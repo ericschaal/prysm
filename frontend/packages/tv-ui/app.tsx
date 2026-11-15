@@ -26,6 +26,7 @@ import {
   instanceAddress,
   localPortal,
   retrySeconds,
+  shown,
   tvStatus,
 } from './model';
 import { qrCode } from './qr';
@@ -40,8 +41,7 @@ import {
 import { useTvService } from './service';
 import './tv.css';
 
-type DialogId =
-  'instance' | 'autostart' | 'service' | 'diagnostics' | 'cleanup' | 'exit';
+type DialogId = 'instance' | 'service' | 'diagnostics' | 'cleanup' | 'exit';
 const parents: Partial<Record<DialogId, DialogId>> = {
   diagnostics: 'service',
   cleanup: 'service',
@@ -114,9 +114,6 @@ function instanceWarning(reach: 'refused' | 'unreachable') {
     : 'Saved. No Prysm answers at that address yet. Check that Prysm is running and the address is right.';
 }
 
-/** An address as people read it: no trailing slash. */
-const shown = (address: string) => address.replace(/\/+$/, '');
-
 export function TvApp({
   flavor,
   service,
@@ -152,7 +149,6 @@ export function TvApp({
     online,
     state,
     draft,
-    tv.dirty,
     portal.snapshot
       ? { lights: !!portal.snapshot.settings.output, address: portalAddress }
       : null,
@@ -178,13 +174,11 @@ export function TvApp({
   const { say } = tv;
 
   /**
-   * Save; a newly saved Prysm address (slim) is checked, and a warning
-   * replaces the notice when no portal that allows this app answers there.
+   * Save a Prysm address (slim) and check it: a warning replaces the notice
+   * when no portal that allows this app answers there.
    */
-  async function saveChecked(save: () => Promise<boolean>) {
-    const instance =
-      slim && draft.instance !== tv.saved.instance ? draft.instance : null;
-    if (!(await save()) || !instance) return;
+  async function setInstance(instance: string | null) {
+    if (!(await tv.set({ instance })) || !instance) return;
     const reach = await checkPortal(instance, portalOptions);
     if (reach !== 'ok') say(instanceWarning(reach), true);
   }
@@ -193,16 +187,22 @@ export function TvApp({
     switch (status.action) {
       case 'setup':
         return void tv.setup();
+      case 'retry':
+        return void tv.retry();
       case 'disable':
         return void tv.enable(false);
       case 'address':
         return nav.openDialog('instance');
-      case 'save_enable':
-        return void saveChecked(tv.saveAndEnable);
       case 'enable':
         return void tv.enable(true);
     }
   }
+  // Full: no button while there is nothing for the service to do; the
+  // lighting modes are the one way to choose what the lights do. Slim keeps
+  // its place while capture stops ("Please wait…").
+  const setupFirst = status.setupLights && !mismatch && !!portalAddress;
+  const showPrimary =
+    status.action !== 'none' || tv.changing || (slim && !!status.label);
 
   /** Screen sync on (calibration needs it), then the calibration screen. */
   async function startCalibration() {
@@ -247,25 +247,9 @@ export function TvApp({
     draft.instance,
   );
 
-  const disabled = !online || tv.changing;
-  const rows: { id: DialogId; label: string; value: string }[] = [];
-  if (slim) {
-    rows.push({
-      id: 'instance',
-      label: 'Prysm address',
-      value: draft.instance ? shown(draft.instance) : 'Add address',
-    });
-  }
-  rows.push({
-    id: 'autostart',
-    label: 'Start with TV',
-    value: draft.autostart ? 'On' : 'Off',
-  });
-
-  let savedLabel = 'On this TV';
-  if (state && tv.syncing) savedLabel = 'Saving…';
-  else if (state && tv.dirty) savedLabel = 'Unsaved changes';
-  else if (state) savedLabel = 'Saved';
+  // A change applies at once; while one is sent the others wait (the
+  // service runs one command at a time), but nothing dims for it.
+  const disabled = !online;
 
   if (calibrating)
     return (
@@ -329,7 +313,7 @@ export function TvApp({
                 ) : null}
                 {meta || '\u00a0'}
               </p>
-              <div className="main-actions">
+              {showPrimary ? (
                 <button
                   id="primary"
                   type="button"
@@ -339,72 +323,63 @@ export function TvApp({
                 >
                   {tv.changing ? 'Please wait…' : status.label}
                 </button>
-                <button
-                  id="service-options"
-                  type="button"
-                  className="quiet"
-                  onClick={() => nav.openDialog('service')}
-                >
-                  Service options
-                </button>
-              </div>
+              ) : null}
             </section>
-            <LightingCard flavor={flavor} portal={portal} />
+            {/*
+              First run: the lights are set up in the portal, so its QR code
+              takes the place of the modes, which could not do anything yet.
+            */}
+            {setupFirst && portalAddress ? (
+              <section className="setup-lights" id="portal-address">
+                {portalQr ? (
+                  <QrCode modules={portalQr} className="setup-qr" />
+                ) : null}
+                <p className="setup-text">
+                  <span className="setup-step">
+                    Scan with your phone to set up your lights.
+                  </span>
+                  <code id="portal-address-text">{shown(portalAddress)}</code>
+                  Or type this address in a browser.
+                </p>
+              </section>
+            ) : (
+              <LightingCard flavor={flavor} portal={portal} />
+            )}
           </div>
           <div className="column" data-column="settings">
-            {portalAddress ? (
-              <section className="card portal-address" id="portal-address">
+            {portalAddress && !setupFirst ? (
+              <section className="portal-address" id="portal-address">
                 {portalQr ? (
                   <QrCode modules={portalQr} className="portal-qr" />
                 ) : null}
                 <p className="portal-text">
-                  <strong>Web portal</strong>
+                  <span className="section-label">Web portal</span>
                   <code id="portal-address-text">{shown(portalAddress)}</code>
                   Scan or type it on your phone for lights, colours and more.
                 </p>
               </section>
             ) : null}
-            <section className="card settings" aria-labelledby="settings-title">
-              <div className="section-heading">
-                <h2 id="settings-title">Settings</h2>
-                <span
-                  id="saved-state"
-                  className={tv.dirty ? 'unsaved' : undefined}
-                >
-                  {savedLabel}
-                </span>
-                <span className="save-actions" hidden={!tv.dirty}>
-                  <button
-                    id="save"
-                    type="button"
-                    className="secondary"
-                    disabled={disabled || !tv.dirty}
-                    onClick={() => void saveChecked(tv.save)}
-                  >
-                    Save changes
-                  </button>
-                  <button
-                    id="discard"
-                    type="button"
-                    className="quiet"
-                    disabled={tv.changing || !tv.dirty}
-                    onClick={tv.discard}
-                  >
-                    Discard
-                  </button>
-                </span>
-              </div>
+            <section className="settings" aria-labelledby="settings-title">
+              <h2 id="settings-title" className="section-label">
+                Settings
+              </h2>
               <div className="setting-list">
-                {rows.map((row) => (
+                {slim ? (
                   <SettingRow
-                    key={row.id}
-                    {...row}
+                    id="instance"
+                    label="Prysm address"
+                    value={draft.instance ? shown(draft.instance) : 'Add'}
                     disabled={disabled}
-                    open={() => nav.openDialog(row.id)}
+                    open={() => nav.openDialog('instance')}
                   />
-                ))}
-              </div>
-              <div className="setting-list">
+                ) : null}
+                <SwitchRow
+                  id="autostart"
+                  label="Start with TV"
+                  checked={draft.autostart}
+                  disabled={disabled}
+                  toggle={() => void tv.set({ autostart: !draft.autostart })}
+                />
                 <SettingRow
                   id="calibrate"
                   label="Calibrate colours"
@@ -414,6 +389,13 @@ export function TvApp({
                   }
                   disabled={!!blocker || starting}
                   open={() => void startCalibration()}
+                />
+                <SettingRow
+                  id="service-options"
+                  label="Service options"
+                  value=""
+                  disabled={false}
+                  open={() => nav.openDialog('service')}
                 />
               </div>
             </section>
@@ -427,7 +409,7 @@ export function TvApp({
             <b>OK</b> Choose
           </span>
           <span>
-            <b>Back</b> Return
+            <b>Back</b> Close
           </span>
           <p
             id="notice"
@@ -446,6 +428,7 @@ export function TvApp({
           modal={nav.modal}
           tv={tv}
           slim={slim}
+          setInstance={(instance) => void setInstance(instance)}
           closeDialog={nav.closeDialog}
           openDialog={nav.openDialog}
           dismiss={nav.dismiss}
@@ -456,6 +439,10 @@ export function TvApp({
   );
 }
 
+/**
+ * A row that opens something (a dialog or the calibration screen): label,
+ * its current value, and a chevron, the promise of another screen.
+ */
 function SettingRow({
   id,
   label,
@@ -474,60 +461,73 @@ function SettingRow({
       id={id}
       type="button"
       className="setting"
-      aria-haspopup="dialog"
+      aria-haspopup={id === 'calibrate' ? undefined : 'dialog'}
       disabled={disabled}
       onClick={open}
     >
       <span className="setting-label">{label}</span>
-      <span className="setting-selection">
-        <span id={`${id}-value`} className="setting-value">
-          {value}
-        </span>
-        <span className="chevron" aria-hidden="true">
-          ›
-        </span>
+      <span id={`${id}-value`} className="setting-value">
+        {value}
       </span>
+      <span className="chevron" aria-hidden="true" />
     </button>
   );
 }
 
-function Choice({
+/** An on/off row: OK flips it and it applies at once; no other screen. */
+function SwitchRow({
   id,
-  title,
-  detail,
-  selected,
-  danger,
-  action,
+  label,
+  checked,
+  disabled,
+  toggle,
 }: {
-  id?: string;
-  title: string;
-  detail?: string;
-  selected?: boolean;
-  danger?: boolean;
-  action: () => void;
+  id: string;
+  label: string;
+  checked: boolean;
+  disabled: boolean;
+  toggle: () => void;
 }) {
   return (
     <button
       id={id}
       type="button"
-      className={`choice${danger ? ' danger' : ''}`}
-      aria-pressed={selected}
-      onClick={action}
+      role="switch"
+      aria-checked={checked}
+      className="setting"
+      disabled={disabled}
+      onClick={toggle}
     >
-      <span>
-        <span className="choice-name">{title}</span>
-        {detail ? <span className="choice-detail">{detail}</span> : null}
+      <span className="setting-label">{label}</span>
+      <span id={`${id}-value`} className="setting-value">
+        {checked ? 'On' : 'Off'}
       </span>
-      {selected ? (
-        <span className="check" aria-hidden="true">
-          ✓
-        </span>
-      ) : null}
+      <span className="switch" aria-hidden="true" />
     </button>
   );
 }
 
-/** A text field committed with OK on the keyboard or the button below it. */
+/** One choice in a dialog's list: a name, an optional line of detail. */
+function Choice({
+  id,
+  title,
+  detail,
+  action,
+}: {
+  id?: string;
+  title: string;
+  detail?: string;
+  action: () => void;
+}) {
+  return (
+    <button id={id} type="button" className="choice" onClick={action}>
+      <span className="choice-name">{title}</span>
+      {detail ? <span className="choice-detail">{detail}</span> : null}
+    </button>
+  );
+}
+
+/** A text field committed with OK on the keyboard or the button beside Cancel. */
 function AddressForm({
   id,
   label,
@@ -535,6 +535,7 @@ function AddressForm({
   placeholder,
   apply,
   button,
+  cancel,
 }: {
   id: string;
   label: string;
@@ -542,6 +543,7 @@ function AddressForm({
   placeholder: string;
   apply: (text: string) => string | null;
   button: string;
+  cancel: () => void;
 }) {
   const [text, setText] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -565,14 +567,27 @@ function AddressForm({
         aria-describedby={error ? `${id}-error` : undefined}
         onChange={(event) => setText(event.target.value)}
       />
+      {/* Always a line, so the buttons never move when an error comes. */}
       {error ? (
         <p id={`${id}-error`} className="notice error" role="alert">
           {error}
         </p>
-      ) : null}
-      <button id={`${id}-apply`} type="submit" className="choice apply">
-        {button}
-      </button>
+      ) : (
+        <p className="notice">{' '}</p>
+      )}
+      <div className="dialog-actions" data-row="form">
+        <button id={`${id}-apply`} type="submit" className="primary">
+          {button}
+        </button>
+        <button
+          id="dialog-back"
+          type="button"
+          className="tonal"
+          onClick={cancel}
+        >
+          Cancel
+        </button>
+      </div>
     </form>
   );
 }
@@ -582,6 +597,7 @@ function Dialogs({
   modal,
   tv,
   slim,
+  setInstance,
   openDialog,
   closeDialog,
   dismiss,
@@ -591,19 +607,26 @@ function Dialogs({
   modal: Ref<HTMLDivElement>;
   tv: ReturnType<typeof useTvService>;
   slim: boolean;
+  setInstance: (instance: string | null) => void;
   openDialog: (dialog: DialogId) => void;
   closeDialog: () => void;
   dismiss: () => void;
   onExit: () => void;
 }) {
-  const { draft } = tv;
   let title = '';
   let description = '';
   let content: ReactNode = null;
-  const choose = (patch: Parameters<typeof tv.edit>[0]) => {
-    tv.edit(patch);
-    closeDialog();
-  };
+  /** The buttons along the bottom; a list dialog has Back alone. */
+  let actions: ReactNode = (
+    <button
+      id="dialog-back"
+      type="button"
+      className="tonal"
+      onClick={closeDialog}
+    >
+      Back
+    </button>
+  );
   switch (dialog) {
     case 'instance':
       title = 'Prysm address';
@@ -613,39 +636,21 @@ function Dialogs({
         <AddressForm
           id="instance-input"
           label="Address"
-          initial={draft.instance ?? ''}
+          initial={tv.draft.instance ? shown(tv.draft.instance) : ''}
           placeholder="192.168.1.20"
           button="Use this address"
+          cancel={closeDialog}
           apply={(text) => {
             const result = instanceAddress(text);
             if ('error' in result) return result.error;
-            choose({ instance: result.value });
+            setInstance(result.value);
+            closeDialog();
             return null;
           }}
         />
       );
-      break;
-    case 'autostart':
-      title = 'Start with TV';
-      description = slim
-        ? 'Start capture automatically when the TV turns on.'
-        : 'Start screen sync automatically when the TV turns on.';
-      content = (
-        <>
-          <Choice
-            title="Off"
-            detail="Start it yourself."
-            selected={!draft.autostart}
-            action={() => choose({ autostart: false })}
-          />
-          <Choice
-            title="On"
-            detail="Start when the TV turns on."
-            selected={draft.autostart}
-            action={() => choose({ autostart: true })}
-          />
-        </>
-      );
+      // The form has its own buttons, under the field.
+      actions = null;
       break;
     case 'service':
       title = 'Service options';
@@ -655,7 +660,7 @@ function Dialogs({
           <Choice
             id="repair"
             title="Set up or repair service"
-            detail="Install the background service and capture permissions again (needs the Homebrew Channel)."
+            detail="Install the service and permissions again (needs the Homebrew Channel)."
             action={() => {
               dismiss();
               void tv.setup();
@@ -680,7 +685,7 @@ function Dialogs({
       title = 'Diagnostics';
       description = 'Service state and the latest messages.';
       content = (
-        <pre className="diagnostics" id="diagnostics-text">
+        <pre className="diagnostics" id="diagnostics-text" data-scroll>
           {diagnostics(tv.online === false ? null : tv.state, tv.problem)}
         </pre>
       );
@@ -689,22 +694,28 @@ function Dialogs({
       title = 'Remove service setup?';
       description =
         'Capture stops and the service is removed with its autostart and permissions. Your settings are kept; set it up again from Service options.';
-      content = (
+      // Two answers and no third Back button: the Back key keeps the setup.
+      actions = (
         <>
-          <Choice
+          <button
             id="keep-setup"
-            title="Keep setup"
-            action={() => openDialog('service')}
-          />
-          <Choice
+            type="button"
+            className="tonal"
+            onClick={() => openDialog('service')}
+          >
+            Keep setup
+          </button>
+          <button
             id="confirm-cleanup"
-            title="Remove setup"
-            danger
-            action={() => {
+            type="button"
+            className="danger"
+            onClick={() => {
               dismiss();
               void tv.uninstall();
             }}
-          />
+          >
+            Remove setup
+          </button>
         </>
       );
       break;
@@ -713,10 +724,19 @@ function Dialogs({
       description = slim
         ? 'Capture keeps its current setting when you close the app.'
         : 'The lights keep their current mode when you close the app.';
-      content = (
+      actions = (
         <>
-          <Choice id="stay" title="Stay here" action={closeDialog} />
-          <Choice id="exit" title="Close app" action={onExit} />
+          <button
+            id="stay"
+            type="button"
+            className="tonal"
+            onClick={closeDialog}
+          >
+            Stay here
+          </button>
+          <button id="exit" type="button" className="primary" onClick={onExit}>
+            Close app
+          </button>
         </>
       );
       break;
@@ -739,14 +759,11 @@ function Dialogs({
           {description}
         </p>
         <div id="dialog-body">{content}</div>
-        <button
-          id="dialog-back"
-          type="button"
-          className="quiet dialog-back"
-          onClick={closeDialog}
-        >
-          Back
-        </button>
+        {actions ? (
+          <div className="dialog-actions" data-row="actions">
+            {actions}
+          </div>
+        ) : null}
       </section>
     </div>
   );

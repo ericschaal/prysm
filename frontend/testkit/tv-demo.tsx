@@ -3,7 +3,9 @@
  * `/demo.html`): the real Luna client over an in-memory supervisor and an
  * in-memory portal. Query flags: `offline` (service not set up), `refused`
  * (the portal answers but refuses this origin), `unreachable`, `old` (a TV
- * that cannot play the calibration patterns). Selects at the bottom right put
+ * that cannot play the calibration patterns), `nolights` (a first run: the
+ * portal has no lights yet; `demo.addLights()` stands in for its setup
+ * wizard), `noaddress` (slim: no Prysm address saved yet). Selects at the bottom right put
  * the supervisor in one of its states (a failure with a retry countdown,
  * waiting for video, …) and set or clear the calibration pattern, as the
  * phone does.
@@ -32,27 +34,27 @@ export function runDemo(
     offline: flags.has('offline'),
     delayMs: 150,
     preferences:
-      flavor === 'slim' ? { instance: 'http://192.168.1.20:8787' } : {},
+      flavor === 'slim' && !flags.has('noaddress')
+        ? { instance: 'http://192.168.1.20:8787' }
+        : {},
   });
-  const application = fakeApplicationPort<unknown, unknown>(
+  const output = {
+    kind: 'wled',
+    address: '192.168.1.50',
+    leds: { top: 96, right: 54, bottom: 96, left: 54 },
+  };
+  const capture =
     flavor === 'full'
-      ? {
-          capture: { kind: 'webos', width: 640, height: 360, fps: 30 },
-          output: {
-            kind: 'wled',
-            address: '192.168.1.50',
-            leds: { top: 96, right: 54, bottom: 96, left: 54 },
-          },
-        }
-      : {
-          capture: { kind: 'remote' },
-          output: {
-            kind: 'wled',
-            address: '192.168.1.50',
-            leds: { top: 96, right: 54, bottom: 96, left: 54 },
-          },
-        },
+      ? { kind: 'webos', width: 640, height: 360, fps: 30 }
+      : { kind: 'remote' };
+  const application = fakeApplicationPort<unknown, unknown>(
+    flags.has('nolights') ? { capture } : { capture, output },
   );
+  /** What the portal's setup wizard does when it saves (with Save only). */
+  const addLights = () =>
+    application.publish({
+      settings: { ...application.snapshot().settings, output },
+    });
   // `old`: a TV that cannot play the patterns. A browser without H.264
   // (e.g. Chromium) shows each pattern as a plain colour instead.
   const colours: PatternPlayer = {
@@ -111,7 +113,7 @@ export function runDemo(
       });
     lighting = supervisor.state().lighting;
   }, 500);
-  Object.assign(window, { demo: { supervisor, application } });
+  Object.assign(window, { demo: { supervisor, application, addLights } });
   const root = document.getElementById('root');
   if (!root) throw new Error('Missing TV root.');
   // Calibration: plays the phone's part (choose Calibrate colours on the TV first).

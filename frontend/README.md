@@ -238,12 +238,14 @@ supervisor in each of its states and play the phone's calibration part). See the
   [WLED](packages/output-wled-ui/index.ts) with the
   [LED layout](packages/output-wled-ui/layout.tsx), and the
   [null output](packages/output-null-ui/index.tsx).
-- [TV UI](packages/tv-ui/app.tsx) (both packages): status card and primary
-  action from the supervisor's state ([rules](packages/tv-ui/model.ts)),
-  with the capture rate and a countdown to a pending restart (counted from
-  when the state arrived),
-  settings rows with an explicit Save ([service and draft](packages/tv-ui/service.ts)),
+- [TV UI](packages/tv-ui/app.tsx) (both packages): status card from the
+  supervisor's state ([rules](packages/tv-ui/model.ts)), with the capture
+  rate and a countdown to a pending restart (counted from when the state
+  arrived); a primary button only for the service (set up, try again after a
+  failure, slim capture on and off), never for what the lights do;
   lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx));
+  settings rows that apply at once (a switch for Start with TV, a dialog for
+  the slim Prysm address; [service](packages/tv-ui/service.ts));
   capture, lights and the slim stream encoding are set up only in the web
   portal, whose address the TV shows with a QR code (and names in the status card while no
   lights are set up). [Calibration](packages/tv-ui/calibration.tsx): a QR

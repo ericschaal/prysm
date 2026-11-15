@@ -5,7 +5,8 @@
  * The screen has two columns (`data-column`); Up/Down move within a column,
  * Left/Right move within a `data-row` group and otherwise to the other column,
  * returning to the control last used there. In a dialog Up/Down (and Tab)
- * move through its controls; Left/Right stay with a text field's caret.
+ * move through its controls, and past the first or last one scroll its
+ * `data-scroll` text; Left/Right stay with a text field's caret.
  */
 import {
   useEffect,
@@ -88,6 +89,13 @@ function rowStop(row: Element): HTMLElement | undefined {
   );
 }
 
+/** The first stop in a scope: its first control, or a row's chosen one. */
+function firstStop(scope: ParentNode | null | undefined) {
+  const first = focusables(scope)[0];
+  const row = first?.closest('[data-row]');
+  return row ? rowStop(row) : first;
+}
+
 export function useRemoteNavigation<D extends string>({
   root,
   parents,
@@ -128,23 +136,28 @@ export function useRemoteNavigation<D extends string>({
         ) ?? controls[0]
       )?.focus();
     } else if (usable(returnFocus.current)) returnFocus.current.focus();
-    else focusables(root.current)[0]?.focus();
+    else firstStop(root.current)?.focus();
   });
   // A status update can disable the focused control; never leave focus on the
-  // page. Until the user moves, focus goes to the primary button once it can.
+  // page. Until the user moves, focus goes to the primary button, or without
+  // one to the first stop (the chosen lighting mode), once it can.
   const automatic = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     if (dialog) return;
     const active = activeElement();
-    const primary = root.current?.querySelector<HTMLElement>(
-      '#primary:not(:disabled)',
-    );
-    if (active && usable(active) && !(active === automatic.current && primary))
+    const preferred =
+      root.current?.querySelector<HTMLElement>('#primary:not(:disabled)') ??
+      firstStop(root.current);
+    if (
+      active &&
+      usable(active) &&
+      !(active === automatic.current && preferred && preferred !== active)
+    )
       return;
-    const next = primary ?? focusables(root.current)[0];
-    if (next && next !== active) {
-      next.focus();
-      automatic.current = next;
+    if (preferred && preferred !== active) {
+      // Set first: a control focused for the user is not one they chose.
+      automatic.current = preferred;
+      preferred.focus();
     }
   });
 
@@ -186,6 +199,13 @@ export function useRemoteNavigation<D extends string>({
         while (row && controls[next] && row.contains(controls[next]!))
           next += step;
         const target = controls[next];
+        // No control that way: a scrolling text (`data-scroll`) moves instead,
+        // so all of it can be read with the arrows alone.
+        const text = modal.current?.querySelector('[data-scroll]');
+        if (!target && text) {
+          text.scrollTop += (step * text.clientHeight * 2) / 3;
+          return;
+        }
         const targetRow = target?.closest('[data-row]');
         (targetRow && targetRow !== row ? rowStop(targetRow) : target)?.focus();
       }
@@ -198,7 +218,7 @@ export function useRemoteNavigation<D extends string>({
     event.preventDefault();
     const column = active?.closest('[data-column]');
     if (!column) {
-      focusables(root.current)[0]?.focus();
+      firstStop(root.current)?.focus();
       return;
     }
     const row = active!.closest('[data-row]');
@@ -221,7 +241,7 @@ export function useRemoteNavigation<D extends string>({
         lastInColumn.current[other.getAttribute('data-column') ?? ''];
       (usable(remembered) && other.contains(remembered)
         ? remembered
-        : focusables(other)[0]
+        : firstStop(other)
       )?.focus();
       return;
     }
@@ -277,7 +297,8 @@ export function useRemoteNavigation<D extends string>({
     onFocus: (event: FocusEvent<HTMLElement>) => {
       const column = event.target.closest('[data-column]');
       const name = column?.getAttribute('data-column');
-      if (name) lastInColumn.current[name] = event.target;
+      if (name && event.target !== automatic.current)
+        lastInColumn.current[name] = event.target;
     },
   };
 }

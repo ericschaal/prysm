@@ -5,7 +5,19 @@
  *
  * 1rem = 1.5625vw: 30 px at 1920 × 1080, 20 px at 1280 × 720, so the layout
  * is the same at every TV resolution. Content stays inside a 5% overscan
- * margin. Four type sizes: display, title, body, small (24 px at 1080p).
+ * margin (LG asks for at least 20 px). Four type sizes: display, title, body
+ * (30 px at 1080p) and small (27 px), the sizes of LG's own TV apps
+ * (Sandstone body and small body); LG's floor is 20 px. Every control is at
+ * least --hit tall (78 px; LG recommends 75 px at 1080p).
+ *
+ * webOS TV rules followed here: one focused control at a time, always
+ * visible and told apart at a glance (light fill, dark text, ring, lift);
+ * disabled controls dimmed, never only recoloured; controls that look like
+ * controls before they have focus (every control has a fill at rest, and
+ * nothing else does); no pure white fields (the QR codes sit on --paper).
+ *
+ * Rhythm: spacing only from the --space scale, radii only from the --radius
+ * scale; both columns start with a small label on the same line.
  *
  * Chromium 53 (webOS 4): flexbox without gap, custom properties (never in
  * media queries or keyframes), transforms, transitions, keyframes, gradients.
@@ -29,6 +41,8 @@
   color-scheme: dark;
 
   --bg: #0e0f16;
+  /* The secondary column's panel: one step above the background. */
+  --surface-1: #151722;
   --surface-2: #1c1f2d;
   --surface-3: #252939;
   --surface-sunken: #11131c;
@@ -50,6 +64,14 @@
   --focus-ring: #8d7dff;
   --danger-focus-fill: #ffe5e9;
   --danger-focus-text: #8c1d2f;
+  /* The chosen lighting mode: an accent tint, quieter than the primary fill. */
+  --accent-tint: #3a3270;
+  /* An off switch on the light focus fill. */
+  --focus-track: #cfcbe4;
+  /* Behind QR codes: scannable, but not a white field on the panel. */
+  --paper: #e4e2ee;
+  --line: rgba(255, 255, 255, 0.07);
+  --disabled-opacity: 0.42;
 
   --font:
     'LG Smart UI', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
@@ -58,7 +80,7 @@
   --text-display: 2.6rem;
   --text-title: 1.35rem;
   --text-body: 1rem;
-  --text-small: 0.8rem;
+  --text-small: 0.9rem;
   --weight-regular: 400;
   --weight-bold: 600;
 
@@ -71,10 +93,14 @@
   --space-12: 3rem;
   --safe-x: 5vw;
   --safe-y: 5vh;
+  --hit: 2.6rem;
+  /* The left column's controls (primary, modes) share one width. */
+  --control-width: 28rem;
 
-  --radius-sm: 0.3rem;
-  --radius-md: 0.55rem;
-  --radius-lg: 0.9rem;
+  /* Inner parts (QR, mode segments); controls; dialogs and cards. */
+  --radius-sm: 0.35rem;
+  --radius-md: 0.6rem;
+  --radius-lg: 1rem;
 
   --duration-fast: 120ms;
   --duration: 260ms;
@@ -145,9 +171,10 @@ button:focus,
   box-shadow: 0 0 0 0.1rem var(--focus-ring);
   transform: scale(1.03);
 }
+/* Unavailable: dimmed as a whole, so it reads as off from the sofa. */
 button:disabled {
   cursor: default;
-  color: var(--text-3);
+  opacity: var(--disabled-opacity);
 }
 
 /* ---- Layout ---- */
@@ -317,44 +344,116 @@ button:disabled {
   transform-origin: 0 50%;
   animation: countdown linear forwards;
 }
-.main-actions {
-  width: 24rem;
-  margin-top: var(--space-4);
-}
+/*
+ * ---- Controls ----
+ * Three kinds, each with one resting shape that focus lights up in place:
+ * the primary action (accent fill), tonal buttons and list rows (a dark
+ * fill one step above their ground), and the lighting modes (a segmented
+ * track). Anything with a fill can be pressed; information sits on the
+ * background without one.
+ */
 .primary {
-  width: 100%;
-  min-height: 3.2rem;
+  width: var(--control-width);
+  min-height: 3rem;
+  margin-top: var(--space-6);
   background: var(--accent-fill);
   color: var(--text-on-accent);
   font-weight: var(--weight-bold);
   text-align: center;
 }
+/* Its words still matter while it waits ("Please wait…"): grey, not faded. */
 .primary:disabled {
   background: var(--surface-2);
-}
-.quiet {
-  color: var(--text-2);
-}
-.main-actions .quiet {
-  width: 100%;
-  margin-top: var(--space-2);
   color: var(--text-3);
-  font-size: var(--text-small);
+  opacity: 1;
+}
+.tonal,
+.danger {
+  min-width: 10rem;
+  background: var(--surface-3);
+  color: var(--text);
   text-align: center;
 }
+.danger {
+  color: var(--danger);
+}
+/* Focus wins over every resting colour: dark text on the light fill. */
+.tonal:focus {
+  color: var(--focus-text);
+}
+.danger:focus {
+  background: var(--danger-focus-fill);
+  color: var(--danger-focus-text);
+  box-shadow: 0 0 0 0.1rem var(--danger);
+}
 
-/* ---- Your lights: what the lights do, one segmented control ---- */
+/* ---- Your lights: the main control, a segmented track ---- */
+/*
+ * Right under the status: the status line, its quiet line, then either the
+ * service's one button and the lights, or the lights alone, each step the
+ * same --space-6 apart.
+ */
 .lighting {
-  margin-top: var(--space-8);
+  margin-top: var(--space-6);
 }
 .card-title {
   color: var(--text-3);
   font-size: var(--text-small);
 }
+.modes {
+  display: flex;
+  width: var(--control-width);
+  margin-top: var(--space-3);
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.mode {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mode + .mode {
+  margin-left: var(--space-1);
+}
+/*
+ * The three states never share a look: chosen is an accent tint with bold
+ * words and a dot; focused is the light fill (with the dot, now accent, when
+ * it is also the chosen one); unavailable is dimmed.
+ */
+.mode[aria-pressed='true'] {
+  background: var(--accent-tint);
+  color: var(--text);
+  font-weight: var(--weight-bold);
+}
+.mode[aria-pressed='true']::before {
+  content: '';
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin: 0 var(--space-2) 0.12rem 0;
+  border-radius: 50%;
+  background: var(--accent-text);
+  vertical-align: middle;
+}
+.mode:focus {
+  transform: scale(1.05);
+}
+.mode[aria-pressed='true']:focus::before {
+  background: var(--accent-fill);
+}
 /* Only what the chosen mode does not say; two lines kept, at most two used. */
 .lighting-status {
   position: relative;
-  width: 24rem;
+  width: var(--control-width);
   height: 2.8em;
   margin-top: var(--space-3);
   overflow: hidden;
@@ -376,75 +475,63 @@ button:disabled {
   border-radius: 50%;
   background: var(--warning);
 }
-/* One track, three equal segments. */
-.modes {
+
+/*
+ * First run, no lights yet: the portal's QR code, large, in the modes'
+ * place. Information, so no fill of its own; the code sits on its paper.
+ */
+.setup-lights {
   display: flex;
-  width: 24rem;
-  margin-top: var(--space-2);
-  padding: 0.2rem;
+  align-items: center;
+  margin-top: var(--space-6);
+}
+.setup-qr {
+  flex-shrink: 0;
+  width: 9rem;
+  height: 9rem;
+  margin-right: var(--space-6);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
 }
-.mode {
-  flex: 1;
+.setup-qr rect {
+  fill: var(--paper);
+}
+.setup-text {
   min-width: 0;
-  min-height: 2.6rem;
-  padding: var(--space-1) var(--space-3);
-  border-radius: 0.4rem;
-  color: var(--text-2);
-  font-size: var(--text-small);
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mode + .mode {
-  margin-left: 0.2rem;
-}
-/* Chosen: a raised segment with a dot, which stays when it has focus. */
-.mode[aria-pressed='true'] {
-  background: var(--surface-3);
-  color: var(--text);
-  font-weight: var(--weight-bold);
-}
-.mode[aria-pressed='true']::before {
-  content: '';
-  display: inline-block;
-  width: 0.35rem;
-  height: 0.35rem;
-  margin: 0 var(--space-2) 0.12rem 0;
-  border-radius: 50%;
-  background: currentColor;
-  vertical-align: middle;
-}
-.mode:focus {
-  transform: scale(1.05);
-}
-/* Unavailable: hatched, not just dim. */
-.mode:disabled {
   color: var(--text-3);
-  background: repeating-linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.06),
-    rgba(255, 255, 255, 0.06) 0.15rem,
-    rgba(255, 255, 255, 0) 0.15rem,
-    rgba(255, 255, 255, 0) 0.45rem
-  );
+  font-size: var(--text-small);
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+.setup-step {
+  display: block;
+  color: var(--text);
+  font-size: var(--text-body);
+}
+.setup-text code {
+  display: block;
+  margin: var(--space-2) 0;
+  color: var(--text);
+  font-size: var(--text-title);
+  font-weight: var(--weight-bold);
+  line-height: 1.2;
 }
 
-/* ---- Secondary column: portal and settings ---- */
+/* ---- Secondary column: the portal (information) and the settings (a list) ---- */
 .portal-address {
   display: flex;
   align-items: flex-start;
 }
 .portal-qr {
   flex-shrink: 0;
-  width: 4.2rem;
-  height: 4.2rem;
+  width: 4.6rem;
+  height: 4.6rem;
   margin-right: var(--space-4);
   border-radius: var(--radius-sm);
-  /* Scannable, but quieter than the headline. */
-  opacity: 0.8;
+}
+/* Paper, not a white field: the quiet zone takes the paper colour too. */
+.portal-qr rect,
+.qr rect {
+  fill: var(--paper);
 }
 .portal-text {
   min-width: 0;
@@ -453,105 +540,126 @@ button:disabled {
   line-height: 1.4;
   word-wrap: break-word;
 }
-.portal-text strong,
 .portal-text code {
   display: block;
-}
-.portal-text strong {
-  font-weight: var(--weight-regular);
-}
-.portal-text code {
-  margin: 0.1rem 0 var(--space-1);
+  margin: var(--space-2) 0 var(--space-1);
   color: var(--text);
   font-size: var(--text-body);
+  line-height: 1.2;
+}
+.settings:first-child {
+  margin-top: 0;
 }
 .settings {
   margin-top: var(--space-8);
 }
-.section-heading {
-  display: flex;
-  align-items: center;
-  min-height: 2.8rem;
+.setting-list {
+  margin-top: var(--space-3);
 }
-.section-heading h2 {
-  color: var(--text-3);
-  font-size: var(--text-small);
-}
-#saved-state {
-  margin-left: auto;
-  padding-left: var(--space-3);
-  white-space: nowrap;
-  color: var(--text-3);
-  font-size: var(--text-small);
-}
-#saved-state.unsaved {
-  color: var(--warning);
-}
-.save-actions {
-  display: flex;
-  margin-left: var(--space-2);
-}
-.save-actions button {
-  min-height: 2.4rem;
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--text-small);
-  white-space: nowrap;
-}
-.secondary {
-  background: var(--accent-fill);
-  color: var(--text-on-accent);
-  font-weight: var(--weight-bold);
-}
-.save-actions .quiet {
-  margin-left: var(--space-1);
-  padding-right: 0;
-}
-.setting-list + .setting-list {
-  margin-top: var(--space-4);
-}
+/*
+ * A row at rest: one height, label on the left, its value quieter on the
+ * right, then what OK does: a chevron opens something, a switch flips.
+ */
 .setting {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  min-height: 2.9rem;
-  margin: 0 calc(-1 * var(--space-4));
-  width: calc(100% + 2 * var(--space-4));
+  width: 100%;
+  min-height: var(--hit);
+  padding: 0 var(--space-6);
+  background: var(--surface-2);
 }
 .setting + .setting {
-  margin-top: 0.1rem;
+  margin-top: var(--space-2);
 }
 .setting:focus {
   transform: scale(1.02);
 }
 .setting-label {
-  white-space: nowrap;
-}
-.setting-selection {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  flex: 1;
   min-width: 0;
-  max-width: 64%;
-  margin-left: var(--space-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .setting-value {
+  flex-shrink: 1;
   min-width: 0;
+  max-width: 55%;
+  margin-left: var(--space-4);
   overflow: hidden;
   color: var(--text-3);
-  text-align: right;
+  font-size: var(--text-small);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.chevron {
-  margin-left: var(--space-3);
-  color: var(--text-3);
-  line-height: 1;
-}
-.setting:focus .setting-value,
-.setting:focus .chevron {
+.setting:focus .setting-value {
   color: var(--focus-text-2);
 }
-.setting:disabled .chevron {
+/* A switch says On or Off by itself; the words are kept for screen readers. */
+.setting[role='switch'] .setting-value {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+/* Drawn, not a glyph: the TV's font may not have one. */
+.chevron {
+  flex-shrink: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin: 0 0.1rem 0 var(--space-4);
+  border-top: 0.12rem solid var(--text-3);
+  border-right: 0.12rem solid var(--text-3);
+  transform: rotate(45deg);
+}
+.setting:focus .chevron {
+  border-color: var(--focus-text-2);
+}
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 1.1rem;
+  margin-left: var(--space-4);
+  border-radius: 0.55rem;
+  background: var(--surface-3);
+  box-shadow: 0 0 0 0.06rem var(--border-strong) inset;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.setting[aria-checked='true'] .switch {
+  background: var(--accent-fill);
+  box-shadow: none;
+}
+.setting[aria-checked='true'] .switch::after {
+  background: var(--text);
+  transform: translateX(0.9rem);
+}
+.setting:focus .switch {
+  background: var(--focus-track);
+}
+.setting:focus .switch::after {
+  background: var(--focus-text-2);
+}
+.setting[aria-checked='true']:focus .switch {
+  background: var(--accent-fill);
+}
+.setting[aria-checked='true']:focus .switch::after {
+  background: var(--focus-fill);
+}
+.setting:disabled .chevron,
+.setting:disabled .switch {
   visibility: hidden;
 }
 
@@ -565,9 +673,12 @@ button:disabled {
 .notice.error {
   color: var(--danger);
 }
+/* Two lines of room are always kept for a message, so nothing above moves when one comes. */
 .key-help {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+  height: 3.3rem;
   margin-top: var(--space-4);
   padding-top: var(--space-3);
   border-top: 1px solid var(--surface-2);
@@ -586,11 +697,13 @@ button:disabled {
 #notice {
   flex: 1;
   min-width: 0;
+  max-height: 2.8em;
+  overflow: hidden;
   margin-left: var(--space-4);
   text-align: right;
 }
 
-/* ---- Dialogs ---- */
+/* ---- Dialogs: the same rows and buttons, one step lighter ---- */
 /* Typing: the dialog sits high, clear of the TV's on-screen keyboard. */
 .modal.top {
   align-items: flex-start;
@@ -613,7 +726,7 @@ button:disabled {
   max-width: 100%;
   max-height: 100%;
   overflow-y: auto;
-  padding: var(--space-8) var(--space-8) var(--space-6);
+  padding: var(--space-8);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
   animation: arrive var(--duration) var(--ease-out) backwards;
@@ -624,33 +737,26 @@ button:disabled {
   line-height: 1.2;
 }
 .dialog-description {
-  margin: var(--space-2) 0 var(--space-6);
+  margin-top: var(--space-2);
   color: var(--text-2);
   font-size: var(--text-small);
   line-height: 1.45;
 }
 #dialog-body {
-  margin: 0 calc(-1 * var(--space-4));
+  margin-top: var(--space-6);
 }
+#dialog-body:empty {
+  display: none;
+}
+/* A list choice: a row with a line of detail. */
 .choice {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: block;
   width: 100%;
-  min-height: 3rem;
+  padding: var(--space-3) var(--space-6);
+  background: var(--surface-3);
 }
 .choice + .choice {
-  margin-top: var(--space-1);
-}
-/* The form's one action: a real button, not a line of text. */
-.apply {
-  width: auto;
-  min-width: 14rem;
-  margin: var(--space-4) var(--space-4) 0;
-  justify-content: center;
-  background: var(--accent-fill);
-  color: var(--text-on-accent);
-  font-weight: var(--weight-bold);
+  margin-top: var(--space-2);
 }
 .choice:focus {
   transform: scale(1.02);
@@ -660,46 +766,38 @@ button:disabled {
   display: block;
 }
 .choice-detail {
-  margin-top: 0.1rem;
+  margin-top: var(--space-1);
   color: var(--text-3);
   font-size: var(--text-small);
 }
 .choice:focus .choice-detail {
   color: var(--focus-text-2);
 }
-.check {
+/* The answers along the bottom, centred; the dialog's way out is one of them. */
+.dialog-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-8);
+}
+.dialog-actions button + button {
   margin-left: var(--space-4);
-  color: var(--accent-text);
-  font-weight: var(--weight-bold);
 }
-.choice:focus .check {
-  color: var(--accent-fill);
-}
-.danger {
-  color: var(--danger);
-}
-.danger:focus {
-  background: var(--danger-focus-fill);
-  color: var(--danger-focus-text);
-  box-shadow: 0 0 0 0.1rem var(--danger);
-}
-.dialog-back {
-  min-width: 8rem;
-  margin: var(--space-6) auto 0;
-  color: var(--text-3);
-  text-align: center;
+.dialog-actions .primary {
+  width: auto;
+  min-width: 10rem;
+  min-height: var(--hit);
+  margin-top: 0;
 }
 .dialog label {
   display: block;
-  margin: 0 var(--space-4) var(--space-2);
+  margin-bottom: var(--space-2);
   color: var(--text-3);
   font-size: var(--text-small);
 }
 .dialog input {
   display: block;
-  width: calc(100% - 2 * var(--space-4));
-  min-height: 3rem;
-  margin: 0 var(--space-4);
+  width: 100%;
+  min-height: var(--hit);
   padding: var(--space-2) var(--space-4);
   border: 0.1rem solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -709,7 +807,7 @@ button:disabled {
 .dialog input:focus {
   outline: none;
   border-color: var(--focus-ring);
-  box-shadow: 0 0 0 0.12rem var(--focus-ring);
+  box-shadow: 0 0 0 0.1rem var(--focus-ring);
 }
 .dialog input[aria-invalid='true'] {
   border-color: var(--danger);
@@ -718,24 +816,27 @@ button:disabled {
   color: var(--text-3);
 }
 .dialog form .notice {
-  margin: var(--space-2) var(--space-4) 0;
+  margin-top: var(--space-2);
+}
+.dialog form .dialog-actions {
+  margin-top: var(--space-4);
 }
 .diagnostics {
-  margin: 0 var(--space-4);
+  margin: 0;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
   color: var(--text-2);
-  font: 0.7rem/1.5 var(--font-mono);
+  font: 0.8rem/1.5 var(--font-mono);
   white-space: pre-wrap;
   word-wrap: break-word;
+  /* A long log scrolls here (Up/Down, or the Magic Remote's wheel); Back stays in view. */
+  max-height: 15rem;
+  overflow-y: auto;
 }
 
 /* Pressed: the control sinks under OK. */
-button:active,
-.mode:active,
-.setting:active,
-.choice:active {
+button:active {
   transform: scale(0.97);
 }
 
@@ -802,7 +903,7 @@ button:active,
   max-width: 26rem;
   padding: var(--space-6) var(--space-6) var(--space-4);
   border-radius: var(--radius-lg);
-  background: #fff;
+  background: var(--paper);
   color: #1b1830;
   text-align: center;
 }

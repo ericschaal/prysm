@@ -12,7 +12,7 @@ import {
   type Ref,
 } from 'react';
 import type { Pattern } from '@prysm/application-client';
-import { calibrationUrl } from './model';
+import { calibrationUrl, shown } from './model';
 import { WAITING_PATTERN, type PatternPlayer } from './patterns';
 import { qrCode } from './qr';
 
@@ -142,7 +142,7 @@ export function CalibrationScreen({
               {modules ? (
                 <QrCode id="calibration-qr" modules={modules} />
               ) : null}
-              <code id="calibration-address">{url}</code>
+              <code id="calibration-address">{shown(url)}</code>
             </div>
           </div>
           <footer className="key-help">

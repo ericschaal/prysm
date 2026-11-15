@@ -28,6 +28,7 @@ import {
   instanceAddress,
   localPortal,
   retrySeconds,
+  shown,
   tvStatus,
   completePreferences,
 } from '../packages/tv-ui/model';
@@ -442,12 +443,12 @@ test('status card covers the supervisor states for both packages', () => {
   });
   const draft = (value = {}) =>
     completePreferences({ instance: 'http://192.168.1.20:8787', ...value });
-  const title = (online, value, d = draft(), dirty = false) =>
-    tvStatus(online, value, d, dirty).title;
+  const title = (online, value, d = draft()) =>
+    tvStatus(online, value, d).title;
   assert.equal(title(null, null), 'Connecting…');
-  assert.equal(tvStatus(false, null, draft(), false).label, 'Set up service');
+  assert.equal(tvStatus(false, null, draft()).label, 'Set up service');
   assert.equal(title(true, slim({ capturing: true })), 'Sending the picture');
-  assert(tvStatus(true, slim({ capturing: true }), draft(), false).ready);
+  assert(tvStatus(true, slim({ capturing: true }), draft()).ready);
   assert.equal(title(true, slim({ power: 'asleep' })), 'TV is asleep');
   assert.equal(
     title(true, slim({ power: 'screen_saver' })),
@@ -467,7 +468,6 @@ test('status card covers the supervisor states for both packages', () => {
       },
     }),
     draft(),
-    false,
   );
   assert.equal(waiting.title, 'Waiting for Prysm');
   assert.equal(waiting.attention, false, 'waiting is not a failure');
@@ -478,7 +478,6 @@ test('status card covers the supervisor states for both packages', () => {
       failure: { kind: 'other', message: 'worker exited 1' },
     }),
     draft(),
-    false,
   );
   assert.deepEqual(
     [retrying.title, retrying.description, retrying.attention],
@@ -494,7 +493,6 @@ test('status card covers the supervisor states for both packages', () => {
     true,
     slim({ failure: { kind: 'other', message: 'capture failed' } }),
     draft(),
-    false,
   );
   assert.deepEqual(
     [failedSlim.title, failedSlim.description],
@@ -504,7 +502,6 @@ test('status card covers the supervisor states for both packages', () => {
     true,
     slim({ worker: { phase: 'stopping' } }),
     draft(),
-    false,
   );
   assert.deepEqual(
     [stopping.title, stopping.label, stopping.action],
@@ -514,22 +511,16 @@ test('status card covers the supervisor states for both packages', () => {
     true,
     slim({ enabled: false }, {}),
     completePreferences({}),
-    false,
   );
   assert.deepEqual(
     [notSet.title, notSet.label, notSet.action],
     ['Set up this TV', 'Add Prysm address', 'address'],
   );
   assert.equal(
-    tvStatus(true, slim({ enabled: false }), draft({ autostart: true }), true)
-      .label,
-    'Save and start capture',
-  );
-  assert.equal(
-    tvStatus(true, slim({ enabled: false }), draft(), false).label,
+    tvStatus(true, slim({ enabled: false }), draft()).label,
     'Start capture',
   );
-  assert.equal(tvStatus(true, slim(), draft(), false).label, 'Stop capture');
+  assert.equal(tvStatus(true, slim(), draft()).label, 'Stop capture');
   assert.equal(title(true, slim({ enabled: false })), 'Capture off');
   const full = (change) => ({
     ...state(),
@@ -541,10 +532,11 @@ test('status card covers the supervisor states for both packages', () => {
     ...change,
   });
   assert.deepEqual(
-    [
-      tvStatus(true, full({ enabled: false, lighting: 'off' }), draft(), false),
-    ].map((s) => [s.title, s.label]),
-    [['Lights off', 'Start screen sync']],
+    [tvStatus(true, full({ enabled: false, lighting: 'off' }), draft())].map(
+      (s) => [s.title, s.label, s.action],
+    ),
+    [['Lights off', '', 'none']],
+    'the lighting modes start screen sync; no second button',
   );
   assert.equal(
     title(
@@ -561,7 +553,6 @@ test('status card covers the supervisor states for both packages', () => {
     true,
     full({ enabled: true, lighting: 'processed', capturing: false }),
     draft(),
-    false,
   );
   assert.equal(
     noFrames.title,
@@ -586,18 +577,14 @@ test('status card covers the supervisor states for both packages', () => {
     'Starting screen sync…',
   );
   assert.equal(
-    tvStatus(
-      true,
-      full({ enabled: true, video: 'unavailable' }),
-      draft(),
-      false,
-    ).description,
+    tvStatus(true, full({ enabled: true, video: 'unavailable' }), draft())
+      .description,
     'Choose an input or play something on the TV.',
   );
   // Every headline and detail fits its one line (about 52 characters).
   const all = [
-    tvStatus(null, null, draft(), false),
-    tvStatus(false, null, draft(), false),
+    tvStatus(null, null, draft()),
+    tvStatus(false, null, draft()),
     ...[
       slim(),
       slim({ capturing: true }),
@@ -613,17 +600,24 @@ test('status card covers the supervisor states for both packages', () => {
       full({ enabled: true, capturing: true, lighting: 'processed' }),
       full({ enabled: true, lighting: 'device_native' }),
       full({ failure: { kind: 'other', message: 'x' } }),
-    ].map((value) => tvStatus(true, value, draft(), false)),
-    tvStatus(true, full({}), draft(), false, { lights: false, address: null }),
+    ].map((value) => tvStatus(true, value, draft())),
+    tvStatus(true, full({}), draft(), { lights: false, address: null }),
   ];
   for (const { title: heading, description } of all) {
     assert(heading.length <= 24, heading);
     assert(description.length <= 52, description);
     assert.doesNotMatch(`${heading} ${description}`, /https?:|\d+ s\b/);
   }
-  assert.equal(
-    tvStatus(true, full({ enabled: true }), draft(), false).label,
-    'Turn lights off',
+  assert.equal(tvStatus(true, full({ enabled: true }), draft()).action, 'none');
+  const failedFull = tvStatus(
+    true,
+    full({ enabled: true, failure: { kind: 'other', message: 'x' } }),
+    draft(),
+  );
+  assert.deepEqual(
+    [failedFull.label, failedFull.action],
+    ['Try again', 'retry'],
+    'after a failure the service is restarted, not the lights chosen',
   );
 });
 
@@ -644,7 +638,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     ...change,
   });
   const draft = completePreferences({ instance: 'http://192.168.1.20:8787' });
-  const status = (value) => tvStatus(true, value, draft, false);
+  const status = (value) => tvStatus(true, value, draft);
   const hint = 'Choose another encoding in Prysm’s web portal.';
   assert.deepEqual(
     ['h264_hardware', 'h264_software', 'raw'].map(encodingName),
@@ -967,12 +961,18 @@ test('every state keeps the same slots, plain words and focus on a control', asy
         active && active !== document.body && !active.disabled,
         `${label}: focus`,
       );
-      if (name === 'stopping') {
+      if (name === 'stopping' && flavor === 'slim') {
         assert(tv.el('primary').disabled, 'nothing to press while it stops');
-        assert.equal(tv.focus(), 'service-options');
+        assert.equal(tv.focus(), 'mode-off');
       }
+      if (name === 'stopping' && flavor === 'full')
+        assert(!tv.el('primary'), 'no button while the service has no task');
       if (name === 'back')
-        assert.equal(tv.focus(), 'primary', 'focus returns once it can');
+        assert.equal(
+          tv.focus(),
+          flavor === 'slim' ? 'primary' : 'mode-off',
+          'focus returns once it can',
+        );
     }
     await tv.unmount();
   }
@@ -987,8 +987,6 @@ test('remote arrows move focus through rows and columns without changing setting
     },
   });
   assert.equal(tv.focus(), 'primary');
-  await tv.key(DOWN);
-  assert.equal(tv.focus(), 'service-options');
   await tv.key(DOWN);
   assert.equal(
     tv.focus(),
@@ -1005,8 +1003,14 @@ test('remote arrows move focus through rows and columns without changing setting
     'the row edge continues to the settings column',
   );
   await tv.key(DOWN);
-  await tv.key(DOWN);
   assert.equal(tv.focus(), 'autostart');
+  await tv.key(DOWN);
+  assert.equal(
+    tv.focus(),
+    'service-options',
+    'an unavailable row is passed over',
+  );
+  await tv.key(UP);
   await tv.key(LEFT);
   assert.equal(
     tv.focus(),
@@ -1019,11 +1023,18 @@ test('remote arrows move focus through rows and columns without changing setting
   await tv.key(UP);
   await tv.key(UP);
   assert.equal(tv.focus(), 'instance');
-  assert(!tv.methods().includes('setPreferences'));
-  assert.equal(tv.text('saved-state'), 'Saved');
+  assert(!tv.methods().includes('setPreferences'), 'arrows change nothing');
 });
 
-test('OK opens choices, arrows only focus, Back cancels, and Save alone persists', async (t) => {
+test('full: without a task for the service there is no primary button; focus starts on the chosen mode', async (t) => {
+  const tv = await mountTv(t, { flavor: 'full' });
+  assert(!tv.el('primary'));
+  assert.equal(tv.focus(), 'mode-off');
+  await tv.key(RIGHT);
+  assert.equal(tv.focus(), 'autostart', 'the first row of the settings');
+});
+
+test('Start with TV is a switch: OK flips it and it applies at once', async (t) => {
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
@@ -1032,31 +1043,28 @@ test('OK opens choices, arrows only focus, Back cancels, and Save alone persists
     },
   });
   tv.el('autostart').focus();
+  assert.equal(tv.el('autostart').getAttribute('role'), 'switch');
+  assert.equal(tv.el('autostart').getAttribute('aria-checked'), 'false');
+  await tv.key(LEFT);
+  await tv.key(RIGHT);
+  assert(!tv.methods().includes('setPreferences'), 'arrows change nothing');
   await tv.click('autostart');
-  assert.equal(tv.text('dialog-title'), 'Start with TV');
-  assert.equal(
-    document.activeElement.getAttribute('aria-pressed'),
-    'true',
-    'the current choice is focused',
-  );
-  await tv.key(DOWN);
-  await tv.key(BACK);
-  assert.equal(tv.el('modal'), null);
-  assert.equal(tv.focus(), 'autostart', 'focus returns to the row');
-  assert.equal(tv.text('autostart-value'), 'Off');
-  await tv.click('autostart');
-  await tv.choose('On');
-  assert.equal(tv.text('autostart-value'), 'On');
-  assert.equal(tv.text('saved-state'), 'Unsaved changes');
-  assert(!tv.methods().includes('setPreferences'), 'choosing does not save');
-  await tv.click('save');
+  await settle();
+  assert(!tv.el('modal'), 'no dialog for an on/off value');
   const saved = tv.supervisor.calls.find(
     (call) => call.method === 'setPreferences',
   ).payload;
   assert.equal(saved.autostart, true);
-  assert.equal(saved.instance, 'http://192.168.1.20:8787');
-  assert.equal(tv.text('saved-state'), 'Saved');
+  assert.equal(saved.instance, 'http://192.168.1.20:8787', 'the rest is kept');
+  assert.equal(tv.el('autostart').getAttribute('aria-checked'), 'true');
+  assert.equal(tv.text('autostart-value'), 'On');
+  assert.equal(
+    tv.text('notice'),
+    '',
+    'success says nothing; failures are reported',
+  );
   assert.equal(tv.supervisor.state().preferences.autostart, true);
+  assert(!tv.el('save'), 'nothing waits for a Save');
 });
 
 test('the Prysm address is explicit: invalid text is explained and Back keeps the old one', async (t) => {
@@ -1080,14 +1088,26 @@ test('the Prysm address is explicit: invalid text is explained and Back keeps th
   assert.match(tv.el('modal').className, /\btop\b/, 'clear of the keyboard');
   await tv.type('instance-input', ' 192.168.1.30 ');
   await tv.key(BACK);
-  assert.equal(tv.text('instance-value'), 'Add address');
+  assert.equal(tv.text('instance-value'), 'Add');
+  assert(!tv.methods().includes('setPreferences'), 'Back sends nothing');
   await tv.click('instance');
   assert.equal(tv.el('instance-input').value, '');
   await tv.type('instance-input', '192.168.1.30');
   await tv.submit('instance-input');
-  assert.equal(tv.el('modal'), null);
-  assert.equal(tv.text('instance-value'), 'http://192.168.1.30:8787');
-  assert.equal(tv.text('saved-state'), 'Unsaved changes');
+  await settle();
+  assert(!tv.el('modal'));
+  assert.equal(tv.text('instance-value'), '192.168.1.30:8787');
+  assert.equal(
+    tv.supervisor.state().preferences.instance,
+    'http://192.168.1.30:8787',
+    'Use this address saves it',
+  );
+  await tv.click('instance');
+  assert.equal(
+    tv.el('instance-input').value,
+    '192.168.1.30:8787',
+    'edited as it is shown',
+  );
 });
 
 test('saving a Prysm address checks that a portal answers there, and only warns', async (t) => {
@@ -1096,8 +1116,6 @@ test('saving a Prysm address checks that a portal answers there, and only warns'
     await tv.click('primary');
     await tv.type('instance-input', '192.168.1.30');
     await tv.submit('instance-input');
-    await settle();
-    await tv.click('save');
     await settle();
     assert.equal(
       tv.supervisor.state().preferences.instance,
@@ -1125,18 +1143,19 @@ test('saving a Prysm address checks that a portal answers there, and only warns'
     await save({ block: true, probe: () => Promise.resolve(true) }),
     refused,
   );
-  assert.equal(await save({}), 'Settings saved.', 'a portal answers');
+  assert.equal(await save({}), '', 'a portal answers: nothing to report');
 });
 
-test('a Prysm address is all the slim TV needs; Save and start capture sends it first', async (t) => {
+test('a Prysm address is all the slim TV needs; then Start capture', async (t) => {
   const tv = await mountTv(t);
   await tv.click('primary');
   await tv.type('instance-input', '192.168.1.20');
   await tv.submit('instance-input');
   await settle();
-  assert.deepEqual(tv.urls, ['http://192.168.1.20:8787']);
-  assert.equal(tv.el('receiver'), null, 'no second address');
-  assert.equal(tv.text('primary'), 'Save and start capture');
+  // The lights and the address check both use the one address.
+  assert.deepEqual([...new Set(tv.urls)], ['http://192.168.1.20:8787']);
+  assert(!tv.el('receiver'), 'no second address');
+  assert.equal(tv.text('primary'), 'Start capture');
   await tv.click('primary');
   await settle();
   assert.deepEqual(
@@ -1150,7 +1169,7 @@ test('a Prysm address is all the slim TV needs; Save and start capture sends it 
   assert.equal(tv.text('primary'), 'Stop capture');
 });
 
-test('a failed save keeps the draft and never enables', async (t) => {
+test('a failed change keeps the saved value, says so, and never enables', async (t) => {
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
@@ -1163,11 +1182,10 @@ test('a failed save keeps the draft and never enables', async (t) => {
     'invalid setPreferences request: Prysm address `x`: needs http:// or https://',
   );
   await tv.click('autostart');
-  await tv.choose('On');
-  await tv.click('primary');
+  await settle();
   assert.equal(
     tv.text('notice'),
-    'Couldn’t save and start. Service options › Diagnostics has the details.',
+    'Couldn’t save your settings. Service options › Diagnostics has the details.',
   );
   // The service's own words are in Diagnostics.
   tv.el('service-options').focus();
@@ -1180,11 +1198,11 @@ test('a failed save keeps the draft and never enables', async (t) => {
   await tv.key(BACK);
   await tv.key(BACK);
   assert(!tv.methods().includes('setEnabled'));
-  assert.equal(tv.text('autostart-value'), 'On');
-  assert.equal(tv.text('saved-state'), 'Unsaved changes');
+  assert.equal(tv.text('autostart-value'), 'Off', 'the saved value stays');
+  assert.equal(tv.el('autostart').getAttribute('aria-checked'), 'false');
 });
 
-test('status updates keep unsaved choices and focus; a change made elsewhere replaces the edit', async (t) => {
+test('status updates keep focus; a change made elsewhere shows at once', async (t) => {
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
@@ -1192,8 +1210,6 @@ test('status updates keep unsaved choices and focus; a change made elsewhere rep
       },
     },
   });
-  await tv.click('autostart');
-  await tv.choose('On');
   tv.el('instance').focus();
   await act(async () =>
     tv.supervisor.publish({
@@ -1203,7 +1219,6 @@ test('status updates keep unsaved choices and focus; a change made elsewhere rep
     }),
   );
   await settle();
-  assert.equal(tv.text('autostart-value'), 'On');
   assert.equal(tv.focus(), 'instance');
   const prefs = tv.supervisor.state().preferences;
   await act(async () =>
@@ -1211,8 +1226,31 @@ test('status updates keep unsaved choices and focus; a change made elsewhere rep
   );
   await settle();
   assert.equal(tv.text('autostart-value'), 'On');
-  assert.match(tv.text('notice'), /changed elsewhere/);
-  assert.equal(tv.text('saved-state'), 'Saved');
+  assert.equal(tv.focus(), 'instance');
+});
+
+test('Up and Down scroll a long diagnostics text while focus stays on Back', async (t) => {
+  const tv = await mountTv(t);
+  tv.el('service-options').focus();
+  await tv.click('service-options');
+  await tv.click('diagnostics');
+  assert.equal(tv.focus(), 'dialog-back');
+  // jsdom has no layout: give the text a height and a scroll position.
+  const text = tv.el('diagnostics-text');
+  let top = 0;
+  Object.defineProperty(text, 'clientHeight', { value: 300 });
+  Object.defineProperty(text, 'scrollTop', {
+    get: () => top,
+    set: (value) => {
+      top = value;
+    },
+  });
+  await tv.key(DOWN);
+  assert.equal(top, 200);
+  await tv.key(UP);
+  await tv.key(UP);
+  assert.equal(top, -200, 'the browser clamps it at the top');
+  assert.equal(tv.focus(), 'dialog-back');
 });
 
 test('removing the setup is tucked away, needs confirmation, and Back returns one level', async (t) => {
@@ -1251,9 +1289,9 @@ test('Back on the main screen asks before closing; Tab stays inside the dialog',
   await tv.key(TAB);
   assert.equal(tv.focus(), 'exit');
   await tv.key(TAB);
-  assert.equal(tv.focus(), 'dialog-back');
-  await tv.key(TAB);
-  assert.equal(tv.focus(), 'stay');
+  assert.equal(tv.focus(), 'stay', 'two answers, no third Back button');
+  await tv.key(RIGHT);
+  assert.equal(tv.focus(), 'exit', 'side by side: Right moves between them');
   await tv.key(ESCAPE);
   assert.equal(tv.el('modal'), null);
   assert.equal(tv.exits(), 0);
@@ -1323,29 +1361,28 @@ test('a page shown without a visibility event subscribes when it is focused', as
   assert.equal(tv.supervisor.subscribers(), 1);
 });
 
-test('a lost subscription recovers after 3 s without losing the draft', async (t) => {
+test('a lost subscription recovers after 3 s and keeps the settings shown', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
+        autostart: true,
       },
     },
   });
-  await tv.click('autostart');
-  await tv.choose('On');
   assert.equal(tv.text('autostart-value'), 'On');
   await act(async () => tv.supervisor.drop('Service stopped'));
   await settle();
   assert.equal(tv.text('status-title'), 'Prysm needs setting up');
   assert.equal(tv.text('notice'), '');
   assert.equal(tv.text('autostart-value'), 'On');
+  assert(tv.el('autostart').disabled, 'nothing to change without the service');
   await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
   await settle();
   assert.equal(tv.text('status-title'), 'Capture off');
   assert.equal(tv.text('notice'), 'Service connected.');
   assert.equal(tv.text('autostart-value'), 'On');
-  assert.equal(tv.text('saved-state'), 'Unsaved changes');
 });
 
 test('a waiting slim worker is described as waiting for Prysm, not as a failure', async (t) => {
@@ -1494,17 +1531,30 @@ test('a remote Prysm without Remote capture is explained; an old browser gets th
 test('full: the TV portal is used over loopback and its address is shown', async (t) => {
   const tv = await mountTv(t, { flavor: 'full' });
   assert.deepEqual(tv.urls, ['http://127.0.0.1:8787']);
-  assert.equal(tv.text('portal-address-text'), 'http://192.168.1.5:8787');
+  assert.equal(tv.text('portal-address-text'), '192.168.1.5:8787');
   assert.equal(tv.text('status-title'), 'Lights off');
   assert.equal(tv.el('instance'), null, 'no slim rows');
   assert.equal(tv.el('capture'), null, 'capture is set in the portal only');
-  await tv.click('primary');
-  assert.deepEqual(
-    tv.methods().filter((m) => m !== 'getState'),
-    ['setEnabled'],
+  assert(!tv.el('primary'), 'the lighting modes are the one control');
+  // After a failure the supervisor does not retry, the button restarts it.
+  await act(async () =>
+    tv.supervisor.publish({
+      enabled: true,
+      lighting: 'processed',
+      failure: { kind: 'other', message: 'capture failed' },
+    }),
   );
-  assert.equal(tv.text('status-title'), 'Screen sync on');
-  assert.equal(tv.text('primary'), 'Turn lights off');
+  await settle();
+  assert.equal(tv.text('status-title'), 'Screen sync stopped');
+  assert.equal(tv.text('primary'), 'Try again');
+  await tv.click('primary');
+  await settle();
+  assert.deepEqual(
+    tv.supervisor.calls
+      .filter((call) => call.method === 'setEnabled')
+      .map((call) => call.payload.enabled),
+    [false, true],
+  );
 });
 
 test('full: the lights card says why the lights do not follow the picture', async (t) => {
@@ -1548,8 +1598,8 @@ test('neither package sets up capture, lights or the stream on the TV; both show
     assert.deepEqual(
       rows,
       flavor === 'full'
-        ? ['autostart', 'calibrate']
-        : ['instance', 'autostart', 'calibrate'],
+        ? ['autostart', 'calibrate', 'service-options']
+        : ['instance', 'autostart', 'calibrate', 'service-options'],
     );
     assert.doesNotMatch(
       document.body.textContent,
@@ -1571,7 +1621,7 @@ test('neither package sets up capture, lights or the stream on the TV; both show
     assert.equal(tv.text('lighting-title'), 'Your lights');
     assert.equal(
       tv.el('portal-address').querySelector('code').textContent,
-      flavor === 'full' ? 'http://192.168.1.5:8787' : linked.instance,
+      flavor === 'full' ? '192.168.1.5:8787' : shown(linked.instance),
     );
     await tv.unmount();
   }
@@ -1585,7 +1635,7 @@ test('lights without a setup are named plainly with the portal address, in both 
       portal: { capture: portals[flavor].capture },
     });
     const address =
-      flavor === 'full' ? 'http://192.168.1.5:8787' : linked.instance;
+      flavor === 'full' ? '192.168.1.5:8787' : shown(linked.instance);
     assert.equal(tv.text('status-title'), 'Set up your lights');
     assert.equal(
       tv.text('status-description'),
@@ -1596,11 +1646,17 @@ test('lights without a setup are named plainly with the portal address, in both 
       tv.el('status-title').closest('.overview').className,
       /attention/,
     );
+    // The portal's QR code leads, in the modes' place; the modes, which
+    // could not do anything yet, are not shown.
+    assert(tv.el('portal-address').classList.contains('setup-lights'));
     assert.match(
-      document.querySelector('.card.lighting').textContent,
-      /Set up your lights in the web portal first/,
+      tv.text('portal-address'),
+      /Scan with your phone to set up your lights/,
     );
-    // Once the portal has lights, the usual status returns.
+    assert(!document.querySelector('.card.lighting'), 'no modes yet');
+    assert(!tv.el('mode-processed'));
+    // Once the portal has lights, the usual home returns by itself; nothing
+    // starts until the lights are chosen.
     await act(async () =>
       tv.application.publish({
         settings: { ...tv.application.snapshot().settings, output: wled },
@@ -1608,6 +1664,9 @@ test('lights without a setup are named plainly with the portal address, in both 
     );
     await settle();
     assert.notEqual(tv.text('status-title'), 'Set up your lights');
+    assert(tv.el('mode-processed'), 'the modes are back');
+    assert(!tv.el('portal-address').classList.contains('setup-lights'));
+    assert.equal(tv.application.snapshot().target, 'off');
     await tv.unmount();
   }
 });
@@ -1623,7 +1682,7 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
   };
   const noLights = { lights: false, address: 'http://192.168.1.20:8787' };
   const draft = completePreferences({});
-  const status = (value) => tvStatus(true, value, draft, false, noLights);
+  const status = (value) => tvStatus(true, value, draft, noLights);
   assert.equal(
     status({ ...base, flavor: 'full', enabled: false }).title,
     'Set up your lights',
@@ -1640,13 +1699,8 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
     preferences: { instance: 'http://192.168.1.20:8787' },
   };
   assert.equal(
-    tvStatus(
-      true,
-      slimOff,
-      completePreferences(slimOff.preferences),
-      false,
-      noLights,
-    ).action,
+    tvStatus(true, slimOff, completePreferences(slimOff.preferences), noLights)
+      .action,
     'enable',
     'capture does not',
   );
@@ -1680,7 +1734,7 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
     'Set up your lights',
   );
   assert.equal(
-    tvStatus(true, { ...base, flavor: 'full', enabled: false }, draft, false, {
+    tvStatus(true, { ...base, flavor: 'full', enabled: false }, draft, {
       lights: true,
       address: null,
     }).title,
@@ -1777,7 +1831,7 @@ test('slim: an encoder failure shows the error and sends the user to the portal 
   assert.doesNotMatch(document.body.textContent, /no device/);
   assert.equal(
     tv.el('portal-address').querySelector('code').textContent,
-    linked.instance,
+    shown(linked.instance),
   );
   assert.equal(tv.el('encoding'), null, 'no encoding setting on the TV');
 });
@@ -1816,7 +1870,7 @@ test('slim: a receiver wait or another failure does not mention the encoding', a
   );
   assert.equal(tv.text('status-meta'), 'Trying again in 4 s');
   await tv.key(DOWN);
-  assert.equal(tv.focus(), 'service-options');
+  assert.equal(tv.focus(), 'mode-off', 'down from Stop capture: the lights');
 });
 
 test('full: no encoding setting, encoding in use or encoding switch', async (t) => {
@@ -1930,10 +1984,7 @@ test('full: Calibrate turns screen sync on, shows the phone address and follows 
     ['target:processed'],
   );
   assert.equal(tv.el('app'), null, 'the main screen is closed');
-  assert.equal(
-    tv.text('calibration-address'),
-    'http://192.168.1.5:8787/#/calibrate',
-  );
+  assert.equal(tv.text('calibration-address'), '192.168.1.5:8787/#/calibrate');
   assert.equal(tv.text('calibration-hint'), 'Scan with your phone to start.');
   assert(tv.el('calibration-qr'));
   // The gray pattern already plays under the waiting screen.
@@ -1953,10 +2004,7 @@ test('full: Calibrate turns screen sync on, shows the phone address and follows 
 
   // The phone ends calibration: the TV waits for it again.
   await phone(tv, null);
-  assert.equal(
-    tv.text('calibration-address'),
-    'http://192.168.1.5:8787/#/calibrate',
-  );
+  assert.equal(tv.text('calibration-address'), '192.168.1.5:8787/#/calibrate');
   assert.equal(player.pattern(), 'gray-192');
   assert.equal(player.plays, 1);
 
@@ -1985,10 +2033,7 @@ test('slim: calibration uses the computer portal, already on, and ends when the 
       .some((call) => call.startsWith('target:')),
     'already on',
   );
-  assert.equal(
-    tv.text('calibration-address'),
-    'http://192.168.1.20:8787/#/calibrate',
-  );
+  assert.equal(tv.text('calibration-address'), '192.168.1.20:8787/#/calibrate');
   await phone(tv, { pattern: 'coast', uncorrected: false });
   assert.equal(player.pattern(), 'coast');
   Object.defineProperty(document, 'hidden', {

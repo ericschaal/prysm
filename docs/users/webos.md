@@ -66,8 +66,8 @@ does this. If you installed another way, open **Prysm** on the TV and choose
    most setups; **Smooth** updates the lights twice as often and is more work
    for the TV. **Include TV menus** decides whether on-screen menus light the
    LEDs.
-3. Play video. Choose **Start screen sync** on the TV or turn on Screen sync
-   in the portal.
+3. Play video. Under **Your lights** on the TV choose **Screen sync**, or turn
+   on Screen sync in the portal.
 
 The portal stays available while the TV is awake, also with the lights off or
 the app closed. On the TV, the portal also accepts requests from web pages on
@@ -86,7 +86,8 @@ other sites, so keep the TV on a trusted network.
    (recommended)** and, under **Size and rate**, **Efficient** (320 × 180 at
    30 fps) to start.
 3. On the TV, open **Prysm**. Set **Prysm address** to the computer's portal,
-   for example `http://192.168.1.20:8787`. The TV sends its picture to that
+   for example `192.168.1.20` (the port 8787 is added for you), and choose
+   **Use this address**; it is saved at once. The TV sends its picture to that
    same address; nothing else needs to be reachable.
 4. Choose **Start capture**, then turn on Screen sync in the portal or on the
    TV.
@@ -110,8 +111,10 @@ the portal. Uncompressed needs about ten times the network.
 - Closing the app leaves the service running. On Back, the app asks before
   closing.
 - **Start with TV** starts Screen sync (full) or capture (slim) when the TV
-  turns on. Turn it on only after you have tested standby, wake and a cold
-  boot.
+  turns on. OK switches it on or off and it is saved at once. Turn it on only
+  after you have tested standby, wake and a cold boot.
+- If Screen sync stops and the TV does not try again by itself, choose
+  **Try again** (full package).
 - **Service options** has **Set up or repair service**, **View diagnostics**
   and **Remove service setup…**.
 - [Calibrate colours](calibration.md) from the app.

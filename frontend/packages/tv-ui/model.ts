@@ -71,8 +71,13 @@ export function localPortal(portal: string | null | undefined): string | null {
   return `http://127.0.0.1:${match[1] ?? '80'}`;
 }
 
+/**
+ * The primary button is about the service on this TV only; what the lights
+ * do is chosen with the lighting modes. Full package: set up, or try again
+ * after a failure, else no button. Slim: capture on or off.
+ */
 export type PrimaryAction =
-  'none' | 'setup' | 'disable' | 'address' | 'save_enable' | 'enable';
+  'none' | 'setup' | 'retry' | 'disable' | 'address' | 'enable';
 
 /**
  * What the status card says: one headline and one line of detail. Every
@@ -88,6 +93,11 @@ export interface TvStatus {
   attention: boolean;
   /** Frames flow from an awake TV with video. */
   ready: boolean;
+  /**
+   * The portal has no lights yet: its setup is the one next step, so the
+   * screen leads with the portal address and its QR code.
+   */
+  setupLights: boolean;
 }
 
 /** What the TV UI knows from the portal that drives the lights. */
@@ -116,15 +126,15 @@ export function captureRate(state: State | null): string | null {
 
 /**
  * The status card and primary button from the supervisor's state. `online`
- * is `null` until the first reply; `draft` is the preferences being edited;
- * `portal` is `null` until the portal's state is known. The retry countdown
+ * is `null` until the first reply; `draft` is the preferences as shown
+ * (saved, or being saved); `portal` is `null` until the portal's state is
+ * known. The retry countdown
  * is shown beside the card (see {@link retrySeconds}), not in its words.
  */
 export function tvStatus(
   online: boolean | null,
   state: State | null,
   draft: SavedPreferences,
-  dirty: boolean,
   portal: PortalFacts | null = null,
 ): TvStatus {
   if (online === null || (online && !state))
@@ -135,6 +145,7 @@ export function tvStatus(
       action: 'none',
       attention: false,
       ready: false,
+      setupLights: false,
     };
   if (!online || !state)
     return {
@@ -144,6 +155,7 @@ export function tvStatus(
       action: 'setup',
       attention: true,
       ready: false,
+      setupLights: false,
     };
   const full = state.flavor === 'full';
   const { enabled } = state;
@@ -174,7 +186,7 @@ export function tvStatus(
     title = stopped;
     if (phase === 'retrying')
       description = 'Something went wrong. Prysm tries again by itself.';
-    else if (full) description = 'Turn the lights off and on again to retry.';
+    else if (full) description = 'Try again, or choose another mode.';
     else description = 'Stop and start capture again to retry.';
     attention = true;
   } else if (enabled && state.power !== 'active') {
@@ -189,7 +201,7 @@ export function tvStatus(
   } else if (full) {
     if (!enabled) {
       title = 'Lights off';
-      description = 'Start screen sync and the lights follow the picture.';
+      description = 'Choose Screen sync: the lights follow the picture.';
     } else if (state.lighting === 'device_native') {
       title = 'WLED effects on';
       description = 'Your lights run their own effects.';
@@ -206,9 +218,7 @@ export function tvStatus(
     }
   } else if (!state.preferences.instance) {
     title = 'Set up this TV';
-    description = draft.instance
-      ? 'Save to send this TV’s picture to Prysm.'
-      : 'Add the address of Prysm on your computer.';
+    description = 'Add the address of Prysm on your computer.';
   } else if (!enabled) {
     title = 'Capture off';
     description = 'Start capture to send the picture to Prysm.';
@@ -229,30 +239,30 @@ export function tvStatus(
   // Lights are set up in the portal (its first-run setup), never here.
   const linked = full || !!state.preferences.instance;
   const noLights = !!portal && !portal.lights && linked;
-  if (noLights && !failed && phase !== 'stopping') {
+  const setupLights = noLights && !failed && phase !== 'stopping';
+  if (setupLights) {
     title = 'Set up your lights';
     description = 'Open the web portal on your phone to add them.';
     attention = true;
   }
 
-  let label: string;
-  let action: PrimaryAction;
+  // Full: the modes start and stop the lights, so the button only restarts
+  // after a failure the supervisor does not retry by itself.
+  let label = '';
+  let action: PrimaryAction = 'none';
   if (phase === 'stopping') {
-    label = 'Please wait…';
-    action = 'none';
-  } else if (enabled) {
-    label = full ? 'Turn lights off' : 'Stop capture';
-    action = 'disable';
+    if (!full) label = 'Please wait…';
   } else if (full) {
-    label = 'Start screen sync';
-    // Screen sync cannot start without lights.
-    action = noLights ? 'none' : 'enable';
+    if (failed && phase !== 'retrying') {
+      label = 'Try again';
+      action = 'retry';
+    }
+  } else if (enabled) {
+    label = 'Stop capture';
+    action = 'disable';
   } else if (!draft.instance) {
     label = 'Add Prysm address';
     action = 'address';
-  } else if (dirty) {
-    label = 'Save and start capture';
-    action = 'save_enable';
   } else {
     label = 'Start capture';
     action = 'enable';
@@ -267,6 +277,7 @@ export function tvStatus(
       state.capturing &&
       state.power === 'active' &&
       state.video !== 'unavailable',
+    setupLights,
   };
 }
 
@@ -316,6 +327,10 @@ export function diagnostics(state: State | null, problem = ''): string {
   if (state.log.length) lines.push('', 'Recent messages:', ...state.log);
   return lines.join('\n');
 }
+
+/** An address as people read and type it: no `http://`, no trailing slash. */
+export const shown = (address: string) =>
+  address.replace(/^http:\/\//i, '').replace(/\/+$/, '');
 
 /** The portal page the phone opens, from the portal address the TV shows. */
 export const calibrationUrl = (portal: string) =>
