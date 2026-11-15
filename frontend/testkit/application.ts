@@ -44,6 +44,7 @@ export function fakeApplicationPort<C, O>(initial: {
   /** Trials wait for this before answering; trials fail while `trialFailure`. */
   let trialGate: Promise<void> | null = null;
   let saveGate: Promise<void> | null = null;
+  let patternGate: Promise<void> | null = null;
   let trialFailure: Failure | null = null;
   const trials = { inFlight: 0, mostInFlight: 0 };
   function publish(change: Partial<ApplicationSnapshot<C, O>>) {
@@ -159,6 +160,8 @@ export function fakeApplicationPort<C, O>(initial: {
           ? `calibration:${calibration.pattern}${calibration.uncorrected ? ':uncorrected' : ''}`
           : 'calibration:end',
       );
+      // As a TV on Wi-Fi: the answer takes a while.
+      while (patternGate) await patternGate;
       failIfScripted();
       if (!calibration) {
         clearCalibration();
@@ -196,6 +199,17 @@ export function fakeApplicationPort<C, O>(initial: {
       saveGate = new Promise<void>((resolve) => {
         release = () => {
           saveGate = null;
+          resolve();
+        };
+      });
+      return release;
+    },
+    /** Calibration patterns wait, in order, until the returned function is called. */
+    holdPatterns: () => {
+      let release = () => {};
+      patternGate = new Promise<void>((resolve) => {
+        release = () => {
+          patternGate = null;
           resolve();
         };
       });

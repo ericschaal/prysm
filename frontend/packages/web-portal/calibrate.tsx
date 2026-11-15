@@ -1,6 +1,16 @@
-import { useEffect, useId, useReducer, useRef, type ReactNode } from 'react';
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useReducer,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import {
   failureOf,
+  same,
   type CalibrationPattern,
   type LightingTarget,
   type Pattern,
@@ -16,6 +26,7 @@ import {
   screens,
   wizardReducer,
   type Adjustable,
+  type Place,
   type Screen,
   type Section,
   type WizardAction,
@@ -23,11 +34,14 @@ import {
 import { nameProblem } from './checks';
 import { RangeField, SelectField, TextField } from './fields';
 import { FieldScopeProvider, focusField, type FieldScope } from './form';
-import { useLiveProcessing, withCalibrations } from './live-processing';
+import {
+  throttled,
+  useLiveProcessing,
+  withCalibrations,
+} from './live-processing';
 import {
   correctionLimits,
   correctionOf,
-  corrections,
   freeName,
   nameOf,
   newCalibrationId,
@@ -136,9 +150,14 @@ const leaning = (end: string) => end.replace(/^More /, '').toLowerCase();
 /** What to do with a slider, from what the wall shows: one line under it. */
 const hueGuidance = ([start, end]: readonly [string, string]) =>
   `Too ${leaning(end)}? Toward ${leaning(start)}. Too ${leaning(start)}? Toward ${leaning(end)}.`;
+/** White's sliders, named by their ends like the colours': warmth adds red and takes blue, tint takes green. */
+const whiteEnds = {
+  warmth: ['Cooler', 'Warmer'],
+  tint: ['More green', 'More pink'],
+} as const;
 const whiteGuidance = {
-  warmth: 'Looks blue? Warm it up. Looks yellow? Cool it down.',
-  tint: 'Looks green? Toward pink. Looks pink? Toward green.',
+  warmth: 'Too blue? Toward warmer. Too yellow? Toward cooler.',
+  tint: hueGuidance(whiteEnds.tint),
 } as const;
 const strengthGuidance = `Too vivid? Toward ${leaning(strengthEnds[0])}. Too pale? Toward ${leaning(strengthEnds[1])}.`;
 
@@ -153,10 +172,22 @@ const fixLabels: Record<Adjustable, string> = {
 const tvInstruction = 'Open Prysm on the TV and choose Calibrate.';
 const needsTv = `The TV needs to show the patterns with screen sync on. ${tvInstruction}`;
 
-/** The white controls' names: Warmth, Tint. */
-const correctionLabels = Object.fromEntries(
-  corrections.map(([name, label]) => [name, label]),
-) as Record<keyof typeof correctionLimits, string>;
+/** Why the TV did not show a pattern. */
+function tvProblem(error: unknown) {
+  const reason = failureOf(error);
+  return reason.kind === 'not_processed'
+    ? needsTv
+    : `The TV pattern did not change: ${reason.message}`;
+}
+
+/** A pattern asked of the TV, and the wizard's place with it. */
+interface Wanted {
+  pattern: Pattern;
+  place: Place;
+}
+
+/** What waits for the save on its way: the last change must be in first. */
+type Closing = 'finish' | 'discard' | 'leave';
 
 export interface CalibrateProps {
   processing: Processing;
@@ -205,6 +236,16 @@ export function CalibrateWizard({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const headingId = useId();
+  /** The TV's patterns: one request at a time, the newest waiting one next. */
+  const [patterns] = useState(() => throttled<Wanted>(0));
+  /** The pattern asked for last; an older one's answer no longer decides. */
+  const newestRef = useRef<Wanted | null>(null);
+  /** The draft's correction at the start: unchanged, Cancel needs no question. */
+  const startedWithRef = useRef<CorrectionControls | null>(null);
+  /** Cancel asks before discarding changes. */
+  const [confirming, setConfirming] = useState(false);
+  /** Finish, Cancel or Leave was tapped and is under way. */
+  const [closing, setClosing] = useState<Closing | null>(null);
 
   const calibrating = phase.kind === 'calibrating' ? phase : null;
   const draftIndex = calibrating
@@ -224,35 +265,58 @@ export function CalibrateWizard({
   }, [phase.kind, screen, ended]);
 
   /**
-   * Show `pattern` on the TV, then `next` as the current screen, opened from
-   * the check `returnTo` if given; resolves with whether it did.
+   * Go to `to` (the current screen when absent), opened from the check
+   * `returnTo`, at once; the TV shows `pattern` after the request on its way.
    */
-  async function show(
+  function request(
     pattern: Pattern,
-    uncorrected = false,
-    next?: number,
-    returnTo?: number,
+    to: { screen?: number; returnTo?: number; uncorrected?: boolean } = {},
   ) {
-    dispatch({ type: 'requestSent' });
+    const moved = to.screen !== undefined;
+    const wanted: Wanted = {
+      pattern,
+      place: {
+        screen: to.screen ?? screen,
+        returnTo: moved
+          ? (to.returnTo ?? null)
+          : (calibrating?.returnTo ?? null),
+        uncorrected: to.uncorrected ?? false,
+      },
+    };
+    newestRef.current = wanted;
+    dispatch({ type: 'requestSent', ...to });
+    patterns.push(wanted, send);
+  }
+  async function send(wanted: Wanted) {
     try {
-      await setCalibration({ pattern, uncorrected });
-      dispatch({ type: 'patternShown', screen: next, returnTo });
-      return true;
-    } catch (error) {
-      const reason = failureOf(error);
-      dispatch({
-        type: 'requestFailed',
-        problem:
-          reason.kind === 'not_processed'
-            ? needsTv
-            : `The TV pattern did not change: ${reason.message}`,
+      await setCalibration({
+        pattern: wanted.pattern,
+        uncorrected: wanted.place.uncorrected,
       });
-      return false;
+      dispatch(
+        newestRef.current === wanted
+          ? { type: 'patternShown' }
+          : { type: 'patternShown', more: wanted.place },
+      );
+    } catch (error) {
+      // A newer request decides what the TV shows.
+      if (newestRef.current === wanted)
+        dispatch({ type: 'requestFailed', problem: tvProblem(error) });
     }
   }
   async function start(from: string) {
     dispatch({ type: 'patternRequested' });
-    if (!(await show(screens[0]!.pattern))) return;
+    dispatch({ type: 'requestSent' });
+    try {
+      await setCalibration({
+        pattern: screens[0]!.pattern,
+        uncorrected: false,
+      });
+    } catch (error) {
+      dispatch({ type: 'requestFailed', problem: tvProblem(error) });
+      return;
+    }
+    dispatch({ type: 'patternShown' });
     const source = calibrations.find((calibration) => calibration.id === from);
     const id = newCalibrationId(
       calibrations.map((calibration) => calibration.id),
@@ -270,11 +334,16 @@ export function CalibrateWizard({
       await live.commit(
         withCalibrations(live.value, [...calibrations, calibration], id),
       )
-    )
+    ) {
+      startedWithRef.current = calibration.correction;
       dispatch({ type: 'started', draftId: id, previous });
+    }
   }
   async function end(title: string, message: string) {
     dispatch({ type: 'ending' });
+    // A pattern still on its way must not show after the end.
+    newestRef.current = null;
+    await patterns.settle();
     try {
       await setCalibration(null);
     } catch {
@@ -299,20 +368,31 @@ export function CalibrateWizard({
       ),
     );
   }
-  async function finish(typedName: string | null) {
+
+  /** Save a change still waiting for its delay, then leave. */
+  async function flush() {
+    if (live.dirty && !(await live.commit(live.value))) return false;
+    leave();
+    return true;
+  }
+  function finish() {
     if (!draft) return;
-    const typed = (typedName ?? nameOf(draft)).trim();
-    const invalid = nameProblem(typed, calibrationLimits.name);
-    if (invalid) {
+    const typed = (calibrating?.name ?? nameOf(draft)).trim();
+    if (nameProblem(typed, calibrationLimits.name)) {
       // The field says what is wrong, in its own note.
       focusField(sectionRef.current, 'calibration.name');
       return;
     }
+    setClosing('finish');
+  }
+  async function complete() {
+    if (!draft) return false;
+    const typed = (calibrating?.name ?? nameOf(draft)).trim();
     const others = calibrations.filter(
       (calibration) => calibration.id !== draft.id,
     );
     const final = freeName(typed, others);
-    if (final !== draft.name) {
+    if (final !== draft.name || live.dirty) {
       const renamed = calibrations.map((calibration) =>
         calibration.id === draft.id
           ? { ...calibration, name: final }
@@ -323,23 +403,63 @@ export function CalibrateWizard({
           withCalibrations(live.value, renamed, live.value.active_calibration),
         ))
       )
-        return;
+        return false;
     }
     await end('Calibration finished', `“${final}” is saved and active.`);
+    return true;
   }
-  async function cancel(draftId: string, previous: string | undefined) {
+  function cancel() {
+    // Something would be lost: a slider moved or a name typed since the start.
+    const adjusted =
+      !!draft &&
+      ((startedWithRef.current !== null &&
+        !same(correctionOf(draft), startedWithRef.current)) ||
+        (calibrating?.name != null &&
+          calibrating.name.trim() !== nameOf(draft)));
+    if (adjusted) setConfirming(true);
+    else setClosing('discard');
+  }
+  async function discard() {
+    if (!calibrating) return false;
     const rest = calibrations.filter(
-      (calibration) => calibration.id !== draftId,
+      (calibration) => calibration.id !== calibrating.draftId,
     );
-    const back = rest.some((calibration) => calibration.id === previous)
-      ? previous
+    const back = rest.some(
+      (calibration) => calibration.id === calibrating.previous,
+    )
+      ? calibrating.previous
       : undefined;
-    if (!(await live.commit(withCalibrations(live.value, rest, back)))) return;
+    if (!(await live.commit(withCalibrations(live.value, rest, back))))
+      return false;
     await end(
       'Calibration cancelled',
       'The new calibration was deleted; your colours are as before.',
     );
+    return true;
   }
+
+  /**
+   * Finish, Cancel and Leave run once no save is on its way: a save asked
+   * for meanwhile would only wait for that one, so the tap waits here
+   * instead and runs with the settings that save returned.
+   */
+  const ready = closing !== null && !live.saving;
+  const runningRef = useRef(false);
+  const runClosing = useEffectEvent((how: Closing) => {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    let run = flush;
+    if (how === 'finish') run = complete;
+    else if (how === 'discard') run = discard;
+    void run().then((done) => {
+      runningRef.current = false;
+      // Not done (a save failed and says why): the buttons work again.
+      if (!done) setClosing(null);
+    });
+  });
+  useEffect(() => {
+    if (ready && closing) runClosing(closing);
+  }, [ready, closing]);
 
   const notices = (
     <>
@@ -414,21 +534,24 @@ export function CalibrateWizard({
         name={phase.name}
         ended={ended}
         target={target}
-        uncorrected={shown?.uncorrected ?? false}
-        locked={locked}
+        pending={busy}
+        uncorrected={state.uncorrected}
+        disabled={disabled}
+        closing={closing}
         live={live}
         dispatch={dispatch}
         correct={correct}
-        show={(pattern, uncorrected, next, returnTo) =>
-          void show(pattern, uncorrected, next, returnTo)
-        }
+        request={request}
         resume={() => {
           dispatch({ type: 'patternRequested' });
-          void show(screens[phase.screen]!.pattern);
+          request(screens[phase.screen]!.pattern);
         }}
-        finish={() => void finish(phase.name)}
-        cancel={() => void cancel(phase.draftId, phase.previous)}
-        leave={leave}
+        finish={finish}
+        cancel={cancel}
+        confirming={confirming}
+        keep={() => setConfirming(false)}
+        discard={() => setClosing('discard')}
+        leave={() => setClosing('leave')}
       />
     );
   return (
@@ -530,6 +653,89 @@ function StartScreen({
   );
 }
 
+/**
+ * The top line: where you are, and Cancel, quiet like Setup's Leave setup.
+ * Cancel discards work, so with changes it first asks in the same place;
+ * nothing below moves.
+ */
+function StepHeading({
+  confirming,
+  closing,
+  disabled,
+  cancel,
+  keep,
+  discard,
+}: {
+  confirming: boolean;
+  /** Finish, Cancel or Leave is under way. */
+  closing: Closing | null;
+  disabled: boolean;
+  cancel: () => void;
+  keep: () => void;
+  discard: () => void;
+}) {
+  const questionId = useId();
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  /** Focus follows the question in and back out, never on the first draw. */
+  const askedRef = useRef(false);
+  const escape = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && !closing) keep();
+  };
+  useEffect(() => {
+    if (confirming) keepRef.current?.focus();
+    else if (askedRef.current) cancelRef.current?.focus();
+    askedRef.current ||= confirming;
+  }, [confirming]);
+  return (
+    <div className="card-heading">
+      {confirming ? (
+        <div
+          className="calibrate-confirm"
+          role="group"
+          aria-labelledby={questionId}
+        >
+          <p id={questionId}>Discard your changes?</p>
+          <button
+            ref={keepRef}
+            type="button"
+            className="quiet"
+            disabled={closing !== null}
+            onClick={keep}
+            onKeyDown={escape}
+          >
+            Keep
+          </button>
+          <button
+            type="button"
+            className="quiet danger"
+            disabled={disabled || closing !== null}
+            aria-busy={closing === 'discard' || undefined}
+            onClick={discard}
+            onKeyDown={escape}
+          >
+            Discard
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="eyebrow">Calibrate colours</p>
+          <button
+            ref={cancelRef}
+            type="button"
+            className="quiet"
+            disabled={disabled || closing !== null}
+            aria-busy={closing === 'discard' || undefined}
+            onClick={cancel}
+          >
+            Cancel calibration
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** One pattern on the TV and its controls, or the notice that calibration ended. */
 function StepScreen({
   heading,
@@ -542,15 +748,20 @@ function StepScreen({
   name,
   ended,
   target,
+  pending,
   uncorrected,
-  locked,
+  disabled,
+  closing,
   live,
   dispatch,
   correct,
-  show,
+  request,
   resume,
   finish,
   cancel,
+  confirming,
+  keep,
+  discard,
   leave,
 }: {
   heading: (title: string) => ReactNode;
@@ -565,9 +776,14 @@ function StepScreen({
   name: string | null;
   ended: boolean;
   target: LightingTarget;
-  /** The TV shows the pattern without the draft's correction. */
+  /** The pattern is on its way to the TV. */
+  pending: boolean;
+  /** The TV shows (or is about to show) the pattern without the draft's correction. */
   uncorrected: boolean;
-  locked: boolean;
+  /** The portal cannot take commands now. */
+  disabled: boolean;
+  /** Finish, Cancel or Leave is under way. */
+  closing: Closing | null;
   live: {
     scope: FieldScope;
     generation: number;
@@ -576,15 +792,17 @@ function StepScreen({
   };
   dispatch: (action: WizardAction) => void;
   correct: (change: Partial<CorrectionControls>) => void;
-  show: (
+  /** Go there at once; the TV's pattern follows. */
+  request: (
     pattern: Pattern,
-    uncorrected: boolean,
-    next?: number,
-    returnTo?: number,
+    to?: { screen?: number; returnTo?: number; uncorrected?: boolean },
   ) => void;
   resume: () => void;
   finish: () => void;
   cancel: () => void;
+  confirming: boolean;
+  keep: () => void;
+  discard: () => void;
   leave: () => void;
 }) {
   const words = wordsOf(current);
@@ -594,66 +812,65 @@ function StepScreen({
   const position = inSection.indexOf(current);
   const values = draft ? correctionOf(draft) : noCorrection;
   const go = (to: number, from?: number) =>
-    show(screens[to]!.pattern, false, to, from);
-  const slider = (control: keyof typeof whiteGuidance) => (
+    request(screens[to]!.pattern, { screen: to, returnTo: from });
+  const range = (
+    control: string,
+    ends: readonly [string, string],
+    help: string,
+    value: number,
+    onChange: (value: number) => void,
+    limits: { min: number; max: number; step: number },
+  ) => (
     <RangeField
       key={control}
-      className={`slider-${control}`}
+      className={`slider-${control.replace('.', '-')}`}
       path={`${path}.${control}`}
-      label={correctionLabels[control]}
-      help={whiteGuidance[control]}
-      value={values[control]}
-      onChange={(value) => correct({ [control]: value })}
+      label={endsLabel(ends)}
+      help={help}
+      ends={ends}
+      value={value}
+      onChange={onChange}
       onPress={live.slider.press}
       onRelease={live.slider.release}
       format={signed}
-      {...correctionLimits[control]}
+      {...limits}
     />
   );
+  const slider = (control: keyof typeof whiteEnds) =>
+    range(
+      control,
+      whiteEnds[control],
+      whiteGuidance[control],
+      values[control],
+      (value) => correct({ [control]: value }),
+      correctionLimits[control],
+    );
   const primary = primaryOf(current.section);
   const primarySlider = (
     name: Primary,
     control: keyof typeof primaryLimits,
     ends: readonly [string, string],
-  ) => (
-    <RangeField
-      key={control}
-      className={`slider-${name}-${control}`}
-      path={`${path}.${name}.${control}`}
-      label={endsLabel(ends)}
-      help={control === 'hue' ? hueGuidance(ends) : strengthGuidance}
-      ends={ends}
-      value={values[name][control]}
-      onChange={(value) =>
-        correct({ [name]: { ...values[name], [control]: value } })
-      }
-      onPress={live.slider.press}
-      onRelease={live.slider.release}
-      format={signed}
-      {...primaryLimits[control]}
-    />
-  );
+  ) =>
+    range(
+      `${name}.${control}`,
+      ends,
+      control === 'hue' ? hueGuidance(ends) : strengthGuidance,
+      values[name][control],
+      (value) => correct({ [name]: { ...values[name], [control]: value } }),
+      primaryLimits[control],
+    );
   const reset = resetOf(current.section, values);
   const review = current.section === 'review';
   return (
     <>
-      <div className="card-heading">
-        <p className="eyebrow">
-          Calibrate colours
-          <span className="eyebrow-step">
-            {' '}
-            · step {sectionIndex + 1} of {sectionOrder.length}
-          </span>
-        </p>
-        <button
-          type="button"
-          className="quiet danger"
-          disabled={locked}
-          onClick={cancel}
-        >
-          Cancel calibration
-        </button>
-      </div>
+      <StepHeading
+        confirming={confirming}
+        closing={closing}
+        disabled={disabled}
+        cancel={cancel}
+        keep={keep}
+        discard={discard}
+      />
       <ol className="setup-steps" aria-label="Calibration progress">
         {sectionOrder.map((id, index) => (
           <li
@@ -678,13 +895,18 @@ function StepScreen({
           </p>
           {notices}
           <div className="actions">
-            <button type="button" disabled={locked} onClick={leave}>
+            <button
+              type="button"
+              disabled={closing !== null}
+              aria-busy={closing === 'leave' || undefined}
+              onClick={leave}
+            >
               Leave
             </button>
             <button
               type="button"
               className="primary"
-              disabled={locked}
+              disabled={disabled || closing !== null}
               onClick={resume}
             >
               Resume
@@ -694,10 +916,12 @@ function StepScreen({
       ) : (
         <>
           {heading(words.title)}
+          {/* While the TV is still changing, the swatch waits dimmed. */}
           <p
             className="calibrate-pattern"
             data-pattern={current.pattern}
             role="status"
+            aria-busy={pending || undefined}
           >
             On your TV: {patternLabels[current.pattern]}
           </p>
@@ -728,7 +952,7 @@ function StepScreen({
                       <button
                         key={fix}
                         type="button"
-                        disabled={locked}
+                        disabled={disabled}
                         onClick={() => go(screenOf(fix), screen)}
                       >
                         {fixLabels[fix]}
@@ -764,8 +988,10 @@ function StepScreen({
               type="button"
               className="compare"
               aria-pressed={uncorrected}
-              disabled={locked}
-              onClick={() => show(current.pattern, !uncorrected)}
+              disabled={disabled}
+              onClick={() =>
+                request(current.pattern, { uncorrected: !uncorrected })
+              }
             >
               Show without correction
             </button>
@@ -773,7 +999,7 @@ function StepScreen({
               <button
                 type="button"
                 className="quiet"
-                disabled={locked || !reset.changed}
+                disabled={disabled || !reset.changed}
                 onClick={() => correct(reset.to)}
               >
                 Reset
@@ -785,7 +1011,7 @@ function StepScreen({
             {screen > 0 && returnTo === null ? (
               <button
                 type="button"
-                disabled={locked}
+                disabled={disabled}
                 onClick={() => go(screen - 1)}
               >
                 Back
@@ -795,7 +1021,8 @@ function StepScreen({
               <button
                 type="button"
                 className="primary"
-                disabled={locked || !draft}
+                disabled={disabled || !draft || closing !== null}
+                aria-busy={closing === 'finish' || undefined}
                 onClick={finish}
               >
                 Finish
@@ -804,7 +1031,7 @@ function StepScreen({
               <button
                 type="button"
                 className="primary"
-                disabled={locked}
+                disabled={disabled}
                 onClick={() => go(returnTo ?? screen + 1)}
               >
                 Looks right

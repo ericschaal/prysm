@@ -199,16 +199,22 @@
 .calibrate h2 + .notice {
   margin-top: var(--space-4);
 }
-/* The step count is in the progress bar too: on a small phone, only there. */
-@container (max-width: 340px) {
-  .calibrate .eyebrow-step {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
+/* Cancel's question, in the line it replaces: the two answers sit where Cancel was. */
+.calibrate-confirm {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.calibrate-confirm p {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+.calibrate .calibrate-confirm button:not(:last-child) {
+  margin-right: 0;
 }
 /* The swatch sits on the first line when the pattern's words wrap. */
 .calibrate-pattern {
@@ -229,6 +235,15 @@
   box-shadow:
     0 0 0 1px var(--line-strong) inset,
     0 0 12px var(--swatch, transparent);
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+/*
+ * The pattern on its way to the TV: the swatch waits dimmed, only if it
+ * takes a moment (no flicker on a quick TV), and lights as the TV shows it.
+ */
+.calibrate-pattern[aria-busy='true']::before {
+  opacity: 0.3;
+  transition-delay: 100ms;
 }
 .calibrate-pattern[data-pattern='gray-192'] {
   --swatch: #c0c0c0;
@@ -380,6 +395,10 @@ button.compare::before {
   border-bottom: 2px solid transparent;
   transform: rotate(45deg);
 }
+/* A toggle answers within a frame. */
+.calibrate-tools .compare {
+  transition-duration: var(--duration-fast);
+}
 button.compare[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -389,8 +408,8 @@ button.compare[aria-pressed='true']::before {
   border-color: currentColor;
 }
 /*
- * A TV request or a save takes the buttons out for a moment: they dim only
- * if it lasts, so quick ones do not flicker. Back to enabled is immediate.
+ * Starting, Finish and Cancel take the buttons out for a moment: they dim
+ * only if it lasts, so quick ones do not flicker. Back to enabled is immediate.
  */
 .calibrate button:disabled {
   transition-delay: 0s, 0s, 0s, 0s, 160ms, 0s;

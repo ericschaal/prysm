@@ -20,9 +20,13 @@ have not been tested on a TV with Prysm 1.x.
    portal.
 3. Start a new calibration, or start from a copy of a saved one.
 4. Follow the steps. Each shows a pattern on the TV and asks one question.
-   If it already looks right, tap **Looks right**.
-   - **White:** make the wall as neutral as the grey on the TV with
-     **Warmth** and **Tint**. Ignore brightness.
+   If it already looks right, tap **Looks right**. The next step shows at
+   once; its swatch beside "On your TV" stays dim until the TV shows the
+   pattern. If the TV does not change, the phone goes back to the step the TV
+   shows and says why.
+   - **White:** make the wall as neutral as the grey on the TV. One slider
+     goes from **Cooler** to **Warmer**, the other from **More green** to
+     **More pink**. Ignore brightness.
    - **Red, Green, Blue:** compare each half of the TV with the wall. The
      first slider turns the colour (for red: **More pink** or **More
      orange**), the second makes it **Softer** or **Stronger**. Adjusting a
@@ -39,8 +43,10 @@ Changes show on the wall as you move a slider; the line under each slider
 says which way to move it. **Show without correction** compares the wall
 without the calibration; it shows a tick while it is on.
 
-**Cancel** deletes the new calibration and brings back the one you used
-before. If calibrating ends on the TV side, the phone offers to resume and
+**Cancel calibration** (top right) deletes the new calibration and brings
+back the one you used before. If you changed anything, it first asks
+**Discard your changes?** in the same line: **Keep** carries on, **Discard**
+cancels. If calibrating ends on the TV side, the phone offers to resume and
 keeps your draft. A pattern left on the TV clears itself after 10 minutes.
 
 ## Use calibrations
