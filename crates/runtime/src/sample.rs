@@ -51,10 +51,11 @@ pub fn sample_rgb(
     }
     let (nv12, yuyv) = (Nv12View::new(frame), YuyvView::new(frame));
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
+    // An area reaching past `u32::MAX` saturates there: outside, so black.
     for y in 0..height {
-        let sy = area.y + scale(y, area.height, height);
+        let sy = area.y.saturating_add(scale(y, area.height, height));
         for x in 0..width {
-            let sx = area.x + scale(x, area.width, width);
+            let sx = area.x.saturating_add(scale(x, area.width, width));
             pixels.push(match (nv12, yuyv) {
                 (Some(nv12), _) => nv12.pixel(sx, sy).into(),
                 (_, Some(yuyv)) => yuyv.pixel(sx, sy).into(),
@@ -72,6 +73,9 @@ fn scale(i: u32, span: u32, of: u32) -> u32 {
 }
 
 fn pixel(frame: &Frame, x: u32, y: u32) -> [u8; 3] {
+    if x >= frame.width() || y >= frame.height() {
+        return [0; 3];
+    }
     let data = frame.as_slice();
     match frame.format() {
         PixelFormat::RGB24 | PixelFormat::BGR24 => {
@@ -226,6 +230,29 @@ mod tests {
             height: 1,
         };
         assert_eq!(sample_rgb(&frame, outside, 1, 1).unwrap(), [[0; 3]]);
+    }
+
+    #[test]
+    fn pixels_right_of_the_frame_are_black_not_the_next_row() {
+        let frame = coordinates(3, 2);
+        let right = Viewport {
+            x: 2,
+            y: 0,
+            width: 2,
+            height: 1,
+        };
+        assert_eq!(
+            sample_rgb(&frame, right, 2, 1).unwrap(),
+            [[2, 0, 7], [0; 3]]
+        );
+        // An area ending past the coordinate range does not overflow.
+        let far = Viewport {
+            x: u32::MAX,
+            y: u32::MAX,
+            width: 2,
+            height: 2,
+        };
+        assert_eq!(sample_rgb(&frame, far, 2, 2).unwrap(), [[0; 3]; 4]);
     }
 
     #[test]

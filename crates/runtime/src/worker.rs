@@ -19,6 +19,10 @@ pub(crate) struct Flags {
 }
 
 impl Flags {
+    fn request_stop(&self) {
+        self.stop.store(true, Ordering::Release);
+    }
+
     pub(crate) fn set_phase(&self, phase: SessionPhase) {
         *self.phase.lock().unwrap_or_else(PoisonError::into_inner) = Some(phase);
     }
@@ -32,7 +36,7 @@ impl Flags {
         mut each: impl FnMut(Option<Frame>) -> Result<()>,
     ) -> Pumped {
         self.set_phase(SessionPhase::Running);
-        let pumped = catch_unwind(AssertUnwindSafe(|| {
+        let pumped = guarded("session loop", || {
             while !self.stop.load(Ordering::Acquire) {
                 // A failing source is the capture's failure.
                 match source
@@ -45,13 +49,15 @@ impl Flags {
                 }
             }
             Ok(Pumped::Stopped)
-        }));
-        match pumped {
-            Ok(Ok(pumped)) => pumped,
-            Ok(Err(error)) => Pumped::Failed(error),
-            Err(_) => Pumped::Failed(Error::Panicked("session loop")),
-        }
+        });
+        pumped.unwrap_or_else(Pumped::Failed)
     }
+}
+
+/// Run `call` with a panic turned into [`Error::Panicked`] naming `what`, so
+/// the thread goes on to release what it holds and reports the panic.
+pub(crate) fn guarded<T>(what: &'static str, call: impl FnOnce() -> Result<T>) -> Result<T> {
+    catch_unwind(AssertUnwindSafe(call)).unwrap_or(Err(Error::Panicked(what)))
 }
 
 /// Why a pump loop returned.
@@ -72,8 +78,19 @@ impl Pumped {
     }
 }
 
+/// The worker's hold on the shared flags: dropping it requests stop, so a
+/// worker dropped without [`Worker::stop`] or [`Worker::join`] still ends its
+/// thread, which then releases what it holds on its own.
+struct StopOnDrop(Arc<Flags>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.request_stop();
+    }
+}
+
 pub(crate) struct Worker<T> {
-    flags: Arc<Flags>,
+    flags: StopOnDrop,
     done: oneshot::Receiver<T>,
     thread: JoinHandle<()>,
 }
@@ -116,18 +133,15 @@ impl<T: Send + 'static> Worker<T> {
             return Err((Error::Panicked("session thread"), state));
         }
         Ok(Self {
-            flags,
+            flags: StopOnDrop(flags),
             done,
             thread,
         })
     }
 
-    pub(crate) fn request_stop(&self) {
-        self.flags.stop.store(true, Ordering::Release);
-    }
-
     fn phase(&self) -> SessionPhase {
         self.flags
+            .0
             .phase
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -145,7 +159,7 @@ impl<T: Send + 'static> Worker<T> {
     /// Request stop and join within `deadline`. On timeout the thread is left
     /// running and the phase it is stuck in is returned.
     pub(crate) async fn stop(mut self, deadline: Duration) -> Result<Result<T>, SessionPhase> {
-        self.request_stop();
+        self.flags.0.request_stop();
         match tokio::time::timeout(deadline, self.finished()).await {
             Ok(end) => {
                 self.join().await;
@@ -159,5 +173,25 @@ impl<T: Send + 'static> Worker<T> {
     pub(crate) async fn join(self) {
         let thread = self.thread;
         let _ = tokio::task::spawn_blocking(move || thread.join()).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_a_worker_asks_its_thread_to_stop() {
+        let (stopped, seen) = mpsc::channel();
+        let worker = Worker::spawn("prysm-test", (), move |(), flags| {
+            while !flags.stop.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let _ = stopped.send(());
+        })
+        .map_err(|(error, ())| error)
+        .unwrap();
+        drop(worker);
+        assert!(seen.recv_timeout(Duration::from_secs(5)).is_ok());
     }
 }

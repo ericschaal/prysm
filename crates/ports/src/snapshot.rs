@@ -98,7 +98,8 @@ pub struct Snapshot {
     pub calibration: Option<CalibrationPattern>,
     /// The last lighting failure. Every target change, settings apply,
     /// shutdown and session end replaces it, so the next one that succeeds
-    /// clears it.
+    /// clears it, unless the saved settings do not validate: that is then
+    /// the failure.
     pub failure: Option<Error>,
     /// Surfaces that failed. Lighting continues without them.
     pub surface_failures: Vec<Error>,

@@ -85,6 +85,8 @@ pub struct FakeSourceSettings {
     pub close_delay_ms: u64,
     /// `close` reports an unconfirmed release.
     pub fail_close: bool,
+    /// `close` panics, like an adapter with a broken invariant.
+    pub panic_close: bool,
     /// Byte every frame pixel channel is filled with; 0 (black) by default.
     /// A gray frame lets tests observe the color correction in the preview.
     pub fill: u8,
@@ -200,6 +202,7 @@ impl FrameSource for FakeSource {
         thread::sleep(Duration::from_millis(self.settings.close_delay_ms));
         self.log
             .record(format!("source.close:{}", self.settings.name));
+        assert!(!self.settings.panic_close, "fake source panics in close");
         if self.settings.fail_close {
             return Err(Error::other("fake source release is unconfirmed"));
         }
@@ -216,6 +219,8 @@ pub struct FakeOutputSettings {
     pub fail_open: bool,
     /// `idle` fails after recording the call, like an unreachable device.
     pub fail_idle: bool,
+    /// `idle` panics after recording the call.
+    pub panic_idle: bool,
     /// Rejected by `validate`.
     pub invalid: bool,
     /// `observe` reports the device overridden after this many writes.
@@ -225,6 +230,8 @@ pub struct FakeOutputSettings {
     pub brightness: Option<u8>,
     /// Each `write` takes this long, like a slow device.
     pub write_delay_ms: u64,
+    /// `idle` takes this long after recording the call.
+    pub idle_delay_ms: u64,
 }
 
 /// Registers kind `"fake"`.
@@ -301,6 +308,8 @@ impl LedOutput for FakeOutput {
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {
         self.log
             .record(format!("output.idle:{}:{mode:?}", self.settings.name));
+        assert!(!self.settings.panic_idle, "fake output panics in idle");
+        thread::sleep(Duration::from_millis(self.settings.idle_delay_ms));
         if self.settings.fail_idle {
             return Err(Error::other("fake output cannot idle"));
         }

@@ -3,7 +3,7 @@
 use crate::feeds::Feeds;
 use crate::leds::{Leds, OpenOutput};
 use crate::stats::{FrameTimes, Stats};
-use crate::worker::{Flags, Pumped, Worker};
+use crate::worker::{Flags, Pumped, Worker, guarded};
 use prysm_core::{Config, EdgeColors, Frame};
 use prysm_ports::{
     DeviceBrightness, Error, FrameSource, IdleMode, LatestSlot, OutputIssue, Result, Section,
@@ -37,6 +37,9 @@ pub(crate) struct SessionEnd {
     /// session finished on its own without a failure.
     pub(crate) ended: bool,
     pub(crate) released: Result<()>,
+    /// The mode the output was left in, if `idled` worked: the stop's, or
+    /// `Off` when the session ended before a stop asked for another.
+    pub(crate) idle: IdleMode,
     pub(crate) idled: Result<()>,
 }
 
@@ -196,21 +199,24 @@ impl SessionLoop {
         self.report(Observed::default());
         self.feeds.clear();
         flags.set_phase(SessionPhase::ClosingSource);
-        let released = source.close();
+        // A panic in either is reported as that step's failure, and the
+        // output is idled after a source that panicked while closing.
+        let released = guarded("closing the source", || source.close());
         flags.set_phase(SessionPhase::IdlingOutput);
-        let mode = *self
+        let idle = *self
             .control
             .idle
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let idled = self
-            .leds
-            .finish(mode, &mut self.open_output)
-            .map_err(lights);
+        let idled = guarded("idling the output", || {
+            self.leds.finish(idle, &mut self.open_output)
+        })
+        .map_err(lights);
         SessionEnd {
             failure,
             ended,
             released,
+            idle,
             idled,
         }
     }

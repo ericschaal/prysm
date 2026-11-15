@@ -1202,3 +1202,271 @@ async fn a_slow_source_is_not_falling_behind() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn a_restart_starts_the_new_session_even_when_the_old_output_cannot_idle() {
+    within(async {
+        let log = CallLog::new();
+        let unreachable = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                fail_idle: true,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, unreachable, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.write:a", 1).await);
+
+        // The lights that no longer answer are replaced.
+        handle
+            .replace_settings(revision(&handle), named("a", "b"))
+            .await
+            .unwrap();
+        assert_eq!(log.count("output.idle:a:Off"), 1);
+        assert!(log.wait_for("output.write:b", 1).await);
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Running);
+        assert_eq!(
+            snapshot
+                .failure
+                .map(|failure| failure.to_string())
+                .as_deref(),
+            Some("fake output cannot idle"),
+            "the old output's failure is still reported"
+        );
+        engine.shutdown().await.unwrap();
+        assert_eq!(log.count("output.idle:b:Off"), 1);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_restart_that_cannot_start_reports_the_start_failure() {
+    within(async {
+        let log = CallLog::new();
+        let unreachable = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                fail_idle: true,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, unreachable, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.write:a", 1).await);
+
+        let broken = settings(
+            FakeSourceSettings {
+                name: "b".into(),
+                fail_open: true,
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+        );
+        handle
+            .replace_settings(revision(&handle), broken)
+            .await
+            .unwrap();
+        assert_eq!(log.count("source.open_failed:b"), 1, "the start was tried");
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Stopped);
+        assert_eq!(
+            snapshot.failure.as_ref().and_then(Error::section),
+            Some(Section::Capture),
+            "the start's failure, not the old idle's"
+        );
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_settings_save_after_a_failed_native_idle_retries_the_idle() {
+    within(async {
+        let log = CallLog::new();
+        let unreachable = settings(
+            FakeSourceSettings::default(),
+            FakeOutputSettings {
+                name: "a".into(),
+                fail_idle: true,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, unreachable.clone(), DEADLINE).await;
+        assert!(
+            handle
+                .set_target(LightingTarget::DeviceNative)
+                .await
+                .is_err()
+        );
+        let failed = handle.snapshot().borrow().clone();
+        assert_eq!(failed.target, LightingTarget::DeviceNative);
+        assert_eq!(failed.session, SessionState::Stopped);
+        assert!(failed.failure.is_some());
+
+        // A processing-only save retries, and the failure stays.
+        let mut brighter = unreachable;
+        brighter.processing.brightness_percent = 75;
+        handle
+            .replace_settings(revision(&handle), brighter)
+            .await
+            .unwrap();
+        assert_eq!(log.count("output.idle:a:Native"), 2, "retried");
+        assert!(handle.snapshot().borrow().failure.is_some());
+
+        // Corrected output settings put the lights in their own effects.
+        handle
+            .replace_settings(revision(&handle), named("", "b"))
+            .await
+            .unwrap();
+        assert_eq!(log.count("output.idle:b:Native"), 1);
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Native);
+        assert!(snapshot.failure.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_source_panicking_while_closing_still_idles_the_output_and_faults_the_engine() {
+    within(async {
+        let log = CallLog::new();
+        let panicking = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                panic_close: true,
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, panicking, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.write:a", 1).await);
+
+        let error = handle.set_target(LightingTarget::Off).await.unwrap_err();
+        assert!(matches!(error, Error::Panicked(_)), "{error:?}");
+        assert_eq!(log.count("output.idle:a:Off"), 1);
+        // The source's release is unconfirmed: nothing may reopen it.
+        assert_eq!(
+            handle.snapshot().borrow().session,
+            SessionState::Faulted(SessionPhase::ClosingSource)
+        );
+        assert!(engine.shutdown().await.is_err());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_output_panicking_while_idling_is_reported_and_lighting_can_start_again() {
+    within(async {
+        let log = CallLog::new();
+        let panicking = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                panic_idle: true,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, panicking, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.write:a", 1).await);
+
+        let error = handle.set_target(LightingTarget::Off).await.unwrap_err();
+        assert!(matches!(error, Error::Panicked(_)), "{error:?}");
+        assert_eq!(log.count("source.close:a"), 1);
+        assert_eq!(handle.snapshot().borrow().session, SessionState::Stopped);
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert_eq!(log.count("source.open:a"), 2);
+        assert!(log.wait_for("output.open:a", 2).await);
+        assert!(engine.shutdown().await.is_err());
+    })
+    .await;
+}
+
+/// The session ended on its own and was being left `Off` when the lights were
+/// asked for their own effects: they get them, and the state says so.
+#[tokio::test]
+async fn device_native_asked_while_a_session_ends_on_its_own_still_reaches_native() {
+    within(async {
+        let log = CallLog::new();
+        let ending = settings(
+            FakeSourceSettings {
+                name: "s".into(),
+                end_after: Some(2),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "o".into(),
+                idle_delay_ms: 500,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, ending, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.idle:o:Off", 1).await);
+
+        handle
+            .set_target(LightingTarget::DeviceNative)
+            .await
+            .unwrap();
+        assert!(before(&log, "output.idle:o:Off", "output.idle:o:Native"));
+        assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn invalid_loaded_settings_stay_reported_after_a_successful_command() {
+    within(async {
+        let log = CallLog::new();
+        let invalid = settings(
+            FakeSourceSettings {
+                invalid: true,
+                ..Default::default()
+            },
+            FakeOutputSettings::default(),
+        );
+        let (handle, engine, _) = start(&log, invalid, DEADLINE).await;
+        let invalid_capture = |s: &Snapshot| {
+            matches!(&s.failure, Some(Error::Invalid(e)) if e.field == "capture.invalid")
+        };
+        assert!(invalid_capture(&handle.snapshot().borrow()));
+
+        // The output alone is valid, so the lights take their own effects.
+        handle
+            .set_target(LightingTarget::DeviceNative)
+            .await
+            .unwrap();
+        assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+        assert!(invalid_capture(&handle.snapshot().borrow()));
+
+        handle
+            .replace_settings(revision(&handle), named("a", "a"))
+            .await
+            .unwrap();
+        assert!(handle.snapshot().borrow().failure.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}

@@ -255,6 +255,18 @@ fn first_revision() -> Revision {
 /// session can be trusted to open it: only a process restart recovers.
 const UNRELEASED: SessionState = SessionState::Faulted(SessionPhase::ClosingSource);
 
+/// The state a session's end leaves, from what its thread reported.
+fn left_by(end: &Result<SessionEnd>) -> SessionState {
+    match end {
+        Err(Error::Faulted(phase)) => SessionState::Faulted(*phase),
+        // The thread died without reporting, so its source may still be held.
+        Err(_) => UNRELEASED,
+        Ok(end) if end.released.is_err() => UNRELEASED,
+        Ok(end) if end.idle == IdleMode::Native && end.idled.is_ok() => SessionState::Native,
+        Ok(_) => SessionState::Stopped,
+    }
+}
+
 type Store = Arc<Mutex<Box<dyn SettingsStore>>>;
 
 fn lock(store: &Store) -> std::sync::MutexGuard<'_, Box<dyn SettingsStore>> {
@@ -406,10 +418,7 @@ impl Core {
         if let Some(running) = self.running.take() {
             running.session.join().await;
         }
-        let session = match &end {
-            Ok(end) if end.released.is_err() => UNRELEASED,
-            _ => SessionState::Stopped,
-        };
+        let session = left_by(&end);
         let ended = end.as_ref().is_ok_and(|end| end.ended);
         let failure = end.and_then(SessionEnd::result).err();
         self.state.send_modify(|s| {
@@ -429,23 +438,11 @@ impl Core {
 
     async fn set_target(&mut self, target: LightingTarget) -> Result<()> {
         self.faulted()?;
-        let current = self.session();
         self.state.send_modify(|s| s.target = target);
         if target != LightingTarget::Processed {
             self.calibrate(None);
         }
-        let result = match (target, current) {
-            (LightingTarget::Processed, SessionState::Running) => Ok(()),
-            (LightingTarget::Processed, _) => self.start().await,
-            (LightingTarget::DeviceNative, SessionState::Running) => {
-                self.stop(IdleMode::Native).await
-            }
-            (LightingTarget::DeviceNative, SessionState::Native) => Ok(()),
-            (LightingTarget::DeviceNative, _) => self.idle_output(IdleMode::Native).await,
-            (LightingTarget::Off, SessionState::Running) => self.stop(IdleMode::Off).await,
-            (LightingTarget::Off, SessionState::Native) => self.idle_output(IdleMode::Off).await,
-            (LightingTarget::Off, _) => Ok(()),
-        };
+        let result = self.reconcile(false, false).await;
         self.record(&result);
         result
     }
@@ -465,16 +462,14 @@ impl Core {
         let saved = settings.clone();
         blocking(move || lock(&store).save(&saved)).await??;
 
-        let (target, output_changed, capture_changed) = {
+        let (output_changed, capture_changed) = {
             let snapshot = self.state.borrow();
             (
-                snapshot.target,
                 snapshot.settings.output != settings.output,
                 snapshot.settings.capture != settings.capture,
             )
         };
         let adapters_changed = output_changed || capture_changed;
-        let session = self.session();
         let revision = current.next();
         // Saved settings end a trial.
         let install = |core: &mut Self| {
@@ -484,34 +479,51 @@ impl Core {
                 s.revision = revision;
             });
         };
-        if session == SessionState::Running && !adapters_changed {
+        if self.session() == SessionState::Running && !adapters_changed {
             // Same adapters: the running session takes the new processing.
             self.reconfigure(install);
         } else {
             install(self);
         }
-        let applied = match session {
-            // Processed was requested but failed to start or ended in a
-            // failure: the new settings get the next attempt. A start that
-            // failed from the device's own effects leaves the session
-            // `Native` (the lights keep them); that is the same request.
-            // Doing nothing there would clear the failure below while the
-            // target still says `Processed`: an unexplained state.
-            SessionState::Stopped | SessionState::Native if target == LightingTarget::Processed => {
-                self.start().await
-            }
-            SessionState::Running if adapters_changed => {
-                // Same path as Off followed by Processed.
-                match self.stop(IdleMode::Off).await {
-                    Ok(()) => self.start().await,
-                    Err(error) => Err(error),
-                }
-            }
-            SessionState::Native if output_changed => self.idle_output(IdleMode::Native).await,
-            _ => Ok(()),
-        };
+        let applied = self.reconcile(adapters_changed, output_changed).await;
         self.record(&applied);
         Ok(revision)
+    }
+
+    /// Drive the session towards the target. A target that is not reached
+    /// (a failed start or idle) is attempted again at the next call, so every
+    /// settings save retries it. `restart` replaces a running session (its
+    /// adapters changed); `output_changed` puts a native output in its mode
+    /// again (it may be another device).
+    async fn reconcile(&mut self, restart: bool, output_changed: bool) -> Result<()> {
+        let target = self.state.borrow().target;
+        match (target, self.session()) {
+            (_, SessionState::Faulted(phase)) => Err(Error::Faulted(phase)),
+            (LightingTarget::Processed, SessionState::Running) if restart => {
+                // Same path as Off followed by Processed. The new session
+                // starts even when idling the old output failed (that device
+                // may be the one being replaced), but not over a source whose
+                // release is unconfirmed.
+                let stopped = self.stop(IdleMode::Off).await;
+                if self.session() != SessionState::Stopped {
+                    return stopped;
+                }
+                let started = self.start().await;
+                started.and(stopped)
+            }
+            (LightingTarget::Processed, SessionState::Running) => Ok(()),
+            // Also from `Native`: a start that failed from the device's own
+            // effects leaves them showing, and the target says `Processed`.
+            (LightingTarget::Processed, _) => self.start().await,
+            (LightingTarget::DeviceNative, SessionState::Running) => {
+                self.stop(IdleMode::Native).await
+            }
+            (LightingTarget::DeviceNative, SessionState::Native) if !output_changed => Ok(()),
+            (LightingTarget::DeviceNative, _) => self.idle_output(IdleMode::Native).await,
+            (LightingTarget::Off, SessionState::Running) => self.stop(IdleMode::Off).await,
+            (LightingTarget::Off, SessionState::Native) => self.idle_output(IdleMode::Off).await,
+            (LightingTarget::Off, SessionState::Stopped) => Ok(()),
+        }
     }
 
     /// Open the source and start a session. The output is validated here
@@ -569,20 +581,24 @@ impl Core {
         let Some(running) = self.running.take() else {
             return Ok(());
         };
-        let result = running.session.stop(mode, self.stop_deadline).await;
-        let state = match &result {
-            Err(Error::Faulted(phase)) => SessionState::Faulted(*phase),
-            Ok(end) if end.released.is_err() => UNRELEASED,
-            Ok(end) if mode == IdleMode::Native && end.idled.is_ok() => SessionState::Native,
-            _ => SessionState::Stopped,
-        };
+        let end = running.session.stop(mode, self.stop_deadline).await;
+        let state = left_by(&end);
+        // A session that ended on its own just before the stop was left in
+        // the default mode instead: put the output in `mode` now.
+        let missed =
+            state == SessionState::Stopped && end.as_ref().is_ok_and(|end| end.idle != mode);
         self.state.send_modify(|s| {
             s.session = state;
             s.input = None;
             s.output_issue = None;
             s.output_brightness = None;
         });
-        result.and_then(SessionEnd::result)
+        let result = end.and_then(SessionEnd::result);
+        if missed {
+            let idled = self.idle_output(mode).await;
+            return result.and(idled);
+        }
+        result
     }
 
     /// DeviceNative has no session: open the output only to put it in `mode`.
@@ -666,9 +682,15 @@ impl Core {
         }
     }
 
+    /// Publish `result` as the failure. Without one, saved settings that do
+    /// not validate (loaded that way) stay reported until replaced.
     fn record(&self, result: &Result<()>) {
-        let failure = result.as_ref().err().cloned();
-        self.state.send_modify(|s| s.failure = failure);
+        self.state.send_modify(|s| {
+            s.failure = match result {
+                Err(error) => Some(error.clone()),
+                Ok(()) => self.registry.validate(&s.settings).err(),
+            };
+        });
     }
 
     async fn shutdown(&mut self) -> Result<()> {
