@@ -9,7 +9,7 @@ use prysm_ports::{
 };
 use serde_json::{Value, json};
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// WLED's DDP port (UDP).
 const DDP_PORT: u16 = 4048;
@@ -154,7 +154,7 @@ impl WledOutput {
 impl LedOutput for WledOutput {
     fn write(&mut self, colors: &EdgeColors) -> Result<()> {
         self.renderer
-            .render_edges(colors, self.leds, self.observer.transfer())
+            .render_edges(colors, self.leds, self.observer.transfer(), Instant::now())
             .map_err(|source| {
                 Error::adapter(
                     format!("cannot send colours to WLED at {}", self.label),

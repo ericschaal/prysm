@@ -6,9 +6,11 @@
 //! WLED owns brightness, channel order and the realtime timeout, and raises
 //! each byte to its colour gamma before driving the LEDs; the encoding undoes
 //! that, so the light is the intended linear value. Sending never blocks and
-//! never retries; `WouldBlock` and other socket errors are returned. Empty
-//! frames send nothing, shorter frames leave the trailing LEDs unchanged, and
-//! frames over 65535 LEDs are rejected.
+//! never retries: a frame the socket refuses (`WouldBlock` on a full buffer,
+//! no route while ARP re-resolves) is dropped, and the send error is returned
+//! only once sends have kept failing for [`SEND_GRACE`]. Empty frames send
+//! nothing, shorter frames leave the trailing LEDs unchanged, and frames over
+//! 65535 LEDs are rejected.
 
 use ddp_rs::connection::DDPConnection;
 use ddp_rs::error::DDPError;
@@ -16,6 +18,12 @@ use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
 use prysm_core::{Color, EdgeColors, LinearColor};
 use std::io;
 use std::net::{ToSocketAddrs, UdpSocket};
+use std::time::{Duration, Instant};
+
+/// How long sends may keep failing, none getting through, before the error is
+/// returned and lighting stops: long enough to ride out a full send buffer or
+/// a brief loss of the route, short enough to report a device that is gone.
+pub(crate) const SEND_GRACE: Duration = Duration::from_secs(3);
 
 /// How WLED turns a byte into light, and so how a linear colour is encoded.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -90,13 +98,55 @@ impl Rgb8Payload {
 /// A nonblocking RGB renderer for one WLED instance.
 ///
 /// Sends every nonempty frame immediately, without a frame queue or retransmission.
-/// Errors are returned to the caller, including `WouldBlock` if the send buffer is full.
-/// UDP delivery is not acknowledged. Keep sending frames before WLED's realtime
-/// timeout expires, even for a static picture. Stopping lets WLED resume its effect.
+/// A failed send drops the frame (see [`FailedSends`]); frames that cannot be
+/// built are rejected at once. UDP delivery is not acknowledged. Keep sending
+/// frames before WLED's realtime timeout expires, even for a static picture.
+/// Stopping lets WLED resume its effect.
 #[derive(Debug)]
 pub(crate) struct WledRenderer {
     connection: DDPConnection,
     rgb: Rgb8Payload,
+    failed: FailedSends,
+}
+
+/// When the current run of failed sends began, so a brief one only drops
+/// frames. Every send error counts alike: one that persists is returned after
+/// [`SEND_GRACE`] anyway, and telling transient kinds from lasting ones per
+/// platform would gain little.
+#[derive(Debug, Default)]
+struct FailedSends {
+    since: Option<Instant>,
+}
+
+impl FailedSends {
+    /// `Ok` for a send that got through, and for a failed one (the frame is
+    /// dropped) until sends have kept failing for [`SEND_GRACE`] at `now`;
+    /// then the failure itself.
+    fn tolerate(&mut self, sent: Result<(), DDPError>, now: Instant) -> Result<(), DDPError> {
+        match sent {
+            Ok(()) => {
+                if let Some(since) = self.since.take() {
+                    let failing = now.saturating_duration_since(since);
+                    tracing::info!(?failing, "DDP colours reach WLED again");
+                }
+                Ok(())
+            }
+            Err(error) => {
+                let since = *self.since.get_or_insert_with(|| {
+                    tracing::warn!(
+                        error = %prysm_ports::chain(&error),
+                        "DDP send failed; dropping frames until one gets through"
+                    );
+                    now
+                });
+                if now.saturating_duration_since(since) < SEND_GRACE {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
 }
 
 impl WledRenderer {
@@ -118,7 +168,11 @@ impl WledRenderer {
         let rgb = Rgb8Payload::default();
         let connection =
             DDPConnection::try_new(destination, Rgb8Payload::config(), ID::Default, socket)?;
-        Ok(Self { connection, rgb })
+        Ok(Self {
+            connection,
+            rgb,
+            failed: FailedSends::default(),
+        })
     }
 
     /// Send 8-bit RGB colors in physical LED order, starting at LED zero.
@@ -144,11 +198,13 @@ impl WledRenderer {
     /// the screen's front: left bottom-to-top, top left-to-right, right
     /// top-to-bottom, bottom right-to-left. Zero skips an edge.
     /// Interpolation happens in linear light, followed by `transfer`'s encoding.
+    /// `now` is when the frame is sent, for [`SEND_GRACE`].
     pub(crate) fn render_edges(
         &mut self,
         edges: &EdgeColors,
         led_counts: [usize; 4],
         transfer: Transfer,
+        now: Instant,
     ) -> Result<(), DDPError> {
         let total = led_counts
             .into_iter()
@@ -174,8 +230,8 @@ impl WledRenderer {
                 self.rgb.push(transfer.encode(color));
             }
         }
-        self.connection.write(&self.rgb.0)?;
-        Ok(())
+        let sent = self.connection.write(&self.rgb.0).map(drop);
+        self.failed.tolerate(sent, now)
     }
 
     fn prepare(&mut self, count: usize) -> Result<bool, DDPError> {
@@ -284,7 +340,7 @@ mod tests {
             ColorStrip::new(vec![LinearColor::black(), LinearColor::new(0.0, 0.0, 1.0)]).unwrap(),
         );
         renderer
-            .render_edges(&edges, [3, 1, 2, 2], Transfer::Srgb)
+            .render_edges(&edges, [3, 1, 2, 2], Transfer::Srgb, Instant::now())
             .unwrap();
         let bytes = receive(&socket);
         let packet = PacketRef::from_bytes(&bytes).unwrap();
@@ -308,7 +364,7 @@ mod tests {
             ..EdgeColors::default()
         };
         renderer
-            .render_edges(&edges, [0, 0, 1, 0], Transfer::Srgb)
+            .render_edges(&edges, [0, 0, 1, 0], Transfer::Srgb, Instant::now())
             .unwrap();
         let bytes = receive(&socket);
         assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [188, 188, 188]);
@@ -319,7 +375,12 @@ mod tests {
         let (mut renderer, socket) = receiver();
         renderer.render(&[]).unwrap();
         renderer
-            .render_edges(&EdgeColors::default(), [0; 4], Transfer::Srgb)
+            .render_edges(
+                &EdgeColors::default(),
+                [0; 4],
+                Transfer::Srgb,
+                Instant::now(),
+            )
             .unwrap();
         assert_no_packet(&socket);
     }
@@ -335,7 +396,12 @@ mod tests {
                 [color.r, color.g, color.b]
             );
             renderer
-                .render_edges(&EdgeColors::default(), [1; 4], Transfer::Srgb)
+                .render_edges(
+                    &EdgeColors::default(),
+                    [1; 4],
+                    Transfer::Srgb,
+                    Instant::now(),
+                )
                 .unwrap();
             let bytes = receive(&socket);
             assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0; 12]);
@@ -349,12 +415,44 @@ mod tests {
         let edges = EdgeColors::default();
         for counts in [[65536, 0, 0, 0], [usize::MAX, 1, 0, 0]] {
             assert!(matches!(
-                renderer.render_edges(&edges, counts, Transfer::Srgb),
+                renderer.render_edges(&edges, counts, Transfer::Srgb, Instant::now()),
                 Err(DDPError::Disconnect(e)) if e.kind() == io::ErrorKind::InvalidInput
             ));
         }
         assert!(renderer.render(&vec![Color::black(); 65536]).is_err());
         assert_no_packet(&socket);
+    }
+
+    #[test]
+    fn failed_sends_drop_frames_until_they_keep_failing_for_the_grace() {
+        let start = Instant::now();
+        let at = |millis| start + Duration::from_millis(millis);
+        let refused = || Err(io::Error::from(io::ErrorKind::WouldBlock).into());
+        let mut failed = FailedSends::default();
+        assert!(failed.tolerate(refused(), at(0)).is_ok());
+        assert!(failed.tolerate(refused(), at(2_999)).is_ok());
+        // A send that gets through starts the span again.
+        assert!(failed.tolerate(Ok(()), at(3_000)).is_ok());
+        assert!(failed.tolerate(refused(), at(4_000)).is_ok());
+        assert!(failed.tolerate(refused(), at(6_999)).is_ok());
+        let error = failed.tolerate(refused(), at(7_000)).unwrap_err();
+        assert!(
+            matches!(&error, DDPError::Disconnect(e) if e.kind() == io::ErrorKind::WouldBlock),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_frame_the_socket_refuses_is_dropped_and_the_error_kept_for_the_grace() {
+        // No datagram can be sent to port 0, so every send fails locally.
+        let mut renderer = WledRenderer::new("127.0.0.1:0").unwrap();
+        let edges = EdgeColors::default();
+        let start = Instant::now();
+        let mut send = |at| renderer.render_edges(&edges, [1, 0, 0, 0], Transfer::Srgb, start + at);
+        assert!(send(Duration::ZERO).is_ok());
+        assert!(send(SEND_GRACE - Duration::from_millis(1)).is_ok());
+        let error = send(SEND_GRACE).unwrap_err();
+        assert!(matches!(error, DDPError::Disconnect(_)), "{error:?}");
     }
 
     /// What WLED emits for `byte` at `gamma`, as 0–255 light.
@@ -424,7 +522,7 @@ mod tests {
         };
         let mut send = |transfer| {
             renderer
-                .render_edges(&edges, [0, 0, 1, 0], transfer)
+                .render_edges(&edges, [0, 0, 1, 0], transfer, Instant::now())
                 .unwrap();
             PacketRef::from_bytes(&receive(&socket))
                 .unwrap()
