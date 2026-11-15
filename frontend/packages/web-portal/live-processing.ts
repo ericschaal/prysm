@@ -28,12 +28,11 @@ export type ProcessingControls = Pick<
 
 /**
  * Limits from the generated `Processing` schema (`minimum`/`maximum`),
- * checked against it in tests/portal.test.jsx. Where the schema has no
- * maximum, the Rust field type bounds it: `sample_density` is a `u16`.
+ * checked against it in tests/portal.test.jsx.
  */
 export const processingLimits = {
   brightness_percent: { min: 0, max: 100, step: 1 },
-  sample_density: { min: 1, max: 65535, step: 1 },
+  sample_density: { min: 1, max: 1024, step: 1 },
 } as const;
 
 /** The style knobs' limits, from the generated `StyleValues` schema likewise. */

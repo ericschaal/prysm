@@ -103,6 +103,7 @@ pub struct Processing {
     /// kept while another style is; absent until first tuned.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_style: Option<StyleValues>,
+    /// Samples per 1000 px of edge, 1 to [`Processing::MAX_SAMPLE_DENSITY`].
     pub sample_density: u16,
     pub remove_black_bars: bool,
     /// At most [`MAX_CALIBRATIONS`](crate::MAX_CALIBRATIONS), with unique ids.
@@ -129,6 +130,10 @@ impl Default for Processing {
 }
 
 impl Processing {
+    /// The most detail: from 1000 every pixel is its own sample already, so
+    /// more would only grow the sampler's weights and its time per frame.
+    pub const MAX_SAMPLE_DENSITY: u16 = 1024;
+
     /// # Errors
     /// Rejects values the processor would silently clamp or ignore, and a
     /// custom style without values.
@@ -152,10 +157,10 @@ impl Processing {
             (_, Some(values)) => values.validate(&path("custom_style"))?,
             (_, None) => {}
         }
-        if self.sample_density == 0 {
+        if !(1..=Self::MAX_SAMPLE_DENSITY).contains(&self.sample_density) {
             return Err(ValidationError::new(
                 path("sample_density"),
-                "must be at least 1",
+                format!("must be 1-{}", Self::MAX_SAMPLE_DENSITY),
             ));
         }
         calibrations::validate(
@@ -302,14 +307,22 @@ mod tests {
             invalid.validate().unwrap_err().field,
             "processing.brightness_percent"
         );
-        let invalid = Processing {
-            sample_density: 0,
+        for sample_density in [0, Processing::MAX_SAMPLE_DENSITY + 1, u16::MAX] {
+            let invalid = Processing {
+                sample_density,
+                ..Processing::default()
+            };
+            assert_eq!(
+                invalid.validate().unwrap_err().field,
+                "processing.sample_density",
+                "{sample_density}"
+            );
+        }
+        let most = Processing {
+            sample_density: Processing::MAX_SAMPLE_DENSITY,
             ..Processing::default()
         };
-        assert_eq!(
-            invalid.validate().unwrap_err().field,
-            "processing.sample_density"
-        );
+        most.validate().unwrap();
     }
 
     #[test]

@@ -60,10 +60,11 @@ pub struct SettingsSchema {
     processing: ProcessingSchema,
 }
 
-// `schema(...)` takes literals only: the calibration, ramp and floor limits below are spelled out.
+// `schema(...)` takes literals only: the calibration, detail, ramp and floor limits below are spelled out.
 const _: () = assert!(
     MAX_CALIBRATIONS == 32 && MAX_CALIBRATION_ID_LEN == 64 && MAX_CALIBRATION_NAME_CHARS == 64
 );
+const _: () = assert!(prysm_ports::Processing::MAX_SAMPLE_DENSITY == 1024);
 const _: () = assert!(prysm_ports::StyleValues::MAX_BRIGHTNESS_RAMP_SECONDS == 2.0);
 const _: () = assert!(prysm_ports::StyleValues::MAX_DARK_FLOOR_PERCENT == 20);
 
@@ -81,7 +82,7 @@ pub struct ProcessingSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     custom_style: Option<StyleValuesSchema>,
-    #[schema(minimum = 1)]
+    #[schema(minimum = 1, maximum = 1024)]
     sample_density: u16,
     remove_black_bars: bool,
     /// Saved color corrections; ids are unique.
