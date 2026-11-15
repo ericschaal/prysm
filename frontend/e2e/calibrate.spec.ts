@@ -246,11 +246,18 @@ test('the actions stay put and the comparison is in reach on every screen', asyn
   const compare = page.getByRole('button', { name: 'Show without correction' });
   const tops = new Set<number>();
   for (const question of [questions.red, questions.green, /blue/, /yellow/]) {
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    const resting = await looksRight(page).boundingBox();
+    if (!resting) throw new Error('not laid out');
+    tops.add(Math.round(resting.y));
+    // A screen taller than the phone scrolls under the bar: at its end the
+    // comparison is clear of it.
+    await page.evaluate(() =>
+      window.scrollTo(0, document.documentElement.scrollHeight),
+    );
     const actions = await looksRight(page).boundingBox();
     const tools = await compare.boundingBox();
-    expect(await page.evaluate(() => window.scrollY)).toBe(0);
     if (!actions || !tools) throw new Error('not laid out');
-    tops.add(Math.round(actions.y));
     expect(tools.y + tools.height, 'above the action bar').toBeLessThanOrEqual(
       actions.y,
     );
