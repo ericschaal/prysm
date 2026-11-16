@@ -1204,7 +1204,7 @@ test('the video source editor saves the exact section once; Cancel drops the dra
     await submit(form('Video source'));
     assert.equal(
       errorOf(field('capture.path')),
-      'Choose a device, or enter its name here.',
+      'Choose a device, or enter one by hand.',
     );
     assert.equal(status(), 'Fix 1 field');
     assert.equal(document.activeElement, field('capture.path'));
@@ -1636,7 +1636,7 @@ test('kind selectors swap panels without losing drafts', async () => {
       ]),
       [
         ['device', 'Video capture device'],
-        ['remote', 'Capture-only TV (remote)'],
+        ['remote', 'LG TV on your network'],
         ['file', 'Video file (development only)'],
       ],
     );
@@ -1652,7 +1652,7 @@ test('kind selectors swap panels without losing drafts', async () => {
     // Development only: it says what it needs.
     assert.match(
       form('Video source').textContent,
-      /Plays a video file instead of a live picture, for testing\. Needs FFmpeg 9 or newer on this computer\./,
+      /It plays once, through FFmpeg 9 or newer\./,
     );
     await edit(field('capture.kind'), 'remote');
     await submit(form('Video source'));
@@ -1704,7 +1704,7 @@ test('an unconfigured section starts from its first kind and saves only when val
     await submit(form('Video source'));
     assert.equal(
       errorOf(field('capture.path')),
-      'Choose a device, or enter its name here.',
+      'Choose a device, or enter one by hand.',
     );
     assert.equal(saves(fixture), 0);
     await edit(field('capture.path'), ' /dev/video0 ');
@@ -2760,7 +2760,7 @@ test('the step that keeps Prysm behind shows in orange; a failure stays red', as
   }
 });
 
-test('discovered names are kept in this browser: shown at once next time, dropped for another device', async () => {
+test('discovered names are kept in this browser: shown at once next time, not for another device', async () => {
   const memory = {};
   // A storage the portal reads before discovery answers.
   const withStorage = (snapshot) => {
@@ -2795,10 +2795,9 @@ test('discovered names are kept in this browser: shown at once next time, droppe
   try {
     await act(async () => sleep(0));
     assert.equal(name(), 'WLED‑Gledopto');
-    assert.deepEqual(JSON.parse(memory[deviceNamesKey])['output:wled'], {
-      fields: { address: '192.0.2.7' },
-      name: 'WLED-Gledopto',
-    });
+    assert.deepEqual(JSON.parse(memory[deviceNamesKey])['output:wled'], [
+      { fields: { address: '192.0.2.7' }, name: 'WLED-Gledopto' },
+    ]);
   } finally {
     await portal.unmount();
   }
@@ -2815,7 +2814,7 @@ test('discovered names are kept in this browser: shown at once next time, droppe
   } finally {
     await portal.unmount();
   }
-  // Another device saved: not its name; the old entry goes.
+  // Another device saved: not its name; the old one is kept for its return.
   portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output: { ...output, address: '192.0.2.99' } },
@@ -2824,7 +2823,10 @@ test('discovered names are kept in this browser: shown at once next time, droppe
   );
   try {
     assert.equal(name(), 'WLED');
-    assert.equal(JSON.parse(memory[deviceNamesKey])['output:wled'], undefined);
+    assert.deepEqual(
+      JSON.parse(memory[deviceNamesKey])['output:wled'].map(({ name }) => name),
+      ['WLED-Gledopto'],
+    );
   } finally {
     await portal.unmount();
   }

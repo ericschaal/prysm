@@ -1726,7 +1726,7 @@ test('a remote Prysm without Remote capture is explained; an old browser gets th
   });
   assert.equal(
     tv.text('lighting-status'),
-    'This Prysm uses another picture. Choose Capture-only TV in its web portal.',
+    'This Prysm uses another picture. Choose LG TV on your network in its web portal.',
   );
   await tv.unmount();
   const old = await mountTv(t, {

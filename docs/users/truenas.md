@@ -36,7 +36,7 @@ needs. It does not use host networking.
 
 ## 3. Connect the TV and lights
 
-1. In the portal's setup wizard, choose **Capture-only TV (remote)**.
+1. In the portal's setup wizard, choose **LG TV on your network**.
 2. Enter WLED by its **IP address**. Names such as `wled.local` and
    **Find lights** do not work on the app's network.
 3. Follow the [slim TV steps](webos.md#slim-package-the-tv-sends-the-picture),

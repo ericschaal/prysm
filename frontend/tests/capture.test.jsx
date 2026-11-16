@@ -58,7 +58,8 @@ const rows = () =>
     ];
   });
 /** The one line above the rows, if any. */
-const line = () => plain($('.picture-choice > .help')?.textContent ?? '');
+const line = () =>
+  plain($('.picture-choice > .field-note > .help')?.textContent ?? '');
 const saveButton = () => button('Use this video source', form('Video source'));
 const settled = () => act(async () => sleep(0));
 
@@ -148,6 +149,10 @@ test('a device’s own modes decide the presets and what they set; a deliverable
       ['Smooth', '1280 × 720 · 60 fps', false, false],
     ]);
     assert.equal(line(), '');
+    // Nothing to say: the line takes no room, but stays to be announced.
+    const note = $('.picture-choice > .field-note');
+    assert.equal(note.dataset.said, 'false');
+    assert.equal(note.getAttribute('role'), 'status');
     assert(!saveButton(), 'nothing changed');
     await click(radio('Smooth'));
     await submit(form('Video source'));
@@ -218,6 +223,7 @@ test('a saved size and rate the device cannot deliver moves to Balanced, and the
       line(),
       'This device can’t do 640 × 360 at 60 fps, so it is set to Balanced.',
     );
+    assert.equal($('.picture-choice > .field-note').dataset.said, 'true');
     // An unsaved change, saved the usual way.
     await submit(form('Video source'));
     assert.deepEqual(portal.fixture.snapshot().settings.capture, {
@@ -586,6 +592,140 @@ test('a saved encoding the TV does not offer stays in sight with the reason, wit
       ['Balanced', 'Efficient'],
     );
     assert(!encoding().closest('[hidden]'), 'it stays where it is');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a saved device that is not found keeps the name this browser last saw for it', async () => {
+  const memory = {};
+  // A storage that outlives the page, as a browser's does.
+  const withStorage = (snapshot) => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key) => memory[key] ?? null,
+        setItem: (key, value) => {
+          memory[key] = String(value);
+        },
+        removeItem: (key) => {
+          delete memory[key];
+        },
+      },
+    });
+    return snapshot;
+  };
+  const card = { label: 'Elgato Cam Link 4K', detail: path, fields: { path } };
+  const visit = async (found, answer) => {
+    const portal = await renderPortal(
+      HeadlessWebPortal,
+      { capture: { kind: 'device', path }, output },
+      withStorage,
+      {
+        captureModes: fakeCaptureModesClient(() => answer).client,
+        discovery: fakeDiscoveryClient({ 'capture/device': found }).client,
+      },
+    );
+    await openEditor('Video source');
+    await settled();
+    return portal;
+  };
+  // Seen once, plugged in.
+  let portal = await visit([card], known(anyMode(1920, 1080, 60)));
+  await portal.unmount();
+  // Unplugged on the next visit: its name, its path, and why, in the
+  // problem colour.
+  portal = await visit([], unknown);
+  try {
+    const row = $('.device-rows .row-choice');
+    assert.equal($('.row-label', row).textContent, 'Elgato Cam Link 4K');
+    assert.equal($('.row-value', row).textContent, `${path} · Not plugged in`);
+    assert.equal($('.row-problem', row).textContent, 'Not plugged in');
+    assert.equal($('input', row).checked, true);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('with devices to pick, no device chosen is said at the rows, which take the focus; Advanced stays closed', async () => {
+  const discovery = fakeDiscoveryClient({
+    'capture/device': [
+      {
+        label: 'USB Video',
+        detail: '/dev/video2',
+        fields: { path: '/dev/video2' },
+      },
+    ],
+  });
+  const portal = await renderPortal(HeadlessWebPortal, {}, undefined, {
+    discovery: discovery.client,
+  });
+  const wizard = () => $('form.setup');
+  try {
+    await settled();
+    await submit(wizard());
+    const devices = $('.device-rows');
+    assert.equal(document.activeElement, devices);
+    assert.equal(devices.getAttribute('aria-invalid'), 'true');
+    assert.equal(
+      document.getElementById(devices.getAttribute('aria-describedby'))
+        .textContent,
+      'Choose a device, or enter one by hand.',
+    );
+    assert.equal(
+      button('Advanced', wizard()).getAttribute('aria-expanded'),
+      'false',
+    );
+    await click($('input', devices));
+    assert.equal(devices.getAttribute('aria-invalid'), null);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('Look again keeps the focus while looking and ignores presses meanwhile', async () => {
+  const card = { label: 'Card', detail: path, fields: { path } };
+  let hold = false;
+  let release;
+  let looks = 0;
+  const discovery = {
+    candidates: (section) => {
+      if (section === 'capture') looks += 1;
+      return hold
+        ? new Promise((resolve) => {
+            release = () => resolve([card]);
+          })
+        : Promise.resolve([card]);
+    },
+  };
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', path }, output },
+    undefined,
+    { discovery },
+  );
+  try {
+    await openEditor('Video source');
+    await settled();
+    hold = true;
+    const again = button('Look again');
+    again.focus();
+    const before = looks;
+    await click(again);
+    assert.equal(document.activeElement, again, 'still focused');
+    assert.equal(again.disabled, false);
+    assert.equal(again.getAttribute('aria-busy'), 'true');
+    assert.equal(again.getAttribute('aria-disabled'), 'true');
+    assert.equal(
+      $('.device-rows [role="status"]').textContent,
+      'Looking for devices…',
+    );
+    await click(again);
+    assert.equal(looks, before + 1, 'one look at a time');
+    await act(async () => release());
+    await settled();
+    assert.equal(again.getAttribute('aria-busy'), 'false');
+    assert.equal(document.activeElement, again);
   } finally {
     await portal.unmount();
   }

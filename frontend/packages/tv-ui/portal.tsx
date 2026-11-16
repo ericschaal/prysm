@@ -92,7 +92,7 @@ export function LightingCard({
       attention = true;
     } else if (!full && kind !== 'remote') {
       message =
-        'This Prysm uses another picture. Choose Capture-only TV in its web portal.';
+        'This Prysm uses another picture. Choose LG TV on your network in its web portal.';
       attention = true;
     } else if (session.state === 'stopped' && target !== 'off') {
       message = said;

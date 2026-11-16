@@ -14,10 +14,6 @@ export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
   const modes = useCaptureModes(fileQuery);
   return (
     <>
-      <p className="help">
-        Plays a video file instead of a live picture, for testing. Needs FFmpeg
-        9 or newer on this computer.
-      </p>
       <TextField
         path="capture.path"
         label="Video file"
@@ -25,7 +21,7 @@ export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
         placeholder="/home/me/Videos/clip.mkv"
         value={value.path}
         onChange={(path) => onChange({ ...value, path })}
-        help="Where the file is on this computer. It plays once."
+        help="Where the file is on this computer. It plays once, through FFmpeg 9 or newer."
       />
       <PictureChoice
         value={value}
@@ -34,8 +30,8 @@ export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
         modes={modes}
         source="A file"
         unreachable="Prysm can’t say what a file delivers just now."
+        help="A slower file keeps its own rate."
       />
-      <p className="help">A slower file keeps its own rate.</p>
     </>
   );
 }

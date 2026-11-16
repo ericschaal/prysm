@@ -23,7 +23,7 @@ test('setup saves a TV source and no lights, on disk and on Home', async ({
   const wizard = page.getByRole('form', { name: 'Video source' });
   await wizard
     .getByLabel('Capture from')
-    .selectOption({ label: 'Capture-only TV (remote)' });
+    .selectOption({ label: 'LG TV on your network' });
   await page.getByRole('button', { name: 'Next' }).click();
 
   await page
@@ -33,7 +33,7 @@ test('setup saves a TV source and no lights, on disk and on Home', async ({
   await page.getByRole('button', { name: 'Next' }).click();
 
   const review = page.getByRole('form', { name: 'Review and start' });
-  await expect(review).toContainText('Capture-only TV (remote)');
+  await expect(review).toContainText('LG TV on your network');
   await expect(review).toContainText('No lights (test)');
   await page.getByRole('button', { name: 'Save only' }).click();
 
@@ -45,9 +45,7 @@ test('setup saves a TV source and no lights, on disk and on Home', async ({
   expect(saved.output).toEqual({ kind: 'null' });
 
   const setup = page.getByRole('region', { name: 'Your setup' });
-  // Device names never break at a hyphen: it is a non-breaking one.
-  // Home's diagram names a kind without its qualifier, e.g. “(remote)”.
-  await expect(setup).toContainText(/Capture.only TV/);
+  await expect(setup).toContainText('LG TV on your network');
   await expect(setup).toContainText(/320\s×\s180/);
   await expect(setup).toContainText('No lights');
 });
@@ -63,7 +61,7 @@ test('a step with a missing value says so at its field', async ({ page }) => {
   await expect(path).toBeFocused();
   await expect(path).toHaveAttribute('aria-invalid', 'true');
   await expect(path).toHaveAccessibleDescription(
-    'Choose a device, or enter its name here.',
+    'Choose a device, or enter one by hand.',
   );
   await expect(
     wizard.getByRole('status').filter({ hasText: 'Check the marked field' }),

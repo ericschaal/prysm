@@ -3,9 +3,10 @@ import {
   type Candidate,
   type DiscoveryClient,
 } from '@prysm/application-client';
+import { keepNames, keptName } from './device-name';
 import { DiscoveryContext } from './discovery-context';
 import { Advanced } from './fields';
-import { useFieldScopeContext } from './form';
+import { shownError, useFieldScopeContext } from './form';
 import { RowChoice } from './rows';
 
 type Search =
@@ -23,8 +24,9 @@ const detailOf = ({ detail, led_count }: Candidate) =>
 
 /**
  * Ask the adapter for `kind` what it finds, keeping the candidates that
- * fill `field`. `auto` asks once at once; `look` asks again, showing the
- * last ones meanwhile. A lookup the editor no longer shows is ended.
+ * fill `field`, and keep their names in this browser. `auto` asks once at
+ * once; `look` asks again, showing the last ones meanwhile. A lookup the
+ * editor no longer shows is ended.
  */
 function useCandidates(
   discovery: DiscoveryClient | null,
@@ -46,12 +48,11 @@ function useCandidates(
     try {
       const found = await client.candidates(section, kind, controller.signal);
       if (controller.signal.aborted) return;
-      setSearch({
-        state: 'found',
-        found: found.filter(
-          (candidate) => typeof candidate.fields[field] === 'string',
-        ),
-      });
+      const usable = found.filter(
+        (candidate) => typeof candidate.fields[field] === 'string',
+      );
+      keepNames(section, kind, usable);
+      setSearch({ state: 'found', found: usable });
     } catch {
       if (!controller.signal.aborted) setSearch({ state: 'failed' });
     }
@@ -63,7 +64,10 @@ function useCandidates(
   }, [auto, discovery]);
   return {
     search,
+    looking: search.state === 'looking',
+    /** Ask again; ignored while asking, so the control keeps its focus. */
     look: (client: DiscoveryClient) => {
+      if (search.state === 'looking') return;
       setSearch({
         state: 'looking',
         found: search.state === 'found' ? search.found : [],
@@ -109,13 +113,11 @@ export function FindDevices({
 }) {
   const discovery = use(DiscoveryContext);
   const scope = useFieldScopeContext();
-  const { search, look } = useCandidates(
-    discovery,
-    section,
-    kind,
-    field,
-    false,
-  );
+  const {
+    search,
+    looking: busy,
+    look,
+  } = useCandidates(discovery, section, kind, field, false);
   const [picked, setPicked] = useState('');
   if (!discovery) return null;
 
@@ -162,13 +164,16 @@ export function FindDevices({
     <div className="find">
       <button
         type="button"
-        disabled={scope.disabled || search.state === 'looking'}
+        disabled={scope.disabled}
+        aria-disabled={busy || undefined}
+        aria-busy={busy}
         onClick={() => {
+          if (busy) return;
           setPicked('');
           look(discovery);
         }}
       >
-        {search.state === 'looking' ? looking : label}
+        {busy ? looking : label}
       </button>
       {result}
     </div>
@@ -178,12 +183,15 @@ export function FindDevices({
 /**
  * The devices of `kind` present, looked for as the editor opens, as rows
  * to tick; picking one fills `path` (its field at `field`). The saved
- * device keeps a ticked row of its own while it is not found, saying
- * `missing` beneath; `problem` (what is wrong with the picked one) is
- * said under the rows, in the warning colour. The field to type it (`byHand`, its paths
- * `byHandPaths`) is under Advanced, after what follows the device
- * (`then`), while there are devices to pick; with nothing found, or no
- * discovery client, it is shown as it is, before `then`.
+ * device keeps a ticked row of its own while it is not found, by the name
+ * this browser last saw for it (else its value), with `missing` beneath in
+ * the problem colour. Under the rows one line says how the lookup went, or
+ * `problem` (what is wrong with the picked device), or the problem of
+ * `path`, such as no device chosen: while there are rows they own `path`,
+ * so a save goes to them. The field to type it (`byHand`) is under
+ * Advanced, after what follows the device (`then`), while there are
+ * devices to pick; with nothing found, or no discovery client, it is shown
+ * as it is, before `then`, and owns `path` itself.
  */
 export function DeviceRows({
   kind,
@@ -194,7 +202,6 @@ export function DeviceRows({
   missing,
   problem,
   byHand,
-  byHandPaths,
   then,
   onPick,
 }: {
@@ -208,7 +215,6 @@ export function DeviceRows({
   missing?: string;
   problem?: string;
   byHand: ReactNode;
-  byHandPaths: readonly string[];
   then: ReactNode;
   onPick: (value: string) => void;
 }) {
@@ -216,7 +222,8 @@ export function DeviceRows({
   const scope = useFieldScopeContext();
   const nameId = useId();
   const legendId = useId();
-  const { search, look } = useCandidates(
+  const lineId = useId();
+  const { search, looking, look } = useCandidates(
     discovery,
     'capture',
     kind,
@@ -242,9 +249,13 @@ export function DeviceRows({
    */
   const plain = !found.length && !(search.state === 'looking' && !search.again);
   const listed = found.some((candidate) => candidate.fields[field] === value);
+  const missingRow = value !== '' && !listed;
+  const rows = found.length > 0 || missingRow;
+  const error = rows ? shownError(scope, path, false) : undefined;
   let status: string | null = null;
-  if (problem) status = problem;
-  else if (search.state === 'looking') status = 'Looking for devices…';
+  if (error) status = error;
+  else if (problem) status = problem;
+  else if (looking) status = 'Looking for devices…';
   else if (search.state === 'failed')
     status = 'Couldn’t look for devices just now.';
   else if (!found.length)
@@ -259,9 +270,13 @@ export function DeviceRows({
         className="device-rows"
         role="radiogroup"
         aria-labelledby={legendId}
+        aria-describedby={status ? lineId : undefined}
+        aria-invalid={error ? true : undefined}
+        data-field={rows ? path : undefined}
+        tabIndex={rows ? -1 : undefined}
       >
         <legend id={legendId}>{legend}</legend>
-        {found.length || (value && !listed) ? (
+        {rows ? (
           <ul className="rows">
             {found.map((candidate) => {
               const at = candidate.fields[field] as string;
@@ -277,23 +292,29 @@ export function DeviceRows({
                 />
               );
             })}
-            {value && !listed ? (
-              <RowChoice
+            {missingRow ? (
+              <MissingRow
                 name={nameId}
-                label={value}
-                about={missing}
-                checked
-                onChoose={() => {}}
+                label={keptName('capture', { kind, [field]: value })}
+                value={value}
+                missing={missing}
               />
             ) : null}
           </ul>
         ) : null}
-        <p className="help" data-tone={problem ? 'warning' : undefined}>
-          <span role="status">{status}</span>{' '}
+        <p
+          className="help"
+          data-tone={error || problem ? 'warning' : undefined}
+        >
+          <span id={lineId} role="status">
+            {status}
+          </span>{' '}
           <button
             type="button"
             className="link"
-            disabled={scope.disabled || search.state === 'looking'}
+            disabled={scope.disabled}
+            aria-disabled={looking || undefined}
+            aria-busy={looking}
             onClick={() => look(discovery)}
           >
             Look again
@@ -302,7 +323,34 @@ export function DeviceRows({
       </fieldset>
       {plain ? byHand : null}
       {then}
-      {plain ? null : <Advanced paths={byHandPaths}>{byHand}</Advanced>}
+      {plain ? null : (
+        // While there are rows, a problem of the device is theirs to say.
+        <Advanced paths={rows ? [] : [path]}>{byHand}</Advanced>
+      )}
     </>
+  );
+}
+
+/** The saved device that is not found: by its kept name, else its value. */
+function MissingRow({
+  name,
+  label,
+  value,
+  missing,
+}: {
+  name: string;
+  label: string | null;
+  value: string;
+  missing?: string;
+}) {
+  return (
+    <RowChoice
+      name={name}
+      label={label ?? value}
+      about={label === null ? undefined : value}
+      problem={missing}
+      checked
+      onChoose={() => {}}
+    />
   );
 }

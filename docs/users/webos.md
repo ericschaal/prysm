@@ -82,7 +82,7 @@ other sites, so keep the TV on a trusted network.
    [Docker](docker.md#receive-the-picture-from-a-tv-slim-package),
    [TrueNAS](truenas.md)). Without this option the TV app says how to allow it.
 2. In the computer's portal, choose the video source
-   **Capture-only TV (remote)**. Keep **Compressed by the TV's video chip
+   **LG TV on your network**. Keep **Compressed by the TV's video chip
    (recommended)** and, under **Size and rate**, **Efficient** (320 × 180 at
    30 fps) to start. Until the TV has tried to send its picture (steps 3
    and 4), the portal says **The TV isn't connected** and keeps the size and

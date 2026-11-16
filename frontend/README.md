@@ -212,10 +212,16 @@ supervisor in each of its states and play the phone's calibration part). See the
   - [Devices](packages/web-portal/discovery.tsx): the video device editor
     asks the portal (`GET /api/v1/candidates/capture/device`) what is present
     as it opens, and lists the devices as rows to tick ("Look again" asks
-    again); the saved device keeps a ticked row of its own while it is not
-    found ("Not plugged in" while it cannot be asked). Typing the device is
-    under Advanced ("Enter the device by hand"), and in plain sight when
-    nothing was found. "Find lights" in the WLED editor asks on request only:
+    again, and keeps the focus while it looks). Every name found is kept in
+    this browser ([device names](packages/web-portal/device-name.ts), the
+    last eight per kind), so the saved device keeps a ticked row of its own
+    by its name while it is not found ("Not plugged in" in the problem colour
+    while it cannot be asked; its path only if no name was ever seen). While
+    there are rows they own the device's problem ("Choose a device, or enter
+    one by hand."), said under them, and take the focus. Typing the device is
+    under Advanced ("Enter the device by hand"), and in plain sight, owning
+    the problem, when nothing was found. "Find lights" in the WLED editor asks
+    on request only:
     WLED discovery takes over a second and asks the network; picking one
     fills the address, and the typed field stays the fallback. Hosts pass
     `httpDiscoveryClient()`; without one there are only the typed fields.
@@ -236,16 +242,19 @@ supervisor in each of its states and play the phone's calibration part). See the
     the size and rate it sets. Nothing extra is stored: the ticked row
     follows from the saved numbers; a saved size and rate no preset sets is
     one more ticked row, "Custom", until a preset replaces it. One that a
-    known answer excludes moves to the first preset, and a line above the
-    rows says so (an unsaved change); a preset the user ticked follows to
-    another device's size for it. Until the answer is known the rows are
+    known answer excludes moves to the first preset (or to the size of a
+    preset ticked earlier), and the line kept under the rows says so (an
+    unsaved change); following a ticked preset to a deliverable size is
+    silent. The line takes no room while empty (Advanced then follows the
+    rows as one more row), so the rows never move; the file source's own
+    help sits in it otherwise. Until the answer is known the rows are
     locked on the current choice, with the reason while the hardware is out
     of reach ("The TV isn't connected.", "Plug in the device …"). A source
     that delivers nothing shows no rows; the field that selects it says so
     (a device: "Prysm can't capture from this device."; a TV encoding it
     does not offer is not listed, and a saved one stays listed, in sight,
-    saying so). A refused size or rate is said above the rows, which take
-    the focus.
+    saying so). A refused size or rate is said in that line, and the rows
+    take the focus.
 - [Desktop host](hosts/headless/web-portal/app.tsx) (served by `prysm-headless`
   and `prysm-tui`) and [webOS browser host](hosts/webos/web-portal/app.tsx)
   register their kinds as `AdapterUis` maps; the types are exhaustive over the

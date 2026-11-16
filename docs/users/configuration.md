@@ -37,7 +37,7 @@ Nothing is saved until the last step.
 
 1. **Video source.** Choose where the picture comes from:
    **Video capture device** ([capture card](quickstart.md)),
-   **Capture-only TV (remote)** ([slim TV package](webos.md#slim-package-the-tv-sends-the-picture)),
+   **LG TV on your network** ([slim TV package](webos.md#slim-package-the-tv-sends-the-picture)),
    or **This TV** on the full TV package.
 2. **Your lights.** Choose **WLED**. Select **Find lights** to list WLED
    devices on your network, or type the address: a name such as `wled.local`

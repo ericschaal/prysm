@@ -104,7 +104,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     assert.equal(heading(), 'Video source');
     assert.equal(
       errorOf(field('capture.path')),
-      'Choose a device, or enter its name here.',
+      'Choose a device, or enter one by hand.',
     );
     assert.equal(document.activeElement, field('capture.path'));
     assert.equal(

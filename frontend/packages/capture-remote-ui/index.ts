@@ -7,7 +7,7 @@ import { remoteDefaults } from './settings';
 export * from './settings';
 
 export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
-  label: 'Capture-only TV (remote)',
+  label: 'LG TV on your network',
   create: () => ({ kind: 'remote' }),
   Editor: RemoteEditor,
   summary: (value) =>

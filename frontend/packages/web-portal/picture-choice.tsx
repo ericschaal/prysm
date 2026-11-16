@@ -37,6 +37,7 @@ export function PictureChoice<V extends Picture>({
   modes,
   source,
   unreachable,
+  help,
 }: {
   value: V;
   /** What Rust uses for an omitted field of this section. */
@@ -47,6 +48,8 @@ export function PictureChoice<V extends Picture>({
   source: string;
   /** Why nothing can be chosen while the hardware is out of reach. */
   unreachable: string;
+  /** Said in the line under the rows while it has nothing else to say. */
+  help?: string;
 }) {
   const scope = use(FieldContext);
   const nameId = useId();
@@ -95,6 +98,7 @@ export function PictureChoice<V extends Picture>({
   else if (modes.state === 'failed')
     line = 'Prysm didn’t say what this source can do. Asking again…';
   else if (known) line = moved;
+  line ??= help ?? null;
 
   function choose({ width, height, fps }: Offered) {
     for (const path of picturePaths) scope.edited(path);
@@ -110,22 +114,14 @@ export function PictureChoice<V extends Picture>({
       className="picture-choice"
       role="radiogroup"
       aria-labelledby={legendId}
-      aria-describedby={error || line ? lineId : undefined}
+      aria-describedby={
+        (error && `${lineId}-error`) || (line && `${lineId}-help`) || undefined
+      }
       aria-invalid={error ? true : undefined}
       data-field={picturePaths.join(' ')}
       tabIndex={-1}
     >
       <legend id={legendId}>Size and rate</legend>
-      {error || line ? (
-        <p
-          className="help"
-          id={lineId}
-          role="status"
-          data-tone={error ? 'warning' : undefined}
-        >
-          {error ?? line}
-        </p>
-      ) : null}
       <ul className="rows">
         {offered.map((each) => {
           const at = picturePresets[each.preset];
@@ -154,6 +150,20 @@ export function PictureChoice<V extends Picture>({
           />
         )}
       </ul>
+      {/* Under the rows, and of no height while it has nothing to say. */}
+      <div
+        className="field-note"
+        data-state={error ? 'error' : 'help'}
+        data-said={Boolean(error || line)}
+        role="status"
+      >
+        <p className="help" id={`${lineId}-help`}>
+          {line}
+        </p>
+        <p className="field-error" id={`${lineId}-error`}>
+          {error}
+        </p>
+      </div>
     </fieldset>
   );
 }

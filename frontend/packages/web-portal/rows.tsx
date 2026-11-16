@@ -118,12 +118,14 @@ function CheckIcon() {
  * One option of a choice in the rows pattern: a radio drawn as a tick in
  * the chevron's place. Its label names it; the line beneath (and `facts`
  * beside the label, if given) describe it, so a screen reader reads the
- * name first and the trade after it.
+ * name first and the trade after it. A `problem` joins that line in the
+ * error colour after `about`, as in a `RowLink`.
  */
 export function RowChoice({
   name,
   label,
   about,
+  problem,
   facts,
   checked,
   disabled = false,
@@ -134,6 +136,8 @@ export function RowChoice({
   label: string;
   /** What choosing it means; absent: the label says enough. */
   about?: string;
+  /** What is wrong with it now, such as `Not plugged in`. */
+  problem?: string;
   /** What the option sets, quietly beside its label: `640 × 360 · 30 fps`. */
   facts?: string;
   checked: boolean;
@@ -151,7 +155,7 @@ export function RowChoice({
           disabled={disabled}
           aria-labelledby={`${id}-label`}
           aria-describedby={
-            [about && `${id}-about`, facts && `${id}-facts`]
+            [(about || problem) && `${id}-about`, facts && `${id}-facts`]
               .filter(Boolean)
               .join(' ') || undefined
           }
@@ -172,7 +176,13 @@ export function RowChoice({
               {label}
             </span>
           )}
-          {about ? (
+          {problem ? (
+            <span className="row-value" id={`${id}-about`} data-problem="true">
+              {about ? <span className="row-lead">{about} · </span> : null}
+              <span className="row-problem">{problem}</span>
+            </span>
+          ) : null}
+          {about && !problem ? (
             <span className="row-value" id={`${id}-about`}>
               {about}
             </span>

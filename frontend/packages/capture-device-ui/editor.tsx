@@ -44,7 +44,6 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
           : undefined
       }
       onPick={pick}
-      byHandPaths={['capture.path']}
       byHand={
         <TextField
           path="capture.path"
@@ -53,7 +52,7 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
           value={value.path}
           onChange={(typed) => onChange({ ...value, path: typed })}
           check={(typed) =>
-            typed.trim() ? null : 'Choose a device, or enter its name here.'
+            typed.trim() ? null : 'Choose a device, or enter one by hand.'
           }
           help="Its name, such as /dev/video0."
         />

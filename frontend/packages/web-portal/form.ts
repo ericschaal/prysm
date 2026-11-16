@@ -149,9 +149,11 @@ function controlOf(form: HTMLElement | null, field: string | undefined) {
   // Field paths are dotted identifiers from the generated settings.
   const path = field && /^[\w.]+$/.test(field) ? field : null;
   if (!form || !path) return null;
+  // A group that owns the path (a choice of rows) goes before an input of
+  // that name, which is then the group's alternative.
   return (
-    form.querySelector<HTMLElement>(`[name="${path}"]`) ??
-    form.querySelector<HTMLElement>(`[data-field~="${path}"]`)
+    form.querySelector<HTMLElement>(`[data-field~="${path}"]`) ??
+    form.querySelector<HTMLElement>(`[name="${path}"]`)
   );
 }
 
