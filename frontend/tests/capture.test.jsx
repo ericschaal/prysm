@@ -581,6 +581,10 @@ test('a saved encoding the TV does not offer stays in sight with the reason, wit
       encoding().closest('.field').querySelector('.help').textContent,
       'This TV can’t send the picture this way.',
     );
+    assert.equal(
+      encoding().closest('.field').querySelector('.help').dataset.tone,
+      'warning',
+    );
     assert(!choice());
     assert.deepEqual(
       $$('option', encoding()).map((option) => option.value),
@@ -592,6 +596,12 @@ test('a saved encoding the TV does not offer stays in sight with the reason, wit
       ['Balanced', 'Efficient'],
     );
     assert(!encoding().closest('[hidden]'), 'it stays where it is');
+    // Said as a problem, but not a check: another encoding saves at once.
+    await submit(form('Video source'));
+    assert.equal(
+      portal.fixture.snapshot().settings.capture.encoding,
+      'h264_hardware',
+    );
   } finally {
     await portal.unmount();
   }
@@ -726,6 +736,60 @@ test('Look again keeps the focus while looking and ignores presses meanwhile', a
     await settled();
     assert.equal(again.getAttribute('aria-busy'), 'false');
     assert.equal(document.activeElement, again);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the first lookup lists nothing until it answers, then each device once, in place; looking again keeps the rows', async () => {
+  const card = { label: 'Card', detail: path, fields: { path } };
+  const webcam = {
+    label: 'Webcam',
+    detail: '/dev/video1',
+    fields: { path: '/dev/video1' },
+  };
+  const waiting = [];
+  const discovery = {
+    candidates: (section) =>
+      section === 'capture'
+        ? new Promise((resolve) => waiting.push(() => resolve([webcam, card])))
+        : Promise.resolve([]),
+  };
+  const answer = () =>
+    act(async () => {
+      for (const resolve of waiting.splice(0)) resolve();
+    });
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', path }, output },
+    undefined,
+    { discovery },
+  );
+  const devices = () => $$('.device-rows .row-choice');
+  try {
+    await openEditor('Video source');
+    // Looking: no row yet, not even the saved device's.
+    assert.equal(devices().length, 0);
+    assert.equal(
+      $('.device-rows [role="status"]').textContent,
+      'Looking for devices…',
+    );
+    await answer();
+    await settled();
+    assert.deepEqual(
+      devices().map((row) => $('.row-label', row).textContent),
+      ['Webcam', 'Card'],
+    );
+    const saved = devices()[1];
+    assert.equal($('input', saved).checked, true);
+    // Looking again: the same rows, the same nodes, until and after it answers.
+    await click(button('Look again'));
+    assert.equal(devices()[1], saved);
+    assert.equal($('.row-label', saved).textContent, 'Card');
+    await answer();
+    await settled();
+    assert.equal(devices()[1], saved);
+    assert.equal($('.row-label', saved).textContent, 'Card');
   } finally {
     await portal.unmount();
   }

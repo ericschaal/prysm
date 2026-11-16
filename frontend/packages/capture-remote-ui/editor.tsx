@@ -53,6 +53,7 @@ export function RemoteEditor({
           ? 'This TV can’t send the picture this way.'
           : encodingChoices.find((choice) => choice.value === encoding)?.help
       }
+      helpTone={lacks(encoding) ? 'warning' : undefined}
     />
   );
   const inSight = lacks(saved);

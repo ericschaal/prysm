@@ -20,17 +20,19 @@ import { ChevronIcon } from './rows';
 function Note({
   id,
   help,
+  helpTone,
   error,
   retry,
 }: {
   id: string;
   help?: ReactNode;
+  helpTone?: 'warning';
   error?: string;
   retry?: () => void;
 }) {
   return (
     <div className="field-note" data-state={error ? 'error' : 'help'}>
-      <p className="help" id={`${id}-help`}>
+      <p className="help" id={`${id}-help`} data-tone={helpTone}>
         {help}
       </p>
       <p className="field-error" id={`${id}-error`}>
@@ -53,7 +55,7 @@ function classes(own: string, extra: string | undefined) {
   return extra ? `${own} ${extra}` : own;
 }
 
-function useField(path: string, help?: ReactNode) {
+function useField(path: string, help?: ReactNode, helpTone?: 'warning') {
   const scope = use(FieldContext);
   const id = useId();
   const [touched, setTouched] = useState(false);
@@ -75,7 +77,15 @@ function useField(path: string, help?: ReactNode) {
       onBlur: () => setTouched(true),
     },
     touch: () => setTouched(true),
-    note: <Note id={id} help={help} error={error} retry={retry} />,
+    note: (
+      <Note
+        id={id}
+        help={help}
+        helpTone={helpTone}
+        error={error}
+        retry={retry}
+      />
+    ),
   };
 }
 
@@ -102,6 +112,11 @@ interface FieldProps {
   path: string;
   label: string;
   help?: ReactNode;
+  /**
+   * `warning`: the help says what is wrong with the value now, in the
+   * problem colour, without stopping a save (Prysm has the last word).
+   */
+  helpTone?: 'warning';
   className?: string;
 }
 
@@ -414,6 +429,7 @@ export function SelectField<V extends string>({
   path,
   label,
   help,
+  helpTone,
   className,
   value,
   options,
@@ -423,7 +439,7 @@ export function SelectField<V extends string>({
   options: readonly { value: V; label: string }[];
   onChange: (value: V) => void;
 }) {
-  const field = useField(path, help);
+  const field = useField(path, help, helpTone);
   return (
     <div className={classes('field', className)}>
       <label htmlFor={field.id}>{label}</label>

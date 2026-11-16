@@ -182,7 +182,8 @@ export function FindDevices({
 
 /**
  * The devices of `kind` present, looked for as the editor opens, as rows
- * to tick; picking one fills `path` (its field at `field`). The saved
+ * to tick, listed once the first lookup has answered and kept while looking
+ * again; picking one fills `path` (its field at `field`). The saved
  * device keeps a ticked row of its own while it is not found, by the name
  * this browser last saw for it (else its value), with `missing` beneath in
  * the problem colour. Under the rows one line says how the lookup went, or
@@ -243,13 +244,16 @@ export function DeviceRows({
       </>
     );
   const found = 'found' in search ? search.found : [];
+  // Until the first answer nothing is listed, not even the saved device:
+  // which row is its row is known only then, so no row changes after.
+  const answered = !(search.state === 'looking' && !search.again);
   /**
    * Nothing to pick once looked: typing is the way, so the field is not
    * tucked away (and stays put while looking again).
    */
-  const plain = !found.length && !(search.state === 'looking' && !search.again);
+  const plain = !found.length && answered;
   const listed = found.some((candidate) => candidate.fields[field] === value);
-  const missingRow = value !== '' && !listed;
+  const missingRow = answered && value !== '' && !listed;
   const rows = found.length > 0 || missingRow;
   const error = rows ? shownError(scope, path, false) : undefined;
   let status: string | null = null;

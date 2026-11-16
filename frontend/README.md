@@ -211,8 +211,9 @@ supervisor in each of its states and play the phone's calibration part). See the
     the TV; if calibration ends elsewhere it offers Resume and keeps the draft.
   - [Devices](packages/web-portal/discovery.tsx): the video device editor
     asks the portal (`GET /api/v1/candidates/capture/device`) what is present
-    as it opens, and lists the devices as rows to tick ("Look again" asks
-    again, and keeps the focus while it looks). Every name found is kept in
+    as it opens, and lists the devices as rows to tick once it answers
+    ("Looking for devices…" until then, with no row, so no row is replaced);
+    "Look again" asks again, keeping the rows and the focus while it looks. Every name found is kept in
     this browser ([device names](packages/web-portal/device-name.ts), the
     last eight per kind), so the saved device keeps a ticked row of its own
     by its name while it is not found ("Not plugged in" in the problem colour
