@@ -10,6 +10,7 @@ npm --prefix frontend run codegen:check
 npm --prefix frontend test
 npm --prefix frontend run lint          # ESLint, the root rule set
 npm --prefix frontend run format:check  # Prettier; `format` rewrites
+npm --prefix frontend run e2e:tv        # TV app with remote keys in Chromium (in-memory demo)
 ```
 
 `npm test` regenerates contracts, type-checks, builds the four entry points

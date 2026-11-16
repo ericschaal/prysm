@@ -126,9 +126,16 @@ export function useRemoteNavigation<D extends string>({
   const returnFocus = useRef<HTMLElement | null>(null);
   const lastInColumn = useRef<Record<string, HTMLElement>>({});
   const opened = useRef<D | null>(null);
+  /** The control of each dialog that opened another, to return to by id. */
+  const openers = useRef<Partial<Record<D, string>>>({});
 
   function openDialog(next: D) {
-    if (!dialog) returnFocus.current = activeElement();
+    const opener = activeElement();
+    if (dialog) openers.current[dialog] = opener?.id;
+    else {
+      returnFocus.current = opener;
+      openers.current = {};
+    }
     setDialog(next);
   }
   function closeDialog() {
@@ -136,17 +143,21 @@ export function useRemoteNavigation<D extends string>({
   }
   const dismiss = () => setDialog(null);
 
-  // Focus the chosen option (or the first control) when a dialog opens, and the
-  // opener when the last one closes.
+  // When a dialog opens, focus the control that opened the dialog just left,
+  // else the chosen option, else the first control; when the last one closes,
+  // the opener on the page.
   useLayoutEffect(() => {
     if (opened.current === dialog) return;
     opened.current = dialog;
     if (dialog) {
       const controls = focusables(modal.current);
+      const opener = openers.current[dialog];
       (
+        controls.find((element) => opener && element.id === opener) ??
         controls.find(
           (element) => element.getAttribute('aria-pressed') === 'true',
-        ) ?? controls[0]
+        ) ??
+        controls[0]
       )?.focus();
     } else if (usable(returnFocus.current)) returnFocus.current.focus();
     else firstStop(root.current)?.focus();

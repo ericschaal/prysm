@@ -109,6 +109,32 @@ and traces on retry; the report, traces and videos are uploaded when it
 fails. `.github/workflows/e2e-nightly.yml` runs WebKit (closest to Safari on
 macOS) and Firefox on a macOS runner every night and on demand.
 
+### TV app
+
+`frontend/e2e-tv/` is a separate Playwright project for the TV app of both
+packages: Chromium only, 1920 × 1080, against the in-memory demo
+(`testkit/tv-demo.tsx`) that Vite serves on loopback. It needs no
+`prysm-headless` and no build. It drives the app only with remote keys
+(arrows, OK as Enter, Back as keyCode 461) and checks what jsdom cannot: after
+every key one control has focus, visible, inside the viewport and the 5 %
+safe area of `tv.css`, with a focus ring; arrows reach every enabled control
+on each screen and dialog; Back closes one dialog level and returns focus to
+its opener, and on Home asks before closing; controls are at least `--hit`
+(78 px) in their smaller dimension and text at least 20 px; and journeys
+(settings, a long diagnostics log, calibration, first run of each package).
+
+```sh
+npm --prefix frontend run e2e:install   # once per Playwright version
+npm --prefix frontend run e2e:tv        # add -- --headed, -- -g "first run"
+```
+
+Limits: desktop Chromium is not the TV's browser (webOS 4 runs Chromium 53),
+fonts and rendering differ from the TV's, the service is the demo's fake
+supervisor rather than Luna, the portal is an in-memory fake, and text entry
+fills the field instead of using the TV's on-screen keyboard. Remote
+navigation on a real TV still needs a manual check. CI runs it in the `e2e`
+job.
+
 The system behind the portal (the TV stream over `ws://` and `wss://`, a fake
 WLED on 127.0.0.1, settings files across restarts) is tested without a
 browser in [`hosts/headless/tests/system.rs`](../../hosts/headless/tests/system.rs).

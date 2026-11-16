@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e && tsc --noEmit -p e2e-tv",
     "build": "npm run codegen && npm run typecheck && node scripts/build.mjs",
     "test": "npm run build && node --test tests/contracts.test.mjs && vite build --ssr tests/composition.test.jsx --outDir .test && NODE_OPTIONS=--max-old-space-size=2048 node --import ./tests/setup-dom.js --test --test-timeout=60000 .test/composition.test.js",
     "dev:headless": "npm run codegen && vite hosts/headless/web-portal --config dev.config.mjs --host 127.0.0.1",
@@ -19,6 +19,7 @@
     "dev:webos-slim": "npm run codegen && vite hosts/webos-slim/tv-ui --host 127.0.0.1",
     "dev:webos-portal": "npm run codegen && vite hosts/webos/web-portal --config dev.config.mjs --host 127.0.0.1",
     "e2e": "playwright test -c e2e --project chromium --project webkit",
+    "e2e:tv": "playwright test -c e2e-tv --workers=2",
     "e2e:install": "playwright install chromium webkit",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write \"**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}\"",

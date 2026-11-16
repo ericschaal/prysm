@@ -11,7 +11,8 @@
 #   compiling. Codegen runs the Rust contract exporter, which is why this job
 #   also needs Rust and libclang.
 # - `rust` (Linux, macOS): formatting, clippy, tests, doctests; builds the e2e
-#   binaries. `e2e`: the portal in Chromium and WebKit against them.
+#   binaries. `e2e`: the portal in Chromium and WebKit against them, and the
+#   TV app with remote keys in Chromium on its in-memory demo.
 # - `webos-armv7`: lints (clippy -D warnings) every TV crate that compiles
 #   without the webOS SDK, with Ubuntu's stock soft-float cross compiler (the
 #   C++ in capture-webos-sys and OpenH264 only need a g++; Luna and VTCapture
@@ -242,6 +243,9 @@ jobs:
           PRYSM_HEADLESS_BIN: ${{ runner.temp }}/e2e-bin/prysm-headless
           PRYSM_TEST_SENDER_BIN: ${{ runner.temp }}/e2e-bin/examples/test_sender
         run: npm --prefix frontend run e2e
+      # The TV app on its in-memory demo (frontend/e2e-tv): no binaries.
+      - name: TV app end-to-end tests
+        run: npm --prefix frontend run e2e:tv
       # The HTML report, and traces and videos of failed or retried tests.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
