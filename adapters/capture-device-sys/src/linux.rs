@@ -125,9 +125,11 @@ fn configure_frame_rate(device: &Device, refresh_rate_hz: NonZeroU32) -> anyhow:
         .set_params(&params)
         .context("failed to set capture frame interval")?;
     anyhow::ensure!(
-        actual.interval.numerator != 0
-            && u64::from(actual.interval.numerator) * u64::from(refresh_rate_hz.get())
-                == u64::from(actual.interval.denominator),
+        crate::formats::v4l2::interval_is(
+            actual.interval.numerator,
+            actual.interval.denominator,
+            refresh_rate_hz.get()
+        ),
         "capture device cannot provide {refresh_rate_hz} Hz (negotiated interval: {})",
         actual.interval
     );

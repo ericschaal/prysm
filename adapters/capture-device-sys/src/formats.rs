@@ -1,19 +1,29 @@
-//! Whole-number frame rates a device sets exactly, as spans: the arithmetic
-//! behind [`list_formats`](crate::list_formats), platform-free so it is
-//! tested on any OS. Each platform's way of stating rates is its own module.
+//! Whole-number frame rates a device delivers, as spans: the arithmetic
+//! behind [`list_formats`](crate::list_formats) and behind opening a device at
+//! a rate, platform-free so it is tested on any OS. Each platform's way of
+//! stating rates is its own module.
+//!
+//! A device's rate counts as a whole number when it lies within
+//! [`TOLERANCE_PER_MILLE`] of it. USB capture cards state rates as frame
+//! intervals in steps of 100 ns, so their 30 and 60 frames per second are
+//! 30.00003 and 60.00024; broadcast sources state 29.97 and 59.94.
 use prysm_ports::Span;
 use std::collections::BTreeSet;
 
 #[cfg(any(target_os = "macos", test))]
-mod avfoundation;
+pub(crate) mod avfoundation;
 #[cfg(any(target_os = "linux", test))]
-mod v4l2;
+pub(crate) mod v4l2;
+
+/// How far, in thousandths, a device's rate may lie from a whole number of
+/// frames per second and still be that rate.
+const TOLERANCE_PER_MILLE: u32 = 2;
 
 /// The highest rate listed; no capture device goes beyond it, and it bounds
 /// the work of listing a continuous range.
 const MAX_FPS: u32 = 1000;
 
-/// Whole-number frame rates a device takes exactly, 1 to [`MAX_FPS`].
+/// Whole-number frame rates a device delivers, 1 to [`MAX_FPS`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Rates(BTreeSet<u32>);
 

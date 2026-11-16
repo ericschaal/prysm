@@ -1,17 +1,32 @@
 //! V4L2 states rates as frame intervals in seconds: discrete fractions, or a
 //! stepwise or continuous range of them, per size. Capture sets 1/fps and
-//! requires the driver to take it exactly.
-use super::{MAX_FPS, Rates};
+//! requires the driver to answer with that rate.
+use super::{MAX_FPS, Rates, TOLERANCE_PER_MILLE};
+
+/// Whether a frame interval of `numerator / denominator` seconds is `fps`
+/// frames per second.
+pub(crate) fn interval_is(numerator: u32, denominator: u32, fps: u32) -> bool {
+    // |1/interval - fps| <= fps * tolerance, without dividing.
+    let stated = u64::from(denominator) * 1000;
+    let whole = u64::from(numerator) * u64::from(fps) * 1000;
+    let slack = u64::from(numerator) * u64::from(fps) * u64::from(TOLERANCE_PER_MILLE);
+    numerator != 0 && stated.abs_diff(whole) <= slack
+}
 
 impl Rates {
-    /// A frame interval of `numerator / denominator` seconds, when it is
-    /// exactly a whole number of frames per second.
+    /// A frame interval of `numerator / denominator` seconds, when it is a
+    /// whole number of frames per second.
     pub(crate) fn interval(&mut self, numerator: u32, denominator: u32) {
-        if numerator != 0 && denominator.is_multiple_of(numerator) {
-            let fps = denominator / numerator;
-            if (1..=MAX_FPS).contains(&fps) {
-                self.0.insert(fps);
-            }
+        if numerator == 0 {
+            return;
+        }
+        // The nearest whole rate, computed wide enough not to overflow.
+        let nearest = (u64::from(denominator) + u64::from(numerator) / 2) / u64::from(numerator);
+        if let Ok(fps) = u32::try_from(nearest)
+            && (1..=MAX_FPS).contains(&fps)
+            && interval_is(numerator, denominator, fps)
+        {
+            self.0.insert(fps);
         }
     }
 
@@ -51,16 +66,30 @@ mod tests {
     use prysm_ports::Span;
 
     #[test]
-    fn intervals_give_exact_whole_rates() {
-        // 1/30, 1/25, 1001/30000 (29.97, not whole), 2/1 (0.5 fps), 0/0.
+    fn intervals_give_whole_rates() {
+        // 1/30, 1/25, 2/59 (29.5, not whole), 2/1 (0.5 fps), 0/0.
         assert_eq!(
             spans(|r| {
-                for (n, d) in [(1, 30), (1, 25), (1001, 30000), (2, 1), (0, 0), (2, 60)] {
+                for (n, d) in [(1, 30), (1, 25), (2, 59), (2, 1), (0, 0), (2, 60)] {
                     r.interval(n, d);
                 }
             }),
             [Span::exactly(25), Span::exactly(30)]
         );
+        // A USB card's 100 ns intervals, and a broadcast rate.
+        assert_eq!(
+            spans(|r| {
+                for (n, d) in [(333_333, 10_000_000), (166_666, 10_000_000), (1001, 24_000)] {
+                    r.interval(n, d);
+                }
+            }),
+            [Span::exactly(24), Span::exactly(30), Span::exactly(60)]
+        );
+        assert!(interval_is(333_333, 10_000_000, 30));
+        assert!(interval_is(1, 30, 30));
+        assert!(!interval_is(1, 25, 30));
+        assert!(!interval_is(0, 0, 30));
+        assert!(interval_is(u32::MAX, u32::MAX, 1));
         // Continuous 1/60 s to 1 s.
         assert_eq!(spans(|r| r.intervals((1, 60), (1, 1), None)), [span(1, 60)]);
         // Stepwise 1/30 s to 1/10 s in 1/60 s: 2/60 to 6/60, each whole.

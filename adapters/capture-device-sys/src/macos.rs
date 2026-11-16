@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
-use av_foundation::capture_device::{AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification};
+use av_foundation::capture_device::{
+    AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification, AVFrameRateRange,
+};
 use av_foundation::capture_input::AVCaptureDeviceInput;
 use av_foundation::capture_output_base::AVCaptureOutput;
 use av_foundation::capture_session::{
@@ -345,32 +347,26 @@ fn configure_capture(
     height: u32,
     refresh_rate_hz: NonZeroU32,
 ) -> anyhow::Result<()> {
-    let timescale = i32::try_from(refresh_rate_hz.get())
-        .context("capture rate exceeds AVFoundation's timescale")?;
     let requested_width =
         i32::try_from(width).context("capture width exceeds AVFoundation's dimensions")?;
     let requested_height =
         i32::try_from(height).context("capture height exceeds AVFoundation's dimensions")?;
     let formats = device.formats();
-    let format = formats
+    let (format, duration) = formats
         .iter()
-        .find(|format| {
-            let Some(description) = format
+        .find_map(|format| {
+            let description = format
                 .format_description()
-                .downcast::<CMVideoFormatDescription>()
-            else {
-                return false;
-            };
+                .downcast::<CMVideoFormatDescription>()?;
             let dimensions = description.get_dimensions();
-            dimensions.width == requested_width
-                && dimensions.height == requested_height
-                && format
-                    .video_supported_frame_rate_ranges()
-                    .iter()
-                    .any(|range| {
-                        range.min_frame_rate() <= f64::from(refresh_rate_hz.get())
-                            && f64::from(refresh_rate_hz.get()) <= range.max_frame_rate()
-                    })
+            if dimensions.width != requested_width || dimensions.height != requested_height {
+                return None;
+            }
+            let duration = format
+                .video_supported_frame_rate_ranges()
+                .iter()
+                .find_map(|range| frame_duration(&range, refresh_rate_hz))?;
+            Some((format, duration))
         })
         .with_context(|| {
             format!("capture device does not support {width}x{height} at {refresh_rate_hz} Hz")
@@ -379,11 +375,22 @@ fn configure_capture(
         .lock_for_configuration()
         .context("cannot lock capture device to set format and frame rate")?;
     device.set_active_format(&format);
-    let duration = CMTime::make(1, timescale);
     device.set_active_video_min_frame_duration(duration);
     device.set_active_video_max_frame_duration(duration);
     device.unlock_for_configuration();
     Ok(())
+}
+
+/// The frame duration at which `range` delivers `fps`: 1/fps inside the
+/// range, else the range's own bound when that bound is `fps` (a capture card
+/// states 30 frames per second as 30.00003).
+fn frame_duration(range: &AVFrameRateRange, fps: NonZeroU32) -> Option<CMTime> {
+    use crate::formats::avfoundation::{Fit, fit};
+    match fit(range.min_frame_rate(), range.max_frame_rate(), fps.get())? {
+        Fit::Inside => Some(CMTime::make(1, i32::try_from(fps.get()).ok()?)),
+        Fit::Lowest => Some(range.max_frame_duration()),
+        Fit::Highest => Some(range.min_frame_duration()),
+    }
 }
 
 fn start_session(
