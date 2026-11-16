@@ -9,6 +9,28 @@
 Reference: [packaging](../../packaging/README.md). Builds never install
 or deploy. Release builds: [releasing](releasing.md).
 
+## Artifacts in dist/
+
+`cargo xtask dist TARGET...` writes artifacts under fixed names to `dist/`
+(ignored by git) and records each in `dist/manifest.json`:
+
+| Target | File | Built by |
+| --- | --- | --- |
+| `mac` | `prysm-headless-macos-arm64` (this Mac's architecture) | `npm run build`, then `cargo build --release --locked -p prysm-headless`; macOS only |
+| `linux-arm64`, `linux-amd64` | `prysm-headless-linux-<arch>` | The Dockerfile's `binary` target |
+| `deb-arm64`, `deb-amd64` | `prysm-headless-linux-<arch>.deb` | The Dockerfile's `deb` target, copied from its versioned name |
+
+```sh
+cargo xtask dist linux-arm64 deb-arm64
+```
+
+The Docker targets need buildx; a target for the other architecture is
+emulated and slow. The manifest has one entry per file: the version from
+`VERSION`, the commit, whether the tree had uncommitted changes, the SHA-256
+and the build time in UTC. Building a target replaces its entry and keeps
+the others. The TV packages and the Docker image are not targets yet; build
+them as below.
+
 ## Docker
 
 ```sh
@@ -30,11 +52,11 @@ User guides: [Docker](../users/docker.md), [TrueNAS](../users/truenas.md).
 ## Debian package
 
 ```sh
-docker buildx build -f packaging/docker/Dockerfile --target deb --output type=local,dest=dist .
+cargo xtask dist deb-arm64   # or deb-amd64
 ```
 
-This builds for the build machine's architecture; add `--platform linux/arm64`
-for a Pi. [build-deb.sh](../../packaging/debian/build-deb.sh) does the
+This runs the Dockerfile's `deb` target for that platform and writes
+`dist/prysm-headless-linux-<arch>.deb`. [build-deb.sh](../../packaging/debian/build-deb.sh) does the
 assembly with `dpkg-deb` and also runs on any Debian or Ubuntu with
 `dpkg-dev`. The binary is built on Debian 12 and needs glibc 2.34+ and systemd.
 

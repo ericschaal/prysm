@@ -28,6 +28,7 @@ members = [
     "hosts/webos-slim",
     "hosts/webos-service",
     "tools/export-contracts",
+    "tools/xtask",
 ]
 default-members = ["hosts/headless", "hosts/tui"]
 

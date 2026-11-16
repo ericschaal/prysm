@@ -1,0 +1,21 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "cargo xtask: one entry point for codegen, checks and build artifacts"
+
+# Must build on a fresh checkout: no crate that include!s frontend/dist.
+[dependencies]
+anyhow = "1"
+clap.workspace = true
+# RFC 3339 build times in dist/manifest.json.
+humantime = "2"
+prysm-version.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+
+[lints]
+workspace = true

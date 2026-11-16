@@ -18,6 +18,9 @@ __pycache__/
 # Local investigation workspaces and generated handoff bundles.
 /work/
 
+# Artifacts from `cargo xtask dist`.
+/dist/
+
 # Prysm settings
 settings.json
 

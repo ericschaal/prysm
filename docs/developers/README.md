@@ -16,7 +16,19 @@ The product is one Cargo workspace (`Cargo.toml`) and one npm workspace
 
 ## Build and run
 
-Run everything from the repository root. The Rust hosts embed the frontend
+`cargo xtask` is the entry point for generating, checking and building
+([tools/xtask](../../tools/xtask/src/main.rs)). It runs the npm scripts,
+Cargo, the Dockerfile and the Python checks in the right order, and runs
+`npm ci` first when `frontend/node_modules` is missing.
+
+```sh
+cargo xtask doctor    # which tools are installed, and what needs them
+cargo xtask codegen   # contracts from Rust; --check fails on drift
+cargo xtask check     # the checks below, in order
+cargo xtask dist mac  # an artifact in dist/; see packaging
+```
+
+For day-to-day work, run the hosts with Cargo. They embed the frontend
 bundle, so build it first; Cargo never runs npm.
 
 ```sh
@@ -61,19 +73,20 @@ It plays once (`"repeat": true` loops it); at the end lighting stops cleanly.
 
 ## Check
 
-The same commands CI runs ([ci.yml](../../.github/workflows/ci.yml)):
-
 ```sh
-cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-cargo test --locked --workspace --all-targets --all-features
-npm --prefix frontend run lint
-npm --prefix frontend run format:check
-npm --prefix frontend run codegen:check
-npm --prefix frontend test
-python3 -m unittest discover -s packaging/webos/tests
-python3 scripts/check-doc-links.py
+cargo xtask check
 ```
+
+It runs the checks of CI's `quality`, `frontend` and `rust` jobs
+([ci.yml](../../.github/workflows/ci.yml)) and stops at the first failing
+step, which it names. Not included: shellcheck, actionlint, the end-to-end
+tests, the armv7, Miri, IPK and Docker jobs. The order: Rust formatting, frontend
+lint and formatting, `codegen:check`, `npm test` (which builds
+`frontend/dist`), clippy with `-D warnings`, the Rust tests and doctests, the
+Python tests in `scripts/tests` and `packaging/webos/tests`, and
+`scripts/check-doc-links.py`. The contracts are checked before `npm test`
+because its build rewrites them, and the bundle is built before Rust because
+the hosts `include!` it.
 
 Use `cargo test -p CRATE` for one crate. The
 TV crates are also linted and unit-tested for armv7 under qemu in CI; the IPK

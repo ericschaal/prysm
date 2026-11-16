@@ -16,7 +16,7 @@ The implementation before 1.0 is in the tag `pre-1.0-consolidation`.
 | `adapters/` | [`capture-device`](../../adapters/capture-device/src/lib.rs) (+ [`-sys`](../../adapters/capture-device-sys/src/lib.rs): V4L2 and AVFoundation), [`capture-file`](../../adapters/capture-file/src/lib.rs), [`capture-remote`](../../adapters/capture-remote/README.md), [`capture-webos`](../../adapters/capture-webos/src/lib.rs) (+ `-sys`), [`h264`](../../adapters/h264/src/lib.rs) (+ [`-rvenc-sys`](../../adapters/h264-rvenc-sys/src/lib.rs)), [`webos-luna-sys`](../../adapters/webos-luna-sys/src/lib.rs), [`output-wled`](../../adapters/output-wled/src/lib.rs), [`settings-file`](../../adapters/settings-file/README.md) | `FrameSource`, `FrameSink`, `LedOutput` and `SettingsStore` implementations; the Luna bus; H.264 for the remote stream |
 | `surfaces/` | [`tui`](../../surfaces/tui/src/lib.rs), [`web-portal`](../../surfaces/web-portal/HTTP-CONTRACT.md) | Ways in and out of a running engine |
 | `hosts/` | [`headless`](../../hosts/headless/src/main.rs), [`tui`](../../hosts/tui/src/main.rs), [`common`](../../hosts/common/src/lib.rs) (`prysm-host`); TV: [`webos`](../../hosts/webos/src/main.rs), [`webos-slim`](../../hosts/webos-slim/src/main.rs), [`webos-service`](../../hosts/webos-service/src/lib.rs) | Executables: a builder list plus process options; the TV workers and their supervisor ([design](../plans/prysm-v1-webos-supervisor.md)) |
-| `tools/` | [`export-contracts`](../../tools/export-contracts/src/main.rs) | OpenAPI documents for frontend codegen |
+| `tools/` | [`export-contracts`](../../tools/export-contracts/src/main.rs), [`xtask`](../../tools/xtask/src/main.rs) | OpenAPI documents for frontend codegen; `cargo xtask`, the build entry point ([develop](README.md#build-and-run)) |
 | `frontend/` | npm workspace | Portal and TV bundles; see its [README](../../frontend/README.md) |
 
 Contracts: [ownership and generation](contracts.md), [portal HTTP](../../surfaces/web-portal/HTTP-CONTRACT.md),
@@ -155,18 +155,17 @@ async fn log(engine: EngineHandle, shutdown: Shutdown) -> prysm_ports::Result<()
 
 ## Build and test
 
-From the repository root:
+From the repository root, `cargo xtask check` runs every check in order
+([check](README.md#check)). For a quicker loop:
 
 ```sh
 npm --prefix frontend ci && npm --prefix frontend run build   # hosts include! the bundle
-cargo fmt --all
 cargo test --workspace --all-targets --offline
-cargo clippy --workspace --all-targets --offline -- -D warnings
-npm --prefix frontend run codegen:check && npm --prefix frontend test
 ```
 
 `cargo build` builds the two hosts (the default
-members). Builds do not deploy.
+members); `xtask` depends on no crate that embeds the bundle, so it builds on
+a fresh checkout. Builds do not deploy.
 
 ## Not done yet
 
