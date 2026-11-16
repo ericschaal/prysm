@@ -1,0 +1,247 @@
+"""The acceptance runner's allow-list, its transport and the TV steps against a recorded transcript."""
+from pathlib import Path
+import re
+import sys
+import tempfile
+import unittest
+
+ACCEPTANCE = Path(__file__).resolve().parents[1] / 'acceptance'
+sys.path.insert(0, str(ACCEPTANCE))
+
+import commands  # noqa: E402
+import config  # noqa: E402
+import plan  # noqa: E402
+import stage_tv  # noqa: E402
+import transport  # noqa: E402
+import tv  # noqa: E402
+from transport import Result  # noqa: E402
+
+# Shell words that must never appear in a TV command.
+FORBIDDEN = re.compile(r'\b(dd|mkfs\w*|flash\w*|mtd\w*|ubi\w*|mount|umount|reboot|insmod|rmmod|chmod|chown|'
+                       r'mv|cp|ln|tee|sed|kill|killall|pkill|opkg|ares-install)\b|rm\s+-r|/dev/|/etc/|rootfs|tvservice')
+# The commands a TV command may run (the first word of each part).
+TV_PROGRAMS = {'echo', 'if', 'for', 'then', 'else', 'fi', 'done', 'do', 'case', 'esac', 'cat', 'mkdir', 'rm',
+               'timeout', 'luna-send', 'grep', 'readlink', 'continue', 'l=$(readlink', 'p=${e#/proc/};', '[',
+               commands.SETUP, commands.SUPERVISOR}
+
+
+def without_uris(text):
+    """The remote text without Luna and HTTP URIs (services, not files) and error redirections."""
+    return re.sub(r'(luna|https?)://[^\s\'"]+', 'URI', text).replace('2>/dev/null', '')
+
+
+def paths(text):
+    return re.findall(r'(?<![\w$*%#])/[A-Za-z0-9_.*\[\]/-]+', without_uris(text))
+
+
+class AllowList(unittest.TestCase):
+    def test_every_command_builder_is_listed(self):
+        builders = {name for name, value in vars(commands).items()
+                    if callable(value) and not name.startswith('_') and getattr(value, '__module__', '') == 'commands'
+                    and name[0].islower() and name not in ('ssh_target', 'field')}
+        produced = {factory().template for factory in commands.TEMPLATES.values()}
+        self.assertEqual(set(commands.TEMPLATES), produced)
+        self.assertEqual(len(builders), len(commands.TEMPLATES), sorted(builders))
+
+    def test_every_template_is_bounded_and_named(self):
+        for name, factory in commands.TEMPLATES.items():
+            command = factory()
+            self.assertEqual(command.template, name)
+            if command.background:
+                self.assertEqual(name, 'local.headless')
+            else:
+                self.assertGreater(command.timeout, 0, name)
+                self.assertLessEqual(command.timeout, 3600, name)
+
+    def test_tv_commands_touch_only_prysm_paths(self):
+        tv_templates = [factory() for name, factory in commands.TEMPLATES.items() if name.startswith('tv.')]
+        self.assertTrue(tv_templates)
+        for command in tv_templates:
+            with self.subTest(command.template):
+                self.assertEqual(command.argv[0], 'ssh')
+                self.assertEqual(command.argv[-1], command.remote)
+                self.assertIn('BatchMode=yes', command.argv)
+                self.assertIsNone(FORBIDDEN.search(without_uris(command.remote)), command.remote)
+                for path in paths(command.remote):
+                    self.assertTrue(path.startswith(commands.TV_READ_PATHS + commands.TV_WRITE_PATHS),
+                                    f'{path} in {command.remote}')
+                for written in re.findall(r'(?:>|rm -f|mkdir -p)\s+(\S+)', command.remote):
+                    if written.startswith('/'):
+                        self.assertIn(written, commands.TV_WRITE_PATHS, command.remote)
+                    else:
+                        self.assertRegex(written, r'^(/dev/null|"\$\w+")$')
+                self.assertNotIn(commands.DATA_DIR + '/', re.sub(r'cat /var/lib/io\.prysm\.tv/\w+\.json|'
+                                                                r'-f /var/lib/io\.prysm\.tv/\w+\.json', '', command.remote))
+
+    def test_luna_calls_only_prysm_and_the_install_service(self):
+        for factory in commands.TEMPLATES.values():
+            command = factory()
+            for uri in re.findall(r'luna://\S+', command.remote or ''):
+                self.assertRegex(uri, r'^luna://(io\.prysm\.tv\.service/(getState|setPreferences|setEnabled)|'
+                                      r'com\.webos\.appInstallService/dev/install)$')
+            if command.remote and 'luna-send' in command.remote:
+                self.assertTrue(command.hold_stdin, command.template)
+                self.assertTrue(command.remote.startswith('timeout '), command.template)
+
+    def test_parameters_are_checked_not_quoted(self):
+        refused = [
+            lambda: commands.tv_reachable('-oProxyCommand=sh'),
+            lambda: commands.tv_reachable('root@tv;reboot'),
+            lambda: commands.tv_read_data('root@tv', '../../etc/passwd'),
+            lambda: commands.tv_stage('root@tv', 'io.prysm.tv-full_1.0.0_all.ipk;reboot'),
+            lambda: commands.tv_stage('root@tv', 'other.ipk'),
+            lambda: commands.tv_set_preferences('root@tv', False, 'http://x/;reboot'),
+            lambda: commands.tv_set_preferences('root@tv', False, "http://x'$(reboot)"),
+            lambda: commands.tv_set_preferences('root@tv', 'yes'),
+            lambda: commands.tv_set_enabled('root@tv', 1),
+            lambda: commands.ares_remove('tv; rm -rf /'),
+            lambda: commands.build_ipk('both'),
+            lambda: commands.verify_ipk('/tmp/evil.ipk'),
+            lambda: commands.headless('bin', 'settings.json', '0.0.0.0:8787 --start'),
+            lambda: commands.ffmpeg_edges_clip('c.mp4', 640, 360, 30, 10, {'top': "ff0000';x", 'right': '00ff00',
+                                                                            'bottom': '0000ff', 'left': 'ffff00'}),
+        ]
+        for build in refused:
+            with self.assertRaises(commands.Refused):
+                build()
+
+    def test_only_the_allow_list_names_ssh_or_spawns(self):
+        for path in ACCEPTANCE.glob('*.py'):
+            text = path.read_text()
+            if path.name != 'commands.py':
+                self.assertNotIn("'ssh'", text, path.name)
+                self.assertNotIn('luna://', text, path.name)
+            if path.name not in ('transport.py', 'run.py'):
+                self.assertIsNone(re.search(r'subprocess\.(run|Popen|call|check_\w+)\(|os\.system', text), path.name)
+
+    def test_no_real_addresses(self):
+        documents = [*ACCEPTANCE.glob('*'), ACCEPTANCE.parents[1] / 'docs/developers/acceptance.md']
+        for path in documents:
+            # config.toml is the owner's own, untracked copy.
+            if path.is_file() and path.name != 'config.toml':
+                self.assertNotIn('192.168.18.', path.read_text(), path.name)
+
+
+class HeldStdin(unittest.TestCase):
+    def test_stops_at_the_expected_reply(self):
+        command = commands.Command('test', (sys.executable, '-c', 'import time; print(\'{"state":"installed"}\', '
+                                            'flush=True); time.sleep(30)'), 10, hold_stdin=True, until='"installed"')
+        result = transport.Real(log=lambda line: None).run(command)
+        self.assertTrue(result.ok)
+        self.assertLess(result.seconds, 5)
+
+    def test_keeps_stdin_open_until_the_timeout(self):
+        # Like luna-send, this exits as soon as its stdin closes.
+        command = commands.Command('test', (sys.executable, '-c', 'import sys; sys.stdin.read(); print("eof")'), 1,
+                                   hold_stdin=True)
+        result = transport.Real(log=lambda line: None).run(command, check=False)
+        self.assertEqual(result.returncode, 124)
+        self.assertNotIn('eof', result.stdout)
+
+    def test_a_failure_reply_fails(self):
+        command = commands.Command('test', (sys.executable, '-c', 'import time; print(\'{"returnValue":false}\', '
+                                            'flush=True); time.sleep(30)'), 10, hold_stdin=True, until='"installed"',
+                                   fail=r'"returnValue":\s*false')
+        with self.assertRaises(transport.CommandFailed):
+            transport.Real(log=lambda line: None).run(command)
+
+    def test_the_dry_run_transport_refuses_everything(self):
+        with self.assertRaises(RuntimeError):
+            transport.Refusing().run(commands.tv_reachable('root@tv'))
+
+
+STATE = ('{"returnValue":true,"flavor":"full","preferences":{"autostart":false},"enabled":true,'
+         '"lighting":"processed","power":"active","video":"available","worker":{"phase":"running"},'
+         '"capturing":true,"fps":30,"portal":"http://192.0.2.50:8787","failure":null,"encoding":null,'
+         '"paused":false,"log":[]}')
+ABSENT = '\n'.join(f'absent {p}' for p in (*commands.INSTALLED_PATHS, commands.STAGING)) + \
+    f'\npresent {commands.DATA_DIR}\n'
+
+
+def context(entries, answers=()):
+    settings = config.parse({'tv': {'address': 'tv.example', 'ares_device': 'tv'}, 'wled': {'address': 'wled.example'}})
+    replies = list(answers)
+    out = Path(tempfile.mkdtemp())
+    return plan.Context(settings, None, transport.Transcript(entries), out,
+                        ask=lambda question, choices=(): replies.pop(0), log=lambda line: None)
+
+
+class RecordedTv(unittest.TestCase):
+    def test_install_follows_the_documented_path(self):
+        ctx = context([('tv.stage', Result(0, '')),
+                       ('tv.install', Result(0, '{"details":{"state":"installed"}}')),
+                       ('tv.unstage', Result(0, '')),
+                       ('tv.setup', Result(0, '')),
+                       ('tv.get-state', Result(0, STATE))])
+        state = tv.install(ctx, 'target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk')
+        self.assertEqual(state['flavor'], 'full')
+        self.assertEqual(ctx.transport.calls[0].argv[-2], 'root@tv.example')
+        self.assertEqual(ctx.transport.calls[0].stdin_file, 'target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk')
+
+    def test_a_failed_install_still_removes_the_staged_package(self):
+        ctx = context([('tv.stage', Result(0, '')),
+                       ('tv.install', Result(1, '{"returnValue":false,"errorText":"bad package"}')),
+                       ('tv.unstage', Result(0, ''))])
+        with self.assertRaises(plan.Failed):
+            tv.install(ctx, 'io.prysm.tv-slim_1.0.0_all.ipk')
+        self.assertEqual([c.template for c in ctx.transport.calls], ['tv.stage', 'tv.install', 'tv.unstage'])
+
+    def test_uninstall_checks_that_nothing_is_left(self):
+        ctx = context([('tv.supervisor-uninstall', Result(0, '')),
+                       ('local.ares-remove', Result(0, '')),
+                       ('tv.paths', Result(0, ABSENT)),
+                       ('tv.processes', Result(0, '')),
+                       ('tv.get-state', Result(1, '', 'Service does not exist'))])
+        detail, evidence = stage_tv.uninstall(ctx)
+        self.assertIn('nothing left', detail)
+        self.assertIn(commands.DATA_DIR, evidence['kept_by_design'])
+
+    def test_uninstall_fails_on_leftovers(self):
+        left = ABSENT.replace(f'absent {commands.HOOK}', f'present {commands.HOOK}')
+        ctx = context([('tv.supervisor-uninstall', Result(0, '')),
+                       ('local.ares-remove', Result(0, '')),
+                       ('tv.paths', Result(0, left)),
+                       ('tv.processes', Result(0, f'812 {commands.WORKER}\n')),
+                       ('tv.get-state', Result(1, ''))])
+        with self.assertRaises(plan.Failed) as failure:
+            stage_tv.uninstall(ctx)
+        self.assertIn(commands.HOOK, str(failure.exception))
+
+    def test_restore_reinstalls_the_package_found_and_its_preferences(self):
+        ok = Result(0, '{"returnValue":true}')
+        slim = STATE.replace('"flavor":"full"', '"flavor":"slim"')
+        ctx = context([('tv.get-state', Result(1, '')),  # nothing installed after the uninstall check
+                       ('local.verify-ipk', Result(0, '')),
+                       ('tv.stage', Result(0, '')), ('tv.install', Result(0, '"installed"')),
+                       ('tv.unstage', Result(0, '')), ('tv.setup', Result(0, '')), ('tv.get-state', Result(0, slim)),
+                       ('tv.set-preferences', ok), ('tv.set-enabled', ok)])
+        ctx.config.tv.ipk_slim = 'io.prysm.tv-slim_1.0.0_all.ipk'
+        ctx.data['as_found'] = {'flavor': 'slim', 'enabled': True, 'lighting': None,
+                                'preferences': {'autostart': True, 'instance': 'http://192.0.2.20:8787'}}
+        self.assertIn('slim installed', stage_tv.restore(ctx))
+        preferences = ctx.transport.calls[-2].remote
+        self.assertIn('"autostart":true,"instance":"http://192.0.2.20:8787"', preferences)
+        self.assertIn('"enabled":true', ctx.transport.calls[-1].remote)
+
+    def test_worker_load_from_proc(self):
+        reading = ('1000.00 900.00\n0.50 0.40 0.30 1/100 812\n'
+                   f'stat 812 (prysm-webos-wor) S 1 812 0 0 -1 0 0 0 0 0 300 100 0 0 20 0\nVmRSS:\t   10240 kB\n')
+        later = reading.replace('1000.00', '1010.00').replace(' 300 100 ', ' 600 200 ')
+        ctx = context([('tv.sample-worker', Result(0, reading)), ('tv.sample-worker', Result(0, later))])
+        first, second = tv.sample_worker(ctx), tv.sample_worker(ctx)
+        self.assertEqual(first['rss_kb'], 10240)
+        self.assertEqual(tv.cpu_percent(first, second), 40.0)
+
+    def test_the_stage_refuses_without_the_owner_saying_the_tv_is_free(self):
+        settings = config.parse({'tv': {'address': 'tv.example'}, 'wled': {'address': 'wled.example'},
+                                 'leds': {'top': 10}})
+
+        class Args:
+            tv_is_free = False
+        self.assertIn('--tv-is-free', stage_tv.refuse(settings, Args()))
+        Args.tv_is_free = True
+        self.assertIsNone(stage_tv.refuse(settings, Args()))
+
+
+if __name__ == '__main__':
+    unittest.main()

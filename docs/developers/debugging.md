@@ -53,7 +53,9 @@ For rates and timing over time, enable [metrics](monitoring.md).
 ## Hardware checks
 
 None of these have been run against Prysm 1.x yet; results belong in
-[research](../../research/README.md).
+[research](../../research/README.md). The
+[acceptance runner](acceptance.md) automates most of them (desktop, both TV
+packages) and asks for the rest.
 
 - **Capture card:** start `prysm-tui` with the `device` source and the `null`
   output; check the picture, `input.fps` and the colours. Then the same with

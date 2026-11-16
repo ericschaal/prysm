@@ -78,7 +78,7 @@ python3 scripts/check-doc-links.py
 Use `cargo test -p CRATE` for one crate. The
 TV crates are also linted and unit-tested for armv7 under qemu in CI; the IPK
 build needs the webOS SDK. Tests on a TV are separate and manual
-([debugging](debugging.md#hardware-checks)).
+([debugging](debugging.md#hardware-checks), [acceptance runner](acceptance.md)).
 
 ## Topics
 
@@ -86,6 +86,7 @@ build needs the webOS SDK. Tests on a TV are separate and manual
 [Contracts](contracts.md) · [UI assemblies](ui-assemblies.md) ·
 [Portal API and settings](control-api.md) ·
 [Frontend](frontend.md) · [Calibration](calibration.md) · [LG TV](webos.md) ·
-[Packaging](packaging.md) · [Releasing](releasing.md) ·
+[Packaging](packaging.md) · [Hardware acceptance](acceptance.md) ·
+[Releasing](releasing.md) ·
 [Monitoring](monitoring.md) · [Errors](error-handling.md) ·
 [Contribution rules](guidelines.md) · [Decisions](decisions/README.md)

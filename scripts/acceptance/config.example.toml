@@ -1,0 +1,65 @@
+# Prysm acceptance runner configuration. Copy to scripts/acceptance/config.toml
+# (untracked) and fill in your own addresses; see docs/developers/acceptance.md.
+# Values here are examples in the documentation's placeholder style.
+
+[wled]
+# WLED's host[:port], as in Prysm's settings (no http://).
+address = "192.168.1.30"
+
+[leds]
+# LEDs per edge, clockwise from the bottom-left corner (as in the portal).
+top = 30
+right = 18
+bottom = 30
+left = 18
+
+[desktop]
+# prysm-headless to run; empty: build and use target/release/prysm-headless.
+headless = ""
+# Where the runner's own prysm-headless listens (localhost: nothing else reaches it).
+listen = "127.0.0.1:18787"
+# Seconds of frame-rate sampling per check.
+seconds = 10
+# Allowed deviation of the measured frame rate from the source's (0.15 = 15 %).
+fps_tolerance = 0.15
+# Part of the capture device's name to pick (empty: the first one found).
+device = ""
+# Size-and-rate preset resolved against the device's modes, as the portal does.
+preset = "balanced"
+# Port of the local colour page for --display-check (localhost only).
+display_port = 18790
+
+[tv]
+# The TV's address; ssh defaults to root@ADDRESS (an ssh config alias also works).
+address = "192.168.1.50"
+ssh = ""
+# Device name from ares-setup-device for removing the app; empty: removal is guided.
+ares_device = ""
+flavours = ["full", "slim"]
+# Package left on the TV at the end: as-found, full, slim or none.
+restore_flavour = "as-found"
+soak_seconds = 90
+# Built packages to use; empty: packaging/webos/build-ipk.sh builds them (needs WEBOS_SDK).
+ipk_full = ""
+ipk_slim = ""
+
+[receiver]
+# Slim: the Prysm the TV streams to. Empty: the runner starts prysm-headless here.
+url = ""
+# Where that local prysm-headless listens; the TV must reach it.
+listen = "0.0.0.0:8788"
+# This computer's address as the TV sees it; empty: the address on the route to the TV.
+advertise = ""
+# Optional https:// Prysm (reverse proxy) for the wss check.
+wss_url = ""
+# Local port of the stand-in Prysm that answers another stream version (426).
+mismatch_port = 18791
+
+[sweep]
+sizes = ["320x180", "640x360", "960x540", "1280x720"]
+rates = [30, 60]
+seconds = 10
+
+[eyes]
+# The portal whose state the guided checks set up; empty: the TV's (full package).
+portal = ""
