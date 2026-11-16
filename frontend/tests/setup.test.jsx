@@ -23,6 +23,10 @@ import {
   renderPortal,
   sleep,
   submit,
+  chooseKind,
+  kindOf,
+  kindRows,
+  kinds,
 } from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
@@ -89,15 +93,9 @@ test('setup steps keep the drafts, check each step and save both sections with o
   try {
     // The host's kinds and the kind's own editor; a video file only with
     // developer options on.
-    assert.deepEqual(
-      $$('option', field('capture.kind')).map((item) => item.value),
-      ['device', 'remote'],
-    );
+    assert.deepEqual(kinds('capture.kind'), ['device', 'remote']);
     await act(async () => saveDeveloper(true));
-    assert.deepEqual(
-      $$('option', field('capture.kind')).map((item) => item.value),
-      ['device', 'remote', 'file'],
-    );
+    assert.deepEqual(kinds('capture.kind'), ['device', 'remote', 'file']);
     // No device yet: nothing to choose a size for.
     assert(!$('.picture-choice', wizard()));
     await next();
@@ -260,7 +258,7 @@ test('setup again starts from the saved settings, and leaving it saves nothing',
   try {
     await openPage('Start over with setup');
     assert.equal(heading(), 'Video source');
-    assert.equal(field('capture.kind').value, 'device');
+    assert.equal(kindOf('capture.kind'), 'device');
     assert.equal(field('capture.path').value, '/dev/video0');
     await edit(field('capture.path'), '/dev/video5');
     await next();
@@ -276,7 +274,7 @@ test('setup again starts from the saved settings, and leaving it saves nothing',
     await openPage('Start over with setup');
     assert.equal(field('capture.path').value, '/dev/video0');
     await next();
-    await edit(field('output.kind'), 'null');
+    await chooseKind('output.kind', 'null');
     await next();
     assert.deepEqual($$('.review-item p').map(plain), [
       'Video capture device/dev/video0, 640 × 360 at 30 fps',
@@ -332,11 +330,11 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
   const portal = await renderPortal(WebosWebPortal, {});
   const { fixture } = portal;
   try {
-    assert(!field('capture.kind'));
+    assert(!kindRows('capture.kind'));
     assert.equal(radio('Balanced').checked, true);
     assert(!field('capture.width'), 'no number fields');
     await next();
-    assert(!field('output.kind'));
+    assert(!kindRows('output.kind'));
     await edit(field('output.address'), '192.0.2.4');
     await edit(field('output.leds.top'), 20);
     await next();
@@ -422,7 +420,7 @@ test('setup lists the devices present at once and finds lights on request; the t
     const devices = () => $$('input[type="radio"]', $('.device-rows'));
     assert.deepEqual(
       devices().map((input) => plain(input.closest('label'))),
-      ['USB Video/dev/video2', 'Elgato/dev/video4'],
+      ['USB Video', 'Elgato'],
     );
     assert.deepEqual(
       devices().map((input) => input.checked),

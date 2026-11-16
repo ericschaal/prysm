@@ -176,7 +176,9 @@ supervisor in each of its states and play the phone's calibration part). See the
     [draft](packages/web-portal/draft.ts): the video source
     (`#/settings/video`) or the lights (`#/settings/lights`) on a page of
     their own, opened from their row in Settings. The same step as in setup
-    ([section step](packages/web-portal/section-step.tsx), words in
+    ([section step](packages/web-portal/section-step.tsx): the kinds offered
+    as rows to tick, "Capture from" or "Send colours to", when there is more
+    than one, else none; words in
     [step copy](packages/web-portal/step-copy.ts)), one button that saves
     ("Use this video source", "Use these lights"), Cancel. Saving restarts
     screen sync, so the editor then checks it: with screen sync on it waits
@@ -213,7 +215,11 @@ supervisor in each of its states and play the phone's calibration part). See the
     asks the portal (`GET /api/v1/candidates/capture/device`) what is present
     as it opens, and lists the devices as rows to tick once it answers
     ("Looking for devices…" until then, with no row, so no row is replaced);
-    "Look again" asks again, keeping the rows and the focus while it looks. Every name found is kept in
+    "Look again", at the end of the "Capture device" heading (outside the
+    group's name), asks again, keeping the rows and the focus while it
+    looks; the line under the rows shows only while there is something to
+    say. A row shows its device's path only when the name does not tell it
+    apart (two of one name, no name, or missing). Every name found is kept in
     this browser ([device names](packages/web-portal/device-name.ts), the
     last eight per kind), so the saved device keeps a ticked row of its own
     by its name while it is not found ("Not plugged in" in the problem colour
@@ -239,7 +245,9 @@ supervisor in each of its states and play the phone's calibration part). See the
     (640 × 360, 30 fps), Smooth (640 × 360, 60 fps) and Efficient (320 × 180,
     30 fps); each is its target where a mode takes it, else the smallest
     mode covering the target size (16:9 first) at the target rate, else not
-    offered, and presets that come out the same show once. Each row shows
+    offered, and presets that come out the same show once. A preset set
+    above its target says so when ticked ("The smallest size this device
+    offers at 30 fps."). Each row shows
     the size and rate it sets. Nothing extra is stored: the ticked row
     follows from the saved numbers; a saved size and rate no preset sets is
     one more ticked row, "Custom", until a preset replaces it. One that a

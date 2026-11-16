@@ -672,6 +672,10 @@ legend {
   margin-bottom: var(--space-2);
   padding: 0;
 }
+/* A group's note line sits under it as a field's does under its control. */
+fieldset > .field-note {
+  margin-top: var(--space-2);
+}
 
 /* Form actions: the buttons at the end. */
 .actions {
@@ -2476,9 +2480,6 @@ button.section-status-main:focus-visible {
  * Advanced. With nothing to say the line takes no room, and the Advanced
  * toggle is one more row of the list: one line between them, not two.
  */
-.picture-choice > .field-note {
-  margin-top: var(--space-2);
-}
 .picture-choice:has(+ .advanced) {
   margin-bottom: var(--space-2);
 }
@@ -2489,7 +2490,9 @@ button.section-status-main:focus-visible {
 .picture-choice:has(> .field-note[data-said='false']):has(+ .advanced) {
   margin-bottom: 0;
 }
-.picture-choice:has(> .field-note[data-said='false']) + .advanced > .row-toggle {
+.picture-choice:has(> .field-note[data-said='false'])
+  + .advanced
+  > .row-toggle {
   border-top: 0;
 }
 
@@ -2806,7 +2809,23 @@ button.section-status-main:focus-visible {
 }
 
 /* Under the found devices: what the lookup found, and Look again. */
-.device-rows > .help {
+/*
+ * The devices' heading carries Look again at its end, so the action takes
+ * no line of its own; on a narrow screen it wraps under the heading.
+ */
+.device-rows > legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: var(--space-4);
+  width: 100%;
+}
+.device-rows > legend > button.link {
+  font-size: var(--text-small);
+}
+/* What the lookup has to say, under the rows; nothing, no line. */
+.device-rows > .help:not(:empty) {
   margin-top: var(--space-2);
 }
 
@@ -2867,7 +2886,6 @@ button.section-status-main:focus-visible {
   overflow: visible;
 }
 .leds > .field-note {
-  margin-top: var(--space-2);
   text-align: center;
 }
 .screen {

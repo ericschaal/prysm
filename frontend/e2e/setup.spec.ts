@@ -1,6 +1,6 @@
 // The setup wizard against a real engine: from empty settings to a saved
 // setup, written to the settings file and summed up on Home.
-import { expect, test } from './prysm';
+import { chooseKind, expect, test } from './prysm';
 
 test.use({
   settings: { processing: { brightness_percent: 80 } },
@@ -21,15 +21,14 @@ test('setup saves a TV source and no lights, on disk and on Home', async ({
 }) => {
   await page.goto('/');
   const wizard = page.getByRole('form', { name: 'Video source' });
-  await wizard
-    .getByLabel('Capture from')
-    .selectOption({ label: 'LG TV on your network' });
+  await chooseKind(wizard, 'Capture from', 'LG TV on your network');
   await page.getByRole('button', { name: 'Next' }).click();
 
-  await page
-    .getByRole('form', { name: 'Your lights' })
-    .getByLabel('Send colours to')
-    .selectOption({ label: 'No lights (test)' });
+  await chooseKind(
+    page.getByRole('form', { name: 'Your lights' }),
+    'Send colours to',
+    'No lights (test)',
+  );
   await page.getByRole('button', { name: 'Next' }).click();
 
   const review = page.getByRole('form', { name: 'Review and start' });
@@ -53,7 +52,11 @@ test('setup saves a TV source and no lights, on disk and on Home', async ({
 test('a step with a missing value says so at its field', async ({ page }) => {
   await page.goto('/');
   const wizard = page.getByRole('form', { name: 'Video source' });
-  await expect(wizard.getByLabel('Capture from')).toHaveValue('device');
+  await expect(
+    wizard
+      .getByRole('radiogroup', { name: 'Capture from' })
+      .getByRole('radio', { name: 'Video capture device' }),
+  ).toBeChecked();
   await expect(wizard).toContainText('No devices found.');
   await page.getByRole('button', { name: 'Next' }).click();
 

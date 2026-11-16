@@ -2,7 +2,14 @@
 // (stand-ins with fixed modes, from the `fake_devices` host) and a
 // capture-only TV (the test sender), and the sizes and rates each delivers.
 import type { Page } from '@playwright/test';
-import { anyMode, expect, fixedMode, test, type FakeDevice } from './prysm';
+import {
+  anyMode,
+  chooseKind,
+  expect,
+  fixedMode,
+  test,
+  type FakeDevice,
+} from './prysm';
 
 const card: FakeDevice = {
   name: 'Capture card',
@@ -45,9 +52,7 @@ test.describe('a capture card', () => {
   }) => {
     await page.goto('/#/settings/video');
     const video = editor(page);
-    await video.form
-      .getByLabel('Capture from')
-      .selectOption({ label: 'Video capture device' });
+    await chooseKind(video.form, 'Capture from', 'Video capture device');
     // Found without pressing anything; none ticked yet, so no sizes.
     const card = video.devices.getByRole('radio', { name: 'Capture card' });
     const webcam = video.devices.getByRole('radio', { name: 'Webcam' });

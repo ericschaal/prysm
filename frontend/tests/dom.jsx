@@ -131,6 +131,19 @@ export const openSettings = () =>
 export const row = (label) =>
   $$('.row').find((item) => $('.row-label', item)?.textContent === label);
 
+/** A section's kind rows (`capture.kind`), while it offers a choice. */
+export const kindRows = (path) => $(`[data-field="${path}"]`);
+/** The kinds offered, in order: `['device', 'remote']`. */
+export const kinds = (path) =>
+  $$('input[type="radio"]', kindRows(path)).map((input) => input.value);
+/** The ticked kind. */
+export const kindOf = (path) =>
+  $$('input[type="radio"]', kindRows(path)).find((input) => input.checked)
+    ?.value;
+/** Tick a kind, as a user does. */
+export const chooseKind = (path, kind) =>
+  click($(`input[value="${kind}"]`, kindRows(path)));
+
 /** A choice's radio by its row's label: `Balanced`, `Custom`, `Dark`. */
 export const radio = (label) => $('input[type="radio"]', row(label));
 

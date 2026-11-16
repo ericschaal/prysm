@@ -127,12 +127,15 @@ export function RowChoice({
   about,
   problem,
   facts,
+  value,
   checked,
   disabled = false,
   onChoose,
 }: {
   /** The radio group's name: one per choice. */
   name: string;
+  /** The radio's value, such as an adapter kind. */
+  value?: string;
   label: string;
   /** What choosing it means; absent: the label says enough. */
   about?: string;
@@ -151,6 +154,7 @@ export function RowChoice({
         <input
           type="radio"
           name={name}
+          value={value}
           checked={checked}
           disabled={disabled}
           aria-labelledby={`${id}-label`}

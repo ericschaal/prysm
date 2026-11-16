@@ -64,6 +64,10 @@ import {
   navigated,
   submit,
   text,
+  chooseKind,
+  kindOf,
+  kindRows,
+  kinds,
 } from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
@@ -1582,8 +1586,6 @@ test('the status never opens the source: off, it says so and shows no picture', 
 });
 
 test('a video file and no lights are developer options; a saved one still shows', async () => {
-  const kinds = (name) =>
-    $$('option', field(name)).map((option) => option.value);
   const saved = await renderPortal(HeadlessWebPortal, {
     capture: { kind: 'file', path: '/clip.mkv' },
     output: { kind: 'null' },
@@ -1607,7 +1609,7 @@ test('a video file and no lights are developer options; a saved one still shows'
     await leaveEditor();
     // WLED is then the only lights: no choice to make.
     await openEditor('Lights');
-    assert(!field('output.kind'));
+    assert(!kindRows('output.kind'));
     await leaveEditor();
     // On in About this Prysm, for this browser.
     await openPage('About this Prysm');
@@ -1622,17 +1624,25 @@ test('a video file and no lights are developer options; a saved one still shows'
   }
 });
 
-test('kind selectors swap panels without losing drafts', async () => {
+test('kind rows swap panels without losing drafts', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
     // A video file and no lights are developer options.
     await act(async () => saveDeveloper(true));
     await openEditor('Video source');
+    // A choice in the rows pattern, named by its heading alone.
+    const group = kindRows('capture.kind');
+    assert.equal(group.getAttribute('role'), 'radiogroup');
+    assert.equal(
+      document.getElementById(group.getAttribute('aria-labelledby'))
+        .textContent,
+      'Capture from',
+    );
     assert.deepEqual(
-      $$('option', field('capture.kind')).map((item) => [
-        item.value,
-        item.textContent,
+      $$('input', kindRows('capture.kind')).map((input) => [
+        input.value,
+        input.closest('label').textContent,
       ]),
       [
         ['device', 'Video capture device'],
@@ -1640,13 +1650,13 @@ test('kind selectors swap panels without losing drafts', async () => {
         ['file', 'Video file (development only)'],
       ],
     );
-    await edit(field('capture.kind'), 'remote');
+    await chooseKind('capture.kind', 'remote');
     assert(!field('capture.path'));
     // The TV reaches this computer at the portal's address: no address field.
     assert(!field('capture.listen'));
-    await edit(field('capture.kind'), 'device');
+    await chooseKind('capture.kind', 'device');
     assert.equal(field('capture.path').value, '/dev/video0');
-    await edit(field('capture.kind'), 'file');
+    await chooseKind('capture.kind', 'file');
     assert.equal(field('capture.path').value, '');
     assert.equal(field('capture.path').labels[0].textContent, 'Video file');
     // Development only: it says what it needs.
@@ -1654,27 +1664,24 @@ test('kind selectors swap panels without losing drafts', async () => {
       form('Video source').textContent,
       /It plays once, through FFmpeg 9 or newer\./,
     );
-    await edit(field('capture.kind'), 'remote');
+    await chooseKind('capture.kind', 'remote');
     await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'remote' });
     assert.deepEqual(fixture.snapshot().settings.output, output);
 
     await leaveEditor();
     await openEditor('Lights');
-    assert.deepEqual(
-      $$('option', field('output.kind')).map((item) => item.value),
-      ['wled', 'null'],
-    );
+    assert.deepEqual(kinds('output.kind'), ['wled', 'null']);
     await edit(field('output.address'), 'wled.local');
-    await edit(field('output.kind'), 'null');
+    await chooseKind('output.kind', 'null');
     assert(
       form('Your lights').textContent.includes(
         'There is nothing to configure.',
       ),
     );
-    await edit(field('output.kind'), 'wled');
+    await chooseKind('output.kind', 'wled');
     assert.equal(field('output.address').value, 'wled.local', 'kept');
-    await edit(field('output.kind'), 'null');
+    await chooseKind('output.kind', 'null');
     await submit(form('Your lights'));
     assert.deepEqual(fixture.snapshot().settings, {
       capture: { kind: 'remote' },
@@ -1699,7 +1706,7 @@ test('an unconfigured section starts from its first kind and saves only when val
     await openSettings();
     assert.equal(valueOf('Video source'), 'Not set up yet');
     await openEditor('Video source');
-    assert.equal(field('capture.kind').value, 'device');
+    assert.equal(kindOf('capture.kind'), 'device');
     assert.equal(errorOf(field('capture.path')), undefined);
     await submit(form('Video source'));
     assert.equal(
@@ -2079,7 +2086,7 @@ test('the webOS portal edits TV capture with its presets and menus', async () =>
   const { fixture } = portal;
   try {
     await openEditor('Video source');
-    assert(!field('capture.kind'));
+    assert(!kindRows('capture.kind'));
     assert.equal($('.page-heading h2').textContent, 'Video source');
     assert.equal(field('capture.include_ui').checked, true);
     await click(radio('Smooth'));
@@ -2095,7 +2102,7 @@ test('the webOS portal edits TV capture with its presets and menus', async () =>
     assert.deepEqual(fixture.snapshot().settings.output, output);
     await leaveEditor();
     await openEditor('Lights');
-    assert(!field('output.kind'));
+    assert(!kindRows('output.kind'));
   } finally {
     await portal.unmount();
   }

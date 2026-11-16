@@ -63,7 +63,7 @@ export function RemoteEditor({
       defaults={remoteDefaults}
       onChange={onChange}
       modes={modesOf(encoding)}
-      source="The TV"
+      source="This TV"
       unreachable="The TV isn’t connected. Give the TV app the address of this page."
       lead={inSight ? select : null}
       advancedPaths={['capture.encoding']}

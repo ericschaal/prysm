@@ -1,4 +1,4 @@
-import { use, useState } from 'react';
+import { use, useId, useState } from 'react';
 import {
   adapterFor,
   createSection,
@@ -7,11 +7,12 @@ import {
   type AdapterUis,
 } from './adapters';
 import { DeveloperContext } from './developer';
-import { SelectField } from './fields';
+import { FieldMessage } from './fields';
 import { useFieldScopeContext } from './form';
+import { RowChoice } from './rows';
 
 /**
- * The kind selector (when the host registers more than one kind) and the
+ * The kind as rows to tick (when more than one kind is offered) and the
  * kind's editor. Switching kinds keeps what was typed for the other kinds and
  * drops the server's errors for the section. Used inside a field scope.
  */
@@ -30,6 +31,8 @@ export function SectionFields<S extends AdapterSection>({
   onChange: (next: S) => void;
 }) {
   const scope = useFieldScopeContext();
+  const nameId = useId();
+  const legendId = useId();
   /** Drafts of other kinds, so switching back keeps what was typed. */
   const [others, setOthers] = useState<Record<string, S>>({});
   const developer = use(DeveloperContext);
@@ -51,16 +54,31 @@ export function SectionFields<S extends AdapterSection>({
   return (
     <>
       {kinds.length > 1 ? (
-        <SelectField
-          path={`${section}.kind`}
-          label={section === 'capture' ? 'Capture from' : 'Send colours to'}
-          value={value.kind}
-          options={kinds.map((kind) => ({
-            value: kind,
-            label: adapterFor(adapters, kind)?.label ?? kind,
-          }))}
-          onChange={switchKind}
-        />
+        <fieldset
+          className="kind-rows"
+          role="radiogroup"
+          aria-labelledby={legendId}
+          data-field={`${section}.kind`}
+          tabIndex={-1}
+        >
+          <legend id={legendId}>
+            {section === 'capture' ? 'Capture from' : 'Send colours to'}
+          </legend>
+          <ul className="rows">
+            {kinds.map((kind) => (
+              <RowChoice
+                key={kind}
+                name={nameId}
+                value={kind}
+                label={adapterFor(adapters, kind)?.label ?? kind}
+                checked={kind === value.kind}
+                disabled={scope.disabled}
+                onChoose={() => switchKind(kind)}
+              />
+            ))}
+          </ul>
+          <FieldMessage path={`${section}.kind`} />
+        </fieldset>
       ) : null}
       {Editor ? (
         <Editor key={value.kind} value={value} onChange={onChange} />

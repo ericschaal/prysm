@@ -12,7 +12,7 @@
  * `PRYSM_HEADLESS_BIN`, `PRYSM_FAKE_DEVICES_BIN` and `PRYSM_TEST_SENDER_BIN`,
  * or else the debug builds in `$CARGO_TARGET_DIR` (default `target`).
  */
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, type Locator } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -325,5 +325,20 @@ export const test = base.extend<{
     for (const sender of started) await sender.stop();
   },
 });
+
+/**
+ * Tick a kind in a form's kind rows (`Capture from`, `Send colours to`):
+ * a row is clicked as a whole, its radio drawn as the tick.
+ */
+export async function chooseKind(
+  form: Locator,
+  heading: string,
+  label: string,
+): Promise<void> {
+  await form
+    .getByRole('radiogroup', { name: heading })
+    .getByText(label, { exact: true })
+    .click();
+}
 
 export { expect };

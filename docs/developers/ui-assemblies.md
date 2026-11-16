@@ -84,7 +84,7 @@ optional `discovery` (devices to pick) and `httpCaptureModesClient()` as the
 required `captureModes` (the sizes and rates a capture delivers, for its
 editor; `fakeCaptureModesClient()` in the testkit). A host registers each section's kinds as an `AdapterUis` map of
 `AdapterUi { label, create, Editor, normalize?, summary?, lighting?, edges? }`; the map is
-exhaustive over the host's generated union, the form shows a kind selector when
+exhaustive over the host's generated union, the form shows the kinds as rows to tick when
 there is more than one, and editors are controlled components built from the
 portal's fields. Saves copy the latest observed settings and replace one
 section, so unknown fields are kept; a section changed elsewhere is reloaded

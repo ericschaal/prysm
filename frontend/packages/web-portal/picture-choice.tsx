@@ -105,6 +105,17 @@ export function PictureChoice<V extends Picture>({
     setMoved(null);
     onChange({ ...value, width, height, fps });
   }
+  /**
+   * What a ticked preset means: its trade, or, where the source has nothing
+   * as small as the preset aims for, that this is its smallest.
+   */
+  const aboutOf = (each: Offered) => {
+    const at = picturePresets[each.preset];
+    const object = source.charAt(0).toLowerCase() + source.slice(1);
+    return each.width === at.width && each.height === at.height
+      ? at.about
+      : `The smallest size ${object} offers at ${each.fps} fps.`;
+  };
   const facts = (size: Required<Picture>) =>
     pictureFacts(size, size)
       .map((fact) => fact.value)
@@ -131,7 +142,7 @@ export function PictureChoice<V extends Picture>({
               key={each.preset}
               name={nameId}
               label={at.label}
-              about={checked ? at.about : undefined}
+              about={checked ? aboutOf(each) : undefined}
               facts={facts(each)}
               checked={checked}
               disabled={locked}

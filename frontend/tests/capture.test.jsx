@@ -268,7 +268,8 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
     await settled();
     // Looked for as the editor opened, nothing pressed.
     assert.deepEqual(devices(), [
-      ['USB Video', '/dev/video2', false],
+      // Named devices without their paths; the missing one by its path.
+      ['USB Video', undefined, false],
       [path, 'Not plugged in', true],
     ]);
     assert.equal(
@@ -293,7 +294,7 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
     await click($('.device-rows input'));
     await settled();
     assert.equal(field('capture.path').value, '/dev/video2');
-    assert.deepEqual(devices(), [['USB Video', '/dev/video2', true]]);
+    assert.deepEqual(devices(), [['USB Video', undefined, true]]);
     assert.deepEqual(
       rows().map(([label, , checked, locked]) => [label, checked, locked]),
       [
@@ -542,7 +543,7 @@ test('a capture-only TV that has not connected locks the rows on the saved choic
     );
     assert.equal(
       line(),
-      'The TV can’t do 640 × 360 at 60 fps, so it is set to Balanced.',
+      'This TV can’t do 640 × 360 at 60 fps, so it is set to Balanced.',
     );
     assert.deepEqual(encodings(), ['h264_hardware', 'h264_software']);
     assert(field('capture.encoding').closest('[hidden]'), 'under Advanced');
@@ -792,5 +793,121 @@ test('the first lookup lists nothing until it answers, then each device once, in
     assert.equal($('.row-label', saved).textContent, 'Card');
   } finally {
     await portal.unmount();
+  }
+});
+
+test('device rows say where a device is only when its name does not tell it apart', async () => {
+  const discovery = fakeDiscoveryClient({
+    'capture/device': [
+      {
+        label: 'Elgato',
+        detail: '/dev/video7',
+        fields: { path: '/dev/video7' },
+      },
+      {
+        label: 'USB Video',
+        detail: '/dev/video8',
+        fields: { path: '/dev/video8' },
+      },
+      {
+        label: 'USB Video',
+        detail: '/dev/video9',
+        fields: { path: '/dev/video9' },
+      },
+      { label: '', detail: '/dev/video3', fields: { path: '/dev/video3' } },
+      {
+        label: 'Capture box',
+        detail: 'Front HDMI',
+        fields: { path: '/dev/video4' },
+      },
+    ],
+  });
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', path: '/dev/video7' }, output },
+    undefined,
+    { discovery: discovery.client },
+  );
+  try {
+    await openEditor('Video source');
+    await settled();
+    assert.deepEqual(
+      $$('.device-rows .row-choice').map((row) => [
+        $('.row-label', row).textContent,
+        $('.row-value', row)?.textContent,
+      ]),
+      [
+        ['Elgato', undefined],
+        ['USB Video', '/dev/video8'],
+        ['USB Video', '/dev/video9'],
+        ['/dev/video3', undefined],
+        ['Capture box', 'Front HDMI'],
+      ],
+    );
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('Look again sits on the devices heading, outside the group name', async () => {
+  const discovery = fakeDiscoveryClient({
+    'capture/device': [{ label: 'Elgato', detail: path, fields: { path } }],
+  });
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', path }, output },
+    undefined,
+    { discovery: discovery.client },
+  );
+  try {
+    await openEditor('Video source');
+    await settled();
+    const group = $('.device-rows');
+    assert.equal(
+      document.getElementById(group.getAttribute('aria-labelledby'))
+        .textContent,
+      'Capture device',
+    );
+    assert.equal(button('Look again').closest('legend'), $('legend', group));
+    // Nothing to say under the rows: no line.
+    assert.equal($('.device-rows > .help').textContent, '');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a preset above its target says it is the smallest the source offers at its rate', async () => {
+  for (const [capture, source] of [
+    [{ kind: 'device', path }, 'this device'],
+    [{ kind: 'remote' }, 'this TV'],
+  ]) {
+    const modes = fakeCaptureModesClient(() =>
+      known(fixedMode(1280, 720, 30), fixedMode(1280, 720, 60)),
+    );
+    const portal = await renderPortal(
+      HeadlessWebPortal,
+      { capture: { ...capture, width: 1280, height: 720, fps: 30 }, output },
+      undefined,
+      { captureModes: modes.client },
+    );
+    const about = (label) =>
+      plain(
+        $('.row-text > .row-value', radio(label).closest('.row'))
+          ?.textContent ?? '',
+      );
+    try {
+      await openEditor('Video source');
+      assert.equal(
+        about('Balanced'),
+        `The smallest size ${source} offers at 30 fps.`,
+      );
+      await click(radio('Smooth'));
+      assert.equal(
+        about('Smooth'),
+        `The smallest size ${source} offers at 60 fps.`,
+      );
+    } finally {
+      await portal.unmount();
+    }
   }
 });

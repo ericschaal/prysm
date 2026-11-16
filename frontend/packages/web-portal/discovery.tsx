@@ -186,7 +186,9 @@ export function FindDevices({
  * again; picking one fills `path` (its field at `field`). The saved
  * device keeps a ticked row of its own while it is not found, by the name
  * this browser last saw for it (else its value), with `missing` beneath in
- * the problem colour. Under the rows one line says how the lookup went, or
+ * the problem colour. "Look again" sits at the end of the heading line.
+ * Under the rows, only while there is something to say, one line says how
+ * the lookup went (looking, nothing found, failed), or
  * `problem` (what is wrong with the picked device), or the problem of
  * `path`, such as no device chosen: while there are rows they own `path`,
  * so a save goes to them. The field to type it (`byHand`) is under
@@ -264,6 +266,18 @@ export function DeviceRows({
     status = 'Couldn’t look for devices just now.';
   else if (!found.length)
     status = 'No devices found. Plug one in, or enter it below.';
+  /**
+   * A row says where its device is only when its name does not tell it
+   * apart: two found under one name, or none; other details stay.
+   */
+  const aboutOf = (candidate: Candidate, at: string) => {
+    const detail = detailOf(candidate);
+    const named = candidate.label !== '';
+    const shared =
+      found.filter((other) => other.label === candidate.label).length > 1;
+    // Without a name the path is the row's label already.
+    return detail && (detail !== at || (shared && named)) ? detail : undefined;
+  };
   const choose = (next: string) => {
     scope.edited(path);
     onPick(next);
@@ -279,7 +293,20 @@ export function DeviceRows({
         data-field={rows ? path : undefined}
         tabIndex={rows ? -1 : undefined}
       >
-        <legend id={legendId}>{legend}</legend>
+        {/* The group is named by its label alone; Look again acts on it. */}
+        <legend>
+          <span id={legendId}>{legend}</span>
+          <button
+            type="button"
+            className="link"
+            disabled={scope.disabled}
+            aria-disabled={looking || undefined}
+            aria-busy={looking}
+            onClick={() => look(discovery)}
+          >
+            Look again
+          </button>
+        </legend>
         {rows ? (
           <ul className="rows">
             {found.map((candidate) => {
@@ -288,8 +315,8 @@ export function DeviceRows({
                 <RowChoice
                   key={at}
                   name={nameId}
-                  label={candidate.label}
-                  about={detailOf(candidate) || undefined}
+                  label={candidate.label || at}
+                  about={aboutOf(candidate, at)}
                   checked={at === value}
                   disabled={scope.disabled}
                   onChoose={() => choose(at)}
@@ -307,22 +334,12 @@ export function DeviceRows({
           </ul>
         ) : null}
         <p
+          id={lineId}
           className="help"
+          role="status"
           data-tone={error || problem ? 'warning' : undefined}
         >
-          <span id={lineId} role="status">
-            {status}
-          </span>{' '}
-          <button
-            type="button"
-            className="link"
-            disabled={scope.disabled}
-            aria-disabled={looking || undefined}
-            aria-busy={looking}
-            onClick={() => look(discovery)}
-          >
-            Look again
-          </button>
+          {status}
         </p>
       </fieldset>
       {plain ? byHand : null}
