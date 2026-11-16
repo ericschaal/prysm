@@ -10,7 +10,7 @@ own beyond connection limits.
 ```mermaid
 flowchart LR
     Browser[Browser portal] -->|HTTP| Portal[WebPortal surface]
-    Portal -->|set_target, replace_settings, try_processing, set_calibration, candidates| Engine
+    Portal -->|set_target, replace_settings, try_processing, set_calibration, candidates, capture_modes| Engine
     Engine -->|watch: Snapshot| Portal
     Host[Host main] -->|listener, assets, access| Portal
 ```
@@ -63,8 +63,9 @@ into `@prysm/contracts/application`.
 | `PUT /api/v1/calibration` | `Calibration { pattern, uncorrected }` | `204` once shown in the state; see [Calibration](#calibration) |
 | `DELETE /api/v1/calibration` | — | `204` once cleared (also when none was set) |
 | `GET /api/v1/candidates/{section}/{kind}` | — | `200 Candidate[]`: what the adapter finds to choose from; see [Candidates](#candidates) |
+| `POST /api/v1/capture/modes` | `CaptureSettings` (a capture section, `{ kind, ... }`) | `200 Modes`: the sizes and rates that capture delivers; see [Capture modes](#capture-modes) |
 | `GET /metrics` (only when enabled) | — | `200` Prometheus text; see [Metrics](#metrics). Disabled: `404` like any unknown path |
-| `GET /api/v1/capture/stream` (only with a capture handoff) | WebSocket upgrade, subprotocol `prysm-capture.v4` | `101`: a capture-only TV's frame stream; see [Capture stream](#capture-stream) |
+| `GET /api/v1/capture/stream` (only with a capture handoff) | WebSocket upgrade, subprotocol `prysm-capture.v5` | `101`: a capture-only TV's frame stream; see [Capture stream](#capture-stream) |
 
 `State` is `{ target, session, input?, output_issue?, output_brightness?, device_led_count?, calibration?, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
@@ -195,7 +196,39 @@ What each adapter finds:
 | `device` | Video capture devices, filling `path` | Linux: each `/dev/video*` node that reports V4L2 video capture (asked for its capabilities, not started), named by its card name. macOS: AVFoundation's video devices, by localized name, filling the unique ID. Elsewhere nothing. |
 | `wled` | WLED lights, filling `address` (the IPv4 address that answered) | One multicast DNS question for `_wled._tcp.local` from an ephemeral port (a one-shot legacy unicast query, so nothing binds port 5353), answers collected for 1.2 s, then one `GET /json/info` per answer (at most 16, in parallel, 350 ms per step) for its name and LED count. Nothing else is sent to WLED. |
 
-Others (`file`, `remote`, `webos`, `null`) find nothing. WLED discovery only
+Others (`file`, `remote`, `webos`, `null`) find nothing.
+
+## Capture modes
+
+`POST /api/v1/capture/modes` with a capture section as the settings file
+holds it (`{ "kind": "device", "path": "/dev/video0", "width": 640 }`) asks
+that capture's adapter what its hardware delivers. Only the fields that
+select hardware count (`path`, `encoding`); the size and rate in the body
+need not be valid. A form can ask before saving.
+
+- The reply is `Modes`: `{ "status": "unknown" }` when the adapter cannot
+  reach its hardware, or `{ "status": "known", "modes": [Mode, ...] }`, each
+  `Mode` `{ width, height, fps }` of spans `{ min, max, step }` (every
+  combination of `min`, `min + step`, … `max`). No modes: nothing with
+  these settings. A span where the hardware takes any value in it, fixed
+  values where it offers fixed ones.
+- An unregistered kind is `422 invalid` (`capture.kind`); fields the kind
+  does not decode `422 invalid`; a body without `kind` or not JSON `400`;
+  other methods `405`. The origin policy applies.
+- Like candidates it is a lookup, not state: off the async runtime, no
+  revision, not through the command queue; the adapter keeps it brief, the
+  15 s command deadline backs it up.
+- Starting lighting with a size or rate a known answer excludes fails with
+  `422 invalid` on that field (`capture.width`, `capture.height`,
+  `capture.fps`, for `remote` also `capture.encoding`), saying what is
+  delivered.
+
+| Kind | Answers |
+| --- | --- |
+| `device` | Linux: the device's YUYV (even widths), RGB3 and BGR3 sizes (fixed, or ranges for stepwise and continuous sizes) and their whole-number rates (rates of a range of sizes: those at both ends); none when it cannot set its frame interval. macOS: AVFoundation's formats, each size with the whole-number rates of its ranges. Unknown when the device cannot be opened or cannot list its sizes and rates; elsewhere unknown. |
+| `file` | Any size up to 3840 × 2160 at any rate: FFmpeg scales. |
+| `webos` | Even sizes 2 to 1920 × 2 to 1080 at 1 to 60 fps: LG's driver scales. |
+| `remote` | The newest offer a capture-only TV sent with a connection attempt (also while lighting is off, see [Capture stream](#capture-stream)), for the requested `encoding`; unknown before a TV tried. | WLED discovery only
 reaches lights on the same network segment as Prysm: across VLANs or subnets
 without an mDNS reflector nothing answers, and in Docker only host networking
 (`network_mode: host`) lets the question out; on a bridge network the reply is
@@ -313,15 +346,19 @@ did not deliver.
 webOS worker) streams its picture on, on the portal's own listener: the TV
 needs one address, and the stream passes an HTTPS reverse proxy as `wss://`.
 The wire protocol is the
-[capture-remote adapter's](../../adapters/capture-remote/README.md#wire-protocol-version-4);
+[capture-remote adapter's](../../adapters/capture-remote/README.md#wire-protocol-version-5);
 the portal only answers the upgrade and hands the connection, as a plain
 blocking socket, to the `remote` source:
 
-- `101 Switching Protocols` with `Sec-WebSocket-Protocol: prysm-capture.v4`
+- For a sender of this version, its `prysm-capture-offer` header (what the
+  TV can stream, at most 4096 ASCII bytes) is passed to the `remote` source
+  first, whatever the answer, so `POST /api/v1/capture/modes` knows a TV
+  that is waiting for lighting.
+- `101 Switching Protocols` with `Sec-WebSocket-Protocol: prysm-capture.v5`
   when the request is a version-13 WebSocket upgrade offering that
   subprotocol and the `remote` source runs (lighting on with that capture).
   The newest connection replaces the one the source reads.
-- `426 Upgrade Required` (`bad_request`), naming `prysm-capture.v4` in
+- `426 Upgrade Required` (`bad_request`), naming `prysm-capture.v5` in
   `Sec-WebSocket-Protocol`, when the sender offers another version or none.
 - `503 unavailable` while no `remote` source runs: lighting is off or another
   capture is set. The TV retries every second.
@@ -334,7 +371,7 @@ another site is refused (`403`). Like the rest of the API there is no
 password: anyone on the LAN can stream frames while the remote source runs.
 
 Behind a reverse proxy, the proxy must pass WebSocket upgrades on this path,
-including `Sec-WebSocket-Protocol` (standard proxies such as Caddy, nginx
+including `Sec-WebSocket-Protocol` and the `prysm-capture-offer` header (standard proxies such as Caddy, nginx
 with `proxy_set_header Upgrade/Connection` and Traefik do), and it must not
 put this path behind a login page, since the TV cannot sign in. The TV's
 picture then travels encrypted to the proxy (`https://` address on the TV).
@@ -394,7 +431,7 @@ ignored.
 
 CORS responses echo the request's `Origin` in `Access-Control-Allow-Origin`. A
 preflight (`OPTIONS` from an allowed cross origin) answers `204` with
-`Access-Control-Allow-Methods: GET, PUT, DELETE`, `Access-Control-Allow-Headers:
+`Access-Control-Allow-Methods: GET, POST, PUT, DELETE`, `Access-Control-Allow-Headers:
 content-type`, `Access-Control-Max-Age: 600` and, when asked by Chromium's
 Private Network Access, `Access-Control-Allow-Private-Network: true`. No
 credentials are involved, so `Access-Control-Allow-Credentials` is never sent.
@@ -477,6 +514,10 @@ preview viewer registered for it, the 10 per second cap, its own limit, the
 origin policy and `405`, and `/metrics`: `404` when disabled; content type, counted frames,
 `405` and the origin policy when enabled; candidates: the fake output's
 list, the default empty list, an unknown kind (422), malformed paths (404),
-`405`, the origin policy, and no revision change. Unit tests in `src/metrics.rs` check
+`405`, the origin policy, and no revision change; capture modes: the fake
+source's answer for a section with an invalid size, an unknown kind (422),
+undecodable fields, a body without `kind` (400), `405`, the origin policy
+and no revision change. `tests/capture.rs` checks that a refused upgrade
+(lighting off) still delivers the sender's offer. Unit tests in `src/metrics.rs` check
 the exact text; unit tests in `src/preview.rs` decode the JPEG and check its size,
 the sRGB colors and the strip bound; in `src/colors.rs` the averaged segments.

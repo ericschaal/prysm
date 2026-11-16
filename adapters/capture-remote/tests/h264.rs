@@ -58,7 +58,7 @@ fn connect(addr: SocketAddr) -> RemoteSender {
     let url = format!("ws://{addr}/api/v1/capture/stream")
         .parse()
         .unwrap();
-    RemoteSender::connect(&url, addr).unwrap()
+    RemoteSender::connect(&url, addr, &prysm_capture_remote::testkit::offer()).unwrap()
 }
 
 /// Limited-range NV12: a horizontal luma ramp moved by `shift`, plus four

@@ -244,8 +244,12 @@ fn stream(
         None => prysm_ports::system_lookup(prysm.host(), prysm.port())
             .map_err(|error| format!("cannot resolve {prysm}: {error}"))?,
     };
-    let mut sender =
-        RemoteSender::connect(&prysm.capture_stream(), address).map_err(|error| chain(&error))?;
+    let mut sender = RemoteSender::connect(
+        &prysm.capture_stream(),
+        address,
+        &crate::capture::offer(&[prysm_capture_webos::MODE]),
+    )
+    .map_err(|error| chain(&error))?;
     let request = sender.request();
     let checked = (Some(settings.backend), width, height, settings.fps);
     if (

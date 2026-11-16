@@ -9,6 +9,8 @@ description = "V4L2 and AVFoundation video capture threads behind a safe callbac
 [dependencies]
 anyhow = "1.0.104"
 prysm-core.workspace = true
+# `Mode`, `Span`: what a device captures.
+prysm-ports.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

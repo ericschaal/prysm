@@ -4,7 +4,7 @@ use prysm_capture_remote::{
     RemoteReceiver, RemoteSender, StreamEncoding, StreamRequest, WireError,
 };
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, FrameSink, LightingTarget, Settings};
+use prysm_ports::{AdapterSettings, FrameSink, LightingTarget, Modes, Settings};
 use prysm_runtime::fakes::{CallLog, FakeOutputSettings, FakeOutputs, MemoryStore};
 use prysm_runtime::{EngineHandle, Prysm, Shutdown};
 use prysm_web_portal::{Access, WebPortal};
@@ -89,7 +89,8 @@ impl Host {
     /// Connect a sender off the async runtime, as the TV's worker does.
     async fn connect(&self) -> prysm_ports::Result<RemoteSender> {
         let (url, address) = (self.url(), self.address);
-        tokio::task::spawn_blocking(move || RemoteSender::connect(&url, address))
+        let offer = prysm_capture_remote::testkit::offer();
+        tokio::task::spawn_blocking(move || RemoteSender::connect(&url, address, &offer))
             .await
             .unwrap()
     }
@@ -140,12 +141,20 @@ async fn deliver(sender: RemoteSender, engine: &EngineHandle, count: u64) -> Rem
 async fn a_sender_streams_through_the_portal_once_lighting_runs() {
     timeout(LIMIT, async {
         let host = start(true).await;
+        let remote = AdapterSettings::new("remote", &RAW);
+        let modes = || host.engine.capture_modes(remote.clone());
+        assert_eq!(modes().await.unwrap(), Modes::Unknown);
         // Lighting is off: nobody receives; the sender is told and retries.
         let error = host.connect().await.unwrap_err();
         assert_eq!(
             wire_cause(&error),
             Some(WireError::Unavailable(503)),
             "{error}"
+        );
+        // Its refused attempt carried its offer.
+        assert_eq!(
+            modes().await.unwrap(),
+            prysm_capture_remote::testkit::offer().modes(StreamEncoding::Raw)
         );
 
         host.engine

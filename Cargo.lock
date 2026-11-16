@@ -1762,6 +1762,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "prysm-core",
+ "prysm-ports",
  "rustix 1.1.6",
  "thiserror 2.0.21",
  "tracing",
@@ -1866,6 +1867,7 @@ dependencies = [
  "openh264",
  "prysm-core",
  "prysm-h264-rvenc-sys",
+ "prysm-ports",
  "thiserror 2.0.21",
 ]
 

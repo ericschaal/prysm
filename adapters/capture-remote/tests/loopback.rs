@@ -2,10 +2,10 @@
 //! upgrade and hand-over. Every wait is bounded.
 use prysm_capture_remote::testkit::{BOUND, Portal};
 use prysm_capture_remote::{
-    RemoteReceiver, RemoteSender, RemoteSource, StreamEncoding, StreamRequest, WireError,
+    Offer, RemoteReceiver, RemoteSender, RemoteSource, StreamEncoding, StreamRequest, WireError,
 };
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
-use prysm_ports::{FrameSink, FrameSource, SourceFactory};
+use prysm_ports::{FrameSink, FrameSource, Mode, Modes, SourceFactory, Span};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use std::error::Error as _;
@@ -340,7 +340,8 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
     let url = format!("ws://{addr}/api/v1/capture/stream")
         .parse()
         .unwrap();
-    let error = RemoteSender::connect(&url, addr).unwrap_err();
+    let error =
+        RemoteSender::connect(&url, addr, &prysm_capture_remote::testkit::offer()).unwrap_err();
     assert_eq!(
         wire_cause(&error),
         WireError::Version {
@@ -376,7 +377,8 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
         let url = format!("ws://{addr}/api/v1/capture/stream")
             .parse()
             .unwrap();
-        let error = RemoteSender::connect(&url, addr).unwrap_err();
+        let error =
+            RemoteSender::connect(&url, addr, &prysm_capture_remote::testkit::offer()).unwrap_err();
         let cause = wire_cause(&error);
         match (&cause, &expected) {
             (WireError::Json(got), WireError::Json(want)) => {
@@ -476,6 +478,82 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
     );
 }
 
+/// Raw at 320x180 or 640x360, 1 to 30 fps; no H.264.
+fn raw_offer() -> Offer {
+    let size = |w, h| {
+        Mode::new(
+            Span::exactly(w),
+            Span::exactly(h),
+            Span::new(1, 30, 1).unwrap(),
+        )
+    };
+    Offer::new([(StreamEncoding::Raw, vec![size(320, 180), size(640, 360)])])
+}
+
+#[test]
+fn a_refused_attempt_still_tells_the_receiver_what_the_sender_offers() {
+    let factory = RemoteReceiver::default();
+    let portal = Portal::serving(factory.incoming());
+    assert_eq!(factory.modes(&RAW), Modes::Unknown);
+    // Lighting is off: the attempt is refused, the offer kept.
+    let error = portal.connect_offering(&raw_offer()).unwrap_err();
+    assert_eq!(wire_cause(&error), WireError::Unavailable(503));
+    assert_eq!(factory.modes(&RAW), raw_offer().modes(StreamEncoding::Raw));
+    let software = StreamRequest {
+        encoding: StreamEncoding::H264Software,
+        ..RAW
+    };
+    assert_eq!(factory.modes(&software), Modes::Known(Vec::new()));
+
+    // Opening refuses what the offer excludes, naming the field.
+    let invalid = |request: &StreamRequest| match factory.open(request) {
+        Err(prysm_ports::Error::Invalid(invalid)) => invalid.field,
+        Err(error) => panic!("{error:?}"),
+        Ok(_) => panic!("{request} opened"),
+    };
+    assert_eq!(invalid(&software), "encoding");
+    assert_eq!(invalid(&StreamRequest { fps: 60, ..RAW }), "fps");
+    assert_eq!(invalid(&StreamRequest { height: 360, ..RAW }), "height");
+    factory.open(&RAW).unwrap().close().unwrap();
+}
+
+#[test]
+fn a_sender_that_does_not_offer_the_request_fails_the_source_unasked() {
+    let portal = Portal::start();
+    let mut source = portal.source(StreamRequest {
+        width: 640,
+        height: 360,
+        fps: 60,
+        ..RAW
+    });
+    // The sender is closed without a request.
+    let error = portal.connect_offering(&raw_offer()).unwrap_err();
+    assert!(
+        error
+            .source()
+            .is_some_and(|cause| cause.to_string().contains("request")),
+        "{error}"
+    );
+    let deadline = Instant::now() + BOUND;
+    let error = loop {
+        assert!(Instant::now() < deadline, "the source never failed");
+        match source.next_frame(Duration::from_millis(50)) {
+            Err(error) => break error,
+            Ok(pull) => assert!(pull.is_idle()),
+        }
+    };
+    let prysm_ports::Error::Invalid(invalid) = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(invalid.field, "capture.fps");
+    assert_eq!(
+        invalid.reason,
+        "the sender cannot stream 640x360 at 60 fps with menus as raw: \
+         at 640x360 this source delivers 1 to 30"
+    );
+    Box::new(source).close().unwrap();
+}
+
 #[test]
 fn close_is_prompt_stops_receiving_and_fails_the_sender() {
     let (portal, mut source) = open();
@@ -533,7 +611,8 @@ fn connecting_to_a_dead_peer_fails_with_a_source() {
     let url = format!("ws://{addr}/api/v1/capture/stream")
         .parse()
         .unwrap();
-    let error = RemoteSender::connect(&url, addr).unwrap_err();
+    let error =
+        RemoteSender::connect(&url, addr, &prysm_capture_remote::testkit::offer()).unwrap_err();
     assert!(error.to_string().contains(&addr.to_string()), "{error}");
     assert!(error.source().is_some(), "{error}");
 }

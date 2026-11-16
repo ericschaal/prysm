@@ -2,8 +2,11 @@
 //! loopback, for tests: accept, answer the WebSocket upgrade at the capture
 //! stream path, and hand the connection over. Every wait is bounded. Also a
 //! TLS-terminating proxy with a test certificate, for `wss://`.
-use crate::{RemoteSender, RemoteSource, StreamRequest};
-use prysm_ports::{Accepted, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Handoff, Result};
+use crate::{Offer, RemoteSender, RemoteSource, StreamEncoding, StreamRequest};
+use prysm_ports::{
+    Accepted, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Handoff, Mode, Result,
+    Span,
+};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::{ErrorKind, Read, Write};
@@ -20,6 +23,15 @@ use tungstenite::stream::MaybeTlsStream;
 /// The longest any wait here takes.
 pub const BOUND: Duration = Duration::from_secs(5);
 
+/// An offer of every request [`StreamRequest::validate`] accepts, in every
+/// encoding: a sender that refuses only by failing.
+#[must_use]
+pub fn offer() -> Offer {
+    let span = |min, max, step| Span::new(min, max, step).expect("a span");
+    let any = Mode::new(span(2, 1920, 2), span(2, 1080, 2), span(1, 60, 1));
+    Offer::new(StreamEncoding::ALL.map(|encoding| (encoding, vec![any])))
+}
+
 /// A stand-in for the portal on an ephemeral loopback port.
 pub struct Portal {
     pub addr: SocketAddr,
@@ -33,9 +45,18 @@ impl Portal {
     /// Loopback cannot be bound.
     #[must_use]
     pub fn start() -> Self {
+        Self::serving(Handoff::new())
+    }
+
+    /// As [`Self::start`], handing connections to `handoff`, such as a
+    /// [`RemoteReceiver`](crate::RemoteReceiver)'s.
+    ///
+    /// # Panics
+    /// Loopback cannot be bound.
+    #[must_use]
+    pub fn serving(handoff: Handoff) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let handoff = Handoff::new();
         let serving = handoff.clone();
         thread::spawn(move || {
             for socket in listener.incoming().flatten() {
@@ -53,12 +74,20 @@ impl Portal {
             .unwrap()
     }
 
-    /// Connect a sender.
+    /// Connect a sender offering everything ([`offer`]).
     ///
     /// # Errors
     /// As [`RemoteSender::connect`].
     pub fn connect(&self) -> Result<RemoteSender> {
-        RemoteSender::connect(&self.url(), self.addr)
+        self.connect_offering(&offer())
+    }
+
+    /// Connect a sender offering `offer`.
+    ///
+    /// # Errors
+    /// As [`RemoteSender::connect`].
+    pub fn connect_offering(&self, offer: &Offer) -> Result<RemoteSender> {
+        RemoteSender::connect(&self.url(), self.addr, offer)
     }
 
     /// Open a source receiving from this portal.
@@ -91,7 +120,8 @@ impl Portal {
 
 /// Read the request head, answer `101` with the subprotocol (`426` for
 /// another version, `503` while no source receives) and hand the socket over
-/// with what was read past the head.
+/// with what was read past the head. A sender's offer is announced before
+/// `503`, as the portal does.
 fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
     socket.set_read_timeout(Some(BOUND)).unwrap();
     let mut read = Vec::new();
@@ -121,6 +151,9 @@ fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
         );
         let _ = socket.write_all(refused.as_bytes());
         return;
+    }
+    if let Some(offer) = field(CAPTURE_OFFER_HEADER) {
+        handoff.announce(&offer);
     }
     let (Some(key), true) = (field("sec-websocket-key"), handoff.is_receiving()) else {
         let _ = socket.write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n");

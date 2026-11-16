@@ -17,6 +17,7 @@ types live in `@prysm/contracts/application` ([contracts](contracts.md)).
 | `GET /api/v1/colors/stream` | A few LED colours per edge, for tinting Home |
 | `PUT`, `DELETE /api/v1/calibration` | Show or clear a calibration pattern on the TV |
 | `GET /api/v1/candidates/{section}/{kind}` | What an adapter can find: video devices, WLED lights |
+| `POST /api/v1/capture/modes` | What a capture section's hardware delivers: sizes and rates, or unknown |
 | `GET /metrics` | Prometheus text, only with `--metrics` |
 
 Commands answer once applied (`204`), not with an operation ID. A client that

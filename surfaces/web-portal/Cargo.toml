@@ -28,7 +28,7 @@ tungstenite = { workspace = true, features = ["handshake"] }
 tracing.workspace = true
 
 [dev-dependencies]
-prysm-capture-remote.workspace = true
+prysm-capture-remote = { workspace = true, features = ["testkit"] }
 prysm-runtime = { workspace = true, features = ["testkit"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "io-util"] }

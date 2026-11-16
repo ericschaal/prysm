@@ -11,7 +11,9 @@ use futures::stream;
 use http_body_util::{BodyExt, Limited};
 use hyper::header::HeaderValue;
 use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
-use prysm_ports::{CAPTURE_STREAM_PATH, CalibrationPattern, Handoff, Processing, Result, Section};
+use prysm_ports::{
+    AdapterSettings, CAPTURE_STREAM_PATH, CalibrationPattern, Handoff, Processing, Result, Section,
+};
 use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, TargetRequest};
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
@@ -31,6 +33,8 @@ const STREAMS: usize = 8;
 const METRICS: &str = "/metrics";
 /// `GET /api/v1/candidates/{section}/{kind}`.
 const CANDIDATES: &str = "/api/v1/candidates/";
+/// `POST /api/v1/capture/modes`.
+const CAPTURE_MODES: &str = "/api/v1/capture/modes";
 
 pub(crate) struct Context {
     pub engine: EngineHandle,
@@ -223,6 +227,13 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             }
         }
         "/api/v1/settings" if method == Method::PUT => replace_settings(context, request).await,
+        CAPTURE_MODES if method == Method::POST => match decode::<AdapterSettings>(request).await {
+            Ok(body) => match command(context.engine.capture_modes(body)).await {
+                Ok(modes) => response::json(StatusCode::OK, &modes),
+                Err(response) => *response,
+            },
+            Err(response) => *response,
+        },
         _ if path.starts_with(CANDIDATES) => {
             candidates(context, &path[CANDIDATES.len()..], &method).await
         }
@@ -234,6 +245,7 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
         | "/api/v1/calibration"
         | "/api/v1/processing/trial"
         | "/api/v1/settings"
+        | CAPTURE_MODES
         | METRICS => method_not_allowed(),
         _ => not_found(),
     }

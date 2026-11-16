@@ -1,7 +1,9 @@
+use crate::formats::Rates;
 use crate::{
     CaptureError, CaptureSink, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
 };
 use anyhow::Context;
+use prysm_ports::{Mode, Span};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 use v4l::buffer::Type;
@@ -253,6 +255,99 @@ pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
         .collect()
 }
 
+/// The pixel formats [`configure_stream`] negotiates.
+const CAPTURED: [&[u8; 4]; 3] = [b"YUYV", b"RGB3", b"BGR3"];
+
+/// Every even number.
+const EVEN: Span = Span::new(0, u32::MAX, 2).expect("a span");
+
+pub(crate) fn list_formats(path: &str) -> Option<Vec<Mode>> {
+    use v4l::framesize::FrameSizeEnum;
+    use v4l::v4l_sys::v4l2_frmsizetypes_V4L2_FRMSIZE_TYPE_CONTINUOUS;
+    // Opening a node and asking it starts nothing.
+    let device = Device::with_path(path).ok()?;
+    let descriptions = device.enum_formats().ok()?;
+    // `configure_frame_rate` fails on a device that cannot set its interval.
+    let params = device.params().ok()?;
+    if !params
+        .capabilities
+        .contains(v4l::parameters::Capabilities::TIME_PER_FRAME)
+    {
+        return Some(Vec::new());
+    }
+    let mut found = Vec::new();
+    for fourcc in descriptions
+        .into_iter()
+        .map(|description| description.fourcc)
+        .filter(|fourcc| {
+            CAPTURED
+                .iter()
+                .any(|captured| *fourcc == FourCC::new(captured))
+        })
+    {
+        let yuyv = fourcc == FourCC::new(b"YUYV");
+        // A driver that cannot list what it captures leaves it unknown.
+        for size in device.enum_framesizes(fourcc).ok()? {
+            let (width, height, rates) = match size.size {
+                FrameSizeEnum::Discrete(size) => (
+                    Span::exactly(size.width),
+                    Span::exactly(size.height),
+                    rates_at(&device, fourcc, size.width, size.height)?,
+                ),
+                FrameSizeEnum::Stepwise(sizes) => {
+                    let continuous = size.typ == v4l2_frmsizetypes_V4L2_FRMSIZE_TYPE_CONTINUOUS;
+                    let step = |step: u32| if continuous { 1 } else { step };
+                    let (Some(width), Some(height)) = (
+                        Span::new(sizes.min_width, sizes.max_width, step(sizes.step_width)),
+                        Span::new(sizes.min_height, sizes.max_height, step(sizes.step_height)),
+                    ) else {
+                        continue;
+                    };
+                    // Rates are listed per size: those at both ends of the range.
+                    let rates = rates_at(&device, fourcc, width.min(), height.min())?
+                        .and(&rates_at(&device, fourcc, width.max(), height.max())?);
+                    (width, height, rates)
+                }
+            };
+            // YUYV pairs pixels: its widths are even.
+            let Some(width) = (if yuyv { width.and(&EVEN) } else { Some(width) }) else {
+                continue;
+            };
+            found.extend(
+                rates
+                    .spans()
+                    .into_iter()
+                    .map(|fps| Mode::new(width, height, fps)),
+            );
+        }
+    }
+    Some(found)
+}
+
+/// The whole-number rates `device` lists for `fourcc` at `width`×`height`;
+/// `None` when it cannot list them.
+fn rates_at(device: &Device, fourcc: FourCC, width: u32, height: u32) -> Option<Rates> {
+    use v4l::frameinterval::FrameIntervalEnum;
+    use v4l::v4l_sys::v4l2_frmivaltypes_V4L2_FRMIVAL_TYPE_CONTINUOUS;
+    let mut rates = Rates::default();
+    for interval in device.enum_frameintervals(fourcc, width, height).ok()? {
+        match interval.interval {
+            FrameIntervalEnum::Discrete(fraction) => {
+                rates.interval(fraction.numerator, fraction.denominator);
+            }
+            FrameIntervalEnum::Stepwise(range) => {
+                let continuous = interval.typ == v4l2_frmivaltypes_V4L2_FRMIVAL_TYPE_CONTINUOUS;
+                rates.intervals(
+                    (range.min.numerator, range.min.denominator),
+                    (range.max.numerator, range.max.denominator),
+                    (!continuous).then_some((range.step.numerator, range.step.denominator)),
+                );
+            }
+        }
+    }
+    Some(rates)
+}
+
 pub(crate) fn run(
     device_path: Option<&str>,
     width: u32,
@@ -365,6 +460,11 @@ mod tests {
             panic!("expected missing device error")
         };
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_missing_device_lists_nothing_known() {
+        assert_eq!(crate::list_formats("/dev/prysm-test-missing-device"), None);
     }
 
     #[test]

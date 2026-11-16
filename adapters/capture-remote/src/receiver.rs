@@ -1,8 +1,9 @@
 //! The lighting-host end: the `"remote"` source, fed by the portal.
+use crate::offer::Offer;
 use crate::receive::Receiver;
 use crate::request::StreamRequest;
 use prysm_ports::{
-    FrameSource, Handoff, OwnerThread, Pull, Result, SourceFactory, ValidationError,
+    FrameSource, Handoff, Modes, OwnerThread, Pull, Result, SourceFactory, ValidationError,
 };
 use std::time::Duration;
 
@@ -12,7 +13,8 @@ const RELEASE: Duration = Duration::from_secs(1);
 /// Registers kind `"remote"`, its settings the [`StreamRequest`]: frames a
 /// [`RemoteSender`](crate::RemoteSender) streams to the portal's capture
 /// stream path. It owns the [`Handoff`] those connections come in through;
-/// the host gives [`Self::incoming`] to the portal.
+/// the host gives [`Self::incoming`] to the portal, which also announces
+/// there each sender's [`Offer`], refused connections included.
 #[derive(Debug, Clone, Default)]
 pub struct RemoteReceiver {
     incoming: Handoff,
@@ -34,9 +36,24 @@ impl SourceFactory for RemoteReceiver {
         request.validate()
     }
 
+    /// Refuses a request the newest offer excludes, then receives.
     fn open(&self, request: &StreamRequest) -> Result<Box<dyn FrameSource>> {
+        if let Some(offer) = offered(&self.incoming) {
+            offer.check(request)?;
+        }
         Ok(Box::new(RemoteSource::open(&self.incoming, *request)?))
     }
+
+    /// What the newest offer streams in the request's encoding; unknown
+    /// before a sender has tried to connect.
+    fn modes(&self, request: &StreamRequest) -> Modes {
+        offered(&self.incoming).map_or(Modes::Unknown, |offer| offer.modes(request.encoding))
+    }
+}
+
+/// The newest offer announced at `handoff`, if it is one.
+fn offered(handoff: &Handoff) -> Option<Offer> {
+    Offer::parse(&handoff.announcement()?)
 }
 
 /// Receives the connections handed over to it, on a receive thread. One
@@ -46,9 +63,11 @@ impl SourceFactory for RemoteReceiver {
 ///
 /// Every sender is asked for the same [`StreamRequest`]; a new request needs
 /// a new source (the engine reopens it when the settings change, and the
-/// sender reconnects). A sender that cannot produce the request refuses it:
-/// `next_frame` then fails with its reason, as an invalid `capture.encoding`
-/// when the requested encoder is what failed, and the source stops.
+/// sender reconnects). A sender whose [`Offer`] excludes the request is not
+/// asked: `next_frame` fails with the invalid field (`capture.width`,
+/// `capture.encoding`, ...) and the source stops. So does a sender that
+/// cannot produce the request and refuses it, as an invalid
+/// `capture.encoding` when the requested encoder is what failed.
 #[derive(Debug)]
 pub struct RemoteSource {
     request: StreamRequest,

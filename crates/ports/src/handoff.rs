@@ -10,11 +10,19 @@ pub const CAPTURE_STREAM_PATH: &str = "/api/v1/capture/stream";
 
 /// The capture stream's protocol version, agreed as the WebSocket
 /// subprotocol [`CAPTURE_PROTOCOL`] at the upgrade.
-pub const CAPTURE_VERSION: u8 = 4;
+pub const CAPTURE_VERSION: u8 = 5;
 
 /// The WebSocket subprotocol of the capture stream: both ends offer and
 /// accept only this, the portal refuses any other (`426`).
-pub const CAPTURE_PROTOCOL: &str = "prysm-capture.v4";
+pub const CAPTURE_PROTOCOL: &str = "prysm-capture.v5";
+
+/// The upgrade request header in which a capture host says what it can
+/// deliver, in the source's own format; the surface [announces](Handoff::announce)
+/// it whether or not it then hands the connection over.
+pub const CAPTURE_OFFER_HEADER: &str = "prysm-capture-offer";
+
+/// The longest announcement kept, in bytes of ASCII.
+pub const MAX_ANNOUNCEMENT_BYTES: usize = 4096;
 
 /// A connection a surface accepted and upgraded for a source that reads it
 /// itself: the plain, blocking socket and the bytes the surface already read
@@ -32,6 +40,11 @@ pub struct Accepted {
 /// Offers are refused while no source [receives](Self::receive). While one
 /// does, the newest connection waits for it to take; it replaces one not yet
 /// taken (whose socket closes).
+///
+/// It also keeps the newest [announcement](Self::announce): what the capture
+/// host says it can deliver, opaque here. It outlasts sources and
+/// connections, so the receiving source can answer for the capture host
+/// while nothing streams; it is not authenticated and never expires.
 #[derive(Debug, Clone, Default)]
 pub struct Handoff(Arc<Mutex<Slot>>);
 
@@ -39,6 +52,7 @@ pub struct Handoff(Arc<Mutex<Slot>>);
 struct Slot {
     receiving: bool,
     waiting: Option<Accepted>,
+    announced: Option<String>,
 }
 
 impl Handoff {
@@ -58,6 +72,21 @@ impl Handoff {
         }
         slot.waiting = Some(connection);
         Ok(())
+    }
+
+    /// Keep `announcement`, replacing the previous one, whether or not a
+    /// source receives. Ignored when longer than [`MAX_ANNOUNCEMENT_BYTES`]
+    /// or not ASCII.
+    pub fn announce(&self, announcement: &str) {
+        if announcement.len() <= MAX_ANNOUNCEMENT_BYTES && announcement.is_ascii() {
+            self.lock().announced = Some(announcement.to_owned());
+        }
+    }
+
+    /// The newest announcement, if any came.
+    #[must_use]
+    pub fn announcement(&self) -> Option<String> {
+        self.lock().announced.clone()
     }
 
     /// Whether a source receives now; a surface answers the upgrade only
@@ -91,6 +120,12 @@ impl Receiving {
     #[must_use]
     pub fn take(&self) -> Option<Accepted> {
         self.0.lock().waiting.take()
+    }
+
+    /// As [`Handoff::announcement`].
+    #[must_use]
+    pub fn announcement(&self) -> Option<String> {
+        self.0.announcement()
     }
 }
 
@@ -146,6 +181,26 @@ mod tests {
         drop(receiving);
         let (late, _) = connection(2);
         assert!(handoff.offer(late).is_err());
+    }
+
+    #[test]
+    fn announcements_outlast_sources_and_are_bounded() {
+        let handoff = Handoff::new();
+        assert_eq!(handoff.announcement(), None);
+        handoff.announce("first");
+        let receiving = handoff.receive();
+        assert_eq!(receiving.announcement().as_deref(), Some("first"));
+        handoff.announce("second");
+        drop(receiving);
+        assert_eq!(handoff.announcement().as_deref(), Some("second"));
+        handoff.announce(&"x".repeat(MAX_ANNOUNCEMENT_BYTES + 1));
+        handoff.announce("é");
+        assert_eq!(handoff.announcement().as_deref(), Some("second"));
+        handoff.announce(&"x".repeat(MAX_ANNOUNCEMENT_BYTES));
+        assert_eq!(
+            handoff.announcement().map(|a| a.len()),
+            Some(MAX_ANNOUNCEMENT_BYTES)
+        );
     }
 
     #[test]

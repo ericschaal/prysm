@@ -45,6 +45,23 @@ of `prysm-core`.
 - Loaded settings that no longer validate are kept and reported as the
   failure; a file that cannot be read or parsed stops start-up.
 
+## What a capture delivers
+
+Whoever owns the hardware answers for it, in three tiers:
+
+1. `validate` (no hardware) refuses only what can never work anywhere:
+   protocol and format bounds. The settings schema's limits are at least as
+   wide as any hardware's answer.
+2. `SourceFactory::modes` says what the hardware selected by the settings
+   delivers now, as [`Modes`](../../crates/ports/src/modes.rs): ranges where
+   it takes any value in them, fixed modes where it offers fixed ones,
+   unknown only when it cannot be asked. The portal serves it as
+   `POST /api/v1/capture/modes`, off the engine's mailbox.
+3. `open` is the authority: each capture adapter checks the settings against
+   its known modes there, so the failure names the field and what is
+   delivered. The remote source answers from the offer the TV sends with
+   every connection attempt, and checks each connection against it.
+
 <a id="processing-and-color"></a>
 
 ## Processing and colour

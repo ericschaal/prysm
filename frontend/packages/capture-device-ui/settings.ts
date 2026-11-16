@@ -13,9 +13,9 @@ export const deviceLimits = {
 /** What Rust uses for an omitted field. */
 export const deviceDefaults = { width: 640, height: 360, fps: 30 } as const;
 /**
- * Whether a device can capture 60 fps depends on the device, and Prysm does
- * not list a device's modes yet, so Smooth is not offered: Custom is there
- * for a device that can.
+ * Whether a device can capture 60 fps depends on the device, and this
+ * editor does not ask for its modes (`POST /api/v1/capture/modes`) yet, so
+ * Smooth is not offered: Custom is there for a device that can.
  */
 export const devicePresets: readonly PicturePreset[] = [
   'balanced',

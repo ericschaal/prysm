@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   httpApplicationClient,
+  httpCaptureModesClient,
   httpDiscoveryClient,
 } from '@prysm/application-client/http';
 import { ApplicationError } from '@prysm/application-client';
@@ -219,5 +220,53 @@ test('candidates are a GET per section and kind, validated', async () => {
       client.candidates('capture', 'device'),
       /Invalid candidates reply/,
     );
+  }
+});
+
+test('capture modes are posted the capture section and validated', async () => {
+  const requests = [];
+  const known = {
+    status: 'known',
+    modes: [
+      {
+        width: { min: 640, max: 640, step: 1 },
+        height: { min: 360, max: 360, step: 1 },
+        fps: { min: 1, max: 30, step: 1 },
+      },
+    ],
+  };
+  let reply = json(200, known);
+  const client = httpCaptureModesClient({
+    baseUrl: 'http://192.0.2.9:8787/',
+    fetch: async (url, init) => {
+      requests.push([url, init.method, JSON.parse(init.body)]);
+      return reply;
+    },
+  });
+  const capture = { kind: 'device', path: '/dev/video0' };
+  assert.deepEqual(await client.modes(capture), known);
+  assert.deepEqual(requests, [
+    ['http://192.0.2.9:8787/api/v1/capture/modes', 'POST', capture],
+  ]);
+  reply = json(200, { status: 'unknown' });
+  assert.deepEqual(await client.modes(capture), { status: 'unknown' });
+
+  reply = json(422, {
+    kind: 'invalid',
+    message: 'unknown kind',
+    field: 'capture.kind',
+  });
+  await assert.rejects(client.modes({ kind: 'hue' }), (error) => {
+    assert(error instanceof ApplicationError);
+    assert.equal(error.failure.field, 'capture.kind');
+    return true;
+  });
+  for (const invalid of [
+    { status: 'maybe' },
+    { status: 'known' },
+    { status: 'known', modes: [{ width: { min: 1, max: 1, step: 1 } }] },
+  ]) {
+    reply = json(200, invalid);
+    await assert.rejects(client.modes(capture), /Invalid capture modes reply/);
   }
 });

@@ -176,6 +176,98 @@
       "width": 320
     }
   ],
+  "Modes": [
+    {
+      "modes": [
+        {
+          "fps": {
+            "max": 60,
+            "min": 1,
+            "step": 1
+          },
+          "height": {
+            "max": 1080,
+            "min": 2,
+            "step": 2
+          },
+          "width": {
+            "max": 1920,
+            "min": 2,
+            "step": 2
+          }
+        }
+      ],
+      "status": "known"
+    },
+    {
+      "modes": [
+        {
+          "fps": {
+            "max": 4294967295,
+            "min": 1,
+            "step": 1
+          },
+          "height": {
+            "max": 2160,
+            "min": 1,
+            "step": 1
+          },
+          "width": {
+            "max": 3840,
+            "min": 1,
+            "step": 1
+          }
+        }
+      ],
+      "status": "known"
+    },
+    {
+      "modes": [
+        {
+          "fps": {
+            "max": 30,
+            "min": 1,
+            "step": 1
+          },
+          "height": {
+            "max": 360,
+            "min": 360,
+            "step": 1
+          },
+          "width": {
+            "max": 640,
+            "min": 640,
+            "step": 1
+          }
+        },
+        {
+          "fps": {
+            "max": 30,
+            "min": 30,
+            "step": 1
+          },
+          "height": {
+            "max": 1080,
+            "min": 1080,
+            "step": 1
+          },
+          "width": {
+            "max": 1920,
+            "min": 1920,
+            "step": 1
+          }
+        }
+      ],
+      "status": "known"
+    },
+    {
+      "modes": [],
+      "status": "known"
+    },
+    {
+      "status": "unknown"
+    }
+  ],
   "NullSettings": [
     {
       "kind": "null"

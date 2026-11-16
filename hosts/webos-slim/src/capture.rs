@@ -1,10 +1,27 @@
 //! The TV capture, shaped by the receiver's request.
 use crate::link::Flow;
-use prysm_capture_remote::StreamRequest;
+use prysm_capture_remote::{Offer, StreamEncoding, StreamRequest};
 use prysm_capture_webos::WebosSettings;
-use prysm_ports::{FrameSource, Pull, Result};
+use prysm_ports::{FrameSource, Mode, Pull, Result};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// What this TV streams from `capture`'s modes: raw as captured, and in
+/// each H.264 encoder this build has, what both capture and encoder take.
+#[must_use]
+pub fn offer(capture: &[Mode]) -> Offer {
+    Offer::new(StreamEncoding::ALL.into_iter().filter_map(|encoding| {
+        let modes = match encoding.backend() {
+            None => capture.to_vec(),
+            Some(backend) if backend.available() => capture
+                .iter()
+                .filter_map(|mode| mode.and(&backend.limits()))
+                .collect(),
+            Some(_) => return None,
+        };
+        Some((encoding, modes))
+    }))
+}
 
 /// The capture settings a request asks for; its encoding is the sender's.
 #[must_use]

@@ -5,7 +5,7 @@ use crate::session::{Session, SessionEnd};
 use crate::stats::{Counters, Stats};
 use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, CalibrationPattern, Candidate, Error, IdleMode, Input, LightingTarget,
+    AdapterSettings, CalibrationPattern, Candidate, Error, IdleMode, Input, LightingTarget, Modes,
     Processing, Registry, Result, Revision, Section, SessionPhase, SessionState, Settings,
     SettingsStore, Snapshot, ValidationError,
 };
@@ -47,7 +47,8 @@ pub struct EngineHandle {
     snapshot: watch::Receiver<Snapshot>,
     feeds: Feeds,
     stats: Arc<Stats>,
-    /// For [`candidates`](Self::candidates), which needs no engine state.
+    /// For [`candidates`](Self::candidates) and
+    /// [`capture_modes`](Self::capture_modes), which need no engine state.
     registry: Registry,
 }
 
@@ -114,6 +115,19 @@ impl EngineHandle {
     pub async fn candidates(&self, section: Section, kind: &str) -> Result<Vec<Candidate>> {
         let (registry, kind) = (self.registry.clone(), kind.to_owned());
         blocking(move || registry.candidates(section, &kind)).await?
+    }
+
+    /// What the capture `settings` select delivers (see
+    /// [`SourceFactory::modes`](prysm_ports::SourceFactory::modes)). Like
+    /// [`candidates`](Self::candidates), it runs off the async runtime and
+    /// bypasses the engine's mailbox.
+    ///
+    /// # Errors
+    /// An unregistered kind (field `capture.kind`), undecodable settings, or
+    /// a panicking lookup.
+    pub async fn capture_modes(&self, settings: AdapterSettings) -> Result<Modes> {
+        let registry = self.registry.clone();
+        blocking(move || registry.capture_modes(&settings)).await?
     }
 
     #[must_use]

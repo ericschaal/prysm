@@ -71,12 +71,15 @@ fn main() -> ExitCode {
 /// encoder is reported and refused to the receiver until the request
 /// changes; a failing capture ends the worker. The receiver's host name is
 /// resolved at each attempt, so a name that does not resolve (yet) is a
-/// wait like a receiver that is not listening. While the receiver has
+/// wait like a receiver that is not listening. Each attempt carries the
+/// TV's offer (its capture modes within each encoder's limits), so Prysm
+/// knows what the TV streams even while it refuses the stream. While the receiver has
 /// paused the stream the TV capture is closed.
 async fn run(args: SlimArgs, link: Link) -> Result<()> {
     let url = args.prysm.capture_stream();
     let mut prysm = Resolver::new(args.prysm);
-    let (sink, flow) = Uplink::new(move || RemoteSender::connect(&url, prysm.resolve()?));
+    let offer = capture::offer(&[prysm_capture_webos::MODE]);
+    let (sink, flow) = Uplink::new(move || RemoteSender::connect(&url, prysm.resolve()?, &offer));
     let video = VideoSignal::default();
     let capture = WebosCapture::new(video.clone());
     let source = RequestedCapture::new(flow.clone(), move |settings| {

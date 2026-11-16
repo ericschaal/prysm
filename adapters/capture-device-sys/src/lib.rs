@@ -3,7 +3,9 @@ pub use prysm_core::Frame;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use prysm_core::{FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
 mod device;
-pub use device::{CaptureSink, DeviceInfo, capture, list_devices};
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+mod formats;
+pub use device::{CaptureSink, DeviceInfo, capture, list_devices, list_formats};
 
 /// Terminal capture failures. Cancellation closes the stream successfully.
 #[derive(Debug, thiserror::Error)]

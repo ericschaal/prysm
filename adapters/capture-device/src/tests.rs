@@ -400,5 +400,23 @@ fn candidates_fill_a_valid_path() {
             serde_json::from_value(candidate.fields.clone().into()).unwrap();
         assert_eq!(settings.validate(), Ok(()), "{candidate:?}");
         assert_eq!(candidate.detail.as_deref(), Some(settings.path.as_str()));
+        // A device found answers for its formats, and open refuses a size
+        // none has before starting anything.
+        assert!(
+            matches!(DeviceSource.modes(&settings), Modes::Known(_)),
+            "{candidate:?}"
+        );
+        let odd = DeviceSettings {
+            width: 3,
+            ..settings
+        };
+        let Err(Error::Invalid(invalid)) = DeviceSource.open(&odd) else {
+            panic!("3 pixels wide opened");
+        };
+        assert_eq!(invalid.field, "width");
     }
+    assert_eq!(
+        DeviceSource.modes(&DeviceSettings::new("/dev/prysm-test-missing-device")),
+        Modes::Unknown
+    );
 }

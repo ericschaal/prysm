@@ -41,6 +41,33 @@ pub fn list_devices() -> Vec<DeviceInfo> {
     Vec::new()
 }
 
+/// The modes `device` (as [`capture`] takes it) captures, without starting it:
+/// `AVFoundation`'s formats with their frame-rate ranges; on Linux the
+/// sizes and frame intervals of the pixel formats capture reads (YUYV, RGB3,
+/// BGR3), and nothing when the device cannot set its frame interval. Rates
+/// are the whole numbers capture sets exactly. Sorted, without repeats.
+/// `None` when the device cannot be opened or cannot list its sizes and
+/// rates, and on other platforms.
+#[must_use]
+pub fn list_formats(device: &str) -> Option<Vec<prysm_ports::Mode>> {
+    #[cfg(target_os = "macos")]
+    let formats = crate::macos::list_formats(device);
+    #[cfg(target_os = "linux")]
+    let formats = crate::linux::list_formats(device);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let formats: Option<Vec<prysm_ports::Mode>> = {
+        let _ = device;
+        None
+    };
+    formats.map(|formats| {
+        formats
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    })
+}
+
 /// Capture `device` (the platform default when `None`) on the calling thread
 /// until `sink` asks to stop or capture fails, then release the device.
 ///

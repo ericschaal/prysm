@@ -18,7 +18,9 @@ mod source;
 
 pub use settings::FileSettings;
 
-use prysm_ports::{Error, FrameSource, Result, SourceFactory, ValidationError};
+use prysm_ports::{
+    Error, FrameSource, Modes, Result, SourceFactory, ValidationError, capture_size,
+};
 
 /// Plays video files.
 #[derive(Debug, Clone, Copy, Default)]
@@ -30,6 +32,11 @@ impl SourceFactory for FileSource {
 
     fn validate(&self, settings: &FileSettings) -> Result<(), ValidationError> {
         settings.validate()
+    }
+
+    /// FFmpeg scales to any size [`FileSettings::validate`] accepts.
+    fn modes(&self, _: &FileSettings) -> Modes {
+        capture_size::SIZES.into()
     }
 
     /// Checks the file is readable and starts FFmpeg; does not wait for a frame.

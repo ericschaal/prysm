@@ -8,13 +8,15 @@ use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
-use prysm_ports::{Accepted, CAPTURE_PROTOCOL, Handoff};
+use prysm_ports::{Accepted, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, Handoff};
 use prysm_protocol::FailureKind;
 
 /// Answer a WebSocket upgrade with `101` and this protocol version's
 /// subprotocol, and hand the connection over once hyper releases it. `426`,
 /// naming the version spoken here, when the sender offers another; `503`
 /// while no source receives (lighting off, or the capture is not `remote`).
+/// A sender of this version's offer header is announced first, so a refused
+/// attempt still tells the source what the sender can deliver.
 pub(crate) fn upgrade(
     context: &Context,
     handoff: &Handoff,
@@ -38,6 +40,13 @@ pub(crate) fn upgrade(
             HeaderValue::from_static(CAPTURE_PROTOCOL),
         );
         return refused;
+    }
+    if let Some(offer) = request
+        .headers()
+        .get(CAPTURE_OFFER_HEADER)
+        .and_then(|value| value.to_str().ok())
+    {
+        handoff.announce(offer);
     }
     if !handoff.is_receiving() {
         return failure(

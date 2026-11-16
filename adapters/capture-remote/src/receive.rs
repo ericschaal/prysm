@@ -1,6 +1,7 @@
 //! The receive thread: takes the connections the portal hands over, greets
 //! each sender with the request and keeps only the newest frame.
 use crate::link::{self, Inbound, Link, Outbound};
+use crate::offer::Offer;
 use crate::request::StreamRequest;
 use crate::wire::{
     self, Command, Encoding, FrameMessage, HEADER_LEN, Header, MAX_PAYLOAD_BYTES, Refusal, Refused,
@@ -89,8 +90,13 @@ impl Receiver {
                     continue;
                 }
             };
-            // The portal agreed the version at the upgrade; the request
-            // comes first.
+            // The portal agreed the version at the upgrade and announced the
+            // sender's offer; the request comes first, if offered.
+            if let Err(excluded) = self.offered() {
+                next = self.fail_with_offer(&excluded);
+                link.close();
+                continue;
+            }
             send_command(&mut link, Command::Request(self.request));
             next = self.serve(&mut link);
             if matches!(next, Next::Stop) {
@@ -203,6 +209,33 @@ impl Receiver {
             }
             self.worker.offer(writer.finish());
         }
+    }
+
+    /// Whether the newest offer, if one was announced, streams the request.
+    fn offered(&self) -> Result<(), ValidationError> {
+        self.receiving
+            .announcement()
+            .and_then(|announcement| Offer::parse(&announcement))
+            .map_or(Ok(()), |offer| offer.check(&self.request))
+    }
+
+    /// The sender's offer excludes the request: fail the source with the
+    /// field it excludes, as a sender's refusal does. The source then stops.
+    fn fail_with_offer(&self, excluded: &ValidationError) -> Next {
+        tracing::warn!(
+            request = %self.request,
+            field = excluded.field,
+            reason = excluded.reason,
+            "the remote sender does not offer the stream"
+        );
+        self.worker.fail(Error::Invalid(ValidationError::new(
+            format!("{}.{}", Section::Capture.as_str(), excluded.field),
+            format!(
+                "the sender cannot stream {}: {}",
+                self.request, excluded.reason
+            ),
+        )));
+        Next::WaitForSender
     }
 
     /// The sender cannot produce the request: log it and fail the source with

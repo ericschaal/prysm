@@ -39,7 +39,10 @@ export const encodingChoices: readonly {
   },
 ];
 
-/** H.264 needs at least 16 × 16 (the Rust check on `capture.encoding`). */
+/**
+ * H.264 needs at least 16 × 16 (the software encoder's minimum; the TV's
+ * offer, checked by Rust, says what its encoders take).
+ */
 export function encodingProblem(value: RemoteReceiverSettings): string | null {
   const encoding = value.encoding ?? remoteDefaults.encoding;
   const width = value.width ?? remoteDefaults.width;

@@ -1,12 +1,19 @@
-use prysm_ports::ValidationError;
+use prysm_ports::{Mode, Modes, Span, ValidationError};
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
 
-/// The largest size the driver takes (full HD; even sides from 2).
-const MAX_WIDTH: u32 = 1920;
-const MAX_HEIGHT: u32 = 1080;
-/// The rates the driver paces at.
-const FPS: RangeInclusive<u32> = 1..=60;
+/// What LG's capture driver delivers: it scales to the size asked, even
+/// sides (NV12) from 2 up to full HD, paced at 1 to 60 fps. Sizes run on a
+/// TV include 320×180, 640×280 and 640×360; the upper bounds are the panel
+/// size and the driver's pacing, not measured. The driver's own answer
+/// (`vtCapture_capabilityInfo`, undecoded) belongs here once it is read: both
+/// [`WebosSettings::validate`] and [`WebosCapture::modes`](crate::WebosCapture)
+/// answer from this one value.
+pub const MODE: Mode = Mode::new(
+    Span::new(2, 1920, 2).expect("a span"),
+    Span::new(2, 1080, 2).expect("a span"),
+    Span::new(1, 60, 1).expect("a span"),
+);
 /// The TV UI plane's size bounds: HAL fails below 256x144 on the measured
 /// TV, and its cost grows with the size.
 const UI_WIDTH: RangeInclusive<u16> = 256..=320;
@@ -53,31 +60,12 @@ impl Default for WebosSettings {
 }
 
 impl WebosSettings {
-    /// Rejects settings the driver can never negotiate, without touching it.
+    /// Rejects a size or rate outside [`MODE`], without touching the driver.
     ///
     /// # Errors
     /// The first invalid field, relative to the `capture` section.
     pub fn validate(&self) -> Result<(), ValidationError> {
-        // NV12 needs even dimensions; the driver takes 16-bit sizes up to full HD.
-        let even = |field: &str, value: u32, max: u32| {
-            if (2..=max).contains(&value) && value.is_multiple_of(2) {
-                Ok(())
-            } else {
-                Err(ValidationError::new(
-                    field,
-                    format!("must be an even number from 2 to {max}"),
-                ))
-            }
-        };
-        even("width", self.width, MAX_WIDTH)?;
-        even("height", self.height, MAX_HEIGHT)?;
-        if !FPS.contains(&self.fps) {
-            return Err(ValidationError::new(
-                "fps",
-                format!("must be {} to {}", FPS.start(), FPS.end()),
-            ));
-        }
-        Ok(())
+        Modes::from(MODE).check(self.width, self.height, self.fps)
     }
 
     /// The TV UI (graphics plane) capture size, used only while there is no

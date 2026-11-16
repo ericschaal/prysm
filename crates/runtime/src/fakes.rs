@@ -4,8 +4,8 @@ use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
     AdapterSettings, Candidate, DeviceBrightness, Error, FrameSink, FrameSource, IdleMode,
-    LedOutput, LightingTarget, OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore,
-    SourceFactory, ValidationError,
+    LedOutput, LightingTarget, Mode, Modes, OutputFactory, OutputIssue, Pull, Result, Settings,
+    SettingsStore, SourceFactory, Span, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -129,6 +129,16 @@ impl SourceFactory for FakeSources {
             return Err(Error::other("fake source cannot open"));
         }
         Ok(Box::new(FakeSource::new(&self.0, settings.clone())))
+    }
+
+    /// 16 × 9 at 1 to 60 fps, whatever the settings.
+    fn modes(&self, _: &FakeSourceSettings) -> Modes {
+        self.0.record("source.modes");
+        Modes::from(Mode::new(
+            Span::exactly(16),
+            Span::exactly(9),
+            Span::new(1, 60, 1).expect("a span"),
+        ))
     }
 }
 

@@ -9,7 +9,9 @@ use std::str::FromStr;
 /// How the sender encodes the frames it sends. Exactly this encoder is used:
 /// one that cannot start or fails ends the stream with a refusal, never a
 /// switch to another.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum StreamEncoding {
@@ -23,7 +25,7 @@ pub enum StreamEncoding {
 }
 
 impl StreamEncoding {
-    const ALL: [Self; 3] = [Self::H264Hardware, Self::H264Software, Self::Raw];
+    pub const ALL: [Self; 3] = [Self::H264Hardware, Self::H264Software, Self::Raw];
 
     /// The serialized name, such as `h264_hardware`.
     #[must_use]
@@ -67,19 +69,23 @@ impl FromStr for StreamEncoding {
 /// `{ "kind": "remote", "width": 320, "height": 180, "fps": 30,
 /// "include_ui": true, "encoding": "h264_hardware" }`, every field optional.
 /// The sender captures at this size, rate and menu blending and encodes with
-/// exactly this encoding.
+/// exactly this encoding. [`validate`](Self::validate) keeps the protocol's
+/// bounds; what a sender's capture and encoder deliver is in its
+/// [`Offer`](crate::Offer).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "schema", schema(as = RemoteReceiverSettings))]
 pub struct StreamRequest {
-    /// Requested picture width: even, 2 to 1920 (H.264: at least 16).
+    /// Requested picture width: even, 2 to 1920; the sender's offer says
+    /// what its capture and encoder deliver.
     #[cfg_attr(
         feature = "schema",
         schema(minimum = 2, maximum = 1920, multiple_of = 2, default = 320)
     )]
     pub width: u32,
-    /// Requested picture height: even, 2 to 1080 (H.264: at least 16).
+    /// Requested picture height: even, 2 to 1080; the sender's offer says
+    /// what its capture and encoder deliver.
     #[cfg_attr(
         feature = "schema",
         schema(minimum = 2, maximum = 1080, multiple_of = 2, default = 180)
@@ -111,6 +117,8 @@ impl Default for StreamRequest {
 }
 
 impl StreamRequest {
+    /// Rejects what the protocol never carries, without asking a sender.
+    ///
     /// # Errors
     /// The first invalid field, relative to the `capture` section.
     pub fn validate(&self) -> Result<(), ValidationError> {
@@ -128,12 +136,6 @@ impl StreamRequest {
         even("height", self.height, 1080)?;
         if !(1..=60).contains(&self.fps) {
             return Err(ValidationError::new("fps", "must be 1 to 60"));
-        }
-        if self.encoding != StreamEncoding::Raw && (self.width < 16 || self.height < 16) {
-            return Err(ValidationError::new(
-                "encoding",
-                "H.264 needs at least 16x16; use raw for smaller pictures",
-            ));
         }
         Ok(())
     }
@@ -196,20 +198,13 @@ mod tests {
                 "height",
             ),
             (StreamRequest { fps: 61, ..request }, "fps"),
-            (
-                StreamRequest {
-                    width: 8,
-                    ..request
-                },
-                "encoding",
-            ),
         ] {
             assert_eq!(bad.validate().unwrap_err().field, field, "{bad:?}");
         }
+        // Sizes encoders refuse are the sender's offer's to refuse.
         StreamRequest {
             width: 8,
             height: 2,
-            encoding: StreamEncoding::Raw,
             ..request
         }
         .validate()

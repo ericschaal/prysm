@@ -1,5 +1,6 @@
 use crate::{
-    AdapterSettings, Error, FrameSource, LedOutput, Result, Section, Settings, ValidationError,
+    AdapterSettings, Error, FrameSource, LedOutput, Modes, Result, Section, Settings,
+    ValidationError,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
@@ -17,12 +18,24 @@ pub trait SourceFactory: Send + Sync + 'static {
     /// the section.
     fn validate(&self, settings: &Self::Settings) -> Result<(), ValidationError>;
     /// # Errors
-    /// Device or I/O failure.
+    /// Device or I/O failure, or a size or rate [`Self::modes`] says the
+    /// hardware does not deliver.
     fn open(&self, settings: &Self::Settings) -> Result<Box<dyn FrameSource>>;
     /// What this kind finds to choose from, such as the video devices present.
     /// See [`Candidate`]; the default finds nothing.
     fn candidates(&self) -> Vec<Candidate> {
         Vec::new()
+    }
+    /// The sizes and rates this source delivers with `settings`, as
+    /// [`Modes`] says: ranges where the hardware takes any value in them,
+    /// concrete modes where it offers fixed ones. Only the fields that select hardware
+    /// matter (a device path, an encoding), not the size and rate asked for,
+    /// which need not be valid. May block briefly, like
+    /// [`Self::candidates`]; the default cannot say. `open` refuses what
+    /// this excludes, naming the field.
+    fn modes(&self, settings: &Self::Settings) -> Modes {
+        let _ = settings;
+        Modes::Unknown
     }
 }
 
@@ -98,7 +111,7 @@ impl Candidate {
 /// engine and the settings file need no generics.
 #[derive(Clone, Default)]
 pub struct Registry {
-    sources: BTreeMap<&'static str, Arc<dyn Erased<dyn FrameSource>>>,
+    sources: BTreeMap<&'static str, Arc<dyn ErasedSource>>,
     outputs: BTreeMap<&'static str, Arc<dyn Erased<dyn LedOutput>>>,
 }
 
@@ -172,6 +185,15 @@ impl Registry {
             }
         })
     }
+
+    /// What the capture `settings` select delivers; see
+    /// [`SourceFactory::modes`]. Blocking, briefly.
+    ///
+    /// # Errors
+    /// Unknown kind (field `capture.kind`) or undecodable settings.
+    pub fn capture_modes(&self, settings: &AdapterSettings) -> Result<Modes> {
+        find(&self.sources, Section::Capture, &settings.kind)?.modes(settings)
+    }
 }
 
 /// A factory's invalid field, relative to its section, as a full path.
@@ -185,11 +207,11 @@ fn within(section: Section, error: Error) -> Error {
     }
 }
 
-fn find<'a, T: ?Sized>(
-    map: &'a BTreeMap<&'static str, Arc<dyn Erased<T>>>,
+fn find<'a, F: ?Sized>(
+    map: &'a BTreeMap<&'static str, Arc<F>>,
     section: Section,
     kind: &str,
-) -> Result<&'a dyn Erased<T>> {
+) -> Result<&'a F> {
     map.get(kind).map(|factory| &**factory).ok_or_else(|| {
         ValidationError::new(format!("{section}.kind"), format!("unknown kind `{kind}`")).into()
     })
@@ -199,6 +221,10 @@ trait Erased<T: ?Sized>: Send + Sync {
     fn validate(&self, settings: &AdapterSettings) -> Result<()>;
     fn open(&self, settings: &AdapterSettings) -> Result<Box<T>>;
     fn candidates(&self) -> Vec<Candidate>;
+}
+
+trait ErasedSource: Erased<dyn FrameSource> {
+    fn modes(&self, settings: &AdapterSettings) -> Result<Modes>;
 }
 
 fn decode<S: DeserializeOwned>(settings: &AdapterSettings) -> Result<S> {
@@ -222,6 +248,12 @@ impl<F: SourceFactory> Erased<dyn FrameSource> for Source<F> {
     }
     fn candidates(&self) -> Vec<Candidate> {
         self.0.candidates()
+    }
+}
+
+impl<F: SourceFactory> ErasedSource for Source<F> {
+    fn modes(&self, settings: &AdapterSettings) -> Result<Modes> {
+        Ok(self.0.modes(&decode(settings)?))
     }
 }
 

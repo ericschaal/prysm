@@ -38,6 +38,7 @@ use objc2_foundation::{
     NSDictionary, NSError, NSNotification, NSNotificationCenter, NSNumber, NSObject,
     NSObjectProtocol, NSString,
 };
+use prysm_ports::Span;
 
 use crate::{
     CaptureError, CaptureSink, Frame, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
@@ -492,6 +493,36 @@ pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
         .collect()
 }
 
+pub(crate) fn list_formats(device_uid: &str) -> Option<Vec<prysm_ports::Mode>> {
+    let device = AVCaptureDevice::device_with_unique_id(&NSString::from_str(device_uid))?;
+    let mut found = Vec::new();
+    for format in device.formats().iter() {
+        let Some(description) = format
+            .format_description()
+            .downcast::<CMVideoFormatDescription>()
+        else {
+            continue;
+        };
+        let dimensions = description.get_dimensions();
+        let (Ok(width), Ok(height)) = (
+            u32::try_from(dimensions.width),
+            u32::try_from(dimensions.height),
+        ) else {
+            continue;
+        };
+        let mut rates = crate::formats::Rates::default();
+        for range in format.video_supported_frame_rate_ranges().iter() {
+            rates.within(range.min_frame_rate(), range.max_frame_rate());
+        }
+        found.extend(
+            rates.spans().into_iter().map(|fps| {
+                prysm_ports::Mode::new(Span::exactly(width), Span::exactly(height), fps)
+            }),
+        );
+    }
+    Some(found)
+}
+
 pub(crate) fn run(
     device_uid: Option<&str>,
     width: u32,
@@ -593,6 +624,22 @@ mod tests {
                 "the delegate released the sink"
             );
         }
+    }
+
+    #[test]
+    fn a_missing_device_lists_nothing_known() {
+        assert_eq!(crate::list_formats("prysm-test-missing-device"), None);
+    }
+
+    /// The first camera's formats, when there is one: run with
+    /// `--ignored --nocapture` on a Mac; it may ask for camera access.
+    #[test]
+    #[ignore = "needs a camera"]
+    fn the_first_camera_lists_its_formats() {
+        let device = crate::list_devices().into_iter().next().expect("a camera");
+        let formats = crate::list_formats(&device.id).expect("listed");
+        println!("{}: {formats:#?}", device.name);
+        assert!(!formats.is_empty());
     }
 
     #[test]

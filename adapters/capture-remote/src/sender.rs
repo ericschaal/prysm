@@ -1,6 +1,7 @@
 //! The capture-host end: one WebSocket to Prysm's portal, one frame per
 //! `send`, encoded as the receiver requested.
 use crate::link::{self, Inbound, Link, LinkError, Outbound};
+use crate::offer::Offer;
 use crate::request::StreamRequest;
 use crate::wire::{
     self, Command, Encoding, HEADER_LEN, Header, MAX_TEXT_BYTES, Refusal, Refused, WireError,
@@ -8,7 +9,7 @@ use crate::wire::{
 use bytes::{Bytes, BytesMut};
 use prysm_core::Frame;
 use prysm_h264::{Encoder, EncoderSettings, H264Error};
-use prysm_ports::{CAPTURE_PROTOCOL, Error, FrameSink, Result, chain};
+use prysm_ports::{CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, Error, FrameSink, Result, chain};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, OnceLock};
@@ -129,14 +130,15 @@ impl RemoteSender {
     /// against the system's certificate authorities) by connecting to
     /// `address`, where the URL's host resolved to (the caller resolves, so
     /// it bounds the lookup), with this end's protocol version as the
-    /// subprotocol; then read the receiver's request. The requested encoder
-    /// opens at the first frame.
+    /// subprotocol and `offer` in the [`CAPTURE_OFFER_HEADER`] (Prysm keeps
+    /// it even when it refuses the stream); then read the receiver's
+    /// request. The requested encoder opens at the first frame.
     ///
     /// # Errors
     /// Prysm is unreachable, failed TLS verification, has no receiving
     /// source ([`WireError::Unavailable`] `503`), speaks another version
     /// ([`WireError::Version`]) or sent no valid request.
-    pub fn connect(url: &Uri, address: SocketAddr) -> Result<Self> {
+    pub fn connect(url: &Uri, address: SocketAddr, offer: &Offer) -> Result<Self> {
         let failed = |error| Error::adapter(format!("cannot connect to {url}"), error);
         let socket = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(failed)?;
         socket
@@ -145,7 +147,7 @@ impl RemoteSender {
             .and_then(|()| socket.set_nodelay(true))
             .map_err(failed)?;
         let handle = socket.try_clone().map_err(failed)?;
-        let mut link = upgrade(url, socket)?;
+        let mut link = upgrade(url, socket, offer)?;
         let request = read_request(&mut link)
             .map_err(|error| error.context(format!("{url} sent no request")))?;
         // From here the link's reads never wait: controls are polled per frame.
@@ -338,16 +340,20 @@ fn append_picture(
     })
 }
 
-/// Upgrade `socket` to a WebSocket at `url` with this end's subprotocol,
-/// with TLS first for `wss://`.
-fn upgrade(url: &Uri, socket: TcpStream) -> Result<Link<MaybeTlsStream<TcpStream>>> {
+/// Upgrade `socket` to a WebSocket at `url` with this end's subprotocol and
+/// `offer`, with TLS first for `wss://`.
+fn upgrade(url: &Uri, socket: TcpStream, offer: &Offer) -> Result<Link<MaybeTlsStream<TcpStream>>> {
     let mut request = url
         .into_client_request()
         .map_err(|error| Error::adapter(format!("invalid capture stream URL {url}"), error))?;
-    request.headers_mut().insert(
+    let offer = HeaderValue::from_str(&offer.header())
+        .map_err(|error| Error::adapter("cannot send the capture offer", error))?;
+    let headers = request.headers_mut();
+    headers.insert(
         header::SEC_WEBSOCKET_PROTOCOL,
         HeaderValue::from_static(CAPTURE_PROTOCOL),
     );
+    headers.insert(CAPTURE_OFFER_HEADER, offer);
     let connector = match url.scheme_str() {
         Some("wss") => {
             Some(Connector::Rustls(authorities().map_err(|none| {

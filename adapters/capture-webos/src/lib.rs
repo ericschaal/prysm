@@ -28,11 +28,11 @@ mod source;
 mod ui;
 mod video;
 
-pub use settings::WebosSettings;
+pub use settings::{MODE, WebosSettings};
 pub use source::WebosFrames;
 pub use video::{Readiness, Video, VideoSignal};
 
-use prysm_ports::{FrameSource, Result, SourceFactory, ValidationError};
+use prysm_ports::{FrameSource, Modes, Result, SourceFactory, ValidationError};
 
 /// Opens the TV's video capture.
 #[derive(Debug, Clone, Default)]
@@ -49,8 +49,9 @@ impl WebosCapture {
         Self { video }
     }
 
-    /// Validate, take the device lock and start the native thread. Does not
-    /// wait for video; frames follow once the driver is ready.
+    /// Validate (against [`MODE`]), take the device lock and start the
+    /// native thread. Does not wait for video; frames follow once the driver
+    /// is ready.
     ///
     /// # Errors
     /// Invalid settings, a non-TV platform, no root, or another capturer
@@ -76,6 +77,11 @@ impl SourceFactory for WebosCapture {
 
     fn open(&self, settings: &WebosSettings) -> Result<Box<dyn FrameSource>> {
         Ok(Box::new(self.start(settings)?))
+    }
+
+    /// [`MODE`], whatever the settings; `validate` enforces it.
+    fn modes(&self, _: &WebosSettings) -> Modes {
+        MODE.into()
     }
 }
 

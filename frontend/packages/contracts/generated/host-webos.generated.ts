@@ -223,6 +223,30 @@ export interface components {
          */
         LightingTarget: "off" | "processed" | "device_native";
         /**
+         * @description One way a source delivers: every combination of these widths, heights
+         *     and frame rates.
+         */
+        Mode: {
+            fps: components["schemas"]["Span"];
+            height: components["schemas"]["Span"];
+            width: components["schemas"]["Span"];
+        };
+        /**
+         * @description What a capture source delivers with the posted settings, the reply of
+         *     `POST /api/v1/capture/modes`: `unknown` when it cannot reach its
+         *     hardware; `known` with exactly these modes (none: nothing with these
+         *     settings). Ranges where the hardware takes any value in them, fixed
+         *     modes where it offers fixed ones.
+         */
+        Modes: {
+            /** @enum {string} */
+            status: "unknown";
+        } | {
+            modes: components["schemas"]["Mode"][];
+            /** @enum {string} */
+            status: "known";
+        };
+        /**
          * @description Why the lights are not showing Prysm's colours. Prysm keeps sending; they
          *     follow again once the device takes the colours.
          * @enum {string}
@@ -357,6 +381,27 @@ export interface components {
             /** Format: int64 */
             expected: number;
             settings: components["schemas"]["Settings"];
+        };
+        /**
+         * @description `min`, `min + step`, … up to `max` (always reached); a single value is
+         *     `min == max` with step 1.
+         */
+        Span: {
+            /**
+             * Format: int32
+             * @example 1920
+             */
+            max: number;
+            /**
+             * Format: int32
+             * @example 2
+             */
+            min: number;
+            /**
+             * Format: int32
+             * @example 2
+             */
+            step: number;
         };
         /** @description The observable runtime state, sent whole on every change. */
         State: {
@@ -548,6 +593,8 @@ export type LedColor = components['schemas']['LedColor'];
 export type LedColors = components['schemas']['LedColors'];
 export type LedCounts = components['schemas']['LedCounts'];
 export type LightingTarget = components['schemas']['LightingTarget'];
+export type Mode = components['schemas']['Mode'];
+export type Modes = components['schemas']['Modes'];
 export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Pattern = components['schemas']['Pattern'];
@@ -561,6 +608,7 @@ export type Session = components['schemas']['Session'];
 export type Settings = components['schemas']['Settings'];
 export type SettingsReplaced = components['schemas']['SettingsReplaced'];
 export type SettingsRequest = components['schemas']['SettingsRequest'];
+export type Span = components['schemas']['Span'];
 export type State = components['schemas']['State'];
 export type Style = components['schemas']['Style'];
 export type StyleValues = components['schemas']['StyleValues'];

@@ -7,8 +7,9 @@ use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
     AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls, Error,
-    Input, Latency, LightingTarget, OutputIssue, Pattern, PrimaryControls, Processing, Revision,
-    Section, SessionPhase, SessionState, Settings, Snapshot, Style, StyleValues, ValidationError,
+    Input, Latency, LightingTarget, Mode, Modes, OutputIssue, Pattern, PrimaryControls, Processing,
+    Revision, Section, SessionPhase, SessionState, Settings, Snapshot, Span, Style, StyleValues,
+    ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
@@ -304,6 +305,18 @@ fn application() -> Value {
         ],
         "Style": Style::BUILT_IN.into_iter().chain([Style::Custom]).collect::<Vec<_>>(),
         "StyleValues": Style::BUILT_IN.into_iter().filter_map(Style::built_in).collect::<Vec<_>>(),
+        // `POST /api/v1/capture/modes` replies: a scaling capture's range,
+        // a camera's fixed modes, none, unknown.
+        "Modes": [
+            Modes::from(prysm_capture_webos::MODE),
+            Modes::from(prysm_ports::capture_size::SIZES),
+            Modes::Known(vec![
+                Mode::new(Span::exactly(640), Span::exactly(360), Span::new(1, 30, 1).expect("a span")),
+                Mode::new(Span::exactly(1920), Span::exactly(1080), Span::exactly(30)),
+            ]),
+            Modes::Known(Vec::new()),
+            Modes::Unknown,
+        ],
         "Candidate": [
             Candidate::new("USB Video", &json!({ "path": "/dev/video0" })).detail("/dev/video0"),
             Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))

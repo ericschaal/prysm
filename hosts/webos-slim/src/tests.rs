@@ -258,7 +258,7 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
 /// A sender that connects to Prysm through a portal stand-in.
 fn connect(portal: &Portal) -> impl FnMut() -> Result<RemoteSender> + Send + 'static {
     let (url, address) = (portal.url(), portal.addr);
-    move || RemoteSender::connect(&url, address)
+    move || RemoteSender::connect(&url, address, &prysm_capture_remote::testkit::offer())
 }
 
 /// A real receiver that starts after the sender, as when lighting is switched
@@ -383,7 +383,7 @@ async fn a_prysm_of_another_version_is_reported_as_such_and_retried_slowly() {
     let log = CallLog::new();
     let (mut peer, _feed, task) = start(
         &Opened::fake(&log, FakeSourceSettings::default()),
-        move || RemoteSender::connect(&url, address),
+        move || RemoteSender::connect(&url, address, &prysm_capture_remote::testkit::offer()),
     );
     let event = peer
         .wait_for(|e| version_differs(e).is_some())
@@ -600,7 +600,13 @@ async fn a_receiver_host_name_is_resolved_at_each_attempt() {
     let log = CallLog::new();
     let (mut peer, _feed, task) = start(
         &Opened::fake(&log, FakeSourceSettings::default()),
-        move || RemoteSender::connect(&url, resolver.resolve()?),
+        move || {
+            RemoteSender::connect(
+                &url,
+                resolver.resolve()?,
+                &prysm_capture_remote::testkit::offer(),
+            )
+        },
     );
     let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
     assert_eq!(
@@ -631,7 +637,13 @@ async fn a_hanging_lookup_does_not_hold_up_the_stop() {
     let log = CallLog::new();
     let (mut peer, _feed, task) = start(
         &Opened::fake(&log, FakeSourceSettings::default()),
-        move || RemoteSender::connect(&url, resolver.resolve()?),
+        move || {
+            RemoteSender::connect(
+                &url,
+                resolver.resolve()?,
+                &prysm_capture_remote::testkit::offer(),
+            )
+        },
     );
     let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
     assert!(waiting(&event).unwrap().ends_with("no answer yet"));
@@ -651,7 +663,10 @@ async fn a_hanging_lookup_does_not_hold_up_the_stop() {
 /// reason, and nothing switches to software or raw.
 #[tokio::test]
 async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
+    // The hardware encoder's smallest size, so the backend itself is tried.
     let hardware = StreamRequest {
+        width: 176,
+        height: 144,
         encoding: StreamEncoding::H264Hardware,
         ..SOFTWARE
     };
@@ -688,10 +703,9 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
     };
     assert_eq!(invalid.field, "capture.encoding");
     assert!(
-        invalid
-            .reason
-            .starts_with("the sender cannot stream 64x32 at 30 fps with menus as h264_hardware: ")
-            && invalid.reason.contains("hardware H.264"),
+        invalid.reason.starts_with(
+            "the sender cannot stream 176x144 at 30 fps with menus as h264_hardware: "
+        ) && invalid.reason.contains("hardware H.264"),
         "{}",
         invalid.reason
     );
@@ -782,4 +796,45 @@ fn requests_map_to_capture_settings_and_encodings() {
         assert_eq!(slim_encoding(encoding), slim);
         assert_eq!(encoding.name(), slim.name());
     }
+}
+
+#[test]
+fn the_offer_is_the_capture_within_each_encoder() {
+    use prysm_ports::{Mode, Modes, Span};
+    let span = |min, max, step| Span::new(min, max, step).unwrap();
+    let offer = crate::capture::offer(&[prysm_capture_webos::MODE]);
+    assert_eq!(
+        offer.modes(StreamEncoding::H264Hardware),
+        Modes::from(Mode::new(
+            span(176, 1920, 2),
+            span(144, 1080, 2),
+            span(1, 30, 1)
+        ))
+    );
+    assert_eq!(
+        offer.modes(StreamEncoding::H264Software),
+        Modes::from(Mode::new(
+            span(16, 1920, 2),
+            span(16, 1080, 2),
+            span(1, 60, 1)
+        ))
+    );
+    assert_eq!(
+        offer.modes(StreamEncoding::Raw),
+        Modes::from(prysm_capture_webos::MODE)
+    );
+    // A capture no encoder takes is offered raw only.
+    let tiny = Mode::new(Span::exactly(8), Span::exactly(8), span(1, 60, 1));
+    let offer = crate::capture::offer(&[tiny]);
+    assert_eq!(offer.modes(StreamEncoding::Raw), Modes::from(tiny));
+    assert_eq!(
+        offer.modes(StreamEncoding::H264Software),
+        Modes::Known(Vec::new())
+    );
+    let tiny_request = StreamRequest {
+        width: 8,
+        height: 8,
+        ..StreamRequest::default()
+    };
+    assert_eq!(offer.check(&tiny_request).unwrap_err().field, "width");
 }

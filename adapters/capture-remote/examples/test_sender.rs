@@ -95,10 +95,12 @@ fn main() -> ExitCode {
         eprintln!("cannot resolve {host}:{port}");
         return ExitCode::from(2);
     };
+    // Everything a request may ask for, so only `--refuse` refuses.
+    let offer = prysm_capture_remote::testkit::offer();
     let mut refusals = options.refuse;
     let mut sent = 0u64;
     loop {
-        let Ok(mut sender) = RemoteSender::connect(&options.url, address) else {
+        let Ok(mut sender) = RemoteSender::connect(&options.url, address, &offer) else {
             thread::sleep(RETRY);
             continue;
         };

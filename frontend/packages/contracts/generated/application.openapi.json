@@ -400,6 +400,67 @@
         ],
         "type": "string"
       },
+      "Mode": {
+        "additionalProperties": false,
+        "description": "One way a source delivers: every combination of these widths, heights\nand frame rates.",
+        "properties": {
+          "fps": {
+            "$ref": "#/components/schemas/Span"
+          },
+          "height": {
+            "$ref": "#/components/schemas/Span"
+          },
+          "width": {
+            "$ref": "#/components/schemas/Span"
+          }
+        },
+        "required": [
+          "width",
+          "height",
+          "fps"
+        ],
+        "type": "object"
+      },
+      "Modes": {
+        "description": "What a capture source delivers with the posted settings, the reply of\n`POST /api/v1/capture/modes`: `unknown` when it cannot reach its\nhardware; `known` with exactly these modes (none: nothing with these\nsettings). Ranges where the hardware takes any value in them, fixed\nmodes where it offers fixed ones.",
+        "oneOf": [
+          {
+            "properties": {
+              "status": {
+                "enum": [
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "modes": {
+                "items": {
+                  "$ref": "#/components/schemas/Mode"
+                },
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "known"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "modes",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "OutputIssue": {
         "description": "Why the lights are not showing Prysm's colours. Prysm keeps sending; they\nfollow again once the device takes the colours.",
         "enum": [
@@ -794,6 +855,36 @@
         "required": [
           "expected",
           "settings"
+        ],
+        "type": "object"
+      },
+      "Span": {
+        "additionalProperties": false,
+        "description": "`min`, `min + step`, … up to `max` (always reached); a single value is\n`min == max` with step 1.",
+        "properties": {
+          "max": {
+            "example": 1920,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min": {
+            "example": 2,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "step": {
+            "example": 2,
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "min",
+          "max",
+          "step"
         ],
         "type": "object"
       },

@@ -9,6 +9,7 @@ mod calibrations;
 pub mod capture_size;
 mod error;
 mod handoff;
+mod modes;
 mod owner;
 mod registry;
 mod resolve;
@@ -27,8 +28,10 @@ pub use calibrations::{
 };
 pub use error::{Error, Result, ValidationError, chain};
 pub use handoff::{
-    Accepted, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, CAPTURE_VERSION, Handoff, Receiving,
+    Accepted, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, CAPTURE_VERSION,
+    Handoff, MAX_ANNOUNCEMENT_BYTES, Receiving,
 };
+pub use modes::{Mode, Modes, Span};
 pub use owner::{OwnerThread, Worker};
 pub use registry::{Candidate, OutputFactory, Registry, SourceFactory};
 pub use resolve::{Lookup, Resolver, system_lookup};

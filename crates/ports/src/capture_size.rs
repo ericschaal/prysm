@@ -1,8 +1,16 @@
 //! The frame size and rate a local capture (a video device, a video file)
 //! is configured with: their defaults and their one validation, shared so
 //! every such source accepts the same values with the same messages.
-use crate::ValidationError;
+use crate::{Mode, Span, ValidationError};
 use prysm_core::CaptureResolution;
+
+/// Every size and rate [`validate_capture_size`] accepts: 1 to 3840 × 1 to
+/// 2160 (as [`CaptureResolution`]), any positive rate.
+pub const SIZES: Mode = Mode::new(
+    Span::new(1, 3840, 1).expect("a span"),
+    Span::new(1, 2160, 1).expect("a span"),
+    Span::new(1, u32::MAX, 1).expect("a span"),
+);
 
 /// 640, from [`CaptureResolution::default`].
 #[must_use]
@@ -59,7 +67,9 @@ mod tests {
         ] {
             let error = validate_capture_size(width, height, fps).unwrap_err();
             assert_eq!(error.field, field, "{width}x{height}@{fps}");
+            assert!(!SIZES.contains(width, height, fps));
         }
+        assert!(SIZES.contains(1, 1, 1) && SIZES.contains(3840, 2160, u32::MAX));
         assert_eq!(
             (default_width(), default_height(), default_fps()),
             (640, 360, 30)

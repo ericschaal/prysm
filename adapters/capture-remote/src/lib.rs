@@ -10,10 +10,14 @@
 //!   connections the portal hands over through a [`Handoff`](prysm_ports::Handoff).
 //! - [`StreamRequest`]: what the receiver asks the sender to capture and
 //!   how to encode it; the receiver's settings.
+//! - [`Offer`]: what the sender can deliver, sent with each connection
+//!   attempt; the receiver answers [`modes`](prysm_ports::SourceFactory::modes)
+//!   from the newest.
 //!
 //! The wire protocol is described in the crate README. Each wire message is
 //! one binary WebSocket message.
 mod link;
+mod offer;
 mod receive;
 mod receiver;
 mod request;
@@ -22,6 +26,7 @@ mod sender;
 pub mod testkit;
 mod wire;
 
+pub use offer::Offer;
 pub use receiver::{RemoteReceiver, RemoteSource};
 pub use request::{StreamEncoding, StreamRequest};
 pub use sender::{RemoteSender, SendError};

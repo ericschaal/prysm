@@ -84,7 +84,8 @@ other sites, so keep the TV on a trusted network.
 2. In the computer's portal, choose the video source
    **Capture-only TV (remote)**. Keep **Compressed by the TV's video chip
    (recommended)** and, under **Size and rate**, **Efficient** (320 × 180 at
-   30 fps) to start.
+   30 fps) to start. The video chip sends at most 30 fps: for **Smooth**
+   (60 fps) choose **Compressed by the TV's processor** or **Uncompressed**.
 3. On the TV, open **Prysm**. Set **Prysm address** to the computer's portal,
    for example `192.168.1.20` (the port 8787 is added for you), and choose
    **Use this address**; it is saved at once. The TV sends its picture to that

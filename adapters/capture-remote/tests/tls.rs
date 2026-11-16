@@ -37,7 +37,8 @@ fn wss_through_a_tls_terminating_proxy() {
     if refusing {
         // The test CA is not an authority here: verification fails.
         let source = portal.source(RAW);
-        let error = RemoteSender::connect(&url, proxy).unwrap_err();
+        let error = RemoteSender::connect(&url, proxy, &prysm_capture_remote::testkit::offer())
+            .unwrap_err();
         let text = prysm_ports::chain(&error);
         // A certificate refusal naming the authority, not a lost connection.
         assert!(
@@ -49,7 +50,8 @@ fn wss_through_a_tls_terminating_proxy() {
     }
 
     let mut source = portal.source(RAW);
-    let mut sender = RemoteSender::connect(&url, proxy).unwrap();
+    let mut sender =
+        RemoteSender::connect(&url, proxy, &prysm_capture_remote::testkit::offer()).unwrap();
     assert_eq!(sender.request(), RAW);
     let data: Vec<u8> = (0..320 * 180 * 3).map(|i| i as u8).collect();
     let frame = Frame::new(data, 320, 180, PixelFormat::RGB24).unwrap();

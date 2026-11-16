@@ -394,7 +394,7 @@ async fn allowed_origins_get_cors() {
         assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], tv);
         assert_eq!(
             headers[header::ACCESS_CONTROL_ALLOW_METHODS],
-            "GET, PUT, DELETE"
+            "GET, POST, PUT, DELETE"
         );
         assert_eq!(
             headers[header::ACCESS_CONTROL_ALLOW_HEADERS],
@@ -522,6 +522,69 @@ async fn state_read_and_set_target() {
         let (status, body) = portal.target("sideways").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["kind"], "bad_request");
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// Capture modes are an on-request lookup of the posted capture section:
+/// no revision or state change, unknown kinds and undecodable sections are
+/// refused, and the origin policy applies.
+#[tokio::test]
+async fn capture_modes_answer_for_the_posted_section() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let revision = portal.state().await["revision"].clone();
+        let modes = "/api/v1/capture/modes";
+
+        let (status, body) = portal
+            .json(
+                Method::POST,
+                modes,
+                json!({ "kind": "fake", "width": 99999 }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            json!({ "status": "known", "modes": [{
+                "width": { "min": 16, "max": 16, "step": 1 },
+                "height": { "min": 9, "max": 9, "step": 1 },
+                "fps": { "min": 1, "max": 60, "step": 1 },
+            }] })
+        );
+        assert_eq!(portal.log.count("source.modes"), 1);
+
+        let (status, body) = portal
+            .json(Method::POST, modes, json!({ "kind": "hue" }))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "capture.kind");
+        let (status, _) = portal
+            .json(
+                Method::POST,
+                modes,
+                json!({ "kind": "fake", "width": "wide" }),
+            )
+            .await;
+        assert!(status.is_client_error(), "{status}");
+        let (status, body) = portal
+            .json(Method::POST, modes, json!({ "path": "x" }))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["kind"], "bad_request");
+        let (status, _) = portal.get(modes).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        let foreign = portal
+            .request(Method::POST, modes)
+            .header(header::ORIGIN, "http://evil.example")
+            .json(&json!({ "kind": "fake" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+        assert_eq!(portal.log.count("source.modes"), 1);
+        assert_eq!(portal.state().await["revision"], revision);
         portal.shutdown().await.unwrap();
     })
     .await;

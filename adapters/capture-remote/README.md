@@ -15,7 +15,8 @@ has a listener of its own:
   ```
 
   Every field is optional; these are the defaults. An even `width` (2 to
-  1920) and `height` (2 to 1080), at least 16x16 for H.264; `fps` 1 to 60;
+  1920) and `height` (2 to 1080), `fps` 1 to 60 are what the protocol
+  carries; what a sender streams is its [offer](#wire-protocol-version-5).
   `include_ui` blends the sender's on-screen menus into the picture;
   `encoding` is `h264_hardware` (the TV's encoder), `h264_software`
   (OpenH264 on the TV) or `raw`. The host gives its `incoming()`
@@ -25,15 +26,22 @@ has a listener of its own:
   socket. `open` takes those connections on one receive thread, which also
   decodes H.264. `next_frame(timeout)` returns the newest complete frame
   (older untaken frames are replaced, never queued) or `Pull::Idle` on
-  timeout, and fails when the sender refuses the request (see below). `close`
+  timeout, and fails when the sender's offer excludes the request or the
+  sender refuses it (see below). `close`
   pauses the sender and stops the thread within about 50 ms. Closing is the
   only pause: the next source (lighting on again) gets a new connection,
   which starts unpaused.
-- `RemoteSender::connect(url, address)` is a `FrameSink`: it opens the
+  `modes(request)` answers from the newest offer a sender announced (refused
+  attempts included, so it is known while lighting is off): the modes for
+  the request's encoding, none when the sender lacks it, unknown before any
+  sender tried. `open` refuses a request that offer excludes, as an invalid
+  `capture.width`, `capture.height`, `capture.fps` or `capture.encoding`.
+  The announcement is kept for the process's life and is not authenticated.
+- `RemoteSender::connect(url, address, offer)` is a `FrameSink`: it opens the
   WebSocket at `url` (`ws://host:port/api/v1/capture/stream`, or `wss://` for
   an `https://` Prysm, verified against the system's certificate
   authorities) by connecting to `address`, where the caller resolved the
-  host. It learns the request first (`request()`), and `send` encodes each
+  host, sending its `Offer`. It learns the request first (`request()`), and `send` encodes each
   frame with exactly the requested encoder from
   [`prysm-h264`](../h264/src/lib.rs), opened at the first frame. Any error is
   final for that connection. `deliver` (what `send` calls) returns a
@@ -45,6 +53,11 @@ has a listener of its own:
 A new request needs a new connection: the engine reopens the source when the
 capture settings change, which closes the connection, and the sender's next
 connection (the slim TV worker retries every second) gets the new request.
+
+The slim TV worker offers its capture's modes (`prysm_capture_webos::MODE`)
+raw, and in each H.264 encoder the build has, within that encoder's
+limits (`prysm_h264::Backend::limits`): hardware H.264 at most 30 fps and
+176×144 to 1920×1088, software from 16×16.
 
 The slim TV worker takes one Prysm address (`--prysm http://host:8787` or
 `https://host[:port]`), resolves its host at every connection attempt, wraps
@@ -64,15 +77,40 @@ To watch a TV's stream on a desktop without lights, run `prysm-headless` with
 the `remote` capture and the `null` output; the portal shows the rate and the
 preview.
 
-## Wire protocol (version 4)
+## Wire protocol (version 5)
 
 One WebSocket carries one stream. **The version is the WebSocket
-subprotocol** `prysm-capture.v4` ([`CAPTURE_PROTOCOL`](../../crates/ports/src/handoff.rs)):
+subprotocol** `prysm-capture.v5` ([`CAPTURE_PROTOCOL`](../../crates/ports/src/handoff.rs)):
 the sender offers it in `Sec-WebSocket-Protocol`, the portal answers `101`
 with it, or `426 Upgrade Required` naming the one it speaks when the sender
 offers another (or none). The sender then fails with `WireError::Version {
 ours, theirs }` (`theirs` from the `426`'s `Sec-WebSocket-Protocol`; `None`
 when the peer names none); the slim TV worker shows it as its waiting reason.
+
+**The offer** (new in version 5) travels in the upgrade request's
+`prysm-capture-offer` header
+([`CAPTURE_OFFER_HEADER`](../../crates/ports/src/handoff.rs)): compact JSON,
+a map from encoding to the modes the sender streams in it, an encoding it
+lacks absent:
+
+```json
+{"h264_hardware":[{"width":{"min":176,"max":1920,"step":2},
+  "height":{"min":144,"max":1080,"step":2},"fps":{"min":1,"max":30,"step":1}}],
+ "raw":[...]}
+```
+
+A mode is every combination of its `width`, `height` and `fps` spans
+(`min`, `min + step`, … `max`). For a sender of this version the portal
+announces the header to the remote source *before* deciding to answer `101`
+or `503`, so every attempt, refused or not, delivers it; at most 4096 ASCII
+bytes are kept, anything else is ignored. A connection whose sender's offer
+excludes the request is closed without a request (the sender fails with
+`NoRequest`), and the source fails as for an encoding refusal, with the
+field the offer excludes (`capture.width`, `capture.height`, `capture.fps`,
+or `capture.encoding` for an encoding not offered) and the reason `the
+sender cannot stream 640x360 at 60 fps with menus as raw: at 640x360 this
+source delivers 1 to 30`. An unparseable or missing offer leaves the request
+unchecked.
 
 **Text messages** carry JSON, unknown fields refused:
 

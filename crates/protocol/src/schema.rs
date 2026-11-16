@@ -375,6 +375,47 @@ fn candidate_fields() -> ObjectBuilder {
         ))
 }
 
+// Mirrors `prysm_ports::Span`.
+/// `min`, `min + step`, … up to `max` (always reached); a single value is
+/// `min == max` with step 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Span)]
+#[serde(deny_unknown_fields)]
+pub struct SpanSchema {
+    #[schema(minimum = 0, example = 2)]
+    min: u32,
+    #[schema(minimum = 0, example = 1920)]
+    max: u32,
+    #[schema(minimum = 1, example = 2)]
+    step: u32,
+}
+
+// Mirrors `prysm_ports::Mode`.
+/// One way a source delivers: every combination of these widths, heights
+/// and frame rates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Mode)]
+#[serde(deny_unknown_fields)]
+pub struct ModeSchema {
+    width: SpanSchema,
+    height: SpanSchema,
+    fps: SpanSchema,
+}
+
+// Mirrors `prysm_ports::Modes`.
+/// What a capture source delivers with the posted settings, the reply of
+/// `POST /api/v1/capture/modes`: `unknown` when it cannot reach its
+/// hardware; `known` with exactly these modes (none: nothing with these
+/// settings). Ranges where the hardware takes any value in them, fixed
+/// modes where it offers fixed ones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Modes)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModesSchema {
+    Unknown,
+    Known { modes: Vec<ModeSchema> },
+}
+
 // Mirrors `prysm_ports::SessionPhase`.
 /// Where a faulted session stopped making progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -461,6 +502,9 @@ impl ToSchema for OutputSettings {}
     LedColors,
     LedColor,
     CandidateSchema,
+    ModesSchema,
+    ModeSchema,
+    SpanSchema,
 )))]
 struct Roots;
 
@@ -603,9 +647,9 @@ mod tests {
     use super::*;
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
-        DeviceBrightness, FrameSource, Input, Latency, LightingTarget, OutputIssue, Pattern,
-        PrimaryControls, Processing, Result, SessionPhase, Settings, Style, StyleValues,
-        ValidationError,
+        DeviceBrightness, FrameSource, Input, Latency, LightingTarget, Mode, Modes, OutputIssue,
+        Pattern, PrimaryControls, Processing, Result, SessionPhase, Settings, Span, Style,
+        StyleValues, ValidationError,
     };
     use serde_json::json;
 
@@ -746,6 +790,16 @@ mod tests {
                 .detail("192.168.1.40")
                 .led_count(120),
         );
+        same_shape::<Modes, ModesSchema>(&Modes::Unknown);
+        same_shape::<Modes, ModesSchema>(&Modes::Known(Vec::new()));
+        same_shape::<Modes, ModesSchema>(&Modes::Known(vec![
+            Mode::new(
+                Span::new(2, 1920, 2).unwrap(),
+                Span::new(2, 1080, 2).unwrap(),
+                Span::new(1, 60, 1).unwrap(),
+            ),
+            Mode::new(Span::exactly(640), Span::exactly(360), Span::exactly(30)),
+        ]));
         for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
             same_shape::<CalibrationPattern, CalibrationPatternSchema>(&CalibrationPattern {
                 pattern,

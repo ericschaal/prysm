@@ -1,9 +1,12 @@
 import type {
   CalibrationPattern,
   Candidate,
+  CaptureSettings,
   ColorsEvent,
   Failure,
   LightingTarget,
+  Mode,
+  Modes,
   OutputIssue,
   Pattern,
   Phase,
@@ -16,9 +19,12 @@ import type {
 export type {
   CalibrationPattern,
   Candidate,
+  CaptureSettings,
   ColorsEvent,
   Failure,
   LightingTarget,
+  Mode,
+  Modes,
   OutputIssue,
   Pattern,
   PreviewEvent,
@@ -211,6 +217,16 @@ export interface DiscoveryClient {
     kind: string,
     signal?: AbortSignal,
   ): Promise<Candidate[]>;
+}
+
+/**
+ * What the capture a section selects delivers (`status: 'known'` with its
+ * modes), or `unknown` when its hardware cannot be asked. An on-request
+ * lookup of the section as it would be saved, not state; its size and rate
+ * need not be valid.
+ */
+export interface CaptureModesClient {
+  modes(capture: CaptureSettings, signal?: AbortSignal): Promise<Modes>;
 }
 
 export class ApplicationError extends Error {

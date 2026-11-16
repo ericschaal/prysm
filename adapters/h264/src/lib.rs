@@ -47,10 +47,17 @@ pub(crate) enum FrameKind {
 /// Why H.264 encoding or decoding failed.
 #[derive(Debug, thiserror::Error)]
 pub enum H264Error {
-    #[error("H.264 needs limited-range BT.709 NV12 with even dimensions, not {0}")]
+    #[error("H.264 needs limited-range BT.709 NV12 of a size its encoder takes, not {0}")]
     Input(String),
     #[error("invalid H.264 settings: {0}")]
     Settings(&'static str),
+    /// A rate outside the backend's limits.
+    #[error("{} encodes {offered} fps, not {fps}", backend.name())]
+    Rate {
+        backend: Backend,
+        fps: u32,
+        offered: prysm_ports::Span,
+    },
     /// This program was built without the hardware encoder.
     #[error("this build has no hardware H.264 encoder")]
     HardwareNotBuilt,

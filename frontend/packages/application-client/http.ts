@@ -3,11 +3,14 @@ import {
   type ApplicationClient,
   type ApplicationSnapshot,
   type Candidate,
+  type CaptureModesClient,
   type ColorsClient,
   type ColorsEvent,
   type DiscoveryClient,
   type Failure,
   type LightingTarget,
+  type Mode,
+  type Modes,
   type PreviewClient,
   type PreviewEvent,
   type Session,
@@ -231,6 +234,63 @@ export function httpDiscoveryClient({
       return found;
     },
   };
+}
+
+/** The portal's `POST /api/v1/capture/modes`. */
+export function httpCaptureModesClient({
+  baseUrl = '',
+  fetch: fetcher = fetch,
+}: HttpClientOptions = {}): CaptureModesClient {
+  const api = `${baseUrl.replace(/\/+$/, '')}/api/v1/capture/modes`;
+  return {
+    modes: async (capture, signal) => {
+      let response: Response;
+      try {
+        response = await fetcher(api, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(capture),
+          signal: signal ?? timeoutSignal(COMMAND_TIMEOUT_MS),
+          cache: 'no-store',
+          redirect: 'error',
+        });
+      } catch {
+        throw failure('unavailable', 'The portal did not answer.');
+      }
+      if (!response.ok) throw await responseError(response);
+      const modes: unknown = await response.json().catch(() => null);
+      if (!validModes(modes))
+        throw failure('unavailable', 'Invalid capture modes reply.');
+      return modes;
+    },
+  };
+}
+
+function validModes(value: unknown): value is Modes {
+  const modes = value as { status?: unknown; modes?: unknown } | null;
+  if (modes?.status === 'unknown') return true;
+  return (
+    modes?.status === 'known' &&
+    Array.isArray(modes.modes) &&
+    modes.modes.every(validMode)
+  );
+}
+
+function validMode(value: unknown): value is Mode {
+  const mode = value as Partial<Record<keyof Mode, unknown>> | null;
+  const span = (value: unknown) => {
+    const span = value as {
+      min?: unknown;
+      max?: unknown;
+      step?: unknown;
+    } | null;
+    return (
+      Number.isSafeInteger(span?.min) &&
+      Number.isSafeInteger(span?.max) &&
+      Number.isSafeInteger(span?.step)
+    );
+  };
+  return !!mode && span(mode.width) && span(mode.height) && span(mode.fps);
 }
 
 function validCandidate(value: unknown): value is Candidate {

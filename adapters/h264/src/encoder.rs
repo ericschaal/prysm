@@ -2,14 +2,16 @@
 use crate::software::Software;
 use crate::{DEFAULT_BITRATE, FORMAT, FrameKind, H264Error};
 use prysm_core::Frame;
+use prysm_ports::{Mode, Span};
 use std::ops::RangeInclusive;
 
-/// Capture rates an encoder takes.
-const FPS: RangeInclusive<u32> = 1..=60;
 /// Target bitrates an encoder takes: 64 kbit/s to 100 Mbit/s.
 const BITRATE: RangeInclusive<u32> = 64_000..=100_000_000;
-/// The smallest frame side encoded (one macroblock).
-const MIN_SIDE: u32 = 16;
+
+/// `min` to `max` in steps of `step`, for the limits below.
+const fn span(min: u32, max: u32, step: u32) -> Span {
+    Span::new(min, max, step).expect("a span")
+}
 
 /// Which encoder runs. There is no automatic switching between them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,12 +30,42 @@ impl Backend {
             Self::Software => "software H.264 (OpenH264)",
         }
     }
+
+    /// The sizes (even, as NV12 needs) and rates this backend encodes; the
+    /// encoder refuses others. Limits to intersect with a capture's modes,
+    /// not modes themselves.
+    ///
+    /// - Hardware: LG's rvenc. 176×144 to 1920×1088 is what the vendor KADP
+    ///   path checks (research `webos-capture/2026-11-01-hardware-encoding`);
+    ///   at most 30 fps because rvenc programs 30 fps for any rate above 25
+    ///   (`webos-capture/2026-11-02-encoder-latency`, F-001).
+    /// - Software: from one macroblock (16×16) to what the receiver's
+    ///   decoder takes (Baseline up to 1920×1088), 1 to 60 fps, the rates
+    ///   the encoder has always taken.
+    #[must_use]
+    pub const fn limits(self) -> Mode {
+        match self {
+            Self::Hardware => Mode::new(span(176, 1920, 2), span(144, 1088, 2), span(1, 30, 1)),
+            Self::Software => Mode::new(span(16, 1920, 2), span(16, 1088, 2), span(1, 60, 1)),
+        }
+    }
+
+    /// Whether this build has the backend: hardware needs feature
+    /// `hardware`, and even then runs only on the TV (elsewhere it fails at
+    /// its first frame).
+    #[must_use]
+    pub const fn available(self) -> bool {
+        match self {
+            Self::Hardware => cfg!(feature = "hardware"),
+            Self::Software => true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EncoderSettings {
     pub backend: Backend,
-    /// Capture rate, 1 to 60.
+    /// Capture rate, within the backend's [limits](Backend::limits).
     pub fps: u32,
     /// Target bits per second, 64 kbit/s to 100 Mbit/s.
     pub bitrate: u32,
@@ -133,11 +165,16 @@ impl Encoder {
     /// Check the settings; nothing native opens until the first frame.
     ///
     /// # Errors
-    /// Rate or bitrate out of range, or [`Backend::Hardware`] in a build
-    /// without it.
+    /// A rate outside the backend's [limits](Backend::limits), a bitrate
+    /// out of range, or [`Backend::Hardware`] in a build without it.
     pub fn new(settings: EncoderSettings) -> Result<Self, H264Error> {
-        if !FPS.contains(&settings.fps) {
-            return Err(H264Error::Settings("fps must be 1 to 60"));
+        let fps = settings.backend.limits().fps();
+        if !fps.contains(settings.fps) {
+            return Err(H264Error::Rate {
+                backend: settings.backend,
+                fps: settings.fps,
+                offered: fps,
+            });
         }
         if !BITRATE.contains(&settings.bitrate) {
             return Err(H264Error::Settings(
@@ -168,14 +205,18 @@ impl Encoder {
     /// Encode one frame. `Ok(None)`: software rate control skipped it.
     ///
     /// # Errors
-    /// The frame is not limited-range BT.709 NV12, or the backend cannot
+    /// The frame is not limited-range BT.709 NV12 of a size within the
+    /// backend's [limits](Backend::limits), or the backend cannot
     /// start or failed. The session is closed then; the caller reports the
     /// failure (and may try again, which opens a new session).
     pub fn encode(&mut self, frame: &Frame) -> Result<Option<Picture<'_>>, H264Error> {
         let (width, height) = (frame.width(), frame.height());
-        let planes = frame
-            .nv12_planes()
-            .filter(|_| frame.format() == FORMAT && width >= MIN_SIDE && height >= MIN_SIDE);
+        let limits = self.settings.backend.limits();
+        let planes = frame.nv12_planes().filter(|_| {
+            frame.format() == FORMAT
+                && limits.width().contains(width)
+                && limits.height().contains(height)
+        });
         let Some((y, uv)) = planes else {
             return Err(H264Error::Input(format!(
                 "{width}x{height} {}",
@@ -267,6 +308,16 @@ mod tests {
     fn settings_and_inputs_are_checked() {
         let ok = EncoderSettings::new(Backend::Software, 30);
         assert!(Encoder::new(EncoderSettings { fps: 0, ..ok }).is_err());
+        assert!(Encoder::new(EncoderSettings { fps: 60, ..ok }).is_ok());
+        assert!(matches!(
+            Encoder::new(EncoderSettings { fps: 61, ..ok }),
+            Err(H264Error::Rate { fps: 61, .. })
+        ));
+        let small = frame(14, 16, 0, (128, 128));
+        assert!(matches!(
+            Encoder::new(ok).unwrap().encode(&small),
+            Err(H264Error::Input(_))
+        ));
         assert!(Encoder::new(EncoderSettings { bitrate: 1, ..ok }).is_err());
         let mut encoder = Encoder::new(ok).unwrap();
         let rgb = Frame::new(vec![0; 32 * 32 * 3], 32, 32, prysm_core::PixelFormat::RGB24).unwrap();
@@ -301,9 +352,17 @@ mod tests {
     ))]
     #[test]
     fn hardware_off_the_tv_fails_without_switching_backend() {
+        assert!(matches!(
+            Encoder::new(EncoderSettings::new(Backend::Hardware, 31)),
+            Err(H264Error::Rate { fps: 31, .. })
+        ));
         let mut encoder = Encoder::new(EncoderSettings::new(Backend::Hardware, 30)).unwrap();
+        assert!(matches!(
+            encoder.encode(&frame(64, 32, 0, (128, 128))),
+            Err(H264Error::Input(_))
+        ));
         for _ in 0..2 {
-            let error = encoder.encode(&frame(64, 32, 0, (128, 128))).unwrap_err();
+            let error = encoder.encode(&frame(176, 144, 0, (128, 128))).unwrap_err();
             assert!(
                 matches!(
                     error,
@@ -313,6 +372,18 @@ mod tests {
             );
             assert_eq!(encoder.backend(), Backend::Hardware);
         }
+    }
+
+    #[test]
+    fn backends_state_their_limits() {
+        let hardware = Backend::Hardware.limits();
+        assert!(hardware.contains(176, 144, 30) && hardware.contains(1920, 1088, 1));
+        assert!(!hardware.contains(174, 144, 30) && !hardware.contains(640, 360, 31));
+        assert!(!hardware.contains(641, 360, 30));
+        let software = Backend::Software.limits();
+        assert!(software.contains(16, 16, 60) && !software.contains(14, 16, 30));
+        assert!(Backend::Software.available());
+        assert_eq!(Backend::Hardware.available(), cfg!(feature = "hardware"));
     }
 
     #[test]

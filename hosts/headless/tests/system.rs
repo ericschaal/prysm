@@ -285,7 +285,9 @@ impl TvSender {
         let thread = thread::spawn(move || {
             let mut refusals = refuse;
             while !stopping.load(Ordering::Relaxed) {
-                let Ok(mut sender) = RemoteSender::connect(&url, address) else {
+                let Ok(mut sender) =
+                    RemoteSender::connect(&url, address, &prysm_capture_remote::testkit::offer())
+                else {
                     thread::sleep(Duration::from_millis(50));
                     continue;
                 };
