@@ -20,6 +20,15 @@ This page is what it is to become. Delete it when the last phase has landed and
    stays is undecided, and Docker may become the usual way to run Prysm on
    Linux, so a delivery is a thin layer that is cheap to add or drop.
 
+5. **The runner does not redo what Rust or TypeScript already define.** It
+   has no copy of Prysm's API: it types only the fields its checks read, keeps
+   settings as opaque JSON, and a test feeds the generated examples
+   (`frontend/packages/contracts/generated/fixtures.json`) through its parsers,
+   so a field it depends on cannot change unnoticed. A closed set it must name
+   (targets, encodings) is checked against the generated contracts by a test.
+   It re-implements no product logic: where a check would need some, the check
+   asks Prysm or uses explicit values.
+
 ## Layout
 
 - **The build system** makes the artifacts. It is its own work, apart from this
