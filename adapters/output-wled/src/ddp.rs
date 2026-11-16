@@ -47,10 +47,10 @@ impl Gamma {
     /// No gamma: bytes are linear light.
     pub(crate) const LINEAR: Self = Self(1.0);
 
-    /// WLED's colour gamma held to 1–3 (WLED reports 1 when it is off);
-    /// `None` unless finite.
+    /// A gamma WLED accepts, 0.1–3 (it reports 1 when gamma is off); `None`
+    /// outside that, where WLED itself applies none.
     pub(crate) fn new(value: f32) -> Option<Self> {
-        value.is_finite().then(|| Self(value.clamp(1.0, 3.0)))
+        (0.1..=3.0).contains(&value).then_some(Self(value))
     }
 
     /// WLED's gamma table entry for `byte`: `(int)(powf(i / 255, gamma) *
@@ -510,12 +510,13 @@ mod tests {
     }
 
     #[test]
-    fn gamma_is_held_to_what_wled_offers() {
-        assert_eq!(Gamma::new(0.5), Some(Gamma::LINEAR));
-        assert_eq!(Gamma::new(2.2), Some(Gamma(2.2)));
-        assert_eq!(Gamma::new(9.0), Some(Gamma(3.0)));
-        assert_eq!(Gamma::new(f32::NAN), None);
-        assert_eq!(Gamma::new(f32::INFINITY), None);
+    fn gamma_is_one_wled_accepts() {
+        for value in [0.1, 0.5, 1.0, 2.2, 3.0] {
+            assert_eq!(Gamma::new(value), Some(Gamma(value)));
+        }
+        for value in [0.0, 0.09, 3.1, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(Gamma::new(value), None, "{value}");
+        }
     }
 
     #[test]

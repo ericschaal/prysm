@@ -14,6 +14,9 @@
 //! the LED preferences' brightness factor (`light.scale-bri`, percent,
 //! capped at full), unless the realtime setting "Force max brightness"
 //! (`if.live.maxbri`) is on: then at full brightness times that factor.
+//! With "Use Gamma correction for brightness" on (`light.gc.bri`, reported
+//! as 1 when off) it first passes the brightness through its gamma table
+//! (`setBrightness`: `gamma8`, then `scaledBri`).
 //!
 //! It raises realtime colours to its colour gamma (`light.gc.col`, reported
 //! as 1 when off) unless "Disable realtime gamma correction"
@@ -132,6 +135,7 @@ impl Observer {
     pub fn level(&self) -> Option<u8> {
         let config = self.config?;
         let bri = if config.force_max { u8::MAX } else { self.bri? };
+        let bri = config.brightness_gamma.correct(bri);
         // The factor scales it, capped at full.
         let level = u32::from(bri) * u32::from(config.scale) / 100;
         Some(u8::try_from(level).unwrap_or(u8::MAX))
@@ -373,7 +377,9 @@ struct Realtime {
     force_max: bool,
     /// The brightness factor, percent; WLED's default is 100.
     scale: u8,
-    /// `None` when the configuration does not give it.
+    /// The gamma WLED passes its brightness through; linear when off.
+    brightness_gamma: Gamma,
+    /// The colour gamma; `None` when the configuration does not give it.
     gamma: Option<Gamma>,
 }
 
@@ -419,10 +425,12 @@ impl Default for Light {
     }
 }
 
-/// `light.gc`; its `bri` and `val` do not touch realtime colours.
+/// `light.gc`: the gamma for brightness and for colour, each reported as 1
+/// when off. Brightness gamma is off by default.
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct GammaCorrection {
+    bri: Option<f32>,
     col: Option<f32>,
 }
 
@@ -436,6 +444,12 @@ impl From<Config> for Realtime {
         Self {
             force_max: config.interfaces.live.maxbri,
             scale: config.light.scale,
+            brightness_gamma: config
+                .light
+                .gamma
+                .bri
+                .and_then(Gamma::new)
+                .unwrap_or(Gamma::LINEAR),
             gamma,
         }
     }

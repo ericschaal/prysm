@@ -916,6 +916,24 @@ fn wled_brightness_is_reported_once_its_configuration_says_it_applies() {
             200,
             percent(100),
         ),
+        // "Use Gamma correction for brightness": `bri` goes through the
+        // gamma table first (102 becomes 34 at 2.2), then the factor.
+        (
+            cfg(json!({"if": {"live": {}}, "light": {"gc": {"bri": 2.2}}})),
+            102,
+            percent(13),
+        ),
+        (
+            cfg(json!({"if": {"live": {}}, "light": {"gc": {"bri": 2.2}, "scale-bri": 200}})),
+            102,
+            percent(27),
+        ),
+        // Forced to full, the table leaves it full.
+        (
+            cfg(json!({"if": {"live": {"maxbri": true}}, "light": {"gc": {"bri": 2.2}}})),
+            102,
+            percent(100),
+        ),
         // Behind WLED's settings PIN: nothing to go on, nothing reported.
         (
             Reply::Raw("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".into()),
@@ -1069,6 +1087,8 @@ fn wled_gamma_is_read_from_its_configuration() {
     let cases = [
         (gamma_cfg(2.2, false), gamma(2.2)),
         (gamma_cfg(2.8, false), gamma(2.8)),
+        // WLED 16 takes gammas under 1.
+        (gamma_cfg(0.5, false), gamma(0.5)),
         // "Use Gamma correction for color" off: WLED reports 1.
         (gamma_cfg(1.0, false), linear),
         // Realtime gamma disabled: linear, whatever the colour gamma.

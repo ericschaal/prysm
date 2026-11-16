@@ -25,8 +25,8 @@
 //! 2 lower to 1 higher of 255 below it (`v` 10 at `bri` 50: 1 where 16
 //! shows 3).
 //!
-//! Not modelled: WLED's current limiter, RGBW auto-white, its colour
-//! correction (white balance), and brightness gamma (`light.gc.bri`).
+//! Not modelled: WLED's current limiter, RGBW auto-white and its colour
+//! correction (white balance).
 use crate::ddp::Transfer;
 use prysm_core::{Color, LinearColor};
 use std::num::NonZeroU8;
@@ -342,6 +342,8 @@ mod tests {
     #[test]
     fn every_table_ascends_from_off_to_full() {
         for gamma in [
+            Gamma::new(0.1).unwrap(),
+            Gamma::new(0.5).unwrap(),
             Gamma::LINEAR,
             Gamma::new(2.2).unwrap(),
             Gamma::new(2.8).unwrap(),
