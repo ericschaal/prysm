@@ -4,10 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Prints the OpenAPI documents and serialization fixtures the frontend generates from"
+description = "Prints the OpenAPI documents, constants and serialization fixtures the frontend generates from"
 
 [dependencies]
-clap.workspace = true
 prysm-capture-device = { workspace = true, features = ["schema"] }
 prysm-capture-file = { workspace = true, features = ["schema"] }
 prysm-capture-webos = { workspace = true, features = ["schema"] }

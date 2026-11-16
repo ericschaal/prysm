@@ -1,5 +1,6 @@
 //! `cargo xtask doctor`: which tools are installed and what needs them.
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 /// A tool a command needs.
@@ -16,6 +17,9 @@ enum Tool {
     /// bindgen needs clang and libclang on Linux (V4L2 bindings).
     Clang,
     Ffmpeg,
+    /// The relocated webOS SDK in `WEBOS_SDK`, read through its gcc.
+    WebosSdk,
+    AresPackage,
 }
 
 /// What a tool is needed for.
@@ -25,6 +29,7 @@ enum Use {
     Codegen,
     DistMac,
     DistLinux,
+    DistTv,
     /// The `file` source and its tests; they skip without FFmpeg.
     FileSource,
 }
@@ -35,7 +40,8 @@ impl fmt::Display for Use {
             Self::Check => "check",
             Self::Codegen => "codegen",
             Self::DistMac => "dist mac",
-            Self::DistLinux => "dist linux-*/deb-*",
+            Self::DistLinux => "dist linux-*/deb-*/image-*",
+            Self::DistTv => "dist tv-*",
             Self::FileSource => "the file source only",
         })
     }
@@ -46,7 +52,7 @@ impl fmt::Display for Use {
 struct Version(u32, u32);
 
 impl Tool {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 12] = [
         Self::Cargo,
         Self::Rustc,
         Self::Node,
@@ -57,6 +63,8 @@ impl Tool {
         Self::Buildx,
         Self::Clang,
         Self::Ffmpeg,
+        Self::WebosSdk,
+        Self::AresPackage,
     ];
 
     fn name(self) -> &'static str {
@@ -71,15 +79,24 @@ impl Tool {
             Self::Buildx => "buildx",
             Self::Clang => "clang",
             Self::Ffmpeg => "ffmpeg",
+            Self::WebosSdk => "webos-sdk",
+            Self::AresPackage => "ares-package",
         }
     }
 
     /// The command that prints the version.
     fn version_command(self) -> Command {
-        let (program, args): (&str, &[&str]) = match self {
-            Self::Buildx => ("docker", &["buildx", "version"]),
-            Self::Ffmpeg => ("ffmpeg", &["-version"]),
-            other => (other.name(), &["--version"]),
+        let (program, args): (PathBuf, &[&str]) = match self {
+            Self::Buildx => ("docker".into(), &["buildx", "version"]),
+            Self::Ffmpeg => ("ffmpeg".into(), &["-version"]),
+            // Unset, the empty program fails to start: missing.
+            Self::WebosSdk => (
+                std::env::var_os("WEBOS_SDK")
+                    .map(|sdk| Path::new(&sdk).join("bin/arm-webos-linux-gnueabi-gcc"))
+                    .unwrap_or_default(),
+                &["--version"],
+            ),
+            other => (other.name().into(), &["--version"]),
         };
         let mut command = Command::new(program);
         command.args(args);
@@ -100,13 +117,15 @@ impl Tool {
 
     fn uses(self) -> &'static [Use] {
         match self {
-            Self::Cargo | Self::Rustc => &[Use::Check, Use::Codegen, Use::DistMac],
-            Self::Node | Self::Npm => &[Use::Check, Use::Codegen, Use::DistMac],
-            Self::Python => &[Use::Check],
-            Self::Git => &[Use::Check, Use::DistMac, Use::DistLinux],
+            Self::Cargo | Self::Rustc | Self::Node | Self::Npm => {
+                &[Use::Check, Use::Codegen, Use::DistMac, Use::DistTv]
+            }
+            Self::Python => &[Use::Check, Use::DistTv],
+            Self::Git => &[Use::Check, Use::DistMac, Use::DistLinux, Use::DistTv],
             Self::Docker | Self::Buildx => &[Use::DistLinux],
             Self::Clang => &[Use::Check, Use::Codegen],
             Self::Ffmpeg => &[Use::FileSource],
+            Self::WebosSdk | Self::AresPackage => &[Use::DistTv],
         }
     }
 
@@ -124,6 +143,10 @@ impl Tool {
             Self::Docker | Self::Buildx => "install Docker with the buildx plugin",
             Self::Clang => "install clang and libclang-dev",
             Self::Ffmpeg => "install FFmpeg 9 or newer",
+            Self::WebosSdk => {
+                "set WEBOS_SDK to the relocated SDK, see docs/developers/packaging.md#webos"
+            }
+            Self::AresPackage => "npm install --global @webos-tools/cli@3.2.6",
         }
     }
 }
@@ -211,7 +234,7 @@ pub fn run() -> ExitCode {
             format!(" ({})", tool.hint())
         };
         println!(
-            "{label:<8} {:<8} {detail:<12} for {uses}{hint}",
+            "{label:<8} {:<12} {detail:<12} for {uses}{hint}",
             tool.name()
         );
         check_blocked |= !status.usable() && tool.uses().contains(&Use::Check);
@@ -260,6 +283,12 @@ mod tests {
                 "9.0-static",
             ),
             ("Debian clang version 14.0.6", Version(14, 0), "14.0.6"),
+            ("Version: 3.2.6", Version(3, 2), "3.2.6"),
+            (
+                "arm-webos-linux-gnueabi-gcc.br_real (Buildroot -g) 12.2.0",
+                Version(12, 2),
+                "12.2.0",
+            ),
         ];
         for (text, version, word) in cases {
             assert_eq!(parse_version(text), Some((version, word)), "{text}");

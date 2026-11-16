@@ -5,19 +5,20 @@
 #
 #   docker build -f packaging/docker/Dockerfile -t prysm-headless:local .
 #
-# Other targets: `binary` (just /prysm-headless) and `deb` (the Debian package),
-# both meant for `--output type=local,dest=DIR`. See packaging/README.md.
+# The other target, `artifacts`, holds the binary and the Debian package as
+# /prysm-headless-linux-<arch> and /prysm-headless-linux-<arch>.deb, for
+# `--output type=local,dest=DIR` (`cargo xtask dist linux-<arch> deb-<arch>`).
+# See packaging/README.md.
 
 # The bundle is plain JS/CSS, so it is built once on the build machine's own
-# platform. Generated contracts are checked in (CI checks they are current), so
-# this stage skips `npm run codegen` and needs no Rust.
+# platform. Generated contracts are checked in and CI checks them and the
+# types, so this stage only bundles and needs no Rust.
 FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS frontend
 WORKDIR /src/frontend
 COPY frontend/ ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --no-audit --no-fund \
-    && npm run typecheck \
-    && node scripts/build.mjs
+    && npm run bundle
 
 FROM rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS build
 # prysm-capture-device-sys -> v4l2-sys-mit generates its bindings with bindgen.
@@ -40,17 +41,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=prysm-target-${TARGETARCH},target=/src/target,sharing=locked \
     cargo build --locked --release -p prysm-headless \
-    && install -D target/release/prysm-headless /out/prysm-headless \
-    && strip /out/prysm-headless
+    && install -D target/release/prysm-headless /out/prysm-headless
 
-FROM scratch AS binary
-COPY --from=build /out/prysm-headless /prysm-headless
+FROM build AS deb
+ARG TARGETARCH
+RUN packaging/debian/build-deb.sh /out/prysm-headless /deb/prysm-headless-linux-${TARGETARCH}.deb
 
-FROM build AS deb-build
-RUN packaging/debian/build-deb.sh /out/prysm-headless /deb
-
-FROM scratch AS deb
-COPY --from=deb-build /deb/ /
+# Named as in dist/ (tools/xtask/src/dist.rs), with the architecture, so both
+# architectures' files can sit in one directory.
+FROM scratch AS artifacts
+ARG TARGETARCH
+COPY --from=build /out/prysm-headless /prysm-headless-linux-${TARGETARCH}
+COPY --from=deb /deb/ /
 
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
 # No FFmpeg: the "file" source needs FFmpeg 9+, which Debian does not ship;

@@ -1,12 +1,14 @@
 #!/bin/sh
-# Assembles prysm-headless_<version>_<arch>.deb from a built binary with
-# dpkg-deb. Run on Debian/Ubuntu with dpkg-dev, on the binary's own
-# architecture (dpkg-shlibdeps reads the system's library info), e.g. through
-# the Dockerfile's `deb` target. Usage: build-deb.sh BINARY OUT_DIR
+# Assembles the prysm-headless Debian package from a built binary with
+# dpkg-deb and writes it to OUT (the caller names it; Debian's convention is
+# prysm-headless_<version>_<arch>.deb). Run on Debian/Ubuntu with dpkg-dev, on
+# the binary's own architecture (dpkg-shlibdeps reads the system's library
+# info), e.g. through the Dockerfile's `artifacts` target.
+# Usage: build-deb.sh BINARY OUT
 set -eu
 
 if [ $# -ne 2 ]; then
-    echo "usage: $0 BINARY OUT_DIR" >&2
+    echo "usage: $0 BINARY OUT" >&2
     exit 2
 fi
 binary=$1
@@ -83,5 +85,5 @@ Description: Prysm ambient lighting, headless host
  /var/lib/prysm/settings.json.
 EOF
 
-mkdir -p "$out"
-dpkg-deb --root-owner-group -Zxz --build "$root" "$out/${package}_${version}_${arch}.deb"
+mkdir -p "$(dirname "$out")"
+dpkg-deb --root-owner-group -Zxz --build "$root" "$out"

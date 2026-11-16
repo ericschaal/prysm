@@ -11,6 +11,8 @@ enum Step {
     FrontendLint,
     FrontendFormat,
     Contracts,
+    Typecheck,
+    Bundle,
     FrontendTests,
     Clippy,
     RustTests,
@@ -21,14 +23,17 @@ enum Step {
 }
 
 impl Step {
-    /// The order matters twice: `codegen:check` runs before `npm test`, whose
-    /// build rewrites the contracts, and `npm test` writes `frontend/dist`,
-    /// which the hosts `include!`, before anything compiles them.
-    const ALL: [Self; 11] = [
+    /// The order matters twice: stale contracts fail as such before the
+    /// typecheck reports their symptoms, and the bundle in `frontend/dist`
+    /// exists before the TV tests read it and before Rust compiles the
+    /// hosts, which `include!` it.
+    const ALL: [Self; 13] = [
         Self::RustFormat,
         Self::FrontendLint,
         Self::FrontendFormat,
         Self::Contracts,
+        Self::Typecheck,
+        Self::Bundle,
         Self::FrontendTests,
         Self::Clippy,
         Self::RustTests,
@@ -44,7 +49,9 @@ impl Step {
             Self::FrontendLint => "frontend lint",
             Self::FrontendFormat => "frontend formatting",
             Self::Contracts => "generated contracts",
-            Self::FrontendTests => "frontend build and tests",
+            Self::Typecheck => "frontend typecheck",
+            Self::Bundle => "frontend bundle",
+            Self::FrontendTests => "frontend tests",
             Self::Clippy => "clippy",
             Self::RustTests => "Rust tests",
             Self::Doctests => "doctests",
@@ -65,7 +72,10 @@ impl Step {
             Self::RustFormat => cargo(&["fmt", "--all", "--check"]),
             Self::FrontendLint => Script::Lint.command(),
             Self::FrontendFormat => Script::FormatCheck.command(),
-            Self::Contracts => Script::CodegenCheck.command(),
+            // The command a developer runs: it builds and runs the exporter.
+            Self::Contracts => cargo(&["xtask", "codegen", "--check"]),
+            Self::Typecheck => Script::Typecheck.command(),
+            Self::Bundle => Script::Bundle.command(),
             Self::FrontendTests => Script::Test.command(),
             Self::Clippy => cargo(&[
                 "clippy",
@@ -99,7 +109,7 @@ impl Step {
 
 /// Runs every step in order and stops at the first failure.
 pub fn run() -> Result<()> {
-    npm::install_if_missing()?;
+    npm::install_if_stale()?;
     for step in Step::ALL {
         eprintln!("==> {}", step.name());
         process::run(&mut step.command())
@@ -118,14 +128,19 @@ mod tests {
     }
 
     #[test]
-    fn contracts_are_checked_before_the_build_rewrites_them() {
-        assert!(position(Step::Contracts) < position(Step::FrontendTests));
+    fn contracts_are_checked_before_the_typecheck() {
+        assert!(position(Step::Contracts) < position(Step::Typecheck));
     }
 
     #[test]
-    fn the_bundle_exists_before_rust_compiles_the_hosts() {
-        for step in [Step::Clippy, Step::RustTests, Step::Doctests] {
-            assert!(position(Step::FrontendTests) < position(step), "{step:?}");
+    fn the_bundle_exists_before_the_tests_and_rust_read_it() {
+        for step in [
+            Step::FrontendTests,
+            Step::Clippy,
+            Step::RustTests,
+            Step::Doctests,
+        ] {
+            assert!(position(Step::Bundle) < position(step), "{step:?}");
         }
     }
 

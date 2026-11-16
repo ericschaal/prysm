@@ -3,7 +3,7 @@
 | Package | Built by | Output |
 | --- | --- | --- |
 | Docker image `prysm-headless` (amd64, arm64) | [Dockerfile](../../packaging/docker/Dockerfile) | Local image |
-| Debian package `prysm-headless` | Same Dockerfile, `deb` target | `prysm-headless_<version>_<arch>.deb` |
+| Debian package `prysm-headless` | Same Dockerfile, `artifacts` target | `prysm-headless-linux-<arch>.deb`, released as `prysm-headless_<version>_<arch>.deb` |
 | TV packages, full and slim | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | `io.prysm.tv-full_<version>_all.ipk`, `io.prysm.tv-slim_<version>_all.ipk` |
 
 Reference: [packaging](../../packaging/README.md). Builds never install
@@ -16,20 +16,26 @@ or deploy. Release builds: [releasing](releasing.md).
 
 | Target | File | Built by |
 | --- | --- | --- |
-| `mac` | `prysm-headless-macos-arm64` (this Mac's architecture) | `npm run build`, then `cargo build --release --locked -p prysm-headless`; macOS only |
-| `linux-arm64`, `linux-amd64` | `prysm-headless-linux-<arch>` | The Dockerfile's `binary` target |
-| `deb-arm64`, `deb-amd64` | `prysm-headless-linux-<arch>.deb` | The Dockerfile's `deb` target, copied from its versioned name |
+| `mac` | `prysm-headless-macos-arm64` (this Mac's architecture) | `npm run bundle`, then `cargo build --release --locked -p prysm-headless`; macOS only |
+| `linux-arm64`, `linux-amd64` | `prysm-headless-linux-<arch>` | The Dockerfile's `artifacts` target |
+| `deb-arm64`, `deb-amd64` | `prysm-headless-linux-<arch>.deb` | The same `artifacts` target |
+| `image-arm64`, `image-amd64` | `prysm-headless-linux-<arch>.tar` | The Dockerfile's `runtime` target, an archive for `docker load` |
+| `tv-full`, `tv-slim` | `prysm-tv-full.ipk`, `prysm-tv-slim.ipk` | `npm run bundle`, then [build-ipk.sh](../../packaging/webos/build-ipk.sh); needs `WEBOS_SDK` (see [webOS](#webos)) |
 
 ```sh
-cargo xtask dist linux-arm64 deb-arm64
+cargo xtask dist linux-arm64 deb-arm64 image-arm64
+docker load --input dist/prysm-headless-linux-arm64.tar   # prysm-headless:local
 ```
 
 The Docker targets need buildx; a target for the other architecture is
-emulated and slow. The manifest has one entry per file: the version from
+emulated and slow. The binary and the `.deb` of one architecture come from one
+Docker build. The image is labelled with the commit
+(`org.opencontainers.image.revision`). Release builds of Rust are stripped
+(`[profile.release]` in `Cargo.toml`), so the Mac binary has no symbols, like
+the Linux ones. The manifest has one entry per file: the version from
 `VERSION`, the commit, whether the tree had uncommitted changes, the SHA-256
 and the build time in UTC. Building a target replaces its entry and keeps
-the others. The TV packages and the Docker image are not targets yet; build
-them as below.
+the others.
 
 ## Docker
 
@@ -55,8 +61,10 @@ User guides: [Docker](../users/docker.md), [TrueNAS](../users/truenas.md).
 cargo xtask dist deb-arm64   # or deb-amd64
 ```
 
-This runs the Dockerfile's `deb` target for that platform and writes
-`dist/prysm-headless-linux-<arch>.deb`. [build-deb.sh](../../packaging/debian/build-deb.sh) does the
+This runs the Dockerfile's `artifacts` target for that platform and writes
+`dist/prysm-headless-linux-<arch>.deb`; a release attaches it under Debian's
+name, `prysm-headless_<version>_<arch>.deb`.
+[build-deb.sh](../../packaging/debian/build-deb.sh) does the
 assembly with `dpkg-deb` and also runs on any Debian or Ubuntu with
 `dpkg-dev`. The binary is built on Debian 12 and needs glibc 2.34+ and systemd.
 
@@ -73,16 +81,16 @@ Requirements: the relocated webOS SDK
 `npm install --global @webos-tools/cli@3.2.6`, Python 3.9+ and Node.js 24+.
 
 ```sh
-npm --prefix frontend ci
-npm --prefix frontend run build
 export WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot
-packaging/webos/build-ipk.sh full
-packaging/webos/build-ipk.sh slim
+cargo xtask dist tv-full tv-slim
 ```
 
-Outputs: `target/webos-ipk/full/io.prysm.tv-full_<version>_all.ipk` and
-`target/webos-ipk/slim/io.prysm.tv-slim_<version>_all.ipk`, the names the
-release attaches. Both install as the same app (`io.prysm.tv`); the binaries
+This bundles the frontend and runs `build-ipk.sh` for each package, which
+writes `io.prysm.tv-full_<version>_all.ipk` and
+`io.prysm.tv-slim_<version>_all.ipk`, the names the release attaches; xtask
+copies them to `dist/prysm-tv-full.ipk` and `dist/prysm-tv-slim.ipk`. Run
+directly (after `npm --prefix frontend run bundle`),
+`packaging/webos/build-ipk.sh full` writes to `target/webos-ipk/full/`. Both install as the same app (`io.prysm.tv`); the binaries
 are ARMv7 despite `_all`.
 
 | Package | Supervisor | Worker | TV app |
@@ -122,14 +130,15 @@ Without a TV:
 
 ```sh
 python3 -m unittest discover -s packaging/webos/tests
-python3 packaging/webos/ipk.py verify target/webos-ipk/full/io.prysm.tv-full_*_all.ipk
+python3 packaging/webos/ipk.py verify dist/prysm-tv-full.ipk
 ```
 
 With the SDK, check the Luna and GLib bindings against its headers:
 
 ```sh
-WEBOS_SDK=/path/to/sdk cargo run -p prysm-webos-luna-sys \
-  --features codegen --bin generate-luna-bindings -- --check
+WEBOS_SDK=/path/to/sdk cargo xtask codegen --check --luna
 ```
+
+Without `--check` it regenerates them.
 
 On a TV: [hardware checks](debugging.md#hardware-checks).

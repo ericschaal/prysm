@@ -11,8 +11,9 @@
 #
 # Environment: GITHUB_REPOSITORY (owner/name), RELEASE_TAG (v1.2.3),
 # RELEASE_VERSION (1.2.3), RELEASE_SHA (the tag's commit), RELEASE_DIRECTORY
-# (the downloaded artifacts: prysm-headless-<arch>.tar, prysm-headless_*.deb,
-# io.prysm.tv-*.ipk), GH_TOKEN; docker is logged in to ghcr.io.
+# (the downloaded artifacts: prysm-headless-<arch>.tar, prysm-headless-linux-
+# <arch>.deb, which are attached as prysm-headless_<deb version>_<arch>.deb,
+# and io.prysm.tv-*.ipk), GH_TOKEN; docker is logged in to ghcr.io.
 set -euo pipefail
 
 : "${GITHUB_REPOSITORY:?}" "${RELEASE_TAG:?}" "${RELEASE_VERSION:?}" "${RELEASE_SHA:?}" "${RELEASE_DIRECTORY:?}"
@@ -64,7 +65,11 @@ if [ "$release" != published ]; then
     [ "$(dpkg-deb --field "$deb" Package)" = prysm-headless ] || fail "$deb is not prysm-headless"
     packaged=$(dpkg-deb --field "$deb" Version)
     [ "${packaged%-*}" = "$deb_version" ] || fail "$deb has version $packaged, not $deb_version-*"
-    architectures+=("$(dpkg-deb --field "$deb" Architecture)")
+    architecture=$(dpkg-deb --field "$deb" Architecture)
+    architectures+=("$architecture")
+    # CI exports prysm-headless-linux-<arch>.deb; users download Debian's name.
+    named="./prysm-headless_${packaged}_${architecture}.deb"
+    [ "$deb" = "$named" ] || mv "$deb" "$named"
   done
   [ "$(printf '%s\n' "${architectures[@]}" | sort | tr '\n' ' ')" = 'amd64 arm64 ' ] || fail "the .debs are for ${architectures[*]}"
 

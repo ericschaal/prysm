@@ -90,8 +90,9 @@ flowchart LR
 
 The [generator](../../frontend/scripts/codegen.mjs) translates each named document
 mechanically; it has no type mappings or adapter branches. Generated files are
-checked in; `codegen:check` fails on missing, changed or obsolete files without
-writing. `fixtures.json` holds actual Rust serializations of every root, which
+checked in; `cargo xtask codegen` runs the exporter once and passes its output
+to the generator, and `--check` fails on missing, changed or obsolete files
+without writing. `fixtures.json` holds actual Rust serializations of every root, which
 the [contract tests](../../frontend/tests/contracts.test.mjs) validate against the
 generated schemas. `constants.generated.ts` holds server-known values as
 `export const … as const` (`builtInStyles`), so a frontend built with the

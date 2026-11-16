@@ -78,14 +78,19 @@ Release images are published as `ghcr.io/ericschaal/prysm-headless:<version>`
 
 ## Debian package
 
-Build `prysm-headless_<version>_<arch>.deb` for the build machine's
-architecture (any OS with Docker; add `--platform linux/arm64` for a Pi):
+Build the package for the build machine's architecture (any OS with Docker;
+`deb-arm64` for a Pi):
 
 ```sh
-docker buildx build -f packaging/docker/Dockerfile --target deb --output type=local,dest=dist .
+cargo xtask dist deb-arm64   # dist/prysm-headless-linux-arm64.deb
 ```
 
-[`debian/build-deb.sh BINARY OUT_DIR`](debian/build-deb.sh) does the
+That is the Dockerfile's `artifacts` target, which also holds the binary:
+`docker buildx build -f packaging/docker/Dockerfile --platform linux/arm64
+--target artifacts --output type=local,dest=DIR .` writes
+`prysm-headless-linux-arm64` and `prysm-headless-linux-arm64.deb`. Releases
+attach the package as `prysm-headless_<version>_<arch>.deb`.
+[`debian/build-deb.sh BINARY OUT`](debian/build-deb.sh) does the
 assembly with `dpkg-deb` and can run on any Debian/Ubuntu with `dpkg-dev`.
 The binary is built on Debian 12 and needs systemd and glibc 2.34 or newer
 (Debian 12+, Ubuntu 22.04+, Raspberry Pi OS bookworm, 64-bit).
@@ -93,7 +98,7 @@ The binary is built on Debian 12 and needs systemd and glibc 2.34 or newer
 Install and use:
 
 ```sh
-sudo apt install ./prysm-headless_*.deb   # creates user prysm, enables and starts the service
+sudo apt install ./prysm-headless*.deb    # creates user prysm, enables and starts the service
 systemctl status prysm-headless
 journalctl -u prysm-headless -f
 sudo systemctl edit prysm-headless        # e.g. ExecStart= then ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json --start
@@ -168,11 +173,15 @@ armv7-unknown-linux-gnueabi`, `ares-package` from `@webos-tools/cli`, Python 3.9
 and Node.js 24+ for the frontend.
 
 ```sh
-npm --prefix frontend ci && npm --prefix frontend run build   # or pass --frontend
 export WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot
+cargo xtask dist tv-full tv-slim     # dist/prysm-tv-full.ipk, dist/prysm-tv-slim.ipk
+# or, after npm --prefix frontend ci && npm --prefix frontend run bundle (or with --frontend):
 packaging/webos/build-ipk.sh full    # target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk
 packaging/webos/build-ipk.sh slim    # target/webos-ipk/slim/io.prysm.tv-slim_1.0.0_all.ipk
 ```
+
+The script prints the package's path on standard output and everything else
+on standard error.
 
 `--out DIR` changes the output folder; `CARGO_TARGET_DIR` is honoured. The
 script builds the flavour's two binaries with `--profile webos` (fat LTO, one

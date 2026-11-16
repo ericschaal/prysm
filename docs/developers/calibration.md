@@ -42,7 +42,7 @@ This is visual matching, not optical measurement.
 ## Checks
 
 ```sh
-npm --prefix frontend test
+npm --prefix frontend run bundle && npm --prefix frontend test
 npm --prefix frontend run dev:webos   # /demo.html also plays the phone's part
 ```
 

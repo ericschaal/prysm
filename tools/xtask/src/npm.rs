@@ -1,20 +1,25 @@
-//! The npm scripts of the `frontend/` workspace.
-use crate::process;
+//! The npm scripts of the `frontend/` workspace. Each does one thing; xtask
+//! runs them in order.
+use crate::process::{self, root};
 use anyhow::Result;
+use std::fs;
+use std::path::Path;
 use std::process::Command;
+use std::time::SystemTime;
 
 /// A script from `frontend/package.json`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Script {
-    /// Generate the contracts from Rust (it runs the exporter itself).
+    /// Write the contracts from the exporter's output (see `codegen`).
     Codegen,
-    /// Fail if the generated contracts differ, without writing.
+    /// Fail if the contracts differ from the exporter's output, without writing.
     CodegenCheck,
-    /// Codegen, typecheck and the bundles in `frontend/dist`.
-    Build,
+    Typecheck,
+    /// The bundles in `frontend/dist`, which the hosts and IPKs take.
+    Bundle,
     Lint,
     FormatCheck,
-    /// `build`, then the contract and DOM tests.
+    /// The contract and DOM tests; the TV tests read `frontend/dist`.
     Test,
 }
 
@@ -23,7 +28,8 @@ impl Script {
         match self {
             Self::Codegen => "codegen",
             Self::CodegenCheck => "codegen:check",
-            Self::Build => "build",
+            Self::Typecheck => "typecheck",
+            Self::Bundle => "bundle",
             Self::Lint => "lint",
             Self::FormatCheck => "format:check",
             Self::Test => "test",
@@ -36,10 +42,16 @@ impl Script {
     }
 }
 
-/// Installs the locked packages (`npm ci`) when `frontend/node_modules` is
-/// missing, as on a fresh checkout. An existing install is left alone.
-pub fn install_if_missing() -> Result<()> {
-    if process::root().join("frontend/node_modules").is_dir() {
+/// Installs the locked packages (`npm ci`) unless the install is current.
+/// npm writes `node_modules/.package-lock.json` at the end of every install,
+/// so an install older than `package-lock.json`, or none, is stale.
+pub fn install_if_stale() -> Result<()> {
+    let frontend = root().join("frontend");
+    let modified = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
+    if is_current(
+        modified(&frontend.join("node_modules/.package-lock.json")),
+        modified(&frontend.join("package-lock.json")),
+    ) {
         return Ok(());
     }
     process::run(&mut process::command(
@@ -48,15 +60,20 @@ pub fn install_if_missing() -> Result<()> {
     ))
 }
 
+fn is_current(installed: Option<SystemTime>, locked: Option<SystemTime>) -> bool {
+    installed.is_some() && installed >= locked
+}
+
 /// Runs `script`, installing the packages first if needed.
 pub fn run(script: Script) -> Result<()> {
-    install_if_missing()?;
+    install_if_stale()?;
     process::run(&mut script.command())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn scripts_run_in_the_frontend_workspace() {
@@ -65,5 +82,15 @@ mod tests {
             process::display(&command),
             "npm --prefix frontend run codegen:check"
         );
+    }
+
+    #[test]
+    fn an_install_older_than_the_lockfile_is_stale() {
+        let earlier = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        let later = earlier + Duration::from_secs(1);
+        assert!(is_current(Some(later), Some(earlier)));
+        assert!(is_current(Some(later), Some(later)));
+        assert!(!is_current(Some(earlier), Some(later)));
+        assert!(!is_current(None, Some(later)));
     }
 }

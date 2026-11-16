@@ -8,8 +8,8 @@
 # - `quality`: shell scripts, script tests, Markdown links, workflows.
 # - `frontend`: lint, formatting, generated contracts, bundles and tests. The
 #   hosts include! frontend/dist, so the Rust jobs download this bundle before
-#   compiling. Codegen runs the Rust contract exporter, which is why this job
-#   also needs Rust and libclang.
+#   compiling. `cargo xtask codegen --check` runs the Rust contract exporter,
+#   which is why this job also needs Rust and libclang.
 # - `rust` (Linux, macOS): formatting, clippy, tests, doctests; builds the e2e
 #   binaries. `e2e`: the portal in Chromium and WebKit against them, and the
 #   TV app with remote keys in Chromium on its in-memory demo.
@@ -120,12 +120,14 @@ jobs:
         run: |
           npm --prefix frontend run lint
           npm --prefix frontend run format:check
-      # Check before building: the build regenerates the contracts.
       - name: Generated contracts are current
-        run: npm --prefix frontend run codegen:check
-      - name: Build bundles and run frontend tests
-        # `npm test` runs `npm run build` (codegen, typecheck, bundles, assets.rs) first.
-        run: npm --prefix frontend test
+        run: cargo xtask codegen --check
+      - name: Typecheck, bundles and frontend tests
+        # The TV tests read the bundles (and assets.rs) in frontend/dist.
+        run: |
+          npm --prefix frontend run typecheck
+          npm --prefix frontend run bundle
+          npm --prefix frontend test
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-dist
@@ -380,7 +382,7 @@ jobs:
       - name: Frontend bundles
         run: |
           npm --prefix frontend ci
-          npm --prefix frontend run build
+          npm --prefix frontend run bundle
       - name: Fetch crates
         # build-ipk.sh builds with --offline.
         run: cargo fetch --locked
@@ -447,12 +449,13 @@ jobs:
         run: |
           docker compose -f packaging/docker/compose.yaml config --quiet
           docker compose -f packaging/docker/compose.truenas.yaml config --quiet
+      # The binary and prysm-headless-linux-<arch>.deb.
       - name: Build Debian package
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: packaging/docker/Dockerfile
-          target: deb
+          target: artifacts
           outputs: type=local,dest=${{ runner.temp }}/deb
           cache-from: type=gha,scope=prysm-${{ matrix.arch }}
       - name: Inspect, install and purge the Debian package
@@ -460,7 +463,7 @@ jobs:
           DEB_DIRECTORY: ${{ runner.temp }}/deb
           ARCH: ${{ matrix.arch }}
         run: |
-          deb=$(ls "$DEB_DIRECTORY"/prysm-headless_*_"$ARCH".deb)
+          deb="$DEB_DIRECTORY/prysm-headless-linux-$ARCH.deb"
           dpkg-deb --info "$deb"
           dpkg-deb --contents "$deb"
           dpkg-deb --field "$deb" Conflicts | grep -qw prysm-led
@@ -468,7 +471,7 @@ jobs:
           # No systemd in the container: checks dependencies, user and layout.
           docker run --rm -v "$DEB_DIRECTORY:/deb:ro" debian:bookworm-slim sh -euc '
             apt-get update -qq
-            apt-get install -y -qq /deb/prysm-headless_*.deb >/dev/null
+            apt-get install -y -qq /deb/prysm-headless-linux-*.deb >/dev/null
             id prysm
             id -nG prysm | grep -qw video
             /usr/bin/prysm-headless --help >/dev/null

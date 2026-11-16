@@ -13,7 +13,7 @@ Start a host, then the dev server in a second terminal:
 
 ```sh
 npm --prefix frontend ci
-npm --prefix frontend run build
+npm --prefix frontend run bundle
 cargo run -p prysm-tui -- hosts/tui/settings.example.json
 ```
 
@@ -33,11 +33,13 @@ TypeScript under `packages/contracts/generated`, which is checked in. Never
 edit generated files.
 
 ```sh
-npm --prefix frontend run codegen        # after a Rust contract change
-npm --prefix frontend run codegen:check  # fail on drift without writing
+cargo xtask codegen          # after a Rust contract change
+cargo xtask codegen --check  # fail on drift without writing
 ```
 
-Codegen runs Rust, so it needs a Rust toolchain (and `libclang` on Linux).
+xtask runs the Rust exporter, so codegen needs a Rust toolchain (and
+`libclang` on Linux), and passes its output to `npm run codegen`, which only
+translates it; run on its own, that script stops and names the xtask command.
 Details: [contract ownership](contracts.md).
 
 ## webOS TV app
@@ -59,7 +61,9 @@ browsers and remote-control navigation have not yet been verified on a TV.
 ## Tests and formatting
 
 ```sh
-npm --prefix frontend test           # codegen, typecheck, build, contract and DOM tests
+npm --prefix frontend run typecheck
+npm --prefix frontend run bundle     # frontend/dist; the TV tests read it
+npm --prefix frontend test           # contract and DOM tests
 npm --prefix frontend run lint
 npm --prefix frontend run format:check
 npm --prefix frontend run format     # rewrite with Prettier

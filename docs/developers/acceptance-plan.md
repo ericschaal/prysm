@@ -29,7 +29,6 @@ and run in CI; the runner does not repeat it.
    main Linux cell, because every delivery runs it. Whether the Debian package
    stays is undecided, and Docker may become the usual way to run Prysm on
    Linux, so a delivery is a thin layer that is cheap to add or drop.
-
 5. **The runner does not redo what Rust or TypeScript already define.** It
    has no copy of Prysm's API: it types only the fields its checks read, keeps
    settings as opaque JSON, and a test feeds the generated examples
@@ -41,13 +40,10 @@ and run in CI; the runner does not repeat it.
 
 ## Layout
 
-- **The build system** makes the artifacts. It is its own work, apart from this
-  plan (bead `prysm-9ho`): one entry point for code generation, the checks and
-  every artifact, cross-built where needed, written to `dist/` with a manifest
-  (version, commit, hash). Until it exists the artifacts are made by hand:
-  `cargo build --release -p prysm-headless`, the `binary` and `deb` targets of
-  [`packaging/docker/Dockerfile`](../../packaging/docker/Dockerfile), and
-  [`packaging/webos/build-ipk.sh`](../../packaging/webos/build-ipk.sh).
+- **The build system** makes the artifacts: `cargo xtask dist TARGET...`
+  ([packaging](packaging.md#artifacts-in-dist)) writes them to `dist/` under
+  fixed names, with `manifest.json` (version, commit, hash, build time). It is
+  its own work, apart from this plan (bead `prysm-9ho`).
 - `scripts/acceptance/`: the runner. It shares no code with the build system.
 
 ### `--prepare`

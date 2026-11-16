@@ -7,7 +7,9 @@
 #     packaging/webos/build-ipk.sh full|slim [--frontend] [--out DIR]
 #
 # The TV UI bundle (and, for full, the portal assets the worker embeds) is an
-# input from `npm --prefix frontend run build`; --frontend runs that first.
+# input from `npm --prefix frontend run bundle`; --frontend runs that first.
+# Standard output is the path of the package; everything else goes to
+# standard error. `cargo xtask dist tv-full|tv-slim` runs this script.
 set -euo pipefail
 umask 022
 
@@ -45,11 +47,11 @@ for tool in ares-package python3 cargo; do
 done
 
 if ((frontend)); then
-  npm --prefix "$root/frontend" run build
+  npm --prefix "$root/frontend" run bundle >&2
 fi
 ui="$root/frontend/dist/$host/tv-ui"
 [ -f "$ui/index.html" ] || {
-  echo "build-ipk.sh: no TV UI bundle at $ui; run npm --prefix frontend run build (or pass --frontend)" >&2
+  echo "build-ipk.sh: no TV UI bundle at $ui; run npm --prefix frontend run bundle (or pass --frontend)" >&2
   exit 1
 }
 if [ "$flavour" = full ] && [ ! -f "$root/frontend/dist/webos/web-portal/assets.rs" ]; then
@@ -69,11 +71,11 @@ cargo build --manifest-path "$root/Cargo.toml" --offline \
   --target armv7-unknown-linux-gnueabi --profile webos --target-dir "$target_dir" \
   -p "$worker" -p prysm-webos-service --bin "$worker" --bin "$supervisor"
 binaries="$target_dir/armv7-unknown-linux-gnueabi/webos"
-python3 "$here/ipk.py" elf "$binaries/$supervisor"
+python3 "$here/ipk.py" elf "$binaries/$supervisor" >&2
 if [ "$flavour" = slim ]; then
-  python3 "$here/ipk.py" elf --gstreamer "$binaries/$worker"
+  python3 "$here/ipk.py" elf --gstreamer "$binaries/$worker" >&2
 else
-  python3 "$here/ipk.py" elf "$binaries/$worker"
+  python3 "$here/ipk.py" elf "$binaries/$worker" >&2
 fi
 
 output=${out:-$root/target/webos-ipk/$flavour}

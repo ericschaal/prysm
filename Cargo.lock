@@ -1851,7 +1851,6 @@ dependencies = [
 name = "prysm-export-contracts"
 version = "0.0.0"
 dependencies = [
- "clap",
  "prysm-capture-device",
  "prysm-capture-file",
  "prysm-capture-remote",

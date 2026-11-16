@@ -200,7 +200,7 @@ export const entryScript = /\/assets\/index-[\w-]+\.js/;
 
 /**
  * Fails unless the `prysm-headless` under test and its `fake_devices`
- * example serve the bundle `npm run build` last wrote: they embed the
+ * example serve the bundle `npm run bundle` last wrote: they embed the
  * bundle when cargo builds them, so one built before the frontend serves
  * the old one.
  */
@@ -228,7 +228,7 @@ async function checkHost(devices: FakeDevice[] | null): Promise<void> {
     const served = entryScript.exec(await (await fetch(`${url}/`)).text())?.[0];
     if (!built || served !== built)
       throw new Error(
-        `${bin} serves ${served ?? 'no script'}, but dist has ${built ?? 'none'}: rebuild it (cargo build -p prysm-headless --bins --example fake_devices) after npm run build`,
+        `${bin} serves ${served ?? 'no script'}, but dist has ${built ?? 'none'}: rebuild it (cargo build -p prysm-headless --bins --example fake_devices) after npm run bundle`,
       );
   } finally {
     await checked.stop();

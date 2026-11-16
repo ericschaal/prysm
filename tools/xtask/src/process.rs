@@ -1,7 +1,7 @@
 //! Running child processes from the repository root.
 use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// The repository root; xtask lives in `tools/xtask`.
 pub fn root() -> &'static Path {
@@ -34,17 +34,19 @@ pub fn run(command: &mut Command) -> Result<()> {
     Ok(())
 }
 
-/// Runs `command` quietly and returns its trimmed standard output.
+/// Echoes and runs `command` and returns its trimmed standard output; its
+/// standard error goes to the terminal, so a long build stays visible.
 pub fn output(command: &mut Command) -> Result<String> {
     let line = display(command);
+    eprintln!("$ {line}");
     let output = command
+        .stderr(Stdio::inherit())
         .output()
         .with_context(|| format!("could not start `{line}`"))?;
     ensure!(
         output.status.success(),
-        "`{line}` failed ({}): {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr).trim()
+        "`{line}` failed ({})",
+        output.status
     );
     let stdout =
         String::from_utf8(output.stdout).with_context(|| format!("`{line}` printed non-UTF-8"))?;

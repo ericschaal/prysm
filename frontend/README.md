@@ -1,22 +1,26 @@
 # Prysm frontend
 
-An isolated npm workspace with its own lockfile. Node.js 24+ and Rust are
-required; codegen runs the Rust contract exporter.
+An isolated npm workspace with its own lockfile. Node.js 24+ is required, and
+Rust for codegen: `cargo xtask codegen` runs the Rust contract exporter and
+hands its output to `npm run codegen`. Each script does one thing; `cargo xtask
+check` runs them in order.
 
 ```sh
 # From the repository root:
 npm --prefix frontend ci
-npm --prefix frontend run codegen:check
+cargo xtask codegen --check
+npm --prefix frontend run typecheck
+npm --prefix frontend run bundle
 npm --prefix frontend test
 npm --prefix frontend run lint          # ESLint, the root rule set
 npm --prefix frontend run format:check  # Prettier; `format` rewrites
 npm --prefix frontend run e2e:tv        # TV app with remote keys in Chromium (in-memory demo)
 ```
 
-`npm test` regenerates contracts, type-checks, builds the four entry points
-(and the browser bundles' Rust asset lists), then runs the schema/drift and DOM
-tests. `npm run build` does the same without tests. Build the frontend before
-compiling a Rust host that `include!`s the asset list; Cargo never launches npm.
+`npm run bundle` builds the four entry points (and the browser bundles' Rust
+asset lists) into `dist`; `npm test` runs the schema/drift and DOM tests, and
+its TV tests read `dist`, so bundle first. Bundle before compiling a Rust host
+that `include!`s the asset list; Cargo never launches npm.
 
 ```sh
 npm --prefix frontend run dev:headless      # desktop portal, with hot reload
@@ -355,8 +359,8 @@ and the constants into `constants.generated.ts`.
 Generated files are checked in; never edit them.
 
 ```sh
-npm --prefix frontend run codegen        # refresh after Rust contract changes
-npm --prefix frontend run codegen:check  # fail on drift without writing
+cargo xtask codegen          # refresh after Rust contract changes
+cargo xtask codegen --check  # fail on drift without writing
 ```
 
 Panels use their adapter's generated section type from

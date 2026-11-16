@@ -1,10 +1,8 @@
-//! Build-only entry point for `npm run codegen`: prints the named OpenAPI
-//! documents, with `--fixtures` actual Rust serializations the frontend
-//! tests validate against them, or with `--constants` server-known values
-//! the frontends use as they are.
+//! Build-only input of `cargo xtask codegen`: prints the named OpenAPI
+//! documents, server-known values the frontends use as they are, and actual
+//! Rust serializations the frontend tests validate against the documents.
 mod constants;
 mod fixtures;
-use clap::Parser;
 use prysm_capture_device::DeviceSource;
 use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
@@ -12,6 +10,7 @@ use prysm_capture_webos::WebosCapture;
 use prysm_output_wled::Wled;
 use prysm_protocol::schema::{Contract, OpenApi};
 use prysm_runtime::NullOutput;
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::io::{self, Write};
@@ -49,26 +48,16 @@ fn webos() -> Contract {
         .output::<Wled>()
 }
 
-/// Prints the OpenAPI documents the frontend generates its types from.
-#[derive(Debug, Parser)]
-struct Cli {
-    /// Print Rust serializations the frontend tests validate instead
-    #[arg(long, conflicts_with = "constants")]
-    fixtures: bool,
-    /// Print the constants the frontends use, such as the built-in styles, instead
-    #[arg(long)]
-    constants: bool,
-}
-
+/// Prints one JSON object: `documents`, the named OpenAPI documents;
+/// `constants`, server-known values the frontends use as they are; and
+/// `fixtures`, Rust serializations the frontend tests validate against the
+/// documents.
 fn main() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-    let output = if cli.fixtures {
-        fixtures::serialized()
-    } else if cli.constants {
-        constants::serialized()?
-    } else {
-        serde_json::to_value(documents()?)?
-    };
+    let output = json!({
+        "documents": documents()?,
+        "constants": constants::serialized()?,
+        "fixtures": fixtures::serialized(),
+    });
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &output)?;
     writeln!(stdout)?;
@@ -78,7 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::Value;
 
     #[test]
     fn desktop_document_types_every_registered_kind() {

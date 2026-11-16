@@ -18,12 +18,13 @@ The product is one Cargo workspace (`Cargo.toml`) and one npm workspace
 
 `cargo xtask` is the entry point for generating, checking and building
 ([tools/xtask](../../tools/xtask/src/main.rs)). It runs the npm scripts,
-Cargo, the Dockerfile and the Python checks in the right order, and runs
-`npm ci` first when `frontend/node_modules` is missing.
+Cargo, the Dockerfile, the TV package script and the Python checks in the
+right order, and runs `npm ci` first when `frontend/node_modules` is missing
+or older than `frontend/package-lock.json`.
 
 ```sh
 cargo xtask doctor    # which tools are installed, and what needs them
-cargo xtask codegen   # contracts from Rust; --check fails on drift
+cargo xtask codegen   # contracts from Rust; --check fails on drift, --luna adds the TV bindings
 cargo xtask check     # the checks below, in order
 cargo xtask dist mac  # an artifact in dist/; see packaging
 ```
@@ -33,7 +34,7 @@ bundle, so build it first; Cargo never runs npm.
 
 ```sh
 npm --prefix frontend ci
-npm --prefix frontend run build
+npm --prefix frontend run bundle
 cargo build
 ```
 
@@ -81,12 +82,13 @@ It runs the checks of CI's `quality`, `frontend` and `rust` jobs
 ([ci.yml](../../.github/workflows/ci.yml)) and stops at the first failing
 step, which it names. Not included: shellcheck, actionlint, the end-to-end
 tests, the armv7, Miri, IPK and Docker jobs. The order: Rust formatting, frontend
-lint and formatting, `codegen:check`, `npm test` (which builds
-`frontend/dist`), clippy with `-D warnings`, the Rust tests and doctests, the
-Python tests in `scripts/tests` and `packaging/webos/tests`, and
-`scripts/check-doc-links.py`. The contracts are checked before `npm test`
-because its build rewrites them, and the bundle is built before Rust because
-the hosts `include!` it.
+lint and formatting, `cargo xtask codegen --check`, the frontend typecheck,
+bundle (`frontend/dist`) and tests, clippy with `-D warnings`, the Rust tests
+and doctests, the Python tests in `scripts/tests` and `packaging/webos/tests`,
+and `scripts/check-doc-links.py`. The contracts are checked before the
+typecheck, so stale contracts fail as such, and the bundle is built before the
+frontend tests and Rust because the TV tests read it and the hosts `include!`
+it.
 
 Use `cargo test -p CRATE` for one crate. The
 TV crates are also linted and unit-tested for armv7 under qemu in CI; the IPK

@@ -101,7 +101,8 @@ UI teardown releases the state stream only; it never turns lighting off.
 
 ```sh
 npm --prefix frontend ci
-npm --prefix frontend run codegen:check
+cargo xtask codegen --check
+npm --prefix frontend run bundle
 npm --prefix frontend test
 npm --prefix frontend run dev:webos
 ```

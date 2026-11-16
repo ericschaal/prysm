@@ -159,7 +159,7 @@ From the repository root, `cargo xtask check` runs every check in order
 ([check](README.md#check)). For a quicker loop:
 
 ```sh
-npm --prefix frontend ci && npm --prefix frontend run build   # hosts include! the bundle
+npm --prefix frontend ci && npm --prefix frontend run bundle   # hosts include! the bundle
 cargo test --workspace --all-targets --offline
 ```
 
