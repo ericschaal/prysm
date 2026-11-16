@@ -101,11 +101,11 @@ ipk_slim = "dist/prysm-slim.ipk"
 
 The Debian package has no `file` source, so that cell does not exist.
 
-A Docker cell waits for a runtime image: the Dockerfile today builds only the
-binary and the package. The cell would test what a container adds, with the
-compose file the user documentation gives: the capture device passed in, the
-settings on a volume, and host networking so that WLED sees the machine's
-address as the sender.
+A Docker cell is not planned yet. The image and its compose file exist
+([`packaging/docker/`](../../packaging/docker/compose.yaml)); the cell would
+test what a container adds: the capture device passed in, the settings on a
+volume, and the sender address WLED sees through the container's network. It
+needs Docker on the Linux machine.
 
 A cell whose artifact or tool is missing is a SKIP with the reason; a cell
 asked for by name fails instead. Cells run one at a time, and the runner
@@ -170,7 +170,7 @@ Each phase lands with its tests and CI green before the next starts.
 4. **The TV stages on the new configuration**, slim with a Mac or a Linux
    receiver.
 
-The Docker cell has no phase: it follows a runtime image.
+The Docker cell has no phase yet: where it goes is to be decided.
 
 A first package stage exists outside the tree (written before this plan, a
 separate `linux` stage that builds its own package). It passed on a Raspberry
