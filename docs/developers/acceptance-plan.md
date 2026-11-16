@@ -9,7 +9,7 @@ This page is what it is to become. Delete it when the last phase has landed and
 ## Principles
 
 1. **The runner tests artifacts given in the configuration.** It never builds
-   on its own. Separate scripts prepare the artifacts; the runner runs them only
+   on its own. The build system prepares the artifacts; the runner calls it only
    when asked to with `--prepare`.
 2. **Capture devices and feeds are per platform**, each device given by its
    exact identifier.
@@ -18,24 +18,24 @@ This page is what it is to become. Delete it when the last phase has landed and
 
 ## Layout
 
-- `scripts/artifacts/`: one script per artifact (the Mac binary, the Linux
-  binary, the Linux `.deb`, the full and slim TV packages). Each writes to
-  `dist/` and prints the configuration line to paste. Cross-compiling is here,
-  through the existing targets of
-  [`packaging/docker/Dockerfile`](../../packaging/docker/Dockerfile). The
-  scripts work on their own, without the runner.
-- `scripts/acceptance/`: the runner. It imports nothing from
-  `scripts/artifacts/`.
+- **The build system** makes the artifacts. It is its own work, apart from this
+  plan (bead `prysm-9ho`): one entry point for code generation, the checks and
+  every artifact, cross-built where needed, written to `dist/` with a manifest
+  (version, commit, hash). Until it exists the artifacts are made by hand:
+  `cargo build --release -p prysm-headless`, the `binary` and `deb` targets of
+  [`packaging/docker/Dockerfile`](../../packaging/docker/Dockerfile), and
+  [`packaging/webos/build-ipk.sh`](../../packaging/webos/build-ipk.sh).
+- `scripts/acceptance/`: the runner. It shares no code with the build system.
 
 ### `--prepare`
 
 Without the option the runner uses the configured artifacts as they are and
-fails in preflight when one is missing. With `--prepare` it first runs the
-artifact script of each artifact the chosen cells need, as a separate process,
-then tests what the configuration names. Which script makes which artifact is a
-closed table in the runner; the command is one template in the allow-list. A
-failed script ends the run before any device is touched, as a preparation
-failure and not a test failure.
+fails in preflight when one is missing. With `--prepare` it first asks the
+build system for each artifact the chosen cells need, as a separate process,
+then tests what the configuration names. Which command makes which artifact is
+a closed table in the runner; the command is one template in the allow-list. A
+failed build ends the run before any device is touched, as a preparation
+failure and not a test failure. The option waits for the build system.
 
 ## Configuration
 
@@ -129,8 +129,9 @@ runs a caller's string over SSH.
 - **The target:** the architecture matches the artifact, `sudo` for the
   package, FFmpeg 9 or newer for the `file` source, the device identifier
   present and readable.
-- **Artifacts:** the report records each one's version, hash and age, and
-  warns when one is older than the checkout's last commit. After the start the
+- **Artifacts:** the report records each one's version, hash and age (and its
+  commit, once the build system writes a manifest), and warns when one is older
+  than the checkout's last commit. After the start the
   running version (`prysm_build_info` in `/metrics`) is compared with the
   artifact's. Prysm reports its version there and not its commit, so two builds
   of one version differ only by hash.
@@ -149,10 +150,11 @@ runs a caller's string over SSH.
 
 Each phase lands with its tests and CI green before the next starts.
 
-1. **Host seam, configuration and artifact scripts.** `host mac` replaces
-   `desktop`. Verified with the Mac file cell.
+1. **Host seam and configuration.** `host mac` replaces `desktop`. Verified
+   with the Mac file cell.
 2. **The Linux package cell.** Installed on a Raspberry Pi 5 over SSH and run
    through the feed.
-3. **The Linux binary cell, `all` and `--prepare`**, with the skip rules.
+3. **The Linux binary cell and `all`**, with the skip rules. `--prepare`
+   follows when the build system exists.
 4. **The TV stages on the new configuration**, slim with a Mac or a Linux
    receiver.
