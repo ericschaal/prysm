@@ -59,6 +59,7 @@ adb_serial = "0123456789ABCD"
 target = "ssh://pi@192.168.1.70"       # or "local"
 binary = "dist/prysm-headless-linux-arm64"
 deb    = "dist/prysm-headless-linux-arm64.deb"  # optional
+image  = "dist/prysm-headless-linux-arm64.tar"  # optional
 device = "/dev/v4l/by-id/usb-EXAMPLE-video-index0"
 
 [linux.feed.chromecast]
@@ -83,7 +84,7 @@ ipk_slim = "dist/prysm-tv-slim.ipk"
 
 ## Commands
 
-- `run.py host mac|linux [--delivery binary|deb] [--source file|device]`
+- `run.py host mac|linux [--delivery binary|deb|image] [--source file|device]`
 - `run.py tv full` and `run.py tv slim --receiver mac|linux`
 - `run.py eyes`, `run.py all`, `run.py restore-wled`
 - `--prepare`, `--dry-run`, `--only` and `--from`. `--no-build` goes.
@@ -97,16 +98,22 @@ ipk_slim = "dist/prysm-tv-slim.ipk"
 | Linux, binary, device | a card on the Linux machine |
 | Linux, binary, file | FFmpeg 9 or newer on the Linux machine (Debian 13 ships an older one, so this cell is a SKIP on the bench Pi) |
 | Linux, deb, device | a card on the Linux machine, `sudo` |
+| Linux, image, device | a card and Docker on the Linux machine |
 | TV full | the TV free |
 | TV slim, receiver Mac or Linux | the TV free |
 
-The Debian package has no `file` source, so that cell does not exist.
+The Debian package and the image have no `file` source, so those cells do
+not exist.
 
-A Docker cell is not planned yet. The image and its compose file exist
-([`packaging/docker/`](../../packaging/docker/compose.yaml)); the cell would
-test what a container adds: the capture device passed in, the settings on a
-volume, and the sender address WLED sees through the container's network. It
-needs Docker on the Linux machine.
+The image cell runs the image with its compose file
+([`packaging/docker/`](../../packaging/docker/compose.yaml)) and tests what a
+container adds: the capture device passed in, the settings on a volume, and
+the sender address WLED sees through the container's network. Like the
+package cell it is a thin layer over the shared checks.
+
+A capture cell that fails is a plain failure: the runner does not retry. The
+report includes the target's kernel lines about USB from the run, so a card
+that reset (bead `prysm-9jt`) is recognisable.
 
 A cell whose artifact or tool is missing is a SKIP with the reason; a cell
 asked for by name fails instead. Cells run one at a time, and the runner
@@ -124,6 +131,7 @@ stop, logs, base URL, and the sender address WLED should report.
 | Binary, local (Mac or Linux) | none | child process, SIGTERM | file |
 | Binary, SSH (Linux) | copy to a run directory | over SSH; listens on the LAN | fetched file |
 | Package (Linux, local or SSH) | copy, `apt-get install` | systemd unit | `journalctl` |
+| Image (Linux, local or SSH) | copy, `docker load` | `docker compose` | `docker logs` |
 
 A remote `file` source also copies the clip to the target.
 
@@ -140,9 +148,10 @@ runs a caller's string over SSH.
 - **The target:** the architecture matches the artifact, `sudo` for the
   package, FFmpeg 9 or newer for the `file` source, the device identifier
   present and readable.
-- **Artifacts:** the report records each one's version, hash and age (and its
-  commit, once the build system writes a manifest), and warns when one is older
-  than the checkout's last commit. After the start the
+- **Artifacts:** the report records each one's hash and age. When the build
+  system's `manifest.json` is next to the artifact and its hash matches, the
+  report also records the version and commit from it. The runner warns when an
+  artifact is older than the checkout's last commit. After the start the
   running version (`prysm_build_info` in `/metrics`) is compared with the
   artifact's. Prysm reports the product version there (`1.0.0-alpha.0`; the
   package's own file name writes it the Debian way, `1.0.0~alpha.0-1`) and not
@@ -166,13 +175,13 @@ Each phase lands with its tests and CI green before the next starts.
    with the Mac file cell.
 2. **The Linux binary cell.** Copied to a Raspberry Pi 5 over SSH and run
    through the feed.
-3. **The Linux package cell and `all`**, with the skip rules. The package cell
-   is kept as it is and not extended until the package's future is decided.
-   `--prepare` follows when the build system exists.
+3. **The Linux package and image cells and `all`**, with the skip rules. Both
+   deliveries stay thin; the package cell is not extended until the package's
+   future is decided. `--prepare` is added here.
 4. **The TV stages on the new configuration**, slim with a Mac or a Linux
    receiver.
 
-The Docker cell has no phase yet: where it goes is to be decided.
+Phase 1 waits for the build system.
 
 A first package stage exists outside the tree (written before this plan, a
 separate `linux` stage that builds its own package). It passed on a Raspberry
