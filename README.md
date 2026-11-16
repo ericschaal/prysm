@@ -8,17 +8,22 @@
   and sends those colours to WLED.
 </p>
 
-## What you need
+## Three ways to run Prysm
 
-- **A picture source:** an HDMI capture card, or a rooted LG webOS TV.
-- **WLED** with LED strips around the screen.
-- **For a capture card:** a Linux or macOS computer, such as a Raspberry Pi.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/setups-dark.svg">
+  <img src="docs/images/setups.svg" alt="Three setups. Capture card: an HDMI source feeds a capture card on a computer that runs Prysm. LG TV, full package: the TV itself runs Prysm. LG TV, slim package: the TV sends its picture to a computer that runs Prysm. In all three, Prysm sends colours to WLED, which drives the LEDs." width="100%">
+</picture>
 
-```text
-HDMI → capture card → computer running Prysm → WLED → LEDs
-LG TV running Prysm (full package) → WLED → LEDs
-LG TV (slim package) → computer running Prysm → WLED → LEDs
-```
+| Setup | Choose it when | You need |
+| --- | --- | --- |
+| **Capture card** | You want it to work with any TV and any HDMI source. | HDMI capture card, a Linux or macOS computer (a Raspberry Pi will do), WLED |
+| **LG TV, full package** | You have a rooted LG webOS TV and want no extra computer. | Rooted LG webOS TV, WLED |
+| **LG TV, slim package** | You have a rooted LG webOS TV and would rather a computer did the work. | Rooted LG webOS TV, a computer on your network, WLED |
+
+Every setup needs [WLED](https://kno.wled.ge/) driving LED strips around the
+screen. The TV setups also light up for the TV's own apps, which a capture
+card cannot see.
 
 ## Install
 
@@ -67,6 +72,40 @@ picture and the LED colours, and change settings.
 <p align="center">
   <img src="docs/images/portal-home.webp" alt="Prysm web portal Home in dark mode: the lights are On in Screen sync at 80% brightness with the Movie night calibration, next to the setup from TV through Prysm to a WLED with 96 LEDs." width="768">
 </p>
+
+## Help wanted
+
+Prysm is young, and these are the places where help would count most:
+
+- **More TVs.** Today only rooted LG webOS TVs can capture their own picture.
+  Other LG models, and other makers' TVs, need someone with the hardware.
+- **Voice assistants and home automation.** Turning the lights on and off or
+  changing the style from Home Assistant, Alexa or Google Home.
+- **Other LED controllers.** Prysm sends colours to WLED only. An output is a
+  small adapter, so other controllers and protocols can be added.
+
+Open an [issue](https://github.com/ericschaal/prysm/issues) to talk an idea
+through before you start; [Contributing](docs/developers/guidelines.md) has
+the rest.
+
+## Standing on shoulders
+
+Prysm owes a lot to projects that came first:
+
+- [WLED](https://github.com/wled/WLED) drives the LEDs. Prysm only tells it
+  what colours to show.
+- [Hyperion](https://github.com/hyperion-project/hyperion.ng) and
+  [HyperHDR](https://github.com/awawa-dev/HyperHDR) are the established
+  open-source ambient lighting systems. Prysm's [research](research/README.md)
+  measures its sampling and black-bar detection against theirs.
+- [hyperion-webos](https://github.com/webosbrew/hyperion-webos) and
+  [PicCap](https://github.com/TBSniller/piccap) showed how to capture the
+  picture on an LG TV. Prysm's TV capture bindings are ported from
+  hyperion-webos.
+- [webOS Homebrew](https://www.webosbrew.org/) makes it possible to root an
+  LG TV and install apps like this one, and its
+  [tv-native-apis](https://github.com/webosbrew/tv-native-apis) documents
+  the TV's capture interfaces.
 
 ## Develop Prysm
 

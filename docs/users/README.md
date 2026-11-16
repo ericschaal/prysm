@@ -12,11 +12,10 @@ controller.
 | **LG TV, full package** | The TV itself | The TV | Rooted LG webOS TV, WLED |
 | **LG TV, slim package** | The TV itself | A computer on your network; the TV only sends the picture | Rooted LG webOS TV, computer, WLED |
 
-```text
-HDMI → capture card → computer running Prysm → WLED → LEDs
-LG TV running Prysm (full) → WLED → LEDs
-LG TV (slim) → computer running Prysm → WLED → LEDs
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../images/setups-dark.svg">
+  <img src="../images/setups.svg" alt="Three setups. Capture card: an HDMI source feeds a capture card on a computer that runs Prysm. LG TV, full package: the TV itself runs Prysm. LG TV, slim package: the TV sends its picture to a computer that runs Prysm. In all three, Prysm sends colours to WLED, which drives the LEDs." width="100%">
+</picture>
 
 Prysm cannot capture a computer's own desktop.
 
