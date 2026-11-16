@@ -15,6 +15,10 @@ This page is what it is to become. Delete it when the last phase has landed and
    exact identifier.
 3. **A remote Mac is not implemented.** `[mac]` with an `ssh://` target is
    refused when the configuration loads, saying so.
+4. **The checks do not depend on how Prysm is delivered.** The binary is the
+   main Linux cell, because every delivery runs it. Whether the Debian package
+   stays is undecided, and Docker may become the usual way to run Prysm on
+   Linux, so a delivery is a thin layer that is cheap to add or drop.
 
 ## Layout
 
@@ -53,8 +57,8 @@ adb_serial = "0123456789ABCD"
 
 [linux]
 target = "ssh://pi@192.168.1.70"       # or "local"
-deb    = "dist/prysm-headless_1.0.0_arm64.deb"
-binary = "dist/prysm-headless-aarch64" # optional
+binary = "dist/prysm-headless-aarch64"
+deb    = "dist/prysm-headless_1.0.0_arm64.deb"  # optional
 device = "/dev/v4l/by-id/usb-EXAMPLE-video-index0"
 
 [linux.feed.chromecast]
@@ -89,13 +93,19 @@ ipk_slim = "dist/prysm-slim.ipk"
 | --- | --- |
 | Mac, binary, file | FFmpeg 9 or newer on the Mac |
 | Mac, binary, device | a card on the Mac; run from Terminal (camera permission) |
-| Linux, deb, device | a card on the Linux machine, `sudo` |
 | Linux, binary, device | a card on the Linux machine |
 | Linux, binary, file | FFmpeg 9 or newer on the Linux machine |
+| Linux, deb, device | a card on the Linux machine, `sudo` |
 | TV full | the TV free |
 | TV slim, receiver Mac or Linux | the TV free |
 
 The Debian package has no `file` source, so that cell does not exist.
+
+A Docker cell waits for a runtime image: the Dockerfile today builds only the
+binary and the package. The cell would test what a container adds, with the
+compose file the user documentation gives: the capture device passed in, the
+settings on a volume, and host networking so that WLED sees the machine's
+address as the sender.
 
 A cell whose artifact or tool is missing is a SKIP with the reason; a cell
 asked for by name fails instead. Cells run one at a time, and the runner
@@ -152,9 +162,17 @@ Each phase lands with its tests and CI green before the next starts.
 
 1. **Host seam and configuration.** `host mac` replaces `desktop`. Verified
    with the Mac file cell.
-2. **The Linux package cell.** Installed on a Raspberry Pi 5 over SSH and run
+2. **The Linux binary cell.** Copied to a Raspberry Pi 5 over SSH and run
    through the feed.
-3. **The Linux binary cell and `all`**, with the skip rules. `--prepare`
-   follows when the build system exists.
+3. **The Linux package cell and `all`**, with the skip rules. The package cell
+   is kept as it is and not extended until the package's future is decided.
+   `--prepare` follows when the build system exists.
 4. **The TV stages on the new configuration**, slim with a Mac or a Linux
    receiver.
+
+The Docker cell has no phase: it follows a runtime image.
+
+A first package stage exists outside the tree (written before this plan, a
+separate `linux` stage that builds its own package). It passed on a Raspberry
+Pi 5 on 2026-11-16 and is the source for the package cell's commands and
+checks.
