@@ -346,7 +346,7 @@ fn configure_capture(
     width: u32,
     height: u32,
     refresh_rate_hz: NonZeroU32,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ConfigurationLock<'_>> {
     let requested_width =
         i32::try_from(width).context("capture width exceeds AVFoundation's dimensions")?;
     let requested_height =
@@ -374,11 +374,22 @@ fn configure_capture(
     device
         .lock_for_configuration()
         .context("cannot lock capture device to set format and frame rate")?;
+    let lock = ConfigurationLock(device);
     device.set_active_format(&format);
     device.set_active_video_min_frame_duration(duration);
     device.set_active_video_max_frame_duration(duration);
-    device.unlock_for_configuration();
-    Ok(())
+    Ok(lock)
+}
+
+/// A device locked for configuration. A session that starts while the lock
+/// is not held replaces the format and frame rate with its own choice, so the
+/// lock is kept until the session runs.
+struct ConfigurationLock<'a>(&'a AVCaptureDevice);
+
+impl Drop for ConfigurationLock<'_> {
+    fn drop(&mut self) {
+        self.0.unlock_for_configuration();
+    }
 }
 
 /// The frame duration at which `range` delivers `fps`: 1/fps inside the
@@ -445,7 +456,7 @@ fn start_session(
     output.set_video_settings(&video_settings(width, height));
     let configured = configure_capture(&device, width, height, refresh_rate_hz);
     session.commit_configuration();
-    configured?;
+    let configuration = configured?;
 
     let running = RunningSession {
         session,
@@ -457,6 +468,7 @@ fn start_session(
         return Ok(None);
     }
     running.session.start_running();
+    drop(configuration);
     let actual = device
         .get_active_format()
         .format_description()
