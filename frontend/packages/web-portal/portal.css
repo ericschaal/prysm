@@ -649,9 +649,20 @@ button.link {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   column-gap: var(--space-4);
 }
+/*
+ * The three share one set of rows (label, control, note), so the controls
+ * line up whatever the length of a label or a note.
+ */
+.grid.three > .field {
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+}
+.grid.three > .field > label {
+  align-self: end;
+}
 @container (max-width: 460px) {
-  .grid.three {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .grid.three .unit {
+    display: block;
   }
 }
 fieldset {
