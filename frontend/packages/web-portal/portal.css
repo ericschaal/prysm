@@ -2637,15 +2637,46 @@ button.section-status-main:focus-visible {
   width: var(--icon);
   height: var(--icon);
   fill: none;
-  stroke: var(--accent);
-  stroke-width: 2.4;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+/* Every option shows its ring; the chosen one is filled and ticked. */
+.row-ring {
+  stroke: var(--line-strong);
+  transition:
+    fill var(--duration) var(--ease-out),
+    stroke var(--duration) var(--ease-out);
+}
+.row-tick {
+  stroke: var(--on-fill);
   opacity: 0;
   transition: opacity var(--duration) var(--ease-out);
 }
-.row-choice input:checked ~ .row-check {
+.row-choice input:checked ~ .row-check .row-ring {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+.row-choice input:checked ~ .row-check .row-tick {
   opacity: 1;
+}
+@media (hover: hover) {
+  .row-choice label:hover:has(input:enabled:not(:checked)) .row-ring {
+    stroke: var(--accent-ink);
+  }
+}
+/* Forced colours drop the fill's colour: the system's own say which. */
+@media (forced-colors: active) {
+  .row-ring {
+    stroke: CanvasText;
+  }
+  .row-choice input:checked ~ .row-check .row-ring {
+    fill: Highlight;
+    stroke: Highlight;
+  }
+  .row-tick {
+    stroke: HighlightText;
+  }
 }
 /* Locked, as a disabled field is, until it is known what can be chosen. */
 .row-choice label:has(input:disabled) {

@@ -911,3 +911,29 @@ test('a preset above its target says it is the smallest the source offers at its
     }
   }
 });
+
+test('every choice row shows its ring; only the chosen one is checked', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture: { kind: 'device', path },
+    output,
+  });
+  try {
+    await openEditor('Video source');
+    const marks = $$('.row-choice', choice()).map((row) => [
+      $('.row-label', row).textContent,
+      Boolean($('.row-check .row-ring', row)),
+      Boolean($('.row-check .row-tick', row)),
+      $('input', row).checked,
+    ]);
+    assert.deepEqual(marks, [
+      ['Balanced', true, true, true],
+      ['Smooth', true, true, false],
+      ['Efficient', true, true, false],
+    ]);
+    // The mark is drawn, not read: the radio says which is chosen.
+    for (const row of $$('.row-choice', choice()))
+      assert.equal($('.row-check', row).getAttribute('aria-hidden'), 'true');
+  } finally {
+    await portal.unmount();
+  }
+});

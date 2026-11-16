@@ -101,6 +101,7 @@ export function RowFact({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** A choice's mark: a ring, filled and ticked while chosen. */
 function CheckIcon() {
   return (
     <svg
@@ -109,14 +110,15 @@ function CheckIcon() {
       aria-hidden="true"
       focusable="false"
     >
-      <path d="M5 12.5 10 17.5 19 7" />
+      <circle className="row-ring" cx="12" cy="12" r="10.5" />
+      <path className="row-tick" d="M7.5 12.4 10.6 15.5 16.5 9" />
     </svg>
   );
 }
 
 /**
- * One option of a choice in the rows pattern: a radio drawn as a tick in
- * the chevron's place. Its label names it; the line beneath (and `facts`
+ * One option of a choice in the rows pattern: a radio drawn as a ring in
+ * the chevron's place, filled and ticked while chosen. Its label names it; the line beneath (and `facts`
  * beside the label, if given) describe it, so a screen reader reads the
  * name first and the trade after it. A `problem` joins that line in the
  * error colour after `about`, as in a `RowLink`.
