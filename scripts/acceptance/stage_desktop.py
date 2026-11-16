@@ -65,6 +65,10 @@ def build(ctx):
 def snapshot_wled(ctx):
     wled = _wled(ctx)
     saved = wled_api.snapshot(wled)
+    if saved['info'].get('live'):
+        # Two senders would fight over the LEDs and no check could be trusted.
+        raise Failed(f'WLED is already driven by {saved["info"].get("lip")}: turn that lighting off first',
+                     saved['info'])
     path = ctx.save('wled-snapshot.json', saved)
     ctx.data['wled_snapshot'] = saved
 
