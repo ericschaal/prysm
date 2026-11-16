@@ -253,21 +253,39 @@ def headless(binary, settings, listen, metrics=True, allow_null_origin=False):
                    env={'RUST_LOG': 'warn,prysm=info'})
 
 
-def ffmpeg_edges_clip(out, width, height, fps, seconds, edges):
-    """A clip whose edges show fixed colours (`edges`: top, right, bottom, left as hex) over gray."""
-    for value, name in ((width, 'width'), (height, 'height'), (fps, 'fps'), (seconds, 'seconds')):
-        if not isinstance(value, int) or not 1 <= value <= 4000:
+def ffmpeg_edges_clip(out, width, height, fps, seconds, corners, step_seconds):
+    """A clip of coloured edge bands over gray whose colours step round the corners.
+
+    `corners`: four hex colours, clockwise from the top-left corner, at the
+    first step. Each corner's colour fills the halves of the two edge bands
+    that meet there. Every `step_seconds` the colours move one corner on,
+    clockwise. `seconds` is a whole number of periods (four steps), so a
+    player that repeats the clip keeps the order."""
+    for value, name in ((width, 'width'), (height, 'height'), (fps, 'fps'), (seconds, 'seconds'),
+                        (step_seconds, 'step_seconds')):
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 4000:
             raise Refused(f'{name}: {value!r}')
-    for colour in edges.values():
-        _check(re.compile(r'^[0-9a-f]{6}$'), colour, 'colour')
-    band_w, band_h = width // 5, height // 5
-    boxes = [
-        f'drawbox=x={band_w}:y=0:w={width - 2 * band_w}:h={band_h}:color=0x{edges["top"]}:t=fill',
-        f'drawbox=x={band_w}:y={height - band_h}:w={width - 2 * band_w}:h={band_h}:color=0x{edges["bottom"]}:t=fill',
-        f'drawbox=x=0:y={band_h}:w={band_w}:h={height - 2 * band_h}:color=0x{edges["left"]}:t=fill',
-        f'drawbox=x={width - band_w}:y={band_h}:w={band_w}:h={height - 2 * band_h}:color=0x{edges["right"]}:t=fill',
+    period = 4 * step_seconds
+    if seconds % period:
+        raise Refused(f'seconds: {seconds} is not a whole number of {period} s periods')
+    if not isinstance(corners, (list, tuple)) or len(corners) != 4:
+        raise Refused(f'corners: {corners!r}')
+    for colour in corners:
+        _check(re.compile(r'[0-9a-f]{6}'), colour, 'colour')
+    band_w, band_h, half_w, half_h = width // 5, height // 5, width // 2, height // 2
+    # (x, y, w, h) of the two half-bands at each corner, clockwise from the top-left.
+    halves = [
+        ((0, 0, half_w, band_h), (0, 0, band_w, half_h)),
+        ((half_w, 0, width - half_w, band_h), (width - band_w, 0, band_w, half_h)),
+        ((half_w, height - band_h, width - half_w, band_h), (width - band_w, half_h, band_w, height - half_h)),
+        ((0, height - band_h, half_w, band_h), (0, half_h, band_w, height - half_h)),
     ]
-    source = f'color=c=0x404040:s={width}x{height}:r={fps}:d={seconds},' + ','.join(boxes)
+    boxes = [f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0x{corners[(corner - step) % 4]}:t=fill"
+             f":enable='eq(floor(n/{step_seconds * fps}),{step})'"
+             for step in range(4) for corner, parts in enumerate(halves) for x, y, w, h in parts]
+    # One period is drawn, then repeated frame for frame.
+    source = (f'color=c=0x404040:s={width}x{height}:r={fps}:d={period},' + ','.join(boxes)
+              + f',loop=loop={seconds // period - 1}:size={period * fps}')
     # faststart: the index first, so a player streaming it over HTTP can start at once.
     return Command('local.ffmpeg-clip',
                    ('ffmpeg', '-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', source,
@@ -344,7 +362,7 @@ TEMPLATES = {
     'local.check-settings': lambda: check_settings('target/release/prysm-headless', 'settings.json'),
     'local.headless': lambda: headless('target/release/prysm-headless', 'settings.json', '127.0.0.1:8787'),
     'local.ffmpeg-clip': lambda: ffmpeg_edges_clip(
-        'clip.mp4', 640, 360, 30, 60, {'top': 'ff0000', 'right': '00ff00', 'bottom': '0000ff', 'left': 'ffff00'}),
+        'clip.mp4', 640, 360, 30, 64, ('ff0000', '00ff00', '0000ff', 'ffff00'), 2),
     'adb.get-state': lambda: adb_get_state('0123456789ABCD'),
     'adb.wake': lambda: adb_wake('0123456789ABCD'),
     'adb.wakefulness': lambda: adb_wakefulness('0123456789ABCD'),

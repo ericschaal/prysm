@@ -51,9 +51,12 @@ class Prysm:
         return web.request('PUT', self._url('/api/v1/calibration'),
                            {'pattern': pattern, 'uncorrected': False}, timeout=self.timeout)
 
-    def colors(self, seconds=3.0):
-        """The `ColorsEvent`s the colours stream sends within `seconds`."""
-        return web.events(self._url('/api/v1/colors/stream'), seconds)
+    def colors(self, seconds=3.0, timed=False):
+        """The `ColorsEvent`s the colours stream sends within `seconds`.
+
+        `timed`: each as (seconds since the stream opened, event). The stream
+        sends only when the colours change, so an event holds until the next."""
+        return web.events(self._url('/api/v1/colors/stream'), seconds, timed=timed)
 
     def wait(self, check, seconds, every=0.5):
         """The first state for which `check(state)` holds; `None` after `seconds`."""

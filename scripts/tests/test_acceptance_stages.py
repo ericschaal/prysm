@@ -13,9 +13,10 @@ ACCEPTANCE = Path(__file__).resolve().parents[1] / 'acceptance'
 sys.path.insert(0, str(ACCEPTANCE))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from acceptance_fakes import FakePrysm  # noqa: E402
+from acceptance_fakes import edges_event, FakePrysm  # noqa: E402
 import colour_page  # noqa: E402
 import config  # noqa: E402
+import edges_clip  # noqa: E402
 import feed  # noqa: E402
 from fake_wled import FakeWled  # noqa: E402
 import modes  # noqa: E402
@@ -74,13 +75,13 @@ class DesktopChecks(Devices):
         self.assertEqual(outcomes['desktop.wled-live'].status, plan.FAIL)
 
     def test_wrong_edge_colours_fail(self):
-        self.ctx.data['prysm'].colors = lambda seconds=3.0: [{'type': 'colors', 'top': [[0, 0, 250]] * 8,
-                                                              'right': [[10, 250, 10]] * 8,
-                                                              'bottom': [[250, 10, 10]] * 8,
-                                                              'left': [[250, 250, 10]] * 8}]
+        self.prysm.colours = lambda seconds: edges_event({'top': ('blue', 'blue'), 'right': ('green', 'blue'),
+                                                          'bottom': ('yellow', 'blue'), 'left': ('red', 'yellow')})
+        self.ctx.data['prysm'].colors = lambda seconds, timed: prysm_api.Prysm(self.prysm.url).colors(1.0, timed)
         outcomes = self.run_steps(['desktop.colours'])
         self.assertEqual(outcomes['desktop.colours'].status, plan.FAIL)
-        self.assertEqual(outcomes['desktop.colours'].evidence['measured']['top']['seen'], 'blue')
+        self.assertIn('wrong colour: top shows blue, blue', outcomes['desktop.colours'].detail)
+        self.assertEqual(outcomes['desktop.colours'].evidence['samples'][0]['edges']['top'], 'blue, blue')
 
     def test_the_device_source_resolves_the_preset_like_the_portal(self):
         self.ctx.options = Options(source='device')
@@ -252,10 +253,115 @@ class TheFeed(Devices):
 
     def test_colour_checks_wait_for_the_feed(self):
         self.ctx.data['feed'] = self.feed
+        self.ctx.data['prysm'].colors = lambda seconds, timed: timeline()
         detail, _ = stage_desktop.colours(self.ctx)
-        self.assertIn('clip', detail)
+        self.assertIn('steps in order', detail)
         stage_desktop.release(self.ctx)
         self.assertEqual(self.feed.calls, ['settled', 'settled'])
+
+
+def step(number, change=None):
+    """The clip's colours at step `number`, as the stream sends them; `change(pairs)` alters the edges."""
+    pairs = edges_clip.expected(number % edges_clip.STEPS)
+    if change:
+        change(pairs)
+    return edges_event(pairs)
+
+
+def timeline(first=0, changes=(1.3, 3.3, 5.3, 7.3, 9.3), change=None):
+    """Timed samples over 10 s: step `first` at once, the next one at each change."""
+    return [(0.1, step(first, change))] + [(at, step(first + i, change)) for i, at in enumerate(changes, 1)]
+
+
+class TheColourCheck(unittest.TestCase):
+    """The stepping clip's check on the colours stream: direction, steps and pace."""
+
+    def judged(self, samples):
+        return edges_clip.judge(samples, 10.0)
+
+    def fails(self, samples, message):
+        with self.assertRaisesRegex(plan.Failed, message) as failed:
+            self.judged(samples)
+        return failed.exception
+
+    def test_the_stream_reports_each_edge_from_one_corner_to_the_next(self):
+        # Top and bottom left to right, left and right top to bottom; corners red, green, blue, yellow from the top-left.
+        self.assertEqual(edges_clip.expected(0), {'top': ('red', 'green'), 'right': ('green', 'blue'),
+                                                  'bottom': ('yellow', 'blue'), 'left': ('red', 'yellow')})
+        # One step on, every colour has moved one corner clockwise.
+        self.assertEqual(edges_clip.expected(1), {'top': ('yellow', 'red'), 'right': ('red', 'green'),
+                                                  'bottom': ('blue', 'green'), 'left': ('yellow', 'blue')})
+        self.assertEqual(edges_clip.corner_hex(), ('ff0000', '00ff00', '0000ff', 'ffff00'))
+
+    def test_the_clip_passes(self):
+        detail, evidence = self.judged(timeline(first=3))
+        self.assertIn('6 steps in order', detail)
+        self.assertEqual([number for _, number in evidence['steps']], [3, 0, 1, 2, 3, 0])
+        self.assertEqual(evidence['intervals'], [2.0, 2.0, 2.0, 2.0])
+
+    def test_only_the_quarters_between_corner_and_middle_are_read(self):
+        event = step(0)
+        event['top'][0] = event['top'][3] = event['top'][4] = event['top'][7] = [70, 70, 70]
+        self.assertEqual(edges_clip.decode(event), (0, None))
+        event['top'][2] = [70, 70, 70]
+        self.assertEqual(edges_clip.decode(event)[1], 'wrong colour: top shows mixed, green, step 0 has red, green')
+
+    def test_a_wrong_colour_fails(self):
+        def gray(pairs):
+            pairs['right'] = ('gray', pairs['right'][1])
+        failed = self.fails(timeline(change=gray), r'^wrong colour: right shows gray, ')
+        self.assertTrue(failed.evidence['samples'][0]['edges']['right'].startswith('gray'))
+
+    def test_a_reversed_edge_fails(self):
+        def mirror(pairs):
+            pairs['left'] = pairs['left'][::-1]
+        self.fails(timeline(change=mirror), r'^reversed edge: left shows yellow, red, step 0 has red, yellow')
+
+    def test_swapped_edges_fail(self):
+        def swap(pairs):
+            pairs['top'], pairs['right'] = pairs['right'], pairs['top']
+        self.fails(timeline(change=swap), r"^swapped edges: top shows green, blue, right's colours")
+
+    def test_a_frozen_picture_fails(self):
+        failed = self.fails([(0.1, step(2))], r'^frozen picture: step 2 for the whole 10 s')
+        self.assertEqual(failed.evidence['steps'], [[0.1, 2]])
+        self.fails(timeline(changes=(1.3,)), r'^wrong pace: no change for 8.70 s after the last change')
+
+    def test_steps_at_the_wrong_pace_fail(self):
+        failed = self.fails(timeline(changes=(1.3, 3.9, 6.5, 9.1)), r'^wrong pace: steps changed \[2.6, 2.6, 2.6\] s apart')
+        self.assertEqual(failed.evidence['intervals'], [2.6, 2.6, 2.6])
+        self.fails(timeline(changes=(1.3, 2.3, 3.3, 4.3, 5.3, 6.3, 7.3, 8.3, 9.3)), r'^wrong pace')
+
+    def test_a_skipped_step_fails(self):
+        samples = timeline()
+        samples[2] = (3.3, step(3))
+        self.fails(samples, r'^steps out of order: step 1 at 1.3 s, then step 3')
+
+    def test_a_sample_on_a_step_boundary_is_a_short_transition(self):
+        # Caught mid-change: top and right already show step 2, bottom and left still step 1.
+        mixed = step(1)
+        mixed.update({edge: step(2)[edge] for edge in ('top', 'right')})
+        samples = timeline()
+        samples[2:3] = [(3.3, mixed), (3.5, step(2))]
+        detail, evidence = self.judged(samples)
+        self.assertIn('in order', detail)
+        self.assertEqual(evidence['intervals'], [2.2, 1.8, 2.0, 2.0])
+        self.assertTrue(evidence['samples'][2]['fault'].startswith('swapped edges'))
+
+    def test_a_short_fault_within_a_step_fails(self):
+        mirrored = step(1)
+        mirrored['left'] = mirrored['left'][::-1]
+        samples = timeline()
+        samples[2:2] = [(2.0, mirrored), (2.2, step(1))]
+        failed = self.fails(samples, r'^reversed edge: left shows blue, yellow, step 1 has yellow, blue \(for 0.2 s')
+        self.assertEqual(failed.evidence['steps'], [[0.1, 0], [1.3, 1]])
+
+    def test_too_long_a_transition_fails(self):
+        mixed = step(1)
+        mixed.update({edge: step(2)[edge] for edge in ('top', 'right')})
+        samples = timeline()
+        samples[2:3] = [(3.3, mixed), (3.7, step(2))]
+        self.fails(samples, r'^transition too long: from step 1 to step 2 took 0.4 s \(at most 0.3 s\)')
 
 
 class FakeWledBehaviour(Devices):

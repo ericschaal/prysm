@@ -6,6 +6,8 @@ import time
 
 import colour_page
 import commands
+import edges_clip
+from edges_clip import CLIP
 import feed
 import host
 import modes
@@ -14,11 +16,6 @@ import prysm_api
 from prysm_api import near, rates, session
 import wled_api
 
-# The generated clip's edge colours (hex) and what the colours stream should report.
-CLIP_EDGES = {'top': 'ff0000', 'right': '00ff00', 'bottom': '0000ff', 'left': 'ffff00'}
-# 30 minutes, longer than the whole stage, so a feed that does not loop never
-# reaches the end; about 8 s to encode and 2 MB.
-CLIP = {'width': 640, 'height': 360, 'fps': 30, 'seconds': 1800}
 CLEANUPS = ('prysm-headless stopped with SIGTERM (KILL after 30 s)',
             'WLED restored from wled-snapshot.json (live off, preset, on, bri, lor, transition, if.live.maxbri) '
             'and compared; by hand: run.py restore-wled RUN_DIR/wled-snapshot.json')
@@ -103,13 +100,17 @@ def snapshot_wled(ctx):
     return f'saved {path}', saved
 
 
+def _clip_command(path):
+    return commands.ffmpeg_edges_clip(path, CLIP['width'], CLIP['height'], CLIP['fps'], CLIP['seconds'],
+                                      edges_clip.corner_hex(), edges_clip.STEP_SECONDS)
+
+
 def clip(ctx):
     if ctx.options.source_path:
         ctx.data['clip'] = ctx.options.source_path
         return f'using {ctx.options.source_path} (colour check off: unknown content)'
     path = ctx.out_dir / 'edges.mp4'
-    ctx.run(commands.ffmpeg_edges_clip(str(path), CLIP['width'], CLIP['height'], CLIP['fps'],
-                                       CLIP['seconds'], CLIP_EDGES))
+    ctx.run(_clip_command(str(path)))
     ctx.data['clip'] = str(path)
     ctx.data['clip_edges'] = True
     return f'generated {path}'
@@ -244,14 +245,10 @@ def _last_colours(ctx, seconds=3.0):
 def colours(ctx):
     _start_processed(ctx)
     _feed_settled(ctx)
-    event = _last_colours(ctx)
     if ctx.data.get('clip_edges'):
-        expected = {edge: tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4)) for edge, hex_ in CLIP_EDGES.items()}
-        ok, means = colour_page.matches(event, expected)
-        evidence = {'expected': expected, 'measured': means}
-        if not ok:
-            raise Failed('edge colours differ from the clip', evidence)
-        return 'each edge shows the clip\'s colour', evidence
+        seconds = edges_clip.CHECK_SECONDS
+        return edges_clip.judge(_prysm(ctx).colors(seconds, timed=True), seconds)
+    event = _last_colours(ctx)
     brightest = max(max(sum(c) for c in event.get(edge) or [[0, 0, 0]]) for edge in ('top', 'right', 'bottom', 'left'))
     if brightest < 30:
         raise Failed('every edge is black', event)
@@ -427,10 +424,9 @@ def steps(config, options):
              actions=[f'GET http://{config.wled}/json/si', f'GET http://{config.wled}/json/cfg']),
     ]
     if not device or controlled:
-        found.append(Step('desktop.clip', 'Test clip', 'a generated clip with known edge colours, or --source file:PATH',
-                          'setup', clip, commands=lambda: [] if options.source_path else [commands.ffmpeg_edges_clip(
-                              'RUN_DIR/edges.mp4', CLIP['width'], CLIP['height'], CLIP['fps'], CLIP['seconds'],
-                              CLIP_EDGES)]))
+        found.append(Step('desktop.clip', 'Test clip', 'a generated clip whose edge colours step round the corners '
+                          f'every {edges_clip.STEP_SECONDS} s, or --source file:PATH', 'setup', clip,
+                          commands=lambda: [] if options.source_path else [_clip_command('RUN_DIR/edges.mp4')]))
     if device:
         found.append(_feed_step(controlled, options))
     found += [
@@ -449,8 +445,10 @@ def steps(config, options):
              'no output_issue', 'auto', wled_live),
         Step('desktop.fps', 'Frame rate', f'state.input over {config.desktop.seconds} s: fps within '
              f'±{config.desktop.fps_tolerance:.0%} of the source, sent_fps alike, never behind', 'auto', fps),
-        Step('desktop.colours', 'Colours', 'colours stream: each edge (middle half) is nearest the generated clip\'s colour '
-             'among nine named colours (a capture card without a feed: not black)', 'auto', colours),
+        Step('desktop.colours', 'Colours', f'colours stream for {edges_clip.CHECK_SECONDS:g} s: each edge\'s two halves '
+             'are nearest the clip\'s two colours among nine named colours, in the right direction; at least two '
+             f'steps, in order, {edges_clip.STEP_SECONDS} s apart (±{edges_clip.PACE_TOLERANCE} s); no step for at most '
+             f'{edges_clip.TRANSITION} s at a change (a capture card without a feed: not black)', 'auto', colours),
         Step('desktop.device-native', 'WLED effects', 'target device_native: session native; WLED on, not live',
              'auto', device_native),
         Step('desktop.processed-again', 'Screen sync again', 'target processed: running and WLED live DDP',

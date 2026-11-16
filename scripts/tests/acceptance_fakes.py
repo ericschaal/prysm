@@ -4,14 +4,30 @@ It answers the API calls the desktop checks make and, like Prysm, drives a
 `FakeWled` (in-process): live mode and DDP while processed, `lor: 2` for
 device effects, off for off, and reports WLED's brightness while it scales
 the colours. `send_ddp = False` makes it forget DDP, as a broken output would.
+While processed, its colours stream shows the stepping test clip, sending
+only on change like Prysm; `colours(seconds)` says what it shows that long
+after processing started.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
 import time
 
-COLOURS = {'type': 'colors', 'top': [[250, 10, 10]] * 8, 'right': [[10, 250, 10]] * 8,
-           'bottom': [[10, 10, 250]] * 8, 'left': [[250, 250, 10]] * 8}
+import edges_clip
+
+# Named colours as a capture shifts them a little.
+RGB = {'red': [235, 60, 40], 'green': [50, 230, 60], 'blue': [45, 70, 235], 'yellow': [240, 235, 45],
+       'gray': [70, 70, 70]}
+
+
+def edges_event(pairs):
+    """A ColorsEvent with 8 entries per edge: four of each of its two named colours, in the stream's order."""
+    return {'type': 'colors', **{edge: [RGB[first]] * 4 + [RGB[second]] * 4 for edge, (first, second) in pairs.items()}}
+
+
+def stepping(seconds):
+    """What the clip shows `seconds` after it started."""
+    return edges_event(edges_clip.expected(int(seconds // edges_clip.STEP_SECONDS) % edges_clip.STEPS))
 
 
 class FakePrysm:
@@ -21,6 +37,8 @@ class FakePrysm:
         self.settings = settings
         self.revision = 41
         self.send_ddp = True
+        self.colours = stepping
+        self.processed_at = time.monotonic()
         self.requests = []
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), self._handler())
         self.server.daemon_threads = True
@@ -62,6 +80,8 @@ class FakePrysm:
         return state
 
     def set_target(self, target):
+        if target == 'processed' and self.target != 'processed':
+            self.processed_at = time.monotonic()
         self.target = target
         body = {'processed': {'on': True, 'lor': 0, 'live': True, 'tt': 0},
                 'device_native': {'on': True, 'lor': 2, 'tt': 0}, 'off': {'on': False, 'lor': 2, 'tt': 0}}[target]
@@ -90,17 +110,34 @@ class FakePrysm:
                 if self.path == '/api/v1/state':
                     self._reply(200, prysm.state())
                 elif self.path == '/api/v1/colors/stream':
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/event-stream')
-                    self.end_headers()
-                    event = COLOURS if prysm.target == 'processed' else {'type': 'idle'}
-                    self.wfile.write(b'data: ' + json.dumps(event).encode() + b'\n\n')
-                    self.wfile.flush()
-                    time.sleep(0.3)
+                    self._colours()
                 elif self.path == '/api/v1/candidates/capture/device':
                     self._reply(200, [{'label': 'USB Video', 'fields': {'path': 'unique-id-1'}}])
                 else:
                     self._reply(404, {'kind': 'not_found', 'message': self.path})
+
+            def _colours(self):
+                """Like Prysm: look every 100 ms, send on change; a comment each second finds a closed client."""
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.end_headers()
+                sent, ticks = None, 0
+                try:
+                    while prysm.running:
+                        if prysm.target == 'processed':
+                            event = prysm.colours(time.monotonic() - prysm.processed_at)
+                        else:
+                            event = {'type': 'idle'}
+                        if event != sent:
+                            self.wfile.write(b'data: ' + json.dumps(event).encode() + b'\n\n')
+                            sent = event
+                        elif ticks % 10 == 0:
+                            self.wfile.write(b':\n\n')
+                        self.wfile.flush()
+                        ticks += 1
+                        time.sleep(0.1)
+                except OSError:
+                    pass
 
             def do_PUT(self):
                 body = self._body()

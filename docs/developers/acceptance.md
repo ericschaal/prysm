@@ -50,14 +50,14 @@ temporary settings file (WLED output, neutral processing) and checks through
 the [portal API](../../surfaces/web-portal/HTTP-CONTRACT.md) and WLED's JSON
 API:
 
-- the source: a generated clip with known edge colours (`--source file`), a
+- the source: the generated test clip (`--source file`, see below), a
   given clip (`file:PATH`), or a capture card (`device`: the devices and
   their modes are printed, the preset resolved as the portal does);
 - with a card and a feed: the generated clip on the card's input (see
   below);
 - Screen sync starts; WLED reports live DDP from this computer; the frame
-  rate is within 15 % of the source's and nothing falls behind; each edge
-  shows the clip's colour (a card without a feed: not black);
+  rate is within 15 % of the source's and nothing falls behind; the colours
+  follow the test clip (a card without a feed: not black);
 - WLED effects (`device_native`), Screen sync again, off;
 - WLED's brightness: 40 % reported within 5 s at `bri` 102, gone within 35 s
   with Force max brightness, `state.bri` unchanged, `/json/cfg` under 64 KiB;
@@ -71,6 +71,39 @@ API:
   each edge must come out as that colour. The card then records this Mac,
   so the feed is not started for that run;
 - SIGTERM: exit code 0 and WLED released.
+
+#### The test clip and the colour check
+
+The clip (`edges_clip.py`, made by one FFmpeg template) is gray with a band
+along each edge. Each band is split in the middle, and each corner's colour
+fills the two half-bands that meet there: red top-left, green top-right, blue
+bottom-right, yellow bottom-left. Every 2 seconds the colours move one corner
+on, clockwise; nothing moves within a step. Read clockwise, each edge shows
+two colours and its second is the next edge's first. It is H.264 (yuv420p,
+faststart), 30 minutes long and about 2 MB.
+
+`desktop.colours` listens to the colours stream for 10 s. The stream reports
+`top` and `bottom` left to right and `left` and `right` top to bottom, so
+each edge's halves are read in that order; only the entries between 10 and
+40 % and between 60 and 90 % of an edge count, away from the corners and the
+middle. Each half is named by its nearest colour among nine. The check
+requires:
+
+- every sample shows one step of the clip on all four edges, or is no step
+  for at most 0.3 s at a change (two of the stream's 100 ms looks);
+- at least two steps, in rotation order;
+- changes 2 s apart (±0.3 s), and no step held longer than 2.3 s at the
+  start or the end of the 10 s.
+
+So it fails, saying which and with what each edge showed, the steps and their
+times, on a wrong colour, a reversed (mirrored) edge, swapped edges, a frozen
+picture or steps at the wrong pace. It does not measure the delay from the
+screen to the LEDs. A picture turned by a quarter or a half turn looks like
+another step, so it would pass. The stream carries Prysm's edge colours
+before they are put in WLED's order (clockwise from the bottom-left corner),
+so the check proves the direction up to Prysm's edges, not the LEDs' order on
+the strip. The `output-wled` unit tests cover that order; on the bench only
+a look at the lights does.
 
 #### The feed into the capture card
 
@@ -96,9 +129,9 @@ The supported feed is a Chromecast with Google TV, `[feed.chromecast]`:
    default media receiver and waits up to 30 s for `PLAYING`.
 
 The colour check waits `settle_seconds` after `PLAYING` for the player's
-overlay to clear, checks that the clip is still playing and compares each
-edge with the clip's colour by its nearest named colour, which absorbs the
-shift through HDMI and the card. The capture re-open check also needs the clip
+overlay to clear, checks that the clip is still playing and then reads the
+colours as above; naming the nearest colour absorbs the shift through HDMI
+and the card. The capture re-open check also needs the clip
 still playing. At the end, also after a failure or SIGTERM, the media is
 stopped, the receiver quit, the server stopped and
 `stay_on_while_plugged_in` put back as it was.

@@ -115,8 +115,11 @@ class AllowList(unittest.TestCase):
             lambda: commands.build_ipk('both'),
             lambda: commands.verify_ipk('/tmp/evil.ipk'),
             lambda: commands.headless('bin', 'settings.json', '0.0.0.0:8787 --start'),
-            lambda: commands.ffmpeg_edges_clip('c.mp4', 640, 360, 30, 10, {'top': "ff0000';x", 'right': '00ff00',
-                                                                            'bottom': '0000ff', 'left': 'ffff00'}),
+            lambda: commands.ffmpeg_edges_clip('c.mp4', 640, 360, 30, 16, ("ff0000';x", '00ff00', '0000ff', 'ffff00'), 2),
+            lambda: commands.ffmpeg_edges_clip('c.mp4', 640, 360, 30, 16, ('ff0000', '00ff00', '0000ff'), 2),
+            lambda: commands.ffmpeg_edges_clip('c.mp4', 640, 360, 30, 10, ('ff0000', '00ff00', '0000ff', 'ffff00'), 2),
+            lambda: commands.ffmpeg_edges_clip('-c.mp4', 640, 360, 30, 16, ('ff0000', '00ff00', '0000ff', 'ffff00'), 2),
+            lambda: commands.ffmpeg_edges_clip('c.mp4', 640, 360, 30, 16, ('ff0000', '00ff00', '0000ff', 'ffff00'), 0),
             lambda: commands.adb_get_state('-H evil'),
             lambda: commands.adb_get_state('0123; reboot'),
             lambda: commands.adb_get_state('ABC'),
@@ -128,6 +131,25 @@ class AllowList(unittest.TestCase):
         for build in refused:
             with self.assertRaises(commands.Refused):
                 build()
+
+    def test_the_clip_is_one_exact_ffmpeg_command(self):
+        command = commands.ffmpeg_edges_clip('clip.mp4', 100, 50, 10, 16, ('ff0000', '00ff00', '0000ff', 'ffff00'), 2)
+
+        def box(x, y, w, h, colour, step):
+            return f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0x{colour}:t=fill:enable='eq(floor(n/20),{step})'"
+        # Clockwise from the top-left corner, each corner's two half-bands; the colours move one corner on per step.
+        corners = [((0, 0, 50, 10), (0, 0, 20, 25)), ((50, 0, 50, 10), (80, 0, 20, 25)),
+                   ((50, 40, 50, 10), (80, 25, 20, 25)), ((0, 40, 50, 10), (0, 25, 20, 25))]
+        colours = [('ff0000', '00ff00', '0000ff', 'ffff00'), ('ffff00', 'ff0000', '00ff00', '0000ff'),
+                   ('0000ff', 'ffff00', 'ff0000', '00ff00'), ('00ff00', '0000ff', 'ffff00', 'ff0000')]
+        boxes = [box(*part, colour, step) for step in range(4)
+                 for parts, colour in zip(corners, colours[step]) for part in parts]
+        self.assertEqual(boxes[0], "drawbox=x=0:y=0:w=50:h=10:color=0xff0000:t=fill:enable='eq(floor(n/20),0)'")
+        self.assertEqual(command.argv, (
+            'ffmpeg', '-nostdin', '-v', 'error', '-y', '-f', 'lavfi',
+            '-i', 'color=c=0x404040:s=100x50:r=10:d=8,' + ','.join(boxes) + ',loop=loop=1:size=80',
+            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', 'clip.mp4'))
+        self.assertEqual((command.template, command.timeout), ('local.ffmpeg-clip', 300))
 
     def test_only_the_allow_list_names_ssh_or_spawns(self):
         for path in ACCEPTANCE.glob('*.py'):

@@ -64,11 +64,14 @@ def get_json(url, timeout=5.0):
     return reply.json()
 
 
-def events(url, seconds, limit=None):
-    """The `data:` payloads (parsed JSON) a server-sent events stream gives within `seconds`."""
+def events(url, seconds, limit=None, timed=False):
+    """The `data:` payloads (parsed JSON) a server-sent events stream gives within `seconds`.
+
+    `timed`: each as (seconds since the request, payload), by arrival."""
     connection, path = _connection(url, min(seconds, 5.0) + 1)
     found = []
-    deadline = time.monotonic() + seconds
+    start = time.monotonic()
+    deadline = start + seconds
     try:
         connection.request('GET', path, headers={'Accept': 'text/event-stream'})
         sock = connection.sock  # the response may take it over from the connection
@@ -84,7 +87,8 @@ def events(url, seconds, limit=None):
             if not line:
                 break
             if line.startswith(b'data:'):
-                found.append(json.loads(line[5:].strip()))
+                payload = json.loads(line[5:].strip())
+                found.append((round(time.monotonic() - start, 3), payload) if timed else payload)
     except OSError as error:
         raise Unreachable(f'GET {url}: {error}') from error
     finally:
