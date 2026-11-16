@@ -99,9 +99,9 @@ ipk_slim = "dist/prysm-tv-slim.ipk"
 
 ## Commands
 
-- `run.py host mac|linux [--delivery binary|deb|image] [--source file|device]`
-- `run.py tv full` and `run.py tv slim --receiver mac|linux`
-- `run.py eyes`, `run.py all`, `run.py restore-wled`
+- `acceptance host mac|linux [--delivery binary|deb|image] [--source file|device]`
+- `acceptance tv full` and `acceptance tv slim --receiver mac|linux`
+- `acceptance eyes`, `acceptance all`, `acceptance restore-wled`
 - `--prepare`, `--dry-run`, `--only` and `--from`. `--no-build` goes.
 
 ## Cells

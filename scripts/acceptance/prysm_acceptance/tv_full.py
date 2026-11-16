@@ -1,21 +1,23 @@
 """The full package's checks: the TV's own portal, capture, soaks, modes, sweep."""
+
+from collections.abc import Callable
 import time
 
-import modes
-from plan import Failed
-import prysm_api
-from prysm_api import near
-import tv
-import web
+from prysm_acceptance import modes, prysm_api, tv, web
+from prysm_acceptance.plan import Bench, Context, Failed
+from prysm_acceptance.prysm_api import Settings, Target, near, section
+from prysm_acceptance.stage_data import TvData
+
+Ctx = Context[TvData]
 
 SOAKS = [(640, 360, 30), (1280, 720, 30)]
 
 
-def portal(ctx):
+def portal(ctx: Bench) -> prysm_api.Prysm:
     return prysm_api.Prysm(ctx.config.tv.portal)
 
 
-def wait_portal(ctx, seconds=40):
+def wait_portal(ctx: Bench, seconds: float = 40) -> prysm_api.State:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
@@ -25,16 +27,16 @@ def wait_portal(ctx, seconds=40):
     raise Failed(f'the TV portal {ctx.config.tv.portal} did not answer within {seconds} s')
 
 
-def put_back(ctx):
+def put_back(ctx: Ctx) -> None:
     """The TV's settings as saved by the portal step (capture size and all)."""
     reply = portal(ctx).replace_settings(ctx.data['full_settings'])
     if reply.status != 200:
         raise Failed(f'the TV settings were not put back: HTTP {reply.status}', reply.json())
 
 
-def start(ctx, seconds=30):
+def start(ctx: Bench, seconds: float = 30) -> prysm_api.State:
     prysm = portal(ctx)
-    reply = prysm.set_target('processed')
+    reply = prysm.set_target(Target.PROCESSED)
     if reply.status != 204:
         raise Failed(f'target processed: HTTP {reply.status}', reply.json())
     state = prysm.wait(prysm_api.running, seconds)
@@ -43,30 +45,37 @@ def start(ctx, seconds=30):
     return state
 
 
-def portal_step(ctx):
+def portal_step(ctx: Ctx) -> tuple[str, object]:
     state = wait_portal(ctx)
     ctx.data['full_settings'] = state['settings']
     path = ctx.save('tv-full-settings.json', state['settings'])
     return f'portal answers; settings saved to {path}', {'target': state['target'], 'session': state['session']}
 
 
-def capture(ctx):
+def capture(ctx: Ctx) -> tuple[str, object]:
     state = start(ctx)
     luna = tv.wait_state(ctx, lambda s: s['capturing'], 10)
     if luna is None:
         raise Failed('getState does not say capturing', tv.get_state(ctx))
-    return f'capturing at {state["input"]["fps"]} fps; portal {luna.get("portal")}', \
-        {'portal': state['input'], 'luna': luna}
+    return f'capturing at {(state["input"] or {})["fps"]} fps; portal {luna.get("portal")}', {
+        'portal': state['input'],
+        'luna': luna,
+    }
 
 
-def _set_size(prysm, width, height, fps):
-    reply = prysm.change_settings(lambda s: s['capture'].update(width=width, height=height, fps=fps))
+def _size(width: int, height: int, fps: int) -> Callable[[Settings], None]:
+    """A settings change to this capture size and rate."""
+    return lambda settings: section(settings, 'capture').update(width=width, height=height, fps=fps)
+
+
+def _set_size(prysm: prysm_api.Prysm, width: int, height: int, fps: int) -> None:
+    reply = prysm.change_settings(_size(width, height, fps))
     if reply.status != 200:
         raise Failed(f'capture {width}x{height}@{fps}: HTTP {reply.status}', reply.json())
 
 
-def soak(width, height, fps):
-    def run(ctx):
+def soak(width: int, height: int, fps: int) -> Callable[[Ctx], tuple[str, object]]:
+    def run(ctx: Ctx) -> tuple[str, object]:
         prysm = portal(ctx)
         try:
             _set_size(prysm, width, height, fps)
@@ -79,33 +88,44 @@ def soak(width, height, fps):
         if not near(result['fps_mean'], fps, ctx.config.desktop.fps_tolerance):
             raise Failed(f'{result["fps_mean"]} fps over the soak, expected {fps}', result)
         return tv.soak_summary(result), result
+
     return run
 
 
-def capture_modes(ctx):
+def capture_modes(ctx: Ctx) -> tuple[str, object]:
     reply = portal(ctx).modes({'kind': 'webos'})
-    answer = reply.json()
+    answer = prysm_api.modes_answer(reply)
     if reply.status != 200 or answer.get('status') != 'known':
         raise Failed(f'capture modes: HTTP {reply.status}', answer)
     return '; '.join(modes.describe(answer['modes'])), answer
 
 
-def sweep(ctx):
+def sweep(ctx: Ctx) -> tuple[str, object]:
     prysm = portal(ctx)
-    rows = []
+    rows: list[tv.Row] = []
     try:
         for width, height, fps in ctx.config.sweep.pairs():
-            def begin(w=width, h=height, f=fps):
-                reply = prysm.change_settings(lambda s: s['capture'].update(width=w, height=h, fps=f))
-                return reply if reply.status != 200 else prysm.set_target('processed')
-            rows.append({'flavour': 'full', 'encoding': 'capture', 'width': width, 'height': height,
-                         'requested_fps': fps, **tv.measure_row(ctx, prysm, begin)})
+
+            def begin(w: int = width, h: int = height, f: int = fps) -> web.Reply:
+                reply = prysm.change_settings(_size(w, h, f))
+                return reply if reply.status != 200 else prysm.set_target(Target.PROCESSED)
+
+            rows.append(
+                {
+                    'flavour': 'full',
+                    'encoding': 'capture',
+                    'width': width,
+                    'height': height,
+                    'requested_fps': fps,
+                    **tv.measure_row(ctx, prysm, begin),
+                }
+            )
     finally:
         put_back(ctx)
     path = tv.write_table(ctx, 'sweep-full.csv', rows)
     return f'{len(rows)} rows in {path}', rows
 
 
-def resumed(ctx):
+def resumed(ctx: Bench) -> bool:
     """After a reinstall or wake: lighting runs again (when it ran before)."""
     return portal(ctx).wait(prysm_api.running, 30) is not None

@@ -1,18 +1,23 @@
 """The portal's size-and-rate presets resolved against `Modes`, as
 frontend/packages/web-portal/capture-modes.ts `resolve` does."""
 
-PRESETS = {
-    'balanced': {'width': 640, 'height': 360, 'fps': 30},
-    'smooth': {'width': 640, 'height': 360, 'fps': 60},
-    'efficient': {'width': 320, 'height': 180, 'fps': 30},
+from collections.abc import Sequence
+
+from prysm_acceptance.config import Preset
+from prysm_acceptance.prysm_api import CaptureMode, Size, Span
+
+PRESETS: dict[Preset, Size] = {
+    Preset.BALANCED: {'width': 640, 'height': 360, 'fps': 30},
+    Preset.SMOOTH: {'width': 640, 'height': 360, 'fps': 60},
+    Preset.EFFICIENT: {'width': 320, 'height': 180, 'fps': 30},
 }
 
 
-def _contains(span, value):
+def _contains(span: Span, value: int) -> bool:
     return span['min'] <= value <= span['max'] and (value - span['min']) % span['step'] == 0
 
 
-def _at_least(span, target):
+def _at_least(span: Span, target: int) -> int | None:
     if target <= span['min']:
         return span['min']
     if target > span['max']:
@@ -21,16 +26,20 @@ def _at_least(span, target):
     return span['min'] + steps * span['step']
 
 
-def delivers(modes, size):
-    return any(_contains(m['width'], size['width']) and _contains(m['height'], size['height'])
-               and _contains(m['fps'], size['fps']) for m in modes)
+def delivers(modes: Sequence[CaptureMode], size: Size) -> bool:
+    return any(
+        _contains(m['width'], size['width'])
+        and _contains(m['height'], size['height'])
+        and _contains(m['fps'], size['fps'])
+        for m in modes
+    )
 
 
-def resolve(modes, target):
+def resolve(modes: Sequence[CaptureMode], target: Size) -> Size | None:
     """The target where a mode takes it, else the smallest covering size (16:9 first) at its rate; else None."""
     if delivers(modes, target):
-        return dict(target)
-    covering = []
+        return Size(**target)
+    covering: list[Size] = []
     for mode in modes:
         width = _at_least(mode['width'], target['width'])
         height = _at_least(mode['height'], target['height'])
@@ -41,8 +50,10 @@ def resolve(modes, target):
     return min(pool, key=lambda size: size['width'] * size['height'], default=None)
 
 
-def describe(modes):
+def describe(modes: Sequence[CaptureMode]) -> list[str]:
     """One line per mode, `640x360 @ 30` or spans `176-1920/2 x ... @ 1-30`."""
-    def span(s):
-        return str(s['min']) if s['min'] == s['max'] else f"{s['min']}-{s['max']}/{s['step']}"
-    return [f"{span(m['width'])} x {span(m['height'])} @ {span(m['fps'])}" for m in modes]
+
+    def span(s: Span) -> str:
+        return str(s['min']) if s['min'] == s['max'] else f'{s["min"]}-{s["max"]}/{s["step"]}'
+
+    return [f'{span(m["width"])} x {span(m["height"])} @ {span(m["fps"])}' for m in modes]

@@ -5,7 +5,8 @@
 # No path filters: required checks must always report.
 #
 # Jobs:
-# - `quality`: shell scripts, script tests, Markdown links, workflows.
+# - `quality`: shell scripts, script tests, Markdown links, workflows, and the
+#   acceptance runner's lint, types, layers and tests (scripts/acceptance).
 # - `frontend`: lint, formatting, generated contracts, bundles and tests. The
 #   hosts include! frontend/dist, so the Rust jobs download this bundle before
 #   compiling. `cargo xtask codegen --check` runs the Rust contract exporter,
@@ -89,6 +90,15 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts/tests
           python3 scripts/check-doc-links.py
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      # docs/developers/acceptance.md, "Develop the runner".
+      - name: Acceptance runner lint, types, layers and tests
+        run: |
+          uv run --locked --directory scripts/acceptance ruff check
+          uv run --locked --directory scripts/acceptance ruff format --check
+          uv run --locked --directory scripts/acceptance pyright
+          uv run --locked --directory scripts/acceptance lint-imports
+          uv run --locked --directory scripts/acceptance python -m unittest discover -s tests
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 

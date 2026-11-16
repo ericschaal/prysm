@@ -1,57 +1,61 @@
 """Stage A: prysm-headless on this computer with a file or a capture card, driving WLED."""
-import json
-from pathlib import Path
+
 import shutil
 import time
+from typing import assert_never
 
-import colour_page
-import commands
-import edges_clip
-from edges_clip import CLIP
-import feed
-import host
-import modes
-from plan import Failed, Skipped, Step
-import prysm_api
-from prysm_api import near, rates, session
-import wled_api
+from prysm_acceptance import colour_page, commands, edges_clip, feed, host, modes, prysm_api, wled_api
+from prysm_acceptance.commands import Command
+from prysm_acceptance.config import Config
+from prysm_acceptance.edges_clip import CLIP
+from prysm_acceptance.feed import Feed
+from prysm_acceptance.options import Options, Source
+from prysm_acceptance.plan import Answer, Context, Failed, Mode, Skipped, Step
+from prysm_acceptance.prysm_api import ColorsEvent, Size, Target, near, rates, section, session
+from prysm_acceptance.stage_data import DesktopData
+from prysm_acceptance.web import JsonObject
 
-CLEANUPS = ('prysm-headless stopped with SIGTERM (KILL after 30 s)',
-            'WLED restored from wled-snapshot.json (live off, preset, on, bri, lor, transition, if.live.maxbri) '
-            'and compared; by hand: run.py restore-wled RUN_DIR/wled-snapshot.json')
+Ctx = Context[DesktopData]
+
+CLEANUPS = (
+    'prysm-headless stopped with SIGTERM (KILL after 30 s)',
+    'WLED restored from wled-snapshot.json (live off, preset, on, bri, lor, transition, if.live.maxbri) '
+    'and compared; by hand: acceptance restore-wled RUN_DIR/wled-snapshot.json',
+)
 
 
-def _feed(config, options):
+def _feed(config: Config, options: Options) -> Feed | None:
     """The feed this run shows the clip on, or None.
 
     Only a capture card has an input to feed. `--display-check` says the card
     records this computer's display, so the feed is not used then."""
-    if options.source != 'device' or options.display_check:
+    if options.source != Source.DEVICE or options.display_check:
         return None
     return feed.configured(config)
 
 
-def cleanups(config, options):
+def cleanups(config: Config, options: Options) -> tuple[str, ...]:
     """What the end of the run undoes, in that order, for the dry run."""
     controlled = _feed(config, options)
     return CLEANUPS[:1] + (controlled.CLEANUPS if controlled else ()) + CLEANUPS[1:]
 
 
-def _prysm(ctx):
+def _prysm(ctx: Ctx) -> prysm_api.Prysm:
     return ctx.data['prysm']
 
 
-def _wled(ctx):
+def _wled(ctx: Ctx) -> wled_api.Wled:
     return ctx.data['wled']
 
 
-def _expected_fps(ctx):
+def _expected_fps(ctx: Ctx) -> int:
     return ctx.data.get('fps', CLIP['fps'])
 
 
 # ---- setup -----------------------------------------------------------------
 
-def preflight(ctx):
+
+def preflight(ctx: Ctx) -> str:
     config, options = ctx.config, ctx.options
     if not config.wled:
         raise Failed('wled.address is not set (config file or --wled)')
@@ -60,7 +64,7 @@ def preflight(ctx):
     controlled = _feed(config, options)
     if controlled:
         controlled.preflight()
-    if (options.source == 'file' or controlled) and not shutil.which('ffmpeg'):
+    if (options.source == Source.FILE or controlled) and not shutil.which('ffmpeg'):
         raise Failed('the test clip needs FFmpeg 9+ on PATH')
     ctx.data['wled'] = wled_api.Wled(config.wled)
     address = host.local_address(config.wled)
@@ -68,44 +72,40 @@ def preflight(ctx):
     return f'source {options.source}, WLED {config.wled}, this computer {address}'
 
 
-def build(ctx):
-    binary = Path(host.binary(ctx.config))
-    if ctx.config.desktop.headless or ctx.options.no_build:
-        if not binary.exists():
-            raise Failed(f'{binary} does not exist')
-        return f'using {binary}'
-    if not (commands.ROOT / 'frontend/dist/headless').is_dir():
-        raise Failed('frontend/dist/headless is missing: run npm --prefix frontend ci && '
-                     'npm --prefix frontend run build first')
-    ctx.run(commands.cargo_build_headless())
-    return f'built {binary}'
-
-
-def snapshot_wled(ctx):
+def snapshot_wled(ctx: Ctx) -> tuple[str, object]:
     wled = _wled(ctx)
     saved = wled_api.snapshot(wled)
     if saved['info'].get('live'):
         # Two senders would fight over the LEDs and no check could be trusted.
-        raise Failed(f'WLED is already driven by {saved["info"].get("lip")}: turn that lighting off first',
-                     saved['info'])
+        raise Failed(
+            f'WLED is already driven by {saved["info"].get("lip")}: turn that lighting off first', saved['info']
+        )
     path = ctx.save('wled-snapshot.json', saved)
     ctx.data['wled_snapshot'] = saved
 
-    def restore():
+    def restore() -> str:
         left = wled_api.restore(wled, saved)
         if left:
             raise RuntimeError(f'WLED still differs from the snapshot: {left}')
         return f'restored from {path}'
+
     ctx.cleanup('desktop.restore-wled', 'WLED restored to the snapshot', restore)
     return f'saved {path}', saved
 
 
-def _clip_command(path):
-    return commands.ffmpeg_edges_clip(path, CLIP['width'], CLIP['height'], CLIP['fps'], CLIP['seconds'],
-                                      edges_clip.corner_hex(), edges_clip.STEP_SECONDS)
+def _clip_command(path: str) -> Command:
+    return commands.ffmpeg_edges_clip(
+        path,
+        CLIP['width'],
+        CLIP['height'],
+        CLIP['fps'],
+        CLIP['seconds'],
+        edges_clip.corner_hex(),
+        edges_clip.STEP_SECONDS,
+    )
 
 
-def clip(ctx):
+def clip(ctx: Ctx) -> str:
     if ctx.options.source_path:
         ctx.data['clip'] = ctx.options.source_path
         return f'using {ctx.options.source_path} (colour check off: unknown content)'
@@ -116,21 +116,21 @@ def clip(ctx):
     return f'generated {path}'
 
 
-def show_clip(ctx, controlled):
+def show_clip(ctx: Ctx, controlled: Feed) -> tuple[str, object]:
     """Show the clip on the feed; the feed registers what stops it."""
     detail, evidence = controlled.show(ctx, ctx.data['clip'])
     ctx.data['feed'] = controlled
     return detail, evidence
 
 
-def _feed_settled(ctx):
+def _feed_settled(ctx: Ctx) -> None:
     """With a feed showing the clip: wait until its picture can be trusted."""
     showing = ctx.data.get('feed')
     if showing:
         showing.settled()
 
 
-def write_settings(ctx):
+def write_settings(ctx: Ctx) -> str:
     document = host.settings(host.wled_output(ctx.config))
     path = host.write_settings(ctx, 'settings.json', document)
     result = ctx.run(commands.check_settings(host.binary(ctx.config), str(path)))
@@ -140,33 +140,50 @@ def write_settings(ctx):
     return f'{path}: settings OK'
 
 
-def start(ctx):
+def start(ctx: Ctx) -> str:
     headless = host.Headless(ctx, str(ctx.data['settings_path']), ctx.config.desktop.listen)
-    ctx.cleanup('desktop.stop-headless', 'prysm-headless stopped',
-                lambda: f'exit code {headless.stop()}')
+    ctx.cleanup('desktop.stop-headless', 'prysm-headless stopped', lambda: f'exit code {headless.stop()}')
     state = headless.start()
     ctx.data['headless'] = headless
     ctx.data['prysm'] = prysm_api.Prysm(headless.url)
     return f'{headless.url}: target {state["target"]}, session {session(state)}'
 
 
-def source(ctx):
+def source(ctx: Ctx) -> tuple[str, object]:
     prysm = _prysm(ctx)
-    if ctx.options.source == 'file':
-        capture = {'kind': 'file', 'path': ctx.data['clip'], 'width': CLIP['width'],
-                   'height': CLIP['height'], 'fps': CLIP['fps'], 'repeat': True}
-        evidence = {'capture': capture}
-    else:
-        capture, evidence = _device_capture(ctx, prysm)
+    match ctx.options.source:
+        case Source.FILE:
+            size: Size = {'width': CLIP['width'], 'height': CLIP['height'], 'fps': CLIP['fps']}
+            capture: JsonObject = {
+                'kind': 'file',
+                'path': ctx.data['clip'],
+                'width': size['width'],
+                'height': size['height'],
+                'fps': size['fps'],
+                'repeat': True,
+            }
+            evidence: object = {'capture': capture}
+        case Source.DEVICE:
+            path, size, evidence = _device_capture(ctx, prysm)
+            capture = {
+                'kind': 'device',
+                'path': path,
+                'width': size['width'],
+                'height': size['height'],
+                'fps': size['fps'],
+            }
+        case _:
+            assert_never(ctx.options.source)
     reply = prysm.change_settings(lambda settings: settings.__setitem__('capture', capture))
     if reply.status != 200:
         raise Failed(f'PUT /api/v1/settings: HTTP {reply.status}', reply.json())
     ctx.data['capture'] = capture
-    ctx.data['fps'] = capture['fps']
+    ctx.data['fps'] = size['fps']
     return f'{capture["kind"]} {capture["width"]}x{capture["height"]} @ {capture["fps"]}', evidence
 
 
-def _device_capture(ctx, prysm):
+def _device_capture(ctx: Ctx, prysm: prysm_api.Prysm) -> tuple[str, Size, object]:
+    """The capture device to use, its size and rate (the preset resolved) and what was found."""
     found = prysm.candidates('capture', 'device')
     ctx.log('Capture devices: ' + (', '.join(f'{c["label"]} ({c["fields"].get("path")})' for c in found) or 'none'))
     wanted = ctx.config.desktop.device.lower()
@@ -176,23 +193,31 @@ def _device_capture(ctx, prysm):
     device = chosen[0]
     path = device['fields']['path']
     reply = prysm.modes({'kind': 'device', 'path': path})
-    answer = reply.json()
+    answer = prysm_api.modes_answer(reply)
     if reply.status != 200 or answer.get('status') != 'known':
         raise Failed(f'capture modes of {device["label"]} unknown (HTTP {reply.status})', answer)
     ctx.log('Modes: ' + '; '.join(modes.describe(answer['modes'])))
     size = modes.resolve(answer['modes'], modes.PRESETS[ctx.config.desktop.preset])
     if size is None:
         raise Failed(f'no mode covers {ctx.config.desktop.preset}', answer)
-    capture = {'kind': 'device', 'path': path, **size}
-    return capture, {'devices': found, 'modes': answer['modes'], 'preset': ctx.config.desktop.preset,
-                     'resolved': size}
+    return (
+        path,
+        size,
+        {
+            'devices': found,
+            'modes': answer['modes'],
+            'preset': ctx.config.desktop.preset,
+            'resolved': size,
+        },
+    )
 
 
 # ---- checks ----------------------------------------------------------------
 
-def _start_processed(ctx, seconds=15):
+
+def _start_processed(ctx: Ctx, seconds: float = 15) -> prysm_api.State:
     prysm = _prysm(ctx)
-    reply = prysm.set_target('processed')
+    reply = prysm.set_target(Target.PROCESSED)
     if reply.status != 204:
         raise Failed(f'PUT /api/v1/target processed: HTTP {reply.status}', reply.json())
     state = prysm.wait(prysm_api.running, seconds)
@@ -201,12 +226,12 @@ def _start_processed(ctx, seconds=15):
     return state
 
 
-def processed(ctx):
+def processed(ctx: Ctx) -> tuple[str, object]:
     state = _start_processed(ctx)
-    return f'running, {state["input"]["fps"]} fps', state['input']
+    return f'running, {(state["input"] or {})["fps"]} fps', state['input']
 
 
-def wled_live(ctx):
+def wled_live(ctx: Ctx) -> tuple[str, object]:
     _start_processed(ctx)
     expected = ctx.data['local_address']
     si = _wled(ctx).wait(lambda s: s['info'].get('live') and s['info'].get('lm') == 'DDP', 10)
@@ -220,7 +245,7 @@ def wled_live(ctx):
     return f'live DDP from {si["info"]["lip"]}', si['info']
 
 
-def fps(ctx):
+def fps(ctx: Ctx) -> tuple[str, object]:
     expected = _expected_fps(ctx)
     tolerance = ctx.config.desktop.fps_tolerance
     _start_processed(ctx)
@@ -235,29 +260,29 @@ def fps(ctx):
     return f'{measured["fps_mean"]} fps in, {measured["sent_mean"]} sent (min {measured["fps_min"]})', measured
 
 
-def _last_colours(ctx, seconds=3.0):
+def _last_colours(ctx: Ctx, seconds: float = 3.0) -> ColorsEvent:
     found = [event for event in _prysm(ctx).colors(seconds) if event.get('type') == 'colors']
     if not found:
         raise Failed(f'no colours event within {seconds} s')
     return found[-1]
 
 
-def colours(ctx):
+def colours(ctx: Ctx) -> tuple[str, object]:
     _start_processed(ctx)
     _feed_settled(ctx)
     if ctx.data.get('clip_edges'):
         seconds = edges_clip.CHECK_SECONDS
         return edges_clip.judge(_prysm(ctx).colors(seconds, timed=True), seconds)
     event = _last_colours(ctx)
-    brightest = max(max(sum(c) for c in event.get(edge) or [[0, 0, 0]]) for edge in ('top', 'right', 'bottom', 'left'))
+    brightest = max(max(sum(c) for c in event.get(edge) or [[0, 0, 0]]) for edge in prysm_api.EDGES)
     if brightest < 30:
         raise Failed('every edge is black', event)
     return f'not black (brightest edge sum {brightest})', event
 
 
-def device_native(ctx):
+def device_native(ctx: Ctx) -> tuple[str, object]:
     prysm, wled = _prysm(ctx), _wled(ctx)
-    reply = prysm.set_target('device_native')
+    reply = prysm.set_target(Target.DEVICE_NATIVE)
     if reply.status != 204:
         raise Failed(f'PUT /api/v1/target device_native: HTTP {reply.status}', reply.json())
     state = prysm.wait(lambda s: session(s) == 'native', 10)
@@ -267,14 +292,14 @@ def device_native(ctx):
     return 'Prysm native, WLED on and not live', si['state']
 
 
-def processed_again(ctx):
+def processed_again(ctx: Ctx) -> tuple[str, object]:
     _start_processed(ctx)
     return wled_live(ctx)
 
 
-def off(ctx):
+def off(ctx: Ctx) -> tuple[str, object]:
     prysm, wled = _prysm(ctx), _wled(ctx)
-    reply = prysm.set_target('off')
+    reply = prysm.set_target(Target.OFF)
     if reply.status != 204:
         raise Failed(f'PUT /api/v1/target off: HTTP {reply.status}', reply.json())
     state = prysm.wait(lambda s: session(s) == 'stopped', 10)
@@ -284,13 +309,16 @@ def off(ctx):
     return 'Prysm stopped, WLED off', si['state']
 
 
-def brightness(ctx):
+def brightness(ctx: Ctx) -> tuple[str, object]:
     """WLED 16.0.1's brightness chain (prysm-3jx.74): the note at 40 %, gone with Force max."""
     prysm, wled = _prysm(ctx), _wled(ctx)
     raw = wled.cfg_raw()
-    cfg = json.loads(raw)
-    evidence = {'cfg_bytes': len(raw), 'maxbri': cfg.get('if', {}).get('live', {}).get('maxbri'),
-                'scale_bri': cfg.get('light', {}).get('scale-bri')}
+    config = wled_api.cfg(raw)
+    evidence: dict[str, object] = {
+        'cfg_bytes': len(raw),
+        'maxbri': wled_api.lookup(config, 'if', 'live', 'maxbri'),
+        'scale_bri': wled_api.lookup(config, 'light', 'scale-bri'),
+    }
     if len(raw) >= 65536:
         raise Failed('/json/cfg is 64 KiB or more', evidence)
     if evidence['maxbri'] is None or evidence['scale_bri'] is None:
@@ -316,35 +344,39 @@ def brightness(ctx):
     finally:
         wled.post_cfg({'if': {'live': {'maxbri': saved['cfg']['maxbri']}}})
         wled.post_state({'bri': saved['state'].get('bri', 128)})
-    return (f'40 % after {evidence["note_40_seconds"]} s, gone {evidence["force_max_seconds"]} s '
-            'after Force max'), evidence
+    return (
+        f'40 % after {evidence["note_40_seconds"]} s, gone {evidence["force_max_seconds"]} s after Force max'
+    ), evidence
 
 
-def gamma(ctx):
+def gamma(ctx: Ctx) -> tuple[str, object]:
     """WLED's gamma fields where Prysm reads them; read-only (see wled_api.gamma_fields)."""
-    found, problems = wled_api.gamma_fields(json.loads(_wled(ctx).cfg_raw()))
+    found, problems = wled_api.gamma_fields(wled_api.cfg(_wled(ctx).cfg_raw()))
     version = ctx.data['wled_snapshot']['info'].get('ver')
     if problems:
         raise Failed('; '.join(problems), {'ver': version, **found})
     return f'WLED {version}: {wled_api.describe_gamma(found)}', {'ver': version, **found}
 
 
-def dither(ctx):
+def dither(ctx: Ctx) -> tuple[str, object]:
     prysm = _prysm(ctx)
     _start_processed(ctx)
-    found = {}
+    found: dict[str, prysm_api.Rates] = {}
     for value in (False, True):
-        reply = prysm.change_settings(lambda s: s['output'].__setitem__('dither', value))
+        reply = prysm.change_settings(lambda s, value=value: section(s, 'output').__setitem__('dither', value))
         if reply.status != 200:
             raise Failed(f'dither {value}: HTTP {reply.status}', reply.json())
-        state = prysm.wait(lambda s: prysm_api.running(s) and s['settings']['output'].get('dither') == value, 15)
+        state = prysm.wait(
+            lambda s, value=value: prysm_api.running(s) and section(s['settings'], 'output').get('dither') == value,
+            15,
+        )
         if state is None:
             raise Failed(f'not running again with dither {value}', prysm.state())
         found[str(value)] = rates(prysm.sample(3))
     return 'accepted off and on, lighting kept running', found
 
 
-def release(ctx):
+def release(ctx: Ctx) -> tuple[str, object]:
     prysm = _prysm(ctx)
     off(ctx)
     state = _start_processed(ctx, seconds=20)
@@ -355,17 +387,20 @@ def release(ctx):
     return f're-opened: {measured["fps_mean"]} fps', {'first': state['input'], 'rates': measured}
 
 
-def display_check(ctx):
-    if ctx.options.source != 'device':
-        raise Skipped('needs --source device with this Mac as the card\'s input')
+def display_check(ctx: Ctx) -> tuple[str, object]:
+    if ctx.options.source != Source.DEVICE:
+        raise Skipped("needs --source device with this Mac as the card's input")
     page = colour_page.ColourPage(ctx.config.desktop.display_port).start()
     try:
-        answer, note = ctx.ask(f'Open {page.url} in a browser on the display the capture card records '
-                               '(this Mac\'s HDMI output), press F for full screen. Ready?', ('y', 'skip'))
-        if answer != 'y':
+        answer, note = ctx.ask(
+            f'Open {page.url} in a browser on the display the capture card records '
+            "(this Mac's HDMI output), press F for full screen. Ready?",
+            (Answer.YES, Answer.SKIP),
+        )
+        if answer != Answer.YES:
             raise Skipped(f'operator skipped the display set-up {note}'.strip())
         _start_processed(ctx)
-        results = {}
+        results: dict[str, object] = {}
         ok = True
         for name, edges in colour_page.FIELDS:
             if not page.show(name, edges):
@@ -373,8 +408,12 @@ def display_check(ctx):
             time.sleep(1.5)
             event = _last_colours(ctx, 2.0)
             matched, means = colour_page.matches(event, edges)
-            results[name] = {'ok': matched, 'measured': means, 'expected': edges,
-                             'full_screen': (page.shown or {}).get('full')}
+            results[name] = {
+                'ok': matched,
+                'measured': means,
+                'expected': edges,
+                'full_screen': (page.shown or {}).get('full'),
+            }
             ok = ok and matched
         page.show('', None, 2)
         if not ok:
@@ -384,7 +423,7 @@ def display_check(ctx):
         page.close()
 
 
-def sigterm(ctx):
+def sigterm(ctx: Ctx) -> tuple[str, object]:
     headless, wled = ctx.data['headless'], _wled(ctx)
     _start_processed(ctx)
     start = time.monotonic()
@@ -398,82 +437,199 @@ def sigterm(ctx):
     return f'exit 0 after {seconds} s, WLED released', {'seconds': seconds, 'wled': si['state']}
 
 
-def _feed_step(controlled, options):
+def _feed_step(controlled: Feed | None, options: Options) -> Step[DesktopData]:
     """The setup step that puts the clip into the capture card, or a skip that says why nothing does."""
     if controlled:
-        return Step('desktop.feed', 'Picture into the capture card', controlled.how(), 'setup',
-                    lambda ctx: show_clip(ctx, controlled), actions=controlled.actions(),
-                    commands=controlled.commands)
-    why = ('--display-check: the card records this computer\'s display, so no feed is started' if options.display_check
-           else 'no feed in the configuration ([feed]): the card records whatever is plugged into it')
-    return Step('desktop.feed', 'Picture into the capture card', why + '; the colour check is only "not black"',
-                'skip')
+        return Step(
+            'desktop.feed',
+            'Picture into the capture card',
+            controlled.how(),
+            Mode.SETUP,
+            lambda ctx: show_clip(ctx, controlled),
+            actions=controlled.actions(),
+            commands=controlled.commands,
+        )
+    why = (
+        "--display-check: the card records this computer's display, so no feed is started"
+        if options.display_check
+        else 'no feed in the configuration ([feed]): the card records whatever is plugged into it'
+    )
+    return Step(
+        'desktop.feed', 'Picture into the capture card', why + '; the colour check is only "not black"', Mode.SKIP
+    )
 
 
-def steps(config, options):
-    device = options.source == 'device'
+def steps(config: Config, options: Options) -> list[Step[DesktopData]]:
+    device = options.source == Source.DEVICE
     controlled = _feed(config, options)
-    found = [
-        Step('desktop.preflight', 'Configuration and tools', 'WLED address and LEDs set; FFmpeg for the test clip; '
-             'the feed\'s tools', 'setup', preflight),
-        Step('desktop.build', 'Release prysm-headless', 'cargo build --release (or the configured binary)', 'setup',
-             build, commands=lambda: [] if config.desktop.headless or options.no_build
-             else [commands.cargo_build_headless()]),
-        Step('desktop.wled-snapshot', 'WLED snapshot', 'GET /json/si and /json/cfg saved before anything changes; '
-             'restored at the end, also on failure or Ctrl-C', 'setup', snapshot_wled,
-             actions=[f'GET http://{config.wled}/json/si', f'GET http://{config.wled}/json/cfg']),
+    found: list[Step[DesktopData]] = [
+        Step(
+            'desktop.preflight',
+            'Configuration and tools',
+            "WLED address and LEDs set; FFmpeg for the test clip; the feed's tools",
+            Mode.SETUP,
+            preflight,
+        ),
+        Step(
+            'desktop.build',
+            'Release prysm-headless',
+            'cargo build --release (or the configured binary)',
+            Mode.SETUP,
+            host.build,
+            commands=lambda: [] if config.desktop.headless or options.no_build else [commands.cargo_build_headless()],
+        ),
+        Step(
+            'desktop.wled-snapshot',
+            'WLED snapshot',
+            'GET /json/si and /json/cfg saved before anything changes; restored at the end, also on failure or Ctrl-C',
+            Mode.SETUP,
+            snapshot_wled,
+            actions=[f'GET http://{config.wled}/json/si', f'GET http://{config.wled}/json/cfg'],
+        ),
     ]
     if not device or controlled:
-        found.append(Step('desktop.clip', 'Test clip', 'a generated clip whose edge colours step round the corners '
-                          f'every {edges_clip.STEP_SECONDS} s, or --source file:PATH', 'setup', clip,
-                          commands=lambda: [] if options.source_path else [_clip_command('RUN_DIR/edges.mp4')]))
+        found.append(
+            Step(
+                'desktop.clip',
+                'Test clip',
+                'a generated clip whose edge colours step round the corners '
+                f'every {edges_clip.STEP_SECONDS} s, or --source file:PATH',
+                Mode.SETUP,
+                clip,
+                commands=lambda: [] if options.source_path else [_clip_command('RUN_DIR/edges.mp4')],
+            )
+        )
     if device:
         found.append(_feed_step(controlled, options))
     found += [
-        Step('desktop.settings', 'Temporary settings', 'WLED output, neutral processing; --check-settings says OK',
-             'setup', write_settings,
-             commands=lambda: [commands.check_settings(host.binary(config), 'RUN_DIR/settings.json')]),
-        Step('desktop.start', 'Start prysm-headless', 'GET /api/v1/state answers', 'setup', start,
-             commands=lambda: [commands.headless(host.binary(config), 'RUN_DIR/settings.json', config.desktop.listen)]),
-        Step('desktop.source', 'Video source', 'device: candidates, modes and the resolved preset printed; '
-             'PUT /api/v1/settings with the capture', 'setup', source,
-             actions=['GET /api/v1/candidates/capture/device', 'POST /api/v1/capture/modes',
-                      'PUT /api/v1/settings'] if device else ['PUT /api/v1/settings (capture file, repeat)']),
-        Step('desktop.processed', 'Screen sync starts', 'PUT /api/v1/target processed is 204; session running, '
-             'frames arriving within 15 s', 'auto', processed),
-        Step('desktop.wled-live', 'WLED shows Prysm', 'WLED /json/si: live, lm DDP, lip this computer; '
-             'no output_issue', 'auto', wled_live),
-        Step('desktop.fps', 'Frame rate', f'state.input over {config.desktop.seconds} s: fps within '
-             f'±{config.desktop.fps_tolerance:.0%} of the source, sent_fps alike, never behind', 'auto', fps),
-        Step('desktop.colours', 'Colours', f'colours stream for {edges_clip.CHECK_SECONDS:g} s: each edge\'s two halves '
-             'are nearest the clip\'s two colours among nine named colours, in the right direction; at least two '
-             f'steps, in order, {edges_clip.STEP_SECONDS} s apart (±{edges_clip.PACE_TOLERANCE} s); no step for at most '
-             f'{edges_clip.TRANSITION} s at a change (a capture card without a feed: not black)', 'auto', colours),
-        Step('desktop.device-native', 'WLED effects', 'target device_native: session native; WLED on, not live',
-             'auto', device_native),
-        Step('desktop.processed-again', 'Screen sync again', 'target processed: running and WLED live DDP',
-             'auto', processed_again),
-        Step('desktop.off', 'Lights off', 'target off: session stopped; WLED on=false', 'auto', off),
-        Step('desktop.brightness', 'WLED brightness', 'bri 102: output_brightness 40 % within 5 s; '
-             'if.live.maxbri on: back to 100 % within 35 s, state.bri unchanged; /json/cfg under 64 KiB '
-             '(WLED changes restored)', 'auto', brightness,
-             actions=['POST /json/state {"bri":102}', 'POST /json/cfg {"if":{"live":{"maxbri":true}}}',
-                      'restore maxbri and bri']),
-        Step('desktop.gamma', 'WLED gamma', '/json/cfg has the gamma fields Prysm reads, as it parses them: '
-             'if.live.no-gc true or false, light.gc.col and light.gc.bri numbers within 0.1–3. Proves the layout, '
-             'not that Prysm applied the value (output-wled unit tests; stage eyes: dark scenes)', 'auto', gamma,
-             actions=['GET /json/cfg (read-only)']),
-        Step('desktop.dither', 'Smooth dark colours switch', 'output.dither false then true: 200, '
-             'lighting running again each time', 'auto', dither),
+        Step(
+            'desktop.settings',
+            'Temporary settings',
+            'WLED output, neutral processing; --check-settings says OK',
+            Mode.SETUP,
+            write_settings,
+            commands=lambda: [commands.check_settings(host.binary(config), 'RUN_DIR/settings.json')],
+        ),
+        Step(
+            'desktop.start',
+            'Start prysm-headless',
+            'GET /api/v1/state answers',
+            Mode.SETUP,
+            start,
+            commands=lambda: [commands.headless(host.binary(config), 'RUN_DIR/settings.json', config.desktop.listen)],
+        ),
+        Step(
+            'desktop.source',
+            'Video source',
+            'device: candidates, modes and the resolved preset printed; PUT /api/v1/settings with the capture',
+            Mode.SETUP,
+            source,
+            actions=['GET /api/v1/candidates/capture/device', 'POST /api/v1/capture/modes', 'PUT /api/v1/settings']
+            if device
+            else ['PUT /api/v1/settings (capture file, repeat)'],
+        ),
+        Step(
+            'desktop.processed',
+            'Screen sync starts',
+            'PUT /api/v1/target processed is 204; session running, frames arriving within 15 s',
+            Mode.AUTO,
+            processed,
+        ),
+        Step(
+            'desktop.wled-live',
+            'WLED shows Prysm',
+            'WLED /json/si: live, lm DDP, lip this computer; no output_issue',
+            Mode.AUTO,
+            wled_live,
+        ),
+        Step(
+            'desktop.fps',
+            'Frame rate',
+            f'state.input over {config.desktop.seconds} s: fps within '
+            f'±{config.desktop.fps_tolerance:.0%} of the source, sent_fps alike, never behind',
+            Mode.AUTO,
+            fps,
+        ),
+        Step(
+            'desktop.colours',
+            'Colours',
+            f"colours stream for {edges_clip.CHECK_SECONDS:g} s: each edge's two halves "
+            "are nearest the clip's two colours among nine named colours, in the right direction; at least two "
+            f'steps, in order, {edges_clip.STEP_SECONDS} s apart (±{edges_clip.PACE_TOLERANCE} s); no step for at most '
+            f'{edges_clip.TRANSITION} s at a change (a capture card without a feed: not black)',
+            Mode.AUTO,
+            colours,
+        ),
+        Step(
+            'desktop.device-native',
+            'WLED effects',
+            'target device_native: session native; WLED on, not live',
+            Mode.AUTO,
+            device_native,
+        ),
+        Step(
+            'desktop.processed-again',
+            'Screen sync again',
+            'target processed: running and WLED live DDP',
+            Mode.AUTO,
+            processed_again,
+        ),
+        Step('desktop.off', 'Lights off', 'target off: session stopped; WLED on=false', Mode.AUTO, off),
+        Step(
+            'desktop.brightness',
+            'WLED brightness',
+            'bri 102: output_brightness 40 % within 5 s; '
+            'if.live.maxbri on: back to 100 % within 35 s, state.bri unchanged; /json/cfg under 64 KiB '
+            '(WLED changes restored)',
+            Mode.AUTO,
+            brightness,
+            actions=[
+                'POST /json/state {"bri":102}',
+                'POST /json/cfg {"if":{"live":{"maxbri":true}}}',
+                'restore maxbri and bri',
+            ],
+        ),
+        Step(
+            'desktop.gamma',
+            'WLED gamma',
+            '/json/cfg has the gamma fields Prysm reads, as it parses them: '
+            'if.live.no-gc true or false, light.gc.col and light.gc.bri numbers within 0.1–3. Proves the layout, '
+            'not that Prysm applied the value (output-wled unit tests; stage eyes: dark scenes)',
+            Mode.AUTO,
+            gamma,
+            actions=['GET /json/cfg (read-only)'],
+        ),
+        Step(
+            'desktop.dither',
+            'Smooth dark colours switch',
+            'output.dither false then true: 200, lighting running again each time',
+            Mode.AUTO,
+            dither,
+        ),
     ]
     if device:
-        found.append(Step('desktop.release', 'Capture release', 'off, then processed: the device opens again '
-                          'with frames', 'auto', release))
+        found.append(
+            Step(
+                'desktop.release',
+                'Capture release',
+                'off, then processed: the device opens again with frames',
+                Mode.AUTO,
+                release,
+            )
+        )
         if options.display_check:
-            found.append(Step('desktop.display-check', 'Colour fields on the capture display',
-                              'a local page shows red, green, blue, white and an edge pattern full screen; each '
-                              'edge (middle half) is nearest the field\'s colour among nine named colours', 'guided', display_check,
-                              actions=[f'serve http://127.0.0.1:{config.desktop.display_port}/ (localhost only)']))
-    found.append(Step('desktop.sigterm', 'Clean exit', 'SIGTERM while lighting: exit code 0; WLED released',
-                      'auto', sigterm))
+            found.append(
+                Step(
+                    'desktop.display-check',
+                    'Colour fields on the capture display',
+                    'a local page shows red, green, blue, white and an edge pattern full screen; each '
+                    "edge (middle half) is nearest the field's colour among nine named colours",
+                    Mode.GUIDED,
+                    display_check,
+                    actions=[f'serve http://127.0.0.1:{config.desktop.display_port}/ (localhost only)'],
+                )
+            )
+    found.append(
+        Step('desktop.sigterm', 'Clean exit', 'SIGTERM while lighting: exit code 0; WLED released', Mode.AUTO, sigterm)
+    )
     return found

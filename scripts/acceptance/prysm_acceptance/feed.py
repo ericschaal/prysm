@@ -11,9 +11,28 @@ The bench describes its feed in the configuration (`[feed.chromecast]`); a
 Chromecast with Google TV is the one supported. Without a feed the card
 records whatever is plugged into it.
 """
-import feed_chromecast
+
+from typing import ClassVar, Protocol
+
+from prysm_acceptance import feed_chromecast
+from prysm_acceptance.commands import Command
+from prysm_acceptance.config import Config
+from prysm_acceptance.plan import Bench
 
 
-def configured(config):
+class Feed(Protocol):
+    """A feed the runner controls (see the module's description)."""
+
+    CLEANUPS: ClassVar[tuple[str, ...]]
+
+    def preflight(self) -> None: ...
+    def how(self) -> str: ...
+    def actions(self) -> list[str]: ...
+    def commands(self) -> list[Command]: ...
+    def show(self, ctx: Bench, clip: str) -> tuple[str, object]: ...
+    def settled(self) -> None: ...
+
+
+def configured(config: Config) -> Feed | None:
     """The bench's controlled feed, or None."""
     return feed_chromecast.Feed(config.feed) if config.feed else None

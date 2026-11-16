@@ -13,8 +13,15 @@ check catches a wrong colour, a reversed (mirrored) edge, swapped edges, a
 frozen picture and steps at the wrong pace. It does not measure the delay
 from the screen to the LEDs.
 """
-import colour_page
-from plan import Failed
+
+from collections.abc import Sequence
+from enum import StrEnum
+from itertools import pairwise
+from typing import TypedDict
+
+from prysm_acceptance import colour_page
+from prysm_acceptance.plan import Failed
+from prysm_acceptance.prysm_api import ColorsEvent, Edge
 
 # The corners' colours at the first step, clockwise from the top-left corner.
 COLOURS = ('red', 'green', 'blue', 'yellow')
@@ -30,7 +37,7 @@ CLIP = {'width': 640, 'height': 360, 'fps': 30, 'seconds': 1800}
 # own order, clockwise from the bottom-left corner, is applied only when
 # sending). So each edge's entries run from the first corner to the second
 # (corners numbered clockwise from the top-left, 0 to 3):
-EDGE_CORNERS = {'top': (0, 1), 'right': (1, 2), 'bottom': (3, 2), 'left': (0, 3)}
+EDGE_CORNERS: dict[Edge, tuple[int, int]] = {'top': (0, 1), 'right': (1, 2), 'bottom': (3, 2), 'left': (0, 3)}
 
 # The entries of an edge that are read: those wholly within 10-40 % and
 # 60-90 % of its length. That keeps out the corners and the middle, where
@@ -49,30 +56,59 @@ PACE_TOLERANCE = 0.3
 # the stream's 100 ms looks and a frame or two of a capture caught mid-change.
 TRANSITION = 0.3
 
-FAULTS = ('wrong colour', 'swapped edges', 'reversed edge')
+
+class Fault(StrEnum):
+    """What is wrong with a sample that is no step, in the order the check reports them."""
+
+    WRONG_COLOUR = 'wrong colour'
+    SWAPPED_EDGES = 'swapped edges'
+    REVERSED_EDGE = 'reversed edge'
 
 
-def corner_hex():
+class Sample(TypedDict):
+    """One event of the stream as the check read it: its arrival, its step or fault, each edge's halves."""
+
+    t: float
+    step: int | None
+    fault: str | None
+    edges: dict[Edge, str | None] | None
+
+
+class Stretch(TypedDict):
+    """Samples that are no step, since the last step's: from when, the first fault, the step before."""
+
+    start: float
+    fault: str | None
+    before: int | None
+
+
+# [first arrival, step] of each run of samples showing one step.
+Run = list[float]
+
+
+def corner_hex() -> tuple[str, ...]:
     """`COLOURS` as hex, for the clip's template."""
     return tuple('{:02x}{:02x}{:02x}'.format(*colour_page.PALETTE[name]) for name in COLOURS)
 
 
-def expected(step):
+def expected(step: int) -> dict[Edge, tuple[str, ...]]:
     """Each edge's two colours at `step`, in the stream's order."""
-    return {edge: tuple(COLOURS[(corner - step) % STEPS] for corner in corners)
-            for edge, corners in EDGE_CORNERS.items()}
+    return {
+        edge: tuple(COLOURS[(corner - step) % STEPS] for corner in corners) for edge, corners in EDGE_CORNERS.items()
+    }
 
 
-def seen(event):
+def seen(event: ColorsEvent) -> dict[Edge, tuple[str, ...] | None]:
     """Each edge's two halves by nearest named colour ('mixed' when a half's entries differ).
 
     None for an edge with too few entries to read two halves."""
-    found = {}
+    found: dict[Edge, tuple[str, ...] | None] = {}
     for edge in EDGE_CORNERS:
-        entries = event.get(edge) or []
+        entries: list[list[int]] = event.get(edge) or []
         count = len(entries)
-        parts = [[entries[i] for i in range(count) if low <= i / count and (i + 1) / count <= high]
-                 for low, high in HALVES]
+        parts = [
+            [entries[i] for i in range(count) if low <= i / count and (i + 1) / count <= high] for low, high in HALVES
+        ]
         if not all(parts):
             found[edge] = None
             continue
@@ -81,7 +117,7 @@ def seen(event):
     return found
 
 
-def decode(event):
+def decode(event: ColorsEvent) -> tuple[int | None, str | None]:
     """(step, None) when every edge shows its two colours of one step, else (None, fault).
 
     A fault is compared with the step most edges agree on: an edge showing
@@ -98,26 +134,28 @@ def decode(event):
     if agree[step] == len(EDGE_CORNERS):
         return step, None
     wanted = expected(step)
-    found_faults = {}
+    found_faults: dict[Fault, list[str]] = {}
     for edge, pair in found.items():
-        shown = ', '.join(pair)
+        shown = ', '.join(pair or ())
         if pair == wanted[edge]:
             continue
         if pair == wanted[edge][::-1]:
-            found_faults.setdefault('reversed edge', []).append(
-                f'{edge} shows {shown}, step {step} has {", ".join(wanted[edge])}')
+            found_faults.setdefault(Fault.REVERSED_EDGE, []).append(
+                f'{edge} shows {shown}, step {step} has {", ".join(wanted[edge])}'
+            )
             continue
         other = [name for name, colours in wanted.items() if pair in (colours, colours[::-1])]
         if other:
-            found_faults.setdefault('swapped edges', []).append(f'{edge} shows {shown}, {other[0]}\'s colours')
+            found_faults.setdefault(Fault.SWAPPED_EDGES, []).append(f"{edge} shows {shown}, {other[0]}'s colours")
         else:
-            found_faults.setdefault('wrong colour', []).append(
-                f'{edge} shows {shown}, step {step} has {", ".join(wanted[edge])}')
-    kind = next(fault for fault in FAULTS if fault in found_faults)
-    return None, f'{kind}: ' + '; '.join(text for fault in FAULTS for text in found_faults.get(fault, []))
+            found_faults.setdefault(Fault.WRONG_COLOUR, []).append(
+                f'{edge} shows {shown}, step {step} has {", ".join(wanted[edge])}'
+            )
+    kind = next(fault for fault in Fault if fault in found_faults)
+    return None, f'{kind}: ' + '; '.join(text for fault in Fault for text in found_faults.get(fault, []))
 
 
-def judge(samples, seconds):
+def judge(samples: Sequence[tuple[float, ColorsEvent]], seconds: float) -> tuple[str, dict[str, object]]:
     """Judge the timed colours stream: `samples` are (seconds, event) by arrival over `seconds`.
 
     The stream sends only on change, so each sample holds until the next one.
@@ -125,55 +163,81 @@ def judge(samples, seconds):
     `TRANSITION` between one step and the next; at least two steps must be
     seen, in rotation order, changing `STEP_SECONDS` ± `PACE_TOLERANCE`
     apart. Returns (detail, evidence); raises Failed with the evidence."""
-    decoded = []
-    for at, event in samples:
-        step, fault = decode(event)
-        edges = {edge: ', '.join(pair) if pair else None for edge, pair in seen(event).items()} \
-            if event.get('type') == 'colors' else None
-        decoded.append({'t': at, 'step': step, 'fault': fault, 'edges': edges})
-    runs = []  # [first arrival, step] of each run of samples showing one step
-    evidence = {'seconds': seconds, 'samples': decoded, 'steps': runs}
+    decoded = [_read(at, event) for at, event in samples]
+    runs: list[Run] = []
+    evidence: dict[str, object] = {'seconds': seconds, 'samples': decoded, 'steps': runs}
     if not decoded:
         raise Failed(f'no colours event within {seconds} s', evidence)
-    stretch = None  # the samples that are no step, since the last step's
-    for sample in decoded:
-        if sample['step'] is None:
-            stretch = stretch or {'start': sample['t'], 'fault': sample['fault'],
-                                  'before': runs[-1][1] if runs else None}
-            continue
-        if stretch:
-            _transition(stretch, sample['t'], sample['step'], evidence)
-            stretch = None
-        if not runs or runs[-1][1] != sample['step']:
-            runs.append([sample['t'], sample['step']])
-    if stretch:
-        _transition(stretch, seconds, None, evidence)
+    _steps(decoded, seconds, runs, evidence)
     if not runs:
         raise Failed('no step of the clip seen', evidence)
     if len(runs) == 1:
         raise Failed(f'frozen picture: step {runs[0][1]} for the whole {seconds:g} s', evidence)
-    for (at, before), (_, after) in zip(runs, runs[1:]):
+    for (at, before), (_, after) in pairwise(runs):
         if after != (before + 1) % STEPS:
-            raise Failed(f'steps out of order: step {before} at {at} s, then step {after} '
-                         f'(the clip goes 0, 1, 2, 3)', evidence)
+            raise Failed(
+                f'steps out of order: step {before} at {at} s, then step {after} (the clip goes 0, 1, 2, 3)', evidence
+            )
     changes = [at for at, _ in runs[1:]]
-    intervals = [round(b - a, 2) for a, b in zip(changes, changes[1:])]
+    intervals = [round(b - a, 2) for a, b in pairwise(changes)]
     evidence['intervals'] = intervals
-    held = {'before the first change': changes[0], 'after the last change': seconds - changes[-1]}
+    _pace(intervals, {'before the first change': changes[0], 'after the last change': seconds - changes[-1]}, evidence)
+    spread = f'{min(intervals)}-{max(intervals)} s apart' if intervals else f'at {changes[0]} s'
+    return (
+        f'{len(runs)} steps in order, changes {spread}; every edge shows its two colours in the right direction'
+    ), evidence
+
+
+def _read(at: float, event: ColorsEvent) -> Sample:
+    """One sample: its step or fault and, for colours, each edge's halves."""
+    step, fault = decode(event)
+    edges: dict[Edge, str | None] | None = (
+        {edge: ', '.join(pair) if pair else None for edge, pair in seen(event).items()}
+        if event.get('type') == 'colors'
+        else None
+    )
+    return {'t': at, 'step': step, 'fault': fault, 'edges': edges}
+
+
+def _steps(decoded: Sequence[Sample], seconds: float, runs: list[Run], evidence: dict[str, object]) -> None:
+    """Add to `runs` each run of samples showing one step; stretches of no step in between must be short changes."""
+    stretch: Stretch | None = None  # the samples that are no step, since the last step's
+    for sample in decoded:
+        step = sample['step']
+        if step is None:
+            stretch = stretch or {
+                'start': sample['t'],
+                'fault': sample['fault'],
+                'before': int(runs[-1][1]) if runs else None,
+            }
+            continue
+        if stretch:
+            _transition(stretch, sample['t'], step, evidence)
+            stretch = None
+        if not runs or runs[-1][1] != step:
+            runs.append([sample['t'], step])
+    if stretch:
+        _transition(stretch, seconds, None, evidence)
+
+
+def _pace(intervals: Sequence[float], held: dict[str, float], evidence: dict[str, object]) -> None:
+    """Changes `STEP_SECONDS` apart, and no step held longer than that at the start or the end."""
     low, high = STEP_SECONDS - PACE_TOLERANCE, STEP_SECONDS + PACE_TOLERANCE
     if any(not low <= interval <= high for interval in intervals):
-        raise Failed(f'wrong pace: steps changed {intervals} s apart, the clip every {STEP_SECONDS} s '
-                     f'(±{PACE_TOLERANCE} s)', evidence)
+        raise Failed(
+            f'wrong pace: steps changed {intervals} s apart, the clip every {STEP_SECONDS} s (±{PACE_TOLERANCE} s)',
+            evidence,
+        )
     for what, value in held.items():
         if value > high:
-            raise Failed(f'wrong pace: no change for {value:.2f} s {what}, the clip changes every '
-                         f'{STEP_SECONDS} s (±{PACE_TOLERANCE} s)', evidence)
-    spread = f'{min(intervals)}-{max(intervals)} s apart' if intervals else f'at {changes[0]} s'
-    return (f'{len(runs)} steps in order, changes {spread}; every edge shows its two colours '
-            'in the right direction'), evidence
+            raise Failed(
+                f'wrong pace: no change for {value:.2f} s {what}, the clip changes every '
+                f'{STEP_SECONDS} s (±{PACE_TOLERANCE} s)',
+                evidence,
+            )
 
 
-def _transition(stretch, end, after, evidence):
+def _transition(stretch: Stretch, end: float, after: int | None, evidence: dict[str, object]) -> None:
     """Allow samples that are no step only briefly, between a step and the next.
 
     At the start or the end of the window the step on the other side is
@@ -184,6 +248,9 @@ def _transition(stretch, end, after, evidence):
     if held <= TRANSITION and at_change:
         return
     if before is not None and after == (before + 1) % STEPS:
-        raise Failed(f'transition too long: from step {before} to step {after} took {held} s '
-                     f'(at most {TRANSITION} s); in between {stretch["fault"]}', evidence)
+        raise Failed(
+            f'transition too long: from step {before} to step {after} took {held} s '
+            f'(at most {TRANSITION} s); in between {stretch["fault"]}',
+            evidence,
+        )
     raise Failed(f'{stretch["fault"]} (for {held} s from {stretch["start"]} s)', evidence)

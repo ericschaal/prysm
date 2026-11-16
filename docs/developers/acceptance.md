@@ -1,6 +1,7 @@
 # Hardware acceptance runner
 
-[`scripts/acceptance/run.py`](../../scripts/acceptance/run.py) checks Prysm on
+The runner, the package [`scripts/acceptance/prysm_acceptance`](../../scripts/acceptance/prysm_acceptance/run.py),
+checks Prysm on
 real devices: WLED, a capture card, and both TV packages. It is run by hand,
 never by CI or a build. Each check is a named step that ends PASS, FAIL or SKIP
 with its evidence; a run writes `report.md`, `report.json` and its evidence
@@ -11,22 +12,21 @@ configuration) is in the [plan](acceptance-plan.md).
 
 ```sh
 cp scripts/acceptance/config.example.toml scripts/acceptance/config.toml   # then fill in
-python3 scripts/acceptance/run.py desktop --dry-run
-python3 scripts/acceptance/run.py desktop
-python3 scripts/acceptance/run.py desktop --source device --display-check
-uv run --project scripts/acceptance scripts/acceptance/run.py desktop --source device
-python3 scripts/acceptance/run.py tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
-python3 scripts/acceptance/run.py eyes
-python3 scripts/acceptance/run.py restore-wled work/acceptance/RUN/wled-snapshot.json
+uv run --project scripts/acceptance acceptance desktop --dry-run
+uv run --project scripts/acceptance acceptance desktop
+uv run --project scripts/acceptance acceptance desktop --source device --display-check
+uv run --project scripts/acceptance acceptance tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
+uv run --project scripts/acceptance acceptance eyes
+uv run --project scripts/acceptance acceptance restore-wled work/acceptance/RUN/wled-snapshot.json
 ```
 
-Python 3.11+. Every stage runs with the standard library alone, except a
-capture card run with the Chromecast feed, which needs
-[PyChromecast](https://github.com/home-assistant-libs/pychromecast).
-`scripts/acceptance` is a [uv](https://docs.astral.sh/uv/) project for that
-(`pyproject.toml`, `uv.lock`); `uv run --project scripts/acceptance` from the
-repository root installs it into `scripts/acceptance/.venv` and runs the
-runner with it. The tests need nothing installed. `--dry-run` prints every step, HTTP call
+Python 3.11+ and [uv](https://docs.astral.sh/uv/). `scripts/acceptance` is a
+uv project (`pyproject.toml`, `uv.lock`); `uv run --project
+scripts/acceptance` from the repository root installs it into
+`scripts/acceptance/.venv` and runs its `acceptance` command. Its one
+library, [PyChromecast](https://github.com/home-assistant-libs/pychromecast),
+is imported only by a capture card run with the Chromecast feed.
+`--dry-run` prints every step, HTTP call
 and command (TV commands as they run there) and contacts nothing. `--only
 NAME[,NAME]` and `--from NAME` (patterns over step names) select checks; setup
 and cleanup steps always run, so a selected check finds what it needs (for
@@ -41,7 +41,7 @@ address is written in the code.
 
 | Stage | Needs | Person |
 | --- | --- | --- |
-| `desktop` | WLED; FFmpeg 9+ for the file source, or a capture card (with a feed: FFmpeg, and for the Chromecast adb and uv) | Only for `--display-check` set-up |
+| `desktop` | WLED; FFmpeg 9+ for the file source, or a capture card (with a feed: FFmpeg, and for the Chromecast adb) | Only for `--display-check` set-up |
 | `tv` | The TV (only when its owner says it is free: `--tv-is-free`), WLED, the webOS SDK unless IPKs are given | Standby/wake, and removing the app unless `tv.ares_device` is set |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
@@ -163,7 +163,7 @@ The gamma check proves only that this WLED has the configuration layout
 Prysm reads. Prysm does not expose the gamma it applies, so whether it
 applied it stays with the `output-wled` unit tests, and whether dark scenes
 look right is a question in `eyes`. For a rehearsal without lights, run the stand-in
-`python3 scripts/acceptance/fake_wled.py --ddp 127.0.0.1:4048` and give
+`uv run --project scripts/acceptance fake-wled --ddp 127.0.0.1:4048` and give
 `--wled 127.0.0.1:18080`.
 
 ### tv
@@ -206,14 +206,14 @@ calibration flow, the portal on a phone, and a cold boot by unplugging.
 ## Safety
 
 - **The TV.** Every command the runner can run, on the TV or here, is a
-  template in [`commands.py`](../../scripts/acceptance/commands.py); its
+  template in [`commands.py`](../../scripts/acceptance/prysm_acceptance/commands.py); its
   parameters are checked against fixed patterns and nothing from the
   configuration becomes shell text. The TV commands only read, stage the
   package as `/media/developer/temp/io.prysm.tv.ipk` (removed after each
   install), install through `com.webos.appInstallService`, run the package's
   `setup.sh` and the supervisor's `uninstall`, and call Prysm's own Luna
   methods. Nothing writes to system partitions or deletes
-  `/var/lib/io.prysm.tv`. [Tests](../../scripts/tests/test_acceptance_commands.py)
+  `/var/lib/io.prysm.tv`. [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
   enumerate every template and check the paths it names. On the Chromecast,
   ADB only reads its state and Wi-Fi address, wakes it and reads or sets
   `stay_on_while_plugged_in`; there is no free-form `adb shell`.
@@ -233,3 +233,28 @@ calibration flow, the portal on a phone, and a cold boot by unplugging.
 
 On macOS, a Local Network refusal (`EHOSTUNREACH`) means the app running the
 script needs Local Network access; the runner says so.
+
+## Develop the runner
+
+The runner's own code is linted, formatted, type-checked and kept in layers;
+CI runs these in the `quality` job. The rules are in
+[`pyproject.toml`](../../scripts/acceptance/pyproject.toml): Ruff, Pyright in
+strict mode, and Import Linter's layers (command line, stages, their cells,
+checks, the feed, devices, clients, base; stages never import each other).
+Only `transport.py` runs commands, and only `commands.py` builds them; the one
+other process is `git`, which `run.py` asks for the commit in the report. From
+the repository root:
+
+```sh
+uv run --directory scripts/acceptance ruff check
+uv run --directory scripts/acceptance ruff format --check
+uv run --directory scripts/acceptance pyright
+uv run --directory scripts/acceptance lint-imports
+uv run --directory scripts/acceptance python -m unittest discover -s tests
+```
+
+The tests use fakes and contact no device. `test_acceptance_contract.py`
+checks the fields and requests the runner relies on against Prysm's generated
+contracts in `frontend/packages/contracts/generated/`; after a contract
+change, run it with the rest. Pyright comes with its Node.js runtime from
+PyPI (`pyright[nodejs]`), so nothing else needs installing.
