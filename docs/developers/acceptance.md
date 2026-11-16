@@ -6,6 +6,8 @@ never by CI or a build. Each check is a named step that ends PASS, FAIL or SKIP
 with its evidence; a run writes `report.md`, `report.json` and its evidence
 (snapshots, logs, CSV tables) to `work/acceptance/<time>-<stage>/`, which is
 not tracked. Copy what matters into [research](../../research/README.md).
+Where the runner is going next (other platforms, artifacts from the
+configuration) is in the [plan](acceptance-plan.md).
 
 ```sh
 cp scripts/acceptance/config.example.toml scripts/acceptance/config.toml   # then fill in
