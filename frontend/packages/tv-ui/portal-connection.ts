@@ -49,6 +49,15 @@ export function portalSupported(): boolean {
 
 export type Reach = 'unknown' | 'refused' | 'unreachable';
 
+/**
+ * How long the last portal state stays shown while its stream is away (lost,
+ * or released while the page was hidden), counted while the page is shown.
+ * The stream retries after 0.25, 0.5, 1 and 2 s, 3.75 s in all, before its
+ * backoff reaches whole seconds: a stream that comes back soon is back
+ * within 4 s, and a longer wait would hide a real outage.
+ */
+export const STALE_MS = 4_000;
+
 /** How long {@link checkPortal} waits for the portal's state. */
 export const CHECK_TIMEOUT_MS = 10_000;
 
@@ -142,8 +151,26 @@ export function usePortal(
   else if (message && probed?.message === message)
     reach = probed.reachable ? 'refused' : 'unreachable';
 
-  const snapshot: Snapshot | null =
-    connection?.status === 'connected' ? connection.snapshot : null;
+  const live = connection?.status === 'connected' ? connection.snapshot : null;
+  // The last state of this runtime, until STALE_MS after its stream left.
+  const [kept, setKept] = useState<{
+    runtime: Runtime;
+    snapshot: Snapshot;
+    expired: boolean;
+  } | null>(null);
+  if (live && runtime && kept?.snapshot !== live)
+    setKept({ runtime, snapshot: live, expired: false });
+  const stale =
+    !live && kept?.runtime === runtime && !kept.expired ? kept : null;
+  useEffect(() => {
+    if (!stale || !active) return;
+    const timer = setTimeout(
+      () => setKept((last) => last && { ...last, expired: true }),
+      STALE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [stale, active]);
+  const snapshot: Snapshot | null = live ?? stale?.snapshot ?? null;
   return {
     baseUrl,
     supported,

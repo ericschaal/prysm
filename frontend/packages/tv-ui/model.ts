@@ -1,5 +1,6 @@
 /** Pure rules of the TV UI: addresses, drafts and the status card. */
 import type {
+  LightingTarget,
   Phase,
   Preferences,
   SlimEncoding,
@@ -106,6 +107,12 @@ export interface PortalFacts {
   lights: boolean;
   /** Where people open the portal, if known. */
   address: string | null;
+  /**
+   * What the lights do by the portal's own state (its target, and whether
+   * frames reach a running session): the full package's headline follows
+   * it, so it never disagrees with the lights card.
+   */
+  lighting?: { target: LightingTarget; receiving: boolean };
 }
 
 /**
@@ -199,13 +206,19 @@ export function tvStatus(
     title = 'Waiting for video';
     description = 'Choose an input or play something on the TV.';
   } else if (full) {
-    if (!enabled) {
+    // The supervisor hears of a change made in the portal a moment later.
+    let target: LightingTarget = 'processed';
+    if (portal?.lighting) target = portal.lighting.target;
+    else if (!enabled) target = 'off';
+    else if (state.lighting === 'device_native') target = 'device_native';
+    const flowing = portal?.lighting?.receiving ?? state.capturing;
+    if (target === 'off') {
       title = 'Lights off';
       description = 'Choose Screen sync: the lights follow the picture.';
-    } else if (state.lighting === 'device_native') {
+    } else if (target === 'device_native') {
       title = 'WLED effects on';
       description = 'Your lights run their own effects.';
-    } else if (state.capturing) {
+    } else if (flowing) {
       title = 'Screen sync on';
       description = 'Your lights follow the picture.';
     } else if (state.portal && phase === 'running') {
@@ -348,8 +361,10 @@ export function calibrationBlocker(
   instance: string | null,
 ): string | null {
   if (!player.supported || !portal.supported) return 'Needs a newer TV';
+  // Before the service answers, the address is not known yet.
+  if (!tv) return 'Waiting for Prysm';
   if (flavor === 'slim' && !instance) return 'Add the address first';
-  if (flavor === 'slim' && !tv?.enabled) return 'Start capture first';
+  if (flavor === 'slim' && !tv.enabled) return 'Start capture first';
   const { snapshot } = portal;
   if (!snapshot) return 'Waiting for Prysm';
   if (!snapshot.settings.capture || !snapshot.settings.output)

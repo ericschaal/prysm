@@ -25,9 +25,12 @@ const effectsOf = (snapshot: Snapshot) =>
 export function LightingCard({
   flavor,
   portal,
+  connecting,
 }: {
   flavor: 'full' | 'slim';
   portal: PortalView;
+  /** The TV service has not answered yet, so where Prysm is is not known. */
+  connecting: boolean;
 }) {
   const [pending, setPending] = useState<LightingTarget | null>(null);
   const [error, setError] = useState('');
@@ -54,7 +57,9 @@ export function LightingCard({
   let attention = false;
   /** For screen readers when nothing is shown: what the lights do. */
   let said = '';
-  if (!portal.baseUrl) {
+  if (connecting) {
+    message = 'Connecting to Prysm…';
+  } else if (!portal.baseUrl) {
     message = full
       ? 'Waiting for Prysm on this TV…'
       : 'Add the Prysm address to control the lights here.';
@@ -114,7 +119,9 @@ export function LightingCard({
     attention = true;
   }
 
-  const offline = !snapshot || pending !== null;
+  // A press in flight does not disable the track: a disabled control drops
+  // focus, which the remote navigation then moves to another column.
+  const offline = !snapshot;
   const faulted = snapshot?.session.state === 'faulted';
   const hasOutput = !!snapshot?.settings.output;
   const hasCapture = !!snapshot?.settings.capture;
@@ -153,7 +160,10 @@ export function LightingCard({
             className="mode"
             aria-pressed={snapshot ? snapshot.target === mode.value : undefined}
             disabled={offline || faulted || mode.disabled}
-            onClick={() => void choose(mode.value)}
+            aria-busy={pending === mode.value ? true : undefined}
+            onClick={() => {
+              if (pending === null) void choose(mode.value);
+            }}
           >
             {mode.label}
           </button>

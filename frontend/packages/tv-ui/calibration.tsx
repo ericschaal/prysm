@@ -4,6 +4,7 @@
  * and a QR code of that page while none is chosen.
  */
 import {
+  memo,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -20,18 +21,19 @@ import { qrCode } from './qr';
  * A QR code with a four-module quiet zone. Without `id` it is decorative: the
  * address it encodes is written next to it.
  */
-export function QrCode({
+export const QrCode = memo(function QrCode({
   modules,
   id,
   className = 'qr',
 }: {
-  modules: boolean[][];
+  /** Without modules, the code's place is kept empty (not known yet). */
+  modules: boolean[][] | null;
   id?: string;
   className?: string;
 }) {
-  const size = modules.length + 8;
+  const size = (modules?.length ?? 0) + 8;
   let path = '';
-  modules.forEach((row, y) =>
+  modules?.forEach((row, y) =>
     row.forEach((dark, x) => {
       if (dark) path += `M${x + 4} ${y + 4}h1v1h-1z`;
     }),
@@ -51,7 +53,7 @@ export function QrCode({
       <path d={path} fill="#000" />
     </svg>
   );
-}
+});
 
 /** The pattern video; the stream keeps running while `pattern` changes. */
 function PatternVideo({

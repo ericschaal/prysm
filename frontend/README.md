@@ -261,14 +261,22 @@ supervisor in each of its states and play the phone's calibration part). See the
 - [TV UI](packages/tv-ui/app.tsx) (both packages): status card from the
   supervisor's state ([rules](packages/tv-ui/model.ts)), with the capture
   rate and a countdown to a pending restart (counted from when the state
-  arrived); a primary button only for the service (set up, try again after a
-  failure, slim capture on and off), never for what the lights do;
-  lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx));
+  arrived; its bar runs on through later states of the same wait); the full
+  package's headline says what the lights do from the portal's state, so it
+  agrees with the lights card; a primary button only for the service (set
+  up, try again after a failure, slim capture on and off), never for what
+  the lights do or while a setting saves, and busy rather than disabled while
+  it waits, so focus stays on it;
+  lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx)),
+  which stay lit and focused while a choice applies; the last portal state
+  stays shown for up to 4 s while its stream reconnects (also over a
+  calibration pattern);
   settings rows that apply at once (a switch for Start with TV, a dialog for
   the slim Prysm address; [service](packages/tv-ui/service.ts));
   capture, lights and the slim stream encoding are set up only in the web
   portal, whose address the TV shows with a QR code (and names in the status card while no
-  lights are set up). [Calibration](packages/tv-ui/calibration.tsx): a QR
+  lights are set up); the address's place is kept until it is known, and
+  focus is placed only once the service and the portal have answered. [Calibration](packages/tv-ui/calibration.tsx): a QR
   code of the portal's `#/calibrate` page, then the pattern the phone chose as
   full-screen video ([MSE player](packages/tv-ui/patterns.ts),
   [QR encoder](packages/tv-ui/qr.ts)). Service options
@@ -277,8 +285,10 @@ supervisor in each of its states and play the phone's calibration part). See the
   columns and within rows, OK chooses, Back closes one dialog level and then
   asks before closing). Its [Luna client](packages/webos-platform/index.ts)
   checks replies against the generated `luna` contract, times out after 30 s
-  and resubscribes after 3 s; the UI holds the subscriptions only while the
-  page is visible.
+  and resubscribes after 3 s; one lost subscription keeps the last state on
+  screen, and only the bus saying the service is missing, Remove setup, or a
+  second failure in a row shows "Prysm needs setting up". The UI holds the
+  subscriptions only while the page is visible.
 - [Application client](packages/application-client/index.ts),
   [HTTP transport](packages/application-client/http.ts),
   [RTK state](packages/application-state/index.ts) and

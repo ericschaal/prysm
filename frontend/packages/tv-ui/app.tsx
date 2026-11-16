@@ -38,7 +38,7 @@ import {
   usePortal,
   type PortalOptions,
 } from './portal-connection';
-import { useTvService } from './service';
+import { useTvService, type Retry } from './service';
 import './tv.css';
 
 type DialogId = 'instance' | 'service' | 'diagnostics' | 'cleanup' | 'exit';
@@ -107,6 +107,25 @@ function useElapsed(since: number | null) {
   return since === null ? 0 : Math.max(0, now - since);
 }
 
+/**
+ * The time left until a restart, as a bar that empties. Keyed by the wait,
+ * it runs on through later states; mounted late (back from a dialog or
+ * calibration), it starts where the wait is by now.
+ */
+function RetryBar({ retry }: { retry: Retry }) {
+  const [elapsed] = useState(() => (Date.now() - retry.since) / 1000);
+  return (
+    <span
+      className="retry-bar"
+      style={{
+        animationDuration: `${retry.seconds}s`,
+        animationDelay: `${-elapsed}s`,
+      }}
+      aria-hidden="true"
+    />
+  );
+}
+
 /** The warning when no portal that allows this app answers at a saved address. */
 function instanceWarning(reach: 'refused' | 'unreachable') {
   return reach === 'refused'
@@ -128,32 +147,49 @@ export function TvApp({
   const [starting, setStarting] = useState(false);
   const refocusRef = useRef(false);
   const rootRef = useRef<HTMLElement>(null);
+  const slim = flavor === 'slim';
+  const { state, draft, online } = tv;
+  const mismatch = !!state && state.flavor !== flavor;
+  const baseUrl = slim ? draft.instance : localPortal(state?.portal);
+  // Its own connection: a lost TV service subscription does not end it.
+  const portal = usePortal(baseUrl, portalOptions, visible);
+  const { snapshot } = portal;
   const nav = useRemoteNavigation<DialogId>({
     root: rootRef,
     parents,
     onExitRequest: () =>
       calibrating ? leaveCalibration() : nav.openDialog('exit'),
+    // Focus is placed once the screen has its controls: the service has
+    // answered, and so has the portal (or it failed, or there is none).
+    settled:
+      online !== null &&
+      (!portal.runtime || !!snapshot || !!portal.connection?.error),
   });
-  const slim = flavor === 'slim';
-  const { state, draft, online } = tv;
-  const mismatch = !!state && state.flavor !== flavor;
-  const baseUrl = slim ? draft.instance : localPortal(state?.portal);
-  const portal = usePortal(online ? baseUrl : null, portalOptions, visible);
   // Capture, lights and the slim stream encoding are set up only in this
   // portal, never in this UI.
   const portalAddress = slim ? draft.instance : (state?.portal ?? null);
-  const elapsed = useElapsed(
-    state?.worker.phase === 'retrying' ? tv.stateAt : null,
-  );
+  const elapsed = useElapsed(tv.countdown ? tv.stateAt : null);
   const status = tvStatus(
     online,
     state,
     draft,
-    portal.snapshot
-      ? { lights: !!portal.snapshot.settings.output, address: portalAddress }
+    snapshot
+      ? {
+          lights: !!snapshot.settings.output,
+          address: portalAddress,
+          lighting: {
+            target: snapshot.target,
+            // Without the portal's measure yet, the TV's own word.
+            receiving:
+              snapshot.session.state === 'running' &&
+              (snapshot.input?.receiving ?? !!state?.capturing),
+          },
+        }
       : null,
   );
-  const retry = state?.worker.phase === 'retrying' ? state.worker : null;
+  // Counted from the latest state; its bar from when the wait began.
+  const retry =
+    tv.countdown && state?.worker.phase === 'retrying' ? state.worker : null;
   // One quiet line under the detail, always kept: the countdown to a
   // restart, or while frames flow their rate (and the slim encoding).
   let meta = '';
@@ -201,8 +237,16 @@ export function TvApp({
   // lighting modes are the one way to choose what the lights do. Slim keeps
   // its place while capture stops ("Please wait…").
   const setupFirst = status.setupLights && !mismatch && !!portalAddress;
+  // Never only because a setting is being saved: the card would grow and
+  // push the lights down for the length of the call.
   const showPrimary =
-    status.action !== 'none' || tv.changing || (slim && !!status.label);
+    status.action !== 'none' || (slim && (tv.changing || !!status.label));
+  // While it waits it keeps focus (a disabled button would drop it) and OK
+  // does nothing.
+  const waiting = tv.changing || status.action === 'none';
+  // The full package's portal address arrives with the worker; its panel
+  // keeps its place meanwhile, so Settings does not move down.
+  const portalPanel = !setupFirst && (!!portalAddress || !state || !slim);
 
   /** Screen sync on (calibration needs it), then the calibration screen. */
   async function startCalibration() {
@@ -303,13 +347,8 @@ export function TvApp({
               </p>
               {/* Always a line, so the buttons never move. */}
               <p id="status-meta" className="meta">
-                {retry ? (
-                  <span
-                    key={tv.stateAt}
-                    className="retry-bar"
-                    style={{ animationDuration: `${retry.seconds}s` }}
-                    aria-hidden="true"
-                  />
+                {tv.countdown ? (
+                  <RetryBar key={tv.countdown.since} retry={tv.countdown} />
                 ) : null}
                 {meta || '\u00a0'}
               </p>
@@ -318,8 +357,9 @@ export function TvApp({
                   id="primary"
                   type="button"
                   className="primary"
-                  disabled={status.action === 'none' || tv.changing || mismatch}
-                  onClick={primary}
+                  disabled={mismatch}
+                  aria-busy={waiting || undefined}
+                  onClick={waiting ? undefined : primary}
                 >
                   {tv.changing ? 'Please wait…' : status.label}
                 </button>
@@ -343,18 +383,25 @@ export function TvApp({
                 </p>
               </section>
             ) : (
-              <LightingCard flavor={flavor} portal={portal} />
+              <LightingCard
+                flavor={flavor}
+                portal={portal}
+                connecting={online === null}
+              />
             )}
           </div>
           <div className="column" data-column="settings">
-            {portalAddress && !setupFirst ? (
+            {portalPanel ? (
               <section className="portal-address" id="portal-address">
-                {portalQr ? (
-                  <QrCode modules={portalQr} className="portal-qr" />
-                ) : null}
+                <QrCode
+                  modules={portalQr}
+                  className={`portal-qr${portalQr ? '' : ' empty'}`}
+                />
                 <p className="portal-text">
                   <span className="section-label">Web portal</span>
-                  <code id="portal-address-text">{shown(portalAddress)}</code>
+                  <code id="portal-address-text">
+                    {portalAddress ? shown(portalAddress) : '\u00a0'}
+                  </code>
                   Scan or type it on your phone for lights, colours and more.
                 </p>
               </section>

@@ -362,8 +362,12 @@ button:disabled {
   font-weight: var(--weight-strong);
   text-align: center;
 }
-/* Its words still matter while it waits ("Please wait…"): grey, not faded. */
-.primary:disabled {
+/*
+ * Its words still matter while it waits ("Please wait…"): grey, not faded.
+ * Waiting it stays focusable (busy), so focus does not jump away and back.
+ */
+.primary:disabled,
+.primary[aria-busy='true']:not(:focus) {
   background: rgba(var(--fg), 0.08);
   color: rgba(var(--fg), 0.6);
   opacity: 1;
@@ -533,6 +537,10 @@ button:disabled {
 .portal-qr rect,
 .qr rect {
   fill: rgb(var(--fg));
+}
+/* Its place while the address is not known yet: a quiet square, no paper. */
+.portal-qr.empty rect {
+  fill: rgba(var(--fg), 0.08);
 }
 .portal-text {
   min-width: 0;

@@ -21,11 +21,34 @@ import { completePreferences, type SavedPreferences } from './model';
 type Saved = SavedPreferences;
 type Edits = Partial<Saved>;
 
+/**
+ * A restart being counted down: when it was first announced and its length
+ * then. Later states of the same wait keep it, so its bar runs on.
+ */
+export interface Retry {
+  since: number;
+  seconds: number;
+}
+
+/**
+ * The subscription as the screen shows it. `missing` (set up the service) is
+ * reached only when the bus says the service is not there, after Remove
+ * setup, or when the subscription fails twice in a row: one lost
+ * subscription (`lost`, opened again after 3 s) keeps the last state.
+ */
+export type Link =
+  | { status: 'connecting' }
+  | {
+      status: 'live' | 'lost';
+      state: State;
+      /** When `state` arrived (`Date.now()`), for countdowns it carries. */
+      at: number;
+      retry: Retry | null;
+    }
+  | { status: 'missing'; state: State | null };
+
 interface ServiceState {
-  online: boolean | null;
-  state: State | null;
-  /** When `state` arrived (`Date.now()`), for countdowns it carries. */
-  stateAt: number;
+  link: Link;
   /** Sent with the last successful save, until the subscription shows it. */
   pending: Saved | null;
   changing: boolean;
@@ -37,45 +60,69 @@ interface ServiceState {
 
 type Action =
   | { type: 'event'; event: ServiceEvent; at: number }
+  | { type: 'removed' }
   | { type: 'saved'; sent: Saved }
   | { type: 'settled' }
   | { type: 'changing'; value: boolean }
   | { type: 'notice'; text: string; error: boolean }
   | { type: 'problem'; text: string };
 
+/** The last state received, whatever the subscription does now. */
+const lastState = (link: Link) =>
+  link.status === 'connecting' ? null : link.state;
+
+/** The service is gone: the status card says so (its words go to Diagnostics). */
+const missing = (current: ServiceState): ServiceState => ({
+  ...current,
+  link: { status: 'missing', state: lastState(current.link) },
+  notice: '',
+  error: false,
+});
+
 function reducer(current: ServiceState, action: Action): ServiceState {
   switch (action.type) {
     case 'event': {
       const { event } = action;
-      // The status card says it; the service's words go to Diagnostics.
-      if (!event.online)
+      const { link } = current;
+      if (!event.online) {
+        const kept =
+          link.status === 'live' && event.error.kind !== 'unavailable';
         return {
-          ...current,
-          online: false,
-          notice: '',
-          error: false,
+          ...(kept
+            ? { ...current, link: { ...link, status: 'lost' } }
+            : missing(current)),
           problem: event.error.message,
         };
-      const saved = completePreferences(event.state.preferences);
+      }
+      const { state } = event;
+      const saved = completePreferences(state.preferences);
+      const wait = state.worker.phase === 'retrying' ? state.worker : null;
+      const known =
+        link.status === 'live' || link.status === 'lost' ? link.retry : null;
       return {
         ...current,
-        online: true,
-        state: event.state,
-        stateAt: action.at,
+        link: {
+          status: 'live',
+          state,
+          at: action.at,
+          retry: wait && (known ?? { since: action.at, seconds: wait.seconds }),
+        },
         pending:
           current.pending && !same(current.pending, saved)
             ? current.pending
             : null,
-        ...(current.online === false
+        ...(link.status === 'missing'
           ? { notice: 'Service connected.', error: false }
           : {}),
       };
     }
+    case 'removed':
+      return missing(current);
     case 'saved': {
       // The subscription may already show what was saved.
+      const state = lastState(current.link);
       const shown =
-        current.state &&
-        same(completePreferences(current.state.preferences), action.sent);
+        state && same(completePreferences(state.preferences), action.sent);
       return { ...current, pending: shown ? null : action.sent };
     }
     case 'settled':
@@ -90,9 +137,7 @@ function reducer(current: ServiceState, action: Action): ServiceState {
 }
 
 const initial: ServiceState = {
-  online: null,
-  state: null,
-  stateAt: 0,
+  link: { status: 'connecting' },
   pending: null,
   changing: false,
   notice: '',
@@ -132,7 +177,10 @@ export function useTvService(service: TvService, active: boolean) {
     return () => clearTimeout(timer);
   }, [current.pending]);
 
-  const saved = completePreferences(current.state?.preferences ?? {});
+  const { link } = current;
+  const state = lastState(link);
+  const known = link.status === 'live' || link.status === 'lost';
+  const saved = completePreferences(state?.preferences ?? {});
   /** What the settings show: the saved values, or those being saved. */
   const draft: Saved = current.pending ?? saved;
   const say = useCallback(
@@ -177,6 +225,13 @@ export function useTvService(service: TvService, active: boolean) {
 
   return {
     ...current,
+    /** `null` until the first reply; `false` while the service is missing. */
+    online: link.status === 'connecting' ? null : known,
+    /** The last state received, also kept while the service is missing. */
+    state,
+    stateAt: known ? link.at : 0,
+    /** The restart being counted down, if any. */
+    countdown: known ? link.retry : null,
     saved,
     draft,
     say,
@@ -211,7 +266,11 @@ export function useTvService(service: TvService, active: boolean) {
     },
     uninstall: () =>
       run(
-        () => service.uninstall(),
+        async () => {
+          await service.uninstall();
+          // Said at once, whatever the subscription reports on its way out.
+          if (mounted.current) dispatch({ type: 'removed' });
+        },
         'Service setup removed. Your settings are kept.',
         'Couldn’t remove the setup.',
       ),

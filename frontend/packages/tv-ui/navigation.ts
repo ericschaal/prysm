@@ -113,6 +113,7 @@ export function useRemoteNavigation<D extends string>({
   root,
   parents,
   onExitRequest,
+  settled,
 }: {
   /** The page outside dialogs. */
   root: RefObject<HTMLElement | null>;
@@ -120,6 +121,11 @@ export function useRemoteNavigation<D extends string>({
   parents: Partial<Record<D, D>>;
   /** Back outside any dialog. */
   onExitRequest: () => void;
+  /**
+   * The page shows its controls as they will be; until then the app places
+   * no focus, so it does not land on the one control enabled meanwhile.
+   */
+  settled: boolean;
 }) {
   const [dialog, setDialog] = useState<D | null>(null);
   const modal = useRef<HTMLDivElement>(null);
@@ -167,7 +173,7 @@ export function useRemoteNavigation<D extends string>({
   // one to the resting stop (the chosen lighting mode), once it can.
   const automatic = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    if (dialog) return;
+    if (dialog || !settled) return;
     const active = activeElement();
     const preferred =
       root.current?.querySelector<HTMLElement>('#primary:not(:disabled)') ??

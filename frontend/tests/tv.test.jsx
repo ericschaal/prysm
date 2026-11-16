@@ -41,6 +41,7 @@ import {
   streamPatterns,
 } from '../packages/tv-ui/patterns';
 import { qrCode } from '../packages/tv-ui/qr';
+import { STALE_MS } from '../packages/tv-ui/portal-connection';
 import { createHash } from 'node:crypto';
 import jsQR from 'jsqr';
 
@@ -80,6 +81,8 @@ async function mountTv(t, options = {}) {
     IS_REACT_ACT_ENVIRONMENT: true,
   });
   const supervisor = fakeTvSupervisor({ flavor, ...options.supervisor });
+  // No reply yet: the screen before the service answers.
+  if (options.hold) supervisor.hold();
   const application = fakeApplicationPort(options.portal ?? portals[flavor]);
   const urls = [];
   const portal = {
@@ -798,6 +801,45 @@ test('the TV counts a restart down by itself', async (t) => {
   assert.equal(tv.text('status-meta'), 'Trying again now…');
 });
 
+test('the restart bar runs on through later states of the same wait', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 0 });
+  const waiting = {
+    enabled: true,
+    worker: { phase: 'retrying', seconds: 30 },
+    failure: { kind: 'other', message: 'worker exited 1' },
+  };
+  const tv = await mountTv(t, {
+    supervisor: {
+      preferences: { instance: 'http://192.168.1.20:8787' },
+      state: waiting,
+    },
+  });
+  const bar = document.querySelector('.retry-bar');
+  assert.equal(bar.style.animationDuration, '30s');
+  await act(async () => t.mock.timers.tick(4_000));
+  await act(async () =>
+    tv.supervisor.publish({
+      worker: { phase: 'retrying', seconds: 26 },
+      log: ['a line'],
+    }),
+  );
+  await settle();
+  assert.equal(document.querySelector('.retry-bar'), bar, 'not restarted');
+  assert.equal(tv.text('status-meta'), 'Trying again in 26 s');
+  // A later wait is a new one: its bar starts full.
+  await act(async () =>
+    tv.supervisor.publish({ worker: { phase: 'running' } }),
+  );
+  await settle();
+  assert.equal(document.querySelector('.retry-bar'), null);
+  await act(async () => t.mock.timers.tick(1_000));
+  await act(async () => tv.supervisor.publish(waiting));
+  await settle();
+  const next = document.querySelector('.retry-bar');
+  assert.notEqual(next, bar, 'a new wait, a new bar');
+  assert.equal(next.style.animationDelay, '0s');
+});
+
 test('the capture rate is shown while the worker measures it', async (t) => {
   assert.equal(captureRate(state({ fps: 30 })), '30 frames per second');
   assert.equal(captureRate(state({ fps: 0 })), 'No frames yet');
@@ -962,8 +1004,12 @@ test('every state keeps the same slots, plain words and focus on a control', asy
         `${label}: focus`,
       );
       if (name === 'stopping' && flavor === 'slim') {
-        assert(tv.el('primary').disabled, 'nothing to press while it stops');
-        assert.equal(tv.focus(), 'mode-off');
+        // Busy, not disabled: focus stays put and OK does nothing.
+        assert.equal(tv.el('primary').getAttribute('aria-busy'), 'true');
+        assert.equal(tv.focus(), 'primary');
+        const calls = tv.supervisor.calls.length;
+        await tv.click('primary');
+        assert.equal(tv.supervisor.calls.length, calls, 'OK does nothing');
       }
       if (name === 'stopping' && flavor === 'full')
         assert(!tv.el('primary'), 'no button while the service has no task');
@@ -1229,6 +1275,135 @@ test('status updates keep focus; a change made elsewhere shows at once', async (
   assert.equal(tv.focus(), 'instance');
 });
 
+/** Hold the portal's next `setTarget` until the returned function is called. */
+function holdTarget(tv) {
+  const { client } = tv.application;
+  const send = client.setTarget;
+  let release = () => {};
+  client.setTarget = async (target) => {
+    await new Promise((resolve) => {
+      release = resolve;
+    });
+    client.setTarget = send;
+    return send(target);
+  };
+  return () => release();
+}
+
+test('a lighting mode keeps focus and the track stays lit while it applies', async (t) => {
+  const tv = await mountTv(t, { flavor: 'full' });
+  const release = holdTarget(tv);
+  tv.el('mode-processed').focus();
+  await tv.click('mode-processed');
+  // Waiting for the portal: nothing dims, nothing moves focus.
+  for (const id of ['mode-processed', 'mode-device_native', 'mode-off'])
+    assert(!tv.el(id).disabled, id);
+  assert.equal(tv.el('mode-processed').getAttribute('aria-busy'), 'true');
+  assert.equal(tv.focus(), 'mode-processed');
+  await tv.click('mode-off');
+  assert.deepEqual(
+    tv.application.calls.filter((call) => call.startsWith('target:')),
+    [],
+    'a second press waits for the first',
+  );
+  await act(async () => release());
+  await settle();
+  assert.equal(tv.el('mode-processed').getAttribute('aria-pressed'), 'true');
+  assert.equal(tv.el('mode-processed').getAttribute('aria-busy'), null);
+  assert.equal(tv.focus(), 'mode-processed');
+});
+
+test('full: saving Start with TV adds no button that would push the lights down', async (t) => {
+  const tv = await mountTv(t, { flavor: 'full' });
+  tv.el('autostart').focus();
+  tv.supervisor.hold();
+  await tv.click('autostart');
+  assert.equal(tv.el('primary'), null, 'no "Please wait…" button meanwhile');
+  assert.equal(tv.focus(), 'autostart');
+  await act(async () => tv.supervisor.release());
+  await settle();
+  assert.equal(tv.text('autostart-value'), 'On');
+  assert.equal(tv.el('primary'), null);
+});
+
+test('the title follows the portal, so it agrees with the lights card', async (t) => {
+  const tv = await mountTv(t, { flavor: 'full' });
+  assert.equal(tv.text('status-title'), 'Lights off');
+  // Chosen on a phone: the portal knows before the TV service does.
+  await act(async () => tv.application.client.setTarget('device_native'));
+  await settle();
+  assert.equal(tv.supervisor.state().lighting, 'off', 'the service lags');
+  assert.equal(tv.text('status-title'), 'WLED effects on');
+});
+
+test('before the service answers, nothing flashes and focus waits', async (t) => {
+  for (const flavor of ['full', 'slim']) {
+    const tv = await mountTv(t, {
+      flavor,
+      hold: true,
+      patterns: fakePlayer(),
+      supervisor:
+        flavor === 'slim'
+          ? { preferences: { instance: 'http://192.168.1.20:8787' } }
+          : { state: { portal: null } },
+    });
+    assert.equal(tv.text('status-title'), 'Connecting…');
+    assert.equal(tv.text('lighting-status'), 'Connecting to Prysm…', flavor);
+    assert.equal(tv.text('calibrate-value'), 'Waiting for Prysm', flavor);
+    assert.equal(
+      document.activeElement,
+      document.body,
+      `${flavor}: no focus placed yet`,
+    );
+    // The web portal's place is kept: an empty code and no address yet.
+    assert(tv.el('portal-address'), flavor);
+    assert.match(
+      document.querySelector('#portal-address svg').getAttribute('class'),
+      /empty/,
+    );
+    await act(async () => tv.supervisor.release());
+    await settle();
+    if (flavor === 'full') {
+      // The full worker reports its address later; the place stays.
+      assert(tv.el('portal-address'));
+      assert.equal(tv.text('portal-address-text'), '\u00a0');
+      await act(async () =>
+        tv.supervisor.publish({ portal: 'http://192.168.1.5:8787/' }),
+      );
+      await settle();
+    }
+    assert.equal(
+      tv.text('portal-address-text'),
+      flavor === 'full' ? '192.168.1.5:8787' : '192.168.1.20:8787',
+    );
+    assert.equal(tv.focus(), flavor === 'full' ? 'mode-off' : 'primary');
+    await tv.unmount();
+  }
+});
+
+test('the portal state stays shown for a few seconds while its stream is away', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const tv = await mountTv(t, { flavor: 'full' });
+  tv.el('mode-off').focus();
+  const said = tv.text('lighting-status');
+  // Lost, and it does not come back.
+  tv.application.client.observe = () =>
+    Promise.reject(
+      new ApplicationError({ kind: 'unavailable', message: 'gone' }),
+    );
+  await act(async () => tv.application.drop());
+  await settle();
+  assert.equal(tv.text('lighting-status'), said);
+  assert(!tv.el('mode-off').disabled);
+  assert.equal(tv.focus(), 'mode-off');
+  await act(async () => t.mock.timers.tick(STALE_MS));
+  await settle();
+  assert.equal(
+    tv.text('lighting-status'),
+    'Can’t reach Prysm on this TV. Service options can repair it.',
+  );
+});
+
 test('Up and Down scroll a long diagnostics text while focus stays on Back', async (t) => {
   const tv = await mountTv(t);
   tv.el('service-options').focus();
@@ -1361,7 +1536,7 @@ test('a page shown without a visibility event subscribes when it is focused', as
   assert.equal(tv.supervisor.subscribers(), 1);
 });
 
-test('a lost subscription recovers after 3 s and keeps the settings shown', async (t) => {
+test('one lost subscription keeps the last state; a second in a row offers setup', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const tv = await mountTv(t, {
     supervisor: {
@@ -1371,18 +1546,52 @@ test('a lost subscription recovers after 3 s and keeps the settings shown', asyn
       },
     },
   });
-  assert.equal(tv.text('autostart-value'), 'On');
+  tv.el('autostart').focus();
+  const portals = tv.application.calls.filter((c) => c === 'observe').length;
   await act(async () => tv.supervisor.drop('Service stopped'));
+  await settle();
+  // Nothing changes on screen, and OK there can never start a setup.
+  assert.equal(tv.text('status-title'), 'Capture off');
+  assert(!tv.el('autostart').disabled);
+  assert.equal(tv.focus(), 'autostart');
+  assert.equal(
+    tv.application.calls.filter((c) => c === 'observe').length,
+    portals,
+    'the portal connection is kept',
+  );
+  await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
+  await settle();
+  assert.equal(tv.text('status-title'), 'Capture off');
+  assert.equal(tv.text('notice'), '', 'nothing was lost to report');
+  // Lost again, and the next subscription fails too: now it says so.
+  await act(async () => tv.supervisor.drop('Service stopped'));
+  await settle();
+  tv.supervisor.failNext('getState', 'Service is restarting');
+  await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
   await settle();
   assert.equal(tv.text('status-title'), 'Prysm needs setting up');
   assert.equal(tv.text('notice'), '');
-  assert.equal(tv.text('autostart-value'), 'On');
+  assert.equal(tv.text('autostart-value'), 'On', 'the settings stay shown');
   assert(tv.el('autostart').disabled, 'nothing to change without the service');
   await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
   await settle();
   assert.equal(tv.text('status-title'), 'Capture off');
   assert.equal(tv.text('notice'), 'Service connected.');
-  assert.equal(tv.text('autostart-value'), 'On');
+});
+
+test('a lost subscription then a missing service says so at once', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const tv = await mountTv(t, {
+    supervisor: { preferences: { instance: 'http://192.168.1.20:8787' } },
+  });
+  tv.supervisor.setOffline(true);
+  await act(async () => tv.supervisor.drop('Unknown service name'));
+  await settle();
+  assert.equal(
+    tv.text('status-title'),
+    'Prysm needs setting up',
+    'the bus says the service is not there',
+  );
 });
 
 test('a waiting slim worker is described as waiting for Prysm, not as a failure', async (t) => {
@@ -2018,6 +2227,22 @@ test('full: Calibrate turns screen sync on, shows the phone address and follows 
   assert.equal(tv.el('modal'), null, 'Back does not ask to close the app');
   assert(!tv.application.calls.includes('target:off'));
   assert.equal(tv.application.snapshot().target, 'processed');
+});
+
+test('a pattern stays on screen while the portal stream comes back', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const player = fakePlayer();
+  const tv = await mountTv(t, { flavor: 'full', patterns: player });
+  await tv.click('calibrate');
+  await phone(tv, { pattern: 'red', uncorrected: false });
+  await act(async () => tv.application.drop());
+  await settle();
+  assert.equal(tv.el('calibration-address'), null, 'no QR code over it');
+  assert.equal(player.pattern(), 'red');
+  await act(async () => t.mock.timers.tick(250));
+  await settle();
+  assert.equal(tv.el('calibration-address'), null);
+  assert.equal(player.pattern(), 'red');
 });
 
 test('slim: calibration uses the computer portal, already on, and ends when the app is hidden', async (t) => {
