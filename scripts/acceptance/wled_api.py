@@ -81,6 +81,59 @@ def restore(wled, saved):
     return differences(wled, saved)
 
 
+def gamma_fields(cfg):
+    """The gamma fields Prysm reads from WLED's `/json/cfg`, checked as Prysm parses them.
+
+    Mirrors `Config`, `Live`, `Light`, `GammaCorrection` and
+    `From<Config> for Realtime` in adapters/output-wled/src/observe.rs and
+    `Gamma::new` in adapters/output-wled/src/ddp.rs; keep them in step.
+    Returns the raw fields and the problems, each naming the field and what
+    Prysm would do. A missing field fails too, although Prysm then takes a
+    default: it means WLED's layout moved. `light.gc.val` is evidence only;
+    Prysm does not read it.
+    """
+    refused = 'Prysm would refuse the whole configuration read (no brightness, gamma unknown: sRGB)'
+    interfaces = cfg.get('if')
+    live = interfaces.get('live') if isinstance(interfaces, dict) else None
+    light = cfg.get('light', {})
+    gc = light.get('gc', {}) if isinstance(light, dict) else None
+    if not isinstance(live, dict):
+        return {}, [f'if.live is missing or not an object: {refused}']
+    if not isinstance(light, dict) or not isinstance(gc, dict):
+        return {}, [f'light or light.gc is not an object: {refused}']
+    found = {'if.live.no-gc': live.get('no-gc'), 'light.gc.col': gc.get('col'),
+             'light.gc.bri': gc.get('bri'), 'light.gc.val': gc.get('val')}
+    problems = []
+    if 'no-gc' not in live:
+        problems.append('if.live.no-gc is missing: Prysm would take realtime gamma correction as on')
+    elif not isinstance(live['no-gc'], bool):
+        problems.append(f'if.live.no-gc is {live["no-gc"]!r}, not true or false: {refused}')
+    for name, fallback in (('col', 'take the colour gamma as unknown and send sRGB'),
+                           ('bri', 'take the brightness gamma as off')):
+        value = gc.get(name)
+        field = f'light.gc.{name}'
+        if value is None:
+            # serde reads null as a missing value.
+            problems.append(f'{field} is missing: Prysm would {fallback}')
+        elif isinstance(value, bool) or not isinstance(value, (int, float)):
+            problems.append(f'{field} is {value!r}, not a number: {refused}')
+        elif not 0.1 <= value <= 3:
+            problems.append(f'{field} is {value}, outside 0.1–3: Prysm would {fallback}')
+    return found, problems
+
+
+def describe_gamma(found):
+    """The gamma WLED applies to Prysm's colours, from `gamma_fields`, in words."""
+    if found['if.live.no-gc']:
+        colour = 'realtime gamma correction off (linear)'
+    elif found['light.gc.col'] == 1:
+        colour = 'colour gamma off'
+    else:
+        colour = f'colour gamma {found["light.gc.col"]}'
+    bri = found['light.gc.bri']
+    return colour + (', brightness gamma off' if bri == 1 else f', brightness gamma {bri}')
+
+
 def differences(wled, saved):
     """What still differs from the snapshot (empty when restored)."""
     now = snapshot(wled)

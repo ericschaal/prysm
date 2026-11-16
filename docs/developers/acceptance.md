@@ -61,6 +61,9 @@ API:
 - WLED effects (`device_native`), Screen sync again, off;
 - WLED's brightness: 40 % reported within 5 s at `bri` 102, gone within 35 s
   with Force max brightness, `state.bri` unchanged, `/json/cfg` under 64 KiB;
+- WLED's gamma: `/json/cfg` has the fields Prysm reads, as it parses them
+  (`if.live.no-gc` true or false, `light.gc.col` and `light.gc.bri` numbers
+  within 0.1–3), read only;
 - the Smooth dark colours switch, off and on; with a card, release and
   re-open;
 - `--display-check`: when the card records this Mac's HDMI output, a local
@@ -121,8 +124,10 @@ when nothing the runner controls feeds the card. The ADB commands are
 templates in `commands.py` like every other command; everything else about
 the Chromecast is in `feed_chromecast.py`, behind `feed.py`.
 
-WLED's gamma is not observable through Prysm's API, so it is a SKIP here and a
-question in `eyes`. For a rehearsal without lights, run the stand-in
+The gamma check proves only that this WLED has the configuration layout
+Prysm reads. Prysm does not expose the gamma it applies, so whether it
+applied it stays with the `output-wled` unit tests, and whether dark scenes
+look right is a question in `eyes`. For a rehearsal without lights, run the stand-in
 `python3 scripts/acceptance/fake_wled.py --ddp 127.0.0.1:4048` and give
 `--wled 127.0.0.1:18080`.
 

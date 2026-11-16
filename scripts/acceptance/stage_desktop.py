@@ -323,6 +323,15 @@ def brightness(ctx):
             'after Force max'), evidence
 
 
+def gamma(ctx):
+    """WLED's gamma fields where Prysm reads them; read-only (see wled_api.gamma_fields)."""
+    found, problems = wled_api.gamma_fields(json.loads(_wled(ctx).cfg_raw()))
+    version = ctx.data['wled_snapshot']['info'].get('ver')
+    if problems:
+        raise Failed('; '.join(problems), {'ver': version, **found})
+    return f'WLED {version}: {wled_api.describe_gamma(found)}', {'ver': version, **found}
+
+
 def dither(ctx):
     prysm = _prysm(ctx)
     _start_processed(ctx)
@@ -452,8 +461,10 @@ def steps(config, options):
              '(WLED changes restored)', 'auto', brightness,
              actions=['POST /json/state {"bri":102}', 'POST /json/cfg {"if":{"live":{"maxbri":true}}}',
                       'restore maxbri and bri']),
-        Step('desktop.gamma', 'WLED gamma', 'Prysm does not expose the gamma it reads; judge by eye '
-             '(stage eyes: dark scenes) or with the output-wled unit tests', 'skip'),
+        Step('desktop.gamma', 'WLED gamma', '/json/cfg has the gamma fields Prysm reads, as it parses them: '
+             'if.live.no-gc true or false, light.gc.col and light.gc.bri numbers within 0.1–3. Proves the layout, '
+             'not that Prysm applied the value (output-wled unit tests; stage eyes: dark scenes)', 'auto', gamma,
+             actions=['GET /json/cfg (read-only)']),
         Step('desktop.dither', 'Smooth dark colours switch', 'output.dither false then true: 200, '
              'lighting running again each time', 'auto', dither),
     ]

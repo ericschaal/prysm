@@ -90,6 +90,67 @@ class DesktopChecks(Devices):
                                                           'width': 1280, 'height': 720, 'fps': 30})
 
 
+class GammaCheck(Devices):
+    """desktop.gamma reads WLED's gamma fields as Prysm parses them, and changes nothing."""
+
+    def gamma(self):
+        step = next(s for s in stage_desktop.steps(self.ctx.config, Options()) if s.name == 'desktop.gamma')
+        return plan.execute('desktop', [step], self.ctx)[0]
+
+    def test_a_wled_16_configuration_passes_and_is_left_alone(self):
+        before = json.dumps(self.wled.cfg, sort_keys=True)
+        outcome = self.gamma()
+        self.assertEqual(outcome.status, plan.PASS, (outcome.detail, outcome.evidence))
+        self.assertEqual(outcome.detail, 'WLED 16.0.1-fake: colour gamma 2.2, brightness gamma off')
+        self.assertEqual(outcome.evidence, {'ver': '16.0.1-fake', 'if.live.no-gc': False, 'light.gc.col': 2.2,
+                                            'light.gc.bri': 1, 'light.gc.val': 2.2})
+        self.assertEqual((json.dumps(self.wled.cfg, sort_keys=True), self.wled.posts), (before, []))
+
+    def test_realtime_gamma_off_is_described_as_linear(self):
+        self.wled.cfg['if']['live']['no-gc'] = True
+        self.assertIn('realtime gamma correction off (linear)', self.gamma().detail)
+
+    def test_each_missing_wrong_or_out_of_range_field_fails_by_name(self):
+        cases = [(('if', 'live', 'no-gc'), None, 'if.live.no-gc is missing: Prysm would take realtime'),
+                 (('if', 'live', 'no-gc'), 0, 'if.live.no-gc is 0, not true or false: Prysm would refuse'),
+                 (('light', 'gc', 'col'), None, 'light.gc.col is missing: Prysm would take the colour gamma as unknown'),
+                 (('light', 'gc', 'col'), '2.2', "light.gc.col is '2.2', not a number: Prysm would refuse"),
+                 (('light', 'gc', 'col'), True, 'light.gc.col is True, not a number'),
+                 (('light', 'gc', 'col'), 3.5, 'light.gc.col is 3.5, outside 0.1–3: Prysm would take the colour'),
+                 (('light', 'gc', 'col'), 0.05, 'light.gc.col is 0.05, outside 0.1–3'),
+                 (('light', 'gc', 'bri'), None, 'light.gc.bri is missing: Prysm would take the brightness gamma as off'),
+                 (('light', 'gc', 'bri'), [1], 'light.gc.bri is [1], not a number: Prysm would refuse'),
+                 (('light', 'gc', 'bri'), 0, 'light.gc.bri is 0, outside 0.1–3: Prysm would take the brightness'),
+                 (('light', 'gc'), 2.2, 'light or light.gc is not an object: Prysm would refuse'),
+                 (('if', 'live'), None, 'if.live is missing or not an object: Prysm would refuse')]
+        for path, value, message in cases:
+            cfg = json.loads(json.dumps(self.wled.cfg))
+            parent = cfg
+            for key in path[:-1]:
+                parent = parent[key]
+            if value is None:
+                del parent[path[-1]]
+            else:
+                parent[path[-1]] = value
+            found, problems = wled_api.gamma_fields(cfg)
+            self.assertEqual(len(problems), 1, (path, value, problems))
+            self.assertIn(message, problems[0], (path, value))
+        self.wled.cfg['light']['gc']['col'] = 4
+        outcome = self.gamma()
+        self.assertEqual(outcome.status, plan.FAIL)
+        self.assertIn('light.gc.col is 4, outside 0.1–3', outcome.detail)
+        self.assertEqual(outcome.evidence['light.gc.col'], 4)
+
+    def test_the_dry_run_lists_it_as_a_read(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            run.main(['desktop', '--dry-run', '--config', str(EXAMPLE)])
+        entry = output.getvalue().split('] desktop.gamma: ')[1].split('\n[')[0]
+        self.assertIn('auto  ] desktop.gamma', output.getvalue())
+        self.assertIn('- GET /json/cfg (read-only)', entry)
+        self.assertIn('not that Prysm applied the value', entry)
+
+
 class FakeFeed:
     """A feed the runner controls: shows the clip, registers its stop, and settles before each colour check."""
     CLEANUPS = ('the fake feed stopped',)
