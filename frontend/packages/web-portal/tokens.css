@@ -47,6 +47,14 @@
   --space-6: 2rem;
   --space-7: 3rem;
   --space-8: 4rem;
+  /*
+   * Between stacked blocks of a form: what a field leaves under its control
+   * (the gap to its note, the note's kept line, its margin), so a list or a
+   * card is followed by the same space as a field is.
+   */
+  --space-block: calc(
+    var(--space-2) + var(--text-small) * var(--leading) + var(--space-3)
+  );
 
   /* ── Size ──────────────────────────────────────────────────────────── */
   --radius-1: 0.5rem;

@@ -649,22 +649,28 @@ button.link {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   column-gap: var(--space-5);
 }
+/*
+ * Blocks of a form follow each other at one distance: a field's control is
+ * followed by its kept note line and margin, which make --space-block, so
+ * any other block is followed by --space-block too. One that keeps a note
+ * line of its own, as a field does, is followed by a field's margin.
+ */
 fieldset {
   min-width: 0;
-  margin: 0 0 var(--space-5);
+  margin: 0 0 var(--space-block);
   padding: 0;
   border: 0;
+}
+fieldset:where(:has(> .field-note:last-child:not([data-said='false']))) {
+  margin-bottom: var(--space-3);
+}
+/* A group of sliders keeps the sliders' own rhythm, which ends it. */
+fieldset:where(:has(.range)) {
+  margin-bottom: 0;
 }
 legend {
   margin-bottom: var(--space-2);
   padding: 0;
-}
-/* A group of choices after a field starts a new step, not its note. */
-.field + fieldset {
-  margin-top: var(--space-4);
-}
-fieldset > .help {
-  margin-bottom: var(--space-5);
 }
 
 /* Form actions: the buttons at the end. */
@@ -2286,7 +2292,7 @@ fieldset > .help {
  * card's height, so it changes in place.
  */
 .section-status {
-  margin: var(--space-4) 0 var(--space-5);
+  margin: var(--space-4) 0 var(--space-block);
   border-radius: var(--radius-2);
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--line) inset;
@@ -2718,12 +2724,12 @@ button.section-status-main:focus-visible {
   margin-top: var(--space-5);
 }
 .calibration-page > .rows {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-block);
 }
 
 /* ── Found devices ────────────────────────────────────────────────────── */
 .find {
-  margin: 0 0 var(--space-5);
+  margin: 0 0 var(--space-block);
 }
 .find > button[aria-busy='true']::before {
   content: '';
@@ -2801,7 +2807,7 @@ button.section-status-main:focus-visible {
 
 /* Under the found devices: what the lookup found, and Look again. */
 .device-rows > .help {
-  margin: var(--space-2) 0 0;
+  margin-top: var(--space-2);
 }
 
 /* ── LED layout (WLED editor) ─────────────────────────────────────────── */
