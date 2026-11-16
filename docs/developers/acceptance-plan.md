@@ -195,6 +195,11 @@ Each phase lands with its tests and CI green before the next starts.
    against the goal: one a fake could prove moves to the unit or end-to-end
    tests, or is dropped where they already cover it. The copies named in
    principle 5 go the same way.
+   The phase opens with a spike: the Mac file cell on pytest (the host and
+   the WLED snapshot as fixtures, cells as parameters, skips and selection
+   from pytest) next to the current version. If the spike is clearer, pytest
+   replaces the runner's own step runner (`plan.py`) and its unittest tests;
+   `--dry-run` stays the runner's own, and `eyes` may stay a plain script.
 2. **The Linux binary cell.** Copied to a Raspberry Pi 5 over SSH and run
    through the feed.
 3. **The Linux package and image cells and `all`**, with the skip rules. Both
