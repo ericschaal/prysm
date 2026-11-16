@@ -14,7 +14,7 @@
  * visible and told apart at a glance (light fill, dark text, ring, lift);
  * disabled controls dimmed, never only recoloured; controls that look like
  * controls before they have focus (every control has a fill at rest, and
- * nothing else does); no pure white fields (the QR codes sit on --paper).
+ * nothing else does); no pure white fields (the QR codes sit on the light --fg).
  *
  * Rhythm: spacing only from the --space scale, radii only from the --radius
  * scale; both columns start with a small label on the same line.
@@ -40,67 +40,57 @@
 :root {
   color-scheme: dark;
 
-  --bg: #0e0f16;
-  /* The secondary column's panel: one step above the background. */
-  --surface-1: #151722;
-  --surface-2: #1c1f2d;
-  --surface-3: #252939;
-  --surface-sunken: #11131c;
-  --border-strong: #3a3f57;
-  --text: #eceef7;
-  --text-2: #aab0c6;
-  --text-3: #8a90a8;
-  --text-on-accent: #fff;
-  --accent: #8d7dff;
-  --accent-fill: #6c59e6;
-  --accent-text: #b5abff;
-  --success: #5fd6ab;
-  --warning: #f3bd6e;
-  --danger: #ff8796;
-  /* The focused control: a light fill that reads from across the room. */
-  --focus-fill: #f1efff;
-  --focus-text: #1b1830;
-  --focus-text-2: #514c6b;
-  --focus-ring: #8d7dff;
-  --danger-focus-fill: #ffe5e9;
-  --danger-focus-text: #8c1d2f;
-  /* The chosen lighting mode: an accent tint, quieter than the primary fill. */
-  --accent-tint: #3a3270;
-  /* An off switch on the light focus fill. */
-  --focus-track: #cfcbe4;
-  /* Behind QR codes: scannable, but not a white field on the panel. */
-  --paper: #e4e2ee;
-  --line: rgba(255, 255, 255, 0.07);
+  /*
+   * Colour: the portal’s five (packages/web-portal/tokens.css, dark values),
+   * as r, g, b so rgba() can mix them: Chromium 53 has no color-mix().
+   */
+  --bg: 11, 12, 17;
+  --fg: 236, 237, 243;
+  --accent: 91, 71, 213;
+  --ok: 79, 209, 181;
+  --alert: 255, 143, 122;
+  /* Light art: the glow behind the status while screen sync runs. */
+  --glow-1: 123, 102, 255;
+  --glow-2: 214, 91, 192;
+  --glow-3: 62, 195, 235;
+  /* Disabled: dimmed as a whole, never only recoloured. */
   --disabled-opacity: 0.42;
 
+  /* Type: the portal’s five names on this rem (30 px at 1080p); small is LG’s small body. */
   --font:
     'LG Smart UI', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
     Roboto, sans-serif;
   --font-mono: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
-  --text-display: 2.6rem;
-  --text-title: 1.35rem;
-  --text-body: 1rem;
   --text-small: 0.9rem;
+  --text-body: 1rem;
+  --text-title: 1.25rem;
+  --text-display: 2rem;
+  --text-hero: 2.6rem;
   --weight-regular: 400;
-  --weight-bold: 600;
+  --weight-strong: 600;
+  --leading-tight: 1.2;
+  --leading: 1.4;
 
+  /* Spacing: the portal’s eight steps. */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-  --space-12: 3rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  /* LG’s overscan margin, not a step of the scale. */
   --safe-x: 5vw;
   --safe-y: 5vh;
-  --hit: 2.6rem;
-  /* The left column's controls (primary, modes) share one width. */
-  --control-width: 28rem;
 
-  /* Inner parts (QR, mode segments); controls; dialogs and cards. */
-  --radius-sm: 0.35rem;
-  --radius-md: 0.6rem;
-  --radius-lg: 1rem;
+  /* Size: the portal’s radii, touch target and measure. */
+  --radius-1: 0.5rem;
+  --radius-2: 1rem;
+  --hit: 2.75rem;
+  --measure: 40rem;
+  /* The left column’s controls (primary, modes) share one width. */
+  --control-width: 28rem;
 
   --duration-fast: 120ms;
   --duration: 260ms;
@@ -109,9 +99,9 @@
 
   font-family: var(--font);
   font-size: 1.5625vw;
-  line-height: 1.35;
-  color: var(--text);
-  background: var(--bg);
+  line-height: var(--leading);
+  color: rgb(var(--fg));
+  background: rgb(var(--bg));
 }
 
 /* ---- Base ---- */
@@ -120,7 +110,7 @@
 }
 body {
   margin: 0;
-  background: var(--bg);
+  background: rgb(var(--bg));
 }
 [hidden] {
   display: none !important;
@@ -151,11 +141,11 @@ input {
 }
 button {
   display: block;
-  min-height: 2.8rem;
+  min-height: var(--hit);
   margin: 0;
   padding: var(--space-2) var(--space-4);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-1);
   background: none;
   font-size: var(--text-body);
   text-align: left;
@@ -166,10 +156,21 @@ button {
 button:focus,
 .mode[aria-pressed='true']:focus {
   outline: none;
-  background: var(--focus-fill);
-  color: var(--focus-text);
-  box-shadow: 0 0 0 0.1rem var(--focus-ring);
+  background: rgb(var(--fg));
+  color: rgb(var(--bg));
+  box-shadow: 0 0 0 0.1rem rgb(var(--accent));
   transform: scale(1.03);
+}
+/*
+ * Rows and the primary lift from their left edge, so the column keeps one
+ * straight edge while focus moves; the segments and centred answers lift
+ * from their centre.
+ */
+.primary,
+.setting,
+.choice {
+  -webkit-transform-origin: 0 50%;
+  transform-origin: 0 50%;
 }
 /* Unavailable: dimmed as a whole, so it reads as off from the sofa. */
 button:disabled {
@@ -189,18 +190,18 @@ button:disabled {
   background:
     radial-gradient(
       ellipse at 18% 34%,
-      rgba(123, 102, 255, 0.2),
-      rgba(123, 102, 255, 0) 50%
+      rgba(var(--glow-1), 0.2),
+      rgba(var(--glow-1), 0) 50%
     ),
     radial-gradient(
       ellipse at 6% 78%,
-      rgba(214, 91, 192, 0.12),
-      rgba(214, 91, 192, 0) 45%
+      rgba(var(--glow-2), 0.12),
+      rgba(var(--glow-2), 0) 45%
     ),
     radial-gradient(
       ellipse at 42% 8%,
-      rgba(62, 195, 235, 0.1),
-      rgba(62, 195, 235, 0) 45%
+      rgba(var(--glow-3), 0.1),
+      rgba(var(--glow-3), 0) 45%
     );
   opacity: 0;
   pointer-events: none;
@@ -222,29 +223,29 @@ button:disabled {
 .header {
   display: flex;
   align-items: center;
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-5);
 }
 .logo {
   width: 1.2rem;
   height: 1.2rem;
   margin-right: var(--space-2);
   fill: none;
-  stroke: var(--text-2);
+  stroke: rgba(var(--fg), 0.72);
   stroke-width: 2;
   stroke-linejoin: round;
 }
 .brand {
   font-size: var(--text-title);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-strong);
   letter-spacing: -0.03em;
   line-height: 1;
 }
 .brand-dot {
-  color: var(--accent);
+  color: rgb(var(--accent));
 }
 .brand-sub {
   margin-left: var(--space-3);
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
 .layout {
@@ -257,22 +258,22 @@ button:disabled {
 .column {
   min-width: 0;
   overflow-y: auto;
-  margin: -1.2rem;
-  padding: 1.2rem;
+  margin: calc(-1 * var(--space-5));
+  padding: var(--space-5);
 }
 .column[data-column='status'] {
   flex: 1.55;
 }
 .column[data-column='settings'] {
   flex: 1;
-  margin-left: var(--space-12);
+  margin-left: var(--space-7);
 }
 
 /* ---- Status: the focal point ---- */
 .section-label {
   display: flex;
   align-items: center;
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
 .status-dot {
@@ -282,13 +283,13 @@ button:disabled {
   height: 0.55rem;
   margin-right: var(--space-2);
   border-radius: 50%;
-  background: var(--text-3);
+  background: rgba(var(--fg), 0.6);
 }
 .ready .status-dot {
-  background: var(--success);
+  background: rgb(var(--ok));
 }
 .attention .status-dot {
-  background: var(--warning);
+  background: rgb(var(--alert));
 }
 /* Live: a ring leaves the dot every few seconds while frames flow. */
 .ready .status-dot::after {
@@ -299,7 +300,7 @@ button:disabled {
   bottom: 0;
   left: 0;
   border-radius: 50%;
-  background: var(--success);
+  background: rgb(var(--ok));
   animation: live 2.8s ease-out infinite;
 }
 /* One line each: the copy is written to fit; the ellipsis is only a guard. */
@@ -312,25 +313,25 @@ button:disabled {
 }
 .overview h1 {
   margin-top: var(--space-3);
-  font-size: var(--text-display);
-  font-weight: var(--weight-bold);
-  line-height: 1.2;
+  font-size: var(--text-hero);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
   letter-spacing: -0.03em;
   animation: rise var(--duration) var(--ease-out) backwards;
 }
 .description {
   margin-top: var(--space-2);
-  color: var(--text-2);
+  color: rgba(var(--fg), 0.72);
   font-size: var(--text-body);
-  line-height: 1.45;
+  line-height: var(--leading);
 }
 /* The quiet line: a countdown or the frame rate, else empty but kept. */
 .meta {
   margin-top: var(--space-2);
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
   font-variant-numeric: tabular-nums;
-  line-height: 1.5;
+  line-height: var(--leading);
 }
 /* The time left until the restart, before its words. */
 .retry-bar {
@@ -339,7 +340,7 @@ button:disabled {
   height: 0.12rem;
   margin-right: var(--space-3);
   border-radius: 0.06rem;
-  background: var(--warning);
+  background: rgb(var(--alert));
   vertical-align: middle;
   transform-origin: 0 50%;
   animation: countdown linear forwards;
@@ -354,37 +355,37 @@ button:disabled {
  */
 .primary {
   width: var(--control-width);
-  min-height: 3rem;
-  margin-top: var(--space-6);
-  background: var(--accent-fill);
-  color: var(--text-on-accent);
-  font-weight: var(--weight-bold);
+  min-height: calc(var(--hit) + var(--space-1));
+  margin-top: var(--space-5);
+  background: rgb(var(--accent));
+  color: rgb(var(--fg));
+  font-weight: var(--weight-strong);
   text-align: center;
 }
 /* Its words still matter while it waits ("Please wait…"): grey, not faded. */
 .primary:disabled {
-  background: var(--surface-2);
-  color: var(--text-3);
+  background: rgba(var(--fg), 0.08);
+  color: rgba(var(--fg), 0.6);
   opacity: 1;
 }
 .tonal,
 .danger {
   min-width: 10rem;
-  background: var(--surface-3);
-  color: var(--text);
+  background: rgba(var(--fg), 0.12);
+  color: rgb(var(--fg));
   text-align: center;
 }
 .danger {
-  color: var(--danger);
+  color: rgb(var(--alert));
 }
 /* Focus wins over every resting colour: dark text on the light fill. */
 .tonal:focus {
-  color: var(--focus-text);
+  color: rgb(var(--bg));
 }
 .danger:focus {
-  background: var(--danger-focus-fill);
-  color: var(--danger-focus-text);
-  box-shadow: 0 0 0 0.1rem var(--danger);
+  background: rgb(var(--alert));
+  color: rgb(var(--bg));
+  box-shadow: 0 0 0 0.1rem rgb(var(--alert));
 }
 
 /* ---- Your lights: the main control, a segmented track ---- */
@@ -394,10 +395,10 @@ button:disabled {
  * same --space-6 apart.
  */
 .lighting {
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
 }
 .card-title {
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
 .modes {
@@ -405,8 +406,8 @@ button:disabled {
   width: var(--control-width);
   margin-top: var(--space-3);
   padding: var(--space-1);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
+  border-radius: var(--radius-1);
+  background: rgba(var(--fg), 0.08);
 }
 .mode {
   position: relative;
@@ -414,8 +415,8 @@ button:disabled {
   min-width: 0;
   min-height: var(--hit);
   padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--text-2);
+  border-radius: calc(var(--radius-1) - var(--space-1));
+  color: rgba(var(--fg), 0.72);
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
@@ -430,9 +431,9 @@ button:disabled {
  * it is also the chosen one); unavailable is dimmed.
  */
 .mode[aria-pressed='true'] {
-  background: var(--accent-tint);
-  color: var(--text);
-  font-weight: var(--weight-bold);
+  background: rgba(var(--accent), 0.5);
+  color: rgb(var(--fg));
+  font-weight: var(--weight-strong);
 }
 .mode[aria-pressed='true']::before {
   content: '';
@@ -441,14 +442,14 @@ button:disabled {
   height: 0.4rem;
   margin: 0 var(--space-2) 0.12rem 0;
   border-radius: 50%;
-  background: var(--accent-text);
+  background: rgb(var(--fg));
   vertical-align: middle;
 }
 .mode:focus {
   transform: scale(1.05);
 }
 .mode[aria-pressed='true']:focus::before {
-  background: var(--accent-fill);
+  background: rgb(var(--accent));
 }
 /* Only what the chosen mode does not say; two lines kept, at most two used. */
 .lighting-status {
@@ -457,9 +458,9 @@ button:disabled {
   height: 2.8em;
   margin-top: var(--space-3);
   overflow: hidden;
-  color: var(--text-2);
+  color: rgba(var(--fg), 0.72);
   font-size: var(--text-small);
-  line-height: 1.4;
+  line-height: var(--leading);
 }
 /* A problem: calm, a small amber mark beside plain words. */
 .lighting.attention .lighting-status {
@@ -473,7 +474,7 @@ button:disabled {
   width: 0.4rem;
   height: 0.4rem;
   border-radius: 50%;
-  background: var(--warning);
+  background: rgb(var(--alert));
 }
 
 /*
@@ -483,37 +484,37 @@ button:disabled {
 .setup-lights {
   display: flex;
   align-items: center;
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
 }
 .setup-qr {
   flex-shrink: 0;
   width: 9rem;
   height: 9rem;
-  margin-right: var(--space-6);
-  border-radius: var(--radius-md);
+  margin-right: var(--space-5);
+  border-radius: var(--radius-1);
 }
 .setup-qr rect {
-  fill: var(--paper);
+  fill: rgb(var(--fg));
 }
 .setup-text {
   min-width: 0;
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
-  line-height: 1.4;
+  line-height: var(--leading);
   word-wrap: break-word;
 }
 .setup-step {
   display: block;
-  color: var(--text);
+  color: rgb(var(--fg));
   font-size: var(--text-body);
 }
 .setup-text code {
   display: block;
   margin: var(--space-2) 0;
-  color: var(--text);
+  color: rgb(var(--fg));
   font-size: var(--text-title);
-  font-weight: var(--weight-bold);
-  line-height: 1.2;
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
 }
 
 /* ---- Secondary column: the portal (information) and the settings (a list) ---- */
@@ -526,32 +527,32 @@ button:disabled {
   width: 4.6rem;
   height: 4.6rem;
   margin-right: var(--space-4);
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-1) - var(--space-1));
 }
 /* Paper, not a white field: the quiet zone takes the paper colour too. */
 .portal-qr rect,
 .qr rect {
-  fill: var(--paper);
+  fill: rgb(var(--fg));
 }
 .portal-text {
   min-width: 0;
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
-  line-height: 1.4;
+  line-height: var(--leading);
   word-wrap: break-word;
 }
 .portal-text code {
   display: block;
   margin: var(--space-2) 0 var(--space-1);
-  color: var(--text);
+  color: rgb(var(--fg));
   font-size: var(--text-body);
-  line-height: 1.2;
+  line-height: var(--leading-tight);
 }
 .settings:first-child {
   margin-top: 0;
 }
 .settings {
-  margin-top: var(--space-8);
+  margin-top: var(--space-6);
 }
 .setting-list {
   margin-top: var(--space-3);
@@ -565,8 +566,8 @@ button:disabled {
   align-items: center;
   width: 100%;
   min-height: var(--hit);
-  padding: 0 var(--space-6);
-  background: var(--surface-2);
+  padding: 0 var(--space-5);
+  background: rgba(var(--fg), 0.08);
 }
 .setting + .setting {
   margin-top: var(--space-2);
@@ -587,13 +588,13 @@ button:disabled {
   max-width: 55%;
   margin-left: var(--space-4);
   overflow: hidden;
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 .setting:focus .setting-value {
-  color: var(--focus-text-2);
+  color: rgba(var(--bg), 0.7);
 }
 /* A switch says On or Off by itself; the words are kept for screen readers. */
 .setting[role='switch'] .setting-value {
@@ -610,12 +611,12 @@ button:disabled {
   width: 0.45rem;
   height: 0.45rem;
   margin: 0 0.1rem 0 var(--space-4);
-  border-top: 0.12rem solid var(--text-3);
-  border-right: 0.12rem solid var(--text-3);
+  border-top: 0.12rem solid rgba(var(--fg), 0.6);
+  border-right: 0.12rem solid rgba(var(--fg), 0.6);
   transform: rotate(45deg);
 }
 .setting:focus .chevron {
-  border-color: var(--focus-text-2);
+  border-color: rgba(var(--bg), 0.7);
 }
 .switch {
   position: relative;
@@ -624,8 +625,8 @@ button:disabled {
   height: 1.1rem;
   margin-left: var(--space-4);
   border-radius: 0.55rem;
-  background: var(--surface-3);
-  box-shadow: 0 0 0 0.06rem var(--border-strong) inset;
+  background: rgba(var(--fg), 0.12);
+  box-shadow: 0 0 0 0.06rem rgba(var(--fg), 0.24) inset;
 }
 .switch::after {
   content: '';
@@ -635,28 +636,28 @@ button:disabled {
   width: 0.8rem;
   height: 0.8rem;
   border-radius: 50%;
-  background: var(--text-3);
+  background: rgba(var(--fg), 0.6);
   transition: transform var(--duration-fast) var(--ease-out);
 }
 .setting[aria-checked='true'] .switch {
-  background: var(--accent-fill);
+  background: rgb(var(--accent));
   box-shadow: none;
 }
 .setting[aria-checked='true'] .switch::after {
-  background: var(--text);
+  background: rgb(var(--fg));
   transform: translateX(0.9rem);
 }
 .setting:focus .switch {
-  background: var(--focus-track);
+  background: rgba(var(--bg), 0.25);
 }
 .setting:focus .switch::after {
-  background: var(--focus-text-2);
+  background: rgba(var(--bg), 0.7);
 }
 .setting[aria-checked='true']:focus .switch {
-  background: var(--accent-fill);
+  background: rgb(var(--accent));
 }
 .setting[aria-checked='true']:focus .switch::after {
-  background: var(--focus-fill);
+  background: rgb(var(--fg));
 }
 .setting:disabled .chevron,
 .setting:disabled .switch {
@@ -666,12 +667,12 @@ button:disabled {
 /* ---- Messages and key help ---- */
 .notice {
   min-height: 1.4rem;
-  color: var(--text-2);
+  color: rgba(var(--fg), 0.72);
   font-size: var(--text-small);
-  line-height: 1.4;
+  line-height: var(--leading);
 }
 .notice.error {
-  color: var(--danger);
+  color: rgb(var(--alert));
 }
 /* Two lines of room are always kept for a message, so nothing above moves when one comes. */
 .key-help {
@@ -681,17 +682,17 @@ button:disabled {
   height: 3.3rem;
   margin-top: var(--space-4);
   padding-top: var(--space-3);
-  border-top: 1px solid var(--surface-2);
-  color: var(--text-3);
+  border-top: 1px solid rgba(var(--fg), 0.08);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
 .key-help span {
-  margin-right: var(--space-8);
+  margin-right: var(--space-6);
 }
 .key-help b {
   margin-right: var(--space-2);
-  color: var(--text-2);
-  font-weight: var(--weight-bold);
+  color: rgba(var(--fg), 0.72);
+  font-weight: var(--weight-strong);
 }
 /* The latest message sits in the key-help line, right aligned. */
 #notice {
@@ -718,32 +719,35 @@ button:disabled {
   align-items: center;
   justify-content: center;
   padding: var(--safe-y) var(--safe-x);
-  background: rgba(6, 7, 12, 0.8);
+  background: rgba(var(--bg), 0.85);
   animation: fade var(--duration) var(--ease-out) backwards;
 }
 .dialog {
-  width: 38rem;
+  width: var(--measure);
   max-width: 100%;
   max-height: 100%;
   overflow-y: auto;
-  padding: var(--space-8);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
+  padding: var(--space-6);
+  border-radius: var(--radius-2);
+  /* Opaque: one surface step laid over the background, never the page through it. */
+  background:
+    linear-gradient(rgba(var(--fg), 0.08), rgba(var(--fg), 0.08)),
+    rgb(var(--bg));
   animation: arrive var(--duration) var(--ease-out) backwards;
 }
 .dialog h2 {
   font-size: var(--text-title);
-  font-weight: var(--weight-bold);
-  line-height: 1.2;
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
 }
 .dialog-description {
   margin-top: var(--space-2);
-  color: var(--text-2);
+  color: rgba(var(--fg), 0.72);
   font-size: var(--text-small);
-  line-height: 1.45;
+  line-height: var(--leading);
 }
 #dialog-body {
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
 }
 #dialog-body:empty {
   display: none;
@@ -752,8 +756,8 @@ button:disabled {
 .choice {
   display: block;
   width: 100%;
-  padding: var(--space-3) var(--space-6);
-  background: var(--surface-3);
+  padding: var(--space-3) var(--space-5);
+  background: rgba(var(--fg), 0.12);
 }
 .choice + .choice {
   margin-top: var(--space-2);
@@ -767,17 +771,17 @@ button:disabled {
 }
 .choice-detail {
   margin-top: var(--space-1);
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
 .choice:focus .choice-detail {
-  color: var(--focus-text-2);
+  color: rgba(var(--bg), 0.7);
 }
 /* The answers along the bottom, centred; the dialog's way out is one of them. */
 .dialog-actions {
   display: flex;
   justify-content: center;
-  margin-top: var(--space-8);
+  margin-top: var(--space-6);
 }
 .dialog-actions button + button {
   margin-left: var(--space-4);
@@ -791,7 +795,7 @@ button:disabled {
 .dialog label {
   display: block;
   margin-bottom: var(--space-2);
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
 .dialog input {
@@ -799,21 +803,21 @@ button:disabled {
   width: 100%;
   min-height: var(--hit);
   padding: var(--space-2) var(--space-4);
-  border: 0.1rem solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
+  border: 0.1rem solid rgba(var(--fg), 0.24);
+  border-radius: var(--radius-1);
+  background: rgba(var(--bg), 0.6);
   font-size: var(--text-body);
 }
 .dialog input:focus {
   outline: none;
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 0.1rem var(--focus-ring);
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 0 0.1rem rgb(var(--accent));
 }
 .dialog input[aria-invalid='true'] {
-  border-color: var(--danger);
+  border-color: rgb(var(--alert));
 }
 .dialog input::-webkit-input-placeholder {
-  color: var(--text-3);
+  color: rgba(var(--fg), 0.6);
 }
 .dialog form .notice {
   margin-top: var(--space-2);
@@ -824,9 +828,9 @@ button:disabled {
 .diagnostics {
   margin: 0;
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
-  color: var(--text-2);
+  border-radius: var(--radius-1);
+  background: rgba(var(--bg), 0.6);
+  color: rgba(var(--fg), 0.72);
   font: 0.8rem/1.5 var(--font-mono);
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -871,7 +875,7 @@ button:active {
   display: flex;
   flex-direction: column;
   padding: var(--safe-y) var(--safe-x);
-  background: var(--bg);
+  background: rgb(var(--bg));
   animation: fade var(--duration) var(--ease-out) backwards;
 }
 .calibration-body {
@@ -883,17 +887,17 @@ button:active {
 }
 .calibration-copy {
   width: 22rem;
-  margin-right: var(--space-12);
+  margin-right: var(--space-7);
 }
 .calibration-copy h1 {
   font-size: var(--text-display);
-  font-weight: var(--weight-bold);
-  line-height: 1.08;
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
   letter-spacing: -0.03em;
 }
 #calibration-hint {
   margin-top: var(--space-4);
-  color: var(--text-2);
+  color: rgba(var(--fg), 0.72);
 }
 .calibration-copy .notice {
   margin-top: var(--space-4);
@@ -901,10 +905,10 @@ button:active {
 .qr-card {
   min-width: 14rem;
   max-width: 26rem;
-  padding: var(--space-6) var(--space-6) var(--space-4);
-  border-radius: var(--radius-lg);
-  background: var(--paper);
-  color: #1b1830;
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-radius: var(--radius-2);
+  background: rgb(var(--fg));
+  color: rgb(var(--bg));
   text-align: center;
 }
 .qr {
@@ -983,6 +987,6 @@ button:active {
     flex-direction: column;
   }
   .column[data-column='settings'] {
-    margin: var(--space-8) -1.2rem -1.2rem;
+    margin: var(--space-6) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
   }
 }
