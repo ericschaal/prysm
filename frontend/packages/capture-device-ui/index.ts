@@ -11,7 +11,7 @@ export { typedDeviceMs } from './editor';
 export { deviceDefaults } from './settings';
 
 export const deviceCapture: AdapterUi<DeviceSettings> = {
-  label: 'Video capture device',
+  label: 'Capture card or camera',
   create: () => ({ kind: 'device', path: '' }),
   Editor: DeviceEditor,
   normalize: (value) => ({ ...value, path: value.path.trim() }),

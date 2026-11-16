@@ -33,7 +33,7 @@ function editor(page: Page) {
   const sizes = form.getByRole('radiogroup', { name: 'Size and rate' });
   return {
     form,
-    devices: form.getByRole('radiogroup', { name: 'Capture device' }),
+    devices: form.getByRole('radiogroup', { name: 'Device' }),
     sizes,
     size: (name: string) => sizes.getByRole('radio', { name }),
     /** A row is clicked as a whole: its radio is drawn as the tick. */
@@ -52,7 +52,7 @@ test.describe('a capture card', () => {
   }) => {
     await page.goto('/#/settings/video');
     const video = editor(page);
-    await chooseKind(video.form, 'Capture from', 'Video capture device');
+    await chooseKind(video.form, 'Capture from', 'Capture card or camera');
     // Found without pressing anything; none ticked yet, so no sizes.
     const card = video.devices.getByRole('radio', { name: 'Capture card' });
     const webcam = video.devices.getByRole('radio', { name: 'Webcam' });

@@ -40,7 +40,7 @@ docker run -d --name prysm --restart unless-stopped --stop-timeout 30 \
   ghcr.io/ericschaal/prysm-headless:VERSION
 ```
 
-In Prysm, choose **Video capture device** and tick the card, or enter
+In Prysm, choose **Capture card or camera** and tick the card, or enter
 `/dev/video0` under **Advanced**. See [capture card](quickstart.md).
 
 ## Receive the picture from a TV (slim package)

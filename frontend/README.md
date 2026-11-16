@@ -215,7 +215,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     asks the portal (`GET /api/v1/candidates/capture/device`) what is present
     as it opens, and lists the devices as rows to tick once it answers
     ("Looking for devices…" until then, with no row, so no row is replaced);
-    "Look again", at the end of the "Capture device" heading (outside the
+    "Look again", at the end of the "Device" heading (outside the
     group's name), asks again, keeping the rows and the focus while it
     looks; the line under the rows shows only while there is something to
     say. A row shows its device's path only when the name does not tell it

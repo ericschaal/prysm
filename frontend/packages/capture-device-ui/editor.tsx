@@ -35,7 +35,7 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
       kind="device"
       path="capture.path"
       field="path"
-      legend="Capture device"
+      legend="Device"
       value={path}
       missing={modes.state === 'unknown' ? 'Not plugged in' : undefined}
       problem={

@@ -866,7 +866,7 @@ test('Look again sits on the devices heading, outside the group name', async () 
     assert.equal(
       document.getElementById(group.getAttribute('aria-labelledby'))
         .textContent,
-      'Capture device',
+      'Device',
     );
     assert.equal(button('Look again').closest('legend'), $('legend', group));
     // Nothing to say under the rows: no line.

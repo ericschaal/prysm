@@ -13,7 +13,7 @@ capture card on Linux or macOS.
 ## Choose the card in Prysm
 
 Open the web portal. In setup, or later under **Settings → Video source**,
-choose **Video capture device**. Prysm lists the cards it can see; tick
+choose **Capture card or camera**. Prysm lists the cards it can see; tick
 yours (**Look again**, beside the heading, after plugging one in). If yours is not listed, enter it
 under **Advanced → Enter the device by hand**:
 

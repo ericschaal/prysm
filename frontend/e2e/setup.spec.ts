@@ -55,7 +55,7 @@ test('a step with a missing value says so at its field', async ({ page }) => {
   await expect(
     wizard
       .getByRole('radiogroup', { name: 'Capture from' })
-      .getByRole('radio', { name: 'Video capture device' }),
+      .getByRole('radio', { name: 'Capture card or camera' }),
   ).toBeChecked();
   await expect(wizard).toContainText('No devices found.');
   await page.getByRole('button', { name: 'Next' }).click();

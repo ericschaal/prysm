@@ -135,7 +135,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     await next();
     assert.equal(heading(), 'Review and start');
     assert.deepEqual($$('.review-item p').map(plain), [
-      'Video capture device/dev/video2, 640 × 360 at 60 fps',
+      'Capture card or camera/dev/video2, 640 × 360 at 60 fps',
       'WLEDwled.local, 42 LEDs',
     ]);
     await click(button('Change', $$('.review-item')[1]));
@@ -277,7 +277,7 @@ test('setup again starts from the saved settings, and leaving it saves nothing',
     await chooseKind('output.kind', 'null');
     await next();
     assert.deepEqual($$('.review-item p').map(plain), [
-      'Video capture device/dev/video0, 640 × 360 at 30 fps',
+      'Capture card or camera/dev/video0, 640 × 360 at 30 fps',
       'No lights (test)',
     ]);
     await press(button('Save only'));

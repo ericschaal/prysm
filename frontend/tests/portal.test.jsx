@@ -1645,7 +1645,7 @@ test('kind rows swap panels without losing drafts', async () => {
         input.closest('label').textContent,
       ]),
       [
-        ['device', 'Video capture device'],
+        ['device', 'Capture card or camera'],
         ['remote', 'LG TV on your network'],
         ['file', 'Video file (development only)'],
       ],
@@ -2328,7 +2328,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     // The setup card: the path from the picture through Prysm to the LEDs.
     assert.deepEqual(
       $$('.path-name').map((item) => item.textContent),
-      ['Video capture device', 'Prysm', 'WLED'],
+      ['Capture card or camera', 'Prysm', 'WLED'],
     );
     assert.equal(
       $('.led-map figcaption').textContent,
@@ -2372,7 +2372,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     );
     assert.equal(
       valueOf('Video source'),
-      'Video capture device · 640\u00a0×\u00a0360 · 30 fps',
+      'Capture card or camera · 640\u00a0×\u00a0360 · 30 fps',
     );
     assert.equal(valueOf('Lights'), 'WLED · 14 LEDs');
     assert.equal(valueOf('Style'), 'Natural');
