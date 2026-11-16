@@ -2,6 +2,7 @@ import type {
   DeviceSettings,
   WledSettings,
 } from '@prysm/contracts/host-desktop';
+import type { CaptureModesClient } from '@prysm/application-client';
 import type { ApplicationRuntime } from '@prysm/application-state';
 import type { State } from '@prysm/contracts/application';
 import type {
@@ -18,6 +19,7 @@ import type { OutputSettings as DesktopOutput } from '@prysm/contracts/host-desk
 
 declare const device: ApplicationRuntime<DeviceSettings, WledSettings>;
 declare const webos: ApplicationRuntime<WebosSettings, WledSettings>;
+declare const captureModes: CaptureModesClient;
 
 // @ts-expect-error The generated state carries revisions as numbers.
 const revision: State['revision'] = '1';
@@ -35,21 +37,31 @@ void [revision, faulted, untagged, defaults, pathed];
   application={device}
   captures={{ device: deviceCapture }}
   outputs={{ wled: wledOutput }}
+  captureModes={captureModes}
 />;
 <WebPortal
   application={webos}
   captures={{ webos: webosCapture }}
   outputs={{ wled: wledOutput }}
+  captureModes={captureModes}
+/>;
+// @ts-expect-error Every host says what its captures deliver.
+<WebPortal
+  application={device}
+  captures={{ device: deviceCapture }}
+  outputs={{ wled: wledOutput }}
 />;
 
 WebPortal({
   application: webos,
+  captureModes,
   // @ts-expect-error A webOS host cannot mount the device capture panel.
   captures: { device: deviceCapture },
   outputs: { wled: wledOutput },
 });
 WebPortal({
   application: device,
+  captureModes,
   captures: { device: deviceCapture },
   // @ts-expect-error A capture panel cannot edit output settings.
   outputs: { wled: deviceCapture },

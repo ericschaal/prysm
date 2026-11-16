@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { createApplicationRuntime } from '@prysm/application-state';
 import { saveDeveloper } from '@prysm/web-portal';
 import { fakeApplicationPort } from '../testkit/application';
+import { fakeCaptureModesClient } from '../testkit/capture-modes';
 
 /** Kept before a test mocks timers: navigation must still land. */
 const realSetTimeout = globalThis.setTimeout;
@@ -27,7 +28,8 @@ export function mountDom(html = '<div id="root"></div>') {
 /**
  * Render `Host` over a fixture application; `change` edits the fixture's
  * settings before the first render (e.g. fields this UI does not show);
- * `props` go to `Host` as well (e.g. a preview client).
+ * `props` go to `Host` as well (e.g. a preview client); without
+ * `captureModes` every capture delivers any size and rate.
  */
 export async function renderPortal(Host, initial, change, props = {}) {
   const dom = mountDom();
@@ -36,7 +38,13 @@ export async function renderPortal(Host, initial, change, props = {}) {
   const application = createApplicationRuntime(fixture.client);
   const root = createRoot(document.getElementById('root'));
   await act(async () =>
-    root.render(<Host application={application} {...props} />),
+    root.render(
+      <Host
+        application={application}
+        captureModes={fakeCaptureModesClient().client}
+        {...props}
+      />,
+    ),
   );
   return {
     dom,

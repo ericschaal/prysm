@@ -2,59 +2,51 @@ import type { WebosSettings } from '@prysm/contracts/host-webos';
 import type { ReactNode } from 'react';
 import {
   Advanced,
-  allPicturePresets,
   CheckboxField,
   PictureChoice,
+  useCaptureModes,
   type EditorProps,
+  type ModesState,
 } from '@prysm/web-portal';
-import {
-  includeMenusHelp,
-  largeSizeHint,
-  enoughPixels,
-  tvPictureLimits,
-  webosDefaults,
-  type TvPicture,
-} from './settings';
+import { includeMenusHelp, webosDefaults, type TvPicture } from './settings';
 
 /**
  * Size, rate and “include menus” of a TV's picture, shared by this TV's
- * capture and a capture-only TV's stream request. `defaults` are what Rust
- * uses for an omitted field of that section. Both can capture 60 fps
- * (seen on the TV), so Smooth is offered. “Include menus” and `advanced`
- * (the fields at `advancedPaths`) are under Advanced.
+ * capture and a capture-only TV's stream request: the sizes and rates as
+ * `modes` deliver them (`source` and `unreachable` as `PictureChoice`
+ * takes them), after `lead`; “Include menus” and `advanced` (the fields at
+ * `advancedPaths`) under Advanced. `defaults` are what Rust uses for an
+ * omitted field of that section.
  */
 export function TvPictureFields<V extends TvPicture>({
   value,
   defaults,
   onChange,
-  sizeHint = largeSizeHint,
+  modes,
+  source,
+  unreachable,
+  lead,
   advanced,
   advancedPaths = [],
 }: EditorProps<V> & {
   defaults: Required<TvPicture>;
-  /** Help shown under Custom while the size is above 640 × 360. */
-  sizeHint?: string;
+  modes: ModesState;
+  source: string;
+  unreachable: string;
+  lead?: ReactNode;
   advanced?: ReactNode;
   advancedPaths?: readonly string[];
 }) {
-  const large =
-    (value.width ?? defaults.width) * (value.height ?? defaults.height) >
-    enoughPixels;
   return (
     <>
+      {lead}
       <PictureChoice
         value={value}
         defaults={defaults}
         onChange={onChange}
-        presets={allPicturePresets}
-        limits={tvPictureLimits}
-        customNote={
-          large ? (
-            <p className="help" data-size-hint>
-              {sizeHint}
-            </p>
-          ) : null
-        }
+        modes={modes}
+        source={source}
+        unreachable={unreachable}
       />
       <Advanced paths={['capture.include_ui', ...advancedPaths]}>
         <CheckboxField
@@ -70,10 +62,20 @@ export function TvPictureFields<V extends TvPicture>({
   );
 }
 
+/** This TV's own picture: its driver scales, so the answer is always known. */
+const webosQuery = { kind: 'webos' } as const;
+
 export function WebosEditor(props: EditorProps<WebosSettings>) {
+  const modes = useCaptureModes(webosQuery);
   return (
     <>
-      <TvPictureFields {...props} defaults={webosDefaults} />
+      <TvPictureFields
+        {...props}
+        defaults={webosDefaults}
+        modes={modes}
+        source="This TV"
+        unreachable="This TV can’t say what it captures just now."
+      />
       <p className="help">Video comes directly from this TV.</p>
     </>
   );

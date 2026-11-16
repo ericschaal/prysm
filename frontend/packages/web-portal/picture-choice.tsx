@@ -1,129 +1,159 @@
-import { use, useId, useState, type ReactNode } from 'react';
-import { pictureFacts, type Picture } from './adapters';
-import type { NumberLimits } from './checks';
-import { NumberField } from './fields';
-import { FieldContext } from './form';
+import { use, useEffect, useId, useState } from 'react';
+import { describePicture, pictureFacts, type Picture } from './adapters';
+import {
+  delivers,
+  offeredPresets,
+  sameSize,
+  type ModesState,
+  type Offered,
+} from './capture-modes';
+import { FieldContext, shownError } from './form';
 import {
   customPicture,
   picturePaths,
   picturePresets,
-  presetOf,
+  presetOrder,
   type PicturePreset,
 } from './picture-presets';
 import { RowChoice } from './rows';
 
 /**
- * How much work capture costs, as one choice: a few presets and Custom,
- * in the rows pattern, one line each; only the ticked row says what it
- * means. Nothing new is stored: the ticked row follows from the saved size
- * and rate. Custom opens the three number fields below the
- * list, so nothing above them moves, and stays open while the user types
- * there, even through numbers that match a preset.
+ * How much work capture costs, as one choice of presets in the rows
+ * pattern, each at the size and rate the source delivers for it; only the
+ * ticked row says what it means. Nothing new is stored: the ticked row
+ * follows from the size and rate. One more ticked row shows a size and rate
+ * no preset sets, until a preset replaces it. Until the modes are known the
+ * rows are locked on the current choice, with `unreachable` said while the
+ * hardware is out of reach. A preset ticked earlier follows to this source's
+ * size for it; else a size and rate the source cannot deliver moves to the
+ * first preset. Either way, what could not be delivered is said in the line
+ * above the rows. Nothing is drawn when
+ * `nothingOffered`: the field that selects the source says why.
  */
 export function PictureChoice<V extends Picture>({
   value,
   defaults,
   onChange,
-  presets,
-  limits,
-  rate = { label: 'Frame rate' },
-  customNote,
+  modes,
+  source,
+  unreachable,
 }: {
   value: V;
   /** What Rust uses for an omitted field of this section. */
   defaults: Required<Picture>;
   onChange: (next: V) => void;
-  /** The presets this source can do, in the order of `allPicturePresets`. */
-  presets: readonly PicturePreset[];
-  limits: Record<'width' | 'height' | 'fps', NumberLimits>;
-  /** The rate field's label and help, where the source says more. */
-  rate?: { label: string; help?: string };
-  /** Shown under the Custom fields, such as the large-size hint. */
-  customNote?: ReactNode;
+  modes: ModesState;
+  /** What delivers the picture, to start a sentence: `This device`. */
+  source: string;
+  /** Why nothing can be chosen while the hardware is out of reach. */
+  unreachable: string;
 }) {
   const scope = use(FieldContext);
   const nameId = useId();
   const legendId = useId();
-  const preset = presetOf(value, defaults, presets);
-  // A refused size or rate must be seen where it can be corrected.
-  const refused = picturePaths.some((path) => scope.errors[path]);
-  const [customOpen, setCustomOpen] = useState(preset === null);
-  const custom = customOpen || preset === null || refused;
-  function choose(next: PicturePreset) {
-    const { width, height, fps } = picturePresets[next];
+  const lineId = useId();
+  const current = {
+    width: value.width ?? defaults.width,
+    height: value.height ?? defaults.height,
+    fps: value.fps ?? defaults.fps,
+  };
+  const known = modes.state === 'known' ? modes.modes : null;
+  const offered: Offered[] = known
+    ? offeredPresets(known)
+    : presetOrder.map((preset) => ({ preset, ...picturePresets[preset] }));
+  const ticked = offered.find((each) => sameSize(each, current));
+  /** The preset last ticked while the modes were known. */
+  const [intent, setIntent] = useState<PicturePreset | null>(null);
+  /** Said once a size and rate the source cannot deliver was replaced. */
+  const [moved, setMoved] = useState<string | null>(null);
+  if (known && ticked && ticked.preset !== intent) setIntent(ticked.preset);
+  // A line about other modes says nothing about these.
+  if (!known && moved !== null) setMoved(null);
+  const followed = offered.find((each) => each.preset === intent);
+  let move: Offered | undefined;
+  if (known && !ticked && !scope.disabled)
+    move = followed ?? (delivers(known, current) ? undefined : offered[0]);
+  // Said whenever what was set cannot be delivered; following a preset to
+  // a deliverable size is not.
+  if (known && move && !delivers(known, current)) {
+    const line = `${source} can’t do ${describePicture(current.width, current.height, current.fps)}, so it is set to ${picturePresets[move.preset].label}.`;
+    if (moved !== line) setMoved(line);
+  }
+  useEffect(() => {
+    if (!move) return;
+    const { width, height, fps } = move;
+    onChange({ ...value, width, height, fps });
+  }, [move, value, onChange]);
+
+  if (known && offered.length === 0) return null;
+  const locked = scope.disabled || !known;
+  const error = picturePaths
+    .map((path) => shownError(scope, path, false))
+    .find(Boolean);
+  let line: string | null = null;
+  if (modes.state === 'unknown') line = unreachable;
+  else if (modes.state === 'failed')
+    line = 'Prysm didn’t say what this source can do. Asking again…';
+  else if (known) line = moved;
+
+  function choose({ width, height, fps }: Offered) {
     for (const path of picturePaths) scope.edited(path);
-    setCustomOpen(false);
+    setMoved(null);
     onChange({ ...value, width, height, fps });
   }
+  const facts = (size: Required<Picture>) =>
+    pictureFacts(size, size)
+      .map((fact) => fact.value)
+      .join(' · ');
   return (
-    <>
-      <fieldset
-        className="picture-choice"
-        role="radiogroup"
-        aria-labelledby={legendId}
-      >
-        <legend id={legendId}>Size and rate</legend>
-        <ul className="rows">
-          {presets.map((key) => {
-            const at = picturePresets[key];
-            const checked = !custom && preset === key;
-            return (
-              <RowChoice
-                key={key}
-                name={nameId}
-                label={at.label}
-                about={checked ? at.about : undefined}
-                facts={pictureFacts(at, at)
-                  .map((fact) => fact.value)
-                  .join(' · ')}
-                checked={checked}
-                disabled={scope.disabled}
-                onChoose={() => choose(key)}
-              />
-            );
-          })}
+    <fieldset
+      className="picture-choice"
+      role="radiogroup"
+      aria-labelledby={legendId}
+      aria-describedby={error || line ? lineId : undefined}
+      aria-invalid={error ? true : undefined}
+      data-field={picturePaths.join(' ')}
+      tabIndex={-1}
+    >
+      <legend id={legendId}>Size and rate</legend>
+      {error || line ? (
+        <p
+          className="help"
+          id={lineId}
+          role="status"
+          data-tone={error ? 'warning' : undefined}
+        >
+          {error ?? line}
+        </p>
+      ) : null}
+      <ul className="rows">
+        {offered.map((each) => {
+          const at = picturePresets[each.preset];
+          const checked = each === ticked;
+          return (
+            <RowChoice
+              key={each.preset}
+              name={nameId}
+              label={at.label}
+              about={checked ? at.about : undefined}
+              facts={facts(each)}
+              checked={checked}
+              disabled={locked}
+              onChoose={() => choose(each)}
+            />
+          );
+        })}
+        {ticked || move ? null : (
           <RowChoice
             name={nameId}
             label={customPicture.label}
-            about={custom ? customPicture.about : undefined}
-            checked={custom}
-            disabled={scope.disabled}
-            onChoose={() => setCustomOpen(true)}
+            about={customPicture.about}
+            facts={facts(current)}
+            checked
+            onChoose={() => {}}
           />
-        </ul>
-      </fieldset>
-      {custom ? (
-        <div className="picture-custom">
-          <div className="grid three">
-            <NumberField
-              path="capture.width"
-              label="Width"
-              unit="pixels"
-              value={value.width ?? defaults.width}
-              onChange={(width) => onChange({ ...value, width })}
-              {...limits.width}
-            />
-            <NumberField
-              path="capture.height"
-              label="Height"
-              unit="pixels"
-              value={value.height ?? defaults.height}
-              onChange={(height) => onChange({ ...value, height })}
-              {...limits.height}
-            />
-            <NumberField
-              path="capture.fps"
-              label={rate.label}
-              unit="fps"
-              value={value.fps ?? defaults.fps}
-              onChange={(fps) => onChange({ ...value, fps })}
-              help={rate.help}
-              {...limits.fps}
-            />
-          </div>
-          {customNote}
-        </div>
-      ) : null}
-    </>
+        )}
+      </ul>
+    </fieldset>
   );
 }

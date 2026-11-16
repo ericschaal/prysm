@@ -1,6 +1,7 @@
 import './state.test.jsx';
 import './http.test.jsx';
 import './portal.test.jsx';
+import './capture.test.jsx';
 import './setup.test.jsx';
 import './preview.test.jsx';
 import './colors.test.jsx';
@@ -16,6 +17,7 @@ import { lunaTvService } from '@prysm/webos-platform';
 import { WebosTvApp } from '../hosts/webos/tv-ui/app';
 import { WebosSlimTvApp } from '../hosts/webos-slim/tv-ui/app';
 import { fakeApplicationPort } from '../testkit/application';
+import { fakeCaptureModesClient } from '../testkit/capture-modes';
 import { fakeTvSupervisor } from '../testkit/luna';
 import { mountDom, sleep } from './dom';
 
@@ -103,7 +105,12 @@ test('embedded TV and browser portal share one application; either may close', a
           {...tvProps('full', fixture, fakeTvSupervisor({ flavor: 'full' }))}
         />,
       );
-      browserRoot.render(<WebosWebPortal application={browser} />);
+      browserRoot.render(
+        <WebosWebPortal
+          application={browser}
+          captureModes={fakeCaptureModesClient().client}
+        />,
+      );
     });
     await act(async () => sleep(5));
     await act(async () => document.getElementById('mode-processed').click());

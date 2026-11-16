@@ -649,26 +649,6 @@ button.link {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   column-gap: var(--space-5);
 }
-.grid.three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  column-gap: var(--space-4);
-}
-/*
- * The three share one set of rows (label, control, note), so the controls
- * line up whatever the length of a label or a note.
- */
-.grid.three > .field {
-  grid-row: span 3;
-  grid-template-rows: subgrid;
-}
-.grid.three > .field > label {
-  align-self: end;
-}
-@container (max-width: 460px) {
-  .grid.three .unit {
-    display: block;
-  }
-}
 fieldset {
   min-width: 0;
   margin: 0 0 var(--space-5);
@@ -2533,7 +2513,7 @@ button.section-status-main:focus-visible {
 }
 @media (hover: hover) {
   .row-link:hover:enabled .row-label,
-  .row-choice label:hover .row-label {
+  .row-choice label:hover:has(input:enabled) .row-label {
     color: var(--accent-ink);
   }
 }
@@ -2644,6 +2624,11 @@ button.section-status-main:focus-visible {
 .row-choice input:checked ~ .row-check {
   opacity: 1;
 }
+/* Locked, as a disabled field is, until it is known what can be chosen. */
+.row-choice label:has(input:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
 /* A choice's line is read whole: it wraps instead of being cut. */
 .row-choice .row-text > .row-value {
   white-space: normal;
@@ -2660,10 +2645,6 @@ button.section-status-main:focus-visible {
 }
 .row-heading .row-value {
   font-variant-numeric: tabular-nums;
-}
-/* The Custom size fields' hint reads as their note, before the next field. */
-.picture-custom > .help {
-  margin: calc(-1 * var(--space-3)) 0 var(--space-3);
 }
 /*
  * A page's end: its actions under a divider, from the left, the main one
@@ -2798,6 +2779,11 @@ button.section-status-main:focus-visible {
   color: var(--muted);
   font-size: var(--text-small);
   overflow-wrap: anywhere;
+}
+
+/* Under the found devices: what the lookup found, and Look again. */
+.device-rows > .help {
+  margin: var(--space-2) 0 0;
 }
 
 /* ── LED layout (WLED editor) ─────────────────────────────────────────── */

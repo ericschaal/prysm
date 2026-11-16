@@ -17,10 +17,9 @@ export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
   transport: (value) =>
     (value.encoding ?? remoteDefaults.encoding) === 'raw' ? 'raw' : 'h264',
   setup: 'Give the TV app the address of this page.',
-  trouble:
-    'If the TV can’t send its picture, try another way under Advanced, or a smaller size.',
+  trouble: 'If the TV can’t send its picture, try another way under Advanced.',
   problems: {
     'capture.encoding':
-      'Choose Uncompressed, or a picture of at least 16 × 16 pixels.',
+      'This TV can’t send the picture this way. Choose another.',
   },
 };

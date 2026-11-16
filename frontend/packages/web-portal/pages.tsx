@@ -13,6 +13,7 @@ import {
   type AdapterUis,
 } from './adapters';
 import { CalibrateWizard } from './calibrate';
+import { CaptureModesContext } from './capture-modes';
 import { DiscoveryContext } from './discovery-context';
 import { LightCard } from './lighting';
 import { useLiveColors, usePageVisible } from './live-colors';
@@ -194,35 +195,37 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
       <PageHeading title={copy.title} to="settings" backLabel="Settings" />
       <OfflineNotice />
       <DiscoveryContext value={host.discovery ?? null}>
-        {section === 'capture' ? (
-          <SectionEditor
-            section="capture"
-            adapters={host.captures}
-            saved={settings.capture ?? null}
-            previous={portal.previous.capture}
-            setPrevious={(capture) =>
-              portal.setPrevious({ ...portal.previous, capture })
-            }
-            save={(expected, capture) =>
-              dispatch(commands.configureCapture(expected, capture))
-            }
-            {...shared}
-          />
-        ) : (
-          <SectionEditor
-            section="output"
-            adapters={host.outputs}
-            saved={settings.output ?? null}
-            previous={portal.previous.output}
-            setPrevious={(output) =>
-              portal.setPrevious({ ...portal.previous, output })
-            }
-            save={(expected, output) =>
-              dispatch(commands.configureOutput(expected, output))
-            }
-            {...shared}
-          />
-        )}
+        <CaptureModesContext value={host.captureModes}>
+          {section === 'capture' ? (
+            <SectionEditor
+              section="capture"
+              adapters={host.captures}
+              saved={settings.capture ?? null}
+              previous={portal.previous.capture}
+              setPrevious={(capture) =>
+                portal.setPrevious({ ...portal.previous, capture })
+              }
+              save={(expected, capture) =>
+                dispatch(commands.configureCapture(expected, capture))
+              }
+              {...shared}
+            />
+          ) : (
+            <SectionEditor
+              section="output"
+              adapters={host.outputs}
+              saved={settings.output ?? null}
+              previous={portal.previous.output}
+              setPrevious={(output) =>
+                portal.setPrevious({ ...portal.previous, output })
+              }
+              save={(expected, output) =>
+                dispatch(commands.configureOutput(expected, output))
+              }
+              {...shared}
+            />
+          )}
+        </CaptureModesContext>
       </DiscoveryContext>
     </Page>
   );

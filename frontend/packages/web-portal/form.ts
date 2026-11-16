@@ -151,7 +151,7 @@ function controlOf(form: HTMLElement | null, field: string | undefined) {
   if (!form || !path) return null;
   return (
     form.querySelector<HTMLElement>(`[name="${path}"]`) ??
-    form.querySelector<HTMLElement>(`[data-field="${path}"]`)
+    form.querySelector<HTMLElement>(`[data-field~="${path}"]`)
   );
 }
 
@@ -161,10 +161,14 @@ export const showsField = (form: HTMLElement | null, field?: string) =>
 
 /** Of the fields at `paths`, the one `form` shows first. */
 export function firstField(form: HTMLElement | null, paths: string[]) {
+  // A group's `data-field` names each of its paths, space-separated.
   const shown = [
     ...(form?.querySelectorAll<HTMLElement>('[name], [data-field]') ?? []),
-  ].map((control) => control.getAttribute('name') ?? control.dataset.field);
-  return shown.find((path) => path && paths.includes(path)) ?? paths[0];
+  ].flatMap(
+    (control) =>
+      control.getAttribute('name') ?? control.dataset.field?.split(' ') ?? [],
+  );
+  return shown.find((path) => paths.includes(path)) ?? paths[0];
 }
 
 /**

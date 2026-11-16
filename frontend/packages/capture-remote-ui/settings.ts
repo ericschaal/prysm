@@ -1,11 +1,4 @@
-import type {
-  RemoteReceiverSettings,
-  StreamEncoding,
-} from '@prysm/contracts/host-desktop';
-
-/** The size hint of the stream form: a larger stream also costs network. */
-export const largeStreamHint =
-  '640\u00a0×\u00a0360 is enough for the lights. Larger sizes use more of the TV’s processor and more network without a visible difference.';
+import type { StreamEncoding } from '@prysm/contracts/host-desktop';
 
 /** What Rust uses for an omitted field. */
 export const remoteDefaults = {
@@ -38,16 +31,3 @@ export const encodingChoices: readonly {
     help: 'Easiest for the TV, but about ten times the network traffic.',
   },
 ];
-
-/**
- * H.264 needs at least 16 × 16 (the software encoder's minimum; the TV's
- * offer, checked by Rust, says what its encoders take).
- */
-export function encodingProblem(value: RemoteReceiverSettings): string | null {
-  const encoding = value.encoding ?? remoteDefaults.encoding;
-  const width = value.width ?? remoteDefaults.width;
-  const height = value.height ?? remoteDefaults.height;
-  return encoding !== 'raw' && (width < 16 || height < 16)
-    ? 'A compressed picture needs at least 16 × 16 pixels; choose Uncompressed for smaller ones.'
-    : null;
-}

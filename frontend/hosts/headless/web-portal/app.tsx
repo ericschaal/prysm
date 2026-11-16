@@ -3,6 +3,7 @@ import type {
   OutputSettings,
 } from '@prysm/contracts/host-desktop';
 import type {
+  CaptureModesClient,
   ColorsClient,
   DiscoveryClient,
   PreviewClient,
@@ -20,12 +21,14 @@ export function HeadlessWebPortal({
   preview,
   colors,
   discovery,
+  captureModes,
   replaced,
 }: {
   application: ApplicationRuntime<HeadlessCapture, HeadlessOutput>;
   preview?: PreviewClient;
   colors?: ColorsClient;
   discovery?: DiscoveryClient;
+  captureModes: CaptureModesClient;
   replaced?: () => Promise<boolean>;
 }) {
   return (
@@ -36,6 +39,7 @@ export function HeadlessWebPortal({
         preview={preview}
         colors={colors}
         discovery={discovery}
+        captureModes={captureModes}
         replaced={replaced}
         outputs={headlessOutputs}
       />

@@ -3,6 +3,7 @@ import type {
   OutputSettings,
 } from '@prysm/contracts/host-webos';
 import type {
+  CaptureModesClient,
   ColorsClient,
   DiscoveryClient,
   PreviewClient,
@@ -20,12 +21,14 @@ export function WebosWebPortal({
   preview,
   colors,
   discovery,
+  captureModes,
   replaced,
 }: {
   application: ApplicationRuntime<WebosCapture, WebosOutput>;
   preview?: PreviewClient;
   colors?: ColorsClient;
   discovery?: DiscoveryClient;
+  captureModes: CaptureModesClient;
   replaced?: () => Promise<boolean>;
 }) {
   return (
@@ -36,6 +39,7 @@ export function WebosWebPortal({
         preview={preview}
         colors={colors}
         discovery={discovery}
+        captureModes={captureModes}
         replaced={replaced}
         outputs={webosOutputs}
       />

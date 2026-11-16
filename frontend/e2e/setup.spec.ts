@@ -2,7 +2,11 @@
 // setup, written to the settings file and summed up on Home.
 import { expect, test } from './prysm';
 
-test.use({ settings: { processing: { brightness_percent: 80 } } });
+test.use({
+  settings: { processing: { brightness_percent: 80 } },
+  // No video devices: the same on every machine.
+  devices: [],
+});
 
 test.beforeEach(async ({ page }) => {
   // “No lights” is a developer option: on in this browser.
@@ -52,13 +56,16 @@ test('a step with a missing value says so at its field', async ({ page }) => {
   await page.goto('/');
   const wizard = page.getByRole('form', { name: 'Video source' });
   await expect(wizard.getByLabel('Capture from')).toHaveValue('device');
+  await expect(wizard).toContainText('No devices found.');
   await page.getByRole('button', { name: 'Next' }).click();
 
-  const path = wizard.getByLabel('Capture device');
+  const path = wizard.getByLabel('Enter the device by hand');
   await expect(path).toBeFocused();
   await expect(path).toHaveAttribute('aria-invalid', 'true');
-  await expect(path).toHaveAccessibleDescription('Enter a value.');
-  await expect(wizard.getByRole('status')).toHaveText(
-    'Check the marked field to continue.',
+  await expect(path).toHaveAccessibleDescription(
+    'Choose a device, or enter its name here.',
   );
+  await expect(
+    wizard.getByRole('status').filter({ hasText: 'Check the marked field' }),
+  ).toHaveText('Check the marked field to continue.');
 });

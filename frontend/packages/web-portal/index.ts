@@ -1,7 +1,7 @@
 export * from './adapters';
 export { CalibrateWizard, type CalibrateProps } from './calibrate';
 export * from './checks';
-export { FindDevices } from './discovery';
+export { DeviceRows, FindDevices } from './discovery';
 export * from './fields';
 export * from './form';
 export {
@@ -33,6 +33,17 @@ export {
 } from './calibration-model';
 export { PictureChoice } from './picture-choice';
 export {
+  delivers,
+  modesRetryMs,
+  nothingOffered,
+  offeredPresets,
+  resolve,
+  useCaptureModes,
+  useEachCaptureModes,
+  type ModesState,
+  type Offered,
+} from './capture-modes';
+export {
   chooseStyle,
   styleOrder,
   styleValues,
@@ -40,10 +51,9 @@ export {
   type BuiltInStyle,
 } from './styles';
 export {
-  allPicturePresets,
   customPicture,
   picturePresets,
-  presetOf,
+  presetOrder,
   type PicturePreset,
 } from './picture-presets';
 export { PreviewPanel } from './preview';

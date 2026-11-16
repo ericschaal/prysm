@@ -1900,6 +1900,7 @@ dependencies = [
  "prysm-settings-file",
  "prysm-version",
  "prysm-web-portal",
+ "serde",
  "serde_json",
  "tempfile",
 ]

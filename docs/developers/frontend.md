@@ -76,11 +76,16 @@ checked against the portal.
 temporary directory (remote capture, `null` output), and may start test
 senders: `prysm-capture-remote`'s `test_sender` example stands in for the
 TV's slim worker, streaming generated frames, refusing its first connections
-(`--refuse N REASON`) or stopping after some frames (`--stop-after N`).
+(`--refuse N REASON`), stopping after some frames (`--stop-after N`) or
+announcing fewer encodings, sizes and rates (`--offer JSON`). A test that
+sets `devices` starts `prysm-headless`'s `fake_devices` example instead:
+the production host with stand-in video devices (`PRYSM_FAKE_DEVICES`, each
+with its name, path and modes) that discovery finds and that never capture.
 Nothing leaves loopback.
 
 ```sh
 cargo build -p prysm-headless
+cargo build -p prysm-headless --example fake_devices
 cargo build -p prysm-capture-remote --example test_sender
 npm --prefix frontend run e2e:install   # Chromium and WebKit, once per Playwright version
 npm --prefix frontend run e2e           # Chromium and WebKit; add -- --headed, -- -g brightness
@@ -89,11 +94,11 @@ npm --prefix frontend run e2e           # Chromium and WebKit; add -- --headed, 
 One engine, or Firefox (installed with `npx playwright install firefox`), from
 `frontend`: `npx playwright test -c e2e --project firefox`.
 
-The binary embeds the portal bundle at compile time: rebuild the frontend,
-then `prysm-headless`, before testing a frontend change; the suite stops at
-once if the binary serves another bundle than `dist`. The tests take the
-debug builds from `$CARGO_TARGET_DIR` (default `target`), or
-`PRYSM_HEADLESS_BIN` and `PRYSM_TEST_SENDER_BIN`. Results, traces and videos
+The binaries embed the portal bundle at compile time: rebuild the frontend,
+then `prysm-headless` and `fake_devices`, before testing a frontend change;
+the suite stops at once if either serves another bundle than `dist`. The
+tests take the debug builds from `$CARGO_TARGET_DIR` (default `target`), or
+`PRYSM_HEADLESS_BIN`, `PRYSM_FAKE_DEVICES_BIN` and `PRYSM_TEST_SENDER_BIN`. Results, traces and videos
 go to `frontend/.e2e/`. Find elements as a user does, by role and
 accessible name, not by class names.
 

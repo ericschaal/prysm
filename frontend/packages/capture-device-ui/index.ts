@@ -7,7 +7,8 @@ import {
 import { DeviceEditor } from './editor';
 import { deviceDefaults } from './settings';
 
-export { deviceDefaults, deviceLimits, devicePresets } from './settings';
+export { typedDeviceMs } from './editor';
+export { deviceDefaults } from './settings';
 
 export const deviceCapture: AdapterUi<DeviceSettings> = {
   label: 'Video capture device',
@@ -19,10 +20,10 @@ export const deviceCapture: AdapterUi<DeviceSettings> = {
   // A device on this computer: nothing travels over a network.
   transport: () => 'local',
   problems: {
-    'capture.path': 'Pick a device with Find devices, or type its name.',
-    'capture.width': 'Use a size the device supports.',
-    'capture.height': 'Use a size the device supports.',
-    'capture.fps': 'Use a rate the device supports.',
+    'capture.path': 'Choose a device, or enter its name by hand.',
+    'capture.width': 'This device can’t capture this size. Choose another.',
+    'capture.height': 'This device can’t capture this size. Choose another.',
+    'capture.fps': 'This device can’t capture at this rate. Choose another.',
   },
   facts: (value) => pictureFacts(value, deviceDefaults),
 };

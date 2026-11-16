@@ -45,6 +45,7 @@ jobs:
         run: |
           cargo build --locked -p prysm-headless
           cargo build --locked -p prysm-capture-remote --example test_sender
+          cargo build --locked -p prysm-headless --example fake_devices
       - name: Browsers
         working-directory: frontend
         run: npx playwright install webkit firefox
@@ -53,6 +54,7 @@ jobs:
         env:
           PRYSM_HEADLESS_BIN: ${{ github.workspace }}/target/debug/prysm-headless
           PRYSM_TEST_SENDER_BIN: ${{ github.workspace }}/target/debug/examples/test_sender
+          PRYSM_FAKE_DEVICES_BIN: ${{ github.workspace }}/target/debug/examples/fake_devices
         run: npx playwright test -c e2e --project webkit --project firefox
       # The HTML report, and traces and videos of failed or retried tests.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

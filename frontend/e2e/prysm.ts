@@ -5,9 +5,12 @@
  * slim worker) that stream generated frames to it. Nothing here talks to
  * anything but loopback.
  *
+ * A test that sets `devices` runs `prysm-headless`'s `fake_devices` example
+ * instead, which finds those video devices and answers their modes.
+ *
  * The binaries come from cargo (see docs/developers/frontend.md):
- * `PRYSM_HEADLESS_BIN` and `PRYSM_TEST_SENDER_BIN`, or else the debug builds
- * in `$CARGO_TARGET_DIR` (default `target`).
+ * `PRYSM_HEADLESS_BIN`, `PRYSM_FAKE_DEVICES_BIN` and `PRYSM_TEST_SENDER_BIN`,
+ * or else the debug builds in `$CARGO_TARGET_DIR` (default `target`).
  */
 import { test as base, expect } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -21,6 +24,9 @@ const target = process.env.CARGO_TARGET_DIR ?? path.join(root, 'target');
 const headlessBin =
   process.env.PRYSM_HEADLESS_BIN ??
   path.join(target, 'debug', 'prysm-headless');
+const fakeDevicesBin =
+  process.env.PRYSM_FAKE_DEVICES_BIN ??
+  path.join(target, 'debug', 'examples', 'fake_devices');
 const dist = path.join(root, 'frontend', 'dist', 'headless', 'web-portal');
 const senderBin =
   process.env.PRYSM_TEST_SENDER_BIN ??
@@ -41,6 +47,41 @@ export const remoteCapture = {
 /** What a test's settings file holds before Prysm starts. */
 export type Settings = Record<string, unknown>;
 
+/** A span of sizes or rates, as `POST /api/v1/capture/modes` answers. */
+export interface Span {
+  min: number;
+  max: number;
+  step: number;
+}
+
+/** One size and rate a capture delivers, each a span. */
+export interface Mode {
+  width: Span;
+  height: Span;
+  fps: Span;
+}
+
+/** One size at one rate. */
+export const fixedMode = (width: number, height: number, fps: number) => ({
+  width: { min: width, max: width, step: 1 },
+  height: { min: height, max: height, step: 1 },
+  fps: { min: fps, max: fps, step: 1 },
+});
+
+/** Every even size up to `width` × `height`, at 1 to `fps` fps. */
+export const anyMode = (width: number, height: number, fps: number) => ({
+  width: { min: 2, max: width, step: 2 },
+  height: { min: 2, max: height, step: 2 },
+  fps: { min: 1, max: fps, step: 1 },
+});
+
+/** A stand-in video device: found by discovery, never captured from. */
+export interface FakeDevice {
+  name: string;
+  path: string;
+  modes: Mode[];
+}
+
 /** The parts of `GET /api/v1/state` the tests read. */
 export interface State {
   target: string;
@@ -57,8 +98,15 @@ class Process {
   private failure: Error | undefined;
   private readonly exited: Promise<number | null>;
 
-  constructor(command: string, args: string[]) {
-    this.child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  constructor(
+    command: string,
+    args: string[],
+    env: Record<string, string> = {},
+  ) {
+    this.child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...env },
+    });
     for (const stream of [this.child.stdout, this.child.stderr]) {
       if (!stream) continue;
       createInterface({ input: stream }).on('line', (line) => {
@@ -135,6 +183,15 @@ class Process {
   }
 }
 
+/** The host to start: the production binary, or one with fake devices. */
+function host(devices: FakeDevice[] | null, args: string[]) {
+  return devices === null
+    ? new Process(headlessBin, args)
+    : new Process(fakeDevicesBin, args, {
+        PRYSM_FAKE_DEVICES: JSON.stringify(devices),
+      });
+}
+
 /**
  * The entry script a page loads, named by its content, e.g.
  * `/assets/index-CZ3hLPcm.js`.
@@ -142,11 +199,16 @@ class Process {
 export const entryScript = /\/assets\/index-[\w-]+\.js/;
 
 /**
- * Fails unless the `prysm-headless` under test serves the bundle `npm run
- * build` last wrote: it embeds the bundle when cargo builds it, so a binary
- * built before the frontend serves the old one.
+ * Fails unless the `prysm-headless` under test and its `fake_devices`
+ * example serve the bundle `npm run build` last wrote: they embed the
+ * bundle when cargo builds them, so one built before the frontend serves
+ * the old one.
  */
 export async function checkBundle(): Promise<void> {
+  for (const devices of [null, []]) await checkHost(devices);
+}
+
+async function checkHost(devices: FakeDevice[] | null): Promise<void> {
   // No bundle here: the binary was built elsewhere (CI hands it to this
   // job), so there is nothing it could be stale against.
   const assets = await readFile(path.join(dist, 'assets.rs'), 'utf8').catch(
@@ -157,18 +219,19 @@ export async function checkBundle(): Promise<void> {
   const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
   const file = path.join(dir, 'settings.json');
   await writeFile(file, JSON.stringify({ output: { kind: 'null' } }));
-  const host = new Process(headlessBin, [file, '--listen', '127.0.0.1:0']);
+  const checked = host(devices, [file, '--listen', '127.0.0.1:0']);
+  const bin = devices === null ? headlessBin : fakeDevicesBin;
   try {
-    const line = await host.waitFor('portal http://');
+    const line = await checked.waitFor('portal http://');
     const url = /http:\/\/[^/\s]+/.exec(line)?.[0];
     if (!url) throw new Error(`no address in ${line}`);
     const served = entryScript.exec(await (await fetch(`${url}/`)).text())?.[0];
     if (!built || served !== built)
       throw new Error(
-        `${headlessBin} serves ${served ?? 'no script'}, but dist has ${built ?? 'none'}: rebuild prysm-headless (cargo build -p prysm-headless) after npm run build`,
+        `${bin} serves ${served ?? 'no script'}, but dist has ${built ?? 'none'}: rebuild it (cargo build -p prysm-headless --bins --example fake_devices) after npm run build`,
       );
   } finally {
-    await host.stop();
+    await checked.stop();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -192,6 +255,11 @@ export interface Sender {
 export const test = base.extend<{
   /** The settings file's content. Override with `test.use({ settings })`. */
   settings: Settings;
+  /**
+   * The video devices Prysm finds, with their modes; `null` (the default):
+   * the production binary, which looks for real ones.
+   */
+  devices: FakeDevice[] | null;
   prysm: Prysm;
   /** Start a test sender streaming to this test's Prysm (stopped after the test). */
   startSender: (...args: string[]) => Sender;
@@ -200,16 +268,17 @@ export const test = base.extend<{
     { capture: remoteCapture, output: { kind: 'null' } },
     { option: true },
   ],
+  devices: [null, { option: true }],
 
-  prysm: async ({ settings }, provide, testInfo) => {
+  prysm: async ({ settings, devices }, provide, testInfo) => {
     const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
     const file = path.join(dir, 'settings.json');
     await writeFile(file, JSON.stringify(settings));
-    let host = new Process(headlessBin, [file, '--listen', '127.0.0.1:0']);
+    let running = host(devices, [file, '--listen', '127.0.0.1:0']);
     const logs: string[] = [];
     let code: number | null;
     try {
-      const line = await host.waitFor('portal http://');
+      const line = await running.waitFor('portal http://');
       const url = /http:\/\/[^/\s]+/.exec(line)?.[0];
       if (!url) throw new Error(`no address in ${line}`);
       await provide({
@@ -222,20 +291,18 @@ export const test = base.extend<{
           return (await response.json()) as State;
         },
         restart: async () => {
-          expect(await host.stop(), 'exits cleanly before a restart').toBe(0);
-          logs.push(...host.lines, '(restart)');
-          host = new Process(headlessBin, [
-            file,
-            '--listen',
-            new URL(url).host,
-          ]);
-          await host.waitFor('portal http://');
+          expect(await running.stop(), 'exits cleanly before a restart').toBe(
+            0,
+          );
+          logs.push(...running.lines, '(restart)');
+          running = host(devices, [file, '--listen', new URL(url).host]);
+          await running.waitFor('portal http://');
         },
       });
     } finally {
-      code = await host.stop();
+      code = await running.stop();
       await testInfo.attach('prysm-headless.log', {
-        body: [...logs, ...host.lines].join('\n'),
+        body: [...logs, ...running.lines].join('\n'),
         contentType: 'text/plain',
       });
       await rm(dir, { recursive: true, force: true });

@@ -1,11 +1,12 @@
 import type { Picture } from './adapters';
 
-/** The capture sizes and rates offered by name; anything else is Custom. */
+/** The capture sizes and rates offered by name. */
 export type PicturePreset = 'balanced' | 'smooth' | 'efficient';
 
 /**
- * Each preset in words and in numbers, in the order offered. The label is
- * what the user gains, the line beneath what it costs.
+ * Each preset in words and the size and rate it aims for; what a source
+ * delivers decides what it sets (`offeredPresets`). The label is what the
+ * user gains, the line beneath what it costs.
  */
 export const picturePresets: Readonly<
   Record<PicturePreset, Required<Picture> & { label: string; about: string }>
@@ -33,35 +34,22 @@ export const picturePresets: Readonly<
   },
 };
 
-/** The presets a source that can capture 60 fps offers. */
-export const allPicturePresets: readonly PicturePreset[] = [
+/** The presets in the order offered; the first is the one to fall back to. */
+export const presetOrder: readonly PicturePreset[] = [
   'balanced',
   'smooth',
   'efficient',
 ];
 
-/** The row for any other size and rate: it opens the number fields. */
+/** The row for a saved size and rate no preset sets: shown, not chosen. */
 export const customPicture = {
   label: 'Custom',
-  about: 'Your own size and rate.',
+  about: 'Kept until you choose another.',
 } as const;
 
 /** The paths of the three numbers a preset sets. */
-export const picturePaths = ['capture.width', 'capture.height', 'capture.fps'];
-
-/** The offered preset `value` is at (omitted fields at `defaults`), if any. */
-export function presetOf(
-  value: Picture,
-  defaults: Required<Picture>,
-  offered: readonly PicturePreset[],
-): PicturePreset | null {
-  const width = value.width ?? defaults.width;
-  const height = value.height ?? defaults.height;
-  const fps = value.fps ?? defaults.fps;
-  return (
-    offered.find((preset) => {
-      const at = picturePresets[preset];
-      return at.width === width && at.height === height && at.fps === fps;
-    }) ?? null
-  );
-}
+export const picturePaths = [
+  'capture.width',
+  'capture.height',
+  'capture.fps',
+] as const;

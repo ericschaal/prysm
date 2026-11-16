@@ -4,6 +4,7 @@ import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
 import { saveDeveloper, staleNotice } from '@prysm/web-portal';
+import { typedDeviceMs } from '@prysm/capture-device-ui';
 import { defaultProcessing } from '../testkit/application';
 import { fakeDiscoveryClient } from '../testkit/discovery';
 import {
@@ -97,9 +98,14 @@ test('setup steps keep the drafts, check each step and save both sections with o
       $$('option', field('capture.kind')).map((item) => item.value),
       ['device', 'remote', 'file'],
     );
+    // No device yet: nothing to choose a size for.
+    assert(!$('.picture-choice', wizard()));
     await next();
     assert.equal(heading(), 'Video source');
-    assert.equal(errorOf(field('capture.path')), 'Enter a value.');
+    assert.equal(
+      errorOf(field('capture.path')),
+      'Choose a device, or enter its name here.',
+    );
     assert.equal(document.activeElement, field('capture.path'));
     assert.equal(
       $('.form-status', wizard()).textContent,
@@ -107,8 +113,11 @@ test('setup steps keep the drafts, check each step and save both sections with o
     );
 
     await edit(field('capture.path'), ' /dev/video2 ');
-    await click(radio('Custom'));
-    await edit(field('capture.width'), 1280);
+    // The typed device is asked about once typing pauses.
+    assert(!$('.picture-choice', wizard()));
+    await act(async () => sleep(typedDeviceMs + 50));
+    assert.equal(radio('Balanced').checked, true);
+    await click(radio('Smooth'));
     await next();
     assert.equal(heading(), 'Your lights');
     assert.equal(document.activeElement, $('h2', wizard()));
@@ -122,13 +131,13 @@ test('setup steps keep the drafts, check each step and save both sections with o
     await click(button('Back'));
     assert.equal(heading(), 'Video source');
     assert.equal(field('capture.path').value, ' /dev/video2 ');
-    assert.equal(field('capture.width').value, '1280');
+    assert.equal(radio('Smooth').checked, true);
     await next();
     assert.equal(field('output.address').value, 'http://wled.local/');
     await next();
     assert.equal(heading(), 'Review and start');
     assert.deepEqual($$('.review-item p').map(plain), [
-      'Video capture device/dev/video2, 1280 × 360 at 30 fps',
+      'Video capture device/dev/video2, 640 × 360 at 60 fps',
       'WLEDwled.local, 42 LEDs',
     ]);
     await click(button('Change', $$('.review-item')[1]));
@@ -140,7 +149,13 @@ test('setup steps keep the drafts, check each step and save both sections with o
     await next();
     assert.equal(saves(fixture), 1);
     assert.deepEqual(fixture.snapshot().settings, {
-      capture: { kind: 'device', path: '/dev/video2', width: 1280 },
+      capture: {
+        kind: 'device',
+        path: '/dev/video2',
+        width: 640,
+        height: 360,
+        fps: 60,
+      },
       output: {
         kind: 'wled',
         address: 'wled.local',
@@ -214,7 +229,7 @@ test('a server error sends setup back to the step with the field', async () => {
     assert.equal(heading(), 'Video source');
     assert.equal(
       errorOf(field('capture.path')),
-      'Pick a device with Find devices, or type its name.',
+      'Choose a device, or enter its name by hand.',
     );
     assert.equal(document.activeElement, field('capture.path'));
 
@@ -319,7 +334,7 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
   try {
     assert(!field('capture.kind'));
     assert.equal(radio('Balanced').checked, true);
-    assert(!field('capture.width'), 'the size fields wait for Custom');
+    assert(!field('capture.width'), 'no number fields');
     await next();
     assert(!field('output.kind'));
     await edit(field('output.address'), '192.0.2.4');
@@ -346,13 +361,8 @@ test('setup offers the same size-and-rate choice and saves the chosen preset', a
   const label = (input) =>
     document.getElementById(input.getAttribute('aria-labelledby')).textContent;
   try {
-    const rows = $$('input[type="radio"]', $('[role="radiogroup"]', wizard()));
-    assert.deepEqual(rows.map(label), [
-      'Balanced',
-      'Smooth',
-      'Efficient',
-      'Custom',
-    ]);
+    const rows = $$('input[type="radio"]', $('.picture-choice', wizard()));
+    assert.deepEqual(rows.map(label), ['Balanced', 'Smooth', 'Efficient']);
     assert.equal(radio('Balanced').checked, true);
     await click(radio('Efficient'));
     await next();
@@ -375,25 +385,7 @@ test('setup offers the same size-and-rate choice and saves the chosen preset', a
   }
 });
 
-test('setup shows the same quiet size hint above 640 × 360', async () => {
-  const portal = await renderPortal(WebosWebPortal, {});
-  try {
-    assert(!$('[data-size-hint]', wizard()));
-    await click(radio('Custom'));
-    await edit(field('capture.width'), 1280);
-    await edit(field('capture.height'), 720);
-    assert.match(
-      $('[data-size-hint]', wizard()).textContent,
-      /is enough for the lights/,
-    );
-    await next();
-    assert(!field('output.kind'), 'the hint does not stop the next step');
-  } finally {
-    await portal.unmount();
-  }
-});
-
-test('setup offers found devices and lights; the typed fields stay', async () => {
+test('setup lists the devices present at once and finds lights on request; the typed fields stay', async () => {
   const discovery = fakeDiscoveryClient({
     'capture/device': [
       {
@@ -423,17 +415,26 @@ test('setup offers found devices and lights; the typed fields stay', async () =>
   });
   const { fixture } = portal;
   try {
-    // Nothing is looked up until asked.
-    assert.deepEqual(discovery.calls, []);
-    await press(button('Find devices'));
+    // The devices present are looked for at once, none ticked; the lights
+    // wait to be asked for.
     assert.deepEqual(discovery.calls, ['capture/device']);
-    assert.deepEqual($$('.found button').map(plain), [
-      'USB Video/dev/video2',
-      'Elgato/dev/video4',
-    ]);
-    await press($$('.found button')[1]);
+    assert(!button('Find devices'));
+    const devices = () => $$('input[type="radio"]', $('.device-rows'));
+    assert.deepEqual(
+      devices().map((input) => plain(input.closest('label'))),
+      ['USB Video/dev/video2', 'Elgato/dev/video4'],
+    );
+    assert.deepEqual(
+      devices().map((input) => input.checked),
+      [false, false],
+    );
+    // Typing waits under Advanced while there are devices to pick.
+    assert(field('capture.path').closest('[hidden]'));
+    assert(!$('.picture-choice', wizard()), 'sizes follow the device');
+    await click(devices()[1]);
     assert.equal(field('capture.path').value, '/dev/video4');
-    assert.equal($$('.found button')[1].getAttribute('aria-pressed'), 'true');
+    assert.equal(devices()[1].checked, true);
+    assert.equal(radio('Balanced').checked, true);
     // Typing still works after picking.
     await edit(field('capture.path'), '/dev/video9');
     await next();
@@ -477,8 +478,8 @@ test('nothing found or a failed lookup leaves the typed field', async () => {
     discovery: discovery.client,
   });
   try {
-    // This TV's capture has nothing to find: no button.
-    assert(!button('Find devices'));
+    // This TV's capture has nothing to find.
+    assert(!$('.device-rows'));
     await next();
     await press(button('Find lights'));
     assert.equal(
@@ -503,8 +504,9 @@ test('nothing found or a failed lookup leaves the typed field', async () => {
 test('without a discovery client the editors offer only typed fields', async () => {
   const portal = await renderPortal(HeadlessWebPortal, {});
   try {
-    assert(!button('Find devices'));
+    assert(!$('.device-rows'));
     assert.equal(field('capture.path').value, '');
+    assert(!field('capture.path').closest('[hidden]'), 'not under Advanced');
   } finally {
     await portal.unmount();
   }

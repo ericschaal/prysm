@@ -1,5 +1,6 @@
 import {
   httpApplicationClient,
+  httpCaptureModesClient,
   httpDiscoveryClient,
   httpColorsClient,
   httpPreviewClient,
@@ -21,6 +22,7 @@ createRoot(root).render(
     preview={httpPreviewClient()}
     colors={httpColorsClient()}
     discovery={httpDiscoveryClient()}
+    captureModes={httpCaptureModesClient()}
     replaced={scriptReplaced(import.meta.url)}
   />,
 );

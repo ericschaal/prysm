@@ -209,24 +209,43 @@ supervisor in each of its states and play the phone's calibration part). See the
     it, Cancel deletes it and restores the previous active one;
     both end calibration. Without screen sync it says to choose Calibrate on
     the TV; if calibration ends elsewhere it offers Resume and keeps the draft.
-  - [Find devices](packages/web-portal/discovery.tsx): "Find devices" in the
-    video device editor and "Find lights" in the WLED editor ask the portal
-    (`GET /api/v1/candidates/{section}/{kind}`) what is present and list it;
-    picking one fills the path or address, and the typed field stays the
-    fallback (nothing found: "No devices found. Enter the path below.").
-    A button rather than a lookup when the editor opens: the editors are in
-    Settings too, and WLED discovery takes over a second and asks the
-    network. Hosts pass `httpDiscoveryClient()`; without one there is no button.
+  - [Devices](packages/web-portal/discovery.tsx): the video device editor
+    asks the portal (`GET /api/v1/candidates/capture/device`) what is present
+    as it opens, and lists the devices as rows to tick ("Look again" asks
+    again); the saved device keeps a ticked row of its own while it is not
+    found ("Not plugged in" while it cannot be asked). Typing the device is
+    under Advanced ("Enter the device by hand"), and in plain sight when
+    nothing was found. "Find lights" in the WLED editor asks on request only:
+    WLED discovery takes over a second and asks the network; picking one
+    fills the address, and the typed field stays the fallback. Hosts pass
+    `httpDiscoveryClient()`; without one there are only the typed fields.
   - [Fields](packages/web-portal/fields.tsx): labelled inputs that show the
     server's `Failure.field` errors and their own range checks.
   - [Size and rate](packages/web-portal/picture-choice.tsx): every capture
-    editor's width, height and frame rate as one choice in the rows pattern
-    ([presets](packages/web-portal/picture-presets.ts)): Balanced
-    (640 × 360, 30 fps), Smooth (60 fps; only for the TV sources, a device
-    or file may not do it), Efficient (320 × 180, 30 fps) and Custom, which
-    opens the number fields below the list. Nothing extra is stored: the
-    ticked row follows from the saved numbers, and a refused size or rate
-    opens Custom.
+    editor's width, height and frame rate as one choice in the rows pattern,
+    from what the source delivers ([capture modes](packages/web-portal/capture-modes.ts):
+    `POST /api/v1/capture/modes` with only the fields that select the
+    hardware, a device's `path` or the TV's `encoding`; asked again every
+    3 s while not known and when the page regains focus; hosts pass
+    `httpCaptureModesClient()`). The
+    [presets](packages/web-portal/picture-presets.ts) aim for Balanced
+    (640 × 360, 30 fps), Smooth (640 × 360, 60 fps) and Efficient (320 × 180,
+    30 fps); each is its target where a mode takes it, else the smallest
+    mode covering the target size (16:9 first) at the target rate, else not
+    offered, and presets that come out the same show once. Each row shows
+    the size and rate it sets. Nothing extra is stored: the ticked row
+    follows from the saved numbers; a saved size and rate no preset sets is
+    one more ticked row, "Custom", until a preset replaces it. One that a
+    known answer excludes moves to the first preset, and a line above the
+    rows says so (an unsaved change); a preset the user ticked follows to
+    another device's size for it. Until the answer is known the rows are
+    locked on the current choice, with the reason while the hardware is out
+    of reach ("The TV isn't connected.", "Plug in the device …"). A source
+    that delivers nothing shows no rows; the field that selects it says so
+    (a device: "Prysm can't capture from this device."; a TV encoding it
+    does not offer is not listed, and a saved one stays listed, in sight,
+    saying so). A refused size or rate is said above the rows, which take
+    the focus.
 - [Desktop host](hosts/headless/web-portal/app.tsx) (served by `prysm-headless`
   and `prysm-tui`) and [webOS browser host](hosts/webos/web-portal/app.tsx)
   register their kinds as `AdapterUis` maps; the types are exhaustive over the
@@ -266,6 +285,9 @@ supervisor in each of its states and play the phone's calibration part). See the
   [React bindings](packages/application-react/index.tsx).
 - [Discovery fixture](testkit/discovery.ts): scripted candidates per
   `section/kind`, recorded calls and a scriptable refusal.
+- [Capture modes fixture](testkit/capture-modes.ts): an answer per capture
+  section (any size up to 1920 × 1080 at 60 fps unless scripted), recorded
+  calls and a scriptable refusal; `renderPortal` passes it by default.
 - [Application fixture](testkit/application.ts): revision checks, immediate
   state updates, engine-like target results and scripted failures, outside the
   shipped packages. DOM tests run with [setup-dom](tests/setup-dom.js) loaded
@@ -287,8 +309,9 @@ conflicts with another. Settings says in one line whether everything is saved
 sentence (`AdapterUi.problems`) in place of its help, and move focus to it; a
 field the form does not show is reported in the form's status line. Limits come from the generated schemas
 and are checked against them in [tests](tests/portal.test.jsx); where a schema
-has no maximum the panel uses the Rust type bound (`sample_density` `u16`,
-file `fps` `u32`, device `fps` `i32` for AVFoundation). Calibration limits (32
+has no maximum the panel uses the Rust type bound (`sample_density` `u16`).
+Capture sizes and rates have no limits written here: they come from what the
+source delivers. Calibration limits (32
 calibrations, 64-character names, -100 to 100 per control) are checked the same way.
 
 ## Contracts

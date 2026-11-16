@@ -13,19 +13,22 @@ capture card on Linux or macOS.
 ## Choose the card in Prysm
 
 Open the web portal. In setup, or later under **Settings → Video source**,
-choose **Video capture device**. Select **Find devices** to list the cards
-Prysm can see, or type the device yourself:
+choose **Video capture device**. Prysm lists the cards it can see; tick
+yours (**Look again** after plugging one in). If yours is not listed, enter it
+under **Advanced → Enter the device by hand**:
 
 | Computer | Device value |
 | --- | --- |
 | Linux | `/dev/video0`, or a stable `/dev/v4l/by-id/...` path. Prysm's user needs access to the device (the `video` group). |
-| macOS | The device's unique ID. **Find devices** fills it in. Allow camera access when macOS asks. |
+| macOS | The device's unique ID. Ticking the card fills it in. Allow camera access when macOS asks. |
 | Docker on Linux | The path mapped into the container, such as `/dev/video0`. See [Docker](docker.md#use-a-capture-card). |
 
-Under **Size and rate**, keep **Balanced** (640 × 360 at 30 fps) to start;
-the card must support the size and rate you choose. **Efficient** (320 × 180
-at 30 fps) is less work for the computer; **Custom** takes any size and rate
-the card offers. On Linux the card must offer YUYV, RGB3 or BGR3; cards that
-only offer MJPEG do not work.
+**Size and rate** appears once a card is ticked and offers only what the card
+delivers, each with the size and rate it sets: keep **Balanced** (640 × 360
+at 30 fps, or the card's nearest larger size) to start. **Smooth** (60 fps)
+shows only for a card that captures 60 fps; **Efficient** (320 × 180 at 30
+fps) is less work for the computer. While the card is unplugged its size and
+rate stay as saved and cannot be changed. On Linux the card must offer YUYV,
+RGB3 or BGR3; cards that only offer MJPEG do not work.
 
 Continue with [setting up your lights](configuration.md).

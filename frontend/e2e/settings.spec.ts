@@ -52,7 +52,10 @@ test('the video source page shows whether it works, before and after a save', as
   await expect(now).toContainText(
     'Screen sync is off, so this source isn’t in use.',
   );
-  await editor.getByLabel('Frame rate').fill('25');
+  // The sender has announced what the TV streams: the presets are open.
+  const efficient = editor.getByRole('radio', { name: 'Efficient' });
+  await expect(efficient).toBeEnabled();
+  await editor.getByText('Efficient', { exact: true }).click();
   const save = editor.getByRole('button', { name: 'Use this video source' });
   await save.click();
   // Saved: the bar says so where the user is, then goes; nothing to confirm.
@@ -60,9 +63,13 @@ test('the video source page shows whether it works, before and after a save', as
   await expect(editor.getByText(/^Saved\. Screen sync is off/)).toBeVisible();
   await expect(editor.getByText(/^Saved\./)).toHaveCount(0);
   const saved = (await prysm.state()) as unknown as {
-    settings: { capture: { fps: number } };
+    settings: { capture: { width: number; height: number; fps: number } };
   };
-  expect(saved.settings.capture.fps).toBe(25);
+  expect(saved.settings.capture).toMatchObject({
+    width: 320,
+    height: 180,
+    fps: 30,
+  });
 
   // Screen sync on (from Home, or here another device): the status follows.
   const response = await page.request.put('/api/v1/target', {
@@ -71,7 +78,7 @@ test('the video source page shows whether it works, before and after a save', as
   expect(response.status()).toBe(204);
   await sender.waitFor('connected');
   await expect(now).toContainText('Picture arriving');
-  await expect(now).toContainText('32 × 18');
+  await expect(now).toContainText('320 × 180');
   // The card itself opens the large picture.
   await now.getByRole('button', { name: /See the picture$/ }).click();
   await expect(page).toHaveURL(/#\/preview$/);

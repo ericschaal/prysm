@@ -2,6 +2,7 @@ import type { ApplicationRuntime } from '@prysm/application-state';
 import type { Processing } from '@prysm/contracts/application';
 import type {
   ApplicationSnapshot,
+  CaptureModesClient,
   ColorsClient,
   DiscoveryClient,
   PreviewClient,
@@ -41,6 +42,8 @@ export interface WebPortalProps<
    * one they offer only typed fields.
    */
   discovery?: DiscoveryClient;
+  /** What a capture delivers, for the sizes and rates its editor offers. */
+  captureModes: CaptureModesClient;
   /**
    * Whether Prysm now serves another build of this page, asked when the
    * connection returns (`scriptReplaced`); without one it is never asked.

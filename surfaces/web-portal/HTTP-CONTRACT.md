@@ -168,9 +168,9 @@ on the state stream.
 
 `GET /api/v1/candidates/capture/device` or `.../output/wled` asks the adapter
 registered for that kind what a person could pick instead of typing: the
-video devices present, the WLED lights answering on the network. The setup
-wizard and the capture and lights forms call it on "Find devices" / "Find
-lights" only; nothing polls it.
+video devices present, the WLED lights answering on the network. The video
+device form calls it when it opens and on "Look again"; the lights form on
+"Find lights" only; nothing polls it.
 
 - `section` is `capture` or `output`; anything else, an empty or extra path
   segment is `404`. A kind the host does not register in that section is

@@ -16,6 +16,7 @@ import {
 } from '@prysm/application-react';
 import type { AdapterSection } from './adapters';
 import { useDeveloper } from './developer';
+import { CaptureModesContext } from './capture-modes';
 import { DiscoveryContext } from './discovery-context';
 import { useLingering } from './lingering';
 import { OfflineNotice, Page } from './page';
@@ -208,19 +209,21 @@ function SetupPage({ close }: { close: (notice: string) => void }) {
     <Page className="portal-flow" title="Prysm setup" name="Setup">
       <OfflineNotice />
       <DiscoveryContext value={host.discovery ?? null}>
-        <SetupWizard
-          captures={host.captures}
-          outputs={host.outputs}
-          capture={settings.capture ?? null}
-          output={settings.output ?? null}
-          revision={revision}
-          disabled={!online}
-          save={(expected, capture, value) =>
-            dispatch(commands.configureSetup(expected, capture, value))
-          }
-          start={() => dispatch(commands.setTarget('processed'))}
-          close={close}
-        />
+        <CaptureModesContext value={host.captureModes}>
+          <SetupWizard
+            captures={host.captures}
+            outputs={host.outputs}
+            capture={settings.capture ?? null}
+            output={settings.output ?? null}
+            revision={revision}
+            disabled={!online}
+            save={(expected, capture, value) =>
+              dispatch(commands.configureSetup(expected, capture, value))
+            }
+            start={() => dispatch(commands.setTarget('processed'))}
+            close={close}
+          />
+        </CaptureModesContext>
       </DiscoveryContext>
     </Page>
   );

@@ -1,16 +1,5 @@
 import { describeSavedPicture, pictureFacts } from '@prysm/web-portal';
 
-/**
- * Limits of the picture a TV captures, the same for this TV (`WebosSettings`)
- * and for a capture-only TV (`RemoteReceiverSettings`); NV12 needs even sizes
- * (the schemas say so with `multipleOf`, so the step of 2 is written here).
- */
-export const tvPictureLimits = {
-  width: { min: 2, max: 1920, step: 2 },
-  height: { min: 2, max: 1080, step: 2 },
-  fps: { min: 1, max: 60, step: 1 },
-} as const;
-
 /** The picture settings a TV capture section has; omitted ones use defaults. */
 export interface TvPicture {
   width?: number;
@@ -42,12 +31,6 @@ export function describeTvPicture(
   const picture = describeSavedPicture(value, defaults);
   return `${picture}, ${(value.include_ui ?? defaults.include_ui) ? 'with' : 'without'} menus`;
 }
-
-/** Above this many pixels the lights gain nothing visible. */
-export const enoughPixels = 640 * 360;
-const size = '640\u00a0×\u00a0360';
-/** The quiet hint shown for a size above 640 × 360. */
-export const largeSizeHint = `${size} is enough for the lights. Larger sizes use more of the TV’s processor without a visible difference.`;
 
 export const includeMenusHelp =
   'Menus are captured over the video, and when nothing is playing (such as the Home screen) the TV’s own screens are captured. Off: video only.';

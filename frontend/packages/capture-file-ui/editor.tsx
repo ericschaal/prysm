@@ -1,8 +1,17 @@
 import type { FileSettings } from '@prysm/contracts/host-desktop';
-import { PictureChoice, TextField, type EditorProps } from '@prysm/web-portal';
-import { fileDefaults, fileLimits, filePresets } from './settings';
+import {
+  PictureChoice,
+  TextField,
+  useCaptureModes,
+  type EditorProps,
+} from '@prysm/web-portal';
+import { fileDefaults } from './settings';
+
+/** Every file gets the same answer: FFmpeg scales it. */
+const fileQuery = { kind: 'file', path: '' } as const;
 
 export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
+  const modes = useCaptureModes(fileQuery);
   return (
     <>
       <p className="help">
@@ -22,13 +31,11 @@ export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
         value={value}
         defaults={fileDefaults}
         onChange={onChange}
-        presets={filePresets}
-        limits={fileLimits}
-        rate={{
-          label: 'Maximum frame rate',
-          help: 'A slower file keeps its own rate.',
-        }}
+        modes={modes}
+        source="A file"
+        unreachable="Prysm can’t say what a file delivers just now."
       />
+      <p className="help">A slower file keeps its own rate.</p>
     </>
   );
 }

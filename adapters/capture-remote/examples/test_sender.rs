@@ -3,7 +3,8 @@
 //!
 //! ```sh
 //! cargo run -p prysm-capture-remote --example test_sender -- \
-//!     ws://127.0.0.1:8787/api/v1/capture/stream [--refuse N REASON] [--stop-after N]
+//!     ws://127.0.0.1:8787/api/v1/capture/stream [--refuse N REASON] [--stop-after N] \
+//!     [--offer JSON]
 //! ```
 //!
 //! Like the TV it connects again after each connection ends, every 100 ms
@@ -11,8 +12,10 @@
 //! `--refuse N REASON` refuses the first `N` connections with `REASON`, which
 //! fails the receiving source; `--stop-after N` exits after `N` frames. Each
 //! connection prints one line to stdout (`connected WxH`, `refused`), so a
-//! test can wait for it. Runs until killed otherwise.
-use prysm_capture_remote::RemoteSender;
+//! test can wait for it. Runs until killed otherwise. `--offer` announces
+//! that [`Offer`] (`{ "raw": [Mode, ...] }`) instead of every request the
+//! portal accepts in every encoding, as a TV with fewer encoders does.
+use prysm_capture_remote::{Offer, RemoteSender};
 use prysm_core::{Frame, PixelFormat};
 use std::io::Write;
 use std::net::ToSocketAddrs;
@@ -28,6 +31,7 @@ struct Options {
     refuse: u32,
     reason: String,
     stop_after: Option<u64>,
+    offer: Offer,
 }
 
 fn options() -> Result<Options, String> {
@@ -36,6 +40,8 @@ fn options() -> Result<Options, String> {
     let mut refuse = 0;
     let mut reason = String::new();
     let mut stop_after = None;
+    // Everything a request may ask for, so only `--refuse` refuses.
+    let mut offer = prysm_capture_remote::testkit::offer();
     fn number<T: std::str::FromStr>(value: Option<String>, name: &str) -> Result<T, String> {
         value
             .and_then(|value| value.parse().ok())
@@ -48,6 +54,10 @@ fn options() -> Result<Options, String> {
                 reason = args.next().ok_or("--refuse takes a reason")?;
             }
             "--stop-after" => stop_after = Some(number(args.next(), "--stop-after")?),
+            "--offer" => {
+                let json = args.next().ok_or("--offer takes JSON")?;
+                offer = serde_json::from_str(&json).map_err(|error| format!("--offer: {error}"))?;
+            }
             _ if url.is_none() => {
                 url = Some(arg.parse().map_err(|error| format!("{arg}: {error}"))?);
             }
@@ -55,10 +65,12 @@ fn options() -> Result<Options, String> {
         }
     }
     Ok(Options {
-        url: url.ok_or("usage: test_sender URL [--refuse N REASON] [--stop-after N]")?,
+        url: url
+            .ok_or("usage: test_sender URL [--refuse N REASON] [--stop-after N] [--offer JSON]")?,
         refuse,
         reason,
         stop_after,
+        offer,
     })
 }
 
@@ -95,12 +107,10 @@ fn main() -> ExitCode {
         eprintln!("cannot resolve {host}:{port}");
         return ExitCode::from(2);
     };
-    // Everything a request may ask for, so only `--refuse` refuses.
-    let offer = prysm_capture_remote::testkit::offer();
     let mut refusals = options.refuse;
     let mut sent = 0u64;
     loop {
-        let Ok(mut sender) = RemoteSender::connect(&options.url, address, &offer) else {
+        let Ok(mut sender) = RemoteSender::connect(&options.url, address, &options.offer) else {
             thread::sleep(RETRY);
             continue;
         };
