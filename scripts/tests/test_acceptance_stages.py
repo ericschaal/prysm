@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from acceptance_fakes import FakePrysm  # noqa: E402
 import colour_page  # noqa: E402
 import config  # noqa: E402
+import feed  # noqa: E402
 from fake_wled import FakeWled  # noqa: E402
 import modes  # noqa: E402
 import plan  # noqa: E402
@@ -87,6 +88,113 @@ class DesktopChecks(Devices):
         self.assertEqual(evidence['resolved'], {'width': 1280, 'height': 720, 'fps': 30})
         self.assertEqual(self.prysm.settings['capture'], {'kind': 'device', 'path': 'unique-id-1',
                                                           'width': 1280, 'height': 720, 'fps': 30})
+
+
+class FakeFeed:
+    """A feed the runner controls: shows the clip, registers its stop, and settles before each colour check."""
+    CLEANUPS = ('the fake feed stopped',)
+
+    def __init__(self):
+        self.calls = []
+
+    def preflight(self):
+        self.calls.append('preflight')
+        raise plan.Failed('the fake feed misses a tool')
+
+    def how(self):
+        return 'the fake feed shows the clip'
+
+    def actions(self):
+        return ['show the clip on the fake feed']
+
+    def commands(self):
+        return []
+
+    def show(self, ctx, clip):
+        self.calls.append(('show', clip))
+        ctx.cleanup('desktop.fake-feed-stop', 'Fake feed stopped', lambda: self.calls.append('stop') or 'stopped')
+        return 'showing', None
+
+    def settled(self):
+        self.calls.append('settled')
+
+
+class TheFeed(Devices):
+    """The stage shows the clip on the configured feed, and only for a capture card."""
+
+    def setUp(self):
+        super().setUp()
+        self.feed = FakeFeed()
+        configured = feed.configured
+        feed.configured = lambda config: self.feed
+        self.addCleanup(setattr, feed, 'configured', configured)
+
+    def names(self, options):
+        return [s.name for s in stage_desktop.steps(self.ctx.config, options)]
+
+    def test_a_capture_card_gets_the_clip_through_the_feed(self):
+        options = Options(source='device')
+        names = self.names(options)
+        self.assertLess(names.index('desktop.clip'), names.index('desktop.feed'))
+        self.assertLess(names.index('desktop.feed'), names.index('desktop.start'))
+        step = next(s for s in stage_desktop.steps(self.ctx.config, options) if s.name == 'desktop.feed')
+        self.assertEqual((step.mode, step.how), ('setup', 'the fake feed shows the clip'))
+        self.assertEqual(stage_desktop.cleanups(self.ctx.config, options),
+                         stage_desktop.CLEANUPS[:1] + FakeFeed.CLEANUPS + stage_desktop.CLEANUPS[1:])
+        self.ctx.data['clip'] = 'RUN_DIR/edges.mp4'
+        outcomes = plan.execute('desktop', [step], self.ctx)
+        self.assertEqual([(o.name, o.status) for o in outcomes],
+                         [('desktop.feed', plan.PASS), ('desktop.fake-feed-stop', plan.PASS)])
+        self.assertEqual(self.feed.calls, [('show', 'RUN_DIR/edges.mp4'), 'stop'])
+        self.assertIs(self.ctx.data['feed'], self.feed)
+
+    def test_preflight_checks_the_feed_only_for_a_capture_card(self):
+        self.ctx.config.leds.top = 1
+        self.ctx.options = Options(source='device')
+        with self.assertRaisesRegex(plan.Failed, 'fake feed misses'):
+            stage_desktop.preflight(self.ctx)
+        self.ctx.options = Options(source='file')
+        try:
+            stage_desktop.preflight(self.ctx)
+        except plan.Failed as error:  # only when this computer has no FFmpeg
+            self.assertIn('FFmpeg', str(error))
+        self.assertEqual(self.feed.calls, ['preflight'])
+
+    def test_the_file_source_ignores_the_feed(self):
+        names = self.names(Options(source='file'))
+        self.assertNotIn('desktop.feed', names)
+        self.assertIn('desktop.clip', names)
+        self.assertEqual(stage_desktop.cleanups(self.ctx.config, Options()), stage_desktop.CLEANUPS)
+        self.assertIsNone(stage_desktop._feed(self.ctx.config, Options()))
+
+    def test_the_display_check_does_not_use_the_feed(self):
+        options = Options(source='device')
+        options.display_check = True
+        names = self.names(options)
+        self.assertNotIn('desktop.clip', names)
+        step = next(s for s in stage_desktop.steps(self.ctx.config, options) if s.name == 'desktop.feed')
+        self.assertEqual(step.mode, 'skip')
+        self.assertIn('--display-check', step.how)
+        self.assertIn('desktop.display-check', names)
+
+    def test_without_a_feed_the_card_is_only_not_black(self):
+        feed.configured = lambda config: None
+        options = Options(source='device')
+        self.assertNotIn('desktop.clip', self.names(options))
+        step = next(s for s in stage_desktop.steps(self.ctx.config, options) if s.name == 'desktop.feed')
+        self.assertEqual(step.mode, 'skip')
+        self.assertIn('not black', step.how)
+        self.assertEqual(stage_desktop.cleanups(self.ctx.config, options), stage_desktop.CLEANUPS)
+        self.ctx.data['clip_edges'] = False
+        detail, _ = stage_desktop.colours(self.ctx)
+        self.assertIn('not black', detail)
+
+    def test_colour_checks_wait_for_the_feed(self):
+        self.ctx.data['feed'] = self.feed
+        detail, _ = stage_desktop.colours(self.ctx)
+        self.assertIn('clip', detail)
+        stage_desktop.release(self.ctx)
+        self.assertEqual(self.feed.calls, ['settled', 'settled'])
 
 
 class FakeWledBehaviour(Devices):

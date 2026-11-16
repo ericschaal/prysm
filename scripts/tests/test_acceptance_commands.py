@@ -139,6 +139,12 @@ class AllowList(unittest.TestCase):
             if path.name not in ('transport.py', 'run.py'):
                 self.assertIsNone(re.search(r'subprocess\.(run|Popen|call|check_\w+)\(|os\.system', text), path.name)
 
+    def test_the_desktop_stage_only_knows_its_feed(self):
+        text = (ACCEPTANCE / 'stage_desktop.py').read_text().lower()
+        for word in ('chromecast', 'adb', 'clipserver', 'clip server', 'feed_chromecast'):
+            self.assertNotIn(word, text)
+        self.assertIsNone(re.search(r'\bcast', text))
+
     def test_no_real_addresses(self):
         documents = [*ACCEPTANCE.glob('*'), ACCEPTANCE.parents[1] / 'docs/developers/acceptance.md']
         for path in documents:

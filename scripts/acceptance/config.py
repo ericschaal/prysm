@@ -77,7 +77,8 @@ class Sweep:
 
 
 @dataclass
-class Chromecast:
+class ChromecastFeed:
+    """`[feed.chromecast]`: the Chromecast whose HDMI output the capture card records."""
     adb_serial: str = ''
     serve_port: int = 18792
     settle_seconds: float = 5.0
@@ -91,26 +92,51 @@ class Config:
     tv: Tv = field(default_factory=Tv)
     receiver: Receiver = field(default_factory=Receiver)
     sweep: Sweep = field(default_factory=Sweep)
-    chromecast: Chromecast = field(default_factory=Chromecast)
+    feed: ChromecastFeed | None = None  # None: no controlled feed into the capture card
     eyes_portal: str = ''
 
 
-def _section(data, name, kind):
+def _section(data, name, kind, label=None):
+    label = label or name
     values = data.get(name, {})
     if not isinstance(values, dict):
-        raise ConfigError(f'[{name}] must be a table')
+        raise ConfigError(f'[{label}] must be a table')
     known = set(kind.__dataclass_fields__)
     unknown = set(values) - known
     if unknown:
-        raise ConfigError(f'[{name}]: unknown keys {sorted(unknown)}')
+        raise ConfigError(f'[{label}]: unknown keys {sorted(unknown)}')
     defaults = kind()
     for key, value in values.items():
         expected = type(getattr(defaults, key))
         if expected is float and isinstance(value, int):
             value = float(value)
         if not isinstance(value, expected) or isinstance(value, bool) != (expected is bool):
-            raise ConfigError(f'[{name}] {key}: expected {expected.__name__}')
+            raise ConfigError(f'[{label}] {key}: expected {expected.__name__}')
     return kind(**values)
+
+
+def _feed(data):
+    """`[feed.chromecast]`, or None without a `[feed]`."""
+    feeds = data.get('feed', {})
+    if not isinstance(feeds, dict):
+        raise ConfigError('[feed] must be a table')
+    unknown = set(feeds) - {'chromecast'}
+    if unknown:
+        raise ConfigError(f'[feed]: unknown feeds {sorted(unknown)} (supported: chromecast)')
+    if 'chromecast' not in feeds:
+        return None
+    cast = _section(feeds, 'chromecast', ChromecastFeed, 'feed.chromecast')
+    if not cast.adb_serial:
+        raise ConfigError('feed.chromecast.adb_serial is required (the serial adb devices lists)')
+    try:
+        commands.adb_serial(cast.adb_serial)
+    except commands.Refused as error:
+        raise ConfigError(str(error)) from error
+    if not 1 <= cast.serve_port <= 65535:
+        raise ConfigError('feed.chromecast.serve_port: 1 to 65535')
+    if not 0 <= cast.settle_seconds <= 60:
+        raise ConfigError('feed.chromecast.settle_seconds: 0 to 60')
+    return cast
 
 
 def _address(value, name, required=False):
@@ -124,7 +150,7 @@ def _address(value, name, required=False):
 
 
 def parse(data):
-    unknown = set(data) - {'wled', 'leds', 'desktop', 'tv', 'receiver', 'sweep', 'eyes', 'chromecast'}
+    unknown = set(data) - {'wled', 'leds', 'desktop', 'tv', 'receiver', 'sweep', 'eyes', 'feed'}
     if unknown:
         raise ConfigError(f'unknown sections {sorted(unknown)}')
     wled = data.get('wled', {})
@@ -135,19 +161,9 @@ def parse(data):
         tv=_section(data, 'tv', Tv),
         receiver=_section(data, 'receiver', Receiver),
         sweep=_section(data, 'sweep', Sweep),
-        chromecast=_section(data, 'chromecast', Chromecast),
+        feed=_feed(data),
         eyes_portal=data.get('eyes', {}).get('portal', ''),
     )
-    cast = config.chromecast
-    if cast.adb_serial:
-        try:
-            commands.adb_serial(cast.adb_serial)
-        except commands.Refused as error:
-            raise ConfigError(str(error)) from error
-    if not 1 <= cast.serve_port <= 65535:
-        raise ConfigError('chromecast.serve_port: 1 to 65535')
-    if not 0 <= cast.settle_seconds <= 60:
-        raise ConfigError('chromecast.settle_seconds: 0 to 60')
     for name, count in config.leds.as_settings().items():
         if not 0 <= count <= 16384:
             raise ConfigError(f'leds.{name}: 0 to 16384')

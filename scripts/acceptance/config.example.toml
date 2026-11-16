@@ -29,11 +29,14 @@ preset = "balanced"
 # Port of the local colour page for --display-check (localhost only).
 display_port = 18790
 
-[chromecast]
-# desktop --source device --cast: the Chromecast whose HDMI the capture card records.
-# ADB serial (required for --cast): the USB serial from `adb devices`, or
-# HOST:PORT after your own `adb connect` for wireless debugging. The runner reads
-# the Chromecast's Wi-Fi address over ADB and casts to it (port 8009).
+[feed.chromecast]
+# What puts a known picture into the capture card for desktop --source device:
+# a Chromecast with Google TV on the card's HDMI input. Remove this section if
+# nothing the runner controls feeds the card; the colour check is then only
+# "not black".
+# ADB serial (required): the USB serial from `adb devices`, or HOST:PORT after
+# your own `adb connect` for wireless debugging. The runner reads the
+# Chromecast's Wi-Fi address over ADB and casts to it (port 8009).
 adb_serial = "0123456789ABCD"
 # Port on this computer that serves the clip to the Chromecast.
 serve_port = 18792

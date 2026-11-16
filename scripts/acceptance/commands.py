@@ -13,9 +13,9 @@ supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
 
-On the Chromecast (`desktop --cast`), ADB only reads its state and Wi-Fi
-address, wakes it and reads or sets the one keep-awake setting; there is no
-free-form `adb shell`.
+On the Chromecast that feeds the capture card (`[feed.chromecast]`), ADB
+only reads its state and Wi-Fi address, wakes it and reads or sets the one
+keep-awake setting; there is no free-form `adb shell`.
 """
 from dataclasses import dataclass, field
 import json
@@ -284,7 +284,7 @@ STAY_ON = 7
 
 def adb_serial(serial):
     """A USB serial or HOST:PORT; never an option."""
-    return _check(_ADB_SERIAL, serial, 'chromecast.adb_serial')
+    return _check(_ADB_SERIAL, serial, 'feed.chromecast.adb_serial')
 
 
 def _adb(template, serial, *words, timeout=15):

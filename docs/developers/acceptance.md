@@ -12,14 +12,15 @@ cp scripts/acceptance/config.example.toml scripts/acceptance/config.toml   # the
 python3 scripts/acceptance/run.py desktop --dry-run
 python3 scripts/acceptance/run.py desktop
 python3 scripts/acceptance/run.py desktop --source device --display-check
-uv run --project scripts/acceptance scripts/acceptance/run.py desktop --source device --cast
+uv run --project scripts/acceptance scripts/acceptance/run.py desktop --source device
 python3 scripts/acceptance/run.py tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
 python3 scripts/acceptance/run.py eyes
 python3 scripts/acceptance/run.py restore-wled work/acceptance/RUN/wled-snapshot.json
 ```
 
-Python 3.11+. Every stage runs with the standard library alone, except
-`--cast`, which needs [PyChromecast](https://github.com/home-assistant-libs/pychromecast).
+Python 3.11+. Every stage runs with the standard library alone, except a
+capture card run with the Chromecast feed, which needs
+[PyChromecast](https://github.com/home-assistant-libs/pychromecast).
 `scripts/acceptance` is a [uv](https://docs.astral.sh/uv/) project for that
 (`pyproject.toml`, `uv.lock`); `uv run --project scripts/acceptance` from the
 repository root installs it into `scripts/acceptance/.venv` and runs the
@@ -30,14 +31,15 @@ and cleanup steps always run, so a selected check finds what it needs (for
 `tv`, a package is built and installed only when one of its checks is
 selected). The exit
 code is 0 when nothing failed (skips allowed), 1 on a failure, 2 on bad usage.
-`config.toml` (ignored by git) holds the addresses (WLED, TV, receiver), the Chromecast's ADB serial and
-the LED counts; no address is written in the code.
+`config.toml` (ignored by git) describes the bench: the addresses (WLED,
+TV, receiver), the feed into the capture card and the LED counts; no
+address is written in the code.
 
 ## Stages
 
 | Stage | Needs | Person |
 | --- | --- | --- |
-| `desktop` | WLED; FFmpeg 9+ for the file source, or a capture card (with `--cast`: a Chromecast feeding it, FFmpeg, adb and uv) | Only for `--display-check` set-up |
+| `desktop` | WLED; FFmpeg 9+ for the file source, or a capture card (with a feed: FFmpeg, and for the Chromecast adb and uv) | Only for `--display-check` set-up |
 | `tv` | The TV (only when its owner says it is free: `--tv-is-free`), WLED, the webOS SDK unless IPKs are given | Standby/wake, and removing the app unless `tv.ares_device` is set |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
@@ -51,9 +53,11 @@ API:
 - the source: a generated clip with known edge colours (`--source file`), a
   given clip (`file:PATH`), or a capture card (`device`: the devices and
   their modes are printed, the preset resolved as the portal does);
+- with a card and a feed: the generated clip on the card's input (see
+  below);
 - Screen sync starts; WLED reports live DDP from this computer; the frame
   rate is within 15 % of the source's and nothing falls behind; each edge
-  shows the clip's colour (a card: not black);
+  shows the clip's colour (a card without a feed: not black);
 - WLED effects (`device_native`), Screen sync again, off;
 - WLED's brightness: 40 % reported within 5 s at `bri` 102, gone within 35 s
   with Force max brightness, `state.bri` unchanged, `/json/cfg` under 64 KiB;
@@ -61,27 +65,30 @@ API:
   re-open;
 - `--display-check`: when the card records this Mac's HDMI output, a local
   page the runner controls shows red, green, blue, white and an edge pattern;
-  each edge must come out as that colour;
-- `--cast`: when the card records a Chromecast, the runner plays the
-  generated clip on it (see below), so each edge must come out as the clip's
-  colour, as with the file source;
+  each edge must come out as that colour. The card then records this Mac,
+  so the feed is not started for that run;
 - SIGTERM: exit code 0 and WLED released.
 
-#### The Chromecast bench (`--cast`)
+#### The feed into the capture card
 
-Without a picture of its own, a capture card shows a "no input" splash, so a
-device run could only check that the edges are not black. With `--cast`, the
-`desktop.chromecast` step puts a known picture on the Chromecast that feeds
-the card:
+A capture card shows whatever is plugged into it, or a "no input" splash.
+To compare the edges with a known picture, the bench needs a feed the runner
+controls: something on the card's HDMI input that can show the test clip and
+stop again. The configuration names it. With a feed, the `desktop.feed` step
+("Picture into the capture card") shows the generated clip on it and the
+colour check compares each edge with the clip, as with the file source.
+Without one, that step is a SKIP that says so, and the colour check can only
+say "not black". The file source needs no feed and never starts it.
 
-1. ADB (`chromecast.adb_serial`) must answer `device`; the runner reads
+The supported feed is a Chromecast with Google TV, `[feed.chromecast]`:
+
+1. ADB (`adb_serial`) must answer `device`; the runner reads
    `stay_on_while_plugged_in`, sets it to 7 (screen stays on while powered),
    wakes the device, waits until it reports `mWakefulness=Awake` and reads
    its Wi-Fi (`wlan0`) address;
 2. it serves the generated `edges.mp4` (30 minutes, longer than the stage, as
    the receiver does not loop) from this computer, on the address that routes
-   to the Chromecast and `chromecast.serve_port`; only that file, with byte
-   ranges;
+   to the Chromecast and `serve_port`; only that file, with byte ranges;
 3. it connects to that address (no discovery), plays the clip in the
    default media receiver and waits up to 30 s for `PLAYING`.
 
@@ -107,10 +114,12 @@ One-time set-up of the Chromecast (with Google TV):
   `adb connect HOST:PORT` with the port that screen shows (it changes) and
   set `adb_serial = "HOST:PORT"`. The runner does not pair or connect.
 
-`[chromecast]` in `config.toml`: `adb_serial` (required for `--cast`),
-`serve_port` (default 18792) and `settle_seconds` (default 5). The ADB commands are templates in
-`commands.py` like every other command. `--cast` is refused with the file
-source and with `--display-check`.
+`[feed.chromecast]` in `config.toml`: `adb_serial` (required),
+`serve_port` (default 18792) and `settle_seconds` (default 5; the
+Chromecast's player overlay, so it belongs to this feed). Remove the section
+when nothing the runner controls feeds the card. The ADB commands are
+templates in `commands.py` like every other command; everything else about
+the Chromecast is in `feed_chromecast.py`, behind `feed.py`.
 
 WLED's gamma is not observable through Prysm's API, so it is a SKIP here and a
 question in `eyes`. For a rehearsal without lights, run the stand-in

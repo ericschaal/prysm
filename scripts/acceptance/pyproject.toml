@@ -1,7 +1,8 @@
 # The acceptance runner as a uv project, for its one third-party library
-# (PyChromecast, used only by `desktop --cast`). Run from the repository root:
+# (PyChromecast, used only by the Chromecast feed, `[feed.chromecast]`). Run
+# from the repository root:
 #   uv run --project scripts/acceptance scripts/acceptance/run.py desktop ...
-# Stages that do not cast also run with plain python3.
+# Runs without that feed also work with plain python3.
 [project]
 name = "prysm-acceptance"
 version = "0.1.0"

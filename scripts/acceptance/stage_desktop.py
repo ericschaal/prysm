@@ -1,14 +1,12 @@
 """Stage A: prysm-headless on this computer with a file or a capture card, driving WLED."""
-import importlib.util
 import json
 from pathlib import Path
-import re
 import shutil
 import time
 
-import cast
 import colour_page
 import commands
+import feed
 import host
 import modes
 from plan import Failed, Skipped, Step
@@ -18,29 +16,28 @@ import wled_api
 
 # The generated clip's edge colours (hex) and what the colours stream should report.
 CLIP_EDGES = {'top': 'ff0000', 'right': '00ff00', 'bottom': '0000ff', 'left': 'ffff00'}
-# 30 minutes, longer than the whole stage, so a Chromecast never reaches the end
-# (its default media receiver does not loop); about 8 s to encode and 2 MB.
+# 30 minutes, longer than the whole stage, so a feed that does not loop never
+# reaches the end; about 8 s to encode and 2 MB.
 CLIP = {'width': 640, 'height': 360, 'fps': 30, 'seconds': 1800}
 CLEANUPS = ('prysm-headless stopped with SIGTERM (KILL after 30 s)',
             'WLED restored from wled-snapshot.json (live off, preset, on, bri, lor, transition, if.live.maxbri) '
             'and compared; by hand: run.py restore-wled RUN_DIR/wled-snapshot.json')
-CAST_CLEANUPS = ('the Chromecast: media stopped, the default media receiver quit, disconnected',
-                 'the clip server stopped')
-ADB_CLEANUP = ('the Chromecast\'s stay_on_while_plugged_in put back to the value read before '
-               '(adb -s SERIAL shell \'settings put global stay_on_while_plugged_in VALUE\')')
-CAST_CONNECT_SECONDS = 20
-CAST_PLAY_SECONDS = 30
-ADB_HINT = ('ADB does not reach the Chromecast {serial}: plug it into this computer by USB with USB debugging '
-            'on (Settings > System > Developer options) and allow this computer on the TV; for wireless '
-            'debugging, run adb connect HOST:PORT yourself and give HOST:PORT as chromecast.adb_serial')
+
+
+def _feed(config, options):
+    """The feed this run shows the clip on, or None.
+
+    Only a capture card has an input to feed. `--display-check` says the card
+    records this computer's display, so the feed is not used then."""
+    if options.source != 'device' or options.display_check:
+        return None
+    return feed.configured(config)
 
 
 def cleanups(config, options):
     """What the end of the run undoes, in that order, for the dry run."""
-    found = CLEANUPS[:1]
-    if getattr(options, 'cast', False):
-        found += CAST_CLEANUPS + (ADB_CLEANUP,)
-    return found + CLEANUPS[1:]
+    controlled = _feed(config, options)
+    return CLEANUPS[:1] + (controlled.CLEANUPS if controlled else ()) + CLEANUPS[1:]
 
 
 def _prysm(ctx):
@@ -63,16 +60,11 @@ def preflight(ctx):
         raise Failed('wled.address is not set (config file or --wled)')
     if sum(config.leds.as_settings().values()) == 0:
         raise Failed('leds: no LEDs configured')
-    casting = getattr(options, 'cast', False)
-    if casting:
-        if not config.chromecast.adb_serial:
-            raise Failed('--cast needs chromecast.adb_serial in the config (the serial adb devices lists)')
-        if not shutil.which(commands.adb_get_state(config.chromecast.adb_serial).argv[0]):
-            raise Failed('--cast needs adb (Android platform tools) on PATH')
-        if importlib.util.find_spec('pychromecast') is None:
-            raise Failed(cast.INSTALL_HINT)
-    if (options.source == 'file' or casting) and not shutil.which('ffmpeg'):
-        raise Failed('the file source and --cast need FFmpeg 9+ on PATH')
+    controlled = _feed(config, options)
+    if controlled:
+        controlled.preflight()
+    if (options.source == 'file' or controlled) and not shutil.which('ffmpeg'):
+        raise Failed('the test clip needs FFmpeg 9+ on PATH')
     ctx.data['wled'] = wled_api.Wled(config.wled)
     address = host.local_address(config.wled)
     ctx.data['local_address'] = address
@@ -123,75 +115,18 @@ def clip(ctx):
     return f'generated {path}'
 
 
-def chromecast(ctx):
-    """Keep the Chromecast awake (ADB), serve the clip to it and play it there."""
-    settings = ctx.config.chromecast
-    evidence = {'keep_awake': _keep_awake(ctx, settings.adb_serial)}
-    address = evidence['address'] = _wifi_address(ctx, settings.adb_serial)
-    # Bound by the constructor; started before its cleanup, as shutdown() waits for a running server.
-    server = cast.ClipServer(ctx.data['clip'], host.local_address(address), settings.serve_port).start()
-    ctx.cleanup('desktop.clip-server', 'Clip server stopped', server.close)
-    player = ctx.data.get('chromecast_factory', cast.Chromecast)(address)
-    ctx.cleanup('desktop.cast-stop', 'Cast stopped', player.close)
-    evidence['url'] = server.url
-    try:
-        evidence['device'] = player.connect(CAST_CONNECT_SECONDS)
-        player.play(server.url)
-        cast.wait_playing(player, CAST_PLAY_SECONDS)
-    except Exception as error:  # PyChromecast's own errors, a timeout, or the receiver giving up
-        evidence['clip_requests'] = list(server.requests)
-        raise Failed(f'casting to {address}: {type(error).__name__}: {error}', evidence) from error
-    evidence['clip_requests'] = list(server.requests)
-    ctx.data['cast'] = {'player': player, 'playing_since': time.monotonic()}
-    return f'{server.url} playing on {evidence["device"]}', evidence
+def show_clip(ctx, controlled):
+    """Show the clip on the feed; the feed registers what stops it."""
+    detail, evidence = controlled.show(ctx, ctx.data['clip'])
+    ctx.data['feed'] = controlled
+    return detail, evidence
 
 
-def _keep_awake(ctx, serial):
-    """Check ADB, keep the screen on while powered (put back at the end) and wake it."""
-    state = ctx.run(commands.adb_get_state(serial), check=False)
-    if state.stdout.strip() != 'device':
-        raise Failed(ADB_HINT.format(serial=serial), (state.stdout + state.stderr).strip())
-    read = ctx.run(commands.adb_stay_on_get(serial)).stdout.strip()
-    # A setting never written reads as null; the default is 0.
-    before = 0 if read == 'null' else int(read) if read.isdigit() else -1
-    if not 0 <= before <= 15:
-        raise Failed(f'stay_on_while_plugged_in reads {read!r}, not 0 to 15')
-
-    def restore():
-        ctx.run(commands.adb_stay_on_put(serial, before))
-        return f'stay_on_while_plugged_in {before}'
-    ctx.cleanup('desktop.chromecast-awake', 'Chromecast keep-awake put back', restore)
-    ctx.run(commands.adb_stay_on_put(serial, commands.STAY_ON))
-    ctx.run(commands.adb_wake(serial))
-    for _ in range(10):
-        power = ctx.run(commands.adb_wakefulness(serial), check=False).stdout.strip()
-        if 'mWakefulness=Awake' in power:
-            return {'stay_on_before': before, 'power': power}
-        time.sleep(0.5)
-    raise Failed('the Chromecast did not wake: mWakefulness is not Awake after 5 s', power)
-
-
-def _wifi_address(ctx, serial):
-    """The Chromecast's IPv4 address on wlan0, read over ADB."""
-    line = ctx.run(commands.adb_wifi_address(serial)).stdout
-    found = re.search(r'\binet ((?:[0-9]{1,3}\.){3}[0-9]{1,3})/', line)
-    if not found or not all(int(part) <= 255 for part in found[1].split('.')):
-        raise Failed('the Chromecast has no Wi-Fi address: connect it to the same network as this computer',
-                     line.strip())
-    return found[1]
-
-
-def _cast_settled(ctx):
-    """With --cast: wait out the player's overlay; the clip must still be playing."""
-    casting = ctx.data.get('cast')
-    if not casting:
-        return
-    left = casting['playing_since'] + ctx.config.chromecast.settle_seconds - time.monotonic()
-    if left > 0:
-        time.sleep(left)
-    state, reason = casting['player'].status()
-    if state != 'PLAYING':
-        raise Failed(f'the clip is no longer playing on the Chromecast: {state}' + (f', {reason}' if reason else ''))
+def _feed_settled(ctx):
+    """With a feed showing the clip: wait until its picture can be trusted."""
+    showing = ctx.data.get('feed')
+    if showing:
+        showing.settled()
 
 
 def write_settings(ctx):
@@ -308,7 +243,7 @@ def _last_colours(ctx, seconds=3.0):
 
 def colours(ctx):
     _start_processed(ctx)
-    _cast_settled(ctx)
+    _feed_settled(ctx)
     event = _last_colours(ctx)
     if ctx.data.get('clip_edges'):
         expected = {edge: tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4)) for edge, hex_ in CLIP_EDGES.items()}
@@ -410,7 +345,7 @@ def release(ctx):
     measured = rates(prysm.sample(ctx.config.desktop.seconds))
     if measured['fps_mean'] <= 0:
         raise Failed('no frames after re-opening', measured)
-    _cast_settled(ctx)
+    _feed_settled(ctx)
     return f're-opened: {measured["fps_mean"]} fps', {'first': state['input'], 'rates': measured}
 
 
@@ -457,29 +392,24 @@ def sigterm(ctx):
     return f'exit 0 after {seconds} s, WLED released', {'seconds': seconds, 'wled': si['state']}
 
 
-def _chromecast_step(settings):
-    serial = settings.adb_serial
-    adb = (f'ADB {serial}: get-state is device; stay_on_while_plugged_in read, set to {commands.STAY_ON} '
-           '(put back at the end); wake; mWakefulness=Awake; the wlan0 address read' if serial
-           else 'chromecast.adb_serial is not set: the step fails')
-    return Step('desktop.chromecast', 'The clip on the Chromecast',
-                f'the Chromecast plays the clip (PLAYING within {CAST_PLAY_SECONDS} s); colour checks first wait '
-                f'{settings.settle_seconds:g} s for the player overlay to clear', 'setup', chromecast,
-                actions=[adb, f'serve http://THIS_COMPUTER:{settings.serve_port}/edges.mp4 (that file only) on the '
-                         'address that routes to the Chromecast',
-                         f'cast to CHROMECAST:{cast.CAST_PORT}: default media receiver plays the clip URL (video/mp4)'],
-                commands=lambda: [commands.adb_get_state(serial), commands.adb_stay_on_get(serial),
-                                  commands.adb_stay_on_put(serial, commands.STAY_ON), commands.adb_wake(serial),
-                                  commands.adb_wakefulness(serial), commands.adb_wifi_address(serial)]
-                if serial else [])
+def _feed_step(controlled, options):
+    """The setup step that puts the clip into the capture card, or a skip that says why nothing does."""
+    if controlled:
+        return Step('desktop.feed', 'Picture into the capture card', controlled.how(), 'setup',
+                    lambda ctx: show_clip(ctx, controlled), actions=controlled.actions(),
+                    commands=controlled.commands)
+    why = ('--display-check: the card records this computer\'s display, so no feed is started' if options.display_check
+           else 'no feed in the configuration ([feed]): the card records whatever is plugged into it')
+    return Step('desktop.feed', 'Picture into the capture card', why + '; the colour check is only "not black"',
+                'skip')
 
 
 def steps(config, options):
     device = options.source == 'device'
-    casting = getattr(options, 'cast', False)
+    controlled = _feed(config, options)
     found = [
-        Step('desktop.preflight', 'Configuration and tools', 'WLED address and LEDs set; FFmpeg for the file source',
-             'setup', preflight),
+        Step('desktop.preflight', 'Configuration and tools', 'WLED address and LEDs set; FFmpeg for the test clip; '
+             'the feed\'s tools', 'setup', preflight),
         Step('desktop.build', 'Release prysm-headless', 'cargo build --release (or the configured binary)', 'setup',
              build, commands=lambda: [] if config.desktop.headless or options.no_build
              else [commands.cargo_build_headless()]),
@@ -487,13 +417,13 @@ def steps(config, options):
              'restored at the end, also on failure or Ctrl-C', 'setup', snapshot_wled,
              actions=[f'GET http://{config.wled}/json/si', f'GET http://{config.wled}/json/cfg']),
     ]
-    if not device or casting:
+    if not device or controlled:
         found.append(Step('desktop.clip', 'Test clip', 'a generated clip with known edge colours, or --source file:PATH',
                           'setup', clip, commands=lambda: [] if options.source_path else [commands.ffmpeg_edges_clip(
                               'RUN_DIR/edges.mp4', CLIP['width'], CLIP['height'], CLIP['fps'], CLIP['seconds'],
                               CLIP_EDGES)]))
-    if casting:
-        found.append(_chromecast_step(config.chromecast))
+    if device:
+        found.append(_feed_step(controlled, options))
     found += [
         Step('desktop.settings', 'Temporary settings', 'WLED output, neutral processing; --check-settings says OK',
              'setup', write_settings,
@@ -511,7 +441,7 @@ def steps(config, options):
         Step('desktop.fps', 'Frame rate', f'state.input over {config.desktop.seconds} s: fps within '
              f'±{config.desktop.fps_tolerance:.0%} of the source, sent_fps alike, never behind', 'auto', fps),
         Step('desktop.colours', 'Colours', 'colours stream: each edge (middle half) is nearest the generated clip\'s colour '
-             'among nine named colours (for a device without --cast: not black)', 'auto', colours),
+             'among nine named colours (a capture card without a feed: not black)', 'auto', colours),
         Step('desktop.device-native', 'WLED effects', 'target device_native: session native; WLED on, not live',
              'auto', device_native),
         Step('desktop.processed-again', 'Screen sync again', 'target processed: running and WLED live DDP',
