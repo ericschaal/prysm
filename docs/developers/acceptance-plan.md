@@ -49,7 +49,7 @@ address = "192.168.1.40"
 
 [mac]
 target = "local"                       # "ssh://…" is refused: not implemented
-binary = "dist/prysm-headless-macos"
+binary = "dist/prysm-headless-macos-arm64"
 device = "0x1100000345f2131"           # AVFoundation unique ID; omit without a card
 
 [mac.feed.chromecast]
@@ -57,8 +57,8 @@ adb_serial = "0123456789ABCD"
 
 [linux]
 target = "ssh://pi@192.168.1.70"       # or "local"
-binary = "dist/prysm-headless-aarch64"
-deb    = "dist/prysm-headless_1.0.0_arm64.deb"  # optional
+binary = "dist/prysm-headless-linux-arm64"
+deb    = "dist/prysm-headless-linux-arm64.deb"  # optional
 device = "/dev/v4l/by-id/usb-EXAMPLE-video-index0"
 
 [linux.feed.chromecast]
@@ -66,19 +66,20 @@ adb_serial = "0123456789ABCD"
 
 [tv]
 target   = "ssh://root@192.168.1.50"
-ipk_full = "dist/prysm-full.ipk"
-ipk_slim = "dist/prysm-slim.ipk"
+ipk_full = "dist/prysm-tv-full.ipk"
+ipk_slim = "dist/prysm-tv-slim.ipk"
 ```
 
 - The runner compares `uname` on each target with the table's name and refuses
   a mismatch.
 - A platform without `device` skips its capture cells. A `device` without a
   feed runs with the colour check reduced to "not black".
+- `device` is what Prysm's own device setting takes. On Linux that is a path,
+  and a stable `/dev/v4l/by-id/…` link is preferred over `/dev/videoN`, which
+  can change between boots. On macOS it is the AVFoundation unique ID.
 - A device identifier that is not found fails with the devices that are
   present and their identifiers. The runner matches no names.
 - ADB runs on the computer that runs the runner.
-- To settle before phase 1: the form of identifier Prysm's own device setting
-  accepts on each platform. The examples above follow it.
 
 ## Commands
 
@@ -94,7 +95,7 @@ ipk_slim = "dist/prysm-slim.ipk"
 | Mac, binary, file | FFmpeg 9 or newer on the Mac |
 | Mac, binary, device | a card on the Mac; run from Terminal (camera permission) |
 | Linux, binary, device | a card on the Linux machine |
-| Linux, binary, file | FFmpeg 9 or newer on the Linux machine |
+| Linux, binary, file | FFmpeg 9 or newer on the Linux machine (Debian 13 ships an older one, so this cell is a SKIP on the bench Pi) |
 | Linux, deb, device | a card on the Linux machine, `sudo` |
 | TV full | the TV free |
 | TV slim, receiver Mac or Linux | the TV free |
@@ -143,8 +144,9 @@ runs a caller's string over SSH.
   commit, once the build system writes a manifest), and warns when one is older
   than the checkout's last commit. After the start the
   running version (`prysm_build_info` in `/metrics`) is compared with the
-  artifact's. Prysm reports its version there and not its commit, so two builds
-  of one version differ only by hash.
+  artifact's. Prysm reports the product version there (`1.0.0-alpha.0`; the
+  package's own file name writes it the Debian way, `1.0.0~alpha.0-1`) and not
+  its commit, so two builds of one version differ only by hash.
 
 ## Limits
 
