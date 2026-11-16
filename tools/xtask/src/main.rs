@@ -37,7 +37,11 @@ enum Command {
         luna: bool,
     },
     /// Run the checks to pass before pushing; stops at the first failure.
-    Check,
+    Check {
+        /// Only these groups (one per CI job), in the usual order; all when none.
+        #[arg(value_enum)]
+        groups: Vec<check::Group>,
+    },
     /// Build artifacts into dist/ and record them in dist/manifest.json.
     Dist {
         #[arg(required = true)]
@@ -57,7 +61,7 @@ fn main() -> anyhow::Result<ExitCode> {
             };
             codegen::run(mode, luna)?;
         }
-        Command::Check => check::run()?,
+        Command::Check { groups } => check::run(&groups)?,
         Command::Dist { targets } => dist::run(&targets)?,
         Command::Doctor => return Ok(doctor::run()),
     }

@@ -1,6 +1,8 @@
-//! Process concerns shared by the desktop hosts, so each host `main` is only
-//! its builder list: arguments, logging, the portal listener, signals, a
-//! status surface that reports to stderr and the `--start` request.
+//! What the hosts share. For every host that serves the portal: its
+//! embedded bundles ([`assets`]). For the desktop hosts also the process
+//! concerns, so each host `main` is only its builder list: arguments,
+//! logging, the portal listener, signals, a status surface that reports to
+//! stderr and the `--start` request.
 //!
 //! ```ignore
 //! const PROGRAM: Program = Program { name: "prysm-headless", about: ABOUT, full_screen: false };
@@ -10,7 +12,7 @@
 //!         prysm
 //!             .surface(host.status())
 //!             .surface(host.start())
-//!             .surface(host.portal(ASSETS)?)
+//!             .surface(host.portal(assets::HEADLESS)?)
 //!             .run(host.signals()?)
 //!             .await
 //!     })
@@ -24,6 +26,7 @@
 //! `--check-settings` is handled here: the settings file is validated against
 //! the host's adapters and the run closure is never called.
 mod args;
+pub mod assets;
 
 use args::{Options, parse};
 

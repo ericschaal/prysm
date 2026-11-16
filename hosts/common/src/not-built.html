@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prysm: frontend not built</title>
+<h1>The frontend is not built</h1>
+<p>This debug build of Prysm was compiled without the web portal. From the
+repository root, build the frontend, then build and start Prysm again:</p>
+<pre>npm --prefix frontend ci
+npm --prefix frontend run bundle
+cargo build</pre>
+<p><code>cargo xtask check frontend</code> also builds it. The API under
+<code>/api/v1/</code> works without it.</p>

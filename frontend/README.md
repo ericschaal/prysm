@@ -3,7 +3,7 @@
 An isolated npm workspace with its own lockfile. Node.js 24+ is required, and
 Rust for codegen: `cargo xtask codegen` runs the Rust contract exporter and
 hands its output to `npm run codegen`. Each script does one thing; `cargo xtask
-check` runs them in order.
+check frontend` runs them in order.
 
 ```sh
 # From the repository root:
@@ -19,8 +19,10 @@ npm --prefix frontend run e2e:tv        # TV app with remote keys in Chromium (i
 
 `npm run bundle` builds the four entry points (and the browser bundles' Rust
 asset lists) into `dist`; `npm test` runs the schema/drift and DOM tests, and
-its TV tests read `dist`, so bundle first. Bundle before compiling a Rust host
-that `include!`s the asset list; Cargo never launches npm.
+its TV tests read `dist`, so bundle first. Bundle before compiling a Rust host:
+[`prysm_host::assets`](../hosts/common/src/assets.rs) embeds the asset lists
+(a debug build without them serves a "not built" page, a release build
+fails); Cargo never launches npm.
 
 ```sh
 npm --prefix frontend run dev:headless      # desktop portal, with hot reload

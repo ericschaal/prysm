@@ -9,7 +9,6 @@ description = "Production host: device or remote capture into WLED, controlled f
 [dependencies]
 prysm-host.workspace = true
 prysm-runtime.workspace = true
-prysm-web-portal.workspace = true
 prysm-capture-device.workspace = true
 prysm-capture-file.workspace = true
 prysm-capture-remote.workspace = true

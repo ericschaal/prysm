@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 description = "cargo xtask: one entry point for codegen, checks and build artifacts"
 
-# Must build on a fresh checkout: no crate that include!s frontend/dist.
+# Must build fast on a fresh checkout: no Prysm crate but prysm-version.
 [dependencies]
 anyhow = "1"
 clap.workspace = true

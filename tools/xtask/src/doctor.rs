@@ -11,6 +11,8 @@ enum Tool {
     Node,
     Npm,
     Python,
+    /// Runs the acceptance runner's checks in its locked environment.
+    Uv,
     Git,
     Docker,
     Buildx,
@@ -52,12 +54,13 @@ impl fmt::Display for Use {
 struct Version(u32, u32);
 
 impl Tool {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::Cargo,
         Self::Rustc,
         Self::Node,
         Self::Npm,
         Self::Python,
+        Self::Uv,
         Self::Git,
         Self::Docker,
         Self::Buildx,
@@ -74,6 +77,7 @@ impl Tool {
             Self::Node => "node",
             Self::Npm => "npm",
             Self::Python => "python3",
+            Self::Uv => "uv",
             Self::Git => "git",
             Self::Docker => "docker",
             Self::Buildx => "buildx",
@@ -121,6 +125,7 @@ impl Tool {
                 &[Use::Check, Use::Codegen, Use::DistMac, Use::DistTv]
             }
             Self::Python => &[Use::Check, Use::DistTv],
+            Self::Uv => &[Use::Check],
             Self::Git => &[Use::Check, Use::DistMac, Use::DistLinux, Use::DistTv],
             Self::Docker | Self::Buildx => &[Use::DistLinux],
             Self::Clang => &[Use::Check, Use::Codegen],
@@ -139,6 +144,7 @@ impl Tool {
             Self::Cargo | Self::Rustc => "install Rust with rustup",
             Self::Node | Self::Npm => "install Node.js 24 or newer",
             Self::Python => "install Python 3.9 or newer",
+            Self::Uv => "install uv, see docs/developers/acceptance.md#develop-the-runner",
             Self::Git => "install git",
             Self::Docker | Self::Buildx => "install Docker with the buildx plugin",
             Self::Clang => "install clang and libclang-dev",
@@ -262,6 +268,11 @@ mod tests {
             ("v26.13.0", Version(26, 13), "26.13.0"),
             ("11.6.2", Version(11, 6), "11.6.2"),
             ("Python 3.15.2", Version(3, 15), "3.15.2"),
+            (
+                "uv 0.13.5 (Homebrew 2026-10-22 aarch64-apple-darwin)",
+                Version(0, 13),
+                "0.13.5",
+            ),
             (
                 "Docker version 28.3.2, build 578ccf6",
                 Version(28, 3),

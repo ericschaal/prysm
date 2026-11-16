@@ -200,22 +200,22 @@ export const entryScript = /\/assets\/index-[\w-]+\.js/;
 
 /**
  * Fails unless the `prysm-headless` under test and its `fake_devices`
- * example serve the bundle `npm run bundle` last wrote: they embed the
- * bundle when cargo builds them, so one built before the frontend serves
- * the old one.
+ * example serve a real bundle, and the one `npm run bundle` last wrote if
+ * `dist` has one: they embed the bundle when cargo builds them, so one
+ * built before the frontend serves the old one, and a debug build without
+ * it serves only a "not built" page.
  */
 export async function checkBundle(): Promise<void> {
   for (const devices of [null, []]) await checkHost(devices);
 }
 
 async function checkHost(devices: FakeDevice[] | null): Promise<void> {
-  // No bundle here: the binary was built elsewhere (CI hands it to this
-  // job), so there is nothing it could be stale against.
+  // No bundle here when the binary was built elsewhere (CI hands it to this
+  // job): it must still serve one, but there is nothing to compare it with.
   const assets = await readFile(path.join(dist, 'assets.rs'), 'utf8').catch(
     () => null,
   );
-  if (assets === null) return;
-  const built = entryScript.exec(assets)?.[0];
+  const built = assets === null ? null : entryScript.exec(assets)?.[0];
   const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
   const file = path.join(dir, 'settings.json');
   await writeFile(file, JSON.stringify({ output: { kind: 'null' } }));
@@ -226,7 +226,11 @@ async function checkHost(devices: FakeDevice[] | null): Promise<void> {
     const url = /http:\/\/[^/\s]+/.exec(line)?.[0];
     if (!url) throw new Error(`no address in ${line}`);
     const served = entryScript.exec(await (await fetch(`${url}/`)).text())?.[0];
-    if (!built || served !== built)
+    if (!served)
+      throw new Error(
+        `${bin} serves no portal bundle (built without frontend/dist): run npm run bundle, then rebuild it (cargo build -p prysm-headless --bins --example fake_devices)`,
+      );
+    if (assets !== null && served !== built)
       throw new Error(
         `${bin} serves ${served ?? 'no script'}, but dist has ${built ?? 'none'}: rebuild it (cargo build -p prysm-headless --bins --example fake_devices) after npm run bundle`,
       );

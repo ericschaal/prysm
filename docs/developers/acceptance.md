@@ -236,21 +236,23 @@ script needs Local Network access; the runner says so.
 
 ## Develop the runner
 
-The runner's own code is linted, formatted, type-checked and kept in layers;
-CI runs these in the `quality` job. The rules are in
+The runner's own code is linted, formatted, type-checked and kept in layers.
+`cargo xtask check scripts` runs these checks with the repository's other
+Python checks, as CI's `quality` job does; it needs
+[uv](https://docs.astral.sh/uv/). The rules are in
 [`pyproject.toml`](../../scripts/acceptance/pyproject.toml): Ruff, Pyright in
 strict mode, and Import Linter's layers (command line, stages, their cells,
 checks, the feed, devices, clients, base; stages never import each other).
 Only `transport.py` runs commands, and only `commands.py` builds them; the one
-other process is `git`, which `run.py` asks for the commit in the report. From
-the repository root:
+other process is `git`, which `run.py` asks for the commit in the report. One
+at a time, from the repository root:
 
 ```sh
-uv run --directory scripts/acceptance ruff check
-uv run --directory scripts/acceptance ruff format --check
-uv run --directory scripts/acceptance pyright
-uv run --directory scripts/acceptance lint-imports
-uv run --directory scripts/acceptance python -m unittest discover -s tests
+uv run --locked --directory scripts/acceptance ruff check
+uv run --locked --directory scripts/acceptance ruff format --check
+uv run --locked --directory scripts/acceptance pyright
+uv run --locked --directory scripts/acceptance lint-imports
+uv run --locked --directory scripts/acceptance python -m unittest discover -s tests
 ```
 
 The tests use fakes and contact no device. `test_acceptance_contract.py`

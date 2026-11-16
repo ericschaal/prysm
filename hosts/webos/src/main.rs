@@ -4,12 +4,13 @@ mod link;
 
 use link::EngineLink;
 use prysm_capture_webos::{VideoSignal, WebosCapture, WebosSettings};
+use prysm_host::assets;
 use prysm_output_wled::Wled;
 use prysm_ports::{AdapterSettings, Error, Result, Settings, SettingsStore, SourceFactory};
 use prysm_runtime::Prysm;
 use prysm_runtime::logging::{self, Logs};
 use prysm_settings_file::SettingsFile;
-use prysm_web_portal::{Access, FrontendAsset, WebPortal, lan_url};
+use prysm_web_portal::{Access, WebPortal, lan_url};
 use prysm_webos_link::FullArgs;
 use prysm_webos_link::worker::{self, Link};
 use std::net::TcpListener;
@@ -21,8 +22,6 @@ const NAME: &str = "prysm-webos";
 
 const ABOUT: &str = "The full TV worker. Started by prysm-webos-service: commands on stdin,
 events on stdout, logs on stderr.";
-
-const ASSETS: &[FrontendAsset] = include!("../../../frontend/dist/webos/web-portal/assets.rs");
 
 /// Above the capture adapter's 4 s release limit, below the supervisor's 8 s
 /// TERM-to-KILL window, so WLED idle compensation normally runs.
@@ -61,7 +60,7 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
         // The TV app is a `file://` page (`Origin: null`); it needs CORS.
         .surface(WebPortal::from_listener(
             listener,
-            ASSETS,
+            assets::WEBOS,
             Access::AnyOrigin,
         )?)
         .stop_deadline(STOP_DEADLINE)

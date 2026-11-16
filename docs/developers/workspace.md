@@ -159,13 +159,17 @@ From the repository root, `cargo xtask check` runs every check in order
 ([check](README.md#check)). For a quicker loop:
 
 ```sh
-npm --prefix frontend ci && npm --prefix frontend run bundle   # hosts include! the bundle
+cargo xtask check rust                                       # one group of it
+npm --prefix frontend ci && npm --prefix frontend run bundle   # the portal the hosts embed
 cargo test --workspace --all-targets --offline
 ```
 
-`cargo build` builds the two hosts (the default
-members); `xtask` depends on no crate that embeds the bundle, so it builds on
-a fresh checkout. Builds do not deploy.
+`cargo build` builds the two hosts (the default members). `prysm-host`
+(`hosts/common`) embeds the portal bundles for every host that serves one,
+including `prysm-webos`; without `frontend/dist`, a debug build serves a "not
+built" page and a release build fails ([build](README.md#build-and-run)).
+`xtask` depends on no host, so it builds fast on a fresh checkout. Builds do
+not deploy.
 
 ## Not done yet
 

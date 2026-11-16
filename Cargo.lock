@@ -1904,7 +1904,6 @@ dependencies = [
  "prysm-runtime",
  "prysm-settings-file",
  "prysm-version",
- "prysm-web-portal",
  "serde",
  "serde_json",
  "tempfile",
@@ -2021,7 +2020,6 @@ dependencies = [
  "prysm-settings-file",
  "prysm-surface-tui",
  "prysm-version",
- "prysm-web-portal",
  "tempfile",
  "tokio",
 ]
@@ -2061,6 +2059,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-capture-webos",
+ "prysm-host",
  "prysm-output-wled",
  "prysm-ports",
  "prysm-runtime",

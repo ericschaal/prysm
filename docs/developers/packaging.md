@@ -22,6 +22,10 @@ or deploy. Release builds: [releasing](releasing.md).
 | `image-arm64`, `image-amd64` | `prysm-headless-linux-<arch>.tar` | The Dockerfile's `runtime` target, an archive for `docker load` |
 | `tv-full`, `tv-slim` | `prysm-tv-full.ipk`, `prysm-tv-slim.ipk` | `npm run bundle`, then [build-ipk.sh](../../packaging/webos/build-ipk.sh); needs `WEBOS_SDK` (see [webOS](#webos)) |
 
+Every artifact embeds the portal: the `release` and `webos` profiles fail
+without `frontend/dist`, where a debug build would fall back to a "not
+built" page ([build](README.md#build-and-run)).
+
 ```sh
 cargo xtask dist linux-arm64 deb-arm64 image-arm64
 docker load --input dist/prysm-headless-linux-arm64.tar   # prysm-headless:local
@@ -129,7 +133,7 @@ Install on a TV: [LG TV](../users/webos.md#1-install).
 Without a TV:
 
 ```sh
-python3 -m unittest discover -s packaging/webos/tests
+python3 -m unittest discover -s packaging/webos/tests   # in cargo xtask check scripts
 python3 packaging/webos/ipk.py verify dist/prysm-tv-full.ipk
 ```
 

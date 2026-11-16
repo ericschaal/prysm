@@ -4,16 +4,24 @@
 # artifacts for publishing), so a release is built only from a green run.
 # No path filters: required checks must always report.
 #
+# `quality`, `frontend` and `rust` each run one group of `cargo xtask check`
+# (tools/xtask/src/check.rs), so they check what a local run checks.
+#
 # Jobs:
-# - `quality`: shell scripts, script tests, Markdown links, workflows, and the
-#   acceptance runner's lint, types, layers and tests (scripts/acceptance).
-# - `frontend`: lint, formatting, generated contracts, bundles and tests. The
-#   hosts include! frontend/dist, so the Rust jobs download this bundle before
-#   compiling. `cargo xtask codegen --check` runs the Rust contract exporter,
-#   which is why this job also needs Rust and libclang.
-# - `rust` (Linux, macOS): formatting, clippy, tests, doctests; builds the e2e
-#   binaries. `e2e`: the portal in Chromium and WebKit against them, and the
-#   TV app with remote keys in Chromium on its in-memory demo.
+# - `quality`: shell scripts and workflows, then `check scripts`: script and
+#   TV package tests, the acceptance runner's lint, types, layers and tests
+#   (scripts/acceptance) and Markdown links.
+# - `frontend`: `check frontend`: lint, formatting, generated contracts,
+#   bundles and tests; uploads the bundles. `cargo xtask codegen --check` runs
+#   the Rust contract exporter, which is why this job also needs Rust and
+#   libclang.
+# - `rust` (Linux, macOS): `check rust`: formatting, clippy, tests, doctests.
+#   The hosts embed frontend/dist when it is there and a "not built" page in
+#   debug builds when not (hosts/common/build.rs). Linux downloads the bundles,
+#   so it checks the real portal and builds the e2e binaries with it; macOS
+#   checks the same code without them. `e2e`: the portal in Chromium and
+#   WebKit against those binaries, and the TV app with remote keys in Chromium
+#   on its in-memory demo.
 # - `webos-armv7`: lints (clippy -D warnings) every TV crate that compiles
 #   without the webOS SDK, with Ubuntu's stock soft-float cross compiler (the
 #   C++ in capture-webos-sys and OpenH264 only need a g++; Luna and VTCapture
@@ -86,19 +94,17 @@ jobs:
             packaging/webos/install-ipk.sh packaging/webos/linker.sh \
             packaging/webos/service/setup.sh \
             packaging/webos/tests/tv-acceptance.sh
-      - name: Documentation checker tests and repository links
+      - name: Rust for cargo xtask
         run: |
-          python3 -m unittest discover -s scripts/tests
-          python3 scripts/check-doc-links.py
+          rustup update stable --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: quality
+      # The acceptance runner's checks run in its locked uv environment.
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-      # docs/developers/acceptance.md, "Develop the runner".
-      - name: Acceptance runner lint, types, layers and tests
-        run: |
-          uv run --locked --directory scripts/acceptance ruff check
-          uv run --locked --directory scripts/acceptance ruff format --check
-          uv run --locked --directory scripts/acceptance pyright
-          uv run --locked --directory scripts/acceptance lint-imports
-          uv run --locked --directory scripts/acceptance python -m unittest discover -s tests
+      - name: Script, TV package and acceptance runner checks, repository links
+        run: cargo xtask check scripts
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
@@ -125,19 +131,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: frontend
-      - run: npm --prefix frontend ci
-      - name: Lint and formatting
-        run: |
-          npm --prefix frontend run lint
-          npm --prefix frontend run format:check
-      - name: Generated contracts are current
-        run: cargo xtask codegen --check
-      - name: Typecheck, bundles and frontend tests
-        # The TV tests read the bundles (and assets.rs) in frontend/dist.
-        run: |
-          npm --prefix frontend run typecheck
-          npm --prefix frontend run bundle
-          npm --prefix frontend test
+      # Runs npm ci first, then lint, formatting, generated contracts,
+      # typecheck, bundles and tests.
+      - name: Frontend checks and bundles
+        run: cargo xtask check frontend
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-dist
@@ -172,15 +169,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: rust
-      - name: Formatting
+      # Linux only: the e2e binaries must serve the real portal. macOS checks
+      # the same code with the "not built" page in its place.
+      - name: Frontend bundle for the hosts
         if: runner.os == 'Linux'
-        run: cargo fmt --all --check
-      - name: Package file and ipk.py tests
-        if: runner.os == 'Linux'
-        env:
-          PYTHONDONTWRITEBYTECODE: '1'
-        run: python3 packaging/webos/tests/test_ipk.py
-      - name: Frontend bundle for the hosts' include!
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: frontend-dist
@@ -199,11 +191,8 @@ jobs:
           ffmpeg -version | head -n 1
           major=$(ffmpeg -version | sed -n '1s/^ffmpeg version n\{0,1\}\([0-9][0-9]*\).*/\1/p')
           [ "${major:-0}" -ge 9 ]
-      # --all-features costs nothing extra: the exporter already enables every schema feature.
-      - name: Lint all targets
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      - name: Test all targets
-        run: cargo test --locked --workspace --all-targets --all-features
+      - name: Formatting, clippy, tests and doctests
+        run: cargo xtask check rust
       # The `e2e` job runs the portal against these. Built by name: the test
       # run above leaves examples only under hashed file names.
       - name: Build the e2e binaries
@@ -223,9 +212,6 @@ jobs:
             target/debug/examples/fake_devices
           if-no-files-found: error
           retention-days: 1
-      # --all-targets skips doctests.
-      - name: Doctests
-        run: cargo test --locked --workspace --doc --all-features
 
   # The portal in Chromium and WebKit against a real prysm-headless per test
   # (frontend/e2e). Browsers are installed per run, as Playwright advises.
@@ -271,7 +257,6 @@ jobs:
           retention-days: 7
 
   webos-armv7:
-    needs: frontend
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -299,11 +284,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: webos-armv7
-      - name: Frontend bundle for prysm-webos's include!
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: frontend-dist
-          path: frontend/dist
+      # A debug build: prysm-webos embeds the "not built" page, so this job
+      # needs no frontend bundle.
       # Not prysm-webos-slim or prysm-h264-rvenc-sys: they need the SDK
       # sysroot's GStreamer (webos-ipk lints them).
       - name: Lint the TV crates for armv7

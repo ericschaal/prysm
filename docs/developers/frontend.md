@@ -3,7 +3,11 @@
 `frontend` is one npm workspace (Node.js 24+) with four bundles: the
 desktop portal (served by `prysm-headless` and `prysm-tui`), the TV's own
 portal (full package), and the TV app for each package. The Rust hosts embed
-the browser bundles at compile time; the TV bundles go into the IPKs.
+the browser bundles at compile time
+([`prysm_host::assets`](../../hosts/common/src/assets.rs)); a debug build
+without them serves a "not built" page and a release build fails. The TV
+bundles go into the IPKs. `cargo xtask check frontend` runs this workspace's
+checks as CI's `frontend` job does.
 Reference: [frontend README](../../frontend/README.md) (screens, saving
 rules, limits) and [UI and host assemblies](ui-assemblies.md).
 
@@ -100,7 +104,8 @@ One engine, or Firefox (installed with `npx playwright install firefox`), from
 
 The binaries embed the portal bundle at compile time: rebuild the frontend,
 then `prysm-headless` and `fake_devices`, before testing a frontend change;
-the suite stops at once if either serves another bundle than `dist`. The
+the suite stops at once if either serves another bundle than `dist`, or the
+"not built" page. The
 tests take the debug builds from `$CARGO_TARGET_DIR` (default `target`), or
 `PRYSM_HEADLESS_BIN`, `PRYSM_FAKE_DEVICES_BIN` and `PRYSM_TEST_SENDER_BIN`. Results, traces and videos
 go to `frontend/.e2e/`. Find elements as a user does, by role and

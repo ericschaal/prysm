@@ -29,14 +29,21 @@ cargo xtask check     # the checks below, in order
 cargo xtask dist mac  # an artifact in dist/; see packaging
 ```
 
-For day-to-day work, run the hosts with Cargo. They embed the frontend
-bundle, so build it first; Cargo never runs npm.
+For day-to-day work, run the hosts with Cargo. They embed the portal bundle
+from `frontend/dist`, so build it first; Cargo never runs npm.
 
 ```sh
 npm --prefix frontend ci
 npm --prefix frontend run bundle
 cargo build
 ```
+
+Without the bundle, a debug build still compiles: Cargo warns, and the portal
+shows one page saying the frontend is not built and how to build it. The API
+works as usual, so Rust lints and tests need no npm. A release build (and the
+`webos` profile) fails instead, so a shipped binary always carries the portal
+([hosts/common/build.rs](../../hosts/common/build.rs)). The next build after
+`npm run bundle` embeds it.
 
 This builds the two desktop hosts:
 
@@ -78,17 +85,29 @@ It plays once (`"repeat": true` loops it); at the end lighting stops cleanly.
 cargo xtask check
 ```
 
-It runs the checks of CI's `quality`, `frontend` and `rust` jobs
-([ci.yml](../../.github/workflows/ci.yml)) and stops at the first failing
-step, which it names. Not included: shellcheck, actionlint, the end-to-end
-tests, the armv7, Miri, IPK and Docker jobs. The order: Rust formatting, frontend
-lint and formatting, `cargo xtask codegen --check`, the frontend typecheck,
-bundle (`frontend/dist`) and tests, clippy with `-D warnings`, the Rust tests
-and doctests, the Python tests in `scripts/tests` and `packaging/webos/tests`,
-and `scripts/check-doc-links.py`. The contracts are checked before the
+It stops at the first failing step, which it names. The steps fall into
+three groups, one per CI job ([ci.yml](../../.github/workflows/ci.yml)); name
+one or more to run only those, in the same order:
+
+| Group | CI job | Steps |
+| --- | --- | --- |
+| `rust` | `rust` | `cargo fmt --check`, clippy with `-D warnings`, the Rust tests and doctests |
+| `frontend` | `frontend` | lint and formatting, `cargo xtask codegen --check`, typecheck, bundle (`frontend/dist`), tests |
+| `scripts` | `quality` | the Python tests in `scripts/tests` and `packaging/webos/tests`, the [acceptance runner's checks](acceptance.md#develop-the-runner), `scripts/check-doc-links.py` |
+
+```sh
+cargo xtask check rust            # no Node.js needed
+cargo xtask check frontend scripts
+```
+
+Only the `frontend` group installs the npm packages and needs Node.js;
+`scripts` needs `uv` (`cargo xtask doctor` checks both). Not included: shellcheck and
+actionlint (CI's `quality` job runs them), the end-to-end tests, the armv7,
+Miri, IPK and Docker jobs. In a full run, the contracts are checked before the
 typecheck, so stale contracts fail as such, and the bundle is built before the
-frontend tests and Rust because the TV tests read it and the hosts `include!`
-it.
+frontend tests and Rust, so the TV tests read it and the hosts embed the real
+portal. Without the bundle, the Rust tests that check it are reported as
+ignored.
 
 Use `cargo test -p CRATE` for one crate. The
 TV crates are also linted and unit-tested for armv7 under qemu in CI; the IPK

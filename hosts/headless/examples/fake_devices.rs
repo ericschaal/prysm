@@ -14,17 +14,14 @@
 use prysm_capture_device::DeviceSettings;
 use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
-use prysm_host::Program;
+use prysm_host::{Program, assets};
 use prysm_output_wled::Wled;
 use prysm_ports::{
     Candidate, Error, FrameSource, Mode, Modes, Result, SourceFactory, ValidationError,
 };
 use prysm_runtime::{Builder, NullOutput};
-use prysm_web_portal::FrontendAsset;
 use serde::Deserialize;
 use std::process::ExitCode;
-
-const ASSETS: &[FrontendAsset] = include!("../../../frontend/dist/headless/web-portal/assets.rs");
 
 const PROGRAM: Program = Program {
     name: "prysm-headless",
@@ -97,7 +94,7 @@ fn main() -> ExitCode {
         prysm
             .surface(host.status())
             .surface(host.start())
-            .surface(host.portal(ASSETS)?.capture_stream(tv_stream))
+            .surface(host.portal(assets::HEADLESS)?.capture_stream(tv_stream))
             .run(host.signals()?)
             .await
     })

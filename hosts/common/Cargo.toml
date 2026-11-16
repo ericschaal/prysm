@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Process concerns shared by the desktop hosts: arguments, logging, portal, signals, status"
+description = "Shared by the hosts: the embedded portal bundles; for the desktop hosts arguments, logging, portal, signals, status"
 
 [dependencies]
 prysm-ports.workspace = true

@@ -2,11 +2,10 @@
 use prysm_capture_device::DeviceSource;
 use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
-use prysm_host::Program;
+use prysm_host::{Program, assets};
 use prysm_output_wled::Wled;
 use prysm_runtime::{Builder, NullOutput};
 use prysm_surface_tui::Tui;
-use prysm_web_portal::FrontendAsset;
 use std::process::ExitCode;
 
 const ABOUT: &str = "Preview capture in the terminal, optionally driving WLED; use output kind
@@ -16,9 +15,6 @@ Quit with q, or :quit. Without an interactive
 terminal the preview is unavailable and lighting and portal keep running.
 While the preview uses the terminal, status is not printed and log lines go
 only to --log-file.";
-
-// The desktop hosts register the same adapters, so they share one portal bundle.
-const ASSETS: &[FrontendAsset] = include!("../../../frontend/dist/headless/web-portal/assets.rs");
 
 const PROGRAM: Program = Program {
     name: "prysm-tui",
@@ -45,7 +41,7 @@ fn main() -> ExitCode {
         prysm
             .surface(host.status())
             .surface(host.start())
-            .surface(host.portal(ASSETS)?.capture_stream(tv_stream))
+            .surface(host.portal(assets::HEADLESS)?.capture_stream(tv_stream))
             .surface(tui)
             .run(async {
                 tokio::select! {
