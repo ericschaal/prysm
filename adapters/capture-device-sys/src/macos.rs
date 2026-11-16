@@ -109,7 +109,7 @@ define_class!(
             let error = format!("Capture failed: {} ({:?})", notification.name(), notification.userInfo());
             // SAFETY: This notification name is a process-lifetime Foundation string.
             let error = if &*notification.name() == unsafe { AVCaptureDeviceWasDisconnectedNotification } {
-                CaptureError::Disconnected { details: error }
+                CaptureError::Disconnected { details: error, source: None }
             } else {
                 // SAFETY: This dictionary key is a process-lifetime Foundation string.
                 let source = notification.userInfo()

@@ -18,7 +18,11 @@ pub enum CaptureError {
         source: Option<std::io::Error>,
     },
     #[error("capture device disconnected: {details}")]
-    Disconnected { details: String },
+    Disconnected {
+        details: String,
+        #[source]
+        source: Option<std::io::Error>,
+    },
     #[error("unsupported capture format: {details}")]
     UnsupportedFormat {
         details: String,

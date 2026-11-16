@@ -350,6 +350,19 @@ fn rates_at(device: &Device, fourcc: FourCC, width: u32, height: u32) -> Option<
     Some(rates)
 }
 
+/// A failure of the running stream, `doing` what: [`CaptureError::Disconnected`]
+/// when the device is gone, else a backend error.
+fn stream_failed(error: std::io::Error, doing: &'static str) -> CaptureError {
+    if stream::device_gone(&error) {
+        CaptureError::Disconnected {
+            details: doing.into(),
+            source: Some(error),
+        }
+    } else {
+        anyhow::Error::new(error).context(doing).into()
+    }
+}
+
 pub(crate) fn run(
     device_path: Option<&str>,
     width: u32,
@@ -387,7 +400,9 @@ pub(crate) fn run(
         if stopped() {
             return Ok(());
         }
-        stream.start().context("failed to start capture stream")?;
+        stream
+            .start()
+            .map_err(|error| stream_failed(error, "failed to start capture stream"))?;
         sink.ready();
         let mut pool = FramePool::default();
         let mut stats = crate::trace_stats::TraceStats::new("v4l_capture");
@@ -417,20 +432,16 @@ pub(crate) fn run(
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
                     stats.failure();
-                    stream
-                        .stop()
-                        .context("failed to stop stalled capture stream")?;
+                    stream.stop().map_err(|error| {
+                        stream_failed(error, "failed to stop stalled capture stream")
+                    })?;
                     if !stopped() {
-                        stream
-                            .start()
-                            .context("failed to restart stalled capture stream")?;
+                        stream.start().map_err(|error| {
+                            stream_failed(error, "failed to restart stalled capture stream")
+                        })?;
                     }
                 }
-                Err(error) => {
-                    return Err(anyhow::Error::new(error)
-                        .context("error capturing frame")
-                        .into());
-                }
+                Err(error) => return Err(stream_failed(error, "error capturing frame")),
             }
         }
     })();
@@ -462,6 +473,40 @@ mod tests {
             panic!("expected missing device error")
         };
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_device_gone_while_streaming_is_a_disconnection_with_its_cause() {
+        let gone = stream_failed(
+            std::io::Error::from_raw_os_error(libc::ENODEV),
+            "error capturing frame",
+        );
+        let CaptureError::Disconnected {
+            source: Some(source),
+            ..
+        } = &gone
+        else {
+            panic!("expected a disconnection, got {gone:?}")
+        };
+        assert_eq!(source.raw_os_error(), Some(libc::ENODEV));
+        assert_eq!(
+            gone.to_string(),
+            "capture device disconnected: error capturing frame"
+        );
+
+        let CaptureError::Backend(other) = stream_failed(
+            std::io::Error::from_raw_os_error(libc::EIO),
+            "error capturing frame",
+        ) else {
+            panic!("expected a backend error")
+        };
+        assert_eq!(
+            other
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(libc::EIO)
+        );
     }
 
     #[test]

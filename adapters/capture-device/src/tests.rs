@@ -97,6 +97,7 @@ fn native() -> (Capture, Native) {
 fn disconnected() -> CaptureError {
     CaptureError::Disconnected {
         details: "cable unplugged".into(),
+        source: None,
     }
 }
 
@@ -248,6 +249,30 @@ fn native_failure_propagates_and_release_is_still_certified() {
         frames.next_frame(Duration::ZERO).is_err(),
         "failure is sticky"
     );
+    close(frames).recv_timeout(LIMIT).unwrap().unwrap();
+}
+
+/// A device gone while capturing (V4L2's ENODEV) has nothing left to release:
+/// a capture failure with its cause, not an unconfirmed release.
+#[test]
+fn a_lost_device_is_a_capture_failure_with_a_certified_release() {
+    let (mut frames, native) = opened();
+    native.exit(Err(CaptureError::Disconnected {
+        details: "error capturing frame".into(),
+        source: Some(std::io::Error::other("No such device")),
+    }));
+    let error = frames.next_frame(LIMIT).unwrap_err();
+    assert_eq!(
+        chain(&error),
+        "video device capture failed: capture device disconnected: error capturing frame: No such device"
+    );
+    let mut cause = error.source();
+    while let Some(inner) = cause
+        && !inner.is::<std::io::Error>()
+    {
+        cause = inner.source();
+    }
+    assert!(cause.is_some(), "the I/O cause is kept");
     close(frames).recv_timeout(LIMIT).unwrap().unwrap();
 }
 

@@ -124,6 +124,11 @@ async fn output_idles_when_the_source_fails() {
             snapshot.failure.as_ref().and_then(Error::section),
             Some(Section::Capture)
         );
+        // A failed source was released, so any later target is accepted and
+        // the source opens again.
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("source.open:a", 2).await);
         engine.shutdown().await.unwrap();
     })
     .await;

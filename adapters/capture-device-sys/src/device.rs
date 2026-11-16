@@ -74,6 +74,8 @@ pub fn list_formats(device: &str) -> Option<Vec<prysm_ports::Mode>> {
 /// # Errors
 /// [`CaptureError::Cleanup`]: release could not be certified; do not reopen
 /// the device. Any other error: capture failed and the device was released.
+/// A device unplugged while capturing is [`CaptureError::Disconnected`]; it
+/// is released, since a device that is gone holds nothing.
 pub fn capture(
     device: Option<&str>,
     width: u32,

@@ -23,6 +23,16 @@ pub(super) struct Stream {
     timeout: i32,
 }
 
+/// Whether `error` from a V4L2 ioctl means the device is gone (unplugged or
+/// reset). Once a node is unregistered the V4L2 core answers every ioctl with
+/// ENODEV without calling the driver, and unregistering stops streaming and
+/// frees the queue's buffers (at the latest when the fd closes). Nothing else
+/// counts: EIO, EPROTO or ESHUTDOWN can come from a device still registered,
+/// whose buffers may still be held.
+pub(super) fn device_gone(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ENODEV)
+}
+
 fn buffer(index: u32) -> v4l2_buffer {
     v4l2_buffer {
         index,
@@ -167,11 +177,18 @@ impl Stream {
             |pointer, length| unsafe { v4l2::munmap(pointer, length) },
         )
     }
+    /// Stop, unmap and free whatever is still held. A device that is gone
+    /// ([`device_gone`]) has nothing left to stop or free, so that counts as
+    /// released; its mappings are still unmapped, which needs no device.
     fn release_with(
         &mut self,
         mut ioctl: impl FnMut(v4l2::vidioc::_IOC_TYPE, *mut std::ffi::c_void) -> io::Result<()>,
         mut unmap: impl FnMut(*mut std::ffi::c_void, usize) -> io::Result<()>,
     ) -> io::Result<()> {
+        let mut ioctl = |request, value: *mut std::ffi::c_void| match ioctl(request, value) {
+            Err(error) if device_gone(&error) => Ok(()),
+            result => result,
+        };
         let mut failure = None;
         if self.active {
             let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -312,6 +329,70 @@ mod tests {
             );
         }
     }
+    /// Release with `stop` and `free` as the STREAMOFF and REQBUFS results,
+    /// counting unmaps.
+    fn release_failing(
+        stream: &mut Stream,
+        stop: Option<i32>,
+        free: Option<i32>,
+        unmapped: &mut usize,
+    ) -> io::Result<()> {
+        stream.release_with(
+            |request, _| {
+                let errno = if request == v4l2::vidioc::VIDIOC_STREAMOFF {
+                    stop
+                } else {
+                    free
+                };
+                errno.map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno)))
+            },
+            |_, _| {
+                *unmapped += 1;
+                Ok(())
+            },
+        )
+    }
+
+    #[test]
+    fn a_device_gone_is_released_and_still_unmapped() {
+        for (stop, free) in [
+            (Some(libc::ENODEV), None),
+            (None, Some(libc::ENODEV)),
+            (Some(libc::ENODEV), Some(libc::ENODEV)),
+        ] {
+            let mut stream = allocated();
+            let mut unmapped = 0;
+            release_failing(&mut stream, stop, free, &mut unmapped).unwrap();
+            assert_eq!(unmapped, 2);
+            assert!(!stream.active && !stream.allocated);
+            assert!(stream.buffers.iter().all(Option::is_none));
+            // Nothing is left for a retry (or `Drop`) to touch.
+            stream
+                .release_with(|_, _| panic!("released"), |_, _| panic!("unmapped"))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn other_errors_still_fail_the_release() {
+        for (stop, free, failed) in [
+            (Some(libc::EIO), None, libc::EIO),
+            (None, Some(libc::EBUSY), libc::EBUSY),
+            // A device gone when stopping does not excuse a failure to free.
+            (Some(libc::ENODEV), Some(libc::EBUSY), libc::EBUSY),
+        ] {
+            let mut stream = allocated();
+            let mut unmapped = 0;
+            let error = release_failing(&mut stream, stop, free, &mut unmapped).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(failed));
+            assert_eq!(unmapped, 2);
+            assert_eq!(stream.active, stop == Some(libc::EIO));
+            assert_eq!(stream.allocated, free.is_some());
+            // Leave nothing for `Drop` to try on the test's fd.
+            release_failing(&mut stream, None, None, &mut unmapped).unwrap();
+        }
+    }
+
     #[test]
     fn successful_release_is_idempotent_and_preserves_first_error() {
         let mut stream = allocated();
