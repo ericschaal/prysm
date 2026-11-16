@@ -2,11 +2,13 @@ use crate::address::DeviceAddress;
 use prysm_ports::ValidationError;
 use serde::{Deserialize, Serialize};
 
-/// Where the device is and how many LEDs each screen edge has:
+/// Where the device is, how many LEDs each screen edge has, and whether
+/// dim colours are dithered (on unless `false`):
 ///
 /// ```json
 /// { "kind": "wled", "address": "wled.local",
-///   "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 } }
+///   "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 },
+///   "dither": true }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +27,16 @@ pub struct WledSettings {
     )]
     pub address: String,
     pub leds: LedCounts,
+    /// Mix neighbouring LEDs between the few levels WLED shows for dim
+    /// colours, so they fade evenly and keep their hue. False: each LED
+    /// takes the nearest byte, for a strip on which dark scenes twinkle.
+    #[serde(default = "dither_by_default")]
+    #[cfg_attr(feature = "schema", schema(default = true))]
+    pub dither: bool,
+}
+
+fn dither_by_default() -> bool {
+    true
 }
 
 /// The most LEDs a WLED device drives: `MAX_LEDS` of WLED's largest default
@@ -158,9 +170,14 @@ mod schema_tests {
         let settings = WledSettings {
             address: "wled.local:8080".into(),
             leds,
+            dither: false,
         };
         let schema = same_shape(&settings);
         assert_eq!(schema["required"], json!(["address", "leds"]));
+        assert_eq!(schema["properties"]["dither"]["default"], json!(true));
+        let omitted: WledSettings =
+            serde_json::from_value(json!({"address": "wled.local", "leds": {"top": 1}})).unwrap();
+        assert!(omitted.dither, "dithering is on unless turned off");
         let address = &schema["properties"]["address"];
         assert_eq!(address["type"], json!("string"));
         assert_eq!(address["minLength"], json!(1));
@@ -168,6 +185,7 @@ mod schema_tests {
             let settings = WledSettings {
                 address: example.as_str().unwrap().into(),
                 leds,
+                dither: true,
             };
             assert_eq!(settings.validate(), Ok(()), "{example}");
         }

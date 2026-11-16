@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { WledSettings } from '@prysm/contracts/host-desktop';
 import {
+  Advanced,
+  CheckboxField,
   FindDevices,
   NumberField,
   shownError,
@@ -100,6 +102,15 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
           </p>
         </div>
       </fieldset>
+      <Advanced paths={['output.dither']}>
+        <CheckboxField
+          path="output.dither"
+          label="Smooth dark colours"
+          help="Mixes neighbouring LED levels so dim colours fade evenly. Turn off if dark scenes twinkle."
+          checked={value.dither ?? true}
+          onChange={(dither) => onChange({ ...value, dither })}
+        />
+      </Advanced>
     </>
   );
 

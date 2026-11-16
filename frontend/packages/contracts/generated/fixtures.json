@@ -742,6 +742,7 @@
   "WledSettings": [
     {
       "address": "192.0.2.1",
+      "dither": true,
       "kind": "wled",
       "leds": {
         "bottom": 0,

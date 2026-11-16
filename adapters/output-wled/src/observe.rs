@@ -123,15 +123,18 @@ impl Observer {
     /// The device's own brightness while it scales Prysm's colours, from
     /// the latest state and configuration; `None` until both answered.
     pub fn brightness(&self) -> Option<DeviceBrightness> {
+        self.level()
+            .map(|level| DeviceBrightness::of(level.into(), FULL))
+    }
+
+    /// The brightness WLED scales Prysm's colours by, 0–255 (its
+    /// `scaledBri`), as [`Observer::brightness`] knows it.
+    pub fn level(&self) -> Option<u8> {
         let config = self.config?;
-        let bri = if config.force_max {
-            FULL.get()
-        } else {
-            u32::from(self.bri?)
-        };
-        // WLED's `scaledBri`: the factor scales it, capped at full (by `of`).
-        let level = bri * u32::from(config.scale) / 100;
-        Some(DeviceBrightness::of(level, FULL))
+        let bri = if config.force_max { u8::MAX } else { self.bri? };
+        // The factor scales it, capped at full.
+        let level = u32::from(bri) * u32::from(config.scale) / 100;
+        Some(u8::try_from(level).unwrap_or(u8::MAX))
     }
 
     /// How many LEDs WLED drives, from the latest state; `None` until one

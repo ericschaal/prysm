@@ -143,9 +143,14 @@ impl Device {
     }
 
     fn open(&self, leds: LedCounts) -> Result<Box<dyn LedOutput>, Error> {
+        self.open_with(leds, true)
+    }
+
+    fn open_with(&self, leds: LedCounts, dither: bool) -> Result<Box<dyn LedOutput>, Error> {
         let settings = WledSettings {
             address: self.address("127.0.0.1"),
             leds,
+            dither,
         };
         self.wled.open(&settings)
     }
@@ -237,6 +242,7 @@ fn open_through_the_registry_releases_then_enters_live_mode() {
         &WledSettings {
             address: device.address("127.0.0.1"),
             leds: one_each(),
+            dither: true,
         },
     );
     let _output = registry.open_output(&settings).unwrap();
@@ -285,6 +291,7 @@ fn unreachable_device_fails_open_with_its_cause() {
     let settings = WledSettings {
         address: format!("127.0.0.1:{port}"),
         leds: one_each(),
+        dither: true,
     };
     let error = Wled::local(4048).open(&settings).err().unwrap();
     assert!(error.to_string().contains("live mode"), "{error}");
@@ -408,6 +415,7 @@ fn validation_rejects_malformed_and_non_unicast_addresses_and_led_totals() {
     let valid = WledSettings {
         address: "192.168.1.50".into(),
         leds: one_each(),
+        dither: true,
     };
     assert_eq!(Wled::default().validate(&valid), Ok(()));
     for (address, reason) in [
@@ -540,6 +548,7 @@ fn host_name_is_resolved_at_open_for_http_and_ddp() {
     let settings = WledSettings {
         address: device.address("localhost"),
         leds: one_each(),
+        dither: true,
     };
     let mut output = device.wled.open(&settings).unwrap();
     let (head, state) = device.call_with_head();
@@ -556,6 +565,7 @@ fn unresolvable_host_fails_open_naming_the_host() {
     let settings = WledSettings {
         address: "prysm-test.invalid:8080".into(),
         leds: one_each(),
+        dither: true,
     };
     let started = Instant::now();
     let error = Wled::default().open(&settings).err().unwrap();
@@ -589,6 +599,7 @@ fn a_hanging_lookup_is_bounded_and_not_repeated() {
     let settings = WledSettings {
         address: "wled.local".into(),
         leds: one_each(),
+        dither: true,
     };
     for _ in 0..2 {
         let error = wled.open(&settings).err().unwrap();
@@ -601,7 +612,7 @@ fn a_hanging_lookup_is_bounded_and_not_repeated() {
 }
 
 #[test]
-fn settings_file_shape_omits_nothing_but_defaults_missing_edges() {
+fn settings_file_shape_omits_nothing_but_defaults_missing_edges_and_dithering() {
     let settings: WledSettings =
         serde_json::from_value(json!({"address": "10.0.0.5", "leds": {"top": 96, "left": 54}}))
             .unwrap();
@@ -613,9 +624,14 @@ fn settings_file_shape_omits_nothing_but_defaults_missing_edges() {
             ..LedCounts::default()
         }
     );
+    assert!(settings.dither);
     assert_eq!(
         serde_json::to_value(&settings).unwrap(),
-        json!({"address": "10.0.0.5", "leds": {"top": 96, "right": 0, "bottom": 0, "left": 54}})
+        json!({
+            "address": "10.0.0.5",
+            "leds": {"top": 96, "right": 0, "bottom": 0, "left": 54},
+            "dither": true
+        })
     );
     for invalid in [
         json!({"address": "10.0.0.5", "leds": {"top": 1}, "port": 80}),
@@ -1112,35 +1128,41 @@ fn a_gamma_changed_in_wled_is_followed_and_kept_through_a_refused_read() {
 
 #[test]
 fn an_open_output_encodes_for_wled_gamma() {
-    let device = Device::new(vec![
-        Reply::Json(OK),
-        Reply::Json(OK),
-        at(255),
-        gamma_cfg(2.8, false),
-        Reply::Json(OK),
-        Reply::Json(OK),
-    ]);
-    let mut output = device.open(one_each()).unwrap();
-    device.expect(&[release(), live()]);
-    let deadline = Instant::now() + WAIT;
-    while output.brightness().is_none() {
-        assert!(Instant::now() < deadline, "WLED configuration was not read");
-        assert_eq!(output.observe(), None);
-        thread::sleep(Duration::from_millis(2));
+    // 0.18 under WLED's gamma 2.8 is 45.9 of 255: undithered the nearest
+    // byte, 0.18^(1/2.8); dithered the bytes of levels 45 and 46 around it.
+    for (dither, reds) in [(false, &[138][..]), (true, &[137, 138][..])] {
+        let device = Device::new(vec![
+            Reply::Json(OK),
+            Reply::Json(OK),
+            at(255),
+            gamma_cfg(2.8, false),
+            Reply::Json(OK),
+            Reply::Json(OK),
+        ]);
+        let mut output = device.open_with(one_each(), dither).unwrap();
+        device.expect(&[release(), live()]);
+        let deadline = Instant::now() + WAIT;
+        while output.brightness().is_none() {
+            assert!(Instant::now() < deadline, "WLED configuration was not read");
+            assert_eq!(output.observe(), None);
+            thread::sleep(Duration::from_millis(2));
+        }
+        let color = fill(0.18, 0.0, 1.0);
+        output
+            .write(&EdgeColors::new(
+                color.clone(),
+                color.clone(),
+                color.clone(),
+                color,
+            ))
+            .unwrap();
+        for led in device.rgb().chunks(3) {
+            assert!(reds.contains(&led[0]), "dither {dither}: {led:?}");
+            assert_eq!(&led[1..], [0, 255], "dither {dither}");
+        }
+        device.check_request();
+        device.get_request("/json/cfg");
+        output.idle(IdleMode::Off).unwrap();
+        device.expect(&[release(), off()]);
     }
-    let color = fill(0.18, 0.0, 1.0);
-    output
-        .write(&EdgeColors::new(
-            color.clone(),
-            color.clone(),
-            color.clone(),
-            color,
-        ))
-        .unwrap();
-    // 0.18^(1/2.8): WLED's 2.8 brings it back to 18 % light.
-    assert_eq!(device.rgb(), [138, 0, 255].repeat(4));
-    device.check_request();
-    device.get_request("/json/cfg");
-    output.idle(IdleMode::Off).unwrap();
-    device.expect(&[release(), off()]);
 }

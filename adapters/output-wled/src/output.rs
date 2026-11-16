@@ -1,5 +1,6 @@
 use crate::address::{Host, Names};
 use crate::ddp::WledRenderer;
+use crate::dither::Encoding;
 use crate::observe::{self, Observer};
 use crate::{WledSettings, http};
 use prysm_core::EdgeColors;
@@ -89,6 +90,7 @@ impl OutputFactory for Wled {
             label,
             renderer,
             leds: settings.leds.edges(),
+            encoding: Encoding::new(settings.dither),
         };
         match output.enter(Mode::Live) {
             Ok(()) => Ok(Box::new(output)),
@@ -131,6 +133,8 @@ struct WledOutput {
     label: String,
     renderer: WledRenderer,
     leds: [usize; 4],
+    /// Follows WLED's gamma and brightness at every write.
+    encoding: Encoding,
     observer: Observer,
 }
 
@@ -153,8 +157,10 @@ impl WledOutput {
 
 impl LedOutput for WledOutput {
     fn write(&mut self, colors: &EdgeColors) -> Result<()> {
+        self.encoding
+            .follow(self.observer.transfer(), self.observer.level());
         self.renderer
-            .render_edges(colors, self.leds, self.observer.transfer(), Instant::now())
+            .render_edges(colors, self.leds, &self.encoding, Instant::now())
             .map_err(|source| {
                 Error::adapter(
                     format!("cannot send colours to WLED at {}", self.label),

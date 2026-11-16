@@ -57,7 +57,14 @@ Processing assumes sRGB; the file source tone-maps HDR before it. YUYV and
 NV12 are sampled in place at full precision; a capture card that names no
 YCbCr matrix gets BT.709 from 720 lines up and BT.601 below. The WLED output
 encodes the linear colours for the gamma WLED applies, read from its
-configuration (sRGB until read; see [`observe.rs`](../../adapters/output-wled/src/observe.rs)). The
+configuration (sRGB until read; see [`observe.rs`](../../adapters/output-wled/src/observe.rs)).
+Unless the output's `dither` is off, it dithers each LED between the two
+light levels WLED can show around the wanted light (its gamma table, then its
+brightness), with a fixed threshold per LED place shared by the LED's three
+channels, so dim colours average out across the strip without flicker; off,
+it rounds to the nearest byte. WLED's current limiter, RGBW auto-white and
+colour correction are not modelled
+([`dither.rs`](../../adapters/output-wled/src/dither.rs)). The
 settings' chosen style is resolved to plain values when `Processing::config`
 builds the processor's `Config`; the processor never learns about styles.
 

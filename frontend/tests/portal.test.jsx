@@ -1830,6 +1830,29 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
   }
 });
 
+test('smooth dark colours waits under Advanced in the WLED panel, on unless turned off', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  const advanced = () => button('Advanced', form('Your lights'));
+  const smooth = () => field('output.dither');
+  try {
+    await openEditor('Lights');
+    assert.equal(advanced().getAttribute('aria-expanded'), 'false');
+    assert(smooth().closest('[hidden]'));
+    assert.equal(smooth().checked, true, 'on while the settings leave it out');
+    await click(advanced());
+    assert(!smooth().closest('[hidden]'));
+    await click(smooth());
+    await submit(form('Your lights'));
+    assert.deepEqual(fixture.snapshot().settings.output, {
+      ...output,
+      dither: false,
+    });
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('each edge’s LED count is typed on that edge of the drawing', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {

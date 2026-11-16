@@ -40,6 +40,8 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | LED counts differ | WLED's own LED count (**Config → LED Preferences**) is not the sum of Prysm's edges: with fewer in Prysm the last LEDs stay dark, with more the last edge is cut short. Correct whichever is wrong. |
 | LEDs run the wrong way | The strip must start at the bottom-left corner and run clockwise (seen from the front). Check the per-edge counts. |
 | Dark or washed-out colours | Check WLED's brightness and power limit. With a settings PIN in WLED, Prysm cannot read its gamma: set gamma for colour to 2.2 ([prepare WLED](configuration.md#1-prepare-wled)). |
+| Dark scenes twinkle or shimmer | Turn off **Smooth dark colours** under **Advanced** on the Lights page ([lights](configuration.md#video-source-and-lights)). |
+| Dim colours fade in steps or change colour as they fade | Keep **Smooth dark colours** on (the default) under **Advanced** on the Lights page. |
 | Black bars still lit | Wait a second or two after the picture changes. Very dark scenes keep the last crop. |
 
 ## LG TV

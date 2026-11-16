@@ -491,11 +491,13 @@ export interface components {
             width?: number;
         };
         /**
-         * @description Where the device is and how many LEDs each screen edge has:
+         * @description Where the device is, how many LEDs each screen edge has, and whether
+         *     dim colours are dithered (on unless `false`):
          *
          *     ```json
          *     { "kind": "wled", "address": "wled.local",
-         *       "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 } }
+         *       "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 },
+         *       "dither": true }
          *     ```
          */
         WledSettings: {
@@ -510,6 +512,13 @@ export interface components {
              * @example [fe80::1]:8080
              */
             address: string;
+            /**
+             * @description Mix neighbouring LEDs between the few levels WLED shows for dim
+             *     colours, so they fade evenly and keep their hue. False: each LED
+             *     takes the nearest byte, for a strip on which dark scenes twinkle.
+             * @default true
+             */
+            dither?: boolean;
             /** @enum {string} */
             kind: "wled";
             leds: components["schemas"]["LedCounts"];

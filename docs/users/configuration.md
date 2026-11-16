@@ -189,6 +189,13 @@ went: **Saved. Picture arriving.**, or why it does not work. Until it works,
 **Go back to the previous video source** (or lights) puts the old one back.
 The options few setups change are under **Advanced**.
 
+On the Lights page, **Advanced → Smooth dark colours** (on by default) lets
+neighbouring LEDs mix the few brightness steps WLED has for dim colours, so
+dark scenes fade evenly and keep their colour instead of stepping. Each LED
+stays still while the picture does. Turn it off if dark scenes twinkle; each
+LED then shows the nearest step. In the settings file it is
+`"dither": false` under `output`.
+
 If someone changed the same part in another browser, Prysm asks: **Use
 theirs** shows their settings, **Keep mine** saves yours.
 

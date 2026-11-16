@@ -7,8 +7,9 @@
 //!   next open resolves again.
 //! - `write` sends colours as DDP over UDP (port 4048), clockwise from the
 //!   bottom-left corner, encoded for the gamma WLED applies (read with its
-//!   configuration; sRGB until then). A frame the network refuses is dropped;
-//!   `write` fails once sends have kept failing for 3 s.
+//!   configuration; sRGB until then) and, unless `dither` is off, dithered
+//!   over the levels WLED shows at its brightness. A frame the network
+//!   refuses is dropped; `write` fails once sends have kept failing for 3 s.
 //! - `idle` powers the device off or returns it to its own effect; a failed open
 //!   turns it off before returning.
 //! - `observe` checks WLED's own state about once a second without waiting for
@@ -28,6 +29,7 @@
 mod address;
 mod ddp;
 mod discover;
+mod dither;
 mod http;
 mod observe;
 mod output;

@@ -5,13 +5,17 @@
 //!
 //! WLED owns brightness, channel order and the realtime timeout, and raises
 //! each byte to its colour gamma before driving the LEDs; the encoding undoes
-//! that, so the light is the intended linear value. Sending never blocks and
+//! that, so the light is the intended linear value. By default it dithers
+//! over the few levels WLED shows at the dark end (see `dither`); with
+//! dithering off it rounds to the nearest byte. WLED's current limiter, RGBW
+//! auto-white and colour correction are not modelled. Sending never blocks and
 //! never retries: a frame the socket refuses (`WouldBlock` on a full buffer,
 //! no route while ARP re-resolves) is dropped, and the send error is returned
 //! only once sends have kept failing for [`SEND_GRACE`]. Empty frames send
 //! nothing, shorter frames leave the trailing LEDs unchanged, and frames over
 //! 65535 LEDs are rejected.
 
+use crate::dither::Encoding;
 use ddp_rs::connection::DDPConnection;
 use ddp_rs::error::DDPError;
 use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
@@ -47,6 +51,12 @@ impl Gamma {
     /// `None` unless finite.
     pub(crate) fn new(value: f32) -> Option<Self> {
         value.is_finite().then(|| Self(value.clamp(1.0, 3.0)))
+    }
+
+    /// WLED's gamma table entry for `byte`: `(int)(powf(i / 255, gamma) *
+    /// 255 + 0.5)` (`calcGammaTable`), the byte itself at gamma 1.
+    pub(crate) fn correct(self, byte: u8) -> u8 {
+        quantize((f32::from(byte) / 255.0).powf(self.0))
     }
 }
 
@@ -197,13 +207,14 @@ impl WledRenderer {
     /// Output starts at the bottom-left corner and runs clockwise, as viewed from
     /// the screen's front: left bottom-to-top, top left-to-right, right
     /// top-to-bottom, bottom right-to-left. Zero skips an edge.
-    /// Interpolation happens in linear light, followed by `transfer`'s encoding.
+    /// Interpolation happens in linear light, followed by `encoding`, which
+    /// is given each LED's place in that order.
     /// `now` is when the frame is sent, for [`SEND_GRACE`].
     pub(crate) fn render_edges(
         &mut self,
         edges: &EdgeColors,
         led_counts: [usize; 4],
-        transfer: Transfer,
+        encoding: &Encoding,
         now: Instant,
     ) -> Result<(), DDPError> {
         let total = led_counts
@@ -213,22 +224,25 @@ impl WledRenderer {
         if !self.prepare(total)? {
             return Ok(());
         }
-        for (strip, count, reverse) in [
+        let colors = [
             (&edges.left, led_counts[3], true),
             (&edges.top, led_counts[0], false),
             (&edges.right, led_counts[1], false),
             (&edges.bottom, led_counts[2], true),
-        ] {
-            for i in 0..count {
-                let index = if reverse { count - 1 - i } else { i };
-                let color = strip.color_at(index, count).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "LED sample index out of bounds",
-                    )
-                })?;
-                self.rgb.push(transfer.encode(color));
-            }
+        ]
+        .into_iter()
+        .flat_map(|(strip, count, reverse)| {
+            (0..count).map(move |i| strip.color_at(if reverse { count - 1 - i } else { i }, count))
+        });
+        // At most 65535 LEDs (`prepare`), so the place fits.
+        for (led, color) in (0..).zip(colors) {
+            let color = color.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "LED sample index out of bounds",
+                )
+            })?;
+            self.rgb.push(encoding.encode(color, led));
         }
         let sent = self.connection.write(&self.rgb.0).map(drop);
         self.failed.tolerate(sent, now)
@@ -257,6 +271,10 @@ mod tests {
     use ddp_rs::protocol::DataType;
     use prysm_core::{ColorStrip, LinearColor};
     use std::time::Duration;
+
+    /// Undithered sRGB: the layout tests check where colours go, not how
+    /// they are encoded.
+    const NEAREST: Encoding = Encoding::Nearest(Transfer::Srgb);
 
     fn receiver() -> (WledRenderer, UdpSocket) {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -340,7 +358,7 @@ mod tests {
             ColorStrip::new(vec![LinearColor::black(), LinearColor::new(0.0, 0.0, 1.0)]).unwrap(),
         );
         renderer
-            .render_edges(&edges, [3, 1, 2, 2], Transfer::Srgb, Instant::now())
+            .render_edges(&edges, [3, 1, 2, 2], &NEAREST, Instant::now())
             .unwrap();
         let bytes = receive(&socket);
         let packet = PacketRef::from_bytes(&bytes).unwrap();
@@ -364,7 +382,7 @@ mod tests {
             ..EdgeColors::default()
         };
         renderer
-            .render_edges(&edges, [0, 0, 1, 0], Transfer::Srgb, Instant::now())
+            .render_edges(&edges, [0, 0, 1, 0], &NEAREST, Instant::now())
             .unwrap();
         let bytes = receive(&socket);
         assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [188, 188, 188]);
@@ -375,12 +393,7 @@ mod tests {
         let (mut renderer, socket) = receiver();
         renderer.render(&[]).unwrap();
         renderer
-            .render_edges(
-                &EdgeColors::default(),
-                [0; 4],
-                Transfer::Srgb,
-                Instant::now(),
-            )
+            .render_edges(&EdgeColors::default(), [0; 4], &NEAREST, Instant::now())
             .unwrap();
         assert_no_packet(&socket);
     }
@@ -396,12 +409,7 @@ mod tests {
                 [color.r, color.g, color.b]
             );
             renderer
-                .render_edges(
-                    &EdgeColors::default(),
-                    [1; 4],
-                    Transfer::Srgb,
-                    Instant::now(),
-                )
+                .render_edges(&EdgeColors::default(), [1; 4], &NEAREST, Instant::now())
                 .unwrap();
             let bytes = receive(&socket);
             assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0; 12]);
@@ -415,7 +423,7 @@ mod tests {
         let edges = EdgeColors::default();
         for counts in [[65536, 0, 0, 0], [usize::MAX, 1, 0, 0]] {
             assert!(matches!(
-                renderer.render_edges(&edges, counts, Transfer::Srgb, Instant::now()),
+                renderer.render_edges(&edges, counts, &NEAREST, Instant::now()),
                 Err(DDPError::Disconnect(e)) if e.kind() == io::ErrorKind::InvalidInput
             ));
         }
@@ -448,7 +456,7 @@ mod tests {
         let mut renderer = WledRenderer::new("127.0.0.1:0").unwrap();
         let edges = EdgeColors::default();
         let start = Instant::now();
-        let mut send = |at| renderer.render_edges(&edges, [1, 0, 0, 0], Transfer::Srgb, start + at);
+        let mut send = |at| renderer.render_edges(&edges, [1, 0, 0, 0], &NEAREST, start + at);
         assert!(send(Duration::ZERO).is_ok());
         assert!(send(SEND_GRACE - Duration::from_millis(1)).is_ok());
         let error = send(SEND_GRACE).unwrap_err();
@@ -511,6 +519,36 @@ mod tests {
     }
 
     #[test]
+    fn gamma_table_is_wleds() {
+        // WLED 0.15's built-in gamma 2.8 table (`colors.cpp`), which 16
+        // computes with the same formula.
+        #[rustfmt::skip]
+        const WLED_2_8: [u8; 256] = [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2,
+            2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5,
+            5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10,
+            10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16,
+            17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25,
+            25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36,
+            37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50,
+            51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68,
+            69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89,
+            90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 109, 110, 112, 114,
+            115, 117, 119, 120, 122, 124, 126, 127, 129, 131, 133, 135, 137, 138, 140, 142,
+            144, 146, 148, 150, 152, 154, 156, 158, 160, 162, 164, 167, 169, 171, 173, 175,
+            177, 180, 182, 184, 186, 189, 191, 193, 196, 198, 200, 203, 205, 208, 210, 213,
+            215, 218, 220, 223, 225, 228, 231, 233, 236, 239, 241, 244, 247, 249, 252, 255,
+        ];
+        let gamma = Gamma::new(2.8).unwrap();
+        for byte in 0..=u8::MAX {
+            assert_eq!(gamma.correct(byte), WLED_2_8[usize::from(byte)], "{byte}");
+            assert_eq!(Gamma::LINEAR.correct(byte), byte);
+        }
+    }
+
+    #[test]
     fn edges_are_encoded_with_the_transfer_given() {
         let (mut renderer, socket) = receiver();
         let edges = EdgeColors {
@@ -522,7 +560,12 @@ mod tests {
         };
         let mut send = |transfer| {
             renderer
-                .render_edges(&edges, [0, 0, 1, 0], transfer, Instant::now())
+                .render_edges(
+                    &edges,
+                    [0, 0, 1, 0],
+                    &Encoding::Nearest(transfer),
+                    Instant::now(),
+                )
                 .unwrap();
             PacketRef::from_bytes(&receive(&socket))
                 .unwrap()

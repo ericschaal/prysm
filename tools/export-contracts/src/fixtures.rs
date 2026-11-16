@@ -345,6 +345,7 @@ fn adapter_sections() -> Value {
             &WledSettings {
                 address: "192.0.2.1".into(),
                 leds: LedCounts { top: 10, left: 4, ..LedCounts::default() },
+                dither: true,
             },
         )],
         "WebosSettings": [AdapterSettings::new(

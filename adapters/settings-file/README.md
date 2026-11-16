@@ -33,7 +33,8 @@ the adapter's factory, not here.
   "output": {
     "kind": "wled",
     "address": "wled.local",
-    "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 }
+    "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 },
+    "dither": true
   },
   "processing": {
     "brightness_percent": 80,
