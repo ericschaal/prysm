@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prysm hardware acceptance runner (docs/developers/acceptance.md).
 
-  run.py desktop [--source file|file:PATH|device] [--display-check]
+  run.py desktop [--source file|file:PATH|device] [--display-check | --cast]
   run.py tv --tv-is-free [--flavour full|slim] [--receiver URL] [--wss-url URL] [--sweep]
   run.py eyes [--portal URL]
   run.py restore-wled SNAPSHOT.json
@@ -43,6 +43,8 @@ def arguments(argv):
     parser.add_argument('--wled', help='WLED host[:port], overrides the config')
     parser.add_argument('--source', default='file', help='desktop: file, file:PATH or device')
     parser.add_argument('--display-check', action='store_true')
+    parser.add_argument('--cast', action='store_true',
+                        help='desktop --source device: play the generated clip on the [chromecast] the card records')
     parser.add_argument('--no-build', action='store_true', help='use target/release/prysm-headless as it is')
     parser.add_argument('--seconds', type=int, help='desktop: fps sample length')
     parser.add_argument('--tv-is-free', action='store_true', help='tv: the owner said the TV may be used now')
@@ -57,6 +59,10 @@ def arguments(argv):
         args.source, args.source_path = 'file', args.source[5:]
     if args.source not in ('file', 'device'):
         parser.error('--source is file, file:PATH or device')
+    if args.cast and args.source != 'device':
+        parser.error('--cast plays the clip on the Chromecast the capture card records: use it with --source device')
+    if args.cast and args.display_check:
+        parser.error('--cast and --display-check both need the capture card\'s input: run them separately')
     if args.stage == 'restore-wled' and not args.snapshot:
         parser.error('restore-wled needs the snapshot file')
     return args
@@ -119,7 +125,8 @@ def main(argv=None):
     stage = STAGES[args.stage]
     steps = stage.steps(config, args)
     if args.dry_run:
-        plan.print_plan(args.stage, steps, getattr(stage, 'CLEANUPS', ()),
+        cleanups = stage.cleanups(config, args) if hasattr(stage, 'cleanups') else getattr(stage, 'CLEANUPS', ())
+        plan.print_plan(args.stage, steps, cleanups,
                         getattr(stage, 'cleanup_commands', lambda config: ())(config))
         plan.selected(steps, args.only, args.start)
         return 0

@@ -29,6 +29,17 @@ preset = "balanced"
 # Port of the local colour page for --display-check (localhost only).
 display_port = 18790
 
+[chromecast]
+# desktop --source device --cast: the Chromecast whose HDMI the capture card records.
+# ADB serial (required for --cast): the USB serial from `adb devices`, or
+# HOST:PORT after your own `adb connect` for wireless debugging. The runner reads
+# the Chromecast's Wi-Fi address over ADB and casts to it (port 8009).
+adb_serial = "0123456789ABCD"
+# Port on this computer that serves the clip to the Chromecast.
+serve_port = 18792
+# Seconds the colour checks wait after PLAYING for the player overlay to clear.
+settle_seconds = 5.0
+
 [tv]
 # The TV's address; ssh defaults to root@ADDRESS (an ssh config alias also works).
 address = "192.168.1.50"

@@ -1,0 +1,13 @@
+# The acceptance runner as a uv project, for its one third-party library
+# (PyChromecast, used only by `desktop --cast`). Run from the repository root:
+#   uv run --project scripts/acceptance scripts/acceptance/run.py desktop ...
+# Stages that do not cast also run with plain python3.
+[project]
+name = "prysm-acceptance"
+version = "0.1.0"
+description = "Prysm's hardware acceptance runner (docs/developers/acceptance.md)"
+requires-python = ">=3.11"
+dependencies = ["pychromecast>=14,<15"]
+
+[tool.uv]
+package = false

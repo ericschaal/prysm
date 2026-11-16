@@ -23,6 +23,8 @@ settings.json
 
 # The acceptance runner's local addresses (scripts/acceptance/config.example.toml)
 /scripts/acceptance/config.toml
+# Its uv environment (uv run --project scripts/acceptance)
+/scripts/acceptance/.venv/
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

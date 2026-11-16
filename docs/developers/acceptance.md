@@ -12,26 +12,32 @@ cp scripts/acceptance/config.example.toml scripts/acceptance/config.toml   # the
 python3 scripts/acceptance/run.py desktop --dry-run
 python3 scripts/acceptance/run.py desktop
 python3 scripts/acceptance/run.py desktop --source device --display-check
+uv run --project scripts/acceptance scripts/acceptance/run.py desktop --source device --cast
 python3 scripts/acceptance/run.py tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
 python3 scripts/acceptance/run.py eyes
 python3 scripts/acceptance/run.py restore-wled work/acceptance/RUN/wled-snapshot.json
 ```
 
-Python 3.11+ standard library only. `--dry-run` prints every step, HTTP call
+Python 3.11+. Every stage runs with the standard library alone, except
+`--cast`, which needs [PyChromecast](https://github.com/home-assistant-libs/pychromecast).
+`scripts/acceptance` is a [uv](https://docs.astral.sh/uv/) project for that
+(`pyproject.toml`, `uv.lock`); `uv run --project scripts/acceptance` from the
+repository root installs it into `scripts/acceptance/.venv` and runs the
+runner with it. The tests need nothing installed. `--dry-run` prints every step, HTTP call
 and command (TV commands as they run there) and contacts nothing. `--only
 NAME[,NAME]` and `--from NAME` (patterns over step names) select checks; setup
 and cleanup steps always run, so a selected check finds what it needs (for
 `tv`, a package is built and installed only when one of its checks is
 selected). The exit
 code is 0 when nothing failed (skips allowed), 1 on a failure, 2 on bad usage.
-`config.toml` (ignored by git) holds the addresses (WLED, TV, receiver) and
+`config.toml` (ignored by git) holds the addresses (WLED, TV, receiver), the Chromecast's ADB serial and
 the LED counts; no address is written in the code.
 
 ## Stages
 
 | Stage | Needs | Person |
 | --- | --- | --- |
-| `desktop` | WLED; FFmpeg 9+ for the file source, or a capture card | Only for `--display-check` set-up |
+| `desktop` | WLED; FFmpeg 9+ for the file source, or a capture card (with `--cast`: a Chromecast feeding it, FFmpeg, adb and uv) | Only for `--display-check` set-up |
 | `tv` | The TV (only when its owner says it is free: `--tv-is-free`), WLED, the webOS SDK unless IPKs are given | Standby/wake, and removing the app unless `tv.ares_device` is set |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
@@ -56,7 +62,55 @@ API:
 - `--display-check`: when the card records this Mac's HDMI output, a local
   page the runner controls shows red, green, blue, white and an edge pattern;
   each edge must come out as that colour;
+- `--cast`: when the card records a Chromecast, the runner plays the
+  generated clip on it (see below), so each edge must come out as the clip's
+  colour, as with the file source;
 - SIGTERM: exit code 0 and WLED released.
+
+#### The Chromecast bench (`--cast`)
+
+Without a picture of its own, a capture card shows a "no input" splash, so a
+device run could only check that the edges are not black. With `--cast`, the
+`desktop.chromecast` step puts a known picture on the Chromecast that feeds
+the card:
+
+1. ADB (`chromecast.adb_serial`) must answer `device`; the runner reads
+   `stay_on_while_plugged_in`, sets it to 7 (screen stays on while powered),
+   wakes the device, waits until it reports `mWakefulness=Awake` and reads
+   its Wi-Fi (`wlan0`) address;
+2. it serves the generated `edges.mp4` (30 minutes, longer than the stage, as
+   the receiver does not loop) from this computer, on the address that routes
+   to the Chromecast and `chromecast.serve_port`; only that file, with byte
+   ranges;
+3. it connects to that address (no discovery), plays the clip in the
+   default media receiver and waits up to 30 s for `PLAYING`.
+
+The colour check waits `settle_seconds` after `PLAYING` for the player's
+overlay to clear, checks that the clip is still playing and compares each
+edge with the clip's colour by its nearest named colour, which absorbs the
+shift through HDMI and the card. The capture re-open check also needs the clip
+still playing. At the end, also after a failure or SIGTERM, the media is
+stopped, the receiver quit, the server stopped and
+`stay_on_while_plugged_in` put back as it was.
+
+One-time set-up of the Chromecast (with Google TV):
+
+- set it up with the Google Home app on the same Wi-Fi network as this
+  computer;
+- enable Developer options (Settings > System > About, select Android TV OS
+  build seven times), then USB debugging; connect it to this computer by USB
+  (recommended: that also powers it), run `adb devices` and allow this
+  computer on the TV; set `adb_serial` to the serial `adb devices` lists;
+- wireless instead of USB: enable Wireless debugging, pair once with
+  `adb pair HOST:PAIRPORT CODE` (Settings > System > Developer options >
+  Wireless debugging > Pair device), then before each run
+  `adb connect HOST:PORT` with the port that screen shows (it changes) and
+  set `adb_serial = "HOST:PORT"`. The runner does not pair or connect.
+
+`[chromecast]` in `config.toml`: `adb_serial` (required for `--cast`),
+`serve_port` (default 18792) and `settle_seconds` (default 5). The ADB commands are templates in
+`commands.py` like every other command. `--cast` is refused with the file
+source and with `--display-check`.
 
 WLED's gamma is not observable through Prysm's API, so it is a SKIP here and a
 question in `eyes`. For a rehearsal without lights, run the stand-in
@@ -111,7 +165,9 @@ calibration flow, the portal on a phone, and a cold boot by unplugging.
   `setup.sh` and the supervisor's `uninstall`, and call Prysm's own Luna
   methods. Nothing writes to system partitions or deletes
   `/var/lib/io.prysm.tv`. [Tests](../../scripts/tests/test_acceptance_commands.py)
-  enumerate every template and check the paths it names.
+  enumerate every template and check the paths it names. On the Chromecast,
+  ADB only reads its state and Wi-Fi address, wakes it and reads or sets
+  `stay_on_while_plugged_in`; there is no free-form `adb shell`.
 - **Bounded.** Every command has a timeout; `luna-send` runs with its stdin
   held open and a remote `timeout`, as `install-ipk.sh` does.
 - **Left as found.** The `tv` stage saves `getState`, the files in

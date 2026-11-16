@@ -12,6 +12,10 @@ boot hook and data directory, through the documented install path
 supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
+
+On the Chromecast (`desktop --cast`), ADB only reads its state and Wi-Fi
+address, wakes it and reads or sets the one keep-awake setting; there is no
+free-form `adb shell`.
 """
 from dataclasses import dataclass, field
 import json
@@ -264,9 +268,57 @@ def ffmpeg_edges_clip(out, width, height, fps, seconds, edges):
         f'drawbox=x={width - band_w}:y={band_h}:w={band_w}:h={height - 2 * band_h}:color=0x{edges["right"]}:t=fill',
     ]
     source = f'color=c=0x404040:s={width}x{height}:r={fps}:d={seconds},' + ','.join(boxes)
+    # faststart: the index first, so a player streaming it over HTTP can start at once.
     return Command('local.ffmpeg-clip',
                    ('ffmpeg', '-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', source,
-                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', _local_file(out, 'clip')), 300)
+                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+                    _local_file(out, 'clip')), 300)
+
+
+# ---- the Chromecast's ADB (USB, or wireless debugging connected by hand) ----
+
+_ADB_SERIAL = re.compile(r'[A-Za-z0-9]{4,32}|[A-Za-z0-9][A-Za-z0-9.-]*:[0-9]{1,5}')
+# stay_on_while_plugged_in is a bit mask: 1 AC, 2 USB, 4 wireless charging, 8 dock.
+STAY_ON = 7
+
+
+def adb_serial(serial):
+    """A USB serial or HOST:PORT; never an option."""
+    return _check(_ADB_SERIAL, serial, 'chromecast.adb_serial')
+
+
+def _adb(template, serial, *words, timeout=15):
+    return Command(template, ('adb', '-s', adb_serial(serial), *words), timeout)
+
+
+def adb_get_state(serial):
+    """`device` when ADB reaches the Chromecast."""
+    return _adb('adb.get-state', serial, 'get-state')
+
+
+def adb_wake(serial):
+    return _adb('adb.wake', serial, 'shell', 'input keyevent KEYCODE_WAKEUP')
+
+
+def adb_wakefulness(serial):
+    """The power manager's state, `mWakefulness=Awake` when the screen is on (read-only)."""
+    return _adb('adb.wakefulness', serial, 'shell', 'dumpsys power | grep mWakefulness')
+
+
+def adb_wifi_address(serial):
+    """The Wi-Fi interface's IPv4 address line (read-only)."""
+    return _adb('adb.wifi-address', serial, 'shell', 'ip -f inet -o addr show wlan0')
+
+
+def adb_stay_on_get(serial):
+    return _adb('adb.stay-on-get', serial, 'shell', 'settings get global stay_on_while_plugged_in')
+
+
+def adb_stay_on_put(serial, value):
+    """Set the keep-awake mask: `STAY_ON`, or the value read before (0 to 15)."""
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 15:
+        raise Refused(f'stay_on_while_plugged_in: {value!r}')
+    return _adb('adb.stay-on-put', serial, 'shell', f'settings put global stay_on_while_plugged_in {value}')
 
 
 # The allow-list: every template, with sample parameters for the tests and
@@ -293,4 +345,10 @@ TEMPLATES = {
     'local.headless': lambda: headless('target/release/prysm-headless', 'settings.json', '127.0.0.1:8787'),
     'local.ffmpeg-clip': lambda: ffmpeg_edges_clip(
         'clip.mp4', 640, 360, 30, 60, {'top': 'ff0000', 'right': '00ff00', 'bottom': '0000ff', 'left': 'ffff00'}),
+    'adb.get-state': lambda: adb_get_state('0123456789ABCD'),
+    'adb.wake': lambda: adb_wake('0123456789ABCD'),
+    'adb.wakefulness': lambda: adb_wakefulness('0123456789ABCD'),
+    'adb.wifi-address': lambda: adb_wifi_address('0123456789ABCD'),
+    'adb.stay-on-get': lambda: adb_stay_on_get('0123456789ABCD'),
+    'adb.stay-on-put': lambda: adb_stay_on_put('192.0.2.60:37000', STAY_ON),
 }

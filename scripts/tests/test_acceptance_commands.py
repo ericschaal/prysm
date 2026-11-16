@@ -38,7 +38,7 @@ class AllowList(unittest.TestCase):
     def test_every_command_builder_is_listed(self):
         builders = {name for name, value in vars(commands).items()
                     if callable(value) and not name.startswith('_') and getattr(value, '__module__', '') == 'commands'
-                    and name[0].islower() and name not in ('ssh_target', 'field')}
+                    and name[0].islower() and name not in ('ssh_target', 'adb_serial', 'field')}
         produced = {factory().template for factory in commands.TEMPLATES.values()}
         self.assertEqual(set(commands.TEMPLATES), produced)
         self.assertEqual(len(builders), len(commands.TEMPLATES), sorted(builders))
@@ -83,6 +83,23 @@ class AllowList(unittest.TestCase):
                 self.assertTrue(command.hold_stdin, command.template)
                 self.assertTrue(command.remote.startswith('timeout '), command.template)
 
+    def test_adb_runs_only_the_keep_awake_commands(self):
+        serial = '0123456789ABCD'
+        self.assertEqual({name: factory().argv for name, factory in commands.TEMPLATES.items()
+                          if name.startswith('adb.')}, {
+            'adb.get-state': ('adb', '-s', serial, 'get-state'),
+            'adb.wake': ('adb', '-s', serial, 'shell', 'input keyevent KEYCODE_WAKEUP'),
+            'adb.wakefulness': ('adb', '-s', serial, 'shell', 'dumpsys power | grep mWakefulness'),
+            'adb.wifi-address': ('adb', '-s', serial, 'shell', 'ip -f inet -o addr show wlan0'),
+            'adb.stay-on-get': ('adb', '-s', serial, 'shell', 'settings get global stay_on_while_plugged_in'),
+            'adb.stay-on-put': ('adb', '-s', '192.0.2.60:37000', 'shell',
+                                'settings put global stay_on_while_plugged_in 7'),
+        })
+        self.assertEqual(commands.adb_stay_on_put(serial, 0).argv[-1], 'settings put global stay_on_while_plugged_in 0')
+        for name, factory in commands.TEMPLATES.items():
+            if factory().argv[0] == 'adb':
+                self.assertTrue(name.startswith('adb.'), name)
+
     def test_parameters_are_checked_not_quoted(self):
         refused = [
             lambda: commands.tv_reachable('-oProxyCommand=sh'),
@@ -100,6 +117,13 @@ class AllowList(unittest.TestCase):
             lambda: commands.headless('bin', 'settings.json', '0.0.0.0:8787 --start'),
             lambda: commands.ffmpeg_edges_clip('c.mp4', 640, 360, 30, 10, {'top': "ff0000';x", 'right': '00ff00',
                                                                             'bottom': '0000ff', 'left': 'ffff00'}),
+            lambda: commands.adb_get_state('-H evil'),
+            lambda: commands.adb_get_state('0123; reboot'),
+            lambda: commands.adb_get_state('ABC'),
+            lambda: commands.adb_wake('host:port'),
+            lambda: commands.adb_stay_on_put('0123456789ABCD', 16),
+            lambda: commands.adb_stay_on_put('0123456789ABCD', '7; reboot'),
+            lambda: commands.adb_stay_on_put('0123456789ABCD', True),
         ]
         for build in refused:
             with self.assertRaises(commands.Refused):
@@ -110,6 +134,7 @@ class AllowList(unittest.TestCase):
             text = path.read_text()
             if path.name != 'commands.py':
                 self.assertNotIn("'ssh'", text, path.name)
+                self.assertNotIn("'adb'", text, path.name)
                 self.assertNotIn('luna://', text, path.name)
             if path.name not in ('transport.py', 'run.py'):
                 self.assertIsNone(re.search(r'subprocess\.(run|Popen|call|check_\w+)\(|os\.system', text), path.name)

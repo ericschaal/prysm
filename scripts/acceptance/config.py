@@ -77,6 +77,13 @@ class Sweep:
 
 
 @dataclass
+class Chromecast:
+    adb_serial: str = ''
+    serve_port: int = 18792
+    settle_seconds: float = 5.0
+
+
+@dataclass
 class Config:
     wled: str = ''
     leds: Leds = field(default_factory=Leds)
@@ -84,6 +91,7 @@ class Config:
     tv: Tv = field(default_factory=Tv)
     receiver: Receiver = field(default_factory=Receiver)
     sweep: Sweep = field(default_factory=Sweep)
+    chromecast: Chromecast = field(default_factory=Chromecast)
     eyes_portal: str = ''
 
 
@@ -116,7 +124,7 @@ def _address(value, name, required=False):
 
 
 def parse(data):
-    unknown = set(data) - {'wled', 'leds', 'desktop', 'tv', 'receiver', 'sweep', 'eyes'}
+    unknown = set(data) - {'wled', 'leds', 'desktop', 'tv', 'receiver', 'sweep', 'eyes', 'chromecast'}
     if unknown:
         raise ConfigError(f'unknown sections {sorted(unknown)}')
     wled = data.get('wled', {})
@@ -127,8 +135,19 @@ def parse(data):
         tv=_section(data, 'tv', Tv),
         receiver=_section(data, 'receiver', Receiver),
         sweep=_section(data, 'sweep', Sweep),
+        chromecast=_section(data, 'chromecast', Chromecast),
         eyes_portal=data.get('eyes', {}).get('portal', ''),
     )
+    cast = config.chromecast
+    if cast.adb_serial:
+        try:
+            commands.adb_serial(cast.adb_serial)
+        except commands.Refused as error:
+            raise ConfigError(str(error)) from error
+    if not 1 <= cast.serve_port <= 65535:
+        raise ConfigError('chromecast.serve_port: 1 to 65535')
+    if not 0 <= cast.settle_seconds <= 60:
+        raise ConfigError('chromecast.settle_seconds: 0 to 60')
     for name, count in config.leds.as_settings().items():
         if not 0 <= count <= 16384:
             raise ConfigError(f'leds.{name}: 0 to 16384')
