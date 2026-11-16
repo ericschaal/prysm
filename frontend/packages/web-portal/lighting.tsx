@@ -18,7 +18,7 @@ import {
   plainFailure,
 } from '@prysm/application-client';
 import type { DeviceBrightness, Input } from '@prysm/contracts/application';
-import type { OutputLighting } from './adapters';
+import { ledCountsDiffer, type OutputLighting } from './adapters';
 
 /** What the lights show while on: screen sync or the output's own effects. */
 export type LightingMode = Exclude<LightingTarget, 'off'>;
@@ -31,6 +31,10 @@ export interface LightingProps {
   outputIssue?: OutputIssue;
   /** The lights' own brightness while it scales screen sync's colours. */
   outputBrightness?: DeviceBrightness;
+  /** How many LEDs the lights themselves say they have. */
+  deviceLedCount?: number;
+  /** How many LEDs Prysm sends: the configured edges' total. */
+  sentLedCount?: number;
   /** Whether frames arrive, while screen sync runs. */
   input?: Input;
   hasCapture: boolean;
@@ -276,6 +280,8 @@ export function LightCard({
   failure,
   outputIssue,
   outputBrightness,
+  deviceLedCount,
+  sentLedCount,
   input,
   hasCapture,
   hasOutput,
@@ -379,6 +385,12 @@ export function LightCard({
     ringHoldMs,
   );
   // The card's one line of words, only when it says what the card does not.
+  const showing =
+    lit &&
+    target === 'processed' &&
+    session.state === 'running' &&
+    !!input?.receiving;
+  const countsDiffer = ledCountsDiffer(deviceLedCount, sentLedCount);
   let info: Info | null = null;
   if (problem)
     info = {
@@ -390,16 +402,17 @@ export function LightCard({
   else if (faulted) info = { tone: 'problem', text: status, retry: false };
   else if (outputIssue && session.state === 'running')
     info = { tone: 'warning', text: describeOutputIssue(outputIssue) };
-  // Screen sync shows at the lights' own brightness too: a low one is named
-  // in place of "Following the screen.", so Prysm at 100 % that looks dim
-  // has its reason. Prysm never changes the lights' setting.
+  // While screen sync shows: LED counts that differ leave some LEDs dark or
+  // some colours unshown, so they come first; then the lights' own
+  // brightness, as a low one is named in place of "Following the screen.",
+  // so Prysm at 100 % that looks dim has its reason. Prysm never changes the
+  // lights' settings.
+  else if (showing && countsDiffer)
+    info = { tone: 'warning', text: countsDiffer };
   else if (
+    showing &&
     outputBrightness &&
-    outputBrightness.percent < deviceBrightnessNoteBelow &&
-    lit &&
-    target === 'processed' &&
-    session.state === 'running' &&
-    input?.receiving
+    outputBrightness.percent < deviceBrightnessNoteBelow
   )
     info = {
       tone: 'note',

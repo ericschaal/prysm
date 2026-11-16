@@ -68,12 +68,14 @@ struct Control {
     observed: Mutex<Observed>,
 }
 
-/// The held output's latest [`LedOutput::observe`](prysm_ports::LedOutput::observe)
-/// and [`LedOutput::brightness`](prysm_ports::LedOutput::brightness).
+/// The held output's latest [`LedOutput::observe`](prysm_ports::LedOutput::observe),
+/// [`LedOutput::brightness`](prysm_ports::LedOutput::brightness) and
+/// [`LedOutput::device_led_count`](prysm_ports::LedOutput::device_led_count).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Observed {
     pub issue: Option<OutputIssue>,
     pub brightness: Option<DeviceBrightness>,
+    pub device_led_count: Option<u32>,
 }
 
 impl Control {

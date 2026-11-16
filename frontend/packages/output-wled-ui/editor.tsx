@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { WledSettings } from '@prysm/contracts/host-desktop';
 import {
   FindDevices,
@@ -20,7 +21,12 @@ const edgeLabels = {
 
 export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
   const scope = useFieldScopeContext();
+  /** The found lights last picked, with the LED count they gave. */
+  const [picked, setPicked] = useState<{ address: string; leds: number }>();
   const total = ledTotal(value.leds);
+  // Said under the drawing while the address is still the picked one's;
+  // the edges stay the person's to fill.
+  const found = picked?.address === value.address ? picked.leds : undefined;
   const over = total > ledTotalLimits.max;
   useCheck(
     'output.leds',
@@ -59,7 +65,14 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
         looking="Looking for WLED lights…"
         nothing="No WLED lights found on this network."
         fallback="Enter the address above."
-        onPick={(address) => onChange({ ...value, address })}
+        onPick={(address, candidate) => {
+          setPicked(
+            candidate.led_count === undefined
+              ? undefined
+              : { address, leds: candidate.led_count },
+          );
+          onChange({ ...value, address });
+        }}
       />
       <fieldset className="leds" data-field="output.leds" tabIndex={-1}>
         <legend>LEDs per edge</legend>
@@ -74,6 +87,14 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
           }}
         />
         <div className="field-note" data-state={problem ? 'error' : 'help'}>
+          <p
+            className="help"
+            data-tone={
+              found !== undefined && found !== total ? 'warning' : undefined
+            }
+          >
+            {found === undefined ? null : `This WLED has ${found} LEDs.`}
+          </p>
           <p className="field-error" data-field-message="output.leds">
             {problem}
           </p>

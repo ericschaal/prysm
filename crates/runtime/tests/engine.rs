@@ -861,6 +861,7 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
                 name: "o".into(),
                 overridden_after: Some(20),
                 brightness: Some(40),
+                device_led_count: Some(120),
                 ..Default::default()
             },
         );
@@ -873,6 +874,11 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
             DeviceBrightness::from_percent(40),
             "the device's own brightness goes with the issue"
         );
+        assert_eq!(
+            reported.device_led_count,
+            Some(120),
+            "and so does its own LED count"
+        );
         assert_eq!(reported.session, SessionState::Running);
         assert!(reported.failure.is_none());
         let writes = log.count("output.write:o");
@@ -884,6 +890,7 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert_eq!(handle.snapshot().borrow().output_issue, None);
         assert_eq!(handle.snapshot().borrow().output_brightness, None);
+        assert_eq!(handle.snapshot().borrow().device_led_count, None);
         engine.shutdown().await.unwrap();
     })
     .await;

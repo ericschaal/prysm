@@ -80,6 +80,14 @@ pub trait LedOutput: Send {
     fn brightness(&self) -> Option<DeviceBrightness> {
         None
     }
+    /// How many LEDs the device itself says it drives, as far as it last
+    /// said; `None` while the output cannot tell. A report, not a failure:
+    /// a count other than the written colours' leaves LEDs dark or colours
+    /// unshown, and writing goes on. Learned and read like
+    /// [`brightness`](Self::brightness).
+    fn device_led_count(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// The device's own brightness while it scales Prysm's colours: the LEDs

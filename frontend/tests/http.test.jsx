@@ -181,7 +181,8 @@ test('candidates are a GET per section and kind, validated', async () => {
   const found = [
     {
       label: 'Living room',
-      detail: '192.0.2.40, 120 LEDs',
+      detail: '192.0.2.40',
+      led_count: 120,
       fields: { address: '192.0.2.40' },
     },
   ];
@@ -209,9 +210,14 @@ test('candidates are a GET per section and kind, validated', async () => {
     assert.equal(error.failure.field, 'output.kind');
     return true;
   });
-  reply = json(200, [{ label: 'x' }]);
-  await assert.rejects(
-    client.candidates('capture', 'device'),
-    /Invalid candidates reply/,
-  );
+  for (const invalid of [
+    [{ label: 'x' }],
+    [{ label: 'x', led_count: '120', fields: {} }],
+  ]) {
+    reply = json(200, invalid);
+    await assert.rejects(
+      client.candidates('capture', 'device'),
+      /Invalid candidates reply/,
+    );
+  }
 });

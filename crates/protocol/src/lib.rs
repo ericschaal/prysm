@@ -51,6 +51,14 @@ pub struct State {
         schema(value_type = Option<schema::DeviceBrightnessSchema>, nullable = false)
     )]
     pub output_brightness: Option<DeviceBrightness>,
+    /// How many LEDs the lights themselves say they have (WLED: its LED
+    /// count), from the same checks; absent while the output cannot tell and
+    /// while no session runs. Prysm sends the configured
+    /// `settings.output.leds` either way: a different count leaves LEDs dark
+    /// or colours unshown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schema(nullable = false, example = 120))]
+    pub device_led_count: Option<u32>,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
     /// absent while not calibrating. Never saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,6 +89,7 @@ impl From<&Snapshot> for State {
             input: snapshot.input,
             output_issue: snapshot.output_issue,
             output_brightness: snapshot.output_brightness,
+            device_led_count: snapshot.device_led_count,
             calibration: snapshot.calibration,
             settings: snapshot.settings.clone(),
             revision: snapshot.revision,
@@ -296,6 +305,10 @@ mod tests {
             "absent while stopped"
         );
         assert!(
+            value.get("device_led_count").is_none(),
+            "absent while stopped"
+        );
+        assert!(
             value.get("calibration").is_none(),
             "absent while not calibrating"
         );
@@ -311,6 +324,7 @@ mod tests {
             }),
             output_issue: Some(OutputIssue::OtherSender),
             output_brightness: DeviceBrightness::from_percent(40),
+            device_led_count: Some(120),
             ..Snapshot::default()
         };
         let running = Snapshot {
@@ -334,6 +348,7 @@ mod tests {
         assert_eq!(value["input"]["receiving"], true);
         assert_eq!(value["output_issue"], "other_sender");
         assert_eq!(value["output_brightness"], json!({ "percent": 40 }));
+        assert_eq!(value["device_led_count"], 120);
         assert!((value["input"]["fps"].as_f64().unwrap() - 29.9).abs() < 1e-4);
     }
 

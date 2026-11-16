@@ -58,6 +58,7 @@ impl Leds {
             Self::Held(output) => Observed {
                 issue: output.observe(),
                 brightness: output.brightness(),
+                device_led_count: output.device_led_count(),
             },
             Self::Untouched | Self::Left(_) | Self::Unknown => Observed::default(),
         }

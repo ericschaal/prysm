@@ -59,7 +59,7 @@
         "description": "Something an adapter found that a person can pick instead of typing, one\nitem of `GET /api/v1/candidates/{section}/{kind}`.",
         "properties": {
           "detail": {
-            "description": "Where it is or what it has, such as `192.168.1.40, 120 LEDs`.",
+            "description": "Where it is or what it has, such as `192.168.1.40`.",
             "type": "string"
           },
           "fields": {
@@ -70,6 +70,13 @@
           "label": {
             "description": "What a person recognises, such as the device's name.",
             "type": "string"
+          },
+          "led_count": {
+            "description": "How many LEDs a found output device says it has, when it says.",
+            "example": 120,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -990,6 +997,13 @@
           "calibration": {
             "$ref": "#/components/schemas/CalibrationPattern",
             "description": "The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;\nabsent while not calibrating. Never saved."
+          },
+          "device_led_count": {
+            "description": "How many LEDs the lights themselves say they have (WLED: its LED\ncount), from the same checks; absent while the output cannot tell and\nwhile no session runs. Prysm sends the configured\n`settings.output.leds` either way: a different count leaves LEDs dark\nor colours unshown.",
+            "example": 120,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
           },
           "failure": {
             "oneOf": [

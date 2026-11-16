@@ -974,6 +974,64 @@ fn an_open_output_reports_wled_brightness() {
     device.expect(&[release(), off()]);
 }
 
+/// WLED showing Prysm's DDP while it drives `count` LEDs.
+fn with_leds(count: u32) -> Reply {
+    si(
+        json!({"on": true, "lor": 0, "bri": 128}),
+        json!({"live": true, "lm": "DDP", "lip": "127.0.0.1", "leds": {"count": count, "fps": 42}}),
+    )
+}
+
+#[test]
+fn wled_led_count_follows_the_state_and_goes_with_an_unanswered_check() {
+    let device = Device::new(vec![
+        with_leds(120),
+        with_leds(96),
+        healthy(),
+        with_leds(120),
+        Reply::Raw(String::new()),
+    ]);
+    let mut observer = device.observer();
+    assert_eq!(observer.led_count(), None, "nothing asked yet");
+    assert_eq!(check(&mut observer), None, "a count is no issue");
+    assert_eq!(observer.led_count(), Some(120));
+    check(&mut observer);
+    assert_eq!(observer.led_count(), Some(96), "changed in WLED");
+    check(&mut observer);
+    assert_eq!(observer.led_count(), None, "a state without one");
+    check(&mut observer);
+    assert_eq!(observer.led_count(), Some(120));
+    assert_eq!(check(&mut observer), Some(OutputIssue::Unreachable));
+    assert_eq!(observer.led_count(), None, "no state, no count");
+}
+
+#[test]
+fn an_open_output_reports_wled_led_count_and_keeps_sending() {
+    let device = Device::new(vec![
+        Reply::Json(OK),
+        Reply::Json(OK),
+        with_leds(120),
+        Reply::Json(OK),
+        Reply::Json(OK),
+    ]);
+    let mut output = device.open(one_each()).unwrap();
+    device.expect(&[release(), live()]);
+    assert_eq!(output.device_led_count(), None, "unknown before a check");
+    let deadline = Instant::now() + WAIT;
+    while output.device_led_count().is_none() {
+        assert!(Instant::now() < deadline, "WLED LED count was not reported");
+        output.write(&EdgeColors::default()).unwrap();
+        assert_eq!(output.observe(), None);
+        thread::sleep(Duration::from_millis(2));
+    }
+    // Four LEDs sent, 120 on the device: reported, and writing goes on.
+    assert_eq!(output.device_led_count(), Some(120));
+    output.write(&EdgeColors::default()).unwrap();
+    device.check_request();
+    output.idle(IdleMode::Off).unwrap();
+    device.expect(&[release(), off()]);
+}
+
 /// WLED 16.0.1's own `/json/cfg`, cut to what Prysm reads, with colour gamma
 /// `col` and "Disable realtime gamma correction" `no_gc`.
 fn gamma_cfg(col: f32, no_gc: bool) -> Reply {

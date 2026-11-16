@@ -177,6 +177,7 @@ fn states() -> Vec<State> {
                 behind: Behind::Output,
             }),
             output_issue: Some(OutputIssue::Overridden),
+            device_led_count: Some(120),
             surface_failures: vec![Error::other("portal listener failed")],
             ..Snapshot::default()
         },
@@ -306,7 +307,8 @@ fn application() -> Value {
         "Candidate": [
             Candidate::new("USB Video", &json!({ "path": "/dev/video0" })).detail("/dev/video0"),
             Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))
-                .detail("192.168.1.40, 120 LEDs"),
+                .detail("192.168.1.40")
+                .led_count(120),
         ],
     })
 }

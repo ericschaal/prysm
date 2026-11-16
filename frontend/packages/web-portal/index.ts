@@ -56,7 +56,12 @@ export {
   SectionEditor,
   type SectionEditorProps,
 } from './section-editor';
-export { sectionStatus, type LiveState, type Status } from './section-state';
+export {
+  sectionStatus,
+  type LiveState,
+  type SavedLights,
+  type Status,
+} from './section-state';
 export { SectionFields } from './section-step';
 export { stepCopy } from './step-copy';
 export { SetupWizard, type SetupWizardProps } from './setup';

@@ -352,10 +352,14 @@ pub struct DeviceBrightnessSchema {
 pub struct CandidateSchema {
     /// What a person recognises, such as the device's name.
     label: String,
-    /// Where it is or what it has, such as `192.168.1.40, 120 LEDs`.
+    /// Where it is or what it has, such as `192.168.1.40`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     detail: Option<String>,
+    /// How many LEDs a found output device says it has, when it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false, example = 120)]
+    led_count: Option<u32>,
     #[schema(schema_with = candidate_fields)]
     fields: Map<String, Value>,
 }
@@ -739,7 +743,8 @@ mod tests {
         ));
         same_shape::<Candidate, CandidateSchema>(
             &Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))
-                .detail("192.168.1.40, 120 LEDs"),
+                .detail("192.168.1.40")
+                .led_count(120),
         );
         for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
             same_shape::<CalibrationPattern, CalibrationPatternSchema>(&CalibrationPattern {

@@ -45,7 +45,11 @@ Nothing is saved until the last step.
    page is not on port 80. Do not type `http://`.
    Enter the number of LEDs on each edge; use 0 for an edge without LEDs.
    Prysm takes 1 to 16384 LEDs in total (the most a WLED device drives;
-   smaller chips such as the ESP8266 stop far earlier).
+   smaller chips such as the ESP8266 stop far earlier). The edges should add
+   up to WLED's own LED count: a device picked from **Find lights** shows its
+   count under the drawing, and while screen sync runs the light card and the
+   Lights page warn when the two differ, for example **The lights have 120
+   LEDs, Prysm sends 96**. Prysm keeps sending either way.
 3. **Review and start.** Check the summary, then choose
    **Save and start screen sync**, or **Save only** to start later.
 

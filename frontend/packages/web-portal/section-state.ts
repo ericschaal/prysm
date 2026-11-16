@@ -6,6 +6,7 @@ import {
   type OutputIssue,
 } from '@prysm/application-client';
 import type { DeviceBrightness, Input } from '@prysm/contracts/application';
+import { ledCountsDiffer } from './adapters';
 import { deviceBrightnessNoteBelow } from './lighting';
 import type { PathState } from './setup-card';
 
@@ -18,6 +19,16 @@ export interface LiveState {
   input?: Input;
   outputIssue?: OutputIssue;
   outputBrightness?: DeviceBrightness;
+  /** How many LEDs the lights themselves say they have. */
+  deviceLedCount?: number;
+}
+
+/** What the saved lights are, beyond their identity. */
+export interface SavedLights {
+  /** Their own effects' name, such as `WLED effects`. */
+  effects?: string;
+  /** How many LEDs Prysm sends them: the configured edges' total. */
+  leds?: number;
 }
 
 /** Whether a section works now, in a few words. */
@@ -43,9 +54,10 @@ export function sectionStatus(
   live: LiveState,
   identity: string | null,
   stalled: boolean,
-  effects = 'Device effects',
+  lights: SavedLights = {},
 ): Status {
   const capture = section === 'capture';
+  const effects = lights.effects ?? 'Device effects';
   const { path, failure, target, outputIssue } = live;
   if (identity === null)
     return {
@@ -117,6 +129,9 @@ export function sectionStatus(
         detail: `${Math.round(path.fps)} fps`,
         picture: true,
       };
+    const differ = ledCountsDiffer(live.deviceLedCount, lights.leds);
+    if (differ)
+      return { tone: 'warning', title: 'LED counts differ', detail: differ };
     const brightness = live.outputBrightness?.percent;
     return {
       tone: 'ok',

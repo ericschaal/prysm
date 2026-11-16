@@ -410,11 +410,14 @@ test('setup offers found devices and lights; the typed fields stay', async () =>
     'output/wled': [
       {
         label: 'Living room',
-        detail: '192.0.2.40, 120 LEDs',
+        detail: '192.0.2.40',
+        led_count: 120,
         fields: { address: '192.0.2.40' },
       },
     ],
   });
+  /** The line under the LED drawing that names the found lights' count. */
+  const found = () => $('.leds > .field-note > .help');
   const portal = await renderPortal(HeadlessWebPortal, {}, undefined, {
     discovery: discovery.client,
   });
@@ -440,9 +443,18 @@ test('setup offers found devices and lights; the typed fields stay', async () =>
     assert.equal(plain($('.found button')), 'Living room192.0.2.40, 120 LEDs');
     await press($('.found button'));
     assert.equal(field('output.address').value, '192.0.2.40');
-    // Per-edge counts are left to the person.
+    // Per-edge counts are left to the person; the found count is beside
+    // them, amber while the edges add up to another.
     assert.equal(field('output.leds.top').value, '0');
+    assert.equal(found().textContent, 'This WLED has 120 LEDs.');
+    assert.equal(found().dataset.tone, 'warning');
     await edit(field('output.leds.top'), 120);
+    assert.equal(found().textContent, 'This WLED has 120 LEDs.');
+    assert.equal(found().dataset.tone, undefined, 'they agree');
+    // Another address typed: the found count no longer applies.
+    await edit(field('output.address'), '192.0.2.41');
+    assert.equal(found().textContent, '');
+    await edit(field('output.address'), '192.0.2.40');
     await next();
     await next();
     assert.deepEqual(fixture.snapshot().settings.capture, {

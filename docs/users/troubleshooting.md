@@ -37,6 +37,7 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | Waiting for video | Prysm runs but no picture arrives. Check the source is playing. After about 3 seconds WLED returns to its own state until video comes back. |
 | No LEDs | Check the WLED address, that WLED allows DDP input, and the LED counts. Allow HTTP and UDP port 4048 from Prysm to WLED. In Docker, enter WLED by IP address. |
 | Light card says WLED is off, overridden or not live | Something else changed WLED (its power button, a live override, another app sending colours). Prysm keeps sending; fix it in WLED. |
+| LED counts differ | WLED's own LED count (**Config → LED Preferences**) is not the sum of Prysm's edges: with fewer in Prysm the last LEDs stay dark, with more the last edge is cut short. Correct whichever is wrong. |
 | LEDs run the wrong way | The strip must start at the bottom-left corner and run clockwise (seen from the front). Check the per-edge counts. |
 | Dark or washed-out colours | Check WLED's brightness and power limit. With a settings PIN in WLED, Prysm cannot read its gamma: set gamma for colour to 2.2 ([prepare WLED](configuration.md#1-prepare-wled)). |
 | Black bars still lit | Wait a second or two after the picture changes. Very dark scenes keep the last crop. |

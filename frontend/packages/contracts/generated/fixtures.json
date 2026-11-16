@@ -66,11 +66,12 @@
       "label": "USB Video"
     },
     {
-      "detail": "192.168.1.40, 120 LEDs",
+      "detail": "192.168.1.40",
       "fields": {
         "address": "192.168.1.40"
       },
-      "label": "Living room"
+      "label": "Living room",
+      "led_count": 120
     }
   ],
   "ColorsEvent": [
@@ -486,6 +487,7 @@
       "target": "off"
     },
     {
+      "device_led_count": 120,
       "failure": null,
       "input": {
         "behind": "output",

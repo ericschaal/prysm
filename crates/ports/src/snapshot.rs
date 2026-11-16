@@ -92,6 +92,11 @@ pub struct Snapshot {
     /// not, while the output cannot tell, and while no session holds the
     /// output.
     pub output_brightness: Option<DeviceBrightness>,
+    /// How many LEDs the device itself says it drives, from the same checks
+    /// and republished with them; the configured edges may say otherwise.
+    /// `None` while the output cannot tell and while no session holds the
+    /// output.
+    pub device_led_count: Option<u32>,
     /// The calibration pattern shown, while the target is `Processed`. Not
     /// persisted; while set, processing runs without smoothing (and without
     /// correction when `uncorrected`), leaving `settings` untouched.

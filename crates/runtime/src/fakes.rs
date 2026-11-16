@@ -228,6 +228,8 @@ pub struct FakeOutputSettings {
     /// `brightness` reports the device's own brightness at this percent
     /// once a frame was written.
     pub brightness: Option<u8>,
+    /// `device_led_count` reports this once a frame was written.
+    pub device_led_count: Option<u32>,
     /// Each `write` takes this long, like a slow device.
     pub write_delay_ms: u64,
     /// `idle` takes this long after recording the call.
@@ -303,6 +305,10 @@ impl LedOutput for FakeOutput {
             .brightness
             .filter(|_| self.writes > 0)
             .and_then(DeviceBrightness::from_percent)
+    }
+
+    fn device_led_count(&self) -> Option<u32> {
+        self.settings.device_led_count.filter(|_| self.writes > 0)
     }
 
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {

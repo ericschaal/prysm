@@ -55,9 +55,12 @@ pub trait OutputFactory: Send + Sync + 'static {
 pub struct Candidate {
     /// What a person recognises, such as the device's name.
     pub label: String,
-    /// Where it is or what it has, such as `192.168.1.40, 120 LEDs`.
+    /// Where it is or what it has, such as `192.168.1.40`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// How many LEDs a found output device says it has, when it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub led_count: Option<u32>,
     /// The settings fields picking it fills, such as `{ "path": "/dev/video0" }`:
     /// part of the kind's settings, merged over what the person has.
     pub fields: Map<String, Value>,
@@ -73,6 +76,7 @@ impl Candidate {
         Self {
             label: label.into(),
             detail: None,
+            led_count: None,
             fields,
         }
     }
@@ -80,6 +84,12 @@ impl Candidate {
     #[must_use]
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    #[must_use]
+    pub fn led_count(mut self, count: u32) -> Self {
+        self.led_count = Some(count);
         self
     }
 }

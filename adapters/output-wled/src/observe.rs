@@ -1,5 +1,6 @@
 //! Whether WLED is showing Prysm's colours, from its own state, how much its
-//! own brightness dims them, and the gamma it applies to them.
+//! own brightness dims them, how many LEDs it drives, and the gamma it
+//! applies to them.
 //!
 //! One request at most every [`EVERY`] (5 × that after a check that got no
 //! usable answer): `GET /json/si`, except that the second check and every
@@ -17,6 +18,9 @@
 //! It raises realtime colours to its colour gamma (`light.gc.col`, reported
 //! as 1 when off) unless "Disable realtime gamma correction"
 //! (`if.live.no-gc`) is on: then they are linear.
+//!
+//! Its LED count is the state check's `info.leds.count`: WLED's total
+//! length, at no extra request.
 //!
 //! Without a configuration read (none yet, or WLED refuses it behind its
 //! settings PIN) no brightness is reported and the gamma is unknown.
@@ -74,6 +78,9 @@ pub struct Observer {
     /// `bri` from the latest state that answered; `None` after one that did
     /// not.
     bri: Option<u8>,
+    /// `info.leds.count` from the latest state that answered; `None` after
+    /// one that did not.
+    leds: Option<u32>,
     /// What scales realtime colours, from the latest configuration read.
     config: Option<Realtime>,
 }
@@ -101,6 +108,7 @@ impl Observer {
             ours: None,
             issue: None,
             bri: None,
+            leds: None,
             config: None,
         }
     }
@@ -124,6 +132,12 @@ impl Observer {
         // WLED's `scaledBri`: the factor scales it, capped at full (by `of`).
         let level = bri * u32::from(config.scale) / 100;
         Some(DeviceBrightness::of(level, FULL))
+    }
+
+    /// How many LEDs WLED drives, from the latest state; `None` until one
+    /// answered and after one that did not.
+    pub fn led_count(&self) -> Option<u32> {
+        self.leds
     }
 
     /// How to encode colours for the gamma WLED applies, from the latest
@@ -244,10 +258,11 @@ impl Observer {
             } else {
                 self.every * BACKOFF
             };
-        self.bri = answer
-            .as_ref()
-            .ok()
-            .and_then(|(status, _)| status.state.bri);
+        let status = answer.as_ref().ok().map(|(status, _)| status);
+        self.bri = status.and_then(|status| status.state.bri);
+        self.leds = status
+            .and_then(|status| status.info.leds)
+            .map(|leds| leds.count);
         self.issue = match answer {
             Ok((status, local)) => self.judge(&status, local),
             Err(error) => {
@@ -338,6 +353,14 @@ struct Info {
     /// Address of the last realtime sender; empty when none.
     #[serde(default)]
     lip: Option<String>,
+    #[serde(default)]
+    leds: Option<Leds>,
+}
+
+#[derive(Deserialize, Clone, Copy)]
+struct Leds {
+    /// WLED's total length: every LED on every output it drives.
+    count: u32,
 }
 
 /// What scales realtime colours, and the gamma it raises them to.

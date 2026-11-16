@@ -12,10 +12,17 @@ type Search =
   | { state: 'found'; found: Candidate[] }
   | { state: 'failed' };
 
+/** What a candidate's line under its name says: `192.168.1.40, 120 LEDs`. */
+const detailOf = ({ detail, led_count }: Candidate) =>
+  [detail, led_count === undefined ? undefined : `${led_count} LEDs`]
+    .filter(Boolean)
+    .join(', ');
+
 /**
  * A button that asks the adapter for `kind` what it finds (devices present,
  * lights on the network) and lists them; picking one fills the field `path`
- * with the candidate's `fields[field]`. The typed field stays the fallback.
+ * with the candidate's `fields[field]` and hands the editor the candidate.
+ * The typed field stays the fallback.
  * Nothing is shown without a discovery client (the portal's `discovery`).
  */
 export function FindDevices({
@@ -41,7 +48,7 @@ export function FindDevices({
   nothing: string;
   /** What to do instead, such as `Enter the path below.` */
   fallback: string;
-  onPick: (value: string) => void;
+  onPick: (value: string, candidate: Candidate) => void;
 }) {
   const discovery = use(DiscoveryContext);
   const scope = useFieldScopeContext();
@@ -90,6 +97,7 @@ export function FindDevices({
       <ul className="found" aria-label="Found">
         {search.found.map((candidate) => {
           const value = candidate.fields[field] as string;
+          const detail = detailOf(candidate);
           return (
             <li key={value}>
               <button
@@ -99,13 +107,11 @@ export function FindDevices({
                 onClick={() => {
                   scope.edited(path);
                   setPicked(value);
-                  onPick(value);
+                  onPick(value, candidate);
                 }}
               >
                 <strong>{candidate.label}</strong>
-                {candidate.detail ? (
-                  <span className="found-detail">{candidate.detail}</span>
-                ) : null}
+                {detail ? <span className="found-detail">{detail}</span> : null}
               </button>
             </li>
           );

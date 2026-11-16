@@ -32,7 +32,7 @@ export interface components {
          *     item of `GET /api/v1/candidates/{section}/{kind}`.
          */
         Candidate: {
-            /** @description Where it is or what it has, such as `192.168.1.40, 120 LEDs`. */
+            /** @description Where it is or what it has, such as `192.168.1.40`. */
             detail?: string;
             /** @description The settings fields picking it fills, such as `{ "path": "/dev/video0" }`: part of the kind's settings, merged over what the person has. */
             fields: {
@@ -40,6 +40,12 @@ export interface components {
             };
             /** @description What a person recognises, such as the device's name. */
             label: string;
+            /**
+             * Format: int32
+             * @description How many LEDs a found output device says it has, when it says.
+             * @example 120
+             */
+            led_count?: number;
         };
         CaptureSettings: components["schemas"]["DeviceSettings"] | components["schemas"]["FileSettings"] | components["schemas"]["RemoteReceiverSettings"];
         /** @description The chosen style, as `Processing.style`. */
@@ -472,6 +478,16 @@ export interface components {
              *     absent while not calibrating. Never saved.
              */
             calibration?: components["schemas"]["CalibrationPattern"];
+            /**
+             * Format: int32
+             * @description How many LEDs the lights themselves say they have (WLED: its LED
+             *     count), from the same checks; absent while the output cannot tell and
+             *     while no session runs. Prysm sends the configured
+             *     `settings.output.leds` either way: a different count leaves LEDs dark
+             *     or colours unshown.
+             * @example 120
+             */
+            device_led_count?: number;
             failure: components["schemas"]["Failure"] | null;
             /**
              * @description Frames arriving from the source, measured about once a second; absent

@@ -36,6 +36,20 @@ export interface LedEdges {
 export const ledCount = (edges: LedEdges) =>
   edges.top + edges.right + edges.bottom + edges.left;
 
+/**
+ * `The lights have 120 LEDs, Prysm sends 96.`: while the lights' own LED
+ * count is known and differs from the configured edges' total (a dark tail,
+ * or the last edge cut short); `null` otherwise.
+ */
+export function ledCountsDiffer(
+  device: number | undefined,
+  sent: number | undefined,
+) {
+  return device === undefined || sent === undefined || device === sent
+    ? null
+    : `The lights have ${device} LEDs, Prysm sends ${sent}.`;
+}
+
 /** A device name never broken at a hyphen ("WLED-Gledopto"). */
 export const unbroken = (name: string) => name.split('-').join('\u2011');
 

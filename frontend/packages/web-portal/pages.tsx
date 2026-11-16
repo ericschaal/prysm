@@ -6,7 +6,12 @@ import type {
 } from '@prysm/application-client';
 import { useRef, type ReactNode, type RefObject } from 'react';
 import { useParams } from 'react-router';
-import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
+import {
+  adapterFor,
+  ledCount,
+  type AdapterSection,
+  type AdapterUis,
+} from './adapters';
 import { CalibrateWizard } from './calibrate';
 import { DiscoveryContext } from './discovery-context';
 import { LightCard } from './lighting';
@@ -174,6 +179,7 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
       input: snapshot.input,
       outputIssue: snapshot.output_issue,
       outputBrightness: snapshot.output_brightness,
+      deviceLedCount: snapshot.device_led_count,
     },
     leave: () => nav.back('settings'),
     showPreview: host.preview ? () => nav.go('preview') : undefined,
@@ -435,6 +441,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   const output = settings.output ?? null;
   const captureUi = capture ? adapterFor(captures, capture.kind) : undefined;
   const outputUi = output ? adapterFor(outputs, output.kind) : undefined;
+  const edges = output ? outputUi?.edges?.(output) : undefined;
   return (
     <div
       className="home-grid"
@@ -447,6 +454,8 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
         failure={snapshot.failure}
         outputIssue={snapshot.output_issue}
         outputBrightness={snapshot.output_brightness}
+        deviceLedCount={snapshot.device_led_count}
+        sentLedCount={edges ? ledCount(edges) : undefined}
         input={snapshot.input}
         hasCapture={!!capture}
         hasOutput={!!output}
@@ -479,7 +488,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
             label: outputUi?.label ?? output.kind,
             facts: outputUi?.facts?.(output) ?? [],
           }}
-          edges={outputUi?.edges?.(output)}
+          edges={edges}
           transports={{
             capture: captureUi?.transport?.(capture),
             output: outputUi?.transport?.(output),

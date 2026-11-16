@@ -144,17 +144,14 @@ impl Browse {
             tracing::debug!(%ip, error = %prysm_ports::chain(error), "WLED device gave no info");
         })
         .ok();
-        let mut detail = address.clone();
-        let mut label = instance;
+        let mut candidate = Candidate::new(instance, &Fields { address: &address }).detail(address);
         if let Some(info) = info {
             if !info.name.trim().is_empty() {
-                label = info.name;
+                candidate.label = info.name;
             }
-            if let Some(Leds { count }) = info.leds {
-                detail = format!("{address}, {count} LEDs");
-            }
+            candidate.led_count = info.leds.map(|leds| leds.count);
         }
-        Candidate::new(label, &Fields { address: &address }).detail(detail)
+        candidate
     }
 }
 
@@ -363,8 +360,9 @@ mod tests {
         assert_eq!(
             found,
             [
-                Candidate::new("Living room", &serde_json::json!({ "address": address }))
-                    .detail(format!("{address}, 120 LEDs"))
+                Candidate::new("Living room", &serde_json::json!({ "address": &address }))
+                    .detail(address)
+                    .led_count(120)
             ]
         );
     }

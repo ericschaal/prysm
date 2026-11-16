@@ -66,7 +66,7 @@ into `@prysm/contracts/application`.
 | `GET /metrics` (only when enabled) | — | `200` Prometheus text; see [Metrics](#metrics). Disabled: `404` like any unknown path |
 | `GET /api/v1/capture/stream` (only with a capture handoff) | WebSocket upgrade, subprotocol `prysm-capture.v4` | `101`: a capture-only TV's frame stream; see [Capture stream](#capture-stream) |
 
-`State` is `{ target, session, input?, output_issue?, calibration?, settings, revision, failure, surface_failures }`.
+`State` is `{ target, session, input?, output_issue?, output_brightness?, device_led_count?, calibration?, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
 `settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
@@ -83,7 +83,11 @@ all is well) says why the lights are not showing its colours: `off` (switched
 off on the device), `overridden` (WLED's live override), `not_live` (the device
 is not taking realtime colours), `other_sender` or `unreachable`. It is not a
 failure: lighting keeps sending, nothing is switched back, and the field
-clears once the device shows the colours again.
+clears once the device shows the colours again. `output_brightness` is the
+device's own brightness while it scales the colours, and `device_led_count`
+how many LEDs the device itself says it has (WLED's LED count); Prysm keeps
+sending `settings.output.leds` either way. Both are absent while the output
+cannot tell and while no session runs.
 
 `input`, while a session runs, is measured about once a second: `fps`
 (frames from the source per second), `receiving`, `sent_fps` (frames whose
@@ -171,9 +175,10 @@ lights" only; nothing polls it.
   segment is `404`. A kind the host does not register in that section is
   `422 invalid` with `field` `capture.kind` or `output.kind`. Other methods
   are `405`. The origin policy applies as to every API call.
-- The reply is a JSON array of `Candidate { label, detail?, fields }`:
+- The reply is a JSON array of `Candidate { label, detail?, led_count?, fields }`:
   `label` is what a person recognises (a device's name), `detail` where it is
-  or what it has (`/dev/video2`, `192.168.1.40, 120 LEDs`), and `fields` the
+  (`/dev/video2`, `192.168.1.40`), `led_count` how many LEDs a found light
+  says it has (`120`), and `fields` the
   part of the kind's settings picking it fills (`{ "path": "/dev/video2" }`,
   `{ "address": "192.168.1.40" }`). Nothing found, or a kind that cannot
   look, is `[]`: the typed fields stay the way to configure it.

@@ -180,4 +180,8 @@ impl LedOutput for WledOutput {
     fn brightness(&self) -> Option<DeviceBrightness> {
         self.observer.brightness()
     }
+
+    fn device_led_count(&self) -> Option<u32> {
+        self.observer.led_count()
+    }
 }

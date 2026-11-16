@@ -143,12 +143,16 @@ export function SectionEditor<S extends AdapterSection>({
     checkForMs,
     0,
   );
+  const edges = saved ? savedUi?.edges?.(saved) : undefined;
   const status = sectionStatus(
     section,
     live,
     identityOf(adapters, saved),
     stalled,
-    saved ? savedUi?.lighting?.(saved).effects : '',
+    {
+      effects: saved ? savedUi?.lighting?.(saved).effects : '',
+      leds: edges ? ledCount(edges) : undefined,
+    },
   );
   const failing = status.tone === 'problem';
   const hint = failing ? savedUi?.trouble : undefined;

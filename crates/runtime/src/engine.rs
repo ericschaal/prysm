@@ -403,10 +403,12 @@ impl Core {
         self.state.send_if_modified(|s| {
             let changed = s.input != input
                 || s.output_issue != observed.issue
-                || s.output_brightness != observed.brightness;
+                || s.output_brightness != observed.brightness
+                || s.device_led_count != observed.device_led_count;
             s.input = input;
             s.output_issue = observed.issue;
             s.output_brightness = observed.brightness;
+            s.device_led_count = observed.device_led_count;
             changed
         });
     }
@@ -426,6 +428,7 @@ impl Core {
             s.input = None;
             s.output_issue = None;
             s.output_brightness = None;
+            s.device_led_count = None;
             s.failure = failure;
             if ended {
                 s.target = LightingTarget::Off;
@@ -592,6 +595,7 @@ impl Core {
             s.input = None;
             s.output_issue = None;
             s.output_brightness = None;
+            s.device_led_count = None;
         });
         let result = end.and_then(SessionEnd::result);
         if missed {

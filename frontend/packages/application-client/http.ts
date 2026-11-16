@@ -239,6 +239,8 @@ function validCandidate(value: unknown): value is Candidate {
     !!candidate &&
     typeof candidate.label === 'string' &&
     (candidate.detail === undefined || typeof candidate.detail === 'string') &&
+    (candidate.led_count === undefined ||
+      Number.isSafeInteger(candidate.led_count)) &&
     !!candidate.fields &&
     typeof candidate.fields === 'object' &&
     !Array.isArray(candidate.fields)

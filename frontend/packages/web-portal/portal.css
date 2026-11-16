@@ -333,6 +333,10 @@ legend {
   color: var(--text-3);
   line-height: var(--leading);
 }
+/* Help that disagrees with what is typed, such as the lights' own LED count. */
+.help[data-tone='warning'] {
+  color: var(--warning);
+}
 .field input:not([type='checkbox'], [type='range'], [type='radio']),
 .field select {
   width: 100%;

@@ -263,6 +263,58 @@ test('the lighting card names a low WLED brightness while screen sync shows', as
   }
 });
 
+test('LED counts that differ are said on Home and on the Lights page', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  const publish = (change) => act(async () => fixture.publish(change));
+  const differ = 'The lights have 120 LEDs, Prysm sends 14.';
+  try {
+    await publish({
+      target: 'processed',
+      session: { state: 'running' },
+      input: { fps: 30, receiving: true },
+      device_led_count: 120,
+    });
+    assert.equal(info(), differ);
+    assert.equal($('.light-info').dataset.tone, 'warning');
+    // Before the lights' own brightness: LEDs dark matter more than dim.
+    await publish({ output_brightness: { percent: 40 } });
+    assert.equal(info(), differ);
+    await publish({ device_led_count: 14 });
+    assert.equal(info(), 'WLED limits brightness to 40%.');
+    await publish({
+      device_led_count: undefined,
+      output_brightness: undefined,
+    });
+    assert.equal(info(), null, 'unknown: nothing to say');
+
+    await publish({ device_led_count: 120 });
+    await openSettings();
+    await openEditor('Lights');
+    assert.equal(now(), `LED counts differ — ${differ}`);
+    assert.equal($('.section-status').dataset.tone, 'warning');
+    const showing = 'Showing screen sync — WLED at 192.0.2.1 · 14\u00a0LEDs';
+    await publish({ device_led_count: 14 });
+    assert.equal(now(), showing);
+    await publish({ device_led_count: undefined });
+    assert.equal(now(), showing);
+
+    // What keeps the lights from showing screen sync at all comes first.
+    await publish({ device_led_count: 120, output_issue: 'unreachable' });
+    assert.match(now(), /^Can’t reach the lights — /);
+    await publish({ output_issue: 'off' });
+    assert.match(now(), /^Not showing screen sync — /);
+    await publish({
+      session: { state: 'stopped' },
+      output_issue: undefined,
+      failure: { kind: 'adapter', section: 'output', message: 'no answer' },
+    });
+    assert.match(now(), /^Lights not responding — /);
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('Home says when video is awaited; the capture rate is in the technical details', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
