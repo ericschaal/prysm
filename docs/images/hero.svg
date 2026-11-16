@@ -55,9 +55,7 @@
       <path d="m16 3 13 24H3L16 3Z" stroke-width="2"/><path d="m16 3 4 24M3 27l15-12 11 12" stroke-width="1.5"/>
     </g>
     <text x="109" y="84" fill="#f3f1fa" font-size="32" font-weight="700" letter-spacing="-1.6">prysm<tspan fill="#b79bff">.</tspan></text>
-    <text x="59" y="330" fill="#f3f1fa" font-size="76" font-weight="500" letter-spacing="-4">Beyond</text>
-    <text x="59" y="414" fill="#f3f1fa" font-size="76" font-weight="500" letter-spacing="-4">the <tspan fill="url(#word)">screen.</tspan></text>
-    <text x="64" y="470" fill="#a9a6ba" font-size="20">LED strips that follow your picture.</text>
-    <text x="64" y="612" fill="#77748a" font-size="13" letter-spacing=".4">Capture card or LG TV  ·  WLED  ·  runs on your own network</text>
+    <text x="59" y="342" fill="#f3f1fa" font-size="76" font-weight="500" letter-spacing="-4">Beyond</text>
+    <text x="59" y="426" fill="#f3f1fa" font-size="76" font-weight="500" letter-spacing="-4">the <tspan fill="url(#word)">screen.</tspan></text>
   </g>
 </svg>

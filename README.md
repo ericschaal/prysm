@@ -3,7 +3,6 @@
 </p>
 
 <p align="center">
-  <strong>LED strips that follow your screen.</strong><br>
   Prysm reads the picture, works out a colour for each LED around the screen
   and sends those colours to WLED.
 </p>
