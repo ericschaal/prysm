@@ -6,6 +6,16 @@ This is a plan, not a description of what exists. The
 This page is what it is to become. Delete it when the last phase has landed and
 [acceptance.md](acceptance.md) describes the result.
 
+## Goal
+
+The runner tests what unit and end-to-end tests cannot: real devices (a
+capture card, WLED, the TV, the feed), the artifacts as they are delivered
+(installed, started, restarted and removed on the real system), the whole
+chain from a colour on the screen to that colour on the right LEDs, and what
+takes time or a person (soaks, memory growth, the `eyes` stage). A check that
+a fake could prove belongs in the unit or end-to-end tests, which are faster
+and run in CI; the runner does not repeat it.
+
 ## Principles
 
 1. **The runner tests artifacts given in the configuration.** It never builds
@@ -181,7 +191,10 @@ runs a caller's string over SSH.
 Each phase lands with its tests and CI green before the next starts.
 
 1. **Host seam and configuration.** `host mac` replaces `desktop`. Verified
-   with the Mac file cell.
+   with the Mac file cell. Before it starts, every existing check is held
+   against the goal: one a fake could prove moves to the unit or end-to-end
+   tests, or is dropped where they already cover it. The copies named in
+   principle 5 go the same way.
 2. **The Linux binary cell.** Copied to a Raspberry Pi 5 over SSH and run
    through the feed.
 3. **The Linux package and image cells and `all`**, with the skip rules. Both
