@@ -33,7 +33,7 @@ scripts/acceptance` from the repository root installs it into
 needs no dev group (`--no-dev`). Its libraries are
 [pytest](https://docs.pytest.org/), which runs the host and TV cells, and
 [PyChromecast](https://github.com/home-assistant-libs/pychromecast), imported
-only by a capture card run with the Chromecast feed. `--dry-run` prints what
+only by a run that casts the clip (the Chromecast feed, the TV's feed). `--dry-run` prints what
 would run, with every command and HTTP call (TV commands as they run there),
 and contacts nothing. The exit code is 0 when nothing failed (skips allowed),
 1 on a failure, 2 on bad usage, 3 when `--prepare` failed. `config.toml` (ignored by git) describes the
@@ -51,7 +51,7 @@ implemented), `[linux]` (`target = "ssh://USER@HOST"` or `"local"`), `[tv]`
 | `host linux` | WLED; `[linux] binary` and `target`; over SSH a key the runner can use without a prompt; FFmpeg here for the clip; FFmpeg 9+ on the target for the file source, or a capture card on it (`[linux] device`; with a feed: adb here) | No |
 | `host linux --delivery deb` | As the device cell, with `[linux] deb` instead of `binary`, an SSH target with passwordless sudo and no Prysm installed (or `[linux] installed = "replace"`) | No |
 | `host linux --delivery image` | As the device cell, with `[linux] image`, an SSH target with Docker and its compose plugin 2.24.4+ for the ssh user, and no `prysm-headless:local` image | No |
-| `tv full`, `tv slim --receiver mac\|linux` | `--tv-is-free` (the owner says the TV may be used now); WLED; `[tv] target` and the package (`ipk_full`, `ipk_slim`); slim: the receiver's `[mac]` or `[linux] binary`; no Prysm on the TV (or `[tv] installed = "replace"`) | Standby and wake; removing the app unless `[tv] ares_device` is set |
+| `tv full`, `tv slim --receiver mac\|linux` | `--tv-is-free` (the owner says the TV may be used now); WLED; `[tv] target` and the package (`ipk_full`, `ipk_slim`); slim: the receiver's `[mac]` or `[linux] binary`; no Prysm on the TV (or `[tv] installed = "replace"`); with `[tv.feed.cast]`: FFmpeg | Standby and wake; removing the app unless `[tv] ares_device` is set; with `[tv.feed.cast]`, accepting the TV's prompt for the first cast |
 | `all` | Whatever each host cell needs, and with `--tv-is-free` each TV cell's; a cell without it is skipped | As its cells |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
@@ -407,8 +407,9 @@ One-time set-up of the Chromecast (with Google TV):
 `serve_port` (default 18792) and `settle_seconds` (default 5; the
 Chromecast's player overlay, so it belongs to this feed). Remove the section
 when nothing the runner controls feeds the card. The ADB commands are
-templates in `commands.py` like every other command; everything else about
-the Chromecast is in `feed_chromecast.py`, behind `feed.py`.
+templates in `commands.py` like every other command; the rest of the
+Chromecast is in `feed_chromecast.py`, on the serving and casting it shares
+with the TV's feed in `feed_cast.py`, behind `feed.py`.
 
 ### tv
 
@@ -434,7 +435,11 @@ Prysm on it ([An installed Prysm](#an-installed-prysm-installed)).
   cell (fails it when named). Without `mac` an unreachable TV is that skip at
   once. The runner never puts the TV to sleep;
 - `installed`: `"refuse"` (default) or `"replace"`, below;
-- `soak_seconds`: each soak's length (default 90).
+- `soak_seconds`: each soak's length (default 90);
+- `[tv.feed.cast]` (optional): the test clip cast to the TV,
+  [below](#the-clip-cast-to-the-tv): `serve_port` (default 18792) and
+  `settle_seconds` (default 5). Without the table the TV cells run on
+  whatever the TV shows and the colour check is skipped.
 
 The slim receiver is the host cells' binary seam on that platform: `[mac]
 binary` started here, or `[linux] binary` on the Linux target over SSH,
@@ -480,7 +485,11 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
 - **running**: the sender WLED should see: the TV (the host of the portal
   address `getState` reports) or the receiver's, as the host cells find it.
   A failure fetches the TV worker's recent log lines from `getState`
-  (`tv-worker.log`) and the receiver's logs.
+  (`tv-worker.log`) and the receiver's logs;
+- **clip** and **feed_shown**: with `[tv.feed.cast]`, the host cells' clip
+  generated and cast to the TV (below). Only the colour check asks for them,
+  so they start when it runs, after the Prysm that lights WLED has its
+  settings; at the end the cast is stopped and the clip server closed.
 
 The checks, in order (`@only` marks a package's own):
 
@@ -490,6 +499,10 @@ The checks, in order (`@only` marks a package's own):
   WLED with live DDP from the expected sender, no `output_issue`; the frame
   rate within the tolerance, sent alike, never behind. Full needs video
   playing on the TV;
+- `test_colours`, the host cells' own: the colours follow the clip cast to
+  the TV ([The test clip and the colour check](#the-test-clip-and-the-colour-check));
+  for slim, the receiver's Prysm is the one sampled. Skipped without
+  `[tv.feed.cast]` or when the clip is not shown;
 - capturing: `getState` says capturing with a frame rate;
 - full: the TV's capture modes are known (`POST /api/v1/capture/modes`);
 - slim: with the receiver off, the TV's offer is known for each encoding; each
@@ -508,6 +521,39 @@ The checks, in order (`@only` marks a package's own):
 
 That nothing of Prysm is left after the uninstall is the `package` fixture's
 teardown, so it is checked also after a failure.
+
+#### The clip cast to the TV
+
+The TV cells capture whatever the TV shows: the capture includes the TV's
+menus and screen saver (`include_ui`), so frames come also while no video
+plays. That proves frames and lighting but not their colours. With
+`[tv.feed.cast]` the runner casts the generated clip to the TV's own Cast
+receiver, as the Chromecast feed does on the capture card
+([The feed into the capture card](#the-feed-into-the-capture-card)), and the
+colour check compares each edge with it. The Cast receiver is an app, so the
+capture keeps `include_ui`.
+
+1. It serves `edges.mp4` from this computer, on the address that routes to
+   the TV and `serve_port`;
+2. it connects to the host of `[tv] target` on port 8009 (no discovery, no
+   ADB, nothing over SSH), plays the clip in the default media receiver and
+   waits up to 30 s for `PLAYING`;
+3. the TV asks a person to allow the first cast from this computer, and
+   until then reports no player state and does not fetch the clip. So without
+   `PLAYING` in time the runner asks on the terminal to accept the prompt on
+   the TV with the remote: `y` waits another 30 s (no second cast); `skip`,
+   or no terminal to ask, leaves the clip not shown: the colour check is
+   skipped with that reason, what was started is stopped at once, and every
+   other check runs on whatever the TV shows. The runner never accepts the
+   prompt itself;
+4. a cast that fails (no answer on port 8009, the receiver rejecting the
+   clip, a timeout after `y`) fails the colour check only.
+
+The clip runs 30 minutes, longer than a cell, so it does not end or loop
+while the later checks run. The colour check waits `settle_seconds` after
+`PLAYING` for the player's overlay to clear and fails when the clip no
+longer plays. The cast keeps playing through the later checks; at the end
+the media is stopped, the receiver quit and the server stopped.
 
 #### An installed Prysm (`installed`)
 
@@ -583,7 +629,8 @@ boot, its state with `getState` when `[tv] target` is set.
   enumerate every template and check the paths it names, and every TV command
   the TV cells' plans name ([test](../../scripts/acceptance/tests/test_acceptance_tv.py)). On the Chromecast,
   ADB only reads its state and Wi-Fi address, wakes it and reads or sets
-  `stay_on_while_plugged_in`; there is no free-form `adb shell`.
+  `stay_on_while_plugged_in`; there is no free-form `adb shell`. To the TV's Cast receiver
+  the runner only plays and stops the clip; it never answers the TV's prompt.
 - **A Linux target.** The binary cells write only in the run directory under
   `~/.prysm-acceptance/` (named by a checked run name, never a path from the
   configuration), signal only their own Prysm's PID, never use sudo, and

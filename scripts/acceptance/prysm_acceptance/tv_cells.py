@@ -9,12 +9,15 @@ wake-on-LAN when `[tv] mac` is set, and what of Prysm is on it: refused, or
 replaced after the WLED snapshot), the slim receiver's target (the host
 cells' seam), WLED's snapshot, a Prysm already on the TV replaced, the
 package installed, the Prysm that lights WLED (the TV's own portal, or the
-receiver with the TV streaming to it) and what WLED should see. The checks
-follow in this module's order; `test_wled_live` and `test_fps` are the host
-cells' own. The teardowns undo it in reverse, also after a failure or
-Ctrl-C: the receiver stopped and removed, the package uninstalled with a
-check that nothing of Prysm is left, WLED restored. Each fixture and check
-says what it does in its docstring and, for the dry run, in `planned`.
+receiver with the TV streaming to it), what WLED should see, and with
+`[tv.feed.cast]` the test clip cast to the TV (started by the colour check,
+the only check that needs it). The checks follow in this module's order;
+`test_wled_live`, `test_fps` and `test_colours` are the host cells' own. The
+teardowns undo it in reverse, also after a failure or Ctrl-C: the cast
+stopped and the clip server closed, the receiver stopped and removed, the
+package uninstalled with a check that nothing of Prysm is left, WLED
+restored. Each fixture and check says what it does in its docstring and, for
+the dry run, in `planned`.
 
 Every TV command is a `tv.*` template in `commands.py`; the runner touches
 only Prysm's own files there (`commands.TV_READ_PATHS`, `TV_WRITE_PATHS`).
@@ -32,13 +35,14 @@ import warnings
 import pytest
 
 from prysm_acceptance import artifact as artifacts
-from prysm_acceptance import commands, host, host_cells, installed, options, prysm_api, transport, tv
+from prysm_acceptance import commands, feed, host, host_cells, installed, options, prysm_api, transport, tv
 from prysm_acceptance.artifact import Artifact
 from prysm_acceptance.bench import Planner, only, unavailable, uninterrupted, warn_at_end
 from prysm_acceptance.checks import Answer, Bench, Failed, ask_person
 from prysm_acceptance.config import SSH, Config, Installed
+from prysm_acceptance.feed import Feed
 from prysm_acceptance.host import Host, Sender, shown
-from prysm_acceptance.host_cells import Record, processed, wled_as_found, wled_restored, wled_saved
+from prysm_acceptance.host_cells import Clip, Record, processed, wled_as_found, wled_restored, wled_saved
 from prysm_acceptance.options import Flavour, TvCell
 from prysm_acceptance.prysm_api import Prysm, Target, near, rates
 from prysm_acceptance.tv import Encoding, LunaReply, Tv
@@ -103,7 +107,7 @@ def capture(
 ) -> JsonObject:
     """The capture section: the TV's own (full), or the receiver's stream from the TV (slim). With the TV's
     menus and screen saver included, so frames come whatever the TV shows (without them there are none while
-    no video plays)."""
+    no video plays). The clip cast to the TV plays in an app (the Cast receiver), so it needs them too."""
     size: JsonObject = {'width': width, 'height': height, 'fps': fps, 'include_ui': True}
     if flavour == Flavour.FULL:
         return {'kind': 'webos', **size}
@@ -141,7 +145,7 @@ def _instance(seam: Host, tv_host: str) -> str:
 
 
 def _tv_host(config: Config) -> str:
-    return _ssh(config).rsplit('@', 1)[-1]
+    return config.tv.host or EXAMPLE_TV.rsplit('@', 1)[-1]
 
 
 def owners(found: list[str], installed_by_run: bool) -> list[str]:
@@ -163,15 +167,17 @@ def _artifact_plan(cell: TvCell, config: Config) -> list[str]:
         'its SHA-256 and age, and the version and commit from manifest.json next to it when the hash matches',
         f'$ {commands.verify_ipk(str(ipk or "IPK")).display()}   (by content: nothing outside the app and service)',
         *([f'[{cell.receiver}] binary (the receiver): {receiver or "(not set)"}'] if cell.receiver else []),
+        *(['[tv.feed.cast]: FFmpeg on PATH for the clip, PyChromecast'] if config.tv.feed else []),
     ]
 
 
 @pytest.fixture(scope='module')
 @planned(does=_artifact_plan)
 def artifact(cell: TvCell, config: Config, bench: Bench, request: pytest.FixtureRequest) -> Artifact:
-    """The package under test, checked by content, and the slim receiver's binary.
+    """The package under test, checked by content, the slim receiver's binary, and the feed's tools.
 
-    A missing package or receiver binary, or no TV configured, skips the cell, or fails it when it was named."""
+    A missing package, receiver binary or tool, or no TV configured, skips the cell, or fails it when it was
+    named."""
     if not config.wled:
         pytest.fail('wled.address is not set (config file or --wled)', pytrace=False)
     if sum(config.leds.as_settings().values()) == 0:
@@ -185,6 +191,8 @@ def artifact(cell: TvCell, config: Config, bench: Bench, request: pytest.Fixture
         binary = config.machine(cell.receiver).artifact()
         if binary is None or not binary.is_file():
             unavailable(request, cell, f'no receiver: [{cell.receiver}] binary is {binary or "not set"}')
+    controlled = feed.on_tv(config.tv)
+    host_cells.tools(request, cell, controlled, clip=controlled is not None)
     verified = bench.run(commands.verify_ipk(str(ipk)), check=False)
     if not verified.ok:
         pytest.fail(f'{ipk.name} is refused by ipk.py verify: {(verified.stderr or verified.stdout)[-500:]}')
@@ -460,6 +468,46 @@ def running(bench: Bench, target: OnTv, receiver: Host | None, prysm: Prysm) -> 
     return Lit(target.tv, receiver.sender(), bench.out_dir, receiver)
 
 
+def _cast(config: Config) -> Feed:
+    """The TV's feed; without `[tv.feed.cast]` what needs it is skipped."""
+    controlled = feed.on_tv(config.tv)
+    if controlled is None:
+        pytest.skip('no [tv.feed.cast]: the TV shows whatever it shows, so its colours are not known')
+    return controlled
+
+
+@pytest.fixture(scope='module')
+@planned(
+    does=lambda cell, config: (
+        [f'$ {host_cells.clip_command().display()}'] if config.tv.feed else ['none: no [tv.feed.cast]']
+    )
+)
+def clip(config: Config, bench: Bench, prysm: Prysm) -> Clip:
+    """With `[tv.feed.cast]`, the host cells' test clip: generated, its edge colours stepping round the corners
+    every 2 s, for 30 minutes (longer than the cell, so it never ends or loops)."""
+    _cast(config)
+    return host_cells.generated(bench)
+
+
+@pytest.fixture(scope='module')
+@planned(
+    does=lambda cell, config: (
+        host_cells.feed_plan(feed.on_tv(config.tv)) or ['none: the TV shows whatever it shows; test_colours skipped']
+    ),
+    undoes=lambda cell, config: host_cells.feed_undone(feed.on_tv(config.tv)),
+)
+def feed_shown(config: Config, bench: Bench, prysm: Prysm, clip: Clip) -> Iterator[Feed]:
+    """With `[tv.feed.cast]`, the clip cast to the TV's own Cast receiver; stopped at the end.
+
+    Started by test_colours, the only check that needs it, once the Prysm that lights WLED runs with its
+    settings; it plays on through the later checks. The TV's first cast from this computer waits for a
+    person to accept it on the TV: without PLAYING in time the runner asks on this terminal, and a skip (or no
+    terminal) skips only test_colours. A cast that fails fails only test_colours. Slim: the receiver's Prysm
+    is the one sampled."""
+    with host_cells.showing(_cast(config), bench, clip) as controlled:
+        yield controlled
+
+
 # ---- the checks, in order ----------------------------------------------------
 
 
@@ -477,9 +525,11 @@ def test_registered(cell: TvCell, target: OnTv, package: LunaReply, record: Reco
     record(f'registered; worker {state["worker"]["phase"]}; all files present', {'state': state, 'paths': present})
 
 
-# The host cells' own: Screen sync lights WLED from the expected sender, and the frame rate holds.
+# The host cells' own: Screen sync lights WLED from the expected sender, the frame rate holds, and the colours
+# follow the clip cast to the TV (skipped without [tv.feed.cast] or when nobody accepted the cast).
 test_wled_live = host_cells.test_wled_live
 test_fps = host_cells.test_fps
+test_colours = host_cells.test_colours
 
 
 @planned(does=lambda cell, config: ['PUT /api/v1/target processed', *shown(commands.tv_get_state(_ssh(config)))])

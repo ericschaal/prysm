@@ -1,7 +1,8 @@
-"""The Chromecast feed: the clip server on loopback, showing the clip with a fake Chromecast and recorded ADB,
-its settings and its plan."""
+"""The cast feeds: the clip server on loopback; the Chromecast's (a fake player and recorded ADB) and the TV's
+(a fake player and a fake person); their settings and plans, and a clip not shown skipping only what needs it."""
 
 from collections.abc import Iterable, Sequence
+import io
 from pathlib import Path
 import subprocess
 import sys
@@ -9,13 +10,14 @@ import tempfile
 import time
 from typing import cast
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 
 from acceptance_fakes import transcript_of, untyped
 
-from prysm_acceptance import config, feed, feed_chromecast, transport
-from prysm_acceptance.checks import Bench, Failed
+from prysm_acceptance import checks, config, feed, feed_cast, feed_chromecast, transport
+from prysm_acceptance.checks import Answer, Bench, Failed, Skipped
 from prysm_acceptance.config import ChromecastFeed
 from prysm_acceptance.transport import Result
 
@@ -47,7 +49,7 @@ def clip_file() -> Path:
 
 class ClipServer(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = feed_chromecast.ClipServer(clip_file(), '127.0.0.1', 0).start()
+        self.server = feed_cast.ClipServer(clip_file(), '127.0.0.1', 0).start()
         self.addCleanup(self.server.close)
 
     def test_serves_the_clip_as_mp4(self) -> None:
@@ -74,8 +76,8 @@ class ClipServer(unittest.TestCase):
             self.assertEqual(fetch(base + path)[0], 404, path)
 
 
-class FakeChromecast:
-    """Stands in for `feed_chromecast.Chromecast`: fetches the clip as a player would and reports a state."""
+class FakePlayer:
+    """Stands in for `feed_cast.CastPlayer`: fetches the clip as a player would and reports a state."""
 
     def __init__(
         self, address: str, states: Iterable[State] = ('BUFFERING', 'PLAYING'), fail: Exception | None = None
@@ -91,7 +93,7 @@ class FakeChromecast:
         self.calls.append('connect')
         if self.fail:
             raise self.fail
-        return 'Fake Chromecast'
+        return 'Fake receiver'
 
     def play(self, url: str) -> None:
         self.calls.append('play')
@@ -108,7 +110,9 @@ class FakeChromecast:
         return 'closed'
 
 
-def context(entries: Sequence[tuple[str, Result]] = (), **settings: object) -> tuple[Bench, feed_chromecast.Feed]:
+def context(
+    entries: Sequence[tuple[str, Result]] = (), **settings: object
+) -> tuple[Bench, feed_chromecast.ChromecastCast]:
     """A bench with recorded ADB and the Chromecast feed its settings describe (any free port)."""
     values = config.parse(
         {
@@ -119,7 +123,7 @@ def context(entries: Sequence[tuple[str, Result]] = (), **settings: object) -> t
     )
     cast('ChromecastFeed', values.mac.feed).serve_port = 0
     ctx = Bench(values, transport.Transcript(entries), Path(tempfile.mkdtemp()), log=lambda line: None)
-    return ctx, cast('feed_chromecast.Feed', feed.configured(values.mac))
+    return ctx, cast('feed_chromecast.ChromecastCast', feed.configured(values.mac))
 
 
 # Recorded from `ip -f inet -o addr show wlan0` on the Chromecast (address replaced by a documentation one).
@@ -139,24 +143,28 @@ ADB_OK = [
 ]
 
 
-class Show(unittest.TestCase):
-    def show(self, ctx: Bench, chromecast: feed_chromecast.Feed, player: FakeChromecast) -> tuple[str, list[str]]:
-        """Show the clip, then undo what it registered; the failure (or '') and the undos in their order."""
+class Showing(unittest.TestCase):
+    def show(self, ctx: Bench, fed: feed_cast.Cast, player: FakePlayer) -> tuple[str, list[str]]:
+        """Show the clip, then undo what it registered; the failure or skip (or '') and the undos in their order."""
         made: list[str] = []
-        chromecast.player_factory = lambda address: made.append(address) or player
+        fed.player_factory = lambda address: made.append(address) or player
         failure = ''
         try:
-            chromecast.show(ctx, str(clip_file()))
+            fed.show(ctx, str(clip_file()))
         except Failed as error:
             failure = str(error)
+        except Skipped as error:
+            failure = f'skipped: {error}'
         undone = [name for name, _, _ in reversed(ctx.cleanups)]
         self.assertEqual(ctx.undo(), [])
         player.made_for = made
         return failure, undone
 
+
+class Show(Showing):
     def test_plays_the_clip_and_undoes_everything_in_order(self) -> None:
         ctx, chromecast = context(ADB_OK)
-        player = FakeChromecast('127.0.0.1')
+        player = FakePlayer('127.0.0.1')
         failure, undone = self.show(ctx, chromecast, player)
         self.assertEqual((failure, undone), ('', ['feed.stop', 'feed.server', 'feed.awake']))
         self.assertEqual(player.made_for, ['127.0.0.1'])  # the address ADB read
@@ -171,7 +179,7 @@ class Show(unittest.TestCase):
 
     def test_unreachable_adb_says_what_to_do_and_changes_nothing(self) -> None:
         ctx, chromecast = context([('adb.get-state', Result(1, '', "error: device '0123456789ABCD' not found"))])
-        player = FakeChromecast('127.0.0.1')
+        player = FakePlayer('127.0.0.1')
         failure, undone = self.show(ctx, chromecast, player)
         self.assertIn('USB debugging', failure)
         self.assertIn('adb connect', failure)
@@ -181,7 +189,7 @@ class Show(unittest.TestCase):
 
     def test_a_failed_cast_still_runs_every_cleanup(self) -> None:
         ctx, chromecast = context(ADB_OK)
-        player = FakeChromecast('127.0.0.1', fail=TimeoutError('no answer on 8009'))
+        player = FakePlayer('127.0.0.1', fail=TimeoutError('no answer on 8009'))
         failure, undone = self.show(ctx, chromecast, player)
         self.assertIn('no answer on 8009', failure)
         self.assertEqual(undone, ['feed.stop', 'feed.server', 'feed.awake'])
@@ -191,7 +199,7 @@ class Show(unittest.TestCase):
     def test_no_wifi_address_fails_and_puts_the_setting_back(self) -> None:
         entries = [*ADB_OK[:5], ('adb.wifi-address', Result(0, '')), ADB_OK[-1]]
         ctx, chromecast = context(entries)
-        player = FakeChromecast('x')
+        player = FakePlayer('x')
         failure, undone = self.show(ctx, chromecast, player)
         self.assertIn('no Wi-Fi address', failure)
         self.assertEqual(undone, ['feed.awake'])
@@ -207,7 +215,7 @@ class Show(unittest.TestCase):
 
     def test_a_clip_the_receiver_rejects_fails_at_once(self) -> None:
         ctx, chromecast = context(ADB_OK)
-        player = FakeChromecast('127.0.0.1', states=('IDLE',))
+        player = FakePlayer('127.0.0.1', states=('IDLE',))
         start = time.monotonic()
         failure, _ = self.show(ctx, chromecast, player)
         self.assertLess(time.monotonic() - start, 5)
@@ -215,13 +223,21 @@ class Show(unittest.TestCase):
         self.assertEqual(player.calls[-1], 'close')
 
     def test_the_previous_media_ending_is_not_a_failure(self) -> None:
-        player = FakeChromecast('x', states=(('IDLE', 'INTERRUPTED'), ('BUFFERING', None), ('PLAYING', None)))
-        feed_chromecast.wait_playing(player, 5, sleep=lambda s: None)
+        player = FakePlayer('x', states=(('IDLE', 'INTERRUPTED'), ('BUFFERING', None), ('PLAYING', None)))
+        feed_cast.wait_playing(player, 5, sleep=lambda s: None)
 
     def test_waiting_for_playing_is_bounded(self) -> None:
-        player = FakeChromecast('x', states=('BUFFERING',))
-        with self.assertRaisesRegex(RuntimeError, 'did not report PLAYING within 0.2 s'):
-            feed_chromecast.wait_playing(player, 0.2, sleep=lambda s: None)
+        player = FakePlayer('x', states=('BUFFERING',))
+        with self.assertRaisesRegex(feed_cast.NotPlaying, 'did not report PLAYING within 0.2 s'):
+            feed_cast.wait_playing(player, 0.2, sleep=lambda s: None)
+
+    def test_a_chromecast_that_never_plays_fails_without_asking(self) -> None:
+        ctx, chromecast = context(ADB_OK)
+        player = FakePlayer('127.0.0.1', states=('BUFFERING',))
+        with mock.patch.object(feed_cast, 'PLAY_SECONDS', 0.2):
+            failure, undone = self.show(ctx, chromecast, player)
+        self.assertIn('did not report PLAYING within 0.2 s', failure)
+        self.assertEqual(undone, ['feed.stop', 'feed.server', 'feed.awake'])
 
 
 class Settled(unittest.TestCase):
@@ -229,7 +245,7 @@ class Settled(unittest.TestCase):
 
     def setUp(self) -> None:
         _, self.chromecast = context(settle_seconds=0.3)
-        self.player = FakeChromecast('x', states=('PLAYING',))
+        self.player = FakePlayer('x', states=('PLAYING',))
         self.chromecast.playing = (self.player, time.monotonic())
 
     def test_waits_out_the_overlay(self) -> None:
@@ -265,7 +281,7 @@ class Settings(unittest.TestCase):
         self.assertEqual(
             (chromecast.adb_serial, chromecast.serve_port, chromecast.settle_seconds), ('192.0.2.60:37000', 18792, 5.0)
         )
-        self.assertIsInstance(feed.configured(values.mac), feed_chromecast.Feed)
+        self.assertIsInstance(feed.configured(values.mac), feed_chromecast.ChromecastCast)
 
     def test_without_a_feed_there_is_none(self) -> None:
         self.assertIsNone(config.parse({}).mac.feed)
@@ -322,13 +338,236 @@ class FeedPlan(unittest.TestCase):
         self.assertNotIn('$ adb', text)
 
     def test_nothing_imports_pychromecast_until_it_connects(self) -> None:
-        program = (
-            'import sys; from prysm_acceptance import run; '
-            f"code = run.main(['host', 'mac', '--source', 'device', '--dry-run', '--config', {str(EXAMPLE)!r}]); "
-            "sys.exit(code or ('pychromecast' in sys.modules and 3))"
-        )
-        done = subprocess.run([sys.executable, '-c', program], capture_output=True, text=True, timeout=60, check=False)
-        self.assertEqual(done.returncode, 0, done.stdout[-2000:] + done.stderr)
+        for arguments in (['host', 'mac', '--source', 'device'], ['tv', 'full', '--tv-is-free']):
+            program = (
+                'import sys; from prysm_acceptance import run; '
+                f'code = run.main([*{arguments!r}, "--dry-run", "--config", {str(EXAMPLE)!r}]); '
+                "sys.exit(code or ('pychromecast' in sys.modules and 3))"
+            )
+            done = subprocess.run(
+                [sys.executable, '-c', program], capture_output=True, text=True, timeout=60, check=False
+            )
+            self.assertEqual(done.returncode, 0, done.stdout[-2000:] + done.stderr)
+
+
+def tv_context(**settings: object) -> tuple[Bench, feed_cast.TvCast]:
+    """A bench and the TV's feed `[tv.feed.cast]` describes, for a TV on loopback (any free port)."""
+    values = config.parse({'tv': {'target': 'ssh://root@127.0.0.1', 'feed': {'cast': settings}}})
+    cast('config.CastFeed', values.tv.feed).serve_port = 0
+    ctx = Bench(values, transport.Transcript([]), Path(tempfile.mkdtemp()), log=lambda line: None)
+    return ctx, cast('feed_cast.TvCast', feed.on_tv(values.tv))
+
+
+class Person:
+    """Stands in for `checks.ask_person`: gives `answer`; a yes that `starts` the player lets it play, as
+    accepting the prompt on the TV does."""
+
+    def __init__(self, player: FakePlayer, answer: Answer, note: str = '', starts: bool = True) -> None:
+        self.player = player
+        self.answer = answer
+        self.note = note
+        self.starts = starts
+        self.asked: list[str] = []
+
+    def __call__(self, question: str, choices: tuple[Answer, ...] = checks.ALL_ANSWERS) -> tuple[Answer, str]:
+        self.asked.append(question)
+        if self.answer == Answer.YES and self.starts:
+            self.player.states = ['BUFFERING', 'PLAYING']
+        return self.answer, self.note
+
+
+class TvShow(Showing):
+    """The TV's own receiver: no ADB; the first cast waits for a person to accept it on the TV."""
+
+    def show_tv(self, player: FakePlayer, person: Person | None = None) -> tuple[str, list[str], feed_cast.TvCast]:
+        ctx, tv = tv_context()
+        if person:
+            tv.ask = person
+        with mock.patch.object(feed_cast, 'PLAY_SECONDS', 0.2):
+            failure, undone = self.show(ctx, tv, player)
+        self.assertEqual(transcript_of(ctx).calls, [])  # nothing runs on the TV
+        return failure, undone, tv
+
+    def test_plays_on_the_tv_and_stops(self) -> None:
+        player = FakePlayer('127.0.0.1')
+        person = Person(player, Answer.YES)
+        failure, undone, tv = self.show_tv(player, person)
+        self.assertEqual((failure, undone), ('', ['feed.stop', 'feed.server']))
+        self.assertEqual(player.made_for, ['127.0.0.1'])  # the host of [tv] target
+        self.assertEqual(untyped(player.fetched)[0], 206)
+        self.assertEqual(player.calls, ['connect', 'play', 'close'])
+        self.assertEqual(person.asked, [])
+        self.assertIs(untyped(tv.playing)[0], player)
+
+    def test_an_unaccepted_cast_asks_and_plays_once_accepted(self) -> None:
+        player = FakePlayer('127.0.0.1', states=(('UNKNOWN', None),))
+        person = Person(player, Answer.YES)
+        failure, undone, tv = self.show_tv(player, person)
+        self.assertEqual((failure, undone), ('', ['feed.stop', 'feed.server']))
+        self.assertEqual(person.asked, [feed_cast.ACCEPT])
+        self.assertEqual(player.calls, ['connect', 'play', 'close'])  # played once, never again
+        self.assertIsNotNone(tv.playing)
+
+    def test_a_skipped_prompt_is_a_clip_not_shown(self) -> None:
+        player = FakePlayer('127.0.0.1', states=(('UNKNOWN', None),))
+        person = Person(player, Answer.SKIP, 'not at the TV')
+        failure, _, tv = self.show_tv(player, person)
+        self.assertIn('skipped: the clip is not shown', failure)
+        self.assertIn('not at the TV', failure)
+        self.assertEqual(player.calls, ['connect', 'play', 'close'])
+        self.assertIsNone(tv.playing)
+
+    def test_nobody_to_ask_is_a_clip_not_shown(self) -> None:
+        player = FakePlayer('127.0.0.1', states=(('UNKNOWN', None),))
+        with mock.patch.object(checks.sys, 'stdin', io.StringIO()):
+            failure, _, _ = self.show_tv(player)
+        self.assertIn('no terminal to ask', failure)
+        self.assertEqual(player.calls, ['connect', 'play', 'close'])
+
+    def test_a_clip_the_tv_rejects_fails_without_asking(self) -> None:
+        player = FakePlayer('127.0.0.1', states=('IDLE',))
+        person = Person(player, Answer.YES)
+        failure, undone, _ = self.show_tv(player, person)
+        self.assertIn('IDLE, ERROR', failure)
+        self.assertEqual(undone, ['feed.stop', 'feed.server'])
+        self.assertEqual(person.asked, [])
+
+    def test_still_not_playing_after_yes_fails(self) -> None:
+        player = FakePlayer('127.0.0.1', states=(('UNKNOWN', None),))
+        person = Person(player, Answer.YES, starts=False)
+        failure, _, _ = self.show_tv(player, person)
+        self.assertIn('did not report PLAYING within 0.2 s', failure)
+        self.assertEqual(len(person.asked), 1)
+
+
+class AskPerson(unittest.TestCase):
+    def test_the_end_of_input_is_a_skip(self) -> None:
+        terminal = mock.Mock()
+        terminal.isatty.return_value = True
+        with mock.patch.object(checks.sys, 'stdin', terminal), mock.patch('builtins.input', side_effect=EOFError):
+            self.assertEqual(checks.ask_person('Ready?'), (Answer.SKIP, 'no answer (end of input)'))
+
+
+# A cell module in miniature: the feed is the shared `showing`, its clip not shown (nobody accepted the cast).
+NOT_SHOWN = """
+from pathlib import Path
+
+import pytest
+
+from prysm_acceptance import host_cells, transport
+from prysm_acceptance.checks import Bench, Skipped
+from prysm_acceptance.config import Config
+
+
+class NotAccepted:
+    def show(self, ctx, clip):
+        ctx.cleanup('feed.stop', 'Cast stopped', lambda: print('CAST STOPPED'))
+        raise Skipped('the clip is not shown: nobody accepted the cast')
+
+
+@pytest.fixture(scope='module')
+def feed_shown(tmp_path_factory):
+    bench = Bench(Config(), transport.Refusing(), tmp_path_factory.mktemp('cell'), log=print)
+    with host_cells.showing(NotAccepted(), bench, host_cells.Clip(Path('edges.mp4'), edges=True)) as shown:
+        yield shown
+
+
+def test_before(): pass
+def test_colours(feed_shown): pass
+def test_after(): pass
+"""
+
+
+# The TV cells' own clip, feed and colour check, with a configuration without `[tv.feed.cast]`.
+NO_FEED = """
+import pytest
+
+from prysm_acceptance import transport
+from prysm_acceptance.checks import Bench
+from prysm_acceptance.config import Config
+from prysm_acceptance.tv_cells import clip, feed_shown, test_colours
+
+
+@pytest.fixture(scope='session')
+def config():
+    return Config()
+
+
+@pytest.fixture(scope='module')
+def bench(config, tmp_path_factory):
+    return Bench(config, transport.Refusing(), tmp_path_factory.mktemp('cell'), log=print)
+
+
+@pytest.fixture(scope='module')
+def prysm():
+    return object()
+
+
+@pytest.fixture
+def record():
+    return lambda detail, evidence=None: None
+
+
+def test_before(): pass
+def test_after(): pass
+"""
+
+
+def pytest_in(module: str) -> str:
+    """`module` run by pytest in a directory of its own; its output, after checking that nothing failed."""
+    directory = Path(tempfile.mkdtemp())
+    (directory / 'test_cell.py').write_text(module)
+    command = [sys.executable, '-m', 'pytest', str(directory), '-p', 'no:cacheprovider', '-s', '-rs', '-v']
+    done = subprocess.run(
+        [*command, '--rootdir', str(directory)], capture_output=True, text=True, timeout=60, check=False
+    )
+    if done.returncode != 0:
+        raise AssertionError(done.stdout[-2000:] + done.stderr[-2000:])
+    return done.stdout
+
+
+class NotShown(unittest.TestCase):
+    def test_without_the_table_the_tv_cells_skip_only_the_colour_check(self) -> None:
+        text = pytest_in(NO_FEED)
+        self.assertIn('2 passed, 1 skipped', text)
+        self.assertIn(': no [tv.feed.cast]: the TV shows whatever it shows, so its colours are not known\n', text)
+
+    def test_only_the_check_that_needs_the_clip_is_skipped_and_the_cast_is_stopped_at_once(self) -> None:
+        text = pytest_in(NOT_SHOWN)
+        self.assertIn('test_before PASSED', text)
+        self.assertIn('test_after PASSED', text)
+        self.assertIn('test_colours CAST STOPPED\nSKIPPED', text)
+        self.assertIn(': the clip is not shown: nobody accepted the cast\n', text)
+        self.assertIn('2 passed, 1 skipped', text)
+        self.assertLess(text.index('CAST STOPPED'), text.index('test_after'))
+
+
+class TvSettings(unittest.TestCase):
+    def test_the_table_is_checked(self) -> None:
+        for data in (
+            {'adb_serial': SERIAL},
+            {'serve_port': 70000},
+            {'settle_seconds': -1},
+            {'settle_seconds': '5'},
+        ):
+            with self.assertRaises(config.ConfigError, msg=data):
+                config.parse({'tv': {'feed': {'cast': data}}})
+        for data in ({'feed': {'chromecast': {'adb_serial': SERIAL}}}, {'feed': 'cast'}, {'feed': {'cast': 'yes'}}):
+            with self.assertRaises(config.ConfigError, msg=data):
+                config.parse({'tv': data})
+        values = config.parse({'tv': {'target': 'ssh://root@tv.example', 'feed': {'cast': {'settle_seconds': 2}}}})
+        self.assertEqual(values.tv.feed, config.CastFeed(serve_port=18792, settle_seconds=2))
+        found = cast('feed_cast.TvCast', feed.on_tv(values.tv))
+        self.assertIsInstance(found, feed_cast.TvCast)
+        self.assertEqual(found.address, 'tv.example')
+
+    def test_without_the_table_there_is_none(self) -> None:
+        values = config.parse({'tv': {'target': 'ssh://root@tv.example'}})
+        self.assertIsNone(values.tv.feed)
+        self.assertIsNone(feed.on_tv(values.tv))
+
+    def test_the_example_casts_to_the_tv(self) -> None:
+        self.assertEqual(config.load(EXAMPLE).tv.feed, config.CastFeed())
 
 
 if __name__ == '__main__':

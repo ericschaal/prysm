@@ -383,8 +383,8 @@ class Configuration(unittest.TestCase):
         )
         cell = Cell(Platform.LINUX, Delivery.BINARY, Source.DEVICE)
         feed = host_cells._feed(cell, values)  # pyright: ignore[reportPrivateUsage]
-        self.assertIsInstance(feed, feed_chromecast.Feed)
-        self.assertEqual(cast('feed_chromecast.Feed', feed).settings.adb_serial, 'LINUX00001')
+        self.assertIsInstance(feed, feed_chromecast.ChromecastCast)
+        self.assertEqual(cast('feed_chromecast.ChromecastCast', feed).serial, 'LINUX00001')
         seam = host_cells._seam(cell, values, transport.Refusing(), Path('RUN/CELL'))  # pyright: ignore[reportPrivateUsage]
         self.assertIsInstance(seam, host.SshBinary)
         local = config.parse({'linux': {'target': 'local'}})

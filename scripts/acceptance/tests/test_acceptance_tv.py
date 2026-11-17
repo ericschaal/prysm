@@ -535,18 +535,59 @@ class TheCommandLine(unittest.TestCase):
                 text = done.stdout[done.stdout.index(f'Cell {cell}') :]
                 order = [
                     text.index(f'  {name}: ')
-                    for name in ('artifact', 'target', 'wled', 'cleared', 'package', 'prysm', 'test_registered')
+                    for name in (
+                        'artifact',
+                        'target',
+                        'wled',
+                        'cleared',
+                        'package',
+                        'prysm',
+                        'running',
+                        'clip',
+                        'feed_shown',
+                        'test_registered',
+                        'test_wled_live',
+                        'test_fps',
+                        'test_colours',
+                        'test_capturing',
+                    )
                 ]
                 self.assertEqual(order, sorted(order))
                 for line in (
                     'wake-on-LAN magic packet for 00:00:5E:00:53:01',
-                    'test_wled_live',
-                    'test_fps',
                     'test_soak',
                     'prysm-webos-service uninstall',
                     'refused, nothing is changed',
+                    '[tv.feed.cast]: FFmpeg on PATH for the clip, PyChromecast',
+                    '-movflags +faststart RUN_DIR/CELL/edges.mp4',
+                    'serve http://THIS_COMPUTER:18792/edges.mp4 (that file only) on the address that routes to the TV',
+                    f'cast to {config.load(EXAMPLE).tv.host}:8009: default media receiver plays the clip URL',
+                    'a person is asked to accept the cast on the TV',
                 ):
                     self.assertIn(line, text)
+                self.assertNotIn('$ adb', text)
+                undone = text[text.index('\nAt the end (') :].splitlines()[2:4]
+                self.assertEqual(
+                    undone,
+                    [
+                        '  - the TV: media stopped, the default media receiver quit, disconnected',
+                        '  - the clip server stopped',
+                    ],
+                )
+
+    def test_without_the_feed_the_tv_cells_are_as_before(self) -> None:
+        path = Path(tempfile.mkdtemp()) / 'config.toml'
+        text = EXAMPLE.read_text()
+        start = text.index('[tv.feed.cast]')
+        path.write_text(text[:start] + text[text.index('[eyes]', start) :])
+        for arguments in (['tv', 'full'], ['tv', 'slim', '--receiver', 'mac'], ['tv', 'slim', '--receiver', 'linux']):
+            with self.subTest(arguments[-1]):
+                done = self.dry(*arguments, '--tv-is-free', path=path)
+                self.assertEqual(done.returncode, 0, done.stdout[-3000:] + done.stderr)
+                self.assertIn('none: no [tv.feed.cast]', done.stdout)
+                self.assertIn('none: the TV shows whatever it shows; test_colours skipped', done.stdout)
+                for absent in ('ffmpeg', 'PyChromecast', ':8009', 'clip server stopped', 'media receiver'):
+                    self.assertNotIn(absent, done.stdout)
         mac = self.dry('tv', 'slim', '--receiver', 'mac', '--tv-is-free').stdout
         self.assertIn('--listen 0.0.0.0:18787 --metrics &', mac)
         self.assertIn('test_encodings', mac)

@@ -38,8 +38,8 @@ from prysm_acceptance import (
     wled_api,
 )
 from prysm_acceptance.artifact import Artifact
-from prysm_acceptance.bench import Planner, only, unavailable, uninterrupted, warn_at_end
-from prysm_acceptance.checks import Answer, Bench, Failed, ask_person
+from prysm_acceptance.bench import AnyCell, Planner, only, unavailable, uninterrupted, warn_at_end
+from prysm_acceptance.checks import Answer, Bench, Failed, Skipped, ask_person
 from prysm_acceptance.config import SSH, Config, Installed, Machine
 from prysm_acceptance.edges_clip import CLIP
 from prysm_acceptance.feed import Feed
@@ -78,7 +78,8 @@ def _feed(cell: Cell, config: Config, request: pytest.FixtureRequest | None = No
     return feed.configured(_machine(cell, config))
 
 
-def _clip_command(path: str) -> commands.Command:
+def clip_command(path: str = 'RUN_DIR/CELL/edges.mp4') -> commands.Command:
+    """The generated clip's FFmpeg command (the TV cells' too)."""
     return commands.ffmpeg_edges_clip(
         path,
         CLIP['width'],
@@ -148,13 +149,7 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
     if cell.source == Source.DEVICE and not machine.device:
         unavailable(request, cell, f'no capture device: [{cell.platform}] device is not set')
     controlled = _feed(cell, config, request)
-    if controlled:
-        try:
-            controlled.preflight()
-        except Failed as error:
-            unavailable(request, cell, str(error))
-    if (cell.source == Source.FILE or controlled) and not shutil.which('ffmpeg'):
-        unavailable(request, cell, 'the test clip needs FFmpeg 9+ on PATH')
+    tools(request, cell, controlled, clip=cell.source == Source.FILE or controlled is not None)
     found = artifacts.inspect(path)
     facts = found.facts()
     warning = artifacts.older_than_checkout(found, bench.transport)
@@ -164,6 +159,18 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
     bench.save('artifact.json', facts)
     bench.log('Artifact: ' + ', '.join(f'{key} {value}' for key, value in facts.items()))
     return found
+
+
+def tools(request: pytest.FixtureRequest, cell: AnyCell, controlled: Feed | None, clip: bool) -> None:
+    """The feed's tools, and FFmpeg when the cell generates the clip; what is missing makes the cell unavailable
+    (the TV cells' too)."""
+    if controlled:
+        try:
+            controlled.preflight()
+        except Failed as error:
+            unavailable(request, cell, str(error))
+    if clip and not shutil.which('ffmpeg'):
+        unavailable(request, cell, 'the test clip needs FFmpeg 9+ on PATH')
 
 
 def _plan(cell: Cell, config: Config) -> host.Plan:
@@ -280,7 +287,7 @@ def cleared(cell: Cell, bench: Bench, request: pytest.FixtureRequest, target: Ho
 @pytest.fixture(scope='module')
 @planned(
     does=lambda cell, config: (
-        [f'$ {_clip_command("RUN_DIR/CELL/edges.mp4").display()}']
+        [f'$ {clip_command().display()}']
         if cell.source == Source.FILE or _feed(cell, config)
         else ['none: no feed shows a clip on the capture card']
     )
@@ -292,18 +299,58 @@ def clip(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureReques
         return Clip(Path(str(given)).resolve(), edges=False)
     if cell.source == Source.DEVICE and not _feed(cell, config, request):
         return None
+    return generated(bench)
+
+
+def generated(bench: Bench) -> Clip:
+    """The generated clip, in the cell's run directory (the TV cells' too)."""
     path = bench.out_dir / 'edges.mp4'
-    bench.run(_clip_command(str(path)))
+    bench.run(clip_command(str(path)))
     return Clip(path, edges=True)
+
+
+def feed_plan(controlled: Feed | None) -> list[str]:
+    """The `feed_shown` fixture's set-up, for the dry run (the TV cells' too)."""
+    if controlled is None:
+        return []
+    return [
+        *controlled.actions(),
+        *(f'$ {command.display()}' for command in controlled.commands()),
+        controlled.how(),
+    ]
+
+
+def feed_undone(controlled: Feed | None) -> list[str]:
+    """The `feed_shown` fixture's teardown, for the dry run (the TV cells' too)."""
+    return list(controlled.CLEANUPS) if controlled else []
+
+
+@contextlib.contextmanager
+def showing(controlled: Feed, bench: Bench, clip: Clip) -> Generator[Feed, None, None]:
+    """The clip shown through the feed (feed.json); stopped at the end, also after a failure or Ctrl-C (the
+    `feed_shown` fixture of every cell).
+
+    A clip the feed did not show without anything failing (`Skipped`: on the TV, nobody accepted it) skips what
+    needs it; what the feed started is stopped at once."""
+    try:
+        try:
+            detail, evidence = controlled.show(bench, str(clip.path))
+        except Skipped as error:
+            bench.save('feed.json', {'skipped': str(error), 'evidence': error.evidence})
+            pytest.skip(str(error))
+        bench.save('feed.json', {'detail': detail, 'evidence': evidence})
+        yield controlled
+    finally:
+        with uninterrupted():
+            failures = bench.undo()
+        if failures:
+            pytest.fail(f'the feed was not stopped cleanly: {failures}')
 
 
 @pytest.fixture(scope='module')
 @planned(
-    does=lambda cell, config: [
-        *(controlled.actions() if (controlled := _feed(cell, config)) else ['none: the card records its input']),
-        *(f'$ {command.display()}' for command in (controlled.commands() if controlled else [])),
-    ],
-    undoes=lambda cell, config: list(controlled.CLEANUPS) if (controlled := _feed(cell, config)) else [],
+    does=lambda cell, config: feed_plan(_feed(cell, config)) or ['none: the card records its input'],
+    undoes=lambda cell, config: feed_undone(_feed(cell, config)),
 )
 def feed_shown(
     cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRequest, clip: Clip | None
@@ -313,15 +360,8 @@ def feed_shown(
     if controlled is None or clip is None:
         yield None
         return
-    try:
-        detail, evidence = controlled.show(bench, str(clip.path))
-        bench.save('feed.json', {'detail': detail, 'evidence': evidence})
+    with showing(controlled, bench, clip):
         yield controlled
-    finally:
-        with uninterrupted():
-            failures = bench.undo()
-        if failures:
-            pytest.fail(f'the feed was not stopped cleanly: {failures}')
 
 
 @pytest.fixture(scope='module')
@@ -518,7 +558,8 @@ def test_colours(prysm: Prysm, clip: Clip | None, feed_shown: Feed | None, recor
     """The colours follow the clip.
 
     Each edge's two halves are nearest the clip's two colours among nine, in the right direction; at least two
-    steps, in order, 2 s apart. A clip of unknown content, or a card without a feed: not black."""
+    steps, in order, 2 s apart. A clip of unknown content, or a card without a feed: not black; a TV cell without
+    its feed, or with the clip not shown there: skipped."""
     processed(prysm)
     if feed_shown:
         feed_shown.settled()

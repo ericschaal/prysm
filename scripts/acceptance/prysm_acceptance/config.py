@@ -64,12 +64,18 @@ class Capture:
 
 
 @dataclass
-class ChromecastFeed:
-    """`[PLATFORM.feed.chromecast]`: the Chromecast whose HDMI output the capture card records."""
+class CastFeed:
+    """`[tv.feed.cast]`: the clip served from this computer and cast to the TV's own Cast receiver."""
 
-    adb_serial: str = ''
     serve_port: int = 18792
     settle_seconds: float = 5.0
+
+
+@dataclass
+class ChromecastFeed(CastFeed):
+    """`[PLATFORM.feed.chromecast]`: the Chromecast whose HDMI output the capture card records, reached over ADB."""
+
+    adb_serial: str = ''
 
 
 @dataclass
@@ -105,11 +111,17 @@ class Tv:
     mac: str = ''  # the TV's hardware address for wake-on-LAN; empty: an unreachable TV is not woken
     installed: Installed = Installed.REFUSE
     soak_seconds: int = 90
+    feed: CastFeed | None = None  # None: the TV shows whatever it shows
 
     @property
     def ssh(self) -> str:
         """The target as ssh names it (root@HOST); empty when not configured."""
         return self.target.removeprefix(SSH)
+
+    @property
+    def host(self) -> str:
+        """The TV's address: the target's HOST; empty when not configured."""
+        return self.ssh.rsplit('@', 1)[-1]
 
     def ipk(self, flavour: Flavour) -> Path | None:
         """The configured package of `flavour`, relative to the repository; None without one."""
@@ -131,7 +143,8 @@ class Config:
         return self.mac if platform == Platform.MAC else self.linux
 
 
-Section = TypeVar('Section', Leds, Checks, Capture, ChromecastFeed, Machine, Tv)
+Section = TypeVar('Section', Leds, Checks, Capture, CastFeed, ChromecastFeed, Machine, Tv)
+FeedSettings = TypeVar('FeedSettings', CastFeed, ChromecastFeed)
 
 
 def _table(data: Toml, name: str, label: str) -> dict[str, Any]:
@@ -160,26 +173,36 @@ def _section(values: Mapping[str, Any], kind: type[Section], label: str) -> Sect
     return kind(**values)
 
 
-def _feed(table: dict[str, Any], label: str) -> ChromecastFeed | None:
-    """`[LABEL.feed.chromecast]`, or None without a feed."""
+def _feed(table: dict[str, Any], label: str, kind: str, settings: type[FeedSettings]) -> FeedSettings | None:
+    """`[LABEL.feed.KIND]` (the one feed `label` supports) as `settings`, or None without a feed. Takes the
+    `feed` table out of `table`."""
     feeds = _table(table, 'feed', f'{label}.feed')
-    unknown = set(feeds) - {'chromecast'}
+    table.pop('feed', None)
+    unknown = set(feeds) - {kind}
     if unknown:
-        raise ConfigError(f'[{label}.feed]: unknown feeds {sorted(unknown)} (supported: chromecast)')
-    if 'chromecast' not in feeds:
+        raise ConfigError(f'[{label}.feed]: unknown feeds {sorted(unknown)} (supported: {kind})')
+    if kind not in feeds:
         return None
-    name = f'{label}.feed.chromecast'
-    chromecast = _section(_table(feeds, 'chromecast', name), ChromecastFeed, name)
+    name = f'{label}.feed.{kind}'
+    found = _section(_table(feeds, kind, name), settings, name)
+    if not 1 <= found.serve_port <= 65535:
+        raise ConfigError(f'{name}.serve_port: 1 to 65535')
+    if not 0 <= found.settle_seconds <= 60:
+        raise ConfigError(f'{name}.settle_seconds: 0 to 60')
+    return found
+
+
+def _chromecast(table: dict[str, Any], label: str) -> ChromecastFeed | None:
+    """`[LABEL.feed.chromecast]`, or None without a feed."""
+    chromecast = _feed(table, label, 'chromecast', ChromecastFeed)
+    if chromecast is None:
+        return None
     if not chromecast.adb_serial:
-        raise ConfigError(f'{name}.adb_serial is required (the serial adb devices lists)')
+        raise ConfigError(f'{label}.feed.chromecast.adb_serial is required (the serial adb devices lists)')
     try:
         commands.adb_serial(chromecast.adb_serial)
     except commands.Refused as error:
         raise ConfigError(str(error)) from error
-    if not 1 <= chromecast.serve_port <= 65535:
-        raise ConfigError(f'{name}.serve_port: 1 to 65535')
-    if not 0 <= chromecast.settle_seconds <= 60:
-        raise ConfigError(f'{name}.settle_seconds: 0 to 60')
     return chromecast
 
 
@@ -188,9 +211,8 @@ def _machine(data: Toml, platform: Platform) -> Machine:
     label = str(platform)
     table = _table(data, label, label)
     capture = _section(_table(table, 'capture', f'{label}.capture'), Capture, f'{label}.capture')
-    feed = _feed(table, label)
+    feed = _chromecast(table, label)
     table.pop('capture', None)
-    table.pop('feed', None)
     host = _section(table, Machine, label)
     host.capture = capture
     host.feed = feed
@@ -251,7 +273,7 @@ def parse(data: Toml) -> Config:
         checks=_section(_table(data, 'checks', 'checks'), Checks, 'checks'),
         mac=_machine(data, Platform.MAC),
         linux=_machine(data, Platform.LINUX),
-        tv=_section(_table(data, 'tv', 'tv'), Tv, 'tv'),
+        tv=_tv(_table(data, 'tv', 'tv')),
         eyes_portal=_table(data, 'eyes', 'eyes').get('portal', ''),
     )
     for name, count in config.leds.as_settings().items():
@@ -263,6 +285,14 @@ def parse(data: Toml) -> Config:
     if config.eyes_portal and not _URL.fullmatch(config.eyes_portal):
         raise ConfigError('eyes.portal: http://host[:port]')
     return config
+
+
+def _tv(table: dict[str, Any]) -> Tv:
+    """`[tv]` with its `feed.cast` table."""
+    feed = _feed(table, 'tv', 'cast', CastFeed)
+    tv = _section(table, Tv, 'tv')
+    tv.feed = feed
+    return tv
 
 
 def _check_tv(tv: Tv) -> None:

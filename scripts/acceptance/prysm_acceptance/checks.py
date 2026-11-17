@@ -49,14 +49,17 @@ class Ask(Protocol):
 
 
 def ask_person(question: str, choices: tuple[Answer, ...] = ALL_ANSWERS) -> tuple[Answer, str]:
-    """One question; the answer and an optional note. Without a terminal: skip."""
+    """One question; the answer and an optional note. Without a terminal, or at its end of input: skip."""
     if not sys.stdin.isatty():
         return Answer.SKIP, 'no terminal to ask'
-    while True:
-        answer = input(f'\n>>> {question}\n    [{"/".join(choices)}]: ').strip().lower()
-        if answer in choices:
-            break
-    note = input('    note (optional): ').strip()
+    try:
+        while True:
+            answer = input(f'\n>>> {question}\n    [{"/".join(choices)}]: ').strip().lower()
+            if answer in choices:
+                break
+        note = input('    note (optional): ').strip()
+    except EOFError:
+        return Answer.SKIP, 'no answer (end of input)'
     return Answer(answer), note
 
 

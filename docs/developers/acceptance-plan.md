@@ -296,7 +296,11 @@ Each phase lands with its tests and CI green before the next starts.
    wake-on-LAN packet (the TV answered), `acceptance settings restore`
    against a reinstalled Prysm (only its dry run on the real backup),
    standby and wake (a person presses power), and `replace` on the Linux
-   package cell.
+   package cell. Since then the TV cells have a colour check: with
+   `[tv.feed.cast]` the runner casts the test clip to the TV's own Cast
+   receiver, asking a person to accept the TV's prompt for the first cast.
+   Casting to the TV and the prompt were tried by hand; the cells with the
+   feed have not run on the TV.
 
 
 A first package stage exists outside the tree (written before this plan, a
