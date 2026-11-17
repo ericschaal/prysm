@@ -254,6 +254,8 @@ export interface Prysm {
 export interface Sender {
   /** The first output line containing `needle`: `connected`, `refused`. */
   waitFor(needle: string): Promise<string>;
+  /** Stop it before the test ends, as a TV that leaves does. */
+  stop(): Promise<void>;
 }
 
 export const test = base.extend<{
@@ -324,7 +326,12 @@ export const test = base.extend<{
         ...args,
       ]);
       started.push(sender);
-      return { waitFor: (needle) => sender.waitFor(needle) };
+      return {
+        waitFor: (needle) => sender.waitFor(needle),
+        stop: async () => {
+          await sender.stop();
+        },
+      };
     });
     for (const sender of started) await sender.stop();
   },

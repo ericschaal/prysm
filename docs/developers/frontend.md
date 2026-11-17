@@ -83,9 +83,10 @@ checked against the portal.
 `prysm-headless` on an ephemeral loopback port with a settings file in a
 temporary directory (remote capture, `null` output), and may start test
 senders: `prysm-capture-remote`'s `test_sender` example stands in for the
-TV's slim worker, streaming generated frames, refusing its first connections
-(`--refuse N REASON`), stopping after some frames (`--stop-after N`) or
-announcing fewer encodings, sizes and rates (`--offer JSON`). A test that
+TV's slim worker, streaming generated frames, refusing every connection as a
+busy TV does (`--refuse REASON`), stopping after some frames
+(`--stop-after N`) or announcing fewer encodings, sizes and rates
+(`--offer JSON`). A test that
 sets `devices` starts `prysm-headless`'s `fake_devices` example instead:
 the production host with stand-in video devices (`PRYSM_FAKE_DEVICES`, each
 with its name, path and modes) that discovery finds and that never capture.

@@ -1,19 +1,24 @@
 // A capture that fails: the card says so, offers Try again, and stays usable.
-// The sender refuses its first connection, as a TV whose capture is busy does.
-import { expect, test } from './prysm';
+// The sender refuses every connection, as a TV whose capture is busy does,
+// so lighting started again (a settings save retries it) fails again too.
+import { expect, test, type Sender } from './prysm';
 
 const reason = 'The TV is busy';
 
+/** This test's busy TV. */
+let busy: Sender;
+
 test.beforeEach(async ({ page, startSender }) => {
-  const sender = startSender('--refuse', '1', reason);
+  busy = startSender('--refuse', reason);
   await page.goto('/');
   await page.getByRole('button', { name: 'Power' }).click();
-  await sender.waitFor('refused');
+  await busy.waitFor('refused');
 });
 
 test('a refused capture is shown, and Try again starts screen sync', async ({
   page,
   prysm,
+  startSender,
 }) => {
   const card = page.getByRole('region', { name: 'Your lights' });
   await expect(card.getByRole('alert')).toBeVisible();
@@ -27,7 +32,9 @@ test('a refused capture is shown, and Try again starts screen sync', async ({
   await card.getByText('Details').click();
   await expect(card.getByText(reason)).toBeVisible();
 
-  // The sender's next connection streams.
+  // The TV is free again: its next connection streams.
+  await busy.stop();
+  startSender();
   await card.getByRole('button', { name: 'Try again' }).click();
   // The card's words for screen readers (the problem line folds away).
   await expect(card.locator('[role=status][aria-live]')).toHaveText(

@@ -3,20 +3,23 @@
 //!
 //! ```sh
 //! cargo run -p prysm-capture-remote --example test_sender -- \
-//!     ws://127.0.0.1:8787/api/v1/capture/stream [--refuse N REASON] [--stop-after N] \
+//!     ws://127.0.0.1:8787/api/v1/capture/stream [--refuse REASON] [--stop-after N] \
 //!     [--offer JSON]
 //! ```
 //!
 //! Like the TV it connects again after each connection ends, every 100 ms
 //! while the portal answers `503` (no remote source receives: lighting off).
-//! `--refuse N REASON` refuses the first `N` connections with `REASON`, which
-//! fails the receiving source; `--stop-after N` exits after `N` frames. Each
-//! connection prints one line to stdout (`connected WxH`, `refused`), so a
-//! test can wait for it. Runs until killed otherwise. `--offer` announces
+//! `--refuse REASON` refuses every connection with `REASON`, as a TV whose
+//! capture is busy does: each refusal fails the receiving source, and a
+//! source opened again (lighting retried) is refused too. `--stop-after N`
+//! exits after `N` frames. Each connection prints one line to stdout
+//! (`connected WxH`, `refused` once Prysm has ended the refused connection),
+//! so a test can wait for it. Runs until killed otherwise. `--offer` announces
 //! that [`Offer`] (`{ "raw": [Mode, ...] }`) instead of every request the
 //! portal accepts in every encoding, as a TV with fewer encoders does.
 use prysm_capture_remote::{Offer, RemoteSender};
 use prysm_core::{Frame, PixelFormat};
+use prysm_ports::FrameSink;
 use std::io::Write;
 use std::net::ToSocketAddrs;
 use std::process::ExitCode;
@@ -26,10 +29,12 @@ use tungstenite::http::Uri;
 
 const RETRY: Duration = Duration::from_millis(100);
 
+/// How often a refused connection is checked for Prysm's end of it.
+const POLL: Duration = Duration::from_millis(10);
+
 struct Options {
     url: Uri,
-    refuse: u32,
-    reason: String,
+    refuse: Option<String>,
     stop_after: Option<u64>,
     offer: Offer,
 }
@@ -37,8 +42,7 @@ struct Options {
 fn options() -> Result<Options, String> {
     let mut args = std::env::args().skip(1);
     let mut url = None;
-    let mut refuse = 0;
-    let mut reason = String::new();
+    let mut refuse = None;
     let mut stop_after = None;
     // Everything a request may ask for, so only `--refuse` refuses.
     let mut offer = prysm_capture_remote::testkit::offer();
@@ -49,10 +53,7 @@ fn options() -> Result<Options, String> {
     }
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--refuse" => {
-                refuse = number(args.next(), "--refuse")?;
-                reason = args.next().ok_or("--refuse takes a reason")?;
-            }
+            "--refuse" => refuse = Some(args.next().ok_or("--refuse takes a reason")?),
             "--stop-after" => stop_after = Some(number(args.next(), "--stop-after")?),
             "--offer" => {
                 let json = args.next().ok_or("--offer takes JSON")?;
@@ -66,9 +67,8 @@ fn options() -> Result<Options, String> {
     }
     Ok(Options {
         url: url
-            .ok_or("usage: test_sender URL [--refuse N REASON] [--stop-after N] [--offer JSON]")?,
+            .ok_or("usage: test_sender URL [--refuse REASON] [--stop-after N] [--offer JSON]")?,
         refuse,
-        reason,
         stop_after,
         offer,
     })
@@ -107,16 +107,20 @@ fn main() -> ExitCode {
         eprintln!("cannot resolve {host}:{port}");
         return ExitCode::from(2);
     };
-    let mut refusals = options.refuse;
     let mut sent = 0u64;
     loop {
         let Ok(mut sender) = RemoteSender::connect(&options.url, address, &options.offer) else {
             thread::sleep(RETRY);
             continue;
         };
-        if refusals > 0 {
-            refusals -= 1;
-            sender.refuse(&options.reason);
+        if let Some(reason) = &options.refuse {
+            sender.refuse(reason);
+            // Connect again only once Prysm has ended this connection: it
+            // takes a newer one over one it has not read yet, so the
+            // refusal would be lost. The TV waits a second instead.
+            while sender.tick().is_ok() {
+                thread::sleep(POLL);
+            }
             say("refused");
             continue;
         }
