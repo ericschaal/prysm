@@ -6,8 +6,10 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=prysm
-Group=prysm
+# A user named after the unit (prysm-headless) exists only while the service
+# runs; nothing is added to /etc/passwd. systemd keeps the state in
+# /var/lib/private/prysm and links /var/lib/prysm to it.
+DynamicUser=yes
 SupplementaryGroups=video
 # A missing settings file means "unconfigured"; the portal creates it on the
 # first save. Extra options (--start, --allow-origin ...) go in a drop-in:

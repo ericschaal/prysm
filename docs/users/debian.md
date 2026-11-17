@@ -18,8 +18,8 @@ directory, run:
 sudo apt install ./prysm-headless_*.deb
 ```
 
-This creates the system user `prysm`, then enables and starts the
-`prysm-headless` service.
+This enables and starts the `prysm-headless` service. The service has no
+permanent account: systemd gives it a temporary user while it runs.
 
 ## 2. Open the portal
 
@@ -40,7 +40,12 @@ sudo systemctl restart prysm-headless
 journalctl -u prysm-headless -f
 ```
 
-Settings live in `/var/lib/prysm/settings.json`. Back it up before upgrades.
+Settings live in `/var/lib/prysm/settings.json` (the file is in
+`/var/lib/private/prysm`, which `/var/lib/prysm` links to). Only root can read
+it; normally the portal edits it. To edit it by hand, stop the service, then
+run `sudo nano /var/lib/prysm/settings.json` and start the service again. Back
+the file up before upgrades with
+`sudo cp /var/lib/prysm/settings.json ~/prysm-settings.json`.
 Restarting leaves the lights off; stopping the service turns them off.
 
 To add options, such as starting Screen sync at boot (`--start`) or allowing
@@ -63,5 +68,5 @@ the only port to allow in a firewall.
 ## Remove
 
 `sudo apt remove prysm-headless` stops and disables the service and keeps the
-settings. `sudo apt purge prysm-headless` also deletes `/var/lib/prysm`. The
-`prysm` user stays.
+settings. `sudo apt purge prysm-headless` also deletes the settings
+(`/var/lib/prysm` and `/var/lib/private/prysm`), leaving nothing behind.

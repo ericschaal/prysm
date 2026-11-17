@@ -467,15 +467,30 @@ jobs:
           dpkg-deb --contents "$deb"
           dpkg-deb --field "$deb" Conflicts | grep -qw prysm-led
           dpkg-deb --contents "$deb" | grep -q '/usr/share/doc/prysm-headless/LICENSE.openh264$'
-          # No systemd in the container: checks dependencies, user and layout.
+          # The service runs as a dynamic user: no account, no sysusers file.
+          if dpkg-deb --contents "$deb" | grep -q sysusers; then exit 1; fi
+          dpkg-deb --fsys-tarfile "$deb" \
+            | tar -xO ./usr/lib/systemd/system/prysm-headless.service >unit
+          grep -qx 'DynamicUser=yes' unit
+          grep -qx 'SupplementaryGroups=video' unit
+          grep -qx 'StateDirectory=prysm' unit
+          if grep -q -E '^(User|Group)=' unit; then exit 1; fi
+          # No systemd in the container: checks dependencies and layout, and
+          # that purge removes the state systemd would have created
+          # (/var/lib/private/prysm, linked from /var/lib/prysm) and nothing else.
           docker run --rm -v "$PWD/dist:/deb:ro" debian:bookworm-slim sh -euc '
             apt-get update -qq
             apt-get install -y -qq /deb/prysm-headless-linux-*.deb >/dev/null
-            id prysm
-            id -nG prysm | grep -qw video
+            test -z "$(getent passwd prysm prysm-headless)"
             /usr/bin/prysm-headless --help >/dev/null
+            mkdir -p /var/lib/private/prysm /var/lib/private/other
+            echo {} >/var/lib/private/prysm/settings.json
+            ln -s private/prysm /var/lib/prysm
             apt-get purge -y -qq prysm-headless >/dev/null
-            test ! -e /usr/bin/prysm-headless'
+            test ! -e /usr/bin/prysm-headless
+            test ! -e /var/lib/private/prysm
+            test ! -L /var/lib/prysm
+            test -d /var/lib/private/other'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: inputs.release
         with:

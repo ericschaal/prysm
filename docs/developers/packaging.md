@@ -86,10 +86,25 @@ name, `prysm-headless_<version>_<arch>.deb`.
 assembly with `dpkg-deb` and also runs on any Debian or Ubuntu with
 `dpkg-dev`. The binary is built on Debian 12 and needs glibc 2.34+ and systemd.
 
-The package installs `/usr/bin/prysm-headless`, a sandboxed
-[systemd unit](../../packaging/debian/prysm-headless.service) and a
-sysusers entry. Installing enables and starts the service; settings live in
-`/var/lib/prysm`. User guide: [Debian](../users/debian.md).
+The package installs `/usr/bin/prysm-headless` and a sandboxed
+[systemd unit](../../packaging/debian/prysm-headless.service); installing
+enables and starts the service. User guide: [Debian](../users/debian.md).
+
+The unit has `DynamicUser=yes`, so the package creates no account: while the
+service runs, systemd allocates a user and group named after the unit
+(`prysm-headless`) and adds `video` (`SupplementaryGroups=`) for
+`/dev/video*`. With a dynamic user, `StateDirectory=prysm` is
+`/var/lib/private/prysm` (mode 0700; systemd gives the running user access on
+each start, whatever UID it has that time), and `/var/lib/prysm` is a symlink
+to it, so the unit's settings path stays `/var/lib/prysm/settings.json`.
+`DynamicUser=` also implies `ProtectSystem=strict`, `ProtectHome=read-only`,
+`PrivateTmp=`, `RemoveIPC=`, `NoNewPrivileges=` and `RestrictSUIDSGID=`, all
+of which the unit already sets (`ProtectHome=true`, stricter); it does not
+imply `PrivateDevices=`, and V4L2 access comes from `DevicePolicy=closed`
+with `DeviceAllow=char-video4linux rw`. The service writes only its settings
+file (a temporary file in the same directory, then a rename) and starts no
+other program. `apt purge` deletes `/var/lib/private/prysm` and the
+`/var/lib/prysm` link and leaves systemd's `/var/lib/private`.
 
 ## webOS
 

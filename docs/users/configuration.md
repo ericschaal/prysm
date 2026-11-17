@@ -226,10 +226,11 @@ The portal creates the file on the first save. Back it up before upgrades.
 Stop Prysm before editing it by hand. The format is described in the
 [settings-file reference](../../adapters/settings-file/README.md).
 
-To check a file without starting the lights:
+To check a file without starting the lights (the Debian package's file is
+readable only by root):
 
 ```sh
-prysm-headless --check-settings /var/lib/prysm/settings.json
+sudo prysm-headless --check-settings /var/lib/prysm/settings.json
 ```
 
 It prints `settings OK` or the field that is wrong. It does not contact the

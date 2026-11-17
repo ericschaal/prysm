@@ -1,12 +1,9 @@
 #!/bin/sh
-# Creates the system user, then enables and starts prysm-headless.service
-# (the same steps debhelper's dh_installsystemd would generate).
+# Enables and starts prysm-headless.service (the same steps debhelper's
+# dh_installsystemd would generate). The unit's user is dynamic: nothing to
+# create.
 set -e
 unit=prysm-headless.service
-
-if [ "$1" = configure ]; then
-    systemd-sysusers prysm-headless.conf
-fi
 
 case "$1" in
 configure | abort-upgrade | abort-deconfigure | abort-remove)

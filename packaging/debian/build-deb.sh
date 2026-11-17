@@ -39,7 +39,6 @@ shlibs=$(cd "$work/shlibs" && dpkg-shlibdeps -O -e"$package" 2>/dev/null \
 
 install -D -m 0755 "$binary" "$root/usr/bin/$package"
 install -D -m 0644 "$here/$package.service" "$root/usr/lib/systemd/system/$package.service"
-install -D -m 0644 "$here/$package.sysusers" "$root/usr/lib/sysusers.d/$package.conf"
 install -D -m 0644 "$repo/hosts/headless/settings.example.json" \
     "$root/usr/share/doc/$package/examples/settings.example.json"
 {

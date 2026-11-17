@@ -29,7 +29,7 @@ first save. Hosts start idle; add `--start` to request lighting at launch.
 | | Docker | Debian |
 | --- | --- | --- |
 | Settings | `/data/settings.json` (volume) | `/var/lib/prysm/settings.json` |
-| Runs as | UID/GID 10001, plus `video` (GID 44) | system user `prysm`, plus `video` |
+| Runs as | UID/GID 10001, plus `video` (GID 44) | systemd dynamic user `prysm-headless`, plus `video` |
 | Logs | `docker logs` | `journalctl -u prysm-headless` |
 | Extra options | arguments after the image name | `systemctl edit prysm-headless` |
 
@@ -98,20 +98,20 @@ The binary is built on Debian 12 and needs systemd and glibc 2.34 or newer
 Install and use:
 
 ```sh
-sudo apt install ./prysm-headless*.deb    # creates user prysm, enables and starts the service
+sudo apt install ./prysm-headless*.deb    # enables and starts the service
 systemctl status prysm-headless
 journalctl -u prysm-headless -f
 sudo systemctl edit prysm-headless        # e.g. ExecStart= then ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json --start
 ```
 
-The package installs `/usr/bin/prysm-headless`, the
-[unit](debian/prysm-headless.service) and a
-[sysusers.d](debian/prysm-headless.sysusers) entry. The unit runs as `prysm`
-with `video` for `/dev/video*`, keeps its state in `StateDirectory=prysm`,
-restarts on failure and is sandboxed (read-only system, no capabilities,
-only V4L2 devices, IPv4/IPv6/Unix sockets). `apt remove` stops and disables
-the service; `apt purge` also deletes `/var/lib/prysm`. The `prysm` user is
-kept. The package conflicts with the earlier implementation's `prysm-led`
+The package installs `/usr/bin/prysm-headless` and the
+[unit](debian/prysm-headless.service), and creates no account. The unit runs
+as a systemd dynamic user (`DynamicUser=yes`) with `video` for `/dev/video*`,
+keeps its state in `StateDirectory=prysm` (`/var/lib/private/prysm`, linked
+from `/var/lib/prysm`), restarts on failure and is sandboxed (read-only
+system, no capabilities, only V4L2 devices, IPv4/IPv6/Unix sockets).
+`apt remove` stops and disables the service; `apt purge` also deletes the
+state directory and its link. The package conflicts with the earlier implementation's `prysm-led`
 (both would take the capture device and the portal port), and ships the
 OpenH264 notice next to its copyright file, as the image does in
 `/usr/share/doc/prysm-headless/`.

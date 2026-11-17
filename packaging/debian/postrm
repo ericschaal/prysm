@@ -1,6 +1,7 @@
 #!/bin/sh
-# remove: disable the unit. purge: also delete the settings in /var/lib/prysm.
-# The "prysm" system user is kept, as Debian does for system users.
+# remove: disable the unit. purge: also delete the settings. With
+# DynamicUser=yes systemd keeps them in /var/lib/private/prysm and links
+# /var/lib/prysm to it; rm removes both. /var/lib/private belongs to systemd.
 set -e
 unit=prysm-headless.service
 
@@ -21,5 +22,5 @@ if command -v deb-systemd-helper >/dev/null; then
 fi
 
 if [ "$1" = purge ]; then
-    rm -rf /var/lib/prysm
+    rm -rf /var/lib/private/prysm /var/lib/prysm
 fi
