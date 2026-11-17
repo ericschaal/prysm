@@ -490,10 +490,16 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   ([packaging](packaging.md)): verified, staged as
   `/media/developer/temp/io.prysm.tv.ipk`, `appInstallService` until
   `installed`, unstaged, `setup.sh`, `getState`. At the end it is uninstalled:
-  the supervisor's `uninstall`, then the app removed through
-  `appInstallService` until `removed`, then nothing
-  of the above but the data files may be left (else the teardown fails, saying
-  what is left);
+  capture stopped as the TV app stops it when Prysm answers (full: lighting
+  off with `PUT /api/v1/target` when the portal answers; slim:
+  `setEnabled false`), the supervisor's `uninstall` (which stops Prysm, then
+  deregisters it), no process under `io.prysm.*` left (polled every 2 s for
+  20 s), then the app removed through `appInstallService` until `removed`,
+  then nothing of the above but the data files may be left (else the teardown
+  fails, saying what is left). While a Prysm process still runs the app is
+  NOT removed and the teardown fails: removing it would end Prysm abruptly,
+  and a worker killed with the TV UI capture open leaves the TV's capture
+  locked until a reboot;
 - **prysm**: full: the TV's portal at the address `getState` reports, given
   the run's settings (WLED output, neutral processing, the webOS capture at
   640 × 360 and 30 fps without the UI) with `PUT /api/v1/settings`; slim: the
@@ -645,8 +651,14 @@ and none after it.
   `settings.json` and `resume.json` as they are. It reads the file back and
   compares it. When the backup cannot be taken (an installed Prysm that does
   not answer) or does not compare, the cell stops and nothing is removed.
-  Otherwise the end-of-run warning is registered and Prysm is uninstalled
-  (the TV's uninstall above; the package purged), and must leave nothing.
+  Otherwise Prysm is uninstalled (the TV's uninstall above, Prysm stopped
+  before the app is removed; the package purged) and must leave nothing; the
+  end-of-run warning is registered also when that fails or is interrupted.
+  A TV Prysm that does not stop is left installed, and the warning says so
+  instead. An installed Prysm whose `uninstall` subcommand predates stopping
+  the supervisor leaves its processes running, so it is left installed too
+  (its registration removed by that `uninstall`): update it, or remove it by
+  hand.
   The cell then runs and cleans up as always: the target ends without Prysm.
   Data files without an installed Prysm (an earlier uninstall, or an earlier
   run, leaves them) are backed up the same way and nothing is uninstalled.

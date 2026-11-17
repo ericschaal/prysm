@@ -272,15 +272,33 @@ pub fn exit_code(stop: Option<&Stop>, result: &prysm_ports::Result<()>) -> u8 {
     }
 }
 
-/// Die with the supervisor. `PR_SET_PDEATHSIG` follows the spawning thread,
-/// which is the supervisor's long-lived loop thread.
+/// Stop with the supervisor: its death sends this process SIGTERM
+/// (`PR_SET_PDEATHSIG` follows the spawning thread, which is the
+/// supervisor's long-lived loop thread). SIGTERM, not SIGKILL: the worker
+/// then runs its normal stop and releases the capture tap; a process killed
+/// inside a native capture call can leave the TV's capture locked until a
+/// reboot.
+///
+/// Called before [`main`] installs its signal handlers; a SIGTERM that
+/// arrives in between takes the default action and ends the process before
+/// `body` has opened anything.
+///
+/// What bounds a worker that outlives its supervisor (its stop hangs):
+/// nothing SIGKILLs it any more. Its own stop deadline (the host's
+/// `stop_deadline`) ends the session as `Faulted`; the hung native call runs
+/// on the capture's own thread, not on the runtime's blocking pool, so `main`
+/// returns and the process exits. Until it has exited it holds the capture
+/// adapter's cross-process lock (and the full worker its portal port), so a
+/// new worker cannot open a tap meanwhile: it fails and its supervisor backs
+/// off. A thread stuck in the kernel keeps the process, and so the lock,
+/// until it returns.
 ///
 /// # Errors
 /// The signal cannot be set, or the supervisor is already gone.
 pub fn guard_parent() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)
+        nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGTERM)
             .map_err(|error| format!("cannot set the parent-death signal: {error}"))?;
         if nix::unistd::getppid() == nix::unistd::Pid::from_raw(1) {
             return Err("the supervisor already exited".into());

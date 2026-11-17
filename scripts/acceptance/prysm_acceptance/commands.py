@@ -304,7 +304,9 @@ def tv_setup(host: str) -> Command:
 
 
 def tv_supervisor_uninstall(host: str) -> Command:
-    """The supervisor's own uninstall: stops the worker, removes hook and manifests, rescans."""
+    """The supervisor's own uninstall: stops the running supervisor (SIGTERM; its worker stops and releases the
+    capture first), then removes hook and manifests and rescans. A supervisor that does not exit within its
+    bound fails it, nothing deregistered."""
     return _ssh('tv.supervisor-uninstall', host, f'{SUPERVISOR} uninstall', 90)
 
 

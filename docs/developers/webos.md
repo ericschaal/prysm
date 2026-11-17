@@ -40,8 +40,17 @@ Code: [webos-service](../../hosts/webos-service/src/lib.rs),
   one JSON object per line (at most 4 KiB, unknown fields rejected). Vendor
   output is redirected to stderr, which carries logs.
 - The worker reports status on every change and every 5 s; 15 s of silence is
-  a hang. Stop sends TERM, then KILL 8 s later. The worker dies with its
-  parent.
+  a hang. Stop sends TERM, then KILL 8 s later.
+- The worker stops when its supervisor dies: it gets SIGTERM (parent-death
+  signal) and its stdin closes, and it stops as usual, releasing the capture
+  tap. Nothing SIGKILLs it then: a worker killed inside a native capture call
+  can leave the TV's capture locked until a reboot. One that does not finish
+  is bounded by its own stop deadline and, until it exits, holds the capture
+  lock `/tmp/prysm-capture.lock`, so no other worker opens a tap meanwhile
+  ([`guard_parent`](../../crates/webos-link/src/worker.rs)).
+- The supervisor logs which signal stopped it. The worker logs opening and
+  releasing the TV UI tap with the capture thread's kernel id (`thread`), the
+  id a kernel log names as a capture lock's holder (`K_pid`).
 - The supervisor reaps a worker before starting another. Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.
 - A worker runs while the TV is on (active or screen saver) and, for slim,
@@ -84,14 +93,23 @@ The TV app sets the service up through the Homebrew Channel's `exec` of
 | `/var/lib/webosbrew/init.d/io.prysm.tv` | Boot hook; runs `setup` at boot |
 | `/var/lib/io.prysm.tv/tv.json` | Preferences (supervisor) |
 | `/var/lib/io.prysm.tv/resume.json` | Intent and boot ID (supervisor) |
+| `/var/lib/io.prysm.tv/supervisor.lock` | Held by the running supervisor; empty |
 | `/var/lib/io.prysm.tv/settings.json` | Full only: portal settings (worker's engine) |
 
 `prysm-webos-service setup` writes the manifests and boot hook (refusing
 unrelated content), rescans Luna and activates the service, all with bounded
 waits. It must run after every install or update: IPKs carry no install
-scripts. `uninstall` (Luna method or subcommand) stops the worker, removes the
-hook and manifests and rescans; preferences and settings stay. Remove the
-setup before the app, or the registration stays behind.
+scripts. `uninstall` stops Prysm, removes the hook and manifests and rescans;
+preferences and settings stay. The Luna method stops the worker and then the
+service itself. The subcommand sends the running supervisor SIGTERM (it stops
+its worker first) and waits for it up to 12 s, above the worker's
+TERM-to-KILL window; a supervisor still running then fails the subcommand and
+nothing is deregistered. It finds the supervisor by `supervisor.lock`, which
+`run` holds for its lifetime (one supervisor per identity), and holds that
+lock itself while it deregisters, so a supervisor Luna starts meanwhile exits
+at once ([lock](../../hosts/webos-service/src/lock.rs)). Remove the setup
+before the app, or the registration stays behind; removing the app ends a
+running Prysm abruptly, so stop it first (the subcommand does).
 
 Nothing detects or migrates the old `io.prysm.capture` app; it must be removed
 first.

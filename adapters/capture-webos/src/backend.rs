@@ -96,6 +96,9 @@ impl Backend for Lg {
     fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
         block_signals()?;
         let (width, height) = settings.ui_size();
+        // HAL GAL binds the tap to this thread; the kernel log names a held
+        // lock by thread id (`K_pid`).
+        tracing::info!(thread = os_thread(), "opening the TV UI tap");
         let capture = UiCapture::open(width, height)
             .map_err(|error| fault("cannot open webOS UI capture", error))?;
         Ok(Box::new(HalTap {
@@ -138,10 +141,22 @@ impl Tap for HalTap {
     }
 
     fn release(self: Box<Self>) -> Result<()> {
+        // Logged before as well: a release that hangs never logs after.
+        tracing::info!(thread = os_thread(), "releasing the TV UI tap");
         self.capture
             .release()
-            .map_err(|error| Error::adapter("webOS UI capture cleanup failed", error))
+            .map_err(|error| Error::adapter("webOS UI capture cleanup failed", error))?;
+        tracing::info!(thread = os_thread(), "TV UI tap released");
+        Ok(())
     }
+}
+
+/// The kernel's id of the calling thread (0 off Linux).
+fn os_thread() -> i32 {
+    #[cfg(target_os = "linux")]
+    return nix::unistd::gettid().as_raw();
+    #[cfg(not(target_os = "linux"))]
+    0
 }
 
 /// The driver's packed NV12, forwarded without colour conversion: one copy

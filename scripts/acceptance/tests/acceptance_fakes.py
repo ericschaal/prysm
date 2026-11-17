@@ -1,7 +1,7 @@
 """What the runner's tests share: colours as a capture shows them, a seam's Prysm API, and typing helpers.
 
 The host cells are tested against the real prysm-headless on loopback
-(test_acceptance_host.py); `FakePrysm` only answers a seam's start.
+(test_acceptance_host.py); `FakePrysm` only answers a seam's start and a lighting target.
 """
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,12 +31,13 @@ def ok(stdout: str = '') -> Result:
 
 class FakePrysm:
     """`GET /api/v1/state` and `PUT /api/v1/settings` on loopback, as a seam's start uses them; the saved
-    settings come back in the state. Prysm listens on `listen`."""
+    settings come back in the state. `PUT /api/v1/target` is recorded in `targets`. Prysm listens on `listen`."""
 
     def __init__(self) -> None:
         self.saved: list[object] = []
+        self.targets: list[object] = []
         settings: dict[str, object] = {}
-        saved = self.saved
+        saved, targets = self.saved, self.targets
 
         class Handler(BaseHTTPRequestHandler):
             def reply(self, value: object) -> None:
@@ -52,6 +53,10 @@ class FakePrysm:
 
             def do_PUT(self) -> None:
                 body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                if self.path == '/api/v1/target':
+                    targets.append(body['target'])
+                    self.reply({})
+                    return
                 saved.append(body)
                 settings.clear()
                 settings.update(body['settings'])

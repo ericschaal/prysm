@@ -125,8 +125,14 @@ fn a_missing_program_fails_to_spawn() {
 }
 
 #[test]
-fn dropping_an_unreaped_worker_kills_it() {
-    let worker = sh("echo ready >&2; sleep 30");
+fn dropping_an_unreaped_worker_terminates_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("terminated");
+    let mut worker = sh(&format!(
+        "trap 'echo > {}; exit 0' TERM; echo ready >&2; while :; do sleep 0.05; done",
+        marker.display()
+    ));
+    collect(&mut worker, |seen| !seen.is_empty());
     let pid =
         nix::unistd::Pid::from_raw(i32::try_from(worker.child.as_ref().unwrap().id()).unwrap());
     drop(worker);
@@ -135,4 +141,5 @@ fn dropping_an_unreaped_worker_kills_it() {
         assert!(Instant::now() < deadline, "worker survived its handle");
         std::thread::sleep(Duration::from_millis(10));
     }
+    assert!(marker.exists(), "stopped with SIGTERM, not killed");
 }

@@ -6,18 +6,19 @@ use crate::preferences::{FileStore, PreferencesStore};
 use crate::service::{Bus, METHODS, STATE_KEY, Service, WATCHES, Watch};
 use prysm_webos_luna_sys as sys;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 const TICK: Duration = Duration::from_millis(100);
 
-/// Register and run until stopped (signal, `deadline`, or uninstall).
+/// Register and run until stopped (the signal number stored in `stop`,
+/// `deadline`, or uninstall).
 ///
 /// # Errors
 /// Registration failed or the bus is unavailable (off the TV).
 pub fn serve(
     identity: &Identity,
-    stop: Arc<AtomicBool>,
+    stop: Arc<AtomicUsize>,
     deadline: Option<Instant>,
 ) -> Result<(), sys::Error> {
     let service = Service::new(
@@ -41,7 +42,8 @@ pub fn serve(
 /// Adapts the service to the sys crate's handler.
 pub(crate) struct Glue<L: Launcher, S: PreferencesStore, I: Installer> {
     service: Service<L, S, I>,
-    stop: Arc<AtomicBool>,
+    /// The number of the signal that asked to stop; 0 until one did.
+    stop: Arc<AtomicUsize>,
     deadline: Option<Instant>,
     stopping: bool,
 }
@@ -49,7 +51,7 @@ pub(crate) struct Glue<L: Launcher, S: PreferencesStore, I: Installer> {
 impl<L: Launcher, S: PreferencesStore, I: Installer> Glue<L, S, I> {
     pub(crate) fn new(
         service: Service<L, S, I>,
-        stop: Arc<AtomicBool>,
+        stop: Arc<AtomicUsize>,
         deadline: Option<Instant>,
     ) -> Self {
         Self {
@@ -102,14 +104,33 @@ where
     }
 
     fn tick(&mut self, bus: &mut sys::Bus, now: Instant) -> bool {
-        let expired = self.deadline.is_some_and(|deadline| now >= deadline);
-        if !self.stopping && (expired || self.stop.load(Ordering::Relaxed)) {
-            self.stopping = true;
-            eprintln!("prysm-webos-service: stopping");
-            self.service.shutdown(&mut LunaBus(bus), now);
+        if !self.stopping {
+            let signal = self.stop.load(Ordering::Relaxed);
+            let why = if signal != 0 {
+                Some(signal_name(signal))
+            } else if self.deadline.is_some_and(|deadline| now >= deadline) {
+                Some("the sandboxed run time is over".into())
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                self.stopping = true;
+                eprintln!("prysm-webos-service: stopping: {why}");
+                self.service.shutdown(&mut LunaBus(bus), now);
+            }
         }
         self.service.tick(&mut LunaBus(bus), now)
     }
+}
+
+fn signal_name(signal: usize) -> String {
+    i32::try_from(signal)
+        .ok()
+        .and_then(|number| nix::sys::signal::Signal::try_from(number).ok())
+        .map_or_else(
+            || format!("signal {signal}"),
+            |signal| signal.as_str().into(),
+        )
 }
 
 #[cfg(test)]
@@ -129,7 +150,7 @@ mod tests {
             FakeInstaller::default(),
             now,
         );
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicUsize::new(0));
         let mut glue = Glue::new(service, stop.clone(), None);
         let mut bus = sys::Bus::default();
         assert!(glue.tick(&mut bus, now));
@@ -142,7 +163,8 @@ mod tests {
             },
         );
         assert!(reply.payload.contains(r#""returnValue":true"#));
-        stop.store(true, Ordering::Relaxed);
+        stop.store(15, Ordering::Relaxed);
+        assert_eq!(signal_name(15), "SIGTERM");
         assert!(!glue.tick(&mut bus, now), "no worker: finished at once");
     }
 

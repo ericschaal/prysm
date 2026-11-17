@@ -17,8 +17,9 @@ Its checks are the webOS package's own (registered, reinstall) and, between
 them in their order, those any TV runs (`tv_checks`), taken with their plans
 for this TV (`taken`). The teardowns undo the set-up in reverse, also after
 a failure or Ctrl-C: the cast stopped and the clip server closed, Prysm's app
-closed, the receiver stopped and removed, the package uninstalled with a
-check that nothing of Prysm is left, WLED restored. Each fixture and check
+closed, the receiver stopped and removed, the package uninstalled (capture
+stopped, Prysm stopped, then the app removed) with a check that nothing of
+Prysm is left, WLED restored. Each fixture and check
 says what it does in its docstring and, for the dry run, in `planned`.
 
 Every TV command is a `tv.*` template in `commands.py`; the runner touches
@@ -338,8 +339,15 @@ def _install_plan(ssh: str, ipk: str) -> list[str]:
 def _uninstall_plan(config: Config) -> list[str]:
     ssh = _ssh(config)
     return [
+        'capture stopped first, when Prysm answers:',
+        *shown(commands.tv_get_state(ssh)),
+        'full: PUT PORTAL/api/v1/target off (PORTAL as getState reports it; skipped when it does not answer)',
+        *shown(commands.tv_set_enabled(ssh, False)),
+        '(slim only)',
+        *shown(commands.tv_supervisor_uninstall(ssh), commands.tv_processes(ssh)),
+        f'(every 2 s until no Prysm process is left; one still there after {webos.STOP_SECONDS} s fails, and the '
+        'app is NOT removed: removing it would end Prysm abruptly)',
         *shown(
-            commands.tv_supervisor_uninstall(ssh),
             commands.tv_remove_app(ssh),
             commands.tv_paths(ssh),
             commands.tv_processes(ssh),
@@ -367,8 +375,9 @@ def package(
 ) -> Iterator[LunaReply]:
     """The package installed the documented way (verified, staged, appInstallService, unstaged, setup.sh).
 
-    At the end, also after a failure, it is uninstalled (the supervisor's uninstall, then the app removed
-    through the TV's install service) and nothing of Prysm may be left but its data files."""
+    At the end, also after a failure, it is uninstalled (capture stopped, the supervisor's uninstall, no Prysm
+    process left, then the app removed through the TV's install service) and nothing of Prysm may be left but
+    its data files. While a Prysm process still runs the app is left installed and the teardown fails."""
     request.config.stash[INSTALLED_BY_RUN] = True
     try:
         yield target.tv.install(str(_ipk(cell, config)))

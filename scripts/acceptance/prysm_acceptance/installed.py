@@ -67,13 +67,20 @@ class Existing(Protocol):
         ...
 
     def remove(self) -> list[str]:
-        """Uninstall Prysm; what of it is still there (empty: nothing)."""
+        """Uninstall Prysm; what of it is still there (empty: nothing). Raises `Kept` when Prysm could not be
+        stopped, so it was left installed rather than removed while running."""
         ...
 
     def restore(self, backup: Backup) -> list[str]:
         """Send what `backup` holds to the Prysm reinstalled there, through its API; what was done. Raises when
         no Prysm answers. Lighting is not switched on."""
         ...
+
+
+class Kept(Failed):
+    """Prysm still runs after its uninstall was asked to stop it, so it was left installed: removing a running
+    Prysm ends it abruptly (on the TV, a worker killed with its capture open can leave the TV's capture locked
+    until a reboot)."""
 
 
 def refusal(existing: Existing, found: list[str]) -> str | None:
@@ -102,14 +109,21 @@ def take(existing: Existing, found: list[str], path: Path) -> Backup:
 
 
 def replace(existing: Existing, found: list[str], path: Path, warn: Callable[[str], None]) -> str:
-    """`installed = "replace"`: the backup taken and verified, the end-of-run warning registered, then Prysm
-    uninstalled; Failed when the backup fails (nothing removed) or the uninstall leaves anything."""
+    """`installed = "replace"`: the backup taken and verified, then Prysm uninstalled, the end-of-run warning
+    registered also when the uninstall fails or is interrupted; Failed when the backup fails (nothing removed) or
+    the uninstall leaves anything, `Kept` (and its own warning) when Prysm could not be stopped."""
     backup = take(existing, found, path)
-    installed = backup['luna'] is not None or backup['portal'] is not None
-    warn(warning(existing, backup, path, removed=installed))
-    if not installed:
+    if backup['luna'] is None and backup['portal'] is None:
+        warn(warning(existing, backup, path, removed=False))
         return f'only data files of Prysm were there; backed up in {path}'
-    left = existing.remove()
+    kept: Kept | None = None
+    try:
+        left = existing.remove()
+    except Kept as error:
+        kept = error
+        raise
+    finally:
+        warn(kept_warning(existing, backup, path, kept) if kept else warning(existing, backup, path, removed=True))
     if left:
         raise Failed(f'the uninstall left on the {existing.name} target: {", ".join(left)}')
     return f'backed up in {path}, then uninstalled'
@@ -133,6 +147,15 @@ def warning(existing: Existing, backup: Backup, path: Path, removed: bool) -> st
         f'Prysm was REMOVED from the {existing.name} target ({backup["host"]}) and NOT reinstalled. Reinstalling the '
         f'right version is your responsibility. Its settings are backed up in {path}; once Prysm is installed and '
         f'running there again, restore them with: {command}'
+    )
+
+
+def kept_warning(existing: Existing, backup: Backup, path: Path, kept: Kept) -> str:
+    """What the end of the run says when `replace` left a Prysm that could not be stopped installed."""
+    return (
+        f'Prysm on the {existing.name} target ({backup["host"]}) did not stop, so this run did NOT REMOVE it while '
+        f'it runs, but it is no longer as it was: {kept}. Its settings are backed up in {path}. Check Prysm there '
+        f'(restart the {existing.name} target if it is stuck), then remove or set it up again yourself.'
     )
 
 

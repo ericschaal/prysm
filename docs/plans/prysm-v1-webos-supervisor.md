@@ -112,8 +112,9 @@ has one Luna binding.
   rejected too). A bad, oversized or truncated line is a protocol failure: the
   supervisor terminates the worker; the worker exits `FAILED`.
 - **Liveness**: status on every change and every 5 s; 15 s of silence is a hang.
-- **Parent death**: `set_pdeathsig(SIGKILL)` then exit if `getppid() == 1`
+- **Parent death**: `set_pdeathsig(SIGTERM)` then exit if `getppid() == 1`
   (Linux); stdin EOF also stops the worker. The supervisor spawns from its loop thread.
+  SIGTERM, not SIGKILL, so the worker releases the capture tap before it exits.
 
 ```rust,ignore
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]

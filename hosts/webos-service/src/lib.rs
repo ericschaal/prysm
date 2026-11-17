@@ -7,11 +7,14 @@
 //!   [`launcher::Launcher`], [`preferences::PreferencesStore`] and
 //!   [`install::Installer`] seams.
 //! - [`main`]: the process: arguments, signals, the real Luna bus.
+//! - [`lock`]: one supervisor per identity, stopped by the `uninstall`
+//!   subcommand before it deregisters.
 //! - `schema` (feature `schema`): the `luna` OpenAPI document of the TV app's API.
 mod cli;
 pub mod identity;
 pub mod install;
 pub mod launcher;
+pub mod lock;
 mod luna;
 pub mod machine;
 pub mod observe;

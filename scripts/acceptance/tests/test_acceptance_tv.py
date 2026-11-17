@@ -54,6 +54,8 @@ NO_SERVICE = Result(1, '', 'Service does not exist: io.prysm.tv.service')
 ABSENT = ''.join(f'absent {path}\n' for path in (*commands.INSTALLED_PATHS, commands.DATA_DIR, commands.STAGING))
 INSTALLED = ABSENT.replace('absent /media', 'present /media').replace(f'absent {commands.DATA_DIR}', 'present /var/lib')
 DATA_ONLY = ABSENT.replace(f'absent {commands.DATA_DIR}', f'present {commands.DATA_DIR}')
+# Prysm stopped before an uninstall removes the app: nothing answering, the supervisor's uninstall, no process.
+STOPPED = [('tv.get-state', NO_SERVICE), ('tv.supervisor-uninstall', ok()), ('tv.processes', ok())]
 # The templates that only read the TV.
 READING = {'tv.reachable', 'tv.paths', 'tv.processes', 'tv.get-state', 'tv.read-data', 'tv.sample-worker'}
 
@@ -108,9 +110,9 @@ class TheTv(unittest.TestCase):
             found.install('dist/prysm-tv-slim.ipk')
         self.assertEqual(calls(found), ['local.verify-ipk', 'tv.stage', 'tv.install', 'tv.unstage'])
 
-    def test_uninstall_leaves_nothing_but_the_data(self) -> None:
+    def test_uninstall_stops_prysm_before_the_app_is_removed(self) -> None:
         found = recorded(
-            ('tv.supervisor-uninstall', ok()),
+            *STOPPED,
             ('tv.remove-app', ok()),
             ('tv.paths', ok(DATA_ONLY)),
             ('tv.processes', ok()),
@@ -119,20 +121,66 @@ class TheTv(unittest.TestCase):
         with no_wait():
             self.assertEqual(found.uninstall(), [])
 
-    def test_uninstall_reports_what_is_left(self) -> None:
+    def test_the_full_package_lights_off_through_its_portal_first(self) -> None:
+        prysm = FakePrysm()
+        self.addCleanup(prysm.close)
         found = recorded(
-            ('tv.supervisor-uninstall', ok()),
+            ('tv.get-state', ok(STATE.replace('192.0.2.50:8787', prysm.listen))),
+            *STOPPED[1:],
             ('tv.remove-app', ok()),
-            ('tv.paths', ok(ABSENT.replace(f'absent {commands.HOOK}', f'present {commands.HOOK}'))),
-            ('tv.processes', ok(f'812 {commands.WORKER}\n')),
+            ('tv.paths', ok(DATA_ONLY)),
+            ('tv.processes', ok()),
             ('tv.get-state', NO_SERVICE),
         )
         with no_wait():
-            self.assertEqual(found.uninstall(), [commands.HOOK, f'process 812 {commands.WORKER}'])
+            self.assertEqual(found.uninstall(), [])
+        self.assertEqual(prysm.targets, ['off'])
+
+    def test_the_slim_package_is_disabled_and_a_silent_portal_skipped(self) -> None:
+        found = recorded(('tv.get-state', ok(SLIM)), ('tv.set-enabled', ok('{"returnValue":true}')))
+        found.stop_capture()
+        self.assertIn('"enabled":false', untyped(found.transport).calls[1].remote)
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            closed = f'127.0.0.1:{probe.getsockname()[1]}'
+        found = recorded(('tv.get-state', ok(STATE.replace('192.0.2.50:8787', closed))))
+        found.stop_capture()
+        self.assertEqual(calls(found), ['tv.get-state'])
+
+    def test_a_prysm_that_keeps_running_is_left_installed(self) -> None:
+        still = ok(f'812 {commands.SUPERVISOR}\n')
+        found = recorded(
+            ('tv.get-state', NO_SERVICE),
+            ('tv.supervisor-uninstall', Result(1, '', 'the running supervisor (pid 812) did not exit within 12 s')),
+            ('tv.processes', still),
+            ('tv.processes', still),
+        )
+        clock = mock.patch.object(webos.time, 'monotonic', side_effect=[0, 0, webos.STOP_SECONDS])
+        with clock, no_wait(), self.assertRaisesRegex(installed.Kept, 'the app was not removed') as raised:
+            found.uninstall()
+        self.assertNotIn('tv.remove-app', calls(found))
+        self.assertIn('did not exit', untyped(raised.exception).evidence)
+
+    def test_processes_still_stopping_are_waited_for(self) -> None:
+        found = recorded(('tv.processes', ok(f'812 {commands.WORKER}\n')), ('tv.processes', ok()))
+        with no_wait():
+            self.assertEqual(found.running(), [])
+        self.assertEqual(calls(found), ['tv.processes', 'tv.processes'])
+
+    def test_uninstall_reports_what_is_left(self) -> None:
+        found = recorded(
+            *STOPPED,
+            ('tv.remove-app', ok()),
+            ('tv.paths', ok(ABSENT.replace(f'absent {commands.HOOK}', f'present {commands.HOOK}'))),
+            ('tv.processes', ok()),
+            ('tv.get-state', NO_SERVICE),
+        )
+        with no_wait():
+            self.assertEqual(found.uninstall(), [commands.HOOK])
 
     def test_an_app_the_install_service_does_not_remove_fails_the_uninstall(self) -> None:
         found = recorded(
-            ('tv.supervisor-uninstall', ok()),
+            *STOPPED,
             ('tv.remove-app', Result(1, '{"returnValue":false,"errorText":"denied"}')),
             ('tv.paths', ok(ABSENT.replace(f'absent {commands.APP_DIR}', f'present {commands.APP_DIR}'))),
             ('tv.processes', ok()),
@@ -364,9 +412,12 @@ class Existing:
 
     name = 'tv'
 
-    def __init__(self, backup: Callable[[], Backup], left: Sequence[str] = ()) -> None:
+    def __init__(
+        self, backup: Callable[[], Backup], left: Sequence[str] = (), raises: BaseException | None = None
+    ) -> None:
         self.make = backup
         self.left = list(left)
+        self.raises = raises
         self.done: list[str] = []
 
     def found(self) -> list[str]:
@@ -378,6 +429,8 @@ class Existing:
 
     def remove(self) -> list[str]:
         self.done.append('remove')
+        if self.raises:
+            raise self.raises
         return self.left
 
     def restore(self, backup: Backup) -> list[str]:
@@ -446,12 +499,20 @@ class Replace(unittest.TestCase):
             self.replace(existing)
         self.assertEqual((existing.done, self.warnings), (['backup'], []))
 
-    def test_the_warning_comes_before_the_uninstall(self) -> None:
-        existing = Existing(a_backup)
-        warned: list[list[str]] = []
-        installed.replace(existing, ['x'], self.path, lambda text: warned.append(list(existing.done)))
-        self.assertEqual((warned, existing.done), ([['backup']], ['backup', 'remove']))
+    def test_the_warning_is_registered_also_when_the_uninstall_is_interrupted(self) -> None:
+        existing = Existing(a_backup, raises=KeyboardInterrupt())
+        with self.assertRaises(KeyboardInterrupt):
+            self.replace(existing)
+        self.assertEqual(existing.done, ['backup', 'remove'])
+        self.assertIn('REMOVED', self.warnings[0])
         self.assertEqual(json.loads(self.path.read_text()), a_backup())
+
+    def test_a_prysm_that_could_not_be_stopped_is_reported_left_installed(self) -> None:
+        with self.assertRaisesRegex(installed.Kept, 'still runs'):
+            self.replace(Existing(a_backup, raises=installed.Kept('Prysm still runs')))
+        self.assertEqual(len(self.warnings), 1)
+        self.assertIn('did NOT REMOVE it', self.warnings[0])
+        self.assertNotIn('REMOVED', self.warnings[0])
 
     def test_what_the_uninstall_leaves_fails(self) -> None:
         with self.assertRaisesRegex(Failed, f'left on the tv target: {commands.HOOK}'):
