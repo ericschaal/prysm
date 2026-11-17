@@ -191,6 +191,36 @@ def screen_on(*entries: tuple[str, Result], cast_feed: FakeCast | None = None) -
 class States(unittest.TestCase):
     """Each check's state: set by the runner, confirmed from the TV, the part not reached named."""
 
+    def test_a_start_the_cells_know_is_left_alone(self) -> None:
+        for app in tv_cells.FREE_APPS:
+            found = recorded(('tv.foreground', front(app)))
+            self.assertEqual(tv_cells.at_home(found), app)
+            self.assertEqual(calls(found), ['tv.foreground'])
+
+    def test_over_another_app_the_home_screen_is_brought_to_the_front(self) -> None:
+        found = recorded(
+            ('tv.foreground', front('com.webos.app.hdmi1')),
+            ('tv.launch-home', ok('{"returnValue":true}')),
+            ('tv.foreground', front('')),
+            ('tv.foreground', front(tv_cells.HOME_APP)),
+        )
+        with mock.patch.object(tv_cells.time, 'sleep'):
+            self.assertEqual(tv_cells.at_home(found), 'com.webos.app.hdmi1')
+        self.assertEqual(calls(found), ['tv.foreground', 'tv.launch-home', 'tv.foreground', 'tv.foreground'])
+
+    def test_a_home_screen_that_does_not_come_fails(self) -> None:
+        found = recorded(
+            ('tv.foreground', front('com.webos.app.hdmi1')),
+            ('tv.launch-home', ok('{"returnValue":true}')),
+            ('tv.foreground', front('com.webos.app.hdmi1')),
+        )
+        with (
+            mock.patch.object(tv_cells.time, 'sleep'),
+            mock.patch.object(tv_cells.time, 'monotonic', side_effect=[0, 100]),
+            self.assertRaisesRegex(Failed, 'the home screen is not in front: com.webos.app.hdmi1 is'),
+        ):
+            tv_cells.at_home(found)
+
     def test_the_video_state_casts_once_and_is_confirmed_from_the_tv(self) -> None:
         fed = FakeCast()
         screen = screen_on(

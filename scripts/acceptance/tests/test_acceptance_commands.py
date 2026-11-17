@@ -124,7 +124,7 @@ class AllowList(unittest.TestCase):
                 self.assertTrue(command.hold_stdin, command.template)
                 self.assertTrue(command.remote.startswith('timeout '), command.template)
 
-    def test_the_application_manager_only_reads_or_names_prysms_app(self) -> None:
+    def test_the_application_manager_only_reads_or_names_prysms_app_or_the_home_screen(self) -> None:
         manager = 'luna://com.webos.service.applicationManager'
         self.assertEqual(
             {
@@ -135,6 +135,7 @@ class AllowList(unittest.TestCase):
             {
                 'tv.foreground': f"timeout 12 luna-send -n 1 {manager}/getForegroundAppInfo '{{}}'",
                 'tv.launch-app': f'timeout 12 luna-send -n 1 {manager}/launch \'{{"id":"io.prysm.tv"}}\'',
+                'tv.launch-home': f'timeout 12 luna-send -n 1 {manager}/launch \'{{"id":"com.webos.app.home"}}\'',
                 'tv.close-app': f'timeout 12 luna-send -n 1 {manager}/closeByAppId \'{{"id":"io.prysm.tv"}}\'',
             },
         )

@@ -13,7 +13,8 @@ supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
 Beyond Prysm's own service, Luna is asked only which app is in front, and to
-launch or close Prysm's own app (`APP`, fixed in the template).
+launch or close Prysm's own app (`APP`) and bring the home screen to the front
+(`HOME_APP`), each id fixed in its template.
 When the TV does not answer and `[tv] mac` is set, the runner sends it one
 wake-on-LAN packet (`local.wake-on-lan`, a UDP broadcast, no process); it
 never puts the TV to sleep.
@@ -55,6 +56,7 @@ ROOT = Path(__file__).resolve().parents[3]
 APP = 'io.prysm.tv'
 SERVICE = 'io.prysm.tv.service'
 APP_MANAGER = 'com.webos.service.applicationManager'
+HOME_APP = 'com.webos.app.home'
 APP_DIR = '/media/developer/apps/usr/palm/applications/io.prysm.tv'
 SERVICE_DIR = '/media/developer/apps/usr/palm/services/io.prysm.tv.service'
 MANIFESTS = (
@@ -336,6 +338,11 @@ def tv_foreground(host: str) -> Command:
 def tv_launch_app(host: str) -> Command:
     """Bring Prysm's own app to the front (no other app: the id is fixed)."""
     return _luna('tv.launch-app', host, f'{APP_MANAGER}/launch', {'id': APP})
+
+
+def tv_launch_home(host: str) -> Command:
+    """Bring the TV's home screen to the front, over whatever app is there (the id is fixed)."""
+    return _luna('tv.launch-home', host, f'{APP_MANAGER}/launch', {'id': HOME_APP})
 
 
 def tv_close_app(host: str) -> Command:
@@ -905,6 +912,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.set-preferences': lambda: tv_set_preferences('root@tv.example', False, 'http://192.0.2.20:8787'),
     'tv.foreground': lambda: tv_foreground('root@tv.example'),
     'tv.launch-app': lambda: tv_launch_app('root@tv.example'),
+    'tv.launch-home': lambda: tv_launch_home('root@tv.example'),
     'tv.close-app': lambda: tv_close_app('root@tv.example'),
     'linux.probe': lambda: linux_probe('pi@pi.example'),
     'linux.ffmpeg-version': lambda: linux_ffmpeg_version('pi@pi.example'),

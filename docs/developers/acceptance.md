@@ -455,11 +455,12 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   (and for slim the receiver's binary) present, else a SKIP (a failure when
   named); `ipk.py verify` accepts the package (by what it contains, whatever
   its name); its hash, age, version and commit recorded as for the host cells;
-- **target**: the TV reachable (woken as above) and free: the app in front
-  (saved as `tv-foreground.json`) is none, the home screen (also under the
-  screen saver), Prysm's own or the Cast receiver; any other app in front
-  means someone is using the TV, and the cell is skipped (failed when named)
-  before anything changes. Then the old `io.prysm.capture` app not running,
+- **target**: the TV reachable (woken as above) and at a known start: the
+  app in front (saved as `tv-foreground.json`) is none, the home screen (also
+  under the screen saver), Prysm's own or the Cast receiver; over any other
+  app (an input, a streaming app) the runner brings the home screen to the
+  front, and fails the cell unless the TV reports it there within 20 s.
+  `--tv-is-free` is the owner's word that nobody is watching. Then the old `io.prysm.capture` app not running,
   and what of Prysm is there: the app, the service, the Luna manifests and
   boot hook, the staged package, a process under `io.prysm.*`, `getState`
   answering, or the data files in `/var/lib/io.prysm.tv` that an uninstall
@@ -574,9 +575,9 @@ That nothing of Prysm is left after the uninstall is the `package` fixture's
 teardown, so it is checked also after a failure.
 
 Beyond Prysm's own service and the install service, the runner sends the TV
-`getForegroundAppInfo` (it only reads), and `launch` and `closeByAppId` of
-`com.webos.service.applicationManager` with the id `io.prysm.tv` fixed in the
-template. To the Cast receiver on port 8009 it loads the clip with its
+`getForegroundAppInfo` (it only reads), `launch` and `closeByAppId` of
+`com.webos.service.applicationManager` with the id `io.prysm.tv`, and `launch`
+with the id `com.webos.app.home`, each id fixed in its template. To the Cast receiver on port 8009 it loads the clip with its
 subtitle track, switches that track on, and at the end stops the media and
 quits the receiver. It sends no key or input event, no toast, and nothing to
 the power, settings, input, volume or update services.
@@ -680,8 +681,8 @@ boot, its state with `getState` when `[tv] target` is set.
   package as `/media/developer/temp/io.prysm.tv.ipk` (removed after each
   install), install and remove the app through `com.webos.appInstallService`,
   run the package's `setup.sh` and the supervisor's `uninstall`, call
-  Prysm's own Luna methods, ask which app is in front, and launch or close
-  Prysm's own app (no other); here, one wake-on-LAN packet. Nothing
+  Prysm's own Luna methods, ask which app is in front, launch or close
+  Prysm's own app and bring the home screen to the front (no other app); here, one wake-on-LAN packet. Nothing
   writes to system partitions or deletes `/var/lib/io.prysm.tv`.
   [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
   enumerate every template and check the paths it names, and every TV command

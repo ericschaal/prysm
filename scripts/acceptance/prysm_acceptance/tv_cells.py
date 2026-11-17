@@ -78,9 +78,9 @@ CAPTURE = (640, 360, 30)
 SOAKS = {Flavour.FULL: [(640, 360, 30), (1280, 720, 30)], Flavour.SLIM: [(640, 360, 30)]}
 # The TV's UI capture is at most this size, whatever was asked (adapters/capture-webos settings.rs `ui_size`).
 UI_LIMIT = (320, 180)
-# The apps in front while the TV is free: none named, the home screen (also under the screen saver), Prysm's
-# own app, and the Cast receiver the clip plays in. Anything else in front: someone is using the TV.
-HOME_APP = 'com.webos.app.home'
+# The apps a cell may start from: none named, the home screen (also under the screen saver), Prysm's own app,
+# and the Cast receiver the clip plays in. Anything else in front: the runner brings the home screen there.
+HOME_APP = commands.HOME_APP
 CAST_APP = 'com.webos.chromecast'
 FREE_APPS = ('', HOME_APP, commands.APP, CAST_APP)
 # How long the TV may take to report a state the runner set.
@@ -283,6 +283,21 @@ def in_state(screen: Screen, wanted: Shown, prysm: Prysm, section: JsonObject) -
     return reached
 
 
+def at_home(found: Tv) -> str:
+    """The app found in front. Over one a cell cannot start from (`FREE_APPS`) the home screen is brought to
+    the front; Failed unless the TV reports it there within `CONFIRM_SECONDS`."""
+    front = found.foreground()
+    if front in FREE_APPS:
+        return front
+    found.launch_home()
+    deadline = time.monotonic() + CONFIRM_SECONDS
+    while (now := found.foreground()) != HOME_APP:
+        if time.monotonic() >= deadline:
+            raise Failed(f'the home screen is not in front: {now or "no app"} is, after {front}')
+        time.sleep(1)
+    return front
+
+
 def _ssh(config: Config) -> str:
     return config.tv.ssh or EXAMPLE_TV
 
@@ -416,8 +431,10 @@ def _target_plan(cell: TvCell, config: Config) -> list[str]:
         *shown(commands.tv_reachable(ssh)),
         *_wake_plan(config),
         *shown(commands.tv_foreground(ssh)),
-        f'(saved as tv-foreground.json; another app than {", ".join(app or "none" for app in FREE_APPS)} in '
-        'front: someone uses the TV, the cell is skipped, or fails when named, before anything changes)',
+        f'(saved as tv-foreground.json; with another app than {", ".join(app or "none" for app in FREE_APPS)} '
+        'in front:)',
+        *shown(commands.tv_launch_home(ssh)),
+        f'(the home screen not in front within {CONFIRM_SECONDS} s fails the cell before anything else changes)',
         *shown(commands.tv_processes(ssh)),
         '(the old io.prysm.capture app running fails the cell)',
         *shown(
@@ -448,20 +465,19 @@ def _wake_plan(config: Config) -> list[str]:
 @pytest.fixture(scope='module')
 @planned(does=_target_plan)
 def target(cell: TvCell, config: Config, bench: Bench, request: pytest.FixtureRequest, artifact: Artifact) -> OnTv:
-    """The TV: reachable over SSH (woken first when `[tv] mac` is set), free, and what of Prysm is on it.
+    """The TV: reachable over SSH (woken first when `[tv] mac` is set), at a known start, and what of Prysm is
+    on it.
 
-    Free: the app in front (saved, and never brought back at the end) is none, the home screen, Prysm's or the
-    Cast receiver; another means someone uses the TV. With `[tv] installed = "refuse"` anything of Prysm found
+    The start: the app in front (saved, and never brought back at the end) is none, the home screen, Prysm's or
+    the Cast receiver; over any other the runner brings the home screen (`at_home`).
+    With `[tv] installed = "refuse"` anything of Prysm found
     (the app, the service, its manifests or boot hook, a process, the Luna service, the data files an uninstall
     leaves) skips the cell, or fails it when named, before anything changes."""
     found = Tv(bench.transport, config.tv.ssh)
     unreachable = found.reach(config.tv.mac, lambda: host.local_address(_tv_host(config)))
     if unreachable:
         unavailable(request, cell, unreachable)
-    front = found.foreground()
-    bench.save('tv-foreground.json', {'foreground': front})
-    if front not in FREE_APPS:
-        unavailable(request, cell, f'someone is using the TV: {front} is in front')
+    bench.save('tv-foreground.json', {'foreground': at_home(found)})
     old = [line for line in found.processes() if 'io.prysm.capture' in line[-1]]
     if old:
         pytest.fail(f'the old io.prysm.capture app is running; remove it first (docs/users/webos.md): {old}')

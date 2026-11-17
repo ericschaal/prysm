@@ -225,6 +225,10 @@ class Tv:
         """Prysm's own app in front."""
         self.call(commands.tv_launch_app(self.target))
 
+    def launch_home(self) -> None:
+        """The TV's home screen in front."""
+        self.call(commands.tv_launch_home(self.target))
+
     def close_app(self) -> None:
         """Prysm's own app closed."""
         self.call(commands.tv_close_app(self.target))
