@@ -7,9 +7,8 @@ it tests the artifacts the configuration names (`cargo xtask dist`,
 [packaging](packaging.md#artifacts-in-dist)). A run writes its report and
 evidence (snapshots, logs, CSV tables) to `work/acceptance/<time>-<stage>/`,
 which is not tracked. Copy what matters into
-[research](../../research/README.md). Where the runner is going next (Linux,
-the package and the image, the TV on the new configuration) is in the
-[plan](acceptance-plan.md).
+[research](../../research/README.md). Where the runner is going next (the
+TV on the new configuration) is in the [plan](acceptance-plan.md).
 
 ```sh
 cp scripts/acceptance/config.example.toml scripts/acceptance/config.toml   # then fill in
@@ -18,6 +17,8 @@ uv run --no-dev --project scripts/acceptance acceptance host mac --dry-run
 uv run --no-dev --project scripts/acceptance acceptance host mac --source file
 uv run --no-dev --project scripts/acceptance acceptance host mac --source device [--display-check]
 uv run --no-dev --project scripts/acceptance acceptance host linux [--source file|device]
+uv run --no-dev --project scripts/acceptance acceptance host linux --delivery deb|image
+uv run --no-dev --project scripts/acceptance acceptance all [--prepare]
 uv run --no-dev --project scripts/acceptance acceptance tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
 uv run --no-dev --project scripts/acceptance acceptance eyes
 uv run --no-dev --project scripts/acceptance acceptance restore-wled work/acceptance/RUN/CELL/wled-snapshot.json
@@ -33,7 +34,7 @@ needs no dev group (`--no-dev`). Its libraries are
 only by a capture card run with the Chromecast feed. `--dry-run` prints what
 would run, with every command and HTTP call (TV commands as they run there),
 and contacts nothing. The exit code is 0 when nothing failed (skips allowed),
-1 on a failure, 2 on bad usage. `config.toml` (ignored by git) describes the
+1 on a failure, 2 on bad usage, 3 when `--prepare` failed. `config.toml` (ignored by git) describes the
 bench (see [`config.example.toml`](../../scripts/acceptance/config.example.toml)):
 WLED and the LED counts, `[checks]` (sample length, frame-rate tolerance),
 `[mac]` (`target = "local"`; an `ssh://` target is refused as not
@@ -46,20 +47,44 @@ in the code.
 | --- | --- | --- |
 | `host mac` | WLED; `[mac] binary`; FFmpeg 9+ for the file source, or a capture card (`[mac] device`; with a feed: FFmpeg, and for the Chromecast adb) | Only for `--display-check` set-up |
 | `host linux` | WLED; `[linux] binary` and `target`; over SSH a key the runner can use without a prompt; FFmpeg here for the clip; FFmpeg 9+ on the target for the file source, or a capture card on it (`[linux] device`; with a feed: adb here) | No |
+| `host linux --delivery deb` | As the device cell, with `[linux] deb` instead of `binary`, an SSH target with passwordless sudo and no Prysm installed | No |
+| `host linux --delivery image` | As the device cell, with `[linux] image`, an SSH target with Docker and its compose plugin 2.24.4+ for the ssh user, and no `prysm-headless:local` image | No |
+| `all` | Whatever each host cell needs; a cell without it is skipped | As its cells |
 | `tv` | The TV (only when its owner says it is free: `--tv-is-free`), WLED, the IPKs `[tv] ipk_full`, `ipk_slim`; slim with the local receiver: `[mac] binary` | Standby/wake, and removing the app unless `tv.ares_device` is set |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
 ### host
 
 The host cells run under pytest: a cell is a parameter (platform, delivery,
-source), so `mac-binary-file`, `mac-binary-device`, `linux-binary-file` and
-`linux-binary-device` today, and the Debian package and the image in a later
-phase. `acceptance host mac` runs both Mac cells, `acceptance host linux`
-both Linux cells; `--source file` or `--source device` names one. Other
-arguments go to pytest, so `-k fps`, `-m file` or `-x` select and stop as
-pytest does. A cell whose artifact or tool is missing (no `binary`, no
-`device`, no FFmpeg) is a SKIP with the reason; a cell named with `--source`
-fails instead. The run directory has `report.xml` (JUnit, with each check's
+source): `mac-binary-file`, `mac-binary-device`, `linux-binary-file`,
+`linux-binary-device`, `linux-deb-device` and `linux-image-device` (the
+package and the image have no file source). `acceptance host mac` runs both
+Mac cells, `acceptance host linux` both Linux binary cells; `--source file`
+or `--source device` names one, and `--delivery deb` or `--delivery image`
+names that delivery's one cell. Other arguments go to pytest, so `-k fps`,
+`-m file` or `-x` select and stop as pytest does. A cell whose artifact or
+tool is missing (no `binary`, no `device`, no FFmpeg, no sudo, no Docker) is
+a SKIP with the reason; a named cell fails instead.
+
+`acceptance all` runs every host cell, one at a time, each skipped with the
+reason when its artifact, tool or device is missing; none is named, so none
+fails for that. It covers the host cells only: the `tv` stage keeps its own
+step runner, needs `--tv-is-free` and a person, and joins `all` when the
+plan's phase 4 moves it; `eyes` is a person's stage. With one capture card
+on the bench, leave `device` out of the platform whose computer does not
+have it.
+
+`--prepare` (with `host` or `all`) first asks the build system for the
+artifacts of the chosen cells, as one `cargo xtask dist TARGET...` run in
+the repository (a template in `commands.py`), and waits for it. Which target
+makes which artifact is a closed table in `prepare.py`: (platform, delivery,
+architecture) to the target and the file it writes in `dist/`. The
+architecture is taken from the configured file name, so `--prepare` refuses
+an artifact configured anywhere but under its `dist/` name. A cell without a
+configured artifact is not built (and is skipped as usual). A failed or
+refused build ends the run with exit code 3 before anything is contacted.
+With `--dry-run` it prints the build command and runs nothing. Without
+`--prepare` the runner never builds. The run directory has `report.xml` (JUnit, with each check's
 detail), each cell's `commands.log`, `headless.log`, `artifact.json`,
 `wled-snapshot.json` and `wled-cfg.json` (WLED's configuration, as evidence),
 and `evidence/CHECK.json`; a Linux target over SSH adds `kernel-usb.log`.
@@ -159,7 +184,7 @@ uv run --no-dev --project scripts/acceptance acceptance host linux --source devi
 - `[linux.capture]` and `[linux.feed.chromecast]`: as for `[mac]`. The feed
   runs on this computer (ADB, PyChromecast and the clip server) while the
   card is on the target;
-- `deb` and `image` are read and checked, not used yet.
+- `deb` and `image`: the package and the image cells' artifacts (below).
 
 Before WLED is touched, the target is checked, each with one command:
 reachable over ssh without a prompt; `uname -sm` is Linux on the binary's
@@ -190,13 +215,101 @@ the port in use: there, stop it with
 `linux.*` template in `commands.py`; `--dry-run` prints each as it would
 run.
 
+#### Run the Linux package and image cells
+
+```sh
+cargo xtask dist deb-arm64 image-arm64   # or: acceptance host linux --delivery deb --prepare
+uv run --no-dev --project scripts/acceptance acceptance host linux --delivery deb --dry-run
+uv run --no-dev --project scripts/acceptance acceptance host linux --delivery deb
+uv run --no-dev --project scripts/acceptance acceptance host linux --delivery image
+```
+
+Both run the device cell's fixtures and checks through their own seam (an
+SSH target only; with `target = "local"` they are skipped as not
+implemented), and both treat the target as a test bench: nothing of Prysm
+may be there before the run, and nothing is left after it.
+
+**The package** (`linux-deb-device`, `host_deb.py`, `deb.*` templates):
+
+- preflight: the package's `Architecture` read from its control file here,
+  against `uname -m`; `sudo -n true`; then `deb.leftovers` must find nothing:
+  none of the package's files, `/var/lib/prysm` or `/var/lib/private/prysm`,
+  a unit of that name, the run's drop-in, a `prysm` user or group, or a
+  package dpkg knows (else a SKIP that lists what it found, or a failure
+  when named); the device readable; the listen port free;
+- deliver: the `.deb` copied into the run directory, then
+  `sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y
+  --no-install-recommends ./prysm-headless.deb` there (its output in
+  `apt.log`); `dpkg-query` must then report the control file's version;
+- start: a runtime drop-in, the package's documented override, in
+  `/run/systemd/system/prysm-headless.service.d/` (gone at the next boot)
+  that runs the unit's own command with `--listen LISTEN --metrics`;
+  `daemon-reload`; `systemctl restart`; once the unit is active and the API
+  answers, the settings are given through the portal (`PUT
+  /api/v1/settings`), so Prysm writes them into its state directory itself,
+  whichever user owns it;
+- stop: `systemctl stop` (SIGTERM; systemd kills after the unit's 30 s); the
+  exit code is `ExecMainStatus` when `ExecMainCode` says the process exited,
+  otherwise the stop reports the signal or the timeout;
+- logs: the unit's journal since the delivery (`journal.log`) and the
+  kernel's USB lines;
+- its own checks: the unit's main process does not run as root (no user name
+  is assumed); a `systemctl restart` while lighting comes back idle with the
+  saved settings (as the package documents: a restart leaves the lights off)
+  and Screen sync lights WLED again;
+- close, also after a failure: the drop-in removed, `apt-get purge -y
+  prysm-headless`, then `deb.leftovers` again: anything it lists (a `prysm`
+  user or group included) fails the cell and is left for a person to remove;
+  the run directory is removed either way.
+
+**The image** (`linux-image-device`, `host_image.py`, `image.*` templates):
+
+- preflight: the archive's architecture and tags read from its
+  `manifest.json` here (it must carry `prysm-headless:local`, the name
+  compose.yaml runs), against `uname -m`; `docker info` and `docker compose
+  version` as the ssh user, without sudo (Debian's `docker.io` and compose
+  packages, the user in the `docker` group), compose 2.24.4 or newer for
+  `!override`; neither the image tag nor the run's compose project may exist;
+  the device's group ID; port 8787 free;
+- deliver: the archive copied into the run directory and `docker load`ed;
+  its image ID recorded;
+- start: [`packaging/docker/compose.yaml`](../../packaging/docker/compose.yaml)
+  copied as it is, with a second compose file next to it,
+  `compose.acceptance.yaml`: `restart: "no"`, `command: ["--metrics"]`, and
+  with `!override` the configured device in place of the file's
+  `/dev/video0` (at that path in the container, where Prysm finds it) and the
+  device's group in place of `44`. The project is
+  `prysm-acceptance-RUN`. The settings are written into the project's volume
+  as the image's user (`compose run --rm -T --entrypoint sh prysm -c 'cat >
+  /data/settings.json'`, as `smoke.sh` seeds them), then `compose up -d
+  --pull never --no-build`; Prysm listens on compose.yaml's published port
+  8787 (`[linux] listen` does not apply);
+- stop: `compose stop` (SIGTERM, KILL after the file's 30 s grace) and the
+  container's exit code from `compose ps`;
+- logs: `compose logs` (`container.log`) and the kernel's USB lines;
+- sender: the target's own `src` on the route to WLED: compose.yaml's bridge
+  network reaches the LAN through Docker's masquerade as that address (with
+  `network_mode: host` it is the same);
+- its own check: a new container (`compose up --force-recreate`) answers idle
+  with the same settings, so they live on the volume, and lights WLED again;
+- close, also after a failure: `compose down --volumes --remove-orphans` (this
+  project's container, network and volume only), `docker image rm
+  prysm-headless:local` when the tag exists (the preflight saw none, so it is
+  the run's, also after an interrupted load), the run directory removed.
+  Nothing else of Docker's is touched.
+
 #### Add a cell
 
 A cell is one more `Cell` in `CELLS` in
-[`host_cells.py`](../../scripts/acceptance/prysm_acceptance/host_cells.py).
-A new delivery is one more implementation of `Host` in `host.py` (preflight,
-deliver, start, stop, logs, base URL, expected sender, close), chosen in
-`_seam`; the checks stay as they are. Each fixture and check carries its description (the
+[`options.py`](../../scripts/acceptance/prysm_acceptance/options.py).
+A new delivery is one more implementation of `Host` (preflight, deliver,
+start, stop, logs, base URL, expected sender, close) in its own module with
+its own templates, chosen in `_seam` in
+[`host_cells.py`](../../scripts/acceptance/prysm_acceptance/host_cells.py);
+the shared checks stay as they are. A check of what only that delivery adds
+is marked `@only(Delivery.X)` and is not collected for other cells, so
+dropping a delivery is dropping its module, templates, cell and those
+checks. Each fixture and check carries its description (the
 docstring) and what it does for the dry run (`planned`), so there is no
 separate table of steps.
 
@@ -339,10 +452,16 @@ unplugging. Like `tv`, it keeps the step runner and its `--only`/`--from`.
   enumerate every template and check the paths it names. On the Chromecast,
   ADB only reads its state and Wi-Fi address, wakes it and reads or sets
   `stay_on_while_plugged_in`; there is no free-form `adb shell`.
-- **A Linux target.** The runner writes only in its run directory under
+- **A Linux target.** The binary cells write only in the run directory under
   `~/.prysm-acceptance/` (named by a checked run name, never a path from the
-  configuration), signals only its own Prysm's PID, never uses sudo, and
-  removes the directory at the end.
+  configuration), signal only their own Prysm's PID, never use sudo, and
+  remove the directory at the end. The package cell also changes, with
+  `sudo -n` in its `deb.*` templates only: the package's own files through
+  apt-get (install, purge), the runtime drop-in under `/run/systemd/system/`,
+  the unit's state (`systemctl`); Prysm writes its settings itself. The image
+  cell changes only Docker's own storage (the loaded image, the run's compose
+  project with its container, network and volume), without sudo. A test
+  enumerates these templates and the paths they may write.
 - **Bounded.** Every command has a timeout; `luna-send` runs with its stdin
   held open and a remote `timeout`, as `install-ipk.sh` does.
 - **Left as found.** The `tv` stage saves `getState`, the files in
@@ -368,7 +487,8 @@ Python checks, as CI's `quality` job does; it needs
 [uv](https://docs.astral.sh/uv/). The rules are in
 [`pyproject.toml`](../../scripts/acceptance/pyproject.toml): Ruff, Pyright in
 strict mode, and Import Linter's layers (command line, the host cells and
-their pytest plugin, the stages, their cells, checks, the feed, devices,
+their pytest plugin, the stages, their cells, checks, the feed, the package
+and image seams, devices,
 clients, base; stages never import each other). Only `transport.py` runs
 commands, and only `commands.py` builds them. One at a time, from the
 repository root:

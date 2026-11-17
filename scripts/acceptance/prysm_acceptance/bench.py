@@ -74,6 +74,32 @@ def planned(does: Lines = _none, undoes: Lines = _none) -> Callable[[Function], 
     return record
 
 
+def only(*deliveries: Delivery) -> Callable[[Function], Function]:
+    """A check of what these deliveries add: it is not collected for the other cells."""
+
+    def mark(function: Function) -> Function:
+        setattr(function, 'deliveries', deliveries)  # noqa: B010 -- read back by pytest_collection_modifyitems
+        return function
+
+    return mark
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Deselect a delivery's own checks (`only`) for the other deliveries' cells."""
+    kept: list[pytest.Item] = []
+    dropped: list[pytest.Item] = []
+    for item in items:
+        deliveries = getattr(getattr(item, 'function', None), 'deliveries', None)
+        cell = None
+        if isinstance(item, pytest.Function) and hasattr(item, 'callspec'):
+            cell = cast('Cell | None', item.callspec.params.get('cell'))
+        mine = deliveries is None or cell is None or cell.delivery in deliveries
+        (kept if mine else dropped).append(item)
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup('prysm acceptance')
     group.addoption('--bench-config', default=str(HERE / 'config.toml'), help='the bench configuration (TOML)')

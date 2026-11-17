@@ -1,6 +1,8 @@
 """Prysm hardware acceptance runner (docs/developers/acceptance.md).
 
-  acceptance host mac|linux [--delivery binary] [--source file|file:PATH|device] [--display-check] [PYTEST ARGS]
+  acceptance host mac|linux [--delivery binary|deb|image] [--source file|file:PATH|device] [--display-check]
+                            [--prepare] [PYTEST ARGS]
+  acceptance all [--prepare] [PYTEST ARGS]
   acceptance tv --tv-is-free [--flavour full|slim] [--receiver URL] [--wss-url URL] [--sweep]
   acceptance eyes [--portal URL]
   acceptance restore-wled SNAPSHOT.json
@@ -8,11 +10,16 @@
 Each takes --config FILE (default scripts/acceptance/config.toml) and
 --dry-run (print what would run; execute and contact nothing). `host` runs
 the host cells with pytest: other arguments go to pytest (-k, -m, -x, -v ...);
-naming the source names the cell, which then fails instead of skipping when
-its artifact or tool is missing. `tv` and `eyes` take --only NAME[,NAME] and
---from NAME (patterns over step names; setup and cleanup always run).
+naming the source, or the deb or image delivery (each one cell), names the
+cell, which then fails instead of skipping when its artifact or tool is
+missing. `all` runs every host cell, one at a time, each skipped when its
+artifact, tool or device is missing (the `tv` and `eyes` stages are not part
+of it yet). --prepare first builds the chosen cells' configured artifacts
+with `cargo xtask dist`. `tv` and `eyes` take --only NAME[,NAME] and --from
+NAME (patterns over step names; setup and cleanup always run).
 Reports go to work/acceptance/<time>-<stage>/.
-Exit code: 0 all passed (skips allowed), 1 a failure, 2 bad usage.
+Exit code: 0 all passed (skips allowed), 1 a failure, 2 bad usage, 3 the
+preparation (--prepare) failed and nothing was contacted.
 """
 
 import argparse
@@ -26,20 +33,23 @@ from typing import Generic, assert_never, cast
 
 import pytest
 
-from prysm_acceptance import bench, commands, plan, stage_eyes, stage_tv, transport, wled_api
+from prysm_acceptance import bench, commands, plan, prepare, stage_eyes, stage_tv, transport, wled_api
 from prysm_acceptance import config as configuration
 from prysm_acceptance.commands import Command, Flavour
 from prysm_acceptance.config import Config
-from prysm_acceptance.options import Cell, Delivery, Platform, Source
+from prysm_acceptance.options import CELLS, Cell, Delivery, Platform, Source
 from prysm_acceptance.stage_data import EyesData, TvData
 
 # The runner's project: scripts/acceptance, where config.toml lives.
 HERE = Path(__file__).resolve().parents[1]
-CELLS = Path(__file__).with_name('host_cells.py')
+HOST_CELLS = Path(__file__).with_name('host_cells.py')
+# The exit code of a failed --prepare.
+PREPARATION_FAILED = 3
 
 
 class Stage(StrEnum):
     HOST = 'host'
+    ALL = 'all'
     TV = 'tv'
     EYES = 'eyes'
     RESTORE_WLED = 'restore-wled'
@@ -59,6 +69,7 @@ class Arguments:
     source: Source | None = None
     clip: str | None = None
     display_check: bool = False
+    prepare: bool = False
     pytest: list[str] = field(default_factory=list[str])
     # tv and eyes
     only: list[str] = field(default_factory=list[str])
@@ -80,11 +91,14 @@ def arguments(argv: Sequence[str]) -> Arguments:
     common.add_argument('--dry-run', action='store_true')
     common.add_argument('--wled', help='WLED host[:port], overrides the config')
     stages = parser.add_subparsers(dest='stage', required=True)
-    host = stages.add_parser(Stage.HOST, parents=[common], help='the host cells (pytest)')
+    building = argparse.ArgumentParser(add_help=False)
+    building.add_argument('--prepare', action='store_true', help='build the artifacts first (cargo xtask dist)')
+    host = stages.add_parser(Stage.HOST, parents=[common, building], help='the host cells (pytest)')
     host.add_argument('platform', choices=[platform.value for platform in Platform], help='where Prysm runs')
     host.add_argument('--delivery', choices=[delivery.value for delivery in Delivery], default=Delivery.BINARY)
-    host.add_argument('--source', help='file, file:PATH or device (default: every source of the platform)')
+    host.add_argument('--source', help='file, file:PATH or device (default: every source of the delivery)')
     host.add_argument('--display-check', action='store_true', help="device: colour fields on this computer's display")
+    stages.add_parser(Stage.ALL, parents=[common, building], help='every host cell, one at a time (pytest)')
     selection = argparse.ArgumentParser(add_help=False)
     selection.add_argument('--only', action='append', default=[])
     selection.add_argument('--from', dest='start')
@@ -101,16 +115,24 @@ def arguments(argv: Sequence[str]) -> Arguments:
     values, rest = parser.parse_known_args(argv)
     found = vars(values)
     stage = Stage(found.pop('stage'))
-    if rest and stage != Stage.HOST:
+    if rest and stage not in (Stage.HOST, Stage.ALL):
         parser.error(f'unrecognized arguments: {" ".join(rest)}')
+    if stage == Stage.ALL:
+        found['pytest'] = rest
     if stage == Stage.HOST:
         source = cast('str | None', found.pop('source'))
         if source and source.startswith('file:'):
             found['clip'], source = source[5:], Source.FILE
         if source and source not in tuple(Source):
             parser.error('--source is file, file:PATH or device')
+        cells = [cell for cell in CELLS if (cell.platform, cell.delivery) == (found['platform'], found['delivery'])]
+        if not cells:
+            parser.error(f'{found["platform"]} has no {found["delivery"]} cell')
+        if len(cells) == 1 and source and source != cells[0].source:
+            parser.error(f'the {found["delivery"]} delivery has only the {cells[0].source} source')
         found |= {
-            'source': Source(source) if source else None,
+            # A delivery with one cell names it, as --source does.
+            'source': Source(source) if source else (cells[0].source if len(cells) == 1 else None),
             'platform': Platform(found['platform']),
             'delivery': Delivery(found['delivery']),
             'pytest': rest,
@@ -141,17 +163,61 @@ def load_config(args: Arguments) -> Config:
     return config
 
 
+def chosen(args: Arguments) -> list[Cell]:
+    """The cells a `host` or `all` run may run (before pytest's own selection)."""
+    if args.stage == Stage.ALL:
+        return list(CELLS)
+    return [
+        cell
+        for cell in CELLS
+        if (cell.platform, cell.delivery) == (args.platform, args.delivery)
+        and (args.source is None or cell.source == args.source)
+    ]
+
+
+def prepared(args: Arguments) -> int | None:
+    """--prepare: the build command for the chosen cells' artifacts, printed (dry run) or run; the exit code
+    when it failed, None to go on."""
+    try:
+        config = load_config(args)
+    except configuration.ConfigError as error:
+        print(f'config: {error}', file=sys.stderr)
+        return 2
+    try:
+        build = prepare.command(chosen(args), config)
+    except prepare.PrepareError as error:
+        print(f'--prepare: {error}', file=sys.stderr)
+        return PREPARATION_FAILED
+    if build is None:
+        print('--prepare: no artifact configured for the chosen cells; nothing to build')
+        return None
+    if args.dry_run:
+        print(f'--prepare (dry run, not run): $ {build.display()}')
+        return None
+    print(f'--prepare: $ {build.display()}', flush=True)
+    done = transport.Real(lambda line: None).run(build, check=False)
+    if not done.ok:
+        print(done.stdout[-3000:] + done.stderr[-3000:], file=sys.stderr)
+        print(f'--prepare: the build exited {done.returncode}; nothing was contacted', file=sys.stderr)
+        return PREPARATION_FAILED
+    return None
+
+
 def host(args: Arguments) -> int:
     """The host cells under pytest, with the `bench` plugin; pytest's exit code as the runner's."""
-    named = [Cell(args.platform, args.delivery, args.source).id] if args.source else []
+    if args.prepare:
+        failed = prepared(args)
+        if failed is not None:
+            return failed
+    every = args.stage == Stage.ALL
+    named = [Cell(args.platform, args.delivery, args.source).id] if args.source and not every else []
     options = [
-        str(CELLS),
+        str(HOST_CELLS),
         '--rootdir',
         str(HERE),
         '--bench-config',
         args.config,
-        '-m',
-        f'{args.platform} and {args.delivery}',
+        *([] if every else ['-m', f'{args.platform} and {args.delivery}']),
         '-v',
         '--tb=short',
         '-rfEs',
@@ -197,7 +263,7 @@ class StagePlan(Generic[plan.Data]):
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = arguments(sys.argv[1:] if argv is None else argv)
-    if args.stage == Stage.HOST:
+    if args.stage in (Stage.HOST, Stage.ALL):
         return host(args)
     try:
         config = load_config(args)

@@ -243,6 +243,27 @@ Each phase lands with its tests and CI green before the next starts.
 3. **The Linux package and image cells and `all`**, with the skip rules. Both
    deliveries stay thin; the package cell is not extended until the package's
    future is decided. `--prepare` is added here.
+
+   **Landed** ([acceptance.md](acceptance.md#run-the-linux-package-and-image-cells)):
+   the cells `linux-deb-device` (`SshDeb`: apt-get
+   install, a runtime drop-in for `--listen` and `--metrics`, the settings
+   through the portal, systemd's exit status, the journal; its checks: not
+   root, a restart keeps the settings and lights again; purge and a check
+   that nothing is left) and `linux-image-device` (`SshImage`: `docker load`,
+   compose.yaml with a second compose file of the runner's values, the
+   settings seeded into the volume, the container's exit code, `compose
+   logs`; its check: a recreated container keeps the settings; `down
+   --volumes` and the image removed). The bench must start without Prysm
+   installed and without the image; both are refused otherwise. Each
+   delivery is one module with its templates, its cell and its `@only`
+   checks. `acceptance all` runs every host cell; the `tv` stage joins it
+   with phase 4. `--prepare` builds the chosen cells' configured `dist/`
+   artifacts with one `cargo xtask dist` before anything is contacted (exit
+   code 3 when it fails). Both cells passed on a Raspberry Pi 5 on 2026-11-17
+   (Debian 13, Docker 26.1.5, compose 2.26.1) through the capture card and
+   the Chromecast feed, and left nothing behind. What remains: `--prepare`
+   has not run a real build, and `target = "local"` for these cells is not
+   implemented.
 4. **The TV stages on the new configuration**, slim with a Mac or a Linux
    receiver.
 

@@ -17,6 +17,8 @@ class Delivery(StrEnum):
     """How Prysm reaches the platform (docs/developers/acceptance-plan.md, One host seam)."""
 
     BINARY = 'binary'
+    DEB = 'deb'
+    IMAGE = 'image'
 
 
 class Source(StrEnum):
@@ -37,6 +39,18 @@ class Cell:
     @property
     def id(self) -> str:
         return f'{self.platform}-{self.delivery}-{self.source}'
+
+
+# Every host cell, in the order `acceptance all` runs them. The Debian package and the image have no
+# `file` source (docs/developers/acceptance-plan.md, Cells).
+CELLS = (
+    Cell(Platform.MAC, Delivery.BINARY, Source.FILE),
+    Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE),
+    Cell(Platform.LINUX, Delivery.BINARY, Source.FILE),
+    Cell(Platform.LINUX, Delivery.BINARY, Source.DEVICE),
+    Cell(Platform.LINUX, Delivery.DEB, Source.DEVICE),
+    Cell(Platform.LINUX, Delivery.IMAGE, Source.DEVICE),
+)
 
 
 class Options(Protocol):

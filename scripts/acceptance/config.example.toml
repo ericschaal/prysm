@@ -63,15 +63,22 @@ target = "ssh://pi@192.168.1.70"
 # must be the target's (uname -m). The runner copies it to
 # ~/.prysm-acceptance/RUN on the target and removes that directory at the end.
 binary = "dist/prysm-headless-linux-arm64"
-# Read and checked, not used yet (the package and image cells: a later phase).
+# The Debian package (cell linux-deb-device) and the image (linux-image-device),
+# as `cargo xtask dist deb-arm64 image-arm64` writes them; each optional. Both
+# need an ssh target, and the target must have no Prysm installed and no image
+# prysm-headless:local: the runner refuses otherwise, and purges or removes
+# what it installed at the end. The package needs passwordless sudo there;
+# the image Docker and its compose plugin (2.24.4+) for the ssh user (in the
+# `docker` group, no sudo). The image listens on compose.yaml's port 8787.
 deb = "dist/prysm-headless-linux-arm64.deb"
 image = "dist/prysm-headless-linux-arm64.tar"
 # The capture card: a V4L2 path on the target, preferably the stable
 # /dev/v4l/by-id/...-video-index0 link (/dev/videoN can change between boots).
 # Omit without a card.
 device = "/dev/v4l/by-id/usb-EXAMPLE-video-index0"
-# Where Prysm listens on the target. With an ssh target the default is
-# 0.0.0.0:18787, so the runner on this computer reaches it over the LAN.
+# Where Prysm listens on the target (the binary, and the package through a
+# runtime drop-in). With an ssh target the default is 0.0.0.0:18787, so the
+# runner on this computer reaches it over the LAN.
 # listen = "0.0.0.0:18787"
 
 # [linux.capture] and [linux.feed.chromecast] are as for [mac]. The feed runs

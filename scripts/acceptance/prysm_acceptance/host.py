@@ -7,8 +7,8 @@ sender. `LocalBinary` runs the binary on this computer as a child process,
 stopped with SIGTERM, its output in a file of the run directory.
 `SshBinary` copies it to a run directory on a Linux target and runs it there
 over SSH; every remote command is a `linux.*` template in `commands.py`. The
-Debian package and the image are later implementations of the same
-interface.
+Debian package (`host_deb.SshDeb`) and the image (`host_image.SshImage`) are
+the same interface, each in its own module with its own templates.
 """
 
 from dataclasses import dataclass, field
@@ -48,6 +48,8 @@ NEUTRAL_PROCESSING: JsonObject = {
 }
 # The ELF header's e_machine, named as `uname -m` names the machine.
 ELF_MACHINES = {0x3E: 'x86_64', 0xB7: 'aarch64', 0x28: 'armv7l'}
+# Debian's and Docker's architecture names, as `uname -m` names the machine.
+DEBIAN_MACHINES = {'arm64': 'aarch64', 'amd64': 'x86_64'}
 # The oldest FFmpeg (major version) Prysm's file source works with.
 FFMPEG_MAJOR = 9
 # A kernel log line about the capture card's USB link.
@@ -95,6 +97,39 @@ def ffmpeg_too_old(version: str) -> str | None:
     return None
 
 
+def route_source(transport: Transport, target: str, wled: str) -> str:
+    """The `src` of the target's route to WLED: the sender WLED sees from a process on the target (also from a
+    container behind Docker's NAT, which masquerades as that address)."""
+    host = wled.split(':', maxsplit=1)[0]
+    route = transport.run(commands.linux_route(target, socket.gethostbyname(host))).stdout
+    match = re.search(r'\bsrc (\S+)', route)
+    if match is None:
+        raise RuntimeError(f'no source address in the route to WLED on {target}: {route.strip()!r}')
+    return match[1]
+
+
+def target_machine(transport: Transport, target: str) -> tuple[str | None, str]:
+    """`uname -m` on the target, or None with why ssh failed or the target is not Linux."""
+    probe = transport.run(commands.linux_probe(target), check=False)
+    if not probe.ok:
+        return None, f'ssh {target} failed (BatchMode, no prompts): {(probe.stderr or probe.stdout).strip()[-300:]}'
+    kernel, _, machine = probe.stdout.strip().partition(' ')
+    if kernel != 'Linux':
+        return None, f'{target} runs {kernel or "an unknown kernel"}, not Linux'
+    return machine, ''
+
+
+def save_kernel_usb(transport: Transport, target: str, since: int, path: Path) -> None:
+    """The kernel's USB lines on the target since `since` into `path` (a note when journalctl -k is refused)."""
+    found = transport.run(commands.linux_kernel(target, since), check=False)
+    if found.ok:
+        lines = [line for line in found.stdout.splitlines(keepends=True) if USB_LINE.search(line)]
+        text = ''.join(lines) or '(no USB lines in the kernel log since the delivery)\n'
+    else:
+        text = f'(journalctl -k failed, exit {found.returncode}: {found.stderr.strip()[-300:]})\n'
+    path.write_text(text)
+
+
 @dataclass(frozen=True)
 class Plan:
     """What a seam does, for the dry run: the preflight, the start, and the stop with its cleanup."""
@@ -133,6 +168,10 @@ class Host(Protocol):
         """`device` as Prysm lists it among its capture candidates (a link resolved to its node)."""
         ...
 
+    def capture_path(self, device: str) -> str:
+        """Where Prysm opens the configured `device`: the path itself, or where a container sees it."""
+        ...
+
     def deliver(self) -> str:
         """Put the artifact where it runs; what was done."""
         ...
@@ -162,7 +201,7 @@ class Host(Protocol):
         ...
 
 
-def _tail(path: Path, lines: int) -> str:
+def tail(path: Path, lines: int) -> str:
     if not path.exists():
         return ''
     return ''.join(path.read_text(errors='replace').splitlines(keepends=True)[-lines:])
@@ -219,6 +258,9 @@ class LocalBinary:
     def listed(self, device: str) -> str:
         return os.path.realpath(device) if device.startswith('/dev/') else device
 
+    def capture_path(self, device: str) -> str:
+        return device
+
     def deliver(self) -> str:
         return 'nothing to deliver: the binary runs where it is'
 
@@ -253,7 +295,7 @@ class LocalBinary:
         return self.exit_code
 
     def logs(self, lines: int = 20) -> str:
-        return _tail(self.log_path, lines)
+        return tail(self.log_path, lines)
 
     def fetch(self) -> None:
         """The log is written here already."""
@@ -301,12 +343,7 @@ class SshBinary:
         return self.transport.run(command, check=check)
 
     def sender(self) -> str:
-        host = self.wled.split(':', maxsplit=1)[0]
-        route = self._run(commands.linux_route(self.target, socket.gethostbyname(host))).stdout
-        match = re.search(r'\bsrc (\S+)', route)
-        if match is None:
-            raise RuntimeError(f'no source address in the route to WLED on {self.target}: {route.strip()!r}')
-        return match[1]
+        return route_source(self.transport, self.target, self.wled)
 
     def plan(self, source: Source, device: str) -> Plan:
         checks = [
@@ -354,12 +391,9 @@ class SshBinary:
 
     def _system(self) -> str | None:
         """Why the target is unreachable or does not run this binary; None when it does."""
-        probe = self._run(commands.linux_probe(self.target), check=False)
-        if not probe.ok:
-            return f'ssh {self.target} failed (BatchMode, no prompts): {(probe.stderr or probe.stdout).strip()[-300:]}'
-        kernel, _, machine = probe.stdout.strip().partition(' ')
-        if kernel != 'Linux':
-            return f'{self.target} runs {kernel or "an unknown kernel"}, not Linux'
+        machine, reason = target_machine(self.transport, self.target)
+        if machine is None:
+            return reason
         built = elf_machine(self.binary)
         if built != machine:
             return f'{self.binary.name} is built for {built or "no ELF machine"}; {self.target} is {machine}'
@@ -384,6 +418,9 @@ class SshBinary:
 
     def listed(self, device: str) -> str:
         return self.device_node or device
+
+    def capture_path(self, device: str) -> str:
+        return device
 
     def deliver(self) -> str:
         self.delivered = True  # from here on `close` removes the run directory, also after a failed copy
@@ -446,7 +483,7 @@ class SshBinary:
     def logs(self, lines: int = 20) -> str:
         if self.delivered:
             self._fetch_log()
-        return _tail(self.log_path, lines)
+        return tail(self.log_path, lines)
 
     def _fetch_log(self) -> None:
         self.log_path.write_text(self._run(commands.linux_read_log(self.target, self.run)).stdout)
@@ -455,15 +492,8 @@ class SshBinary:
         if not self.delivered:
             return
         self._fetch_log()
-        if self.since is None:
-            return
-        found = self._run(commands.linux_kernel(self.target, self.since), check=False)
-        if found.ok:
-            lines = [line for line in found.stdout.splitlines(keepends=True) if USB_LINE.search(line)]
-            text = ''.join(lines) or '(no USB lines in the kernel log since the delivery)\n'
-        else:
-            text = f'(journalctl -k failed, exit {found.returncode}: {found.stderr.strip()[-300:]})\n'
-        self.kernel_path.write_text(text)
+        if self.since is not None:
+            save_kernel_usb(self.transport, self.target, self.since, self.kernel_path)
 
     def close(self) -> None:
         if not self.delivered:

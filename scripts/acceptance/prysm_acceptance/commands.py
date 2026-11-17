@@ -18,7 +18,16 @@ writes only in the run's own directory, `$HOME/.prysm-acceptance/RUN` (the
 templates take the checked run name, never a path), reads the kernel log,
 the route to WLED and its own Prysm's state, signals only the process whose
 executable is the binary it copied there, and removes that directory at the
-end. It never uses sudo.
+end. The `linux.*` templates never use sudo.
+
+The Debian package cell (`deb.*`) also installs the package with apt-get,
+writes a runtime drop-in `DEB_DROPIN` under /run (gone at the next boot),
+starts and stops the unit, reads its journal and purges the package at the
+end (Prysm itself writes its settings, `DEB_SETTINGS`, through its portal);
+only these templates use sudo, each spelling `sudo -n` itself. The image cell (`image.*`) runs plain
+`docker` and `docker compose` (the ssh user is in the `docker` group) on the
+image tag `IMAGE_TAG` and one compose project named after the run, and
+removes both at the end.
 
 On the Chromecast that feeds the capture card (`[mac.feed.chromecast]`), ADB
 only reads its state and Wi-Fi address, wakes it and reads or sets the one
@@ -98,6 +107,7 @@ class Command:
     fail: str | None = None
     background: bool = False
     env: dict[str, str] = field(default_factory=dict[str, str])
+    cwd: str | None = None
 
     def display(self) -> str:
         text = shlex.join(self.argv)
@@ -456,10 +466,12 @@ STOP_SECONDS = 30
 
 
 class RunFile(StrEnum):
-    """The files the runner puts into a run directory besides the binary."""
+    """The files the runner puts into a run directory besides the artifact."""
 
     SETTINGS = 'settings.json'
     CLIP = 'clip'
+    COMPOSE = 'compose.yaml'  # the image cell: packaging/docker/compose.yaml as it is
+    OVERRIDE = 'compose.acceptance.yaml'  # the image cell: the runner's values
 
 
 class Signal(StrEnum):
@@ -603,6 +615,237 @@ def linux_remove(host: str, run: str) -> Command:
     return _ssh('linux.remove', host, remote, 60)
 
 
+def _artifact_dir(run: str, file: str) -> str:
+    """A new run directory with `file` from stdin in it; prints the directory's absolute path and the target's clock."""
+    directory = run_dir(run)
+    return (
+        f'mkdir -p {REMOTE_ROOT} && mkdir -m 700 {directory} && cat > {directory}/{file} && '
+        f'cd {directory} && pwd -P && date +%s'
+    )
+
+
+# ---- the Debian package on a Linux target over SSH (the deb cell) -----------
+
+DEB_PACKAGE = 'prysm-headless'
+DEB_UNIT = 'prysm-headless.service'
+DEB_SETTINGS = '/var/lib/prysm/settings.json'
+DEB_FILE = 'prysm-headless.deb'
+# The package's documented override (`systemctl edit`), as a runtime drop-in: /run is emptied at every boot.
+DEB_DROPIN_DIR = '/run/systemd/system/prysm-headless.service.d'
+DEB_DROPIN = DEB_DROPIN_DIR + '/prysm-acceptance.conf'
+# Prysm's files on a Linux target, none of which may be there before the run or after the purge: what the
+# package installs (packaging/debian/build-deb.sh, postinst), the unit's state (a
+# DynamicUser's, under /var/lib/private), a unit of the admin's, and the run's drop-in.
+DEB_PATHS = (
+    '/usr/bin/prysm-headless',
+    '/usr/lib/systemd/system/prysm-headless.service',
+    '/usr/share/doc/prysm-headless',
+    '/etc/systemd/system/prysm-headless.service',
+    '/etc/systemd/system/prysm-headless.service.d',
+    '/etc/systemd/system/multi-user.target.wants/prysm-headless.service',
+    '/var/lib/prysm',
+    '/var/lib/private/prysm',
+    DEB_DROPIN_DIR,
+)
+# The user and group systemd gives the unit while it runs (DynamicUser); none may be there before or after the run.
+DEB_ACCOUNT = 'prysm-headless'
+_APT = 'sudo -n env DEBIAN_FRONTEND=noninteractive apt-get'
+
+
+class UnitAction(StrEnum):
+    START = 'start'
+    STOP = 'stop'
+    RESTART = 'restart'
+
+
+def deb_sudo(host: str) -> Command:
+    """Passwordless sudo works (exit 0)."""
+    return _ssh('deb.sudo', host, 'sudo -n true', 15)
+
+
+def deb_installed(host: str) -> Command:
+    """dpkg's status and version of the package: `installed 1.0.0~alpha.0-1`, or `not-installed`."""
+    remote = f"dpkg-query -W -f='${{db:Status-Status}} ${{Version}}\\n' {DEB_PACKAGE} 2>/dev/null || echo not-installed"
+    return _ssh('deb.installed', host, remote, 15)
+
+
+def deb_unit(host: str) -> Command:
+    """The unit's state and its main process's exit, as KEY=VALUE lines."""
+    names = ('LoadState', 'ActiveState', 'SubState', 'Result', 'ExecMainCode', 'ExecMainStatus', 'MainPID')
+    return _ssh('deb.unit', host, f'systemctl show {" ".join(f"-p {name}" for name in names)} {DEB_UNIT}', 15)
+
+
+def deb_deliver(host: str, run: str, deb: str) -> Command:
+    """A new run directory with the package in it (`DEB_FILE`); prints its absolute path and the target's clock."""
+    return _ssh('deb.deliver', host, _artifact_dir(run, DEB_FILE), 300, stdin_file=_local_file(deb, 'package'))
+
+
+def deb_install(host: str, run: str) -> Command:
+    """Install the package from the run directory with apt-get, non-interactively and without recommends."""
+    remote = f'cd {run_dir(run)} && {_APT} install -y --no-install-recommends ./{DEB_FILE}'
+    return _ssh('deb.install', host, remote, 600)
+
+
+def deb_dropin(host: str, listen: str) -> Command:
+    """The runtime drop-in: the unit's own command with `--listen LISTEN --metrics`; then daemon-reload."""
+    start = f'ExecStart=/usr/bin/prysm-headless {DEB_SETTINGS} --listen {_check(_LISTEN, listen, "listen")} --metrics'
+    remote = (
+        f"sudo -n mkdir -p {DEB_DROPIN_DIR} && printf '%s\\n' '[Service]' 'ExecStart=' '{start}' "
+        f'| sudo -n tee {DEB_DROPIN} > /dev/null && sudo -n systemctl daemon-reload'
+    )
+    return _ssh('deb.dropin', host, remote, 30)
+
+
+def deb_systemctl(host: str, action: UnitAction) -> Command:
+    """Start, stop or restart the unit; systemctl waits (a stop sends SIGTERM, KILL after TimeoutStopSec 30 s)."""
+    return _ssh('deb.systemctl', host, f'sudo -n systemctl {_member(UnitAction, action, "action")} {DEB_UNIT}', 60)
+
+
+def deb_main_user(host: str) -> Command:
+    """The user the unit's main process runs as."""
+    return _ssh('deb.main-user', host, f'ps -o user= -p "$(systemctl show -p MainPID --value {DEB_UNIT})"', 15)
+
+
+def deb_journal(host: str, since: int) -> Command:
+    """The unit's journal since `since` (the target's epoch seconds)."""
+    since = _number(since, 'since', 1, 2**40)
+    return _ssh(
+        'deb.journal', host, f'sudo -n journalctl -u {DEB_UNIT} -q --no-pager -o short-iso --since @{since}', 60
+    )
+
+
+def deb_purge(host: str) -> Command:
+    """Remove the runtime drop-in and purge the package (a no-op when it is not installed); then daemon-reload."""
+    remote = (
+        f'sudo -n rm -f {DEB_DROPIN}; sudo -n rmdir {DEB_DROPIN_DIR} 2>/dev/null; '
+        f'{_APT} purge -y {DEB_PACKAGE}; s=$?; sudo -n systemctl daemon-reload; exit $s'
+    )
+    return _ssh('deb.purge', host, remote, 600)
+
+
+def deb_leftovers(host: str) -> Command:
+    """What of Prysm is on the target, one per line: each of `DEB_PATHS` that exists, `user prysm-headless` and
+    `group prysm-headless` when they exist, and dpkg's status of the package when dpkg knows it. The paths are tested
+    with sudo: /var/lib/private is root's alone."""
+    remote = (
+        f'for p in {" ".join(DEB_PATHS)}; do '
+        'if sudo -n test -e "$p" || sudo -n test -L "$p"; then echo "$p"; fi; done; '
+        f"getent passwd {DEB_ACCOUNT} > /dev/null && echo 'user {DEB_ACCOUNT}'; "
+        f"getent group {DEB_ACCOUNT} > /dev/null && echo 'group {DEB_ACCOUNT}'; "
+        f"dpkg-query -W -f='${{db:Status-Status}}\\n' {DEB_PACKAGE} 2>/dev/null; true"
+    )
+    return _ssh('deb.leftovers', host, remote, 15)
+
+
+# ---- the Docker image on a Linux target over SSH (the image cell) -----------
+
+# The name `cargo xtask dist image-*` gives the image, which packaging/docker/compose.yaml runs.
+IMAGE_TAG = 'prysm-headless:local'
+IMAGE_FILE = 'prysm-headless.tar'
+# The port compose.yaml publishes (the portal, on Prysm's default listen address).
+IMAGE_PORT = 8787
+_IMAGE_INSPECT = f"docker image inspect -f '{{{{.Id}}}}' {IMAGE_TAG}"
+
+
+class ComposeAction(StrEnum):
+    """What `image.compose` runs in the run's project (the service `prysm`)."""
+
+    SEED = 'seed'  # the settings into the volume, as the image's user (as smoke.sh does)
+    UP = 'up'
+    STATE = 'state'
+    STOP = 'stop'
+    RECREATE = 'recreate'
+    LOGS = 'logs'
+    DOWN = 'down'  # with the project's volumes and network
+
+
+_COMPOSE = {
+    ComposeAction.SEED: (
+        f"run --rm -T --no-deps --entrypoint sh prysm -c 'cat > /data/settings.json' < {RunFile.SETTINGS}",
+        120,
+    ),
+    ComposeAction.UP: ('up -d --pull never --no-build', 120),
+    ComposeAction.STATE: ("ps -a --format '{{.State}} {{.ExitCode}}' prysm", 30),
+    ComposeAction.STOP: ('stop prysm', 60),
+    ComposeAction.RECREATE: ('up -d --pull never --no-build --force-recreate', 120),
+    ComposeAction.LOGS: ('logs --no-color --timestamps prysm', 60),
+    ComposeAction.DOWN: ('down --volumes --remove-orphans', 120),
+}
+
+
+def compose_project(run: object) -> str:
+    """The compose project of the run named `run`: `prysm-acceptance-RUN` in lower case."""
+    return f'prysm-acceptance-{_check(_RUN, run, "run").lower()}'
+
+
+def image_docker(host: str) -> Command:
+    """The Docker server's version, then the compose plugin's; fails when either does not answer."""
+    return _ssh('image.docker', host, "docker info --format '{{.ServerVersion}}' && docker compose version --short", 30)
+
+
+def image_device(host: str, device: str) -> Command:
+    """The group ID of the node `device` resolves to, or `absent`."""
+    path = v4l2_device(device)
+    return _ssh('image.device', host, f'if [ -e {path} ]; then stat -L -c %g {path}; else echo absent; fi', 15)
+
+
+def image_present(host: str, run: str) -> Command:
+    """What exists of the image tag and of the run's compose project (containers, volumes); nothing: all free."""
+    label = f'label=com.docker.compose.project={compose_project(run)}'
+    remote = f'{_IMAGE_INSPECT} 2>/dev/null; docker ps -aq --filter {label}; docker volume ls -q --filter {label}; true'
+    return _ssh('image.present', host, remote, 30)
+
+
+def image_deliver(host: str, run: str, image: str) -> Command:
+    """A new run directory with the image archive in it (`IMAGE_FILE`); prints its path and the target's clock."""
+    return _ssh('image.deliver', host, _artifact_dir(run, IMAGE_FILE), 600, stdin_file=_local_file(image, 'image'))
+
+
+def image_load(host: str, run: str) -> Command:
+    """`docker load` the archive; prints the ID `IMAGE_TAG` names then."""
+    return _ssh('image.load', host, f'docker load -i {run_dir(run)}/{IMAGE_FILE} && {_IMAGE_INSPECT}', 600)
+
+
+def image_compose(host: str, run: str, action: ComposeAction) -> Command:
+    """`docker compose` in the run directory with compose.yaml and the runner's override, project `compose_project`."""
+    words, timeout = _COMPOSE[_member(ComposeAction, action, 'action')]
+    remote = (
+        f'cd {run_dir(run)} && docker compose -p {compose_project(run)} '
+        f'-f {RunFile.COMPOSE} -f {RunFile.OVERRIDE} {words}'
+    )
+    return _ssh('image.compose', host, remote, timeout)
+
+
+def image_remove(host: str) -> Command:
+    """Remove `IMAGE_TAG` (the preflight found none, so it is the run's), also after an interrupted load; prints
+    `gone` when there is none."""
+    remote = f'if {_IMAGE_INSPECT} > /dev/null 2>&1; then docker image rm {IMAGE_TAG}; else echo gone; fi'
+    return _ssh('image.remove', host, remote, 120)
+
+
+# ---- the build system (--prepare) -------------------------------------------
+
+# The `cargo xtask dist` targets (tools/xtask/src/dist.rs) the runner may ask for.
+XTASK_TARGETS = (
+    'mac',
+    'linux-arm64',
+    'linux-amd64',
+    'deb-arm64',
+    'deb-amd64',
+    'image-arm64',
+    'image-amd64',
+    'tv-full',
+    'tv-slim',
+)
+
+
+def xtask_dist(targets: Sequence[str]) -> Command:
+    """`cargo xtask dist TARGET...` in the repository: the artifacts under their names in dist/."""
+    if not targets or any(target not in XTASK_TARGETS for target in targets):
+        raise Refused(f'xtask dist targets: {list(targets)!r}')
+    return Command('local.xtask-dist', ('cargo', 'xtask', 'dist', *targets), 3600, cwd=str(ROOT))
+
+
 # The allow-list: every template, with sample parameters for the tests and
 # the dry-run listing.
 TEMPLATES: dict[str, Callable[[], Command]] = {
@@ -633,9 +876,28 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'linux.kernel': lambda: linux_kernel('pi@pi.example', 1763380000),
     'linux.route': lambda: linux_route('pi@pi.example', '192.0.2.40'),
     'linux.remove': lambda: linux_remove('pi@pi.example', 'RUN-CELL'),
+    'deb.sudo': lambda: deb_sudo('pi@pi.example'),
+    'deb.installed': lambda: deb_installed('pi@pi.example'),
+    'deb.unit': lambda: deb_unit('pi@pi.example'),
+    'deb.deliver': lambda: deb_deliver('pi@pi.example', 'RUN-CELL', 'dist/prysm-headless-linux-arm64.deb'),
+    'deb.install': lambda: deb_install('pi@pi.example', 'RUN-CELL'),
+    'deb.dropin': lambda: deb_dropin('pi@pi.example', '0.0.0.0:18787'),
+    'deb.systemctl': lambda: deb_systemctl('pi@pi.example', UnitAction.START),
+    'deb.main-user': lambda: deb_main_user('pi@pi.example'),
+    'deb.journal': lambda: deb_journal('pi@pi.example', 1763380000),
+    'deb.purge': lambda: deb_purge('pi@pi.example'),
+    'deb.leftovers': lambda: deb_leftovers('pi@pi.example'),
+    'image.docker': lambda: image_docker('pi@pi.example'),
+    'image.device': lambda: image_device('pi@pi.example', '/dev/v4l/by-id/usb-EXAMPLE-video-index0'),
+    'image.present': lambda: image_present('pi@pi.example', 'RUN-CELL'),
+    'image.deliver': lambda: image_deliver('pi@pi.example', 'RUN-CELL', 'dist/prysm-headless-linux-arm64.tar'),
+    'image.load': lambda: image_load('pi@pi.example', 'RUN-CELL'),
+    'image.compose': lambda: image_compose('pi@pi.example', 'RUN-CELL', ComposeAction.UP),
+    'image.remove': lambda: image_remove('pi@pi.example'),
     'local.ares-remove': lambda: ares_remove('tv'),
     'local.verify-ipk': lambda: verify_ipk('dist/prysm-tv-full.ipk'),
     'local.git-last-commit-time': git_last_commit_time,
+    'local.xtask-dist': lambda: xtask_dist(['linux-arm64', 'deb-arm64']),
     'local.headless': lambda: headless('dist/prysm-headless-macos-arm64', 'settings.json', '127.0.0.1:8787'),
     'local.ffmpeg-clip': lambda: ffmpeg_edges_clip(
         'clip.mp4', 640, 360, 30, 64, ('ff0000', '00ff00', '0000ff', 'ffff00'), 2

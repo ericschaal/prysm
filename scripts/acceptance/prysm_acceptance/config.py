@@ -10,7 +10,7 @@ from typing import Any, TypeAlias, TypeVar, cast
 
 from prysm_acceptance import commands
 from prysm_acceptance.commands import Flavour
-from prysm_acceptance.options import Platform
+from prysm_acceptance.options import Delivery, Platform
 
 _ADDRESS = re.compile(r'[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?')
 _SIZE = re.compile(r'([0-9]{1,4})x([0-9]{1,4})')
@@ -89,9 +89,11 @@ class Machine:
     capture: Capture = field(default_factory=Capture)
     feed: ChromecastFeed | None = None  # None: no controlled feed into the capture card
 
-    def artifact(self) -> Path | None:
-        """The configured binary, relative to the repository; None without one."""
-        return commands.ROOT / self.binary if self.binary else None
+    def artifact(self, delivery: Delivery = Delivery.BINARY) -> Path | None:
+        """The configured artifact of `delivery` (`binary`, `deb` or `image`), relative to the repository; None
+        without one."""
+        name = {Delivery.BINARY: self.binary, Delivery.DEB: self.deb, Delivery.IMAGE: self.image}[delivery]
+        return commands.ROOT / name if name else None
 
 
 @dataclass

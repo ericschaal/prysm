@@ -91,6 +91,7 @@ class Real:
                     capture_output=True,
                     timeout=command.timeout,
                     env={**os.environ, **command.env},
+                    cwd=command.cwd,
                     check=False,
                 )
             except subprocess.TimeoutExpired as error:

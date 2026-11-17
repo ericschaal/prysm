@@ -1,7 +1,7 @@
 """The host cells: Prysm delivered to a platform, driving WLED from the generated clip or a capture card.
 
 `acceptance host` runs this module with pytest and the `bench` plugin; a cell
-is the `cell` parameter (`mac-binary-file`, `linux-binary-device` and so on).
+is the `cell` parameter (`mac-binary-file`, `linux-binary-device`, `linux-deb-device` and so on).
 Its fixtures set up, in order: the artifact and tools, the target (the seam
 in `host`, and whether it can run the cell), WLED's snapshot, the clip,
 the feed into the capture card, Prysm delivered and running, and its API;
@@ -21,25 +21,32 @@ import warnings
 import pytest
 
 from prysm_acceptance import artifact as artifacts
-from prysm_acceptance import colour_page, commands, edges_clip, feed, host, prysm_api, transport, wled_api
+from prysm_acceptance import (
+    colour_page,
+    commands,
+    edges_clip,
+    feed,
+    host,
+    host_deb,
+    host_image,
+    options,
+    prysm_api,
+    transport,
+    wled_api,
+)
 from prysm_acceptance.artifact import Artifact
-from prysm_acceptance.bench import planned, unavailable, uninterrupted
+from prysm_acceptance.bench import only, planned, unavailable, uninterrupted
 from prysm_acceptance.checks import Answer, Bench, Failed, ask_person
 from prysm_acceptance.config import SSH, Config, Machine
 from prysm_acceptance.edges_clip import CLIP
 from prysm_acceptance.feed import Feed
 from prysm_acceptance.host import Host
-from prysm_acceptance.options import Cell, Delivery, Platform, Source
+from prysm_acceptance.options import Cell, Delivery, Source
 from prysm_acceptance.prysm_api import ColorsEvent, Prysm, SessionState, Target, near, rates, session
 from prysm_acceptance.web import JsonObject
 from prysm_acceptance.wled_api import Wled
 
-CELLS = [
-    Cell(Platform.MAC, Delivery.BINARY, Source.FILE),
-    Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE),
-    Cell(Platform.LINUX, Delivery.BINARY, Source.FILE),
-    Cell(Platform.LINUX, Delivery.BINARY, Source.DEVICE),
-]
+CELLS = list(options.CELLS)
 # The `record` fixture: a passed check's detail and evidence.
 Record = Callable[[str, object], None]
 
@@ -74,16 +81,29 @@ def _clip_command(path: str) -> commands.Command:
     )
 
 
+def _local_only(cell: Cell, config: Config) -> str | None:
+    """Why this cell cannot run on a local target: the package and the image run over SSH only."""
+    if cell.delivery != Delivery.BINARY and not _machine(cell, config).target.startswith(SSH):
+        return (
+            f'the {cell.delivery} cell needs [{cell.platform}] target = "ssh://USER@HOST" ("local" is not implemented)'
+        )
+    return None
+
+
 def _seam(cell: Cell, config: Config, run: transport.Transport, out_dir: Path) -> Host:
-    """The host seam of this cell's delivery."""
+    """The host seam of this cell's delivery (the package and the image over SSH only: see `_local_only`)."""
     machine = _machine(cell, config)
+    artifact = machine.artifact(cell.delivery) or Path(str(cell.delivery).upper())
+    target = machine.target.removeprefix(SSH)
     match cell.delivery:
         case Delivery.BINARY:
-            binary = machine.artifact() or Path('BINARY')
             if machine.target.startswith(SSH):
-                target = machine.target.removeprefix(SSH)
-                return host.SshBinary(run, target, binary, machine.listen, out_dir, config.wled)
-            return host.LocalBinary(run, binary, machine.listen, out_dir, config.wled)
+                return host.SshBinary(run, target, artifact, machine.listen, out_dir, config.wled)
+            return host.LocalBinary(run, artifact, machine.listen, out_dir, config.wled)
+        case Delivery.DEB:
+            return host_deb.SshDeb(run, target, artifact, machine.listen, out_dir, config.wled)
+        case Delivery.IMAGE:
+            return host_image.SshImage(run, target, artifact, out_dir, config.wled)
         case _:
             assert_never(cell.delivery)
 
@@ -94,8 +114,8 @@ def _seam(cell: Cell, config: Config, run: transport.Transport, out_dir: Path) -
 @pytest.fixture(scope='module')
 @planned(
     does=lambda cell, config: [
-        f'[{cell.platform}] binary: {_machine(cell, config).binary or "(not set)"}; its SHA-256 and age, and the '
-        'version and commit from manifest.json next to it when the hash matches',
+        f'[{cell.platform}] {cell.delivery}: {_machine(cell, config).artifact(cell.delivery) or "(not set)"}; its '
+        'SHA-256 and age, and the version and commit from manifest.json next to it when the hash matches',
         f'$ {commands.git_last_commit_time().display()}   (warns when the artifact is older)',
         *(['FFmpeg on PATH for the clip'] if cell.source == Source.FILE or _feed(cell, config) else []),
         *([f'[{cell.platform}] device set'] if cell.source == Source.DEVICE else []),
@@ -110,9 +130,12 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
     if sum(config.leds.as_settings().values()) == 0:
         pytest.fail('leds: no LEDs configured', pytrace=False)
     machine = _machine(cell, config)
-    binary = machine.artifact()
+    binary = machine.artifact(cell.delivery)
     if binary is None or not binary.is_file():
-        unavailable(request, cell, f'no artifact: [{cell.platform}] binary is {binary or "not set"}')
+        unavailable(request, cell, f'no artifact: [{cell.platform}] {cell.delivery} is {binary or "not set"}')
+    local = _local_only(cell, config)
+    if local:
+        unavailable(request, cell, local)
     if cell.source == Source.DEVICE and not machine.device:
         unavailable(request, cell, f'no capture device: [{cell.platform}] device is not set')
     controlled = _feed(cell, config, request)
@@ -136,6 +159,9 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
 
 def _plan(cell: Cell, config: Config) -> host.Plan:
     """The seam's plan for the dry run, with nothing run."""
+    local = _local_only(cell, config)
+    if local:
+        return host.Plan(preflight=[f'skipped: {local}'])
     seam = _seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL'))
     return seam.plan(cell.source, _machine(cell, config).device)
 
@@ -253,11 +279,13 @@ def running(
     """Prysm delivered and started with temporary settings; stopped before WLED is restored.
 
     Over SSH the run directory on the target is removed at the end, after its log and the kernel's USB lines
-    are fetched (headless.log, kernel-usb.log)."""
+    are fetched (headless.log, or the package's journal.log, the container's container.log; kernel-usb.log);
+    the package is purged, the image and its compose project removed."""
     try:
         bench.log(target.deliver())
         place = target.place(clip.path) if clip and cell.source == Source.FILE else None
-        state = target.start(host.settings(host.wled_output(config), capture_settings(cell, config, place)))
+        capture = capture_settings(cell, config, place, target.capture_path(_machine(cell, config).device))
+        state = target.start(host.settings(host.wled_output(config), capture))
         bench.log(f'Started at {target.url}: target {state["target"]}, session {session(state)}')
         yield target
     finally:
@@ -268,8 +296,9 @@ def running(
                 target.close()
 
 
-def capture_settings(cell: Cell, config: Config, clip: str | None) -> JsonObject:
-    """The capture section: the clip where the host reads it, or the configured device and size."""
+def capture_settings(cell: Cell, config: Config, clip: str | None, device: str | None = None) -> JsonObject:
+    """The capture section: the clip where the host reads it, or the configured device (at `device`, where the
+    seam's Prysm opens it, when given) and size."""
     match cell.source:
         case Source.FILE:
             path = clip or ''
@@ -279,7 +308,7 @@ def capture_settings(cell: Cell, config: Config, clip: str | None) -> JsonObject
             machine = _machine(cell, config)
             return {
                 'kind': 'device',
-                'path': machine.device,
+                'path': device or machine.device,
                 'width': machine.capture.width,
                 'height': machine.capture.height,
                 'fps': machine.capture.fps,
@@ -293,7 +322,7 @@ def capture_settings(cell: Cell, config: Config, clip: str | None) -> JsonObject
     does=lambda cell, config: (
         [
             'GET /api/v1/candidates/capture/device: the configured device is listed, a link as the node it resolves '
-            'to on the target (else fails, listing the devices with their IDs)',
+            'to on the target, in a container as /dev/video0 (else fails, listing the devices with their IDs)',
             'POST /api/v1/capture/modes: a mode takes the configured size and rate',
         ]
         if cell.source == Source.DEVICE
@@ -305,7 +334,7 @@ def prysm(cell: Cell, config: Config, bench: Bench, running: Host) -> Prysm:
     client = Prysm(running.url)
     if cell.source == Source.DEVICE:
         device = _machine(cell, config).device
-        bench.save('capture-device.json', device_offered(client, device, running.listed(device)))
+        bench.save('capture-device.json', device_offered(client, running.capture_path(device), running.listed(device)))
     return client
 
 
@@ -588,6 +617,74 @@ def test_display_check(
         record(f'{len(results)} fields, each edge the expected colour', results)
     finally:
         page.close()
+
+
+# ---- what a delivery adds: each check is collected only for its delivery's cell (`only`) ----
+
+
+def _settings_kept(prysm: Prysm, wled: Wled, seam: Host, renew: Callable[[], prysm_api.State]) -> object:
+    """While lighting, `renew` Prysm (a unit restart, a new container): it answers idle with the settings it had,
+    and Screen sync lights WLED from the expected sender again."""
+    _processed(prysm)
+    saved = prysm.state()['settings']
+    state = renew()
+    evidence: dict[str, object] = {'target': state['target'], 'session': session(state)}
+    if state['target'] != Target.OFF or session(state) != SessionState.STOPPED:
+        raise Failed(f'not idle after the restart: target {state["target"]}, session {session(state)}', evidence)
+    if state['settings'] != saved:
+        raise Failed('the settings did not come back', {**evidence, 'before': saved, 'after': state['settings']})
+    _processed(prysm)
+    evidence['wled'] = live_from_host(prysm, wled, seam)['info']
+    return evidence
+
+
+def _ssh_host(cell: Cell, config: Config) -> str:
+    return _machine(cell, config).target.removeprefix(SSH)
+
+
+@only(Delivery.DEB)
+@planned(does=lambda cell, config: [f'$ {commands.deb_main_user(_ssh_host(cell, config)).display()}'])
+def test_package_user(running: Host, record: Record) -> None:
+    """The Debian package: the unit's main process does not run as root."""
+    user = cast('host_deb.SshDeb', running).main_user()
+    if user in ('', 'root'):
+        raise Failed(f'the unit runs as {user or "nobody (no main process)"}')
+    record(f'runs as {user}', {'user': user})
+
+
+@only(Delivery.DEB)
+@planned(
+    does=lambda cell, config: [
+        'PUT /api/v1/target processed',
+        f'$ {commands.deb_systemctl(_ssh_host(cell, config), commands.UnitAction.RESTART).display()}',
+        'GET /api/v1/state until it answers, then PUT /api/v1/target processed',
+    ]
+)
+def test_package_restart(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
+    """The Debian package: a restart of the unit while lighting.
+
+    Active again, idle (as the package documents: a restart leaves the lights off) with the saved settings;
+    Screen sync then lights WLED again."""
+    seam = cast('host_deb.SshDeb', running)
+    record('idle with its settings after the restart; lighting again', _settings_kept(prysm, wled, seam, seam.restart))
+
+
+@only(Delivery.IMAGE)
+@planned(
+    does=lambda cell, config: [
+        'PUT /api/v1/target processed',
+        '$ '
+        + commands.image_compose(_ssh_host(cell, config), 'RUN_DIR-CELL', commands.ComposeAction.RECREATE).display(),
+        'GET /api/v1/state until it answers, then PUT /api/v1/target processed',
+    ]
+)
+def test_image_volume(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
+    """The image: the settings live on the compose file's volume.
+
+    A new container (`up --force-recreate`) answers idle with the same settings; Screen sync then lights WLED
+    again."""
+    seam = cast('host_image.SshImage', running)
+    record('a new container has the settings; lighting again', _settings_kept(prysm, wled, seam, seam.recreate))
 
 
 # Last: it stops the host the checks above share.
