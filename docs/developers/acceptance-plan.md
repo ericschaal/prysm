@@ -111,7 +111,7 @@ ipk_slim = "dist/prysm-tv-slim.ipk"
 | Mac, binary, file | FFmpeg 9 or newer on the Mac |
 | Mac, binary, device | a card on the Mac; run from Terminal (camera permission) |
 | Linux, binary, device | a card on the Linux machine |
-| Linux, binary, file | FFmpeg 9 or newer on the Linux machine (Debian 13 ships an older one, so this cell is a SKIP on the bench Pi) |
+| Linux, binary, file | FFmpeg 9 or newer on the Linux machine (Debian 13 ships none that new; the bench Pi has one installed by hand) |
 | Linux, deb, device | a card on the Linux machine, `sudo` |
 | Linux, image, device | a card and Docker on the Linux machine |
 | TV full | the TV free |
