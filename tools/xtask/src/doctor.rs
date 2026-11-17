@@ -1,4 +1,5 @@
 //! `cargo xtask doctor`: which tools are installed and what needs them.
+use serde::Deserialize;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,12 +9,19 @@ use std::process::{Command, ExitCode};
 const RUST_TOOLCHAIN: &str = include_str!("../../../rust-toolchain.toml");
 
 /// The Rust version `rust-toolchain.toml` pins, such as `1.99.1`.
-fn pinned_rust() -> &'static str {
-    RUST_TOOLCHAIN
-        .lines()
-        .find_map(|line| line.strip_prefix("channel = "))
-        .map(|value| value.trim_matches('"'))
+fn pinned_rust() -> String {
+    #[derive(Deserialize)]
+    struct File {
+        toolchain: Toolchain,
+    }
+    #[derive(Deserialize)]
+    struct Toolchain {
+        channel: String,
+    }
+    toml::from_str::<File>(RUST_TOOLCHAIN)
         .expect("rust-toolchain.toml names its channel")
+        .toolchain
+        .channel
 }
 
 /// A tool a command needs.
@@ -127,7 +135,7 @@ impl Tool {
     fn minimum(self) -> Option<Version> {
         match self {
             // In the repository, rustup runs exactly this one.
-            Self::Cargo | Self::Rustc => parse_version(pinned_rust()).map(|(version, _)| version),
+            Self::Cargo | Self::Rustc => parse_version(&pinned_rust()).map(|(version, _)| version),
             Self::Node => Some(Version(24, 0)),
             Self::Python => Some(Version(3, 9)),
             Self::Ffmpeg => Some(Version(9, 0)),

@@ -434,6 +434,10 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
       - name: Rust for cargo xtask
         run: rustup toolchain install --no-self-update
+      # xtask only: the product is compiled inside Docker.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: docker
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       # The cache service's URL and token for `type=gha` in run steps (the
       # build-push-action passes them itself; xtask runs buildx directly).
