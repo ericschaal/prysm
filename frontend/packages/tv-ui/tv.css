@@ -372,6 +372,24 @@ button:disabled {
   color: rgba(var(--fg), 0.6);
   opacity: 1;
 }
+/*
+ * Full: the button is rare (Try again, Set up service), so it takes no room
+ * of its own; it sits at the right of the detail and the quiet line, no
+ * taller than they are, and the lights card stays where it is.
+ */
+.beside {
+  display: flex;
+  align-items: flex-end;
+}
+.beside .status-lines {
+  flex: 1;
+  min-width: 0;
+}
+.beside .primary {
+  flex: none;
+  width: 11rem;
+  margin: 0 0 0 var(--space-4);
+}
 .tonal,
 .danger {
   min-width: 10rem;
@@ -394,9 +412,9 @@ button:disabled {
 
 /* ---- Your lights: the main control, a segmented track ---- */
 /*
- * Right under the status: the status line, its quiet line, then either the
- * service's one button and the lights, or the lights alone, each step the
- * same --space-6 apart.
+ * Right under the status: the status line, its quiet line, then the slim
+ * service's one button and the lights (the full package's button sits beside
+ * the lines), each step the same --space-6 apart.
  */
 .lighting {
   margin-top: var(--space-5);

@@ -107,10 +107,6 @@ for (const flavor of ['full', 'slim'] as const) {
   test(`${flavor}: capture failing on the TV moves neither the cards nor the buttons`, async ({
     page,
   }) => {
-    test.fail(
-      flavor === 'full',
-      'Known: "Try again" appears in the status card and pushes the lights card down',
-    );
     await lightsOn(page, flavor);
     const normal = await measure(page, flavor);
     await page.evaluate(() =>

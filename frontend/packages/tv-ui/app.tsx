@@ -234,11 +234,12 @@ export function TvApp({
     }
   }
   // Full: no button while there is nothing for the service to do; the
-  // lighting modes are the one way to choose what the lights do. Slim keeps
-  // its place while capture stops ("Please wait…").
+  // lighting modes are the one way to choose what the lights do. When it
+  // comes (Try again) it sits beside the detail, so the card keeps its size.
+  // Slim keeps its place while capture stops ("Please wait…").
   const setupFirst = status.setupLights && !mismatch && !!portalAddress;
-  // Never only because a setting is being saved: the card would grow and
-  // push the lights down for the length of the call.
+  // Never only because a setting is being saved: the slim card would grow
+  // and push the lights down for the length of the call.
   const showPrimary =
     status.action !== 'none' || (slim && (tv.changing || !!status.label));
   // While it waits it keeps focus (a disabled button would drop it) and OK
@@ -340,30 +341,35 @@ export function TvApp({
                   {mismatch ? 'Reinstall Prysm' : status.title}
                 </h1>
               </div>
-              <p id="status-description" className="description">
-                {mismatch
-                  ? 'The app and its TV service don’t match.'
-                  : status.description}
-              </p>
-              {/* Always a line, so the buttons never move. */}
-              <p id="status-meta" className="meta">
-                {tv.countdown ? (
-                  <RetryBar key={tv.countdown.since} retry={tv.countdown} />
+              {/* Full: the button sits beside these two lines, in their height. */}
+              <div className={`status-body${slim ? '' : ' beside'}`}>
+                <div className="status-lines">
+                  <p id="status-description" className="description">
+                    {mismatch
+                      ? 'The app and its TV service don’t match.'
+                      : status.description}
+                  </p>
+                  {/* Always a line, so the buttons never move. */}
+                  <p id="status-meta" className="meta">
+                    {tv.countdown ? (
+                      <RetryBar key={tv.countdown.since} retry={tv.countdown} />
+                    ) : null}
+                    {meta || '\u00a0'}
+                  </p>
+                </div>
+                {showPrimary ? (
+                  <button
+                    id="primary"
+                    type="button"
+                    className="primary"
+                    disabled={mismatch}
+                    aria-busy={waiting || undefined}
+                    onClick={waiting ? undefined : primary}
+                  >
+                    {tv.changing ? 'Please wait…' : status.label}
+                  </button>
                 ) : null}
-                {meta || '\u00a0'}
-              </p>
-              {showPrimary ? (
-                <button
-                  id="primary"
-                  type="button"
-                  className="primary"
-                  disabled={mismatch}
-                  aria-busy={waiting || undefined}
-                  onClick={waiting ? undefined : primary}
-                >
-                  {tv.changing ? 'Please wait…' : status.label}
-                </button>
-              ) : null}
+              </div>
             </section>
             {/*
               First run: the lights are set up in the portal, so its QR code
