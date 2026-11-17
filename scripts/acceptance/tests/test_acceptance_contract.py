@@ -176,7 +176,7 @@ class WrittenSettings(unittest.TestCase):
 
     def test_the_captures(self) -> None:
         bench = config.load(EXAMPLE)
-        clip = host_cells.Clip(Path('edges.mp4'), edges=True)
+        clip = 'edges.mp4'
         file = untyped(host_cells.capture_settings(Cell(Platform.MAC, Delivery.BINARY, Source.FILE), bench, clip))
         self.assertEqual((file['kind'], file['repeat']), ('file', True))
         self.assertLessEqual(set(file), self.fields('FileSettings'))

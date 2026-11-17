@@ -73,7 +73,7 @@ class AllowList(unittest.TestCase):
             and not name.startswith('_')
             and getattr(value, '__module__', '') == 'prysm_acceptance.commands'
             and name[0].islower()
-            and name not in ('ssh_target', 'adb_serial', 'field')
+            and name not in ('ssh_target', 'adb_serial', 'run_dir', 'v4l2_device', 'field')
         }
         produced = {factory().template for factory in commands.TEMPLATES.values()}
         self.assertEqual(set(commands.TEMPLATES), produced)

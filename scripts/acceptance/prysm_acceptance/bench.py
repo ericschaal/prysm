@@ -31,6 +31,7 @@ from prysm_acceptance import commands, transport
 from prysm_acceptance import config as configuration
 from prysm_acceptance.checks import Bench, Failed
 from prysm_acceptance.config import Config
+from prysm_acceptance.host import Host
 from prysm_acceptance.options import Cell, Delivery, Platform, Source
 
 # The runner's project: scripts/acceptance, where config.toml lives.
@@ -215,7 +216,8 @@ def pytest_report_teststatus(report: pytest.TestReport) -> tuple[str, str, str] 
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
 ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-    """A failure's report has its evidence, where the logs are and the end of the host's log."""
+    """A failure's report has its evidence, where the logs are and the end of the host's log (a remote host's
+    log and kernel USB lines fetched first)."""
     report = yield
     if not report.failed or RUN_DIR not in item.config.stash:
         return report
@@ -224,6 +226,12 @@ def pytest_runtest_makereport(
         _evidence(item.config, item.name, {'failed': str(error), 'evidence': error.evidence})
         if error.evidence is not None:
             report.sections.append(('evidence', json.dumps(error.evidence, indent=2, default=str)))
+    seam = item.funcargs.get('running') if isinstance(item, pytest.Function) else None
+    if seam is not None:
+        try:
+            cast('Host', seam).fetch()  # a remote host's log and kernel lines, as they are now
+        except Exception as fetched:  # the report still shows what is here
+            report.sections.append(('logs not fetched', f'{type(fetched).__name__}: {fetched}'))
     run_dir = item.config.stash[RUN_DIR]
     logs = sorted(run_dir.glob('*/*.log'))
     tails = [

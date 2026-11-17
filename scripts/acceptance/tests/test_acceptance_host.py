@@ -45,6 +45,7 @@ class DryRun(unittest.TestCase):
         for arguments in (
             ['host', 'mac'],
             ['host', 'mac', '--source', 'device', '--display-check'],
+            ['host', 'linux'],
             ['tv'],
             ['eyes'],
         ):
@@ -60,6 +61,28 @@ class DryRun(unittest.TestCase):
         self.assertIn('$ dist/prysm-headless-macos-arm64 RUN_DIR/CELL/headless-settings.json', cell)
         self.assertIn('GET /api/v1/candidates/capture/device', text[device:])
         self.assertNotIn('cargo', text)
+
+    def test_prints_the_linux_cells_remote_commands(self) -> None:
+        text = runner('host', 'linux', '--dry-run', '--config', str(EXAMPLE)).stdout
+        file, device = text.index('Cell linux-binary-file'), text.index('Cell linux-binary-device')
+        self.assertNotIn('Cell mac-', text)
+        cell = text[file:device]
+        order = [
+            cell.index(f'  {name}: ') for name in ('artifact', 'target', 'wled', 'clip', 'running', 'test_sigterm')
+        ]
+        self.assertEqual(order, sorted(order))
+        for remote in (
+            "'uname -sm'",
+            'ffmpeg -version',
+            "'cat > $HOME/.prysm-acceptance/RUN_DIR-CELL/clip' < RUN_DIR/CELL/edges.mp4",
+            '< dist/prysm-headless-linux-arm64',
+            'RUST_LOG=warn,prysm=info nohup sh -c',
+            'GET http://192.168.1.70:18787/api/v1/state',
+            'journalctl -k',
+            "'rm -rf $HOME/.prysm-acceptance/RUN_DIR-CELL;",
+        ):
+            self.assertIn(remote, cell)
+        self.assertIn('readlink -f /dev/v4l/by-id/usb-EXAMPLE-video-index0', text[device:])
 
     def test_selection_is_pytests(self) -> None:
         text = runner('host', 'mac', '--source', 'file', '--dry-run', '--config', str(EXAMPLE), '-k', 'fps').stdout
@@ -95,6 +118,31 @@ class MissingArtifact(unittest.TestCase):
         done = self.run_without_binary('--source', 'file')
         self.assertEqual(done.returncode, 1, done.stdout[-3000:])
         self.assertIn('mac-binary-file: no artifact', done.stdout)
+
+
+class TargetPreflight(unittest.TestCase):
+    """A target that cannot run the cell skips it, or fails it when it was named, before WLED is touched."""
+
+    def run_with_foreign_binary(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        directory = Path(tempfile.mkdtemp())
+        binary = directory / 'prysm-headless-linux-other'
+        binary.write_bytes(b'\x7fELF\x02\x01\x01' + bytes(11) + (0x1234).to_bytes(2, 'little') + bytes(44))
+        config = directory / 'config.toml'
+        config.write_text(
+            '[wled]\naddress = "127.0.0.1:9"\n[leds]\ntop = 1\n'
+            f'[linux]\ntarget = "local"\nbinary = "{binary}"\ndevice = "/dev/video0"\n'
+        )
+        return runner('host', 'linux', *arguments, '--config', str(config), '--runs', str(directory / 'runs'))
+
+    def test_skips_unless_named(self) -> None:
+        done = self.run_with_foreign_binary('-k', 'device')
+        self.assertEqual(done.returncode, 0, done.stdout[-3000:])
+        self.assertIn('linux-binary-device: prysm-headless-linux-other is', done.stdout)
+
+    def test_fails_when_named(self) -> None:
+        done = self.run_with_foreign_binary('--source', 'device')
+        self.assertEqual(done.returncode, 1, done.stdout[-3000:])
+        self.assertIn('linux-binary-device: prysm-headless-linux-other is', done.stdout)
 
 
 @unittest.skipUnless(BINARY, 'set PRYSM_ACCEPTANCE_BINARY to a built prysm-headless (see the module docstring)')

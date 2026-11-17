@@ -13,6 +13,13 @@ supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
 
+On a Linux target over SSH (`[linux] target = "ssh://USER@HOST"`) the runner
+writes only in the run's own directory, `$HOME/.prysm-acceptance/RUN` (the
+templates take the checked run name, never a path), reads the kernel log,
+the route to WLED and its own Prysm's state, signals only the process whose
+executable is the binary it copied there, and removes that directory at the
+end. It never uses sudo.
+
 On the Chromecast that feeds the capture card (`[mac.feed.chromecast]`), ADB
 only reads its state and Wi-Fi address, wakes it and reads or sets the one
 keep-awake setting; there is no free-form `adb shell`.
@@ -21,10 +28,12 @@ keep-awake setting; there is no free-form `adb shell`.
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+import ipaddress
 import json
 from pathlib import Path
 import re
 import shlex
+from typing import TypeVar
 
 # The repository: scripts/acceptance/prysm_acceptance/commands.py, three levels up.
 ROOT = Path(__file__).resolve().parents[3]
@@ -91,9 +100,10 @@ class Command:
     env: dict[str, str] = field(default_factory=dict[str, str])
 
     def display(self) -> str:
-        text = shlex.join(self.argv).replace(str(ROOT) + '/', '').replace(str(ROOT), '.')
+        text = shlex.join(self.argv)
         if self.stdin_file:
             text += ' < ' + shlex.quote(self.stdin_file)
+        text = text.replace(str(ROOT) + '/', '').replace(str(ROOT), '.')
         if self.hold_stdin:
             text = f'(stdin held open, at most {self.timeout:.0f} s) ' + text
         return text
@@ -121,6 +131,16 @@ def _number(value: object, name: str, low: int, high: int) -> int:
     return value
 
 
+Member = TypeVar('Member', bound=StrEnum)
+
+
+def _member(kind: type[Member], value: object, name: str) -> Member:
+    """A member of `kind` itself, not its string."""
+    if not isinstance(value, kind):
+        raise Refused(f'{name}: {value!r}')
+    return value
+
+
 def _local_file(path: str | Path, name: str) -> str:
     path = Path(path)
     if '\0' in str(path) or str(path).startswith('-'):
@@ -132,8 +152,8 @@ def _local_file(path: str | Path, name: str) -> str:
 
 
 def ssh_target(host: object) -> str:
-    """`root@TV` or an ssh alias; never an option."""
-    return _check(_HOST, host, 'tv.ssh')
+    """`USER@HOST` (`root@TV`) or an ssh alias; never an option."""
+    return _check(_HOST, host, 'ssh target')
 
 
 def _ssh(
@@ -426,6 +446,163 @@ def adb_stay_on_put(serial: str, value: int) -> Command:
     return _adb('adb.stay-on-put', serial, 'shell', f'settings put global stay_on_while_plugged_in {value}')
 
 
+# ---- a Linux target over SSH ------------------------------------------------
+
+# Where a run's files live on the target; a run directory is REMOTE_ROOT/RUN.
+REMOTE_ROOT = '$HOME/.prysm-acceptance'
+_RUN = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,95}')
+_V4L2 = re.compile(r'/dev/[A-Za-z0-9_.:+-]+(/[A-Za-z0-9_.:+-]+)*')
+STOP_SECONDS = 30
+
+
+class RunFile(StrEnum):
+    """The files the runner puts into a run directory besides the binary."""
+
+    SETTINGS = 'settings.json'
+    CLIP = 'clip'
+
+
+class Signal(StrEnum):
+    TERM = 'TERM'
+    KILL = 'KILL'
+
+
+def run_dir(run: object) -> str:
+    """The run directory on the target for the run named `run` (letters, digits, - and _)."""
+    return f'{REMOTE_ROOT}/{_check(_RUN, run, "run")}'
+
+
+def v4l2_device(path: object) -> str:
+    """A V4L2 device path under /dev (a /dev/v4l/by-id link, or /dev/videoN); no `..`."""
+    checked = _check(_V4L2, path, 'linux.device')
+    if '..' in checked.split('/'):
+        raise Refused(f'linux.device: {path!r} is not accepted')
+    return checked
+
+
+def _ipv4(address: object) -> str:
+    if not isinstance(address, str):
+        raise Refused(f'address: {address!r}')
+    try:
+        return str(ipaddress.IPv4Address(address))
+    except ValueError:
+        raise Refused(f'address: {address!r} is not an IPv4 address') from None
+
+
+def linux_probe(host: str) -> Command:
+    """The kernel name and the machine (`Linux aarch64`); also proves ssh works without a prompt."""
+    return _ssh('linux.probe', host, 'uname -sm', 15)
+
+
+def linux_ffmpeg_version(host: str) -> Command:
+    """The first line of `ffmpeg -version` as Prysm will find it (the same non-interactive PATH), or `absent`."""
+    return _ssh(
+        'linux.ffmpeg-version', host, 'if command -v ffmpeg >/dev/null; then ffmpeg -version; else echo absent; fi', 15
+    )
+
+
+def linux_device(host: str, device: str) -> Command:
+    """The device node a readable `device` resolves to (as Prysm lists it), or `unreadable`."""
+    path = v4l2_device(device)
+    return _ssh('linux.device', host, f'if [ -r {path} ]; then readlink -f {path}; else echo unreadable; fi', 15)
+
+
+def linux_port_free(host: str, port: int) -> Command:
+    """Sockets listening on TCP `port` (none: free)."""
+    return _ssh('linux.port-free', host, f'ss -Htln sport = :{_number(port, "port", 1, 65535)}', 15)
+
+
+def linux_deliver(host: str, run: str, binary: str) -> Command:
+    """A new run directory with the binary in it, executable; prints the directory's absolute path and the
+    target's clock (epoch seconds)."""
+    directory = run_dir(run)
+    remote = (
+        f'mkdir -p {REMOTE_ROOT} && mkdir -m 700 {directory} && cat > {directory}/prysm-headless && '
+        f'chmod 700 {directory}/prysm-headless && cd {directory} && pwd -P && date +%s'
+    )
+    return _ssh('linux.deliver', host, remote, 300, stdin_file=_local_file(binary, 'binary'))
+
+
+def linux_put(host: str, run: str, file: RunFile, local: str) -> Command:
+    """Copy a local file into the run directory as `file`."""
+    name = _member(RunFile, file, 'file')
+    return _ssh('linux.put', host, f'cat > {run_dir(run)}/{name}', 300, stdin_file=_local_file(local, 'file'))
+
+
+def linux_start(host: str, run: str, listen: str) -> Command:
+    """Start the binary detached, in its run directory, on `listen` with --metrics.
+
+    A wrapper records its PID (headless.pid) and, when it exits, its exit
+    status (exit-code); its output goes to headless.log. ssh returns at once."""
+    directory = run_dir(run)
+    wrapper = (
+        f'cd {directory} || exit 1; '
+        f'./prysm-headless {RunFile.SETTINGS} --listen {_check(_LISTEN, listen, "listen")} --metrics '
+        '> headless.log 2>&1 < /dev/null & echo $! > headless.pid; wait $!; echo $? > exit-code'
+    )
+    remote = f"RUST_LOG=warn,prysm=info nohup sh -c '{wrapper}' > /dev/null 2>&1 < /dev/null &"
+    return _ssh('linux.start', host, remote, 15)
+
+
+def _alive(directory: str, pid: str) -> str:
+    """A test that `pid` is the run's own binary (not a process that took its PID since)."""
+    return f'[ "$(readlink /proc/{pid}/exe)" = "$(readlink -f {directory}/prysm-headless)" ]'
+
+
+def linux_status(host: str, run: str) -> Command:
+    """`exited CODE`, `running PID` or `starting`."""
+    directory = run_dir(run)
+    remote = (
+        f'p=$(cat {directory}/headless.pid 2>/dev/null); '
+        f'if [ -s {directory}/exit-code ]; then echo "exited $(cat {directory}/exit-code)"; '
+        f'elif [ -n "$p" ] && {_alive(directory, "$p")}; then echo "running $p"; else echo starting; fi'
+    )
+    return _ssh('linux.status', host, remote, 15)
+
+
+def linux_signal(host: str, run: str, pid: int, signal: Signal) -> Command:
+    """Send `signal` to `pid` only while it is the run's own binary; prints `sent` or `gone`."""
+    name = _member(Signal, signal, 'signal')
+    number = str(_number(pid, 'pid', 2, 4194304))
+    remote = f'if {_alive(run_dir(run), number)}; then kill -{name} {number} && echo sent; else echo gone; fi'
+    return _ssh('linux.signal', host, remote, 15)
+
+
+def linux_wait_exit(host: str, run: str, seconds: int = STOP_SECONDS) -> Command:
+    """Wait up to `seconds` for the exit status; prints it, or `running`."""
+    directory = run_dir(run)
+    seconds = _number(seconds, 'seconds', 1, 120)
+    remote = (
+        f'i=0; while [ ! -s {directory}/exit-code ] && [ $i -lt {seconds} ]; do sleep 1; i=$((i+1)); done; '
+        f'if [ -s {directory}/exit-code ]; then cat {directory}/exit-code; else echo running; fi'
+    )
+    return _ssh('linux.wait-exit', host, remote, seconds + 15)
+
+
+def linux_read_log(host: str, run: str) -> Command:
+    directory = run_dir(run)
+    return _ssh(
+        'linux.read-log', host, f'if [ -f {directory}/headless.log ]; then cat {directory}/headless.log; fi', 60
+    )
+
+
+def linux_kernel(host: str, since: int) -> Command:
+    """The kernel log since `since` (the target's epoch seconds); the runner keeps the USB lines."""
+    since = _number(since, 'since', 1, 2**40)
+    return _ssh('linux.kernel', host, f'journalctl -k -q --no-pager -o short-iso --since @{since}', 60)
+
+
+def linux_route(host: str, address: str) -> Command:
+    """The target's route to `address` (IPv4): its `src` is the sender WLED sees."""
+    return _ssh('linux.route', host, f'ip -4 route get {_ipv4(address)}', 15)
+
+
+def linux_remove(host: str, run: str) -> Command:
+    """Remove the run directory (and the runs' parent when it is left empty)."""
+    remote = f'rm -rf {run_dir(run)}; rmdir {REMOTE_ROOT} 2>/dev/null; true'
+    return _ssh('linux.remove', host, remote, 60)
+
+
 # The allow-list: every template, with sample parameters for the tests and
 # the dry-run listing.
 TEMPLATES: dict[str, Callable[[], Command]] = {
@@ -442,6 +619,20 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.get-state': lambda: tv_get_state('root@tv.example'),
     'tv.set-enabled': lambda: tv_set_enabled('root@tv.example', True),
     'tv.set-preferences': lambda: tv_set_preferences('root@tv.example', False, 'http://192.0.2.20:8787'),
+    'linux.probe': lambda: linux_probe('pi@pi.example'),
+    'linux.ffmpeg-version': lambda: linux_ffmpeg_version('pi@pi.example'),
+    'linux.device': lambda: linux_device('pi@pi.example', '/dev/v4l/by-id/usb-EXAMPLE-video-index0'),
+    'linux.port-free': lambda: linux_port_free('pi@pi.example', 18787),
+    'linux.deliver': lambda: linux_deliver('pi@pi.example', 'RUN-CELL', 'dist/prysm-headless-linux-arm64'),
+    'linux.put': lambda: linux_put('pi@pi.example', 'RUN-CELL', RunFile.SETTINGS, 'headless-settings.json'),
+    'linux.start': lambda: linux_start('pi@pi.example', 'RUN-CELL', '0.0.0.0:18787'),
+    'linux.status': lambda: linux_status('pi@pi.example', 'RUN-CELL'),
+    'linux.signal': lambda: linux_signal('pi@pi.example', 'RUN-CELL', 4242, Signal.TERM),
+    'linux.wait-exit': lambda: linux_wait_exit('pi@pi.example', 'RUN-CELL'),
+    'linux.read-log': lambda: linux_read_log('pi@pi.example', 'RUN-CELL'),
+    'linux.kernel': lambda: linux_kernel('pi@pi.example', 1763380000),
+    'linux.route': lambda: linux_route('pi@pi.example', '192.0.2.40'),
+    'linux.remove': lambda: linux_remove('pi@pi.example', 'RUN-CELL'),
     'local.ares-remove': lambda: ares_remove('tv'),
     'local.verify-ipk': lambda: verify_ipk('dist/prysm-tv-full.ipk'),
     'local.git-last-commit-time': git_last_commit_time,

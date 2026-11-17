@@ -1,8 +1,8 @@
 # Hardware acceptance runner
 
 The runner, the package [`scripts/acceptance/prysm_acceptance`](../../scripts/acceptance/prysm_acceptance/run.py),
-checks Prysm's artifacts on real devices: WLED, a capture card, and both TV
-packages. It is run by hand, never by CI or a build, and it never builds:
+checks Prysm's artifacts on real devices: WLED, a capture card, a Linux
+computer over SSH, and both TV packages. It is run by hand, never by CI or a build, and it never builds:
 it tests the artifacts the configuration names (`cargo xtask dist`,
 [packaging](packaging.md#artifacts-in-dist)). A run writes its report and
 evidence (snapshots, logs, CSV tables) to `work/acceptance/<time>-<stage>/`,
@@ -17,6 +17,7 @@ cargo xtask dist mac                                                        # th
 uv run --no-dev --project scripts/acceptance acceptance host mac --dry-run
 uv run --no-dev --project scripts/acceptance acceptance host mac --source file
 uv run --no-dev --project scripts/acceptance acceptance host mac --source device [--display-check]
+uv run --no-dev --project scripts/acceptance acceptance host linux [--source file|device]
 uv run --no-dev --project scripts/acceptance acceptance tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
 uv run --no-dev --project scripts/acceptance acceptance eyes
 uv run --no-dev --project scripts/acceptance acceptance restore-wled work/acceptance/RUN/CELL/wled-snapshot.json
@@ -36,7 +37,7 @@ and contacts nothing. The exit code is 0 when nothing failed (skips allowed),
 bench (see [`config.example.toml`](../../scripts/acceptance/config.example.toml)):
 WLED and the LED counts, `[checks]` (sample length, frame-rate tolerance),
 `[mac]` (`target = "local"`; an `ssh://` target is refused as not
-implemented), the TV and its packages, the receiver; no address is written
+implemented), `[linux]` (`target = "ssh://USER@HOST"` or `"local"`), the TV and its packages, the receiver; no address is written
 in the code.
 
 ## Stages
@@ -44,23 +45,26 @@ in the code.
 | Stage | Needs | Person |
 | --- | --- | --- |
 | `host mac` | WLED; `[mac] binary`; FFmpeg 9+ for the file source, or a capture card (`[mac] device`; with a feed: FFmpeg, and for the Chromecast adb) | Only for `--display-check` set-up |
+| `host linux` | WLED; `[linux] binary` and `target`; over SSH a key the runner can use without a prompt; FFmpeg here for the clip; FFmpeg 9+ on the target for the file source, or a capture card on it (`[linux] device`; with a feed: adb here) | No |
 | `tv` | The TV (only when its owner says it is free: `--tv-is-free`), WLED, the IPKs `[tv] ipk_full`, `ipk_slim`; slim with the local receiver: `[mac] binary` | Standby/wake, and removing the app unless `tv.ares_device` is set |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
 ### host
 
 The host cells run under pytest: a cell is a parameter (platform, delivery,
-source), so `mac-binary-file` and `mac-binary-device` today, and Linux, the
-Debian package and the image in later phases. `acceptance host mac` runs
-both Mac cells; `--source file` or `--source device` names one. Other
+source), so `mac-binary-file`, `mac-binary-device`, `linux-binary-file` and
+`linux-binary-device` today, and the Debian package and the image in a later
+phase. `acceptance host mac` runs both Mac cells, `acceptance host linux`
+both Linux cells; `--source file` or `--source device` names one. Other
 arguments go to pytest, so `-k fps`, `-m file` or `-x` select and stop as
 pytest does. A cell whose artifact or tool is missing (no `binary`, no
 `device`, no FFmpeg) is a SKIP with the reason; a cell named with `--source`
 fails instead. The run directory has `report.xml` (JUnit, with each check's
 detail), each cell's `commands.log`, `headless.log`, `artifact.json`,
 `wled-snapshot.json` and `wled-cfg.json` (WLED's configuration, as evidence),
-and `evidence/CHECK.json`. A failure prints its evidence, the log paths and
-the end of the host's log.
+and `evidence/CHECK.json`; a Linux target over SSH adds `kernel-usb.log`.
+A failure prints its evidence, the log paths and the end of the host's log
+(and of `kernel-usb.log`), fetched from the target first.
 
 The fixtures set up, in order, and their teardowns undo it in reverse, also
 after a failure, Ctrl-C, SIGTERM or SIGHUP:
@@ -69,6 +73,9 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   recorded, and the version and commit from `manifest.json` next to it when
   its hash matches; a warning when it is older than the checkout's last
   commit (one `git log` template);
+- **target**: the host seam (`host.py`) for the cell, and whether the target
+  can run it (below); a target that cannot skips the cell, or fails it when
+  named;
 - **wled**: `/json/si` and `/json/cfg` saved before anything changes; the
   runner refuses while something else drives WLED; restored last and
   compared (`on`, `bri`, `lor`, `transition`, the preset, `if.live.maxbri`);
@@ -76,16 +83,18 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   (the colour check is then "not black");
 - **feed_shown**: with a capture card and a feed, the clip on the card's
   input (see below);
-- **running**: the host seam (`host.py`) delivers Prysm, writes temporary
-  settings (WLED output, neutral processing, the cell's capture) and starts
-  it; stopped with SIGTERM (KILL after 30 s). Today the seam has one
-  delivery: the binary on this computer as a child process, its output in
-  `headless.log`. The seam also says which sender address WLED should report;
+- **running**: the seam delivers Prysm, writes temporary settings (WLED
+  output, neutral processing, the cell's capture) and starts it; stopped with
+  SIGTERM (KILL after 30 s). A local target runs the binary on this computer
+  as a child process, its output in `headless.log`; an SSH target is
+  described below. The seam also says which sender address WLED should
+  report;
 - **prysm**: the portal API. With a capture card, the configured `device`
   (Prysm's own device setting: an AVFoundation unique ID on macOS) must be
-  among Prysm's candidates, or the cell fails listing the devices present
-  with their IDs; a mode of `/capture/modes` must take the capture size and
-  rate (`[mac.capture]`, or Prysm's defaults). The runner matches no names
+  among Prysm's candidates (a Linux `/dev/v4l/by-id/` link as the node it
+  resolves to on the target, which is what Prysm lists), or the cell fails
+  listing the devices present with their IDs; a mode of `/capture/modes` must take the capture size and
+  rate (`[mac.capture]`; 640×360 at 30 fps without it). The runner matches no names
   and resolves no presets.
 
 The checks, in order, through the
@@ -126,13 +135,68 @@ give `--wled 127.0.0.1:18080`; any build of prysm-headless works there
 (`binary = "target/debug/prysm-headless"`, without a manifest the version
 check is a skip).
 
+#### Run the Linux binary cells
+
+```sh
+cargo xtask dist linux-arm64   # dist/prysm-headless-linux-arm64 (linux-amd64 for x86_64)
+uv run --no-dev --project scripts/acceptance acceptance host linux --dry-run
+uv run --no-dev --project scripts/acceptance acceptance host linux --source device
+```
+
+`[linux]` in `config.toml`:
+
+- `target`: `"ssh://USER@HOST"`, or `"local"` to run the binary on this
+  computer as the Mac cells do. HOST is also the address the runner reaches
+  Prysm at over HTTP, so it must resolve here (an ssh config alias does not).
+  ssh runs with `BatchMode=yes`: the key must work without a prompt;
+- `binary`: the Linux artifact. The runner reads its ELF header's machine and
+  compares it with `uname -m` on the target;
+- `device`: the capture card on the target, a V4L2 path; the stable
+  `/dev/v4l/by-id/…-video-index0` link is preferred over `/dev/videoN`, which
+  can change between boots. Omit it without a card;
+- `listen`: where Prysm listens on the target, by default `0.0.0.0:18787`
+  with an ssh target, so the runner reaches it over the LAN;
+- `[linux.capture]` and `[linux.feed.chromecast]`: as for `[mac]`. The feed
+  runs on this computer (ADB, PyChromecast and the clip server) while the
+  card is on the target;
+- `deb` and `image` are read and checked, not used yet.
+
+Before WLED is touched, the target is checked, each with one command:
+reachable over ssh without a prompt; `uname -sm` is Linux on the binary's
+machine; for the file source FFmpeg 9 or newer in the non-interactive ssh
+environment Prysm runs in (absent or older is a SKIP, so `linux-binary-file`
+is skipped on Debian 13's FFmpeg 7); for the device source the device is
+readable by the ssh user (through the link); the listen port is free (`ss`).
+
+On the target the runner writes only in `~/.prysm-acceptance/RUN`, named
+after the run and the cell (`RUN` is `TIME-host-CELL`): the binary, the
+settings, for the file source the clip, and Prysm's `headless.log`,
+`headless.pid` and `exit-code`. A small `sh` wrapper started with `nohup`
+runs Prysm detached with `--metrics` on `listen` and records its PID and,
+when it exits, its exit status, which is how the runner gets the exit code.
+The start counts only when the API answers while that PID is the run's own
+binary. SIGTERM and KILL go only to that PID, and only while
+`/proc/PID/exe` is the run's binary. The sender WLED should see is the
+`src` of `ip -4 route get WLED` on the target. At the end (also after a
+failed start or copy) the runner fetches `headless.log` and the kernel's USB
+lines since the delivery (`journalctl -k`, no sudo; as `kernel-usb.log`, so
+a card that reset shows in the report; a refused `journalctl` leaves a note
+there instead) and removes the run directory. A capture cell that fails is a
+plain failure: the runner does not retry. After a hard kill of the runner
+Prysm and the run directory stay on the target, and the next run reports
+the port in use: there, stop it with
+`kill $(cat ~/.prysm-acceptance/RUN/headless.pid)`, remove
+`~/.prysm-acceptance/RUN` and use `restore-wled`. Every remote command is a
+`linux.*` template in `commands.py`; `--dry-run` prints each as it would
+run.
+
 #### Add a cell
 
 A cell is one more `Cell` in `CELLS` in
 [`host_cells.py`](../../scripts/acceptance/prysm_acceptance/host_cells.py).
-A new delivery is one more implementation of `Host` in `host.py` (deliver,
-start, stop, logs, base URL, expected sender), chosen in `_seam`; the
-checks stay as they are. Each fixture and check carries its description (the
+A new delivery is one more implementation of `Host` in `host.py` (preflight,
+deliver, start, stop, logs, base URL, expected sender, close), chosen in
+`_seam`; the checks stay as they are. Each fixture and check carries its description (the
 docstring) and what it does for the dry run (`planned`), so there is no
 separate table of steps.
 
@@ -275,6 +339,10 @@ unplugging. Like `tv`, it keeps the step runner and its `--only`/`--from`.
   enumerate every template and check the paths it names. On the Chromecast,
   ADB only reads its state and Wi-Fi address, wakes it and reads or sets
   `stay_on_while_plugged_in`; there is no free-form `adb shell`.
+- **A Linux target.** The runner writes only in its run directory under
+  `~/.prysm-acceptance/` (named by a checked run name, never a path from the
+  configuration), signals only its own Prysm's PID, never uses sudo, and
+  removes the directory at the end.
 - **Bounded.** Every command has a timeout; `luna-send` runs with its stdin
   held open and a remote `timeout`, as `install-ipk.sh` does.
 - **Left as found.** The `tv` stage saves `getState`, the files in

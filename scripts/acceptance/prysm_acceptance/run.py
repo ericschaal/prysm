@@ -1,6 +1,6 @@
 """Prysm hardware acceptance runner (docs/developers/acceptance.md).
 
-  acceptance host mac [--delivery binary] [--source file|file:PATH|device] [--display-check] [PYTEST ARGS]
+  acceptance host mac|linux [--delivery binary] [--source file|file:PATH|device] [--display-check] [PYTEST ARGS]
   acceptance tv --tv-is-free [--flavour full|slim] [--receiver URL] [--wss-url URL] [--sweep]
   acceptance eyes [--portal URL]
   acceptance restore-wled SNAPSHOT.json
@@ -81,10 +81,10 @@ def arguments(argv: Sequence[str]) -> Arguments:
     common.add_argument('--wled', help='WLED host[:port], overrides the config')
     stages = parser.add_subparsers(dest='stage', required=True)
     host = stages.add_parser(Stage.HOST, parents=[common], help='the host cells (pytest)')
-    host.add_argument('platform', choices=[Platform.MAC.value], help='where Prysm runs (Linux: a later phase)')
+    host.add_argument('platform', choices=[platform.value for platform in Platform], help='where Prysm runs')
     host.add_argument('--delivery', choices=[delivery.value for delivery in Delivery], default=Delivery.BINARY)
     host.add_argument('--source', help='file, file:PATH or device (default: every source of the platform)')
-    host.add_argument('--display-check', action='store_true', help="device: colour fields on this Mac's display")
+    host.add_argument('--display-check', action='store_true', help="device: colour fields on this computer's display")
     selection = argparse.ArgumentParser(add_help=False)
     selection.add_argument('--only', action='append', default=[])
     selection.add_argument('--from', dest='start')

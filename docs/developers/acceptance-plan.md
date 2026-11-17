@@ -224,6 +224,22 @@ Each phase lands with its tests and CI green before the next starts.
    (`address`, `ssh`) until phase 4. `--prepare` is phase 3.
 2. **The Linux binary cell.** Copied to a Raspberry Pi 5 over SSH and run
    through the feed.
+
+   **Landed** ([acceptance.md](acceptance.md#run-the-linux-binary-cells)):
+   `host linux` with the cells `linux-binary-device` and `linux-binary-file`,
+   the SSH seam (`SshBinary`: a run directory under `~/.prysm-acceptance/`,
+   a detached start that records its PID and exit status, SIGTERM and KILL
+   only to that PID, the log and the kernel's USB lines fetched, the
+   directory removed), `[linux]` used (`target`, `binary`, `device`,
+   `listen`, `capture`, `feed`), the target preflight (ssh without a prompt,
+   `uname` against the binary's ELF machine, FFmpeg 9+ for the file source,
+   the device readable, the port free) and a `linux.*` template per remote
+   operation. Both cells passed on a Raspberry Pi 5 on 2026-11-17: the
+   device cell through the capture card and the Chromecast feed, the file
+   cell with FFmpeg 9 installed on the Pi (Debian 13 ships none that new).
+   The capture size is always sent, and the card must offer it as a mode.
+   What remains: `target = "local"` on a Linux runner, which uses the same
+   code as the Mac but has not run.
 3. **The Linux package and image cells and `all`**, with the skip rules. Both
    deliveries stay thin; the package cell is not extended until the package's
    future is decided. `--prepare` is added here.

@@ -1,10 +1,11 @@
 """The host cells: Prysm delivered to a platform, driving WLED from the generated clip or a capture card.
 
 `acceptance host` runs this module with pytest and the `bench` plugin; a cell
-is the `cell` parameter (`mac-binary-file`, `mac-binary-device`). Its
-fixtures set up, in order: the artifact and tools, WLED's snapshot, the clip,
-the feed into the capture card, the host (the seam in `host`) and Prysm's
-API; the checks follow in this module's order and the teardowns undo it in
+is the `cell` parameter (`mac-binary-file`, `linux-binary-device` and so on).
+Its fixtures set up, in order: the artifact and tools, the target (the seam
+in `host`, and whether it can run the cell), WLED's snapshot, the clip,
+the feed into the capture card, Prysm delivered and running, and its API;
+the checks follow in this module's order and the teardowns undo it in
 reverse. Each fixture and check says what it does in its docstring and, for
 the dry run, in `planned`.
 """
@@ -24,7 +25,7 @@ from prysm_acceptance import colour_page, commands, edges_clip, feed, host, prys
 from prysm_acceptance.artifact import Artifact
 from prysm_acceptance.bench import planned, unavailable, uninterrupted
 from prysm_acceptance.checks import Answer, Bench, Failed, ask_person
-from prysm_acceptance.config import Config, Machine
+from prysm_acceptance.config import SSH, Config, Machine
 from prysm_acceptance.edges_clip import CLIP
 from prysm_acceptance.feed import Feed
 from prysm_acceptance.host import Host
@@ -36,6 +37,8 @@ from prysm_acceptance.wled_api import Wled
 CELLS = [
     Cell(Platform.MAC, Delivery.BINARY, Source.FILE),
     Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE),
+    Cell(Platform.LINUX, Delivery.BINARY, Source.FILE),
+    Cell(Platform.LINUX, Delivery.BINARY, Source.DEVICE),
 ]
 # The `record` fixture: a passed check's detail and evidence.
 Record = Callable[[str, object], None]
@@ -77,6 +80,9 @@ def _seam(cell: Cell, config: Config, run: transport.Transport, out_dir: Path) -
     match cell.delivery:
         case Delivery.BINARY:
             binary = machine.artifact() or Path('BINARY')
+            if machine.target.startswith(SSH):
+                target = machine.target.removeprefix(SSH)
+                return host.SshBinary(run, target, binary, machine.listen, out_dir, config.wled)
             return host.LocalBinary(run, binary, machine.listen, out_dir, config.wled)
         case _:
             assert_never(cell.delivery)
@@ -128,6 +134,31 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
     return found
 
 
+def _plan(cell: Cell, config: Config) -> host.Plan:
+    """The seam's plan for the dry run, with nothing run."""
+    seam = _seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL'))
+    return seam.plan(cell.source, _machine(cell, config).device)
+
+
+@pytest.fixture(scope='module')
+@planned(
+    does=lambda cell, config: _plan(cell, config).preflight,
+)
+def target(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRequest, artifact: Artifact) -> Host:
+    """Where Prysm runs, and whether it can run this cell there.
+
+    Over SSH: reachable without a prompt, Linux on the artifact's machine, FFmpeg 9+ (file) or the device
+    readable (device), the listen port free. What fails skips the cell, or fails it when it was named."""
+    seam = _seam(cell, config, bench.transport, bench.out_dir)
+    try:
+        reason = seam.preflight(cell.source, _machine(cell, config).device)
+    except transport.CommandFailed as error:
+        reason = f'the target preflight failed: {error}'
+    if reason:
+        unavailable(request, cell, reason)
+    return seam
+
+
 @pytest.fixture(scope='module')
 @planned(
     does=lambda cell, config: [
@@ -139,7 +170,7 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
         'compared; by hand: acceptance restore-wled RUN_DIR/CELL/wled-snapshot.json'
     ],
 )
-def wled(config: Config, bench: Bench, artifact: Artifact) -> Iterator[Wled]:
+def wled(config: Config, bench: Bench, target: Host) -> Iterator[Wled]:
     """WLED as found, saved before anything changes and put back last, also after a failure or Ctrl-C."""
     client = Wled(config.wled)
     saved = wled_api.snapshot(client)
@@ -206,50 +237,53 @@ def feed_shown(
 @planned(
     does=lambda cell, config: [
         f'write RUN_DIR/CELL/headless-settings.json: WLED output, neutral processing, the {cell.source} capture',
-        *(
-            f'$ {command.display()} &'
-            for command in _seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL')).commands()
-        ),
-        'GET /api/v1/state answers within 15 s',
+        *_plan(cell, config).start,
     ],
-    undoes=lambda cell, config: ['Prysm stopped with SIGTERM (KILL after 30 s)'],
+    undoes=lambda cell, config: _plan(cell, config).stop,
 )
 def running(
     cell: Cell,
     config: Config,
     bench: Bench,
+    target: Host,
     wled: Wled,
     clip: Clip | None,
     feed_shown: Feed | None,
 ) -> Iterator[Host]:
-    """Prysm delivered and started with temporary settings; stopped before WLED is restored."""
-    seam = _seam(cell, config, bench.transport, bench.out_dir)
-    bench.log(seam.deliver())
+    """Prysm delivered and started with temporary settings; stopped before WLED is restored.
+
+    Over SSH the run directory on the target is removed at the end, after its log and the kernel's USB lines
+    are fetched (headless.log, kernel-usb.log)."""
     try:
-        state = seam.start(host.settings(host.wled_output(config), capture_settings(cell, config, clip)))
-        bench.log(f'Started at {seam.url}: target {state["target"]}, session {session(state)}')
-        yield seam
+        bench.log(target.deliver())
+        place = target.place(clip.path) if clip and cell.source == Source.FILE else None
+        state = target.start(host.settings(host.wled_output(config), capture_settings(cell, config, place)))
+        bench.log(f'Started at {target.url}: target {state["target"]}, session {session(state)}')
+        yield target
     finally:
         with uninterrupted():
-            bench.log(f'Stopped: exit code {seam.stop()}')
+            try:
+                bench.log(f'Stopped: exit code {target.stop()}')
+            finally:
+                target.close()
 
 
-def capture_settings(cell: Cell, config: Config, clip: Clip | None) -> JsonObject:
+def capture_settings(cell: Cell, config: Config, clip: str | None) -> JsonObject:
+    """The capture section: the clip where the host reads it, or the configured device and size."""
     match cell.source:
         case Source.FILE:
-            path = str(clip.path) if clip else ''
+            path = clip or ''
             size = {'width': CLIP['width'], 'height': CLIP['height'], 'fps': CLIP['fps']}
             return {'kind': 'file', 'path': path, **size, 'repeat': True}
         case Source.DEVICE:
             machine = _machine(cell, config)
-            capture: JsonObject = {'kind': 'device', 'path': machine.device}
-            if machine.capture:
-                capture |= {
-                    'width': machine.capture.width,
-                    'height': machine.capture.height,
-                    'fps': machine.capture.fps,
-                }
-            return capture
+            return {
+                'kind': 'device',
+                'path': machine.device,
+                'width': machine.capture.width,
+                'height': machine.capture.height,
+                'fps': machine.capture.fps,
+            }
         case _:
             assert_never(cell.source)
 
@@ -258,9 +292,9 @@ def capture_settings(cell: Cell, config: Config, clip: Clip | None) -> JsonObjec
 @planned(
     does=lambda cell, config: (
         [
-            'GET /api/v1/candidates/capture/device: the configured device is listed (else fails, listing the '
-            'devices with their IDs)',
-            "POST /api/v1/capture/modes: a mode takes the configured size and rate (or Prysm's defaults)",
+            'GET /api/v1/candidates/capture/device: the configured device is listed, a link as the node it resolves '
+            'to on the target (else fails, listing the devices with their IDs)',
+            'POST /api/v1/capture/modes: a mode takes the configured size and rate',
         ]
         if cell.source == Source.DEVICE
         else []
@@ -270,17 +304,20 @@ def prysm(cell: Cell, config: Config, bench: Bench, running: Host) -> Prysm:
     """Prysm's API on the running host; a capture card is checked to be present and to offer the size."""
     client = Prysm(running.url)
     if cell.source == Source.DEVICE:
-        bench.save('capture-device.json', device_offered(client, _machine(cell, config).device))
+        device = _machine(cell, config).device
+        bench.save('capture-device.json', device_offered(client, device, running.listed(device)))
     return client
 
 
-def device_offered(prysm: Prysm, device: str) -> object:
-    """The configured device among Prysm's candidates, offering the capture size and rate in the settings."""
+def device_offered(prysm: Prysm, device: str, listed_as: str | None = None) -> object:
+    """The configured device among Prysm's candidates (as `listed_as`: a link's node), offering the capture size
+    and rate in the settings."""
     found = prysm.candidates('capture', 'device')
     present = [candidate['fields'].get('path') for candidate in found]
-    if device not in present:
+    if (listed_as or device) not in present:
         listed = ', '.join(f'{c["label"]} ({c["fields"].get("path")})' for c in found) or 'none'
-        raise Failed(f'no capture device {device!r}; present: {listed}', found)
+        node = f' ({listed_as})' if listed_as and listed_as != device else ''
+        raise Failed(f'no capture device {device!r}{node}; present: {listed}', found)
     size = _running_size(prysm)
     reply = prysm.modes({'kind': 'device', 'path': device})
     answer = prysm_api.modes_answer(reply)

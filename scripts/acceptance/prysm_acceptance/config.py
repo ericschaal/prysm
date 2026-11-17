@@ -17,6 +17,8 @@ _SIZE = re.compile(r'([0-9]{1,4})x([0-9]{1,4})')
 _URL = re.compile(r'https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/?')
 LOCAL = 'local'
 SSH = 'ssh://'
+# Where Prysm listens on a target over SSH unless `listen` says otherwise: the LAN, so this computer reaches it.
+REMOTE_LISTEN = '0.0.0.0:18787'
 
 # The TOML document as tomllib reads it. Every value is checked here before it
 # becomes a typed field.
@@ -57,7 +59,7 @@ class Checks:
 
 @dataclass
 class Capture:
-    """`[PLATFORM.capture]`: the capture size and rate of the device source (absent: Prysm's defaults)."""
+    """`[PLATFORM.capture]`: the device source's size and rate, always sent (640x360 at 30 fps unless set)."""
 
     width: int = 640
     height: int = 360
@@ -84,7 +86,7 @@ class Machine:
     device: str = ''  # what Prysm's device setting takes: an AVFoundation unique ID, or a V4L2 path
     listen: str = '127.0.0.1:18787'
     display_port: int = 18790
-    capture: Capture | None = None
+    capture: Capture = field(default_factory=Capture)
     feed: ChromecastFeed | None = None  # None: no controlled feed into the capture card
 
     def artifact(self) -> Path | None:
@@ -207,13 +209,28 @@ def _machine(data: Toml, platform: Platform) -> Machine:
     label = str(platform)
     table = _table(data, label, label)
     capture = _section(_table(table, 'capture', f'{label}.capture'), Capture, f'{label}.capture')
-    has_capture = 'capture' in table
     feed = _feed(table, label)
     table.pop('capture', None)
     table.pop('feed', None)
     host = _section(table, Machine, label)
-    host.capture = capture if has_capture else None
+    host.capture = capture
     host.feed = feed
+    _target(host, platform, listen_given='listen' in table)
+    if platform == Platform.MAC and (host.deb or host.image):
+        raise ConfigError('[mac]: deb and image are Linux deliveries')
+    if platform == Platform.LINUX and host.device:
+        try:
+            commands.v4l2_device(host.device)
+        except commands.Refused as error:
+            raise ConfigError(f'[linux] device: a V4L2 path such as /dev/v4l/by-id/...; {error}') from error
+    if not all(0 < value <= 4000 for value in vars(host.capture).values()):
+        raise ConfigError(f'[{label}.capture]: width, height and fps 1 to 4000')
+    return host
+
+
+def _target(host: Machine, platform: Platform, listen_given: bool) -> None:
+    """`target` ("local" or "ssh://USER@HOST", Linux only) and `listen` (on the LAN for a target over SSH)."""
+    label = str(platform)
     if host.target.startswith(SSH):
         if platform == Platform.MAC:
             raise ConfigError(f'[mac] target {host.target!r}: a remote Mac is not implemented; use "local"')
@@ -221,15 +238,14 @@ def _machine(data: Toml, platform: Platform) -> Machine:
             commands.ssh_target(host.target.removeprefix(SSH))
         except commands.Refused as error:
             raise ConfigError(f'[{label}] target: {error}') from error
+        if not listen_given:
+            host.listen = REMOTE_LISTEN
+        if host.listen.startswith('127.'):
+            raise ConfigError(f'[{label}] listen: {host.listen} on the target is out of reach from here')
     elif host.target != LOCAL:
         raise ConfigError(f'[{label}] target: "local" or "ssh://USER@HOST"')
-    if platform == Platform.MAC and (host.deb or host.image):
-        raise ConfigError('[mac]: deb and image are Linux deliveries')
     if not re.fullmatch(r'[0-9.]+:[0-9]{1,5}', host.listen):
         raise ConfigError(f'[{label}] listen: {host.listen!r} is not ADDRESS:PORT')
-    if host.capture and not all(0 < value <= 4000 for value in vars(host.capture).values()):
-        raise ConfigError(f'[{label}.capture]: width, height and fps 1 to 4000')
-    return host
 
 
 def address(value: str, name: str, required: bool = False) -> str:

@@ -36,7 +36,7 @@ display_port = 18790
 
 [mac.capture]
 # The device source's capture size and rate; a mode of the card must take
-# them. Remove the table to use Prysm's defaults (640x360 at 30 fps).
+# them. Without the table: 640x360 at 30 fps.
 width = 640
 height = 360
 fps = 30
@@ -55,13 +55,37 @@ serve_port = 18792
 settle_seconds = 5.0
 
 [linux]
-# The Linux cells come with a later phase (docs/developers/acceptance-plan.md);
-# the table is read and checked, not used yet.
+# "ssh://USER@HOST" (a Linux computer on the LAN, reached with your own ssh
+# keys and BatchMode: no prompts) or "local" (this computer). HOST must also
+# be an address this computer reaches over HTTP: an ssh config alias is not.
 target = "ssh://pi@192.168.1.70"
+# The artifact under test, as `cargo xtask dist` writes it; its ELF machine
+# must be the target's (uname -m). The runner copies it to
+# ~/.prysm-acceptance/RUN on the target and removes that directory at the end.
 binary = "dist/prysm-headless-linux-arm64"
+# Read and checked, not used yet (the package and image cells: a later phase).
 deb = "dist/prysm-headless-linux-arm64.deb"
 image = "dist/prysm-headless-linux-arm64.tar"
+# The capture card: a V4L2 path on the target, preferably the stable
+# /dev/v4l/by-id/...-video-index0 link (/dev/videoN can change between boots).
+# Omit without a card.
 device = "/dev/v4l/by-id/usb-EXAMPLE-video-index0"
+# Where Prysm listens on the target. With an ssh target the default is
+# 0.0.0.0:18787, so the runner on this computer reaches it over the LAN.
+# listen = "0.0.0.0:18787"
+
+# [linux.capture] and [linux.feed.chromecast] are as for [mac]. The feed runs
+# here (ADB, the cast library and the clip server are on this computer) while
+# the card is on the target.
+[linux.capture]
+width = 640
+height = 360
+fps = 30
+
+[linux.feed.chromecast]
+adb_serial = "0123456789ABCD"
+serve_port = 18792
+settle_seconds = 5.0
 
 [tv]
 # The TV's address; ssh defaults to root@ADDRESS (an ssh config alias also works).
