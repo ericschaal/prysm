@@ -39,7 +39,7 @@ from prysm_acceptance import (
 )
 from prysm_acceptance.artifact import Artifact
 from prysm_acceptance.bench import AnyCell, Planner, only, unavailable, uninterrupted, warn_at_end
-from prysm_acceptance.checks import Answer, Bench, Failed, Skipped, ask_person
+from prysm_acceptance.checks import Answer, Bench, Failed, ask_person
 from prysm_acceptance.config import SSH, Config, Installed, Machine
 from prysm_acceptance.edges_clip import CLIP
 from prysm_acceptance.feed import Feed
@@ -325,26 +325,27 @@ def feed_undone(controlled: Feed | None) -> list[str]:
     return list(controlled.CLEANUPS) if controlled else []
 
 
+def stop_feed(bench: Bench) -> None:
+    """What the feed started, stopped (its cleanups on `bench`), not cut short by Ctrl-C (the TV cells' too)."""
+    with uninterrupted():
+        failures = bench.undo()
+    if failures:
+        raise Failed(f'the feed was not stopped cleanly: {failures}')
+
+
 @contextlib.contextmanager
 def showing(controlled: Feed, bench: Bench, clip: Clip) -> Generator[Feed, None, None]:
     """The clip shown through the feed (feed.json); stopped at the end, also after a failure or Ctrl-C (the
-    `feed_shown` fixture of every cell).
-
-    A clip the feed did not show without anything failing (`Skipped`: on the TV, nobody accepted it) skips what
-    needs it; what the feed started is stopped at once."""
+    `feed_shown` fixture)."""
     try:
-        try:
-            detail, evidence = controlled.show(bench, str(clip.path))
-        except Skipped as error:
-            bench.save('feed.json', {'skipped': str(error), 'evidence': error.evidence})
-            pytest.skip(str(error))
+        detail, evidence = controlled.show(bench, str(clip.path))
         bench.save('feed.json', {'detail': detail, 'evidence': evidence})
         yield controlled
     finally:
-        with uninterrupted():
-            failures = bench.undo()
-        if failures:
-            pytest.fail(f'the feed was not stopped cleanly: {failures}')
+        try:
+            stop_feed(bench)
+        except Failed as error:
+            pytest.fail(str(error))
 
 
 @pytest.fixture(scope='module')
@@ -536,9 +537,9 @@ def test_wled_live(prysm: Prysm, wled: Wled, running: Sender, record: Record) ->
     record(f'running at {(state["input"] or {}).get("fps")} fps; live DDP from {si["info"]["lip"]}', si['info'])
 
 
-@planned(does=lambda cell, config: [f'GET /api/v1/state every second for {config.checks.seconds} s'])
-def test_fps(prysm: Prysm, config: Config, record: Record) -> None:
-    """Frame rate: the input's fps within the tolerance of the source's, sent fps alike, never behind."""
+def frame_rate(prysm: Prysm, config: Config) -> prysm_api.Rates:
+    """The input's fps within the tolerance of the source's, sent fps alike, never behind, over
+    `[checks] seconds` of Screen sync (the TV cells' too)."""
     expected = _running_size(prysm)['fps']
     tolerance = config.checks.fps_tolerance
     processed(prysm)
@@ -550,7 +551,27 @@ def test_fps(prysm: Prysm, config: Config, record: Record) -> None:
         raise Failed(f'sent {measured["sent_mean"]} fps, expected about {expected}', measured)
     if measured['behind']:
         raise Failed(f'Prysm fell behind: {measured["behind"]}', measured)
-    record(f'{measured["fps_mean"]} fps in, {measured["sent_mean"]} sent (min {measured["fps_min"]})', measured)
+    return measured
+
+
+def rate_detail(measured: prysm_api.Rates) -> str:
+    return f'{measured["fps_mean"]} fps in, {measured["sent_mean"]} sent (min {measured["fps_min"]})'
+
+
+def not_black(prysm: Prysm) -> tuple[str, ColorsEvent]:
+    """The last colours event has an edge brighter than black (the TV cells' too)."""
+    event = _last_colours(prysm)
+    brightest = max(max(sum(c) for c in event.get(edge) or [[0, 0, 0]]) for edge in prysm_api.EDGES)
+    if brightest < 30:
+        raise Failed('every edge is black', event)
+    return f'not black (brightest edge sum {brightest})', event
+
+
+@planned(does=lambda cell, config: [f'GET /api/v1/state every second for {config.checks.seconds} s'])
+def test_fps(prysm: Prysm, config: Config, record: Record) -> None:
+    """Frame rate: the input's fps within the tolerance of the source's, sent fps alike, never behind."""
+    measured = frame_rate(prysm, config)
+    record(rate_detail(measured), measured)
 
 
 @planned(does=lambda cell, config: [f'GET /api/v1/colors/stream for {edges_clip.CHECK_SECONDS:g} s'])
@@ -558,8 +579,7 @@ def test_colours(prysm: Prysm, clip: Clip | None, feed_shown: Feed | None, recor
     """The colours follow the clip.
 
     Each edge's two halves are nearest the clip's two colours among nine, in the right direction; at least two
-    steps, in order, 2 s apart. A clip of unknown content, or a card without a feed: not black; a TV cell without
-    its feed, or with the clip not shown there: skipped."""
+    steps, in order, 2 s apart. A clip of unknown content, or a card without a feed: not black."""
     processed(prysm)
     if feed_shown:
         feed_shown.settled()
@@ -568,11 +588,7 @@ def test_colours(prysm: Prysm, clip: Clip | None, feed_shown: Feed | None, recor
         detail, evidence = edges_clip.judge(prysm.colors(seconds, timed=True), seconds)
         record(detail, evidence)
         return
-    event = _last_colours(prysm)
-    brightest = max(max(sum(c) for c in event.get(edge) or [[0, 0, 0]]) for edge in prysm_api.EDGES)
-    if brightest < 30:
-        raise Failed('every edge is black', event)
-    record(f'not black (brightest edge sum {brightest})', event)
+    record(*not_black(prysm))
 
 
 @planned(

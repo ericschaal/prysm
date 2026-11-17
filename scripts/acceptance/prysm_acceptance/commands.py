@@ -12,6 +12,8 @@ boot hook and data directory, through the documented install path
 supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
+Beyond Prysm's own service, Luna is asked only which app is in front, and to
+launch or close Prysm's own app (`APP`, fixed in the template).
 When the TV does not answer and `[tv] mac` is set, the runner sends it one
 wake-on-LAN packet (`local.wake-on-lan`, a UDP broadcast, no process); it
 never puts the TV to sleep.
@@ -52,6 +54,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 APP = 'io.prysm.tv'
 SERVICE = 'io.prysm.tv.service'
+APP_MANAGER = 'com.webos.service.applicationManager'
 APP_DIR = '/media/developer/apps/usr/palm/applications/io.prysm.tv'
 SERVICE_DIR = '/media/developer/apps/usr/palm/services/io.prysm.tv.service'
 MANIFESTS = (
@@ -206,16 +209,20 @@ def _ssh(
     )
 
 
-def _luna(
-    template: str, host: str, method: str, payload: dict[str, object], app: bool = False, timeout: int = LUNA_TIMEOUT
-) -> Command:
+def _luna(template: str, host: str, uri: str, payload: dict[str, object], app: bool = False) -> Command:
+    """One Luna call to `uri` (a fixed service and method), as root or as Prysm's app."""
     # This TV's luna-send answers only while its stdin is open; the form used by install-ipk.sh.
     identity = f' -a {APP}' if app else ''
     remote = (
-        f'timeout {timeout} luna-send{identity} -n 1 '
-        f'luna://{SERVICE}/{method} {shlex.quote(json.dumps(payload, separators=(",", ":")))}'
+        f'timeout {LUNA_TIMEOUT} luna-send{identity} -n 1 '
+        f'luna://{uri} {shlex.quote(json.dumps(payload, separators=(",", ":")))}'
     )
-    return _ssh(template, host, remote, timeout + 5, hold_stdin=True)
+    return _ssh(template, host, remote, LUNA_TIMEOUT + 5, hold_stdin=True)
+
+
+def _prysm(template: str, host: str, method: str, payload: dict[str, object], app: bool = False) -> Command:
+    """A call to Prysm's own service."""
+    return _luna(template, host, f'{SERVICE}/{method}', payload, app)
 
 
 def tv_reachable(host: str) -> Command:
@@ -306,11 +313,11 @@ def tv_remove_app(host: str) -> Command:
 
 
 def tv_get_state(host: str) -> Command:
-    return _luna('tv.get-state', host, 'getState', {})
+    return _prysm('tv.get-state', host, 'getState', {})
 
 
 def tv_set_enabled(host: str, enabled: bool) -> Command:
-    return _luna('tv.set-enabled', host, 'setEnabled', {'enabled': _flag(enabled, 'enabled')}, app=True)
+    return _prysm('tv.set-enabled', host, 'setEnabled', {'enabled': _flag(enabled, 'enabled')}, app=True)
 
 
 def tv_set_preferences(host: str, autostart: bool, instance: str | None = None) -> Command:
@@ -318,7 +325,22 @@ def tv_set_preferences(host: str, autostart: bool, instance: str | None = None) 
     payload: dict[str, object] = {'autostart': _flag(autostart, 'autostart')}
     if instance is not None:
         payload['instance'] = _check(_INSTANCE, instance, 'instance')
-    return _luna('tv.set-preferences', host, 'setPreferences', payload, app=True)
+    return _prysm('tv.set-preferences', host, 'setPreferences', payload, app=True)
+
+
+def tv_foreground(host: str) -> Command:
+    """The app in front, as the application manager reports it (read-only)."""
+    return _luna('tv.foreground', host, f'{APP_MANAGER}/getForegroundAppInfo', {})
+
+
+def tv_launch_app(host: str) -> Command:
+    """Bring Prysm's own app to the front (no other app: the id is fixed)."""
+    return _luna('tv.launch-app', host, f'{APP_MANAGER}/launch', {'id': APP})
+
+
+def tv_close_app(host: str) -> Command:
+    """Close Prysm's own app (no other app: the id is fixed)."""
+    return _luna('tv.close-app', host, f'{APP_MANAGER}/closeByAppId', {'id': APP})
 
 
 # ---- this computer ---------------------------------------------------------
@@ -881,6 +903,9 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.get-state': lambda: tv_get_state('root@tv.example'),
     'tv.set-enabled': lambda: tv_set_enabled('root@tv.example', True),
     'tv.set-preferences': lambda: tv_set_preferences('root@tv.example', False, 'http://192.0.2.20:8787'),
+    'tv.foreground': lambda: tv_foreground('root@tv.example'),
+    'tv.launch-app': lambda: tv_launch_app('root@tv.example'),
+    'tv.close-app': lambda: tv_close_app('root@tv.example'),
     'linux.probe': lambda: linux_probe('pi@pi.example'),
     'linux.ffmpeg-version': lambda: linux_ffmpeg_version('pi@pi.example'),
     'linux.device': lambda: linux_device('pi@pi.example', '/dev/v4l/by-id/usb-EXAMPLE-video-index0'),

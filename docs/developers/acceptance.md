@@ -51,7 +51,7 @@ implemented), `[linux]` (`target = "ssh://USER@HOST"` or `"local"`), `[tv]`
 | `host linux` | WLED; `[linux] binary` and `target`; over SSH a key the runner can use without a prompt; FFmpeg here for the clip; FFmpeg 9+ on the target for the file source, or a capture card on it (`[linux] device`; with a feed: adb here) | No |
 | `host linux --delivery deb` | As the device cell, with `[linux] deb` instead of `binary`, an SSH target with passwordless sudo and no Prysm installed (or `[linux] installed = "replace"`) | No |
 | `host linux --delivery image` | As the device cell, with `[linux] image`, an SSH target with Docker and its compose plugin 2.24.4+ for the ssh user, and no `prysm-headless:local` image | No |
-| `tv full`, `tv slim --receiver mac\|linux` | `--tv-is-free` (the owner says the TV may be used now); WLED; `[tv] target` and the package (`ipk_full`, `ipk_slim`); slim: the receiver's `[mac]` or `[linux] binary`; no Prysm on the TV (or `[tv] installed = "replace"`); with `[tv.feed.cast]`: FFmpeg | Standby and wake; removing the app unless `[tv] ares_device` is set; with `[tv.feed.cast]`, accepting the TV's prompt for the first cast |
+| `tv full`, `tv slim --receiver mac\|linux` | `--tv-is-free` (the owner says the TV may be used now); WLED; `[tv] target` and the package (`ipk_full`, `ipk_slim`); slim: the receiver's `[mac]` or `[linux] binary`; no Prysm on the TV (or `[tv] installed = "replace"`); nobody using the TV; FFmpeg and PyChromecast for the clip cast to it | Standby and wake; accepting the TV's prompt for the first cast from this computer |
 | `all` | Whatever each host cell needs, and with `--tv-is-free` each TV cell's; a cell without it is skipped | As its cells |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
@@ -436,10 +436,9 @@ Prysm on it ([An installed Prysm](#an-installed-prysm-installed)).
   once. The runner never puts the TV to sleep;
 - `installed`: `"refuse"` (default) or `"replace"`, below;
 - `soak_seconds`: each soak's length (default 90);
-- `[tv.feed.cast]` (optional): the test clip cast to the TV,
+- `[tv.feed.cast]` (optional): tunes the test clip cast to the TV,
   [below](#the-clip-cast-to-the-tv): `serve_port` (default 18792) and
-  `settle_seconds` (default 5). Without the table the TV cells run on
-  whatever the TV shows and the colour check is skipped.
+  `settle_seconds` (default 5). The TV cells always cast it.
 
 The slim receiver is the host cells' binary seam on that platform: `[mac]
 binary` started here, or `[linux] binary` on the Linux target over SSH,
@@ -447,7 +446,7 @@ listening on the platform's `listen` port on all interfaces (`0.0.0.0`) so
 the TV reaches it. The TV is pointed at it as `http://ADDRESS:PORT`, ADDRESS
 being this computer's address towards the TV or the Linux target's. Its
 settings are the host cells' (WLED output, neutral processing) with the
-remote capture at 640 × 360 and 30 fps, hardware H.264.
+remote capture at 640 × 360 and 30 fps, hardware H.264, without the UI.
 
 The fixtures set up, in order, and their teardowns undo it in reverse, also
 after a failure, Ctrl-C, SIGTERM or SIGHUP:
@@ -456,11 +455,15 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   (and for slim the receiver's binary) present, else a SKIP (a failure when
   named); `ipk.py verify` accepts the package (by what it contains, whatever
   its name); its hash, age, version and commit recorded as for the host cells;
-- **target**: the TV reachable (woken as above), the old `io.prysm.capture`
-  app not running, and what of Prysm is there: the app, the service, the Luna
-  manifests and boot hook, the staged package, a process under `io.prysm.*`,
-  `getState` answering, or the data files in `/var/lib/io.prysm.tv` that an
-  uninstall leaves (`tv-found.json`);
+- **target**: the TV reachable (woken as above) and free: the app in front
+  (saved as `tv-foreground.json`) is none, the home screen (also under the
+  screen saver), Prysm's own or the Cast receiver; any other app in front
+  means someone is using the TV, and the cell is skipped (failed when named)
+  before anything changes. Then the old `io.prysm.capture` app not running,
+  and what of Prysm is there: the app, the service, the Luna manifests and
+  boot hook, the staged package, a process under `io.prysm.*`, `getState`
+  answering, or the data files in `/var/lib/io.prysm.tv` that an uninstall
+  leaves (`tv-found.json`);
 - **receiver** (slim): the receiver's preflight, as the host cells' (over SSH:
   reachable, `uname -m` against the binary, the port free);
 - **wled**: the host cells' snapshot, refused while something else drives WLED
@@ -478,63 +481,110 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   what is left);
 - **prysm**: full: the TV's portal at the address `getState` reports, given
   the run's settings (WLED output, neutral processing, the webOS capture at
-  640 × 360 and 30 fps) with `PUT /api/v1/settings`; slim: the receiver
-  delivered and started, then the TV's `setPreferences` (`instance`, the
-  receiver) and `setEnabled true`, as the app does; the receiver is stopped
-  and removed at the end;
+  640 × 360 and 30 fps without the UI) with `PUT /api/v1/settings`; slim: the
+  receiver delivered and started, then the TV's `setPreferences` (`instance`,
+  the receiver) and `setEnabled true`, as the app does; the receiver is
+  stopped and removed at the end;
 - **running**: the sender WLED should see: the TV (the host of the portal
   address `getState` reports) or the receiver's, as the host cells find it.
   A failure fetches the TV worker's recent log lines from `getState`
   (`tv-worker.log`) and the receiver's logs;
-- **clip** and **feed_shown**: with `[tv.feed.cast]`, the host cells' clip
-  generated and cast to the TV (below). Only the colour check asks for them,
-  so they start when it runs, after the Prysm that lights WLED has its
-  settings; at the end the cast is stopped and the clip server closed.
+- **clip**: the host cells' clip, generated;
+- **screen**: what the TV shows ([The TV's states](#the-tvs-states)). It sets
+  nothing itself: each check sets the state it needs. At the end, also after
+  a failure or Ctrl-C, and before the receiver stops and the package is
+  uninstalled, the cast is stopped, the clip server closed and Prysm's app
+  closed when the runner launched it; the app in front then is saved as
+  `tv-end.json`. The app found in front at the start is not brought back.
+
+#### The TV's states
+
+No check measures whatever the TV happens to show. Each check that measures
+declares a state; the runner sets it, confirms it from the TV, and only then
+measures. A part not reached fails the check, saying which, and every check's
+evidence holds the state as the TV confirmed it: `getState`'s `power` and
+`video`, the app in front and the size of the frames that arrive.
+
+| State | Set by the runner | Confirmed |
+| --- | --- | --- |
+| video | Prysm's app closed if the runner launched it; the clip cast with its overlay, unless it plays | power `active`, video exactly `available`, the Cast receiver (`com.webos.chromecast`) in front, all within 20 s; `settle_seconds` after `PLAYING` the clip still playing; the frames that arrive exactly the size asked |
+| UI | the cast stopped; Prysm's own app launched | power `active`, video exactly `unavailable`, `io.prysm.tv` in front, all within 20 s; the frames that arrive at most 320 × 180 |
+
+`unknown` video, the screen saver and no app named in front count as not
+reached. Power, video and the app come from the TV (`getState`, which reads
+`com.webos.service.tvpower` and the main sink of
+`com.webos.service.videooutput`, and the application manager's
+`getForegroundAppInfo`), never from the Cast receiver's own status: it still
+says `PLAYING` after another app has taken the screen. Between the TV's
+confirmation and the size, the capture the check needs is saved and Screen
+sync must run with frames within 30 s; the size is that of the frames
+Prysm's preview stream shows (`GET /api/v1/preview/stream`).
+
+The cast takes the TV out of its screen saver by itself. The checks run in
+this order, the video ones first, so the clip is cast once and stopped once;
+a check selected alone (`-k`) sets its state just the same. A cast that does
+not play (nobody accepted it, below, or it fails) is tried once: every check
+that needs video then fails at once with that reason, and the UI checks run.
 
 The checks, in order (`@only` marks a package's own):
 
 - registered: `getState` answers as the cell's package with its worker; the
   app, service, manifests and boot hook exist;
-- `test_wled_live` and `test_fps`, the host cells' own: Screen sync lights
-  WLED with live DDP from the expected sender, no `output_issue`; the frame
-  rate within the tolerance, sent alike, never behind. Full needs video
-  playing on the TV;
-- `test_colours`, the host cells' own: the colours follow the clip cast to
-  the TV ([The test clip and the colour check](#the-test-clip-and-the-colour-check));
-  for slim, the receiver's Prysm is the one sampled. Skipped without
-  `[tv.feed.cast]` or when the clip is not shown;
-- capturing: `getState` says capturing with a frame rate;
-- full: the TV's capture modes are known (`POST /api/v1/capture/modes`);
-- slim: with the receiver off, the TV's offer is known for each encoding; each
-  encoding streams at 30 fps and `getState` names it (with the worker's CPU).
-  Raw has no rate control, so its rate is what the link to the receiver
-  carries; the evidence holds the size of the frames that arrived and the
-  TV's power and video state, to tell a slow link from a larger frame;
-  the receiver off pauses the TV's capture and on resumes it;
-- the soak: `soak_seconds` at 640 × 360 and 1280 × 720 (full) or 640 × 360
-  hardware H.264 (slim), the frame rate within the tolerance, the worker's
-  CPU and RSS from `/proc` every 5 s;
-- standby and wake (a person presses power): standby seen when the TV
-  answers, then active with the worker running and capturing within 90 s;
-- reinstall while lighting: the same package again keeps the preferences (and
-  the full package's settings), and lighting resumes by itself.
+- video only (video state, the capture without the UI): the frames at
+  640 × 360, the frame rate within the tolerance, and the colours follow the
+  clip on every edge ([The test clip and the colour check](#the-test-clip-and-the-colour-check))
+  though the overlay is over the bottom of the screen: the UI is left out;
+- video with the overlay (the same state, only the UI included): the same
+  size and rate; the top edge and the side edges' upper halves still follow
+  the clip, and both halves of the bottom edge show the overlay (white) at
+  every step. Both checks judge against the clip's known colours, so the clip
+  keeps playing and nothing is compared with a capture of another moment;
+- WLED live and the frame rate (video state), the host cells' own: Screen
+  sync lights WLED with live DDP from the expected sender, no `output_issue`;
+  the frame rate within the tolerance, sent alike, never behind;
+- capturing (video state): `getState` says capturing with a frame rate;
+- full (video state): the TV's capture modes are known
+  (`POST /api/v1/capture/modes`);
+- slim (video state): with the receiver off, the TV's offer is known for each
+  encoding; each encoding streams at 30 fps and `getState` names it (with the
+  worker's CPU). Raw has no rate control, so its rate is what the link to the
+  receiver carries; the evidence holds the size of the frames that arrived
+  and the TV's power and video state, to tell a slow link from a larger
+  frame; the receiver off pauses the TV's capture and on resumes it;
+- the soak (video state at each size): `soak_seconds` at 640 × 360 and
+  1280 × 720 (full) or 640 × 360 hardware H.264 (slim), the frames arriving
+  at that size, the frame rate within the tolerance, the worker's CPU and RSS
+  from `/proc` every 5 s;
+- reinstall while lighting (video state): the same package again keeps the
+  preferences (and the full package's settings), lighting resumes by itself,
+  and the video state is confirmed again after it;
+- UI only (UI state, the capture with the UI): the frames within the UI size,
+  the frame rate within the tolerance, the picture not black;
+- no video and no UI (the same state, the capture without the UI): for 10 s
+  no frames (Prysm's session never running with frames, no preview frame)
+  and nothing failing (no `failure` in Prysm's state or the TV's `getState`,
+  the session not faulted), as designed; then with the UI again the frames
+  return, of the UI size;
+- standby and wake (UI state; a person presses power): standby seen when the
+  TV answers, then active with the worker running and capturing within 90 s.
+  Last, as it ends the other states; deselect it (`-k "not standby"`) when
+  nobody is at the TV.
 
 That nothing of Prysm is left after the uninstall is the `package` fixture's
 teardown, so it is checked also after a failure.
 
+Beyond Prysm's own service and the install service, the runner sends the TV
+`getForegroundAppInfo` (it only reads), and `launch` and `closeByAppId` of
+`com.webos.service.applicationManager` with the id `io.prysm.tv` fixed in the
+template. To the Cast receiver on port 8009 it loads the clip with its
+subtitle track, switches that track on, and at the end stops the media and
+quits the receiver. It sends no key or input event, no toast, and nothing to
+the power, settings, input, volume or update services.
+
 #### The clip cast to the TV
 
-The TV cells capture whatever the TV shows: the capture includes the TV's
-menus and screen saver (`include_ui`), so frames come also while no video
-plays. That proves frames and lighting but not their colours. With
-`[tv.feed.cast]` the runner casts the generated clip to the TV's own Cast
-receiver, as the Chromecast feed does on the capture card
-([The feed into the capture card](#the-feed-into-the-capture-card)), and the
-colour check compares each edge with it. The Cast receiver is an app, so the
-capture keeps `include_ui`.
-
-1. It serves `edges.mp4` from this computer, on the address that routes to
-   the TV and `serve_port`;
+1. The runner serves `edges.mp4` and `overlay.vtt` (those files only) from
+   this computer, on the address that routes to the TV and `serve_port`;
 2. it connects to the host of `[tv] target` on port 8009 (no discovery, no
    ADB, nothing over SSH), plays the clip in the default media receiver and
    waits up to 30 s for `PLAYING`;
@@ -542,18 +592,25 @@ capture keeps `include_ui`.
    until then reports no player state and does not fetch the clip. So without
    `PLAYING` in time the runner asks on the terminal to accept the prompt on
    the TV with the remote: `y` waits another 30 s (no second cast); `skip`,
-   or no terminal to ask, leaves the clip not shown: the colour check is
-   skipped with that reason, what was started is stopped at once, and every
-   other check runs on whatever the TV shows. The runner never accepts the
-   prompt itself;
-4. a cast that fails (no answer on port 8009, the receiver rejecting the
-   clip, a timeout after `y`) fails the colour check only.
+   or no terminal to ask, leaves the clip not shown, what was started is
+   stopped at once, and the video state is not reached. The runner never
+   accepts the prompt itself;
+4. once `PLAYING`, it switches the clip's subtitle track on: the overlay.
+
+The overlay is one WebVTT cue for the whole clip: two lines of solid blocks
+at the bottom (`line:100%`), white on white at twice the size. The Cast
+receiver draws subtitles over the video, where the TV draws its menus, so a
+capture with the UI sees them and one without does not. On the TV it covers
+the bottom fifth of the picture from about 11 % to 89 % of its width: the
+bottom edge's read entries (12.5 to 87.5 %), and none of the side edges'
+reach (10 % of the width with the runner's neutral processing). The
+player's own controls show only for a few seconds after a pause, so they
+are no overlay to test with.
 
 The clip runs 30 minutes, longer than a cell, so it does not end or loop
-while the later checks run. The colour check waits `settle_seconds` after
-`PLAYING` for the player's overlay to clear and fails when the clip no
-longer plays. The cast keeps playing through the later checks; at the end
-the media is stopped, the receiver quit and the server stopped.
+while the checks run. The video state waits `settle_seconds` after `PLAYING`
+and fails when the clip no longer plays. The UI state stops the cast: the
+media is stopped, the receiver quit and the server stopped.
 
 #### An installed Prysm (`installed`)
 
@@ -622,15 +679,16 @@ boot, its state with `getState` when `[tv] target` is set.
   configuration becomes shell text. The TV commands only read, stage the
   package as `/media/developer/temp/io.prysm.tv.ipk` (removed after each
   install), install and remove the app through `com.webos.appInstallService`,
-  run the package's `setup.sh` and the supervisor's `uninstall`, and call
-  Prysm's own Luna methods; here, one wake-on-LAN packet. Nothing
+  run the package's `setup.sh` and the supervisor's `uninstall`, call
+  Prysm's own Luna methods, ask which app is in front, and launch or close
+  Prysm's own app (no other); here, one wake-on-LAN packet. Nothing
   writes to system partitions or deletes `/var/lib/io.prysm.tv`.
   [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
   enumerate every template and check the paths it names, and every TV command
   the TV cells' plans name ([test](../../scripts/acceptance/tests/test_acceptance_tv.py)). On the Chromecast,
   ADB only reads its state and Wi-Fi address, wakes it and reads or sets
   `stay_on_while_plugged_in`; there is no free-form `adb shell`. To the TV's Cast receiver
-  the runner only plays and stops the clip; it never answers the TV's prompt.
+  the runner only plays the clip with its subtitle track and stops it; it never answers the TV's prompt.
 - **A Linux target.** The binary cells write only in the run directory under
   `~/.prysm-acceptance/` (named by a checked run name, never a path from the
   configuration), signal only their own Prysm's PID, never use sudo, and

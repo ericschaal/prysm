@@ -14,7 +14,7 @@ frozen picture and steps at the wrong pace. It does not measure the delay
 from the screen to the LEDs.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from itertools import pairwise
 from typing import TypedDict
@@ -44,6 +44,9 @@ EDGE_CORNERS: dict[Edge, tuple[int, int]] = {'top': (0, 1), 'right': (1, 2), 'bo
 # overscan, scaling, compression and the sampler's reach blur the halves.
 # With 8 entries (the stream's usual): 1-2 and 5-6.
 HALVES = ((0.1, 0.4), (0.6, 0.9))
+
+# What the TV's overlay over the clip's bottom shows (`feed_cast.OVERLAY_VTT`, white blocks).
+OVERLAY_COLOUR = 'white'
 
 # How long the check listens: five steps, so four or five changes.
 CHECK_SECONDS = 10.0
@@ -155,15 +158,43 @@ def decode(event: ColorsEvent) -> tuple[int | None, str | None]:
     return None, f'{kind}: ' + '; '.join(text for fault in Fault for text in found_faults.get(fault, []))
 
 
-def judge(samples: Sequence[tuple[float, ColorsEvent]], seconds: float) -> tuple[str, dict[str, object]]:
+def decode_overlaid(event: ColorsEvent) -> tuple[int | None, str | None]:
+    """(step, None) when the picture is a step of the clip with the overlay over its bottom: the top edge and
+    the side edges' upper halves show the step's colours, both halves of the bottom edge `OVERLAY_COLOUR`. The
+    side edges' lower halves are not read (the overlay may reach into them). Else (None, fault)."""
+    if event.get('type') != 'colors':
+        return None, f'no colours: {event.get("type")}'
+    found = seen(event)
+    short = [edge for edge, pair in found.items() if pair is None]
+    if short:
+        return None, f'too few entries to read two halves on {", ".join(short)}'
+
+    def clip_part(edges: Mapping[Edge, tuple[str, ...] | None]) -> tuple[object, ...]:
+        return (edges['top'], *(pair[0] for pair in (edges['left'], edges['right']) if pair))
+
+    shown = clip_part(found)
+    step = next((step for step in range(STEPS) if clip_part(expected(step)) == shown), None)
+    if step is None:
+        return None, f'{Fault.WRONG_COLOUR} outside the overlay: top {found["top"]}, left and right begin {shown[1:]}'
+    if found['bottom'] != (OVERLAY_COLOUR, OVERLAY_COLOUR):
+        return None, f'no overlay over the bottom edge: it shows {", ".join(found["bottom"] or ())} at step {step}'
+    return step, None
+
+
+def judge(
+    samples: Sequence[tuple[float, ColorsEvent]],
+    seconds: float,
+    decoder: Callable[[ColorsEvent], tuple[int | None, str | None]] = decode,
+) -> tuple[str, dict[str, object]]:
     """Judge the timed colours stream: `samples` are (seconds, event) by arrival over `seconds`.
 
     The stream sends only on change, so each sample holds until the next one.
-    Every sample must be a step of the clip, or no step for at most
-    `TRANSITION` between one step and the next; at least two steps must be
-    seen, in rotation order, changing `STEP_SECONDS` ± `PACE_TOLERANCE`
-    apart. Returns (detail, evidence); raises Failed with the evidence."""
-    decoded = [_read(at, event) for at, event in samples]
+    Every sample must be a step of the clip (`decoder`: `decode`, or with the
+    overlay over it `decode_overlaid`), or no step for at most `TRANSITION`
+    between one step and the next; at least two steps must be seen, in
+    rotation order, changing `STEP_SECONDS` ± `PACE_TOLERANCE` apart. Returns
+    (detail, evidence); raises Failed with the evidence."""
+    decoded = [_read(at, event, decoder) for at, event in samples]
     runs: list[Run] = []
     evidence: dict[str, object] = {'seconds': seconds, 'samples': decoded, 'steps': runs}
     if not decoded:
@@ -183,14 +214,19 @@ def judge(samples: Sequence[tuple[float, ColorsEvent]], seconds: float) -> tuple
     evidence['intervals'] = intervals
     _pace(intervals, {'before the first change': changes[0], 'after the last change': seconds - changes[-1]}, evidence)
     spread = f'{min(intervals)}-{max(intervals)} s apart' if intervals else f'at {changes[0]} s'
-    return (
-        f'{len(runs)} steps in order, changes {spread}; every edge shows its two colours in the right direction'
-    ), evidence
+    shown = (
+        'every edge shows its two colours in the right direction'
+        if decoder is decode
+        else f'the top and the sides above the middle show them, the bottom edge the overlay ({OVERLAY_COLOUR})'
+    )
+    return f'{len(runs)} steps in order, changes {spread}; {shown}', evidence
 
 
-def _read(at: float, event: ColorsEvent) -> Sample:
+def _read(
+    at: float, event: ColorsEvent, decoder: Callable[[ColorsEvent], tuple[int | None, str | None]] = decode
+) -> Sample:
     """One sample: its step or fault and, for colours, each edge's halves."""
-    step, fault = decode(event)
+    step, fault = decoder(event)
     edges: dict[Edge, str | None] | None = (
         {edge: ', '.join(pair) if pair else None for edge, pair in seen(event).items()}
         if event.get('type') == 'colors'

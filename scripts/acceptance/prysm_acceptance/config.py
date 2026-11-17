@@ -111,7 +111,7 @@ class Tv:
     mac: str = ''  # the TV's hardware address for wake-on-LAN; empty: an unreachable TV is not woken
     installed: Installed = Installed.REFUSE
     soak_seconds: int = 90
-    feed: CastFeed | None = None  # None: the TV shows whatever it shows
+    feed: CastFeed = field(default_factory=CastFeed)  # the clip cast to the TV: always, the table only tunes it
 
     @property
     def ssh(self) -> str:
@@ -288,8 +288,8 @@ def parse(data: Toml) -> Config:
 
 
 def _tv(table: dict[str, Any]) -> Tv:
-    """`[tv]` with its `feed.cast` table."""
-    feed = _feed(table, 'tv', 'cast', CastFeed)
+    """`[tv]` with its `feed.cast` table (its defaults without one)."""
+    feed = _feed(table, 'tv', 'cast', CastFeed) or CastFeed()
     tv = _section(table, Tv, 'tv')
     tv.feed = feed
     return tv

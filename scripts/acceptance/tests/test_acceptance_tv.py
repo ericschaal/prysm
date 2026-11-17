@@ -10,7 +10,7 @@ import socket
 import subprocess
 import sys
 import tempfile
-from typing import Any
+from typing import Any, cast
 import unittest
 from unittest import mock
 
@@ -18,8 +18,20 @@ from acceptance_fakes import FakePrysm, ok, untyped
 from test_acceptance_commands import confined
 from test_acceptance_host import EXAMPLE, runner
 
-from prysm_acceptance import bench, commands, config, host_deb, installed, run, transport, tv, tv_cells
-from prysm_acceptance.checks import Failed
+from prysm_acceptance import (
+    bench,
+    commands,
+    config,
+    feed_cast,
+    host_cells,
+    host_deb,
+    installed,
+    run,
+    transport,
+    tv,
+    tv_cells,
+)
+from prysm_acceptance.checks import Bench, Failed, Skipped
 from prysm_acceptance.config import Installed
 from prysm_acceptance.installed import Backup
 from prysm_acceptance.options import TV_CELLS, Flavour
@@ -140,6 +152,134 @@ class TheTv(unittest.TestCase):
         first, second = found.sample_worker(), found.sample_worker()
         self.assertEqual(first['rss_kb'], 10240)
         self.assertEqual(tv.cpu_percent(first, second), 40.0)
+
+
+def front(app: str) -> Result:
+    """getForegroundAppInfo's reply naming `app`."""
+    return ok(json.dumps({'returnValue': True, 'appId': app, 'processId': '', 'windowId': ''}))
+
+
+UI_STATE = STATE.replace('"video":"available"', '"video":"unavailable"')
+
+
+class FakeCast:
+    """Stands in for `feed_cast.TvCast`: registers its stop on the bench as the cast does, or fails to play."""
+
+    def __init__(self, fails: Exception | None = None) -> None:
+        self.fails = fails
+        self.shown = 0
+        self.settled_times = 0
+
+    def show(self, ctx: Bench, clip: str) -> tuple[str, object]:
+        self.shown += 1
+        ctx.cleanup('feed.stop', 'Cast stopped', lambda: 'stopped')
+        if self.fails:
+            raise self.fails
+        return 'playing', {}
+
+    def settled(self) -> None:
+        self.settled_times += 1
+
+
+def screen_on(*entries: tuple[str, Result], cast_feed: FakeCast | None = None) -> tv_cells.Screen:
+    found = recorded(*entries)
+    ctx = Bench(config.Config(), found.transport, Path(tempfile.mkdtemp()), log=lambda line: None)
+    clip = host_cells.Clip(Path('edges.mp4'), edges=True)
+    return tv_cells.Screen(found, ctx, cast('feed_cast.TvCast', cast_feed or FakeCast()), clip)
+
+
+class States(unittest.TestCase):
+    """Each check's state: set by the runner, confirmed from the TV, the part not reached named."""
+
+    def test_the_video_state_casts_once_and_is_confirmed_from_the_tv(self) -> None:
+        fed = FakeCast()
+        screen = screen_on(
+            ('tv.get-state', ok(STATE.replace('"video":"available"', '"video":"unknown"'))),
+            ('tv.foreground', front('')),
+            ('tv.get-state', ok(STATE)),
+            ('tv.foreground', front(tv_cells.CAST_APP)),
+            cast_feed=fed,
+        )
+        screen.show(tv_cells.Shown.VIDEO)
+        screen.show(tv_cells.Shown.VIDEO)
+        with no_wait():
+            reached = screen.confirm(tv_cells.Shown.VIDEO)
+        self.assertEqual(
+            reached,
+            {'shown': 'video', 'power': 'active', 'video': 'available', 'foreground': tv_cells.CAST_APP, 'size': None},
+        )
+        self.assertEqual((fed.shown, fed.settled_times), (1, 1))
+
+    def test_unknown_video_and_another_app_are_not_reached(self) -> None:
+        screen = screen_on(
+            ('tv.get-state', ok(STATE.replace('"video":"available"', '"video":"unknown"'))),
+            ('tv.foreground', front(tv_cells.HOME_APP)),
+        )
+        with mock.patch.object(tv_cells, 'CONFIRM_SECONDS', 0), self.assertRaises(Failed) as failed:
+            screen.confirm(tv_cells.Shown.VIDEO)
+        self.assertEqual(
+            str(failed.exception),
+            f'the video state is not reached: video unknown, not available; {tv_cells.HOME_APP} in front, '
+            f'not {tv_cells.CAST_APP}',
+        )
+
+    def test_the_screen_saver_is_not_the_ui_state(self) -> None:
+        saver = UI_STATE.replace('"power":"active"', '"power":"screen_saver"')
+        screen = screen_on(('tv.get-state', ok(saver)), ('tv.foreground', front(commands.APP)))
+        with (
+            mock.patch.object(tv_cells, 'CONFIRM_SECONDS', 0),
+            self.assertRaisesRegex(Failed, 'the ui state is not reached: power screen_saver, not active$'),
+        ):
+            screen.confirm(tv_cells.Shown.UI)
+
+    def test_the_ui_state_stops_the_cast_then_launches_prysms_app_and_video_closes_it(self) -> None:
+        fed = FakeCast()
+        screen = screen_on(
+            ('tv.launch-app', ok('{"returnValue":true}')),
+            ('tv.get-state', ok(UI_STATE)),
+            ('tv.foreground', front(commands.APP)),
+            ('tv.close-app', ok('{"returnValue":true}')),
+            cast_feed=fed,
+        )
+        screen.show(tv_cells.Shown.VIDEO)
+        screen.show(tv_cells.Shown.UI)
+        self.assertEqual((screen.casting, screen.bench.cleanups), (False, []))  # the cast stopped first
+        self.assertEqual(screen.confirm(tv_cells.Shown.UI)['foreground'], commands.APP)
+        screen.show(tv_cells.Shown.VIDEO)
+        self.assertEqual(fed.shown, 2)
+        self.assertEqual(calls(screen.tv), ['tv.launch-app', 'tv.get-state', 'tv.foreground', 'tv.close-app'])
+
+    def test_a_cast_that_did_not_play_fails_every_video_state_without_casting_again(self) -> None:
+        fed = FakeCast(Skipped('the clip is not shown: nobody accepted the cast'))
+        screen = screen_on(cast_feed=fed)
+        for _ in range(2):
+            with self.assertRaisesRegex(Failed, 'video state is not reached: the clip was not cast: the clip is not'):
+                screen.show(tv_cells.Shown.VIDEO)
+        self.assertEqual((fed.shown, screen.bench.cleanups), (1, []))
+
+    def test_the_end_stops_the_cast_and_closes_only_prysms_app(self) -> None:
+        screen = screen_on(
+            ('tv.launch-app', ok('{"returnValue":true}')),
+            ('tv.close-app', ok('{"returnValue":false,"errorText":"not running"}')),
+            ('tv.get-state', ok(UI_STATE)),
+            ('tv.foreground', front(tv_cells.HOME_APP)),
+        )
+        screen.show(tv_cells.Shown.UI)
+        self.assertEqual(screen.close(), ["Prysm's app not closed: tv.close-app refused: not running"])
+        saved = json.loads((screen.bench.out_dir / 'tv-end.json').read_text())
+        self.assertEqual(saved, {'foreground': tv_cells.HOME_APP, 'power': 'active'})
+
+    def test_the_frames_must_be_of_the_states_size(self) -> None:
+        section = tv_cells.capture(Flavour.FULL, 1280, 720, 30)
+        sized = tv_cells._sized  # pyright: ignore[reportPrivateUsage]
+        self.assertIsNone(sized(tv_cells.Shown.VIDEO, '1280x720', section))
+        self.assertEqual(
+            sized(tv_cells.Shown.VIDEO, '320x180', section), 'frames of 320x180 arrive, not the 1280x720 asked'
+        )
+        self.assertIsNone(sized(tv_cells.Shown.UI, '320x180', section))
+        self.assertIsNone(sized(tv_cells.Shown.UI, '256x144', section))
+        self.assertIn('not the UI size (at most 320x180)', sized(tv_cells.Shown.UI, '640x360', section) or '')
+        self.assertEqual(sized(tv_cells.Shown.UI, None, section), 'no frames arrive')
 
 
 class Wake(unittest.TestCase):
@@ -505,9 +645,10 @@ class TheCells(unittest.TestCase):
     def test_the_capture_is_the_packages_own(self) -> None:
         self.assertEqual(
             tv_cells.capture(Flavour.FULL, 640, 360, 30),
-            {'kind': 'webos', 'width': 640, 'height': 360, 'fps': 30, 'include_ui': True},
+            {'kind': 'webos', 'width': 640, 'height': 360, 'fps': 30, 'include_ui': False},
         )
-        self.assertEqual(tv_cells.capture(Flavour.SLIM, 640, 360, 30, tv.Encoding.RAW)['encoding'], 'raw')
+        self.assertTrue(tv_cells.capture(Flavour.FULL, 640, 360, 30, include_ui=True)['include_ui'])
+        self.assertEqual(tv_cells.capture(Flavour.SLIM, 640, 360, 30, encoding=tv.Encoding.RAW)['encoding'], 'raw')
 
 
 class TheCommandLine(unittest.TestCase):
@@ -544,12 +685,18 @@ class TheCommandLine(unittest.TestCase):
                         'prysm',
                         'running',
                         'clip',
-                        'feed_shown',
+                        'screen',
                         'test_registered',
+                        'test_video_only',
+                        'test_video_with_overlay',
                         'test_wled_live',
                         'test_fps',
-                        'test_colours',
                         'test_capturing',
+                        'test_soak',
+                        'test_reinstall',
+                        'test_ui_only',
+                        'test_ui_off',
+                        'test_standby',
                     )
                 ]
                 self.assertEqual(order, sorted(order))
@@ -558,36 +705,39 @@ class TheCommandLine(unittest.TestCase):
                     'test_soak',
                     'prysm-webos-service uninstall',
                     'refused, nothing is changed',
-                    '[tv.feed.cast]: FFmpeg on PATH for the clip, PyChromecast',
+                    'the clip cast to the TV: FFmpeg on PATH for the clip, PyChromecast',
                     '-movflags +faststart RUN_DIR/CELL/edges.mp4',
-                    'serve http://THIS_COMPUTER:18792/edges.mp4 (that file only) on the address that routes to the TV',
+                    'serve http://THIS_COMPUTER:18792/edges.mp4 and overlay.vtt (those files only) on the address '
+                    'that routes to the TV',
                     f'cast to {config.load(EXAMPLE).tv.host}:8009: default media receiver plays the clip URL',
                     'a person is asked to accept the cast on the TV',
+                    'luna://com.webos.service.applicationManager/getForegroundAppInfo',
+                    'until power active, video available, com.webos.chromecast in front',
+                    'luna://com.webos.service.applicationManager/launch',
+                    'until power active, video unavailable, io.prysm.tv in front',
+                    'the frames that arrive are at most 320x180',
                 ):
                     self.assertIn(line, text)
                 self.assertNotIn('$ adb', text)
-                undone = text[text.index('\nAt the end (') :].splitlines()[2:4]
+                undone = text[text.index('\nAt the end (') :].splitlines()[2:6]
                 self.assertEqual(
-                    undone,
+                    undone[:2],
                     [
                         '  - the TV: media stopped, the default media receiver quit, disconnected',
                         '  - the clip server stopped',
                     ],
                 )
+                self.assertIn('applicationManager/closeByAppId', undone[2])
+                self.assertIn('getForegroundAppInfo', undone[3])
 
-    def test_without_the_feed_the_tv_cells_are_as_before(self) -> None:
+    def test_without_the_feed_table_the_tv_cells_still_cast(self) -> None:
         path = Path(tempfile.mkdtemp()) / 'config.toml'
         text = EXAMPLE.read_text()
         start = text.index('[tv.feed.cast]')
         path.write_text(text[:start] + text[text.index('[eyes]', start) :])
-        for arguments in (['tv', 'full'], ['tv', 'slim', '--receiver', 'mac'], ['tv', 'slim', '--receiver', 'linux']):
-            with self.subTest(arguments[-1]):
-                done = self.dry(*arguments, '--tv-is-free', path=path)
-                self.assertEqual(done.returncode, 0, done.stdout[-3000:] + done.stderr)
-                self.assertIn('none: no [tv.feed.cast]', done.stdout)
-                self.assertIn('none: the TV shows whatever it shows; test_colours skipped', done.stdout)
-                for absent in ('ffmpeg', 'PyChromecast', ':8009', 'clip server stopped', 'media receiver'):
-                    self.assertNotIn(absent, done.stdout)
+        done = self.dry('tv', 'full', '--tv-is-free', path=path)
+        self.assertEqual(done.returncode, 0, done.stdout[-3000:] + done.stderr)
+        self.assertIn('serve http://THIS_COMPUTER:18792/edges.mp4 and overlay.vtt', done.stdout)
         mac = self.dry('tv', 'slim', '--receiver', 'mac', '--tv-is-free').stdout
         self.assertIn('--listen 0.0.0.0:18787 --metrics &', mac)
         self.assertIn('test_encodings', mac)

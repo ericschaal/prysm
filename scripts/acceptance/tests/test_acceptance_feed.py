@@ -72,8 +72,16 @@ class ClipServer(unittest.TestCase):
 
     def test_serves_nothing_else(self) -> None:
         base = self.server.url.rsplit('/', 1)[0]
-        for path in ('/', '/config.toml', '/../edges.mp4', '/edges.mp4/x', '/settings.json'):
+        for path in ('/', '/config.toml', '/../edges.mp4', '/edges.mp4/x', '/settings.json', '/overlay.vtt'):
             self.assertEqual(fetch(base + path)[0], 404, path)
+
+    def test_serves_the_overlay_only_when_asked(self) -> None:
+        server = feed_cast.ClipServer(clip_file(), '127.0.0.1', 0, overlay=True).start()
+        self.addCleanup(server.close)
+        self.assertIsNone(self.server.overlay_url)
+        status, headers, body = fetch(untyped(server.overlay_url))
+        self.assertEqual((status, headers['Content-Type'], body), (200, 'text/vtt', feed_cast.OVERLAY_VTT.encode()))
+        self.assertEqual(fetch(server.url)[2], CLIP)
 
 
 class FakePlayer:
@@ -87,6 +95,8 @@ class FakePlayer:
         self.fail = fail
         self.calls: list[str] = []
         self.fetched: tuple[int, dict[str, str], bytes] | None = None
+        self.overlaid: tuple[int, dict[str, str], bytes] | None = None
+        self.tracks = [feed_cast.OVERLAY_TRACK]
         self.made_for: list[str] = []
 
     def connect(self, seconds: float) -> str:
@@ -95,9 +105,14 @@ class FakePlayer:
             raise self.fail
         return 'Fake receiver'
 
-    def play(self, url: str) -> None:
+    def play(self, url: str, overlay: str | None = None) -> None:
         self.calls.append('play')
         self.fetched = fetch(url, headers={'Range': 'bytes=0-'})
+        self.overlaid = fetch(overlay) if overlay else None
+
+    def overlay(self) -> list[int]:
+        self.calls.append('overlay')
+        return self.tracks
 
     def status(self) -> tuple[str | None, str | None]:
         state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
@@ -174,8 +189,9 @@ class Show(Showing):
         self.assertEqual(
             puts, ['settings put global stay_on_while_plugged_in 7', 'settings put global stay_on_while_plugged_in 0']
         )
-        self.assertEqual(player.calls, ['connect', 'play', 'close'])
-        self.assertIs(untyped(chromecast.playing)[0], player)
+        self.assertEqual(player.calls, ['connect', 'play', 'close'])  # no overlay on the capture card's input
+        self.assertIsNone(player.overlaid)
+        self.assertIsNone(chromecast.playing)  # stopped by the undo
 
     def test_unreachable_adb_says_what_to_do_and_changes_nothing(self) -> None:
         ctx, chromecast = context([('adb.get-state', Result(1, '', "error: device '0123456789ABCD' not found"))])
@@ -353,9 +369,9 @@ class FeedPlan(unittest.TestCase):
 def tv_context(**settings: object) -> tuple[Bench, feed_cast.TvCast]:
     """A bench and the TV's feed `[tv.feed.cast]` describes, for a TV on loopback (any free port)."""
     values = config.parse({'tv': {'target': 'ssh://root@127.0.0.1', 'feed': {'cast': settings}}})
-    cast('config.CastFeed', values.tv.feed).serve_port = 0
+    values.tv.feed.serve_port = 0
     ctx = Bench(values, transport.Transcript([]), Path(tempfile.mkdtemp()), log=lambda line: None)
-    return ctx, cast('feed_cast.TvCast', feed.on_tv(values.tv))
+    return ctx, feed.on_tv(values.tv)
 
 
 class Person:
@@ -388,25 +404,43 @@ class TvShow(Showing):
         self.assertEqual(transcript_of(ctx).calls, [])  # nothing runs on the TV
         return failure, undone, tv
 
-    def test_plays_on_the_tv_and_stops(self) -> None:
+    def test_plays_on_the_tv_with_the_overlay_and_stops(self) -> None:
         player = FakePlayer('127.0.0.1')
         person = Person(player, Answer.YES)
         failure, undone, tv = self.show_tv(player, person)
         self.assertEqual((failure, undone), ('', ['feed.stop', 'feed.server']))
         self.assertEqual(player.made_for, ['127.0.0.1'])  # the host of [tv] target
         self.assertEqual(untyped(player.fetched)[0], 206)
-        self.assertEqual(player.calls, ['connect', 'play', 'close'])
+        status, headers, body = untyped(player.overlaid)
+        self.assertEqual((status, headers['Content-Type'], body), (200, 'text/vtt', feed_cast.OVERLAY_VTT.encode()))
+        self.assertEqual(player.calls, ['connect', 'play', 'overlay', 'close'])
         self.assertEqual(person.asked, [])
-        self.assertIs(untyped(tv.playing)[0], player)
+        self.assertIsNone(tv.playing)  # stopped by the undo
+
+    def test_an_overlay_the_receiver_does_not_switch_on_fails(self) -> None:
+        player = FakePlayer('127.0.0.1')
+        player.tracks = []
+        failure, undone, _ = self.show_tv(player)
+        self.assertIn('did not switch the overlay on', failure)
+        self.assertEqual(undone, ['feed.stop', 'feed.server'])
+
+    def test_the_overlay_covers_the_bottom_in_white(self) -> None:
+        cue = feed_cast.OVERLAY_VTT.splitlines()
+        self.assertEqual(cue[:2], ['WEBVTT', ''])
+        self.assertIn('00:00:00.000 --> 00:30:00.000 line:100%', cue[2])  # the whole clip, at the bottom
+        self.assertEqual(cue[3:], ['█' * 14] * 2)
+        self.assertEqual(
+            (feed_cast.OVERLAY_STYLE['foregroundColor'], feed_cast.OVERLAY_STYLE['backgroundColor']),
+            ('#FFFFFFFF', '#FFFFFFFF'),
+        )
 
     def test_an_unaccepted_cast_asks_and_plays_once_accepted(self) -> None:
         player = FakePlayer('127.0.0.1', states=(('UNKNOWN', None),))
         person = Person(player, Answer.YES)
-        failure, undone, tv = self.show_tv(player, person)
+        failure, undone, _ = self.show_tv(player, person)
         self.assertEqual((failure, undone), ('', ['feed.stop', 'feed.server']))
         self.assertEqual(person.asked, [feed_cast.ACCEPT])
-        self.assertEqual(player.calls, ['connect', 'play', 'close'])  # played once, never again
-        self.assertIsNotNone(tv.playing)
+        self.assertEqual(player.calls, ['connect', 'play', 'overlay', 'close'])  # played once, never again
 
     def test_a_skipped_prompt_is_a_clip_not_shown(self) -> None:
         player = FakePlayer('127.0.0.1', states=(('UNKNOWN', None),))
@@ -448,100 +482,6 @@ class AskPerson(unittest.TestCase):
             self.assertEqual(checks.ask_person('Ready?'), (Answer.SKIP, 'no answer (end of input)'))
 
 
-# A cell module in miniature: the feed is the shared `showing`, its clip not shown (nobody accepted the cast).
-NOT_SHOWN = """
-from pathlib import Path
-
-import pytest
-
-from prysm_acceptance import host_cells, transport
-from prysm_acceptance.checks import Bench, Skipped
-from prysm_acceptance.config import Config
-
-
-class NotAccepted:
-    def show(self, ctx, clip):
-        ctx.cleanup('feed.stop', 'Cast stopped', lambda: print('CAST STOPPED'))
-        raise Skipped('the clip is not shown: nobody accepted the cast')
-
-
-@pytest.fixture(scope='module')
-def feed_shown(tmp_path_factory):
-    bench = Bench(Config(), transport.Refusing(), tmp_path_factory.mktemp('cell'), log=print)
-    with host_cells.showing(NotAccepted(), bench, host_cells.Clip(Path('edges.mp4'), edges=True)) as shown:
-        yield shown
-
-
-def test_before(): pass
-def test_colours(feed_shown): pass
-def test_after(): pass
-"""
-
-
-# The TV cells' own clip, feed and colour check, with a configuration without `[tv.feed.cast]`.
-NO_FEED = """
-import pytest
-
-from prysm_acceptance import transport
-from prysm_acceptance.checks import Bench
-from prysm_acceptance.config import Config
-from prysm_acceptance.tv_cells import clip, feed_shown, test_colours
-
-
-@pytest.fixture(scope='session')
-def config():
-    return Config()
-
-
-@pytest.fixture(scope='module')
-def bench(config, tmp_path_factory):
-    return Bench(config, transport.Refusing(), tmp_path_factory.mktemp('cell'), log=print)
-
-
-@pytest.fixture(scope='module')
-def prysm():
-    return object()
-
-
-@pytest.fixture
-def record():
-    return lambda detail, evidence=None: None
-
-
-def test_before(): pass
-def test_after(): pass
-"""
-
-
-def pytest_in(module: str) -> str:
-    """`module` run by pytest in a directory of its own; its output, after checking that nothing failed."""
-    directory = Path(tempfile.mkdtemp())
-    (directory / 'test_cell.py').write_text(module)
-    command = [sys.executable, '-m', 'pytest', str(directory), '-p', 'no:cacheprovider', '-s', '-rs', '-v']
-    done = subprocess.run(
-        [*command, '--rootdir', str(directory)], capture_output=True, text=True, timeout=60, check=False
-    )
-    if done.returncode != 0:
-        raise AssertionError(done.stdout[-2000:] + done.stderr[-2000:])
-    return done.stdout
-
-
-class NotShown(unittest.TestCase):
-    def test_without_the_table_the_tv_cells_skip_only_the_colour_check(self) -> None:
-        text = pytest_in(NO_FEED)
-        self.assertIn('2 passed, 1 skipped', text)
-        self.assertIn(': no [tv.feed.cast]: the TV shows whatever it shows, so its colours are not known\n', text)
-
-    def test_only_the_check_that_needs_the_clip_is_skipped_and_the_cast_is_stopped_at_once(self) -> None:
-        text = pytest_in(NOT_SHOWN)
-        self.assertIn('test_before PASSED', text)
-        self.assertIn('test_after PASSED', text)
-        self.assertIn('test_colours CAST STOPPED\nSKIPPED', text)
-        self.assertIn(': the clip is not shown: nobody accepted the cast\n', text)
-        self.assertIn('2 passed, 1 skipped', text)
-        self.assertLess(text.index('CAST STOPPED'), text.index('test_after'))
-
-
 class TvSettings(unittest.TestCase):
     def test_the_table_is_checked(self) -> None:
         for data in (
@@ -557,14 +497,12 @@ class TvSettings(unittest.TestCase):
                 config.parse({'tv': data})
         values = config.parse({'tv': {'target': 'ssh://root@tv.example', 'feed': {'cast': {'settle_seconds': 2}}}})
         self.assertEqual(values.tv.feed, config.CastFeed(serve_port=18792, settle_seconds=2))
-        found = cast('feed_cast.TvCast', feed.on_tv(values.tv))
-        self.assertIsInstance(found, feed_cast.TvCast)
-        self.assertEqual(found.address, 'tv.example')
+        self.assertEqual(feed.on_tv(values.tv).address, 'tv.example')
 
-    def test_without_the_table_there_is_none(self) -> None:
+    def test_without_the_table_the_tv_still_casts_with_the_defaults(self) -> None:
         values = config.parse({'tv': {'target': 'ssh://root@tv.example'}})
-        self.assertIsNone(values.tv.feed)
-        self.assertIsNone(feed.on_tv(values.tv))
+        self.assertEqual(values.tv.feed, config.CastFeed())
+        self.assertIsInstance(feed.on_tv(values.tv), feed_cast.TvCast)
 
     def test_the_example_casts_to_the_tv(self) -> None:
         self.assertEqual(config.load(EXAMPLE).tv.feed, config.CastFeed())

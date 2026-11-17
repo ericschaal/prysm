@@ -117,11 +117,27 @@ class AllowList(unittest.TestCase):
                 self.assertRegex(
                     uri,
                     r'^luna://(io\.prysm\.tv\.service/(getState|setPreferences|setEnabled)|'
-                    r'com\.webos\.appInstallService/dev/(install|remove))$',
+                    r'com\.webos\.appInstallService/dev/(install|remove)|'
+                    r'com\.webos\.service\.applicationManager/(getForegroundAppInfo|launch|closeByAppId))$',
                 )
             if command.remote and 'luna-send' in command.remote:
                 self.assertTrue(command.hold_stdin, command.template)
                 self.assertTrue(command.remote.startswith('timeout '), command.template)
+
+    def test_the_application_manager_only_reads_or_names_prysms_app(self) -> None:
+        manager = 'luna://com.webos.service.applicationManager'
+        self.assertEqual(
+            {
+                name: factory().remote
+                for name, factory in commands.TEMPLATES.items()
+                if 'applicationManager' in (factory().remote or '')
+            },
+            {
+                'tv.foreground': f"timeout 12 luna-send -n 1 {manager}/getForegroundAppInfo '{{}}'",
+                'tv.launch-app': f'timeout 12 luna-send -n 1 {manager}/launch \'{{"id":"io.prysm.tv"}}\'',
+                'tv.close-app': f'timeout 12 luna-send -n 1 {manager}/closeByAppId \'{{"id":"io.prysm.tv"}}\'',
+            },
+        )
 
     def test_adb_runs_only_the_keep_awake_commands(self) -> None:
         serial = '0123456789ABCD'

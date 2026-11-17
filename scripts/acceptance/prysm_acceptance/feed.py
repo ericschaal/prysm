@@ -10,9 +10,9 @@ the dry run (`how`, `actions`, `commands`, `CLEANUPS`) and checks its tools
 The configuration names each feed. A host cell's capture card has its
 platform's (`[mac.feed.chromecast]`: a Chromecast with Google TV on the
 card's input, `feed_chromecast`); without one the card records whatever is
-plugged into it. The TV cells have the TV's (`[tv.feed.cast]`: the clip cast
-to the TV's own Cast receiver, `feed_cast.TvCast`); without one the TV shows
-whatever it shows.
+plugged into it. The TV cells always have the TV's (the clip cast to the TV's
+own Cast receiver with a known overlay over it, `feed_cast.TvCast`;
+`[tv.feed.cast]` only tunes it).
 """
 
 from typing import ClassVar, Protocol
@@ -41,6 +41,6 @@ def configured(machine: Machine) -> Feed | None:
     return feed_chromecast.ChromecastCast(machine.feed) if machine.feed else None
 
 
-def on_tv(tv: Tv) -> Feed | None:
-    """The TV's controlled feed, or None."""
-    return feed_cast.TvCast(tv.feed, tv.host or 'TV') if tv.feed else None
+def on_tv(tv: Tv) -> feed_cast.TvCast:
+    """The TV's controlled feed."""
+    return feed_cast.TvCast(tv.feed, tv.host or 'TV')

@@ -22,7 +22,7 @@ from prysm_acceptance.checks import Failed
 from prysm_acceptance.options import Cell, Delivery, Flavour, Platform, Source
 from prysm_acceptance.prysm_api import SessionState, Target
 from prysm_acceptance.transport import Result
-from prysm_acceptance.tv import Encoding
+from prysm_acceptance.tv import Encoding, Power, Video
 from prysm_acceptance.web import Reply
 
 GENERATED = Path(__file__).resolve().parents[3] / 'frontend/packages/contracts/generated'
@@ -95,6 +95,8 @@ class Fields(unittest.TestCase):
             (Target, LUNA, 'LightingTarget'),
             (Flavour, LUNA, 'Flavor'),
             (Encoding, LUNA, 'SlimEncoding'),
+            (Power, LUNA, 'Power'),
+            (Video, LUNA, 'Video'),
         )
         for kind, schemas, name in sets:
             with self.subTest(name):
@@ -182,7 +184,7 @@ class WrittenSettings(unittest.TestCase):
         device = untyped(host_cells.capture_settings(Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE), bench, None))
         self.assertEqual((device['kind'], device['path'], device['fps']), ('device', bench.mac.device, 30))
         self.assertLessEqual(set(device), self.fields('DeviceSettings'))
-        remote = untyped(tv_cells.capture(Flavour.SLIM, 640, 360, 30, Encoding.RAW))
+        remote = untyped(tv_cells.capture(Flavour.SLIM, 640, 360, 30, encoding=Encoding.RAW))
         self.assertEqual(remote['encoding'], 'raw')
         self.assertLessEqual(set(remote), self.fields('RemoteReceiverSettings'))
         webos = untyped(tv_cells.capture(Flavour.FULL, 640, 360, 30))

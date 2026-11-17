@@ -102,6 +102,28 @@ class TheColourCheck(unittest.TestCase):
         self.assertEqual([number for _, number in untyped(evidence)['steps']], [3, 0, 1, 2, 3, 0])
         self.assertEqual(evidence['intervals'], [2.0, 2.0, 2.0, 2.0])
 
+    def test_the_overlay_over_the_bottom_is_judged_against_the_clip(self) -> None:
+        def overlaid(pairs: Pairs) -> None:
+            # The overlay over the bottom edge, reaching into the sides' lower halves, which are not read.
+            pairs['bottom'] = ('white', 'white')
+            pairs['left'] = (pairs['left'][0], 'white')
+            pairs['right'] = (pairs['right'][0], 'gray')
+
+        detail, _ = edges_clip.judge(timeline(change=overlaid), 10.0, edges_clip.decode_overlaid)
+        self.assertIn('6 steps in order', detail)
+        self.assertIn('the bottom edge the overlay (white)', detail)
+        self.assertEqual(
+            edges_clip.decode_overlaid(step(0))[1], 'no overlay over the bottom edge: it shows yellow, blue at step 0'
+        )
+
+        def hidden_top(pairs: Pairs) -> None:
+            pairs['top'] = pairs['bottom'] = ('white', 'white')
+
+        hidden = step(0, hidden_top)
+        self.assertIn('wrong colour outside the overlay', edges_clip.decode_overlaid(hidden)[1] or '')
+        with self.assertRaisesRegex(Failed, 'no overlay over the bottom edge'):
+            edges_clip.judge(timeline(), 10.0, edges_clip.decode_overlaid)
+
     def test_only_the_quarters_between_corner_and_middle_are_read(self) -> None:
         event = step(0)
         event['top'][0] = event['top'][3] = event['top'][4] = event['top'][7] = [70, 70, 70]

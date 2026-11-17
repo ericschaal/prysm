@@ -30,6 +30,23 @@ class Encoding(StrEnum):
     RAW = 'raw'
 
 
+class Power(StrEnum):
+    """The TV's power as `getState` reports it (`com.webos.service.tvpower`)."""
+
+    UNKNOWN = 'unknown'
+    ACTIVE = 'active'
+    SCREEN_SAVER = 'screen_saver'
+    ASLEEP = 'asleep'
+
+
+class Video(StrEnum):
+    """Video on the TV's main output as `getState` reports it: available only while the power is active."""
+
+    UNKNOWN = 'unknown'
+    UNAVAILABLE = 'unavailable'
+    AVAILABLE = 'available'
+
+
 class Preferences(TypedDict, total=False):
     autostart: bool
     instance: str | None
@@ -53,7 +70,8 @@ class LunaReply(TypedDict, total=False):
     preferences: Preferences
     enabled: bool
     lighting: Target | None
-    power: str
+    power: Power
+    video: Video
     worker: Worker
     capturing: bool
     paused: bool
@@ -62,6 +80,12 @@ class LunaReply(TypedDict, total=False):
     failure: TvFailure | None
     encoding: str | None
     log: list[str]
+
+
+class Foreground(TypedDict, total=False):
+    """The application manager's `getForegroundAppInfo` reply, as the runner reads it."""
+
+    appId: str
 
 
 class Reading(TypedDict):
@@ -189,6 +213,21 @@ class Tv:
         if not reply.get('returnValue'):
             raise Failed(f'{command.template} refused: {reply.get("errorText")}', reply)
         return reply
+
+    def foreground(self) -> str:
+        """The app in front; empty when the TV names none (also for a moment while one app replaces another)."""
+        try:
+            return cast('Foreground', self.call(commands.tv_foreground(self.target))).get('appId') or ''
+        except Failed:
+            return ''
+
+    def launch_app(self) -> None:
+        """Prysm's own app in front."""
+        self.call(commands.tv_launch_app(self.target))
+
+    def close_app(self) -> None:
+        """Prysm's own app closed."""
+        self.call(commands.tv_close_app(self.target))
 
     def preferences_command(self, preferences: Preferences) -> Command:
         """`setPreferences` with the whole of `preferences` (as the app)."""

@@ -291,16 +291,32 @@ Each phase lands with its tests and CI green before the next starts.
    encodings at 30 fps; `tv-slim-linux` passed but for the raw encoding,
    4 fps to a Raspberry Pi 5 on Wi-Fi where the two H.264 encodings held 30;
    a second run of that check alone held raw at 30, and the cause is open
-   (the check now records the size that arrives and the TV's state). The app is removed through
+   (the check now records the size that arrives and the TV's state). Those
+   runs proved less than they seemed: in the screen saver the TV reports no
+   video, so every frame was the UI capture, at most 320 × 180 whatever was
+   asked. The "1280 × 720" soak and the encodings delivered UI-sized frames,
+   and the video path was not tested at all. The app is removed through
    `appInstallService`, as it is installed. What remains unverified: the
    wake-on-LAN packet (the TV answered), `acceptance settings restore`
    against a reinstalled Prysm (only its dry run on the real backup),
    standby and wake (a person presses power), and `replace` on the Linux
-   package cell. Since then the TV cells have a colour check: with
-   `[tv.feed.cast]` the runner casts the test clip to the TV's own Cast
-   receiver, asking a person to accept the TV's prompt for the first cast.
-   Casting to the TV and the prompt were tried by hand; the cells with the
-   feed have not run on the TV.
+   package cell.
+
+   Since then every TV check that measures runs in a state the runner sets
+   and confirms from the TV ([The TV's states](acceptance.md#the-tvs-states)):
+   video (the test clip cast to the TV's own Cast receiver with a subtitle
+   overlay over its bottom) or the UI (the cast stopped, Prysm's app in
+   front). On the bench TV on 2026-11-17, `tv-full` with the states: video
+   available at 640 × 360 and 30 fps; the colours followed the clip with the
+   capture leaving the UI out, and with it included the bottom edge showed
+   the overlay at every step while the rest followed the clip; WLED live,
+   the frame rate, capturing, the capture modes, the reinstall, and both
+   soaks passed with the frames at the size asked (1280 × 720 at 30 fps, the
+   worker at 51 % CPU). In a first run the UI checks passed too (320 × 180;
+   no frames and no failure without the UI, frames again with it); in every
+   run after it the worker's UI capture failed to open (`HAL_GAL_Init failed
+   with status -1`), so the UI checks failed, also alone on a fresh install.
+   The slim cells have not run with the states.
 
 
 A first package stage exists outside the tree (written before this plan, a

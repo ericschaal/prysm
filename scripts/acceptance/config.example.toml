@@ -121,14 +121,15 @@ soak_seconds = 90
 # its binary, listening on its listen port on the LAN, so the TV reaches it.
 
 [tv.feed.cast]
-# The test clip cast to the TV's own Cast receiver (the host of `target`,
-# port 8009), so the colour check can compare the LEDs with it. The first
-# cast from this computer shows a prompt on the TV: the runner asks you on
-# this terminal to accept it with the remote. Remove this table to run the TV
-# cells on whatever the TV shows (no colour check).
-# Port on this computer that serves the clip to the TV.
+# The TV cells always cast the test clip, with a known overlay over its
+# bottom, to the TV's own Cast receiver (the host of `target`, port 8009):
+# it is the video state the video checks measure in. The first cast from this
+# computer shows a prompt on the TV: the runner asks you on this terminal to
+# accept it with the remote. This table is optional; without it, these
+# defaults.
+# Port on this computer that serves the clip and the overlay to the TV.
 serve_port = 18792
-# Seconds the colour check waits after PLAYING for the player overlay to clear.
+# Seconds the video checks wait after PLAYING for the player's own overlay to clear.
 settle_seconds = 5.0
 
 [eyes]
