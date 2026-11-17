@@ -9,7 +9,8 @@
 #   the `cargo xtask dist` output of its `docker` (per architecture) and
 #   `webos-ipk` jobs as artifacts: image archives, binaries, .debs, IPKs and
 #   each job's manifest.json;
-# - `publish`: packaging/release/publish.sh pushes
+# - `publish`: packaging/release/publish.sh checks the artifacts against their
+#   manifests (`cargo xtask release-artifacts`), pushes
 #   ghcr.io/<owner>/prysm-headless:<version> (amd64, arm64 and the index),
 #   attaches the packages and publishes the release.
 #
@@ -108,6 +109,17 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: .release-tools
+      # publish.sh builds `cargo xtask release-artifacts` in that checkout, with
+      # the Rust its rust-toolchain.toml pins; a published release skips it.
+      - name: Rust for cargo xtask
+        if: needs.prepare.outputs.published != 'true'
+        working-directory: .release-tools
+        run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: needs.prepare.outputs.published != 'true'
+        with:
+          key: release
+          workspaces: .release-tools
       # prysm-dist-linux-amd64, prysm-dist-linux-arm64 and prysm-dist-tv, not
       # CI's frontend bundle or e2e binaries. Each lands in a directory of its
       # own with its manifest.json, which publish.sh checks the files against.

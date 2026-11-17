@@ -52,7 +52,7 @@ anchors working. Link only committed files, never ignored build, `work/` or
 temporary files.
 
 ```sh
-python3 -m unittest discover -s scripts/tests
+python3 -m unittest discover -s scripts/tests -p test_doc_links.py
 python3 scripts/check-doc-links.py
 ```
 

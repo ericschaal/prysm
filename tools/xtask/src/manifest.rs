@@ -1,9 +1,10 @@
 //! `dist/manifest.json`: what each artifact in `dist/` was built from.
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs;
-use std::io::ErrorKind;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, ErrorKind};
 use std::path::Path;
 
 /// The manifest: one entry per artifact, keyed and sorted by file name.
@@ -45,6 +46,13 @@ impl Manifest {
         self.artifacts.insert(file, entry);
     }
 
+    /// The entries, by file name.
+    pub fn artifacts(&self) -> impl Iterator<Item = (&str, &Entry)> {
+        self.artifacts
+            .iter()
+            .map(|(file, entry)| (file.as_str(), entry))
+    }
+
     /// Keeps only the entries whose file `keep` accepts.
     pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
         self.artifacts.retain(|file, _| keep(file));
@@ -66,9 +74,32 @@ impl Manifest {
     }
 }
 
+/// The file's lower-case hex SHA-256, read in pieces: an image archive is
+/// large.
+pub fn sha256(path: &Path) -> Result<String> {
+    let reading = || format!("reading {}", path.display());
+    let mut file = BufReader::new(File::open(path).with_context(reading)?);
+    let mut hasher = Sha256::new();
+    loop {
+        let chunk = file.fill_buf().with_context(reading)?;
+        if chunk.is_empty() {
+            break;
+        }
+        hasher.update(chunk);
+        let read = chunk.len();
+        file.consume(read);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process::target_dir;
 
     fn entry(commit: &str) -> Entry {
         Entry {
@@ -117,5 +148,17 @@ mod tests {
     fn unknown_fields_are_refused() {
         let json = r#"{"artifacts": {}, "extra": 1}"#;
         assert!(serde_json::from_str::<Manifest>(json).is_err());
+    }
+
+    #[test]
+    fn hashes_are_lower_case_hex() {
+        let path = target_dir().join("xtask/sha256-test");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "abc").unwrap();
+        assert_eq!(
+            sha256(&path).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        fs::remove_file(&path).unwrap();
     }
 }

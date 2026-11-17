@@ -2,8 +2,10 @@
 use serde::Deserialize;
 use std::fmt;
 use std::fs;
+use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use strum::{EnumIter, IntoEnumIterator};
 
 /// The pinned toolchain file, which rustup reads in the repository.
 const RUST_TOOLCHAIN: &str = include_str!("../../../rust-toolchain.toml");
@@ -24,8 +26,8 @@ fn pinned_rust() -> String {
         .channel
 }
 
-/// A tool a command needs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A tool a command needs, reported in declaration order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 enum Tool {
     Cargo,
     Rustc,
@@ -71,28 +73,41 @@ impl fmt::Display for Use {
     }
 }
 
-/// A `major.minor` version.
+/// A `major.minor.patch` version; a missing patch level is 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Version(u32, u32);
+struct Version(u32, u32, u32);
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
+
+/// What a probe found: what to show, and the version when there is one.
+#[derive(Debug, PartialEq, Eq)]
+struct Found {
+    shown: String,
+    version: Option<Version>,
+}
+
+impl Found {
+    /// The version in a tool's output, such as `24.1.0` from `v24.1.0`, or
+    /// `?` when it has none.
+    fn from_output(text: &str) -> Self {
+        match parse_version(text) {
+            Some((version, word)) => Self {
+                shown: word.to_owned(),
+                version: Some(version),
+            },
+            None => Self {
+                shown: "?".to_owned(),
+                version: None,
+            },
+        }
+    }
+}
 
 impl Tool {
-    const ALL: [Self; 14] = [
-        Self::Cargo,
-        Self::Rustc,
-        Self::Node,
-        Self::Npm,
-        Self::Python,
-        Self::Uv,
-        Self::Git,
-        Self::Docker,
-        Self::Buildx,
-        Self::Clang,
-        Self::Libclang,
-        Self::Ffmpeg,
-        Self::WebosSdk,
-        Self::AresPackage,
-    ];
-
     fn name(self) -> &'static str {
         match self {
             Self::Cargo => "cargo",
@@ -112,7 +127,26 @@ impl Tool {
         }
     }
 
-    /// The command that prints the version.
+    /// What is installed, or `None` when the tool is missing.
+    fn probe(self) -> Option<Found> {
+        match self {
+            // A library: its file name, which carries no version to compare.
+            Self::Libclang => libclang().map(|name| Found {
+                shown: name,
+                version: None,
+            }),
+            _ => {
+                let output = self.version_command().output().ok()?;
+                output
+                    .status
+                    .success()
+                    .then(|| Found::from_output(&String::from_utf8_lossy(&output.stdout)))
+            }
+        }
+    }
+
+    /// The command that prints the version, for every tool but libclang,
+    /// which [`Tool::probe`] looks up as a file.
     fn version_command(self) -> Command {
         let (program, args): (PathBuf, &[&str]) = match self {
             Self::Buildx => ("docker".into(), &["buildx", "version"]),
@@ -136,9 +170,9 @@ impl Tool {
         match self {
             // In the repository, rustup runs exactly this one.
             Self::Cargo | Self::Rustc => parse_version(&pinned_rust()).map(|(version, _)| version),
-            Self::Node => Some(Version(24, 0)),
-            Self::Python => Some(Version(3, 9)),
-            Self::Ffmpeg => Some(Version(9, 0)),
+            Self::Node => Some(Version(24, 0, 0)),
+            Self::Python => Some(Version(3, 9, 0)),
+            Self::Ffmpeg => Some(Version(9, 0, 0)),
             _ => None,
         }
     }
@@ -187,8 +221,8 @@ impl Tool {
 /// What was found for one tool.
 #[derive(Debug, PartialEq, Eq)]
 enum Status {
-    /// Installed; the version as printed, if it could be read.
-    Found(Option<String>),
+    /// Installed; what the probe showed, `?` when it read no version.
+    Found(String),
     TooOld {
         found: String,
         minimum: Version,
@@ -198,28 +232,17 @@ enum Status {
 
 impl Status {
     fn of(tool: Tool) -> Self {
-        if tool == Tool::Libclang {
-            return libclang().map_or(Self::Missing, |name| Self::Found(Some(name)));
-        }
-        let Some(text) = tool
-            .version_command()
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-        else {
-            return Self::Missing;
-        };
-        Self::judge(tool.minimum(), parse_version(&text))
+        tool.probe()
+            .map_or(Self::Missing, |found| Self::judge(tool.minimum(), found))
     }
 
-    fn judge(minimum: Option<Version>, found: Option<(Version, &str)>) -> Self {
-        match (minimum, found) {
-            (Some(minimum), Some((version, text))) if version < minimum => Self::TooOld {
-                found: text.to_owned(),
+    fn judge(minimum: Option<Version>, found: Found) -> Self {
+        match (minimum, found.version) {
+            (Some(minimum), Some(version)) if version < minimum => Self::TooOld {
+                found: found.shown,
                 minimum,
             },
-            (_, found) => Self::Found(found.map(|(_, text)| text.to_owned())),
+            _ => Self::Found(found.shown),
         }
     }
 
@@ -230,19 +253,23 @@ impl Status {
 
 /// The first word that looks like a version, such as `24.1.0` in
 /// `v24.1.0`, `9.0.2` in `ffmpeg version n9.0.2` or `28.3.2` in
-/// `Docker version 28.3.2, build …`.
+/// `Docker version 28.3.2, build …`. It needs a major and a minor number;
+/// a missing or unreadable patch level is 0.
 fn parse_version(text: &str) -> Option<(Version, &str)> {
+    let number = |part: &str| -> Option<u32> {
+        let digits = part
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(part.len());
+        part[..digits].parse().ok()
+    };
     text.split_whitespace().find_map(|word| {
         let word = word.trim_end_matches(',');
         let word = word.strip_prefix(['v', 'n']).unwrap_or(word);
         let mut parts = word.split('.');
         let major = parts.next()?.parse().ok()?;
-        let minor: String = parts
-            .next()?
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        Some((Version(major, minor.parse().ok()?), word))
+        let minor = number(parts.next()?)?;
+        let patch = parts.next().and_then(number).unwrap_or(0);
+        Some((Version(major, minor, patch), word))
     })
 }
 
@@ -277,10 +304,24 @@ fn is_libclang(name: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
 }
 
-/// Prints one line per tool; fails when `check` cannot run.
+/// Prints one line per tool; fails when `check` cannot run. A reader that
+/// stops early (`cargo xtask doctor | head -2`) ends it quietly.
 pub fn run() -> ExitCode {
+    match report(&mut io::stdout().lock()) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(error) if error.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("doctor: writing the report: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes the report to `out`; whether `check` can run.
+fn report(out: &mut impl Write) -> io::Result<bool> {
     let mut check_blocked = false;
-    for tool in Tool::ALL.into_iter().filter(|tool| tool.applies()) {
+    for tool in Tool::iter().filter(|tool| tool.applies()) {
         let status = Status::of(tool);
         let uses = tool
             .uses()
@@ -289,10 +330,8 @@ pub fn run() -> ExitCode {
             .collect::<Vec<_>>()
             .join(", ");
         let (label, detail) = match &status {
-            Status::Found(version) => ("ok", version.as_deref().unwrap_or("?").to_owned()),
-            Status::TooOld { found, minimum } => {
-                ("too old", format!("{found} < {}.{}", minimum.0, minimum.1))
-            }
+            Status::Found(shown) => ("ok", shown.clone()),
+            Status::TooOld { found, minimum } => ("too old", format!("{found} < {minimum}")),
             Status::Missing => ("missing", "-".to_owned()),
         };
         let hint = if status.usable() {
@@ -300,18 +339,21 @@ pub fn run() -> ExitCode {
         } else {
             format!(" ({})", tool.hint())
         };
-        println!(
+        writeln!(
+            out,
             "{label:<8} {:<12} {detail:<17} for {uses}{hint}",
             tool.name()
-        );
+        )?;
         check_blocked |= !status.usable() && tool.uses().contains(&Use::Check);
     }
     if check_blocked {
-        println!("`cargo xtask check` cannot run until the tools above are installed.");
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
+        writeln!(
+            out,
+            "`cargo xtask check` cannot run until the tools above are installed."
+        )?;
     }
+    out.flush()?;
+    Ok(!check_blocked)
 }
 
 #[cfg(test)]
@@ -323,44 +365,45 @@ mod tests {
         let cases = [
             (
                 "cargo 1.99.0 (5f94df478 2026-08-27)",
-                Version(1, 99),
+                Version(1, 99, 0),
                 "1.99.0",
             ),
-            ("v26.13.0", Version(26, 13), "26.13.0"),
-            ("11.6.2", Version(11, 6), "11.6.2"),
-            ("Python 3.15.2", Version(3, 15), "3.15.2"),
+            ("v26.13.0", Version(26, 13, 0), "26.13.0"),
+            ("11.6.2", Version(11, 6, 2), "11.6.2"),
+            ("Python 3.15.2", Version(3, 15, 2), "3.15.2"),
             (
                 "uv 0.13.5 (Homebrew 2026-10-22 aarch64-apple-darwin)",
-                Version(0, 13),
+                Version(0, 13, 5),
                 "0.13.5",
             ),
             (
                 "Docker version 28.3.2, build 578ccf6",
-                Version(28, 3),
+                Version(28, 3, 2),
                 "28.3.2",
             ),
             (
                 "github.com/docker/buildx v0.39.0 Homebrew",
-                Version(0, 39),
+                Version(0, 39, 0),
                 "0.39.0",
             ),
             (
                 "ffmpeg version 9.0.2 Copyright (c) 2000-2026",
-                Version(9, 0),
+                Version(9, 0, 2),
                 "9.0.2",
             ),
             (
                 "ffmpeg version n9.0-static https://…",
-                Version(9, 0),
+                Version(9, 0, 0),
                 "9.0-static",
             ),
-            ("Debian clang version 14.0.6", Version(14, 0), "14.0.6"),
-            ("Version: 3.2.6", Version(3, 2), "3.2.6"),
+            ("Debian clang version 14.0.6", Version(14, 0, 6), "14.0.6"),
+            ("Version: 3.2.6", Version(3, 2, 6), "3.2.6"),
             (
                 "arm-webos-linux-gnueabi-gcc.br_real (Buildroot -g) 12.2.0",
-                Version(12, 2),
+                Version(12, 2, 0),
                 "12.2.0",
             ),
+            ("rustc 1.99.1-beta.2", Version(1, 99, 1), "1.99.1-beta.2"),
         ];
         for (text, version, word) in cases {
             assert_eq!(parse_version(text), Some((version, word)), "{text}");
@@ -370,25 +413,58 @@ mod tests {
     #[test]
     fn a_git_build_has_no_version() {
         assert_eq!(parse_version("ffmpeg version N-118000-gabc123"), None);
+        assert_eq!(
+            Found::from_output("ffmpeg version N-118000-gabc123"),
+            Found {
+                shown: "?".into(),
+                version: None
+            }
+        );
     }
 
     #[test]
     fn old_versions_are_reported_and_unknown_ones_pass() {
-        let old = Status::judge(Some(Version(24, 0)), parse_version("v22.3.0"));
+        let old = Status::judge(Some(Version(24, 0, 0)), Found::from_output("v22.3.0"));
         assert_eq!(
             old,
             Status::TooOld {
                 found: "22.3.0".into(),
-                minimum: Version(24, 0)
+                minimum: Version(24, 0, 0)
             }
         );
-        assert!(Status::judge(Some(Version(9, 0)), None).usable());
-        assert!(Status::judge(Some(Version(3, 9)), parse_version("Python 3.15.2")).usable());
+        let unknown = Status::judge(Some(Version(9, 0, 0)), Found::from_output("N-1-gabc"));
+        assert_eq!(unknown, Status::Found("?".into()));
+        let python = Status::judge(Some(Version(3, 9, 0)), Found::from_output("Python 3.15.2"));
+        assert!(python.usable());
+    }
+
+    #[test]
+    fn the_patch_level_of_the_pinned_rust_counts() {
+        let pinned = Version(1, 99, 1);
+        assert!(!Status::judge(Some(pinned), Found::from_output("rustc 1.99.0 (x)")).usable());
+        assert!(Status::judge(Some(pinned), Found::from_output("rustc 1.99.1 (x)")).usable());
+        assert!(Status::judge(Some(pinned), Found::from_output("rustc 1.100.0 (x)")).usable());
+        assert_eq!(pinned.to_string(), "1.99.1");
+    }
+
+    #[test]
+    fn a_library_shows_its_file_name() {
+        let found = Found {
+            shown: "libclang-18.so.18".into(),
+            version: None,
+        };
+        assert_eq!(
+            Status::judge(Tool::Libclang.minimum(), found),
+            Status::Found("libclang-18.so.18".into())
+        );
     }
 
     #[test]
     fn the_dockerfile_builds_with_the_pinned_rust() {
-        assert_eq!(Tool::Rustc.minimum().map(|version| version.0), Some(1));
+        assert_eq!(
+            Tool::Rustc.minimum().map(|version| version.to_string()),
+            Some(pinned_rust())
+        );
         let dockerfile = include_str!("../../../packaging/docker/Dockerfile");
         let tag = format!("FROM rust:{}-", pinned_rust());
         assert!(

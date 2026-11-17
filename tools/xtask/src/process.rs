@@ -25,8 +25,8 @@ pub fn command(program: &str, args: &[&str]) -> Command {
 }
 
 /// Echoes and runs `command`, failing unless it exits successfully.
-pub fn run(command: &mut Command) -> Result<()> {
-    let line = display(command);
+pub fn run(mut command: Command) -> Result<()> {
+    let line = display(&command);
     eprintln!("$ {line}");
     let status = command
         .status()
@@ -37,15 +37,15 @@ pub fn run(command: &mut Command) -> Result<()> {
 
 /// Echoes and runs `command` and returns its trimmed standard output; its
 /// standard error goes to the terminal, so a long build stays visible.
-pub fn output(command: &mut Command) -> Result<String> {
-    eprintln!("$ {}", display(command));
+pub fn output(command: Command) -> Result<String> {
+    eprintln!("$ {}", display(&command));
     query(command)
 }
 
 /// [`output`] without the echo, for questions such as `git rev-parse HEAD`
 /// rather than steps of the build.
-pub fn query(command: &mut Command) -> Result<String> {
-    let line = display(command);
+pub fn query(mut command: Command) -> Result<String> {
+    let line = display(&command);
     let output = command
         .stderr(Stdio::inherit())
         .output()

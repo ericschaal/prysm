@@ -52,7 +52,8 @@ the `docker` job runs `dist linux-<arch> deb-<arch> image-<arch>` on amd64 and
 arm64, and `webos-ipk` runs `dist tv-full tv-slim`. Each uploads its `dist/`
 with its manifest as one artifact (`prysm-dist-linux-<arch>`, `prysm-dist-tv`)
 on release runs (the IPKs also on pushes to `main`), and a release checks
-every file against its manifest ([releasing](releasing.md#cut-a-release)).
+every file against its manifest with `cargo xtask release-artifacts`
+([releasing](releasing.md#cut-a-release)).
 
 ## Docker
 

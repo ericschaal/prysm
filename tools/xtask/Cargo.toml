@@ -16,6 +16,8 @@ prysm-version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"
+# Iterating the variants of check steps and doctor tools.
+strum = { version = "0.26", features = ["derive"] }
 # rust-toolchain.toml, for doctor.
 toml = "1"
 

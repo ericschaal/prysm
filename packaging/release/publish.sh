@@ -11,11 +11,14 @@
 #
 # Environment: GITHUB_REPOSITORY (owner/name), RELEASE_TAG (v1.2.3),
 # RELEASE_VERSION (1.2.3), RELEASE_SHA (the tag's commit), RELEASE_DIRECTORY,
-# GH_TOKEN; docker is logged in to ghcr.io. RELEASE_DIRECTORY holds one
-# directory per CI artifact, each a `cargo xtask dist` output: files under
-# their dist/ names and the manifest.json that records them. Every file must
-# match its manifest entry (this version and commit, a clean tree, the
-# SHA-256). The release attaches prysm-headless-linux-<arch>.deb as Debian's
+# GH_TOKEN; docker is logged in to ghcr.io; cargo runs the Rust that this
+# checkout's rust-toolchain.toml pins. RELEASE_DIRECTORY holds one directory
+# per CI artifact, each a `cargo xtask dist` output: files under their dist/
+# names and the manifest.json that records them. `cargo xtask
+# release-artifacts`, built from this script's checkout, checks every file
+# against its manifest entry (this version and commit, a clean tree, the
+# SHA-256) before anything is published. The release attaches
+# prysm-headless-linux-<arch>.deb as Debian's
 # prysm-headless_<deb version>_<arch>.deb and prysm-tv-<flavour>.ipk as
 # io.prysm.tv-<flavour>_<x.y.z>_all.ipk.
 set -euo pipefail
@@ -35,7 +38,10 @@ fail() {
   exit 1
 }
 
+# This script's checkout, which builds xtask with its own toolchain and lock.
+tools=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$RELEASE_DIRECTORY"
+release_directory=$PWD
 
 if gh release view "$RELEASE_TAG" --json isDraft > release.json 2> release-error; then
   if python3 -c 'import json; raise SystemExit(json.load(open("release.json"))["isDraft"])'; then
@@ -56,35 +62,9 @@ revision_of() {
 
 if [ "$release" != published ]; then
   # Moves every artifact here, after checking it against its manifest entry.
-  python3 - "$version" "$RELEASE_SHA" <<'PY'
-import hashlib
-import json
-import sys
-from pathlib import Path
-
-version, sha = sys.argv[1:]
-seen = set()
-for manifest in sorted(Path().glob('*/manifest.json')):
-    for name, entry in json.loads(manifest.read_text())['artifacts'].items():
-        path = manifest.parent / name
-        if name in seen:
-            problem = 'is in two artifacts'
-        elif entry['version'] != version:
-            problem = f'is version {entry["version"]}'
-        elif entry['commit'] != sha:
-            problem = f'is from {entry["commit"]}'
-        elif entry['dirty']:
-            problem = 'was built from a tree with uncommitted changes'
-        elif not path.is_file():
-            problem = f'is missing from {manifest.parent}'
-        elif hashlib.sha256(path.read_bytes()).hexdigest() != entry['sha256']:
-            problem = 'does not match its SHA-256'
-        else:
-            seen.add(name)
-            path.rename(name)
-            continue
-        sys.exit(f'publish: {name} {problem}')
-PY
+  # From the tools' checkout, so rustup reads its rust-toolchain.toml.
+  (cd "$tools" && cargo run --quiet --locked -p xtask -- release-artifacts \
+    "$release_directory" --version "$version" --commit "$RELEASE_SHA")
 
   # The packages this version consists of, under the names users download.
   assets=()

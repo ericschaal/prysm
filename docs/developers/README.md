@@ -34,7 +34,8 @@ cargo xtask dist mac  # an artifact in dist/; see packaging
 
 `doctor` prints one line per tool (on Linux also libclang, looked up in
 `LIBCLANG_PATH` when set, else in `ldconfig -p`) and fails only when a
-tool `check` needs is missing or too old; CI's `frontend` job runs it. xtask
+tool `check` needs is missing or too old (Rust older than the pinned
+`major.minor.patch`); CI's `frontend` job runs it. xtask
 echoes the commands that build or check, not the questions it asks git.
 
 For day-to-day work, run the hosts with Cargo. They embed the portal bundle

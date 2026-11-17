@@ -1,15 +1,14 @@
-//! `cargo xtask dist`: artifacts under fixed names in `dist/`.
-//!
-//! The Docker targets add the words of `XTASK_BUILDX_ARGS`, when set, to
-//! every `docker buildx build`; CI passes its layer cache options that way.
-use crate::manifest::{Entry, Manifest};
+//! `cargo xtask dist`: artifacts under fixed names in `dist/`. The Docker
+//! targets are built in [`docker`].
+mod docker;
+
+use crate::manifest::{Entry, Manifest, sha256};
 use crate::npm::{self, Script};
 use crate::process::{self, root, target_dir};
 use anyhow::{Context, Result, bail, ensure};
 use clap::ValueEnum;
-use sha2::{Digest, Sha256};
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use docker::Docker;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime};
@@ -153,13 +152,8 @@ pub fn run(targets: &[Target]) -> Result<()> {
     let mut builder = Builder {
         host: Arch::host()?,
         source: Source::current()?,
-        buildx_args: std::env::var("XTASK_BUILDX_ARGS")
-            .unwrap_or_default()
-            .split_whitespace()
-            .map(str::to_owned)
-            .collect(),
+        docker: Docker::from_env(),
         bundled: false,
-        exported: Vec::new(),
     };
     let started = Instant::now();
     let mut done = Vec::new();
@@ -197,12 +191,9 @@ pub fn run(targets: &[Target]) -> Result<()> {
 struct Builder {
     host: Arch,
     source: Source,
-    /// More `docker buildx build` options: the words of `XTASK_BUILDX_ARGS`.
-    buildx_args: Vec<String>,
+    docker: Docker,
     /// Whether this run has bundled the frontend.
     bundled: bool,
-    /// Architectures whose `artifacts` stage this run has exported.
-    exported: Vec<Arch>,
 }
 
 impl Builder {
@@ -214,10 +205,14 @@ impl Builder {
                 mac(out)
             }
             Kind::Binary(arch) | Kind::Deb(arch) => {
-                let exported = self.docker_artifacts(arch)?;
+                let exported = self.docker.artifacts(arch)?;
                 copy(&exported.join(kind.file_name(self.host)), out)
             }
-            Kind::Image(arch) => self.image(arch, out),
+            Kind::Image(arch) => {
+                let partial = temporary(out);
+                self.docker.image(arch, &self.source.commit, &partial)?;
+                rename(&partial, out)
+            }
             Kind::Tv(flavour) => {
                 self.bundle()?;
                 tv(flavour, out)
@@ -234,98 +229,15 @@ impl Builder {
         }
         Ok(())
     }
-
-    /// Exports the Dockerfile's `artifacts` stage for `arch` (the binary and
-    /// the `.deb`) into `target/xtask/docker-<arch>`, once per run.
-    fn docker_artifacts(&mut self, arch: Arch) -> Result<PathBuf> {
-        let dir = target_dir()
-            .join("xtask")
-            .join(format!("docker-{}", arch.name()));
-        if !self.exported.contains(&arch) {
-            empty_dir(&dir)?;
-            let output = format!("type=local,dest={}", dir.display());
-            process::run(&mut docker_build(
-                arch,
-                DockerStage::Artifacts,
-                &output,
-                &self.buildx_args,
-            ))?;
-            self.exported.push(arch);
-        }
-        Ok(dir)
-    }
-
-    /// The Dockerfile's `runtime` stage as an image archive, labelled with
-    /// its commit.
-    fn image(&self, arch: Arch, out: &Path) -> Result<()> {
-        let partial = temporary(out);
-        let output = format!("type=docker,name={IMAGE},dest={}", partial.display());
-        let mut options = vec![
-            "--label".to_owned(),
-            format!("org.opencontainers.image.revision={}", self.source.commit),
-        ];
-        options.extend(self.buildx_args.iter().cloned());
-        process::run(&mut docker_build(
-            arch,
-            DockerStage::Runtime,
-            &output,
-            &options,
-        ))?;
-        rename(&partial, out)
-    }
 }
 
 /// A release build of prysm-headless for this Mac.
 fn mac(out: &Path) -> Result<()> {
-    process::run(&mut process::command(
+    process::run(process::command(
         "cargo",
         &["build", "--release", "--locked", "-p", "prysm-headless"],
     ))?;
     copy(&target_dir().join("release/prysm-headless"), out)
-}
-
-/// The name `docker load` gives the image, which
-/// `packaging/release/publish.sh` and `packaging/docker/smoke.sh` use.
-const IMAGE: &str = "prysm-headless:local";
-
-/// A stage of `packaging/docker/Dockerfile`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DockerStage {
-    /// The binary and the `.deb`, under their `dist/` names.
-    Artifacts,
-    /// The image.
-    Runtime,
-}
-
-impl DockerStage {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Artifacts => "artifacts",
-            Self::Runtime => "runtime",
-        }
-    }
-}
-
-/// `docker buildx build` of `stage` for `arch` to `output`, with `options`.
-fn docker_build(arch: Arch, stage: DockerStage, output: &str, options: &[String]) -> Command {
-    let platform = format!("linux/{}", arch.name());
-    let mut command = process::command(
-        "docker",
-        &[
-            "buildx",
-            "build",
-            "--file",
-            "packaging/docker/Dockerfile",
-            "--platform",
-            &platform,
-            "--target",
-            stage.name(),
-            "--output",
-            output,
-        ],
-    );
-    command.args(options).arg(".");
-    command
 }
 
 /// `packaging/webos/build-ipk.sh`, which prints the path of the package it
@@ -335,7 +247,7 @@ fn tv(flavour: Flavour, out: &Path) -> Result<()> {
         .join("xtask")
         .join(format!("tv-{}", flavour.name()));
     empty_dir(&dir)?;
-    let built = process::output(&mut build_ipk(flavour, &dir))?;
+    let built = process::output(build_ipk(flavour, &dir))?;
     copy(Path::new(&built), out)
 }
 
@@ -356,7 +268,7 @@ struct Source {
 
 impl Source {
     fn current() -> Result<Self> {
-        let git = |args: &[&str]| process::query(&mut process::command("git", args));
+        let git = |args: &[&str]| process::query(process::command("git", args));
         Ok(Self {
             commit: git(&["rev-parse", "HEAD"]).context("reading the commit")?,
             dirty: !git(&["status", "--porcelain"])
@@ -374,27 +286,6 @@ impl Source {
             built_at: humantime::format_rfc3339_seconds(built).to_string(),
         }
     }
-}
-
-/// The file's SHA-256, read in pieces: an image archive is large.
-fn sha256(path: &Path) -> Result<String> {
-    let reading = || format!("reading {}", path.display());
-    let mut file = BufReader::new(File::open(path).with_context(reading)?);
-    let mut hasher = Sha256::new();
-    loop {
-        let chunk = file.fill_buf().with_context(reading)?;
-        if chunk.is_empty() {
-            break;
-        }
-        hasher.update(chunk);
-        let read = chunk.len();
-        file.consume(read);
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
 }
 
 /// `path` with `.tmp` appended. Artifacts are written there and then
@@ -483,34 +374,6 @@ mod tests {
     }
 
     #[test]
-    fn docker_builds_one_stage_for_one_platform() {
-        let command = docker_build(
-            Arch::Amd64,
-            DockerStage::Artifacts,
-            "type=local,dest=/tmp/out",
-            &[],
-        );
-        assert_eq!(
-            process::display(&command),
-            "docker buildx build --file packaging/docker/Dockerfile --platform linux/amd64 \
-             --target artifacts --output type=local,dest=/tmp/out ."
-        );
-        assert_eq!(command.get_current_dir(), Some(root()));
-    }
-
-    #[test]
-    fn options_come_before_the_context() {
-        let options = ["--label", "a=b", "--cache-from", "type=gha"].map(String::from);
-        let command = docker_build(Arch::Arm64, DockerStage::Runtime, "type=docker", &options);
-        assert!(
-            process::display(&command)
-                .ends_with("--output type=docker --label a=b --cache-from type=gha ."),
-            "{}",
-            process::display(&command)
-        );
-    }
-
-    #[test]
     fn tv_packages_are_built_into_a_directory_of_their_own() {
         let command = build_ipk(Flavour::Slim, Path::new("/repo/target/xtask/tv-slim"));
         assert_eq!(
@@ -530,17 +393,5 @@ mod tests {
         assert_eq!(entry.version, prysm_version::VERSION);
         assert_eq!(entry.built_at, "2023-11-14T22:13:20Z");
         assert!(entry.dirty);
-    }
-
-    #[test]
-    fn hashes_are_lower_case_hex() {
-        let path = target_dir().join("xtask/sha256-test");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "abc").unwrap();
-        assert_eq!(
-            sha256(&path).unwrap(),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-        fs::remove_file(&path).unwrap();
     }
 }

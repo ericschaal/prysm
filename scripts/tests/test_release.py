@@ -249,21 +249,22 @@ class PublishTests(unittest.TestCase):
         self.assertFalse(self.find(calls, 'gh', 'release', 'upload'))
 
     def test_missing_or_wrong_packages_are_refused(self):
-        def change(field, value, only='prysm-tv-slim.ipk'):
-            return lambda name, entry: entry.update({field: value}) if name == only else None
+        # Each manifest refusal has a Rust test (tools/xtask/src/release.rs);
+        # one here proves publish.sh stops on it.
+        def from_other_commit(name, entry):
+            if name == 'prysm-tv-slim.ipk':
+                entry['commit'] = 'other'
 
         for case, kwargs in (
                 ('no slim ipk', {'layout': {**DIST, 'prysm-dist-tv': ['prysm-tv-full.ipk']}}),
                 ('no arm64 artifact', {'layout': {key: DIST[key] for key in DIST if 'arm64' not in key}}),
-                ('a file in two artifacts', {'layout': {**DIST, 'prysm-extra': ['prysm-tv-full.ipk']}}),
-                ('another version', {'edit': change('version', '1.1.0')}),
-                ('another commit', {'edit': change('commit', 'other')}),
-                ('a dirty tree', {'edit': change('dirty', True)}),
-                ('a changed file', {'edit': change('sha256', '0' * 64)}),
+                ('another commit', {'edit': from_other_commit}),
                 ('wrong package', {'DEB_PACKAGE': 'prysm-led'}),
                 ('wrong deb version', {'DEB_VERSION': '1.1.0-1'})):
             with self.subTest(case=case):
                 result, calls, _ = self.run_publish(**kwargs)
                 self.assertNotEqual(result.returncode, 0)
+                if case == 'another commit':
+                    self.assertIn('prysm-tv-slim.ipk is from other', result.stderr)
                 self.assertFalse(self.find(calls, 'docker', 'image', 'push'))
                 self.assertFalse(self.find(calls, 'gh', 'release', 'upload'))

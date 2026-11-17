@@ -18,7 +18,7 @@ pub enum Mode {
 pub fn run(mode: Mode, luna: bool) -> Result<()> {
     contracts(mode)?;
     if luna {
-        process::run(&mut luna_command(mode))?;
+        process::run(luna_command(mode))?;
     }
     Ok(())
 }
@@ -26,7 +26,7 @@ pub fn run(mode: Mode, luna: bool) -> Result<()> {
 /// Runs the Rust exporter once and hands its JSON to the Node generator,
 /// which writes TypeScript under `frontend/packages/contracts/generated`.
 fn contracts(mode: Mode) -> Result<()> {
-    let json = process::output(&mut process::command(
+    let json = process::output(process::command(
         "cargo",
         &["run", "--quiet", "--locked", "-p", "prysm-export-contracts"],
     ))?;
@@ -35,7 +35,7 @@ fn contracts(mode: Mode) -> Result<()> {
         .and_then(|()| fs::write(&export, json))
         .with_context(|| format!("writing {}", export.display()))?;
     npm::install_if_stale()?;
-    process::run(&mut generator_command(mode, &export))
+    process::run(generator_command(mode, &export))
 }
 
 /// `npm run codegen[:check] -- EXPORT`. The path is absolute: npm runs the

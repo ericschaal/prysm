@@ -6,6 +6,7 @@ use anyhow::{Result, bail};
 use clap::ValueEnum;
 use std::process::Command;
 use std::time::Instant;
+use strum::{EnumIter, IntoEnumIterator};
 
 /// The checks of one CI job.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -19,8 +20,12 @@ pub enum Group {
     Scripts,
 }
 
-/// One check.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One check. Steps run in declaration order, which matters twice: stale
+/// contracts fail as such before the typecheck reports their symptoms, and
+/// the bundle in `frontend/dist` exists before the TV tests read it and
+/// before Rust compiles the hosts, so they embed the real portal rather than
+/// the "not built" page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 enum Step {
     RustFormat,
     FrontendLint,
@@ -43,31 +48,6 @@ enum Step {
 }
 
 impl Step {
-    /// The order matters twice: stale contracts fail as such before the
-    /// typecheck reports their symptoms, and the bundle in `frontend/dist`
-    /// exists before the TV tests read it and before Rust compiles the
-    /// hosts, so they embed the real portal rather than the "not built" page.
-    const ALL: [Self; 18] = [
-        Self::RustFormat,
-        Self::FrontendLint,
-        Self::FrontendFormat,
-        Self::Contracts,
-        Self::Typecheck,
-        Self::Bundle,
-        Self::FrontendTests,
-        Self::Clippy,
-        Self::RustTests,
-        Self::Doctests,
-        Self::ScriptTests,
-        Self::PackageTests,
-        Self::RunnerLint,
-        Self::RunnerFormat,
-        Self::RunnerTypes,
-        Self::RunnerLayers,
-        Self::RunnerTests,
-        Self::DocLinks,
-    ];
-
     fn group(self) -> Group {
         match self {
             Self::RustFormat | Self::Clippy | Self::RustTests | Self::Doctests => Group::Rust,
@@ -173,9 +153,7 @@ impl Step {
 
 /// The steps of `groups` (of every group when empty), in order.
 fn steps(groups: &[Group]) -> impl Iterator<Item = Step> {
-    Step::ALL
-        .into_iter()
-        .filter(move |step| groups.is_empty() || groups.contains(&step.group()))
+    Step::iter().filter(move |step| groups.is_empty() || groups.contains(&step.group()))
 }
 
 /// Runs the steps of `groups` (every step when empty) in order, timing each.
@@ -192,7 +170,7 @@ pub fn run(groups: &[Group], keep_going: bool) -> Result<()> {
     for step in steps(groups) {
         eprintln!("==> {}", step.name());
         let step_started = Instant::now();
-        let result = process::run(&mut step.command());
+        let result = process::run(step.command());
         let took = process::duration(step_started.elapsed());
         match result {
             Ok(()) => eprintln!("ok: {} ({took})", step.name()),
@@ -227,7 +205,7 @@ mod tests {
     use super::*;
 
     fn position(step: Step) -> usize {
-        Step::ALL.iter().position(|&s| s == step).unwrap()
+        Step::iter().position(|s| s == step).unwrap()
     }
 
     #[test]
@@ -249,7 +227,7 @@ mod tests {
 
     #[test]
     fn no_group_is_every_step_and_groups_keep_the_order() {
-        assert!(steps(&[]).eq(Step::ALL));
+        assert_eq!(steps(&[]).count(), Step::iter().count());
         let selected: Vec<_> = steps(&[Group::Scripts, Group::Rust]).collect();
         assert_eq!(selected.first(), Some(&Step::RustFormat));
         assert_eq!(selected.last(), Some(&Step::DocLinks));

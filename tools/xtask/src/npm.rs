@@ -54,7 +54,7 @@ pub fn install_if_stale() -> Result<()> {
     ) {
         return Ok(());
     }
-    process::run(&mut process::command(
+    process::run(process::command(
         "npm",
         &["--prefix", "frontend", "ci", "--no-audit", "--no-fund"],
     ))
@@ -67,7 +67,7 @@ fn is_current(installed: Option<SystemTime>, locked: Option<SystemTime>) -> bool
 /// Runs `script`, installing the packages first if needed.
 pub fn run(script: Script) -> Result<()> {
     install_if_stale()?;
-    process::run(&mut script.command())
+    process::run(script.command())
 }
 
 #[cfg(test)]
