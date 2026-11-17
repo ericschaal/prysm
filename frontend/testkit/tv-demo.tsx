@@ -5,7 +5,9 @@
  * (the portal answers but refuses this origin), `unreachable`, `old` (a TV
  * that cannot play the calibration patterns), `nolights` (a first run: the
  * portal has no lights yet; `demo.addLights()` stands in for its setup
- * wizard), `noaddress` (slim: no Prysm address saved yet). Selects at the bottom right put
+ * wizard), `noaddress` (slim: no Prysm address saved yet), `hold` (the
+ * supervisor answers nothing until `demo.supervisor.release()`: the screen
+ * before the first state). Selects at the bottom right put
  * the supervisor in one of its states (a failure with a retry countdown,
  * waiting for video, …) and set or clear the calibration pattern, as the
  * phone does.
@@ -38,6 +40,7 @@ export function runDemo(
         ? { instance: 'http://192.168.1.20:8787' }
         : {},
   });
+  if (flags.has('hold')) supervisor.hold();
   const output = {
     kind: 'wled',
     address: '192.168.1.50',

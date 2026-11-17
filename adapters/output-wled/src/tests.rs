@@ -1118,6 +1118,24 @@ fn wled_gamma_is_read_from_its_configuration() {
     }
 }
 
+/// A captured WLED 16.0.1 `/json/cfg`, whole, with its network identity
+/// (names, SSIDs, addresses, MQTT) replaced: colour gamma 2.2, brightness
+/// gamma off, realtime gamma correction on, brightness factor 100 %.
+const WLED_16_CFG: &str = include_str!("../tests/fixtures/wled-16.0.1-cfg.json");
+
+#[test]
+fn a_real_wled_configuration_gives_its_gamma() {
+    let device = Device::new(vec![at(102), Reply::Json(WLED_16_CFG)]);
+    let mut observer = device.observer_with_config();
+    check(&mut observer);
+    device.check_request();
+    check(&mut observer);
+    device.get_request("/json/cfg");
+    assert_eq!(observer.transfer(), gamma(2.2));
+    // Brightness gamma off: 102 of 255 is 40 %; through 2.2 it would be 13 %.
+    assert_eq!(observer.brightness(), percent(40));
+}
+
 #[test]
 fn a_gamma_changed_in_wled_is_followed_and_kept_through_a_refused_read() {
     // Checks 1, 31 and 61 (from 0) read the configuration; the last is refused.

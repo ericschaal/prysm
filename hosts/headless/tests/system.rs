@@ -185,6 +185,14 @@ impl FakeWled {
         leds.to_vec()
     }
 
+    /// Discard the DDP packets already received.
+    fn drain(&self) {
+        self.ddp.set_nonblocking(true).unwrap();
+        let mut packet = [0u8; 1500];
+        while self.ddp.recv_from(&mut packet).is_ok() {}
+        self.ddp.set_nonblocking(false).unwrap();
+    }
+
     /// Wait for a packet whose every LED is clearly `colour` (its strongest
     /// channel well above the others), as smoothing settles.
     fn expect_colour(&self, colour: [u8; 3]) {
@@ -383,6 +391,40 @@ fn a_tv_stream_lights_wled_and_sigterm_turns_it_off() {
     assert!(status.success(), "{stderr:#?}");
     assert_eq!(wled.next_state(), json!({ "live": false }));
     assert_eq!(wled.next_state(), body(OFF));
+}
+
+/// Turning dithering off and on again while the lights follow the TV: each
+/// save is accepted, and the session runs again with frames reaching WLED.
+#[test]
+fn dithering_changes_while_lighting_runs() {
+    let _wled = wled_lock();
+    let wled = FakeWled::start(false);
+    let dir = tempfile::tempdir().unwrap();
+    let (host, port) = start(&write_settings(dir.path(), &wled_settings(&wled)));
+    let sender = TvSender::plain(port, 0, RED);
+    assert_eq!(put_target(port, "processed", None).status, 204);
+    sender.expect("connected");
+    wled.expect_state(&body(LIVE));
+    wled.expect_colour(RED);
+    wait_for_state(port, "running", |state| session(state) == "running");
+
+    for dither in [false, true] {
+        let before = state(port);
+        let mut settings = before["settings"].clone();
+        settings["output"]["dither"] = json!(dither);
+        let saved = save_settings(port, &before, &settings);
+        assert_eq!(saved.status, 200, "dither {dither}: {}", saved.body);
+        // The save has replaced the session: only packets sent after it count.
+        wled.drain();
+        let state = wait_for_state(port, &format!("running with dither {dither}"), |state| {
+            session(state) == "running" && state["settings"]["output"]["dither"] == dither
+        });
+        assert_eq!(state["failure"], Value::Null, "{state:#}");
+        wled.expect_colour(RED);
+    }
+    drop(sender);
+    let (status, stderr) = host.terminate();
+    assert!(status.success(), "{stderr:#?}");
 }
 
 /// When the TV stops sending, the lights go back to WLED's own state after

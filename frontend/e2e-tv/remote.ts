@@ -29,6 +29,13 @@ const history = (page: Page) => {
 const after = (page: Page) =>
   `after ${history(page).join(' ') || 'opening the page'}`;
 
+/** The demo page of one package with its query flags (testkit/tv-demo.tsx). */
+export function demoUrl(flavor: Flavor, flags: string[] = []) {
+  const dir = flavor === 'full' ? 'webos' : 'webos-slim';
+  const query = flags.length ? `?${flags.join('&')}` : '';
+  return `/${dir}/tv-ui/demo.html${query}`;
+}
+
 /**
  * Open the demo of one package with its query flags and wait until focus
  * rests on `focus` (an id): the state the user starts from.
@@ -38,9 +45,7 @@ export async function openTv(
   flavor: Flavor,
   { flags = [], focus }: { flags?: string[]; focus: string },
 ) {
-  const dir = flavor === 'full' ? 'webos' : 'webos-slim';
-  const query = flags.length ? `?${flags.join('&')}` : '';
-  await page.goto(`/${dir}/tv-ui/demo.html${query}`);
+  await page.goto(demoUrl(flavor, flags));
   pressed.set(page, []);
   await expect(page.locator(`#${focus}`)).toBeFocused();
   await settled(page);
@@ -313,6 +318,51 @@ export async function expectSizes(page: Page) {
   expect(problems, `sizes ${after(page)}`).toEqual([]);
 }
 
+/** Where an element is laid out, in page pixels. */
+export interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The layout box of the first element matching each selector, or `null` for
+ * none. Offsets, not drawn rectangles: transforms (the focus lift, the
+ * screen's arrival) do not move the layout.
+ */
+export function layoutBoxes(
+  page: Page,
+  selectors: string[],
+): Promise<Record<string, Box | null>> {
+  return page.evaluate((all) => {
+    const boxes: Record<string, Box | null> = {};
+    for (const selector of all) {
+      const element = document.querySelector<HTMLElement>(selector);
+      if (!element) {
+        boxes[selector] = null;
+        continue;
+      }
+      let [left, top] = [0, 0];
+      for (
+        let at: HTMLElement | null = element;
+        at;
+        at = at.offsetParent as HTMLElement | null
+      ) {
+        left += at.offsetLeft;
+        top += at.offsetTop;
+      }
+      boxes[selector] = {
+        left,
+        top,
+        width: element.offsetWidth,
+        height: element.offsetHeight,
+      };
+    }
+    return boxes;
+  }, selectors);
+}
+
 /** `window.demo`: the demo's in-memory supervisor and portal (testkit/tv-demo.tsx). */
 interface Demo {
   supervisor: {
@@ -321,8 +371,14 @@ interface Demo {
       preferences: { autostart?: boolean; instance?: string | null };
     };
     publish(change: Record<string, unknown>): void;
+    /** Hold every call until `release()`. */
+    hold(): void;
+    release(): void;
   };
-  application: { snapshot(): { target: string } };
+  application: {
+    snapshot(): { target: string };
+    publish(change: Record<string, unknown>): void;
+  };
   addLights(): void;
 }
 declare global {
