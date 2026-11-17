@@ -1355,17 +1355,13 @@ test('before the service answers, nothing flashes and focus waits', async (t) =>
       document.body,
       `${flavor}: no focus placed yet`,
     );
-    // The web portal's place is kept: an empty code and no address yet.
-    assert(tv.el('portal-address'), flavor);
-    assert.match(
-      document.querySelector('#portal-address svg').getAttribute('class'),
-      /empty/,
-    );
+    // The web portal's place is kept, hidden: no address yet.
+    assert(tv.el('portal-address').classList.contains('empty'), flavor);
     await act(async () => tv.supervisor.release());
     await settle();
     if (flavor === 'full') {
-      // The full worker reports its address later; the place stays.
-      assert(tv.el('portal-address'));
+      // The full worker reports its address later; the place stays, hidden.
+      assert(tv.el('portal-address').classList.contains('empty'));
       assert.equal(tv.text('portal-address-text'), '\u00a0');
       await act(async () =>
         tv.supervisor.publish({ portal: 'http://192.168.1.5:8787/' }),
@@ -1376,6 +1372,7 @@ test('before the service answers, nothing flashes and focus waits', async (t) =>
       tv.text('portal-address-text'),
       flavor === 'full' ? '192.168.1.5:8787' : '192.168.1.20:8787',
     );
+    assert(!tv.el('portal-address').classList.contains('empty'), flavor);
     assert.equal(tv.focus(), flavor === 'full' ? 'mode-off' : 'primary');
     await tv.unmount();
   }

@@ -247,7 +247,8 @@ export function TvApp({
   // does nothing.
   const waiting = tv.changing || status.action === 'none';
   // The full package's portal address arrives with the worker; its panel
-  // keeps its place meanwhile, so Settings does not move down.
+  // keeps its place meanwhile, empty (nothing to scan yet), so Settings does
+  // not move down.
   const portalPanel = !setupFirst && (!!portalAddress || !state || !slim);
 
   /** Screen sync on (calibration needs it), then the calibration screen. */
@@ -398,11 +399,11 @@ export function TvApp({
           </div>
           <div className="column" data-column="settings">
             {portalPanel ? (
-              <section className="portal-address" id="portal-address">
-                <QrCode
-                  modules={portalQr}
-                  className={`portal-qr${portalQr ? '' : ' empty'}`}
-                />
+              <section
+                className={`portal-address${portalAddress ? '' : ' empty'}`}
+                id="portal-address"
+              >
+                <QrCode modules={portalQr} className="portal-qr" />
                 <p className="portal-text">
                   <span className="section-label">Web portal</span>
                   <code id="portal-address-text">

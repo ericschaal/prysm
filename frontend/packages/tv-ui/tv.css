@@ -530,6 +530,10 @@ button:disabled {
   display: flex;
   align-items: flex-start;
 }
+/* No address yet: its place is kept, with nothing in it to read or scan. */
+.portal-address.empty {
+  visibility: hidden;
+}
 .portal-qr {
   flex-shrink: 0;
   width: 4.6rem;
@@ -541,10 +545,6 @@ button:disabled {
 .portal-qr rect,
 .qr rect {
   fill: rgb(var(--fg));
-}
-/* Its place while the address is not known yet: a quiet square, no paper. */
-.portal-qr.empty rect {
-  fill: rgba(var(--fg), 0.08);
 }
 .portal-text {
   min-width: 0;
