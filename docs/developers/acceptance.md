@@ -493,10 +493,10 @@ The checks, in order (`@only` marks a package's own):
 - capturing: `getState` says capturing with a frame rate;
 - full: the TV's capture modes are known (`POST /api/v1/capture/modes`);
 - slim: with the receiver off, the TV's offer is known for each encoding; each
-  encoding streams and `getState` names it (with the worker's CPU), the two
-  H.264 encodings at 30 fps; raw's rate is only reported, because
-  uncompressed frames go as fast as the link to the receiver carries them
-  (Wi-Fi does not carry 30 fps);
+  encoding streams at 30 fps and `getState` names it (with the worker's CPU).
+  Raw has no rate control, so its rate is what the link to the receiver
+  carries; the evidence holds the size of the frames that arrived and the
+  TV's power and video state, to tell a slow link from a larger frame;
   the receiver off pauses the TV's capture and on resumes it;
 - the soak: `soak_seconds` at 640 × 360 and 1280 × 720 (full) or 640 × 360
   hardware H.264 (slim), the frame rate within the tolerance, the worker's

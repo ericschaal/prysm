@@ -128,6 +128,9 @@ class Rates(TypedDict):
     expected: NotRequired[int]
     tv_cpu: NotRequired[float | None]
     tv_encoding: NotRequired[str | None]
+    tv_power: NotRequired[str | None]
+    tv_video: NotRequired[str | None]
+    source: NotRequired[str | None]
 
 
 class Prysm:
@@ -202,6 +205,14 @@ class Prysm:
         if timed:
             return cast('list[tuple[float, ColorsEvent]]', web.events(url, seconds, timed=True))
         return cast('list[ColorsEvent]', web.events(url, seconds))
+
+    def source_size(self, seconds: float = 3.0) -> str | None:
+        """The size of the frames that arrive, WIDTHxHEIGHT, from the preview stream's first frame within
+        `seconds`; None without one. A source may deliver another size than the settings ask for."""
+        for event in web.events(self._url('/api/v1/preview/stream'), seconds, limit=3):
+            if isinstance(event, dict) and event.get('type') == 'frame':
+                return f'{event.get("source_width")}x{event.get("source_height")}'
+        return None
 
     def wait(self, check: Callable[[State], object], seconds: float, every: float = 0.5) -> State | None:
         """The first state for which `check(state)` holds; `None` after `seconds`."""

@@ -540,11 +540,14 @@ def test_offer(prysm: Prysm, record: Record) -> None:
     ]
 )
 def test_encodings(config: Config, target: OnTv, prysm: Prysm, record: Record) -> None:
-    """The slim package: each encoding streams and getState names it, the two H.264 encodings at 30 fps; the
-    TV worker's CPU. Raw's rate is only reported: uncompressed frames go as fast as the link to the receiver
-    carries them (Wi-Fi does not carry 30 fps), so it must only be above zero."""
+    """The slim package: each encoding streams at 30 fps, and getState names it; the TV worker's CPU.
+
+    Raw has no rate control: its frame rate is what the link to the receiver carries. So the evidence also
+    holds, per encoding, the size of the frames that arrived (the TV's UI capture delivers at most 320x180,
+    whatever was asked) and the TV's power and video state, to tell a slow link from a larger frame."""
     results: dict[str, object] = {}
     failed: list[str] = []
+    summary: list[str] = []
     width, height, fps = CAPTURE
     for encoding in Encoding:
         try:
@@ -556,22 +559,19 @@ def test_encodings(config: Config, target: OnTv, prysm: Prysm, record: Record) -
         first = target.tv.sample_worker()
         measured = rates(prysm.sample(config.checks.seconds))
         measured['tv_cpu'] = tv.cpu_percent(first, target.tv.sample_worker())
-        measured['tv_encoding'] = (target.tv.get_state() or LunaReply()).get('encoding')
+        state = target.tv.get_state() or LunaReply()
+        measured['tv_encoding'] = state.get('encoding')
+        measured['tv_power'], measured['tv_video'] = state.get('power'), state.get('video')
+        measured['source'] = prysm.source_size()
         results[encoding] = measured
-        enough = (
-            measured['fps_mean'] > 0
-            if encoding == Encoding.RAW
-            else near(measured['fps_mean'], fps, config.checks.fps_tolerance)
-        )
-        if not enough or measured['tv_encoding'] != encoding:
+        summary.append(f'{encoding} {measured["fps_mean"]} fps ({measured["source"]})')
+        if not near(measured['fps_mean'], fps, config.checks.fps_tolerance) or measured['tv_encoding'] != encoding:
             failed.append(encoding)
     prysm.set_target(Target.OFF)
     if failed:
-        raise Failed(f'not {fps} fps (raw: no frames), or another encoding, for {failed}', results)
+        raise Failed(f'not {fps} fps, or another encoding, for {failed}', results)
     record(
-        ', '.join(
-            f'{encoding} {cast("prysm_api.Rates", result)["fps_mean"]} fps' for encoding, result in results.items()
-        ),
+        ', '.join(summary),
         results,
     )
 

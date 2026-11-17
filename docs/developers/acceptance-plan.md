@@ -290,7 +290,8 @@ Each phase lands with its tests and CI green before the next starts.
    the uninstall left nothing); `tv-slim-mac` passed with all three
    encodings at 30 fps; `tv-slim-linux` passed but for the raw encoding,
    4 fps to a Raspberry Pi 5 on Wi-Fi where the two H.264 encodings held 30;
-   raw's rate has since been only reported, not required. The app is removed through
+   a second run of that check alone held raw at 30, and the cause is open
+   (the check now records the size that arrives and the TV's state). The app is removed through
    `appInstallService`, as it is installed. What remains unverified: the
    wake-on-LAN packet (the TV answered), `acceptance settings restore`
    against a reinstalled Prysm (only its dry run on the real backup),
