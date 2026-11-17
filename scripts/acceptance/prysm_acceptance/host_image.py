@@ -32,12 +32,25 @@ import json
 from pathlib import Path
 import re
 import tarfile
-import time
 from typing import cast
 
-from prysm_acceptance import commands, web
+from prysm_acceptance import commands
 from prysm_acceptance.commands import ComposeAction, RunFile
-from prysm_acceptance.host import DEBIAN_MACHINES, Plan, route_source, save_kernel_usb, tail, target_machine
+from prysm_acceptance.host import (
+    DEBIAN_MACHINES,
+    SAMPLE_SINCE,
+    Plan,
+    cleanup,
+    port_in_use,
+    route_source,
+    run_name,
+    save_kernel_usb,
+    shown,
+    tail,
+    target_machine,
+    wait_for_state,
+    write_settings,
+)
 from prysm_acceptance.options import Source
 from prysm_acceptance.prysm_api import Settings, State
 from prysm_acceptance.transport import Result, Transport
@@ -48,7 +61,6 @@ COMPOSE_FILE = commands.ROOT / 'packaging' / 'docker' / 'compose.yaml'
 CONTAINER_DEVICE = '/dev/video0'
 # The oldest compose that knows `!override`.
 COMPOSE_OVERRIDE = (2, 24, 4)
-SAMPLE_SINCE = 1
 
 
 def image_archive(path: Path) -> tuple[str, list[str]]:
@@ -103,7 +115,7 @@ class SshImage:
         self.image = image
         self.wled = wled
         self.port = commands.IMAGE_PORT
-        self.run = f'{out_dir.parent.name}-{out_dir.name}'
+        self.run = run_name(out_dir)
         self.project = commands.compose_project(self.run)
         self.url = f'http://{self.target.rsplit("@", 1)[-1]}:{self.port}'
         self.settings_path = out_dir / 'headless-settings.json'
@@ -134,9 +146,6 @@ class SshImage:
         return CONTAINER_DEVICE
 
     def plan(self, source: Source, device: str) -> Plan:
-        def shown(*found: commands.Command) -> list[str]:
-            return [f'$ {command.display()}' for command in found]
-
         target, run = self.target, self.run
 
         def compose(*actions: ComposeAction) -> list[str]:
@@ -214,14 +223,11 @@ class SshImage:
         if not group.isdigit():
             return f'capture device {device} is missing on {self.target}'
         self.device, self.group = device, group
-        if self._run(commands.linux_port_free(self.target, self.port)).stdout.strip():
-            return f'port {self.port} is already in use on {self.target}'
-        return None
+        return port_in_use(self.transport, self.target, self.port)
 
     def deliver(self) -> str:
         self.delivered = True  # from here on `close` removes the run directory, also after a failure
-        words = self._run(commands.image_deliver(self.target, self.run, str(self.image))).stdout.split()
-        self.since = int(words[-1])
+        self.since = int(self._run(commands.image_deliver(self.target, self.run, str(self.image))).stdout.split()[-1])
         self.image_id = self._run(commands.image_load(self.target, self.run)).stdout.split()[-1]
         return f'loaded {self.image.name} on {self.target} as {commands.IMAGE_TAG} ({self.image_id})'
 
@@ -229,7 +235,7 @@ class SshImage:
         raise RuntimeError('the image cell has no file source')
 
     def start(self, document: Settings, seconds: float = 30) -> State:
-        self.settings_path.write_text(json.dumps(document, indent=2) + '\n')
+        write_settings(self.settings_path, document)
         self.override_path.write_text(override(self.device, self.group))
         self.composed = True
         for file, local in (
@@ -253,21 +259,21 @@ class SshImage:
         return state, code
 
     def _answering(self, seconds: float) -> State:
-        deadline = time.monotonic() + seconds
         state = ''
-        while time.monotonic() < deadline:
+
+        def running() -> bool:
+            nonlocal state
             state, code = self._state()
             if state in ('exited', 'dead'):
                 self.fetch()
                 raise RuntimeError(f'the container {state} with code {code} on {self.target}; see {self.log_path}')
-            if state == 'running':
-                try:
-                    return cast('State', web.get_json(self.url + '/api/v1/state', timeout=1))
-                except (web.Unreachable, RuntimeError):
-                    pass
-            time.sleep(0.5)
-        self.fetch()
-        raise RuntimeError(f'the container ({state or "none"}) did not answer at {self.url} within {seconds} s')
+            return state == 'running'
+
+        answer = wait_for_state(self.url, seconds, 0.5, running)
+        if answer is None:
+            self.fetch()
+            raise RuntimeError(f'the container ({state or "none"}) did not answer at {self.url} within {seconds} s')
+        return answer
 
     def stop(self, seconds: int = 30) -> int | str | None:
         """`docker compose stop` (SIGTERM, KILL after compose.yaml's stop_grace_period, 30 s); the container's
@@ -297,18 +303,17 @@ class SshImage:
     def close(self) -> None:
         """Fetch the logs; take the project down with its volume, remove the loaded image and the run directory,
         each also after a failure."""
-        if not self.delivered:
-            return
-        try:
-            self.fetch()
-        finally:
-            try:
-                if self.composed:
-                    self._compose(ComposeAction.DOWN)
-                    self.composed = False
-            finally:
-                try:
-                    self._run(commands.image_remove(self.target))  # also after an interrupted load
-                finally:
-                    self._run(commands.linux_remove(self.target, self.run))
-                    self.delivered = False
+        if self.delivered:
+            cleanup(self.fetch, self._down, self._remove_image, self._remove)
+
+    def _down(self) -> None:
+        if self.composed:
+            self._compose(ComposeAction.DOWN)
+            self.composed = False
+
+    def _remove_image(self) -> None:
+        self._run(commands.image_remove(self.target))  # also after an interrupted load
+
+    def _remove(self) -> None:
+        self._run(commands.linux_remove(self.target, self.run))
+        self.delivered = False

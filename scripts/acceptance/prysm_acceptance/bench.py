@@ -74,14 +74,9 @@ def planned(does: Lines = _none, undoes: Lines = _none) -> Callable[[Function], 
     return record
 
 
-def only(*deliveries: Delivery) -> Callable[[Function], Function]:
+def only(*deliveries: Delivery) -> pytest.MarkDecorator:
     """A check of what these deliveries add: it is not collected for the other cells."""
-
-    def mark(function: Function) -> Function:
-        setattr(function, 'deliveries', deliveries)  # noqa: B010 -- read back by pytest_collection_modifyitems
-        return function
-
-    return mark
+    return pytest.mark.only(*deliveries)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -89,11 +84,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     kept: list[pytest.Item] = []
     dropped: list[pytest.Item] = []
     for item in items:
-        deliveries = getattr(getattr(item, 'function', None), 'deliveries', None)
+        mark = item.get_closest_marker('only')
         cell = None
         if isinstance(item, pytest.Function) and hasattr(item, 'callspec'):
             cell = cast('Cell | None', item.callspec.params.get('cell'))
-        mine = deliveries is None or cell is None or cell.delivery in deliveries
+        mine = mark is None or cell is None or cell.delivery in mark.args
         (kept if mine else dropped).append(item)
     if dropped:
         config.hook.pytest_deselected(items=dropped)

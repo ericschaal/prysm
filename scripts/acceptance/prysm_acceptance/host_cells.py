@@ -61,6 +61,11 @@ def _machine(cell: Cell, config: Config) -> Machine:
     return config.machine(cell.platform)
 
 
+def _ssh_host(cell: Cell, config: Config) -> str:
+    """The platform's target as ssh names it (USER@HOST)."""
+    return _machine(cell, config).target.removeprefix(SSH)
+
+
 def _feed(cell: Cell, config: Config, request: pytest.FixtureRequest | None = None) -> Feed | None:
     """The feed this cell shows the clip on: only a capture card has an input, and not with --display-check."""
     display_check = request is not None and bool(request.config.getoption('display_check'))
@@ -94,7 +99,7 @@ def _seam(cell: Cell, config: Config, run: transport.Transport, out_dir: Path) -
     """The host seam of this cell's delivery (the package and the image over SSH only: see `_local_only`)."""
     machine = _machine(cell, config)
     artifact = machine.artifact(cell.delivery) or Path(str(cell.delivery).upper())
-    target = machine.target.removeprefix(SSH)
+    target = _ssh_host(cell, config)
     match cell.delivery:
         case Delivery.BINARY:
             if machine.target.startswith(SSH):
@@ -130,9 +135,9 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
     if sum(config.leds.as_settings().values()) == 0:
         pytest.fail('leds: no LEDs configured', pytrace=False)
     machine = _machine(cell, config)
-    binary = machine.artifact(cell.delivery)
-    if binary is None or not binary.is_file():
-        unavailable(request, cell, f'no artifact: [{cell.platform}] {cell.delivery} is {binary or "not set"}')
+    path = machine.artifact(cell.delivery)
+    if path is None or not path.is_file():
+        unavailable(request, cell, f'no artifact: [{cell.platform}] {cell.delivery} is {path or "not set"}')
     local = _local_only(cell, config)
     if local:
         unavailable(request, cell, local)
@@ -146,7 +151,7 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
             unavailable(request, cell, str(error))
     if (cell.source == Source.FILE or controlled) and not shutil.which('ffmpeg'):
         unavailable(request, cell, 'the test clip needs FFmpeg 9+ on PATH')
-    found = artifacts.inspect(binary)
+    found = artifacts.inspect(path)
     facts = found.facts()
     warning = artifacts.older_than_checkout(found, bench.transport)
     if warning:
@@ -636,10 +641,6 @@ def _settings_kept(prysm: Prysm, wled: Wled, seam: Host, renew: Callable[[], pry
     _processed(prysm)
     evidence['wled'] = live_from_host(prysm, wled, seam)['info']
     return evidence
-
-
-def _ssh_host(cell: Cell, config: Config) -> str:
-    return _machine(cell, config).target.removeprefix(SSH)
 
 
 @only(Delivery.DEB)

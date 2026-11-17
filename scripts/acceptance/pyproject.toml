@@ -140,6 +140,7 @@ allow_indirect_imports = true
 testpaths = ["tests"]
 pythonpath = ["tests"]
 addopts = ["--strict-markers", "-p", "no:cacheprovider"]
+markers = ["only(delivery, ...): a host cells' check of what these deliveries add (bench.only)"]
 
 [tool.pyright]
 include = ["prysm_acceptance", "tests"]

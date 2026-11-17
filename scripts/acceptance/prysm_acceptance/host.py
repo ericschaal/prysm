@@ -11,6 +11,8 @@ Debian package (`host_deb.SshDeb`) and the image (`host_image.SshImage`) are
 the same interface, each in its own module with its own templates.
 """
 
+from collections.abc import Callable
+import contextlib
 from dataclasses import dataclass, field
 import json
 import os
@@ -119,6 +121,21 @@ def target_machine(transport: Transport, target: str) -> tuple[str | None, str]:
     return machine, ''
 
 
+def device_node(transport: Transport, target: str, device: str) -> tuple[str | None, str]:
+    """The node `device` resolves to on the target, or None with why it cannot be captured from."""
+    node = transport.run(commands.linux_device(target, device)).stdout.strip()
+    if node in ('', 'unreadable'):
+        return None, f'capture device {device} is missing on {target} or not readable by its ssh user'
+    return node, ''
+
+
+def port_in_use(transport: Transport, target: str, port: int) -> str | None:
+    """Why Prysm cannot listen on `port` on the target; None when the port is free."""
+    if transport.run(commands.linux_port_free(target, port)).stdout.strip():
+        return f'port {port} is already in use on {target}'
+    return None
+
+
 def save_kernel_usb(transport: Transport, target: str, since: int, path: Path) -> None:
     """The kernel's USB lines on the target since `since` into `path` (a note when journalctl -k is refused)."""
     found = transport.run(commands.linux_kernel(target, since), check=False)
@@ -128,6 +145,47 @@ def save_kernel_usb(transport: Transport, target: str, since: int, path: Path) -
     else:
         text = f'(journalctl -k failed, exit {found.returncode}: {found.stderr.strip()[-300:]})\n'
     path.write_text(text)
+
+
+def run_name(out_dir: Path) -> str:
+    """The run directory's name on a target: the local run's and the cell's (`out_dir`)."""
+    return f'{out_dir.parent.name}-{out_dir.name}'
+
+
+def listen_url(host: str, listen: str) -> str:
+    """Prysm's base URL from here when it listens on `listen` on `host` (or USER@HOST): `host` for 0.0.0.0."""
+    address, port = listen.rsplit(':', 1)
+    return f'http://{host.rsplit("@", 1)[-1] if address == "0.0.0.0" else address}:{port}'
+
+
+def write_settings(path: Path, document: Settings) -> None:
+    path.write_text(json.dumps(document, indent=2) + '\n')
+
+
+def shown(*found: Command) -> list[str]:
+    """Commands as the dry run prints them."""
+    return [f'$ {command.display()}' for command in found]
+
+
+def wait_for_state(url: str, seconds: float, interval: float, ready: Callable[[], bool]) -> State | None:
+    """Prysm's state once `ready()` (its process is up; it raises when that process is gone) and the API
+    answers; None when `seconds` pass first."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if ready():
+            try:
+                return cast('State', web.get_json(url + '/api/v1/state', timeout=1))
+            except (web.Unreachable, RuntimeError):
+                pass
+        time.sleep(interval)
+    return None
+
+
+def cleanup(*steps: Callable[[], object]) -> None:
+    """Each step in order, every one also after an earlier one failed; a failure is raised after the last step."""
+    with contextlib.ExitStack() as stack:
+        for step in reversed(steps):
+            stack.callback(step)
 
 
 @dataclass(frozen=True)
@@ -227,8 +285,7 @@ class LocalBinary:
         self.command = commands.headless(
             str(binary), str(self.settings_path), listen, allow_null_origin=allow_null_origin
         )
-        host, port = listen.rsplit(':', 1)
-        self.url = f'http://{"127.0.0.1" if host == "0.0.0.0" else host}:{port}'
+        self.url = listen_url('127.0.0.1', listen)
         self.log_path = out_dir / f'{name}.log'
         self.process: Process | None = None
         self.exit_code: int | str | None = None
@@ -268,18 +325,19 @@ class LocalBinary:
         return str(clip)
 
     def start(self, document: Settings, seconds: float = 15) -> State:
-        self.settings_path.write_text(json.dumps(document, indent=2) + '\n')
+        write_settings(self.settings_path, document)
         with self.log_path.open('ab') as log:
-            self.process = self.transport.spawn(self.command, stdout=log, stderr=subprocess.STDOUT)
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            if self.process.poll() is not None:
-                raise RuntimeError(f'prysm-headless exited {self.process.returncode}; see {self.log_path}')
-            try:
-                return cast('State', web.get_json(self.url + '/api/v1/state', timeout=1))
-            except (web.Unreachable, RuntimeError):
-                time.sleep(0.2)
-        raise RuntimeError(f'prysm-headless did not answer within {seconds} s; see {self.log_path}')
+            process = self.process = self.transport.spawn(self.command, stdout=log, stderr=subprocess.STDOUT)
+
+        def running() -> bool:
+            if process.poll() is not None:
+                raise RuntimeError(f'prysm-headless exited {process.returncode}; see {self.log_path}')
+            return True
+
+        state = wait_for_state(self.url, seconds, 0.2, running)
+        if state is None:
+            raise RuntimeError(f'prysm-headless did not answer within {seconds} s; see {self.log_path}')
+        return state
 
     def stop(self, seconds: int = 30) -> int | str | None:
         if self.process is None or self.exit_code is not None:
@@ -306,6 +364,8 @@ class LocalBinary:
 
 # The PID the dry run shows in place of the one `linux.status` reports.
 SAMPLE_PID = 4242
+# The target's clock at delivery, as the dry run shows it.
+SAMPLE_SINCE = 1
 
 
 def _code(value: str) -> int | str:
@@ -326,12 +386,11 @@ class SshBinary:
         self.wled = wled
         self.listen = listen
         self.port = int(listen.rsplit(':', 1)[1])
-        self.run = f'{out_dir.parent.name}-{out_dir.name}'
+        self.run = run_name(out_dir)
         self.settings_path = out_dir / 'headless-settings.json'
         self.log_path = out_dir / 'headless.log'
         self.kernel_path = out_dir / 'kernel-usb.log'
-        address = listen.rsplit(':', 1)[0]
-        self.url = f'http://{self.target.rsplit("@", 1)[-1] if address == "0.0.0.0" else address}:{self.port}'
+        self.url = listen_url(self.target, listen)
         self.directory = commands.run_dir(self.run)  # as the remote shell spells it, until `deliver` resolves it
         self.delivered = False
         self.since: int | None = None  # the target's clock when the run directory was made
@@ -370,20 +429,17 @@ class SshBinary:
             commands.linux_wait_exit(self.target, self.run),
             commands.linux_signal(self.target, self.run, SAMPLE_PID, Signal.KILL),
             commands.linux_read_log(self.target, self.run),
-            commands.linux_kernel(self.target, 1),
+            commands.linux_kernel(self.target, SAMPLE_SINCE),
             commands.linux_remove(self.target, self.run),
         ]
         return Plan(
-            preflight=[
-                f'{self.binary.name}: its ELF machine, compared with uname -m on the target',
-                *(f'$ {command.display()}' for command in checks),
-            ],
+            preflight=[f'{self.binary.name}: its ELF machine, compared with uname -m on the target', *shown(*checks)],
             start=[
-                *(f'$ {command.display()}' for command in start),
+                *shown(*start),
                 f'GET {self.url}/api/v1/state answers while linux.status says running (else fails within 15 s)',
             ],
             stop=[
-                *(f'$ {command.display()}' for command in stop),
+                *shown(*stop),
                 f'({SAMPLE_PID}: the PID linux.status reported; KILL only without an exit within 30 s; @1: the '
                 "target's clock at delivery; the kernel's USB lines go to kernel-usb.log, the log to headless.log)",
             ],
@@ -408,13 +464,10 @@ class SshBinary:
             if reason:
                 return reason
         else:
-            node = self._run(commands.linux_device(self.target, device)).stdout.strip()
-            if node in ('', 'unreadable'):
-                return f'capture device {device} is missing on {self.target} or not readable by its ssh user'
-            self.device_node = node
-        if self._run(commands.linux_port_free(self.target, self.port)).stdout.strip():
-            return f'port {self.port} is already in use on {self.target}'
-        return None
+            self.device_node, reason = device_node(self.transport, self.target, device)
+            if self.device_node is None:
+                return reason
+        return port_in_use(self.transport, self.target, self.port)
 
     def listed(self, device: str) -> str:
         return self.device_node or device
@@ -438,26 +491,27 @@ class SshBinary:
         return word, value
 
     def start(self, document: Settings, seconds: float = 15) -> State:
-        self.settings_path.write_text(json.dumps(document, indent=2) + '\n')
+        write_settings(self.settings_path, document)
         self._run(commands.linux_put(self.target, self.run, RunFile.SETTINGS, str(self.settings_path)))
         self._run(commands.linux_start(self.target, self.run, self.listen))
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            word, value = self._status()
-            if word == 'exited':
-                self.exit_code = _code(value)
-                self.fetch()
-                raise RuntimeError(f'prysm-headless exited {value} on {self.target}; see {self.log_path}')
-            if word == 'running':
-                # Only this run's process counts: a leftover Prysm on the port would answer too.
-                self.pid = int(value)
-                try:
-                    return cast('State', web.get_json(self.url + '/api/v1/state', timeout=1))
-                except (web.Unreachable, RuntimeError):
-                    pass
-            time.sleep(0.3)
-        self.fetch()
-        raise RuntimeError(f'prysm-headless did not answer at {self.url} within {seconds} s; see {self.log_path}')
+        state = wait_for_state(self.url, seconds, 0.3, self._running)
+        if state is None:
+            self.fetch()
+            raise RuntimeError(f'prysm-headless did not answer at {self.url} within {seconds} s; see {self.log_path}')
+        return state
+
+    def _running(self) -> bool:
+        """Whether this run's own process runs (a leftover Prysm on the port would answer too); raises when it
+        exited."""
+        word, value = self._status()
+        if word == 'exited':
+            self.exit_code = _code(value)
+            self.fetch()
+            raise RuntimeError(f'prysm-headless exited {value} on {self.target}; see {self.log_path}')
+        if word == 'running':
+            self.pid = int(value)
+            return True
+        return False
 
     def stop(self, seconds: int = 30) -> int | str | None:
         if self.exit_code is not None or not self.delivered:
@@ -496,10 +550,9 @@ class SshBinary:
             save_kernel_usb(self.transport, self.target, self.since, self.kernel_path)
 
     def close(self) -> None:
-        if not self.delivered:
-            return
-        try:
-            self.fetch()
-        finally:
-            self._run(commands.linux_remove(self.target, self.run))
-            self.delivered = False
+        if self.delivered:
+            cleanup(self.fetch, self._remove)
+
+    def _remove(self) -> None:
+        self._run(commands.linux_remove(self.target, self.run))
+        self.delivered = False

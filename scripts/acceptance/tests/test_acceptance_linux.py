@@ -1,16 +1,14 @@
 """The Linux binary cell's seam over SSH, its templates and preflight, against a recorded transcript (no device)."""
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import platform
 import re
 import tempfile
-import threading
 from typing import cast
 import unittest
 
-from acceptance_fakes import untyped
+from acceptance_fakes import FakePrysm, ok, untyped
 
 from prysm_acceptance import commands, config, feed_chromecast, host, host_cells, transport
 from prysm_acceptance.commands import RunFile, Signal
@@ -26,10 +24,6 @@ RESOLVED = f'/home/pi/.prysm-acceptance/{RUN}'
 def elf(machine: int) -> bytes:
     """An ELF header (64-bit, little-endian) for `machine`, as far as `host.elf_machine` reads it."""
     return b'\x7fELF\x02\x01\x01' + bytes(11) + machine.to_bytes(2, 'little') + bytes(44)
-
-
-def ok(stdout: str = '') -> Result:
-    return Result(0, stdout)
 
 
 class Templates(unittest.TestCase):
@@ -140,31 +134,6 @@ class Templates(unittest.TestCase):
                     self.assertRegex(path, r'^(/dev/null|/proc/|/dev/v4l/by-id/)', remote)
                 if 'kill ' in remote:
                     self.assertIn('readlink /proc/', remote)  # only the run's own binary
-
-
-class FakePrysm:
-    """`GET /api/v1/state` on loopback, as the seam's start waits for it."""
-
-    def __init__(self) -> None:
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self) -> None:
-                body = json.dumps({'target': 'off', 'session': {'state': 'stopped'}}).encode()
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Content-Length', str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, format: str, *args: object) -> None:
-                pass
-
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.listen = f'127.0.0.1:{self.server.server_address[1]}'
-
-    def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
 
 
 class Seam(unittest.TestCase):

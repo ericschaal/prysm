@@ -653,7 +653,6 @@ _APT = 'sudo -n env DEBIAN_FRONTEND=noninteractive apt-get'
 
 
 class UnitAction(StrEnum):
-    START = 'start'
     STOP = 'stop'
     RESTART = 'restart'
 
@@ -697,7 +696,7 @@ def deb_dropin(host: str, listen: str) -> Command:
 
 
 def deb_systemctl(host: str, action: UnitAction) -> Command:
-    """Start, stop or restart the unit; systemctl waits (a stop sends SIGTERM, KILL after TimeoutStopSec 30 s)."""
+    """Stop or restart the unit; systemctl waits (a stop sends SIGTERM, KILL after TimeoutStopSec 30 s)."""
     return _ssh('deb.systemctl', host, f'sudo -n systemctl {_member(UnitAction, action, "action")} {DEB_UNIT}', 60)
 
 
@@ -882,7 +881,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'deb.deliver': lambda: deb_deliver('pi@pi.example', 'RUN-CELL', 'dist/prysm-headless-linux-arm64.deb'),
     'deb.install': lambda: deb_install('pi@pi.example', 'RUN-CELL'),
     'deb.dropin': lambda: deb_dropin('pi@pi.example', '0.0.0.0:18787'),
-    'deb.systemctl': lambda: deb_systemctl('pi@pi.example', UnitAction.START),
+    'deb.systemctl': lambda: deb_systemctl('pi@pi.example', UnitAction.RESTART),
     'deb.main-user': lambda: deb_main_user('pi@pi.example'),
     'deb.journal': lambda: deb_journal('pi@pi.example', 1763380000),
     'deb.purge': lambda: deb_purge('pi@pi.example'),

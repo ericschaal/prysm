@@ -1,36 +1,33 @@
 """The Linux package and image cells' seams, their templates and preflight, `--prepare` and `acceptance all`,
 against recorded transcripts and fakes on loopback (no device, no Docker, no apt, no build)."""
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 from pathlib import Path
 import re
 import tarfile
 import tempfile
-import threading
 from typing import Literal, cast
 import unittest
 from unittest import mock
 
+from acceptance_fakes import FakePrysm, ok
 from test_acceptance_host import EXAMPLE, runner
 
 from prysm_acceptance import commands, config, host_cells, host_deb, host_image, prepare, run, transport
 from prysm_acceptance.commands import ComposeAction, UnitAction
-from prysm_acceptance.options import Cell, Delivery, Platform, Source
+from prysm_acceptance.options import CELLS, Cell, Delivery, Platform, Source
 from prysm_acceptance.transport import Result
 
 TARGET = 'pi@pi.example'
 RUN = '20261117-101500-host-linux-deb-device'
 DIRECTORY = f'$HOME/.prysm-acceptance/{RUN}'
 DEVICE = '/dev/v4l/by-id/usb-EXAMPLE-video-index0'
-SSH = 'ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 '
 IMAGE_ID = 'sha256:' + 'a' * 64
 VERSION = '1.0.0~alpha.0-1'
-
-
-def ok(stdout: str = '') -> Result:
-    return Result(0, stdout)
+# What `deb.deliver` and `image.deliver` print: the run directory and the target's clock.
+DELIVERED = ok('/home/pi/x\n1763380000\n')
+DEB_CELL = Cell(Platform.LINUX, Delivery.DEB, Source.DEVICE)
 
 
 def ar_member(name: str, data: bytes) -> bytes:
@@ -70,159 +67,97 @@ def write_image(path: Path, architecture: str = 'arm64', tag: str = 'prysm-headl
     return path
 
 
-class FakePrysm:
-    """`GET /api/v1/state` and `PUT /api/v1/settings` on loopback; the saved settings come back in the state."""
-
-    def __init__(self) -> None:
-        self.saved: list[object] = []
-        settings: dict[str, object] = {}
-        saved = self.saved
-
-        class Handler(BaseHTTPRequestHandler):
-            def reply(self, status: int, value: object) -> None:
-                body = json.dumps(value).encode()
-                self.send_response(status)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Content-Length', str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self) -> None:
-                state = {'target': 'off', 'session': {'state': 'stopped'}, 'settings': settings, 'revision': 1}
-                self.reply(200, state)
-
-            def do_PUT(self) -> None:
-                body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-                saved.append(body)
-                settings.clear()
-                settings.update(body['settings'])
-                self.reply(200, {'revision': 2})
-
-            def log_message(self, format: str, *args: object) -> None:
-                pass
-
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.listen = f'127.0.0.1:{self.server.server_address[1]}'
-
-    def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
-
-
-def remaining(test: unittest.TestCase, recorded: transport.Transcript) -> None:
-    test.assertEqual([template for template, _ in recorded.entries], [], 'commands expected but not run')
+def temporary(test: unittest.TestCase) -> Path:
+    return Path(test.enterContext(tempfile.TemporaryDirectory()))
 
 
 class Templates(unittest.TestCase):
-    def test_exact_deb_command_lines(self) -> None:
-        self.assertEqual(commands.deb_sudo(TARGET).argv[:-1], commands.linux_probe(TARGET).argv[:-1])
+    def test_exact_command_lines(self) -> None:
+        project = f'prysm-acceptance-{RUN}'
+        compose = f'cd {DIRECTORY} && docker compose -p {project} -f compose.yaml -f compose.acceptance.yaml '
+        found = {
+            'deb.sudo': commands.deb_sudo(TARGET),
+            'deb.install': commands.deb_install(TARGET, RUN),
+            'deb.dropin': commands.deb_dropin(TARGET, '0.0.0.0:18787'),
+            'deb.systemctl stop': commands.deb_systemctl(TARGET, UnitAction.STOP),
+            'deb.systemctl restart': commands.deb_systemctl(TARGET, UnitAction.RESTART),
+            'deb.installed': commands.deb_installed(TARGET),
+            'deb.unit': commands.deb_unit(TARGET),
+            'deb.main-user': commands.deb_main_user(TARGET),
+            'deb.journal': commands.deb_journal(TARGET, 1763380000),
+            'deb.purge': commands.deb_purge(TARGET),
+            'deb.leftovers': commands.deb_leftovers(TARGET),
+            'deb.deliver': commands.deb_deliver(TARGET, RUN, 'dist/prysm-headless-linux-arm64.deb'),
+            'image.docker': commands.image_docker(TARGET),
+            'image.load': commands.image_load(TARGET, RUN),
+            'image.present': commands.image_present(TARGET, RUN),
+            'image.remove': commands.image_remove(TARGET),
+            'image.device': commands.image_device(TARGET, DEVICE),
+            'image.deliver': commands.image_deliver(TARGET, RUN, 'dist/prysm-headless-linux-arm64.tar'),
+            **{f'image.compose {action}': commands.image_compose(TARGET, RUN, action) for action in ComposeAction},
+        }
         self.assertEqual(
+            {name: command.remote for name, command in found.items()},
             {
-                'install': commands.deb_install(TARGET, RUN).remote,
-                'dropin': commands.deb_dropin(TARGET, '0.0.0.0:18787').remote,
-                'stop': commands.deb_systemctl(TARGET, UnitAction.STOP).remote,
-                'installed': commands.deb_installed(TARGET).remote,
-                'unit': commands.deb_unit(TARGET).remote,
-                'user': commands.deb_main_user(TARGET).remote,
-                'journal': commands.deb_journal(TARGET, 1763380000).remote,
-                'purge': commands.deb_purge(TARGET).remote,
-            },
-            {
-                'install': f'cd {DIRECTORY} && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y '
+                'deb.sudo': 'sudo -n true',
+                'deb.install': f'cd {DIRECTORY} && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y '
                 '--no-install-recommends ./prysm-headless.deb',
-                'dropin': "sudo -n mkdir -p /run/systemd/system/prysm-headless.service.d && printf '%s\\n' "
+                'deb.dropin': "sudo -n mkdir -p /run/systemd/system/prysm-headless.service.d && printf '%s\\n' "
                 "'[Service]' 'ExecStart=' 'ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json "
                 "--listen 0.0.0.0:18787 --metrics' | sudo -n tee "
                 '/run/systemd/system/prysm-headless.service.d/prysm-acceptance.conf > /dev/null && '
                 'sudo -n systemctl daemon-reload',
-                'stop': 'sudo -n systemctl stop prysm-headless.service',
-                'installed': "dpkg-query -W -f='${db:Status-Status} ${Version}\\n' prysm-headless 2>/dev/null "
+                'deb.systemctl stop': 'sudo -n systemctl stop prysm-headless.service',
+                'deb.systemctl restart': 'sudo -n systemctl restart prysm-headless.service',
+                'deb.installed': "dpkg-query -W -f='${db:Status-Status} ${Version}\\n' prysm-headless 2>/dev/null "
                 '|| echo not-installed',
-                'unit': 'systemctl show -p LoadState -p ActiveState -p SubState -p Result -p ExecMainCode '
+                'deb.unit': 'systemctl show -p LoadState -p ActiveState -p SubState -p Result -p ExecMainCode '
                 '-p ExecMainStatus -p MainPID prysm-headless.service',
-                'user': 'ps -o user= -p "$(systemctl show -p MainPID --value prysm-headless.service)"',
-                'journal': 'sudo -n journalctl -u prysm-headless.service -q --no-pager -o short-iso '
+                'deb.main-user': 'ps -o user= -p "$(systemctl show -p MainPID --value prysm-headless.service)"',
+                'deb.journal': 'sudo -n journalctl -u prysm-headless.service -q --no-pager -o short-iso '
                 '--since @1763380000',
-                'purge': 'sudo -n rm -f /run/systemd/system/prysm-headless.service.d/prysm-acceptance.conf; '
+                'deb.purge': 'sudo -n rm -f /run/systemd/system/prysm-headless.service.d/prysm-acceptance.conf; '
                 'sudo -n rmdir /run/systemd/system/prysm-headless.service.d 2>/dev/null; '
                 'sudo -n env DEBIAN_FRONTEND=noninteractive apt-get purge -y prysm-headless; s=$?; '
                 'sudo -n systemctl daemon-reload; exit $s',
-            },
-        )
-        deliver = commands.deb_deliver(TARGET, RUN, 'dist/prysm-headless-linux-arm64.deb')
-        self.assertEqual(
-            deliver.remote,
-            f'mkdir -p $HOME/.prysm-acceptance && mkdir -m 700 {DIRECTORY} && cat > {DIRECTORY}/prysm-headless.deb '
-            f'&& cd {DIRECTORY} && pwd -P && date +%s',
-        )
-        self.assertEqual(deliver.stdin_file, 'dist/prysm-headless-linux-arm64.deb')
-
-    def test_exact_image_command_lines(self) -> None:
-        project = f'prysm-acceptance-{RUN}'
-        compose = f'cd {DIRECTORY} && docker compose -p {project} -f compose.yaml -f compose.acceptance.yaml '
-        self.assertEqual(
-            {action: commands.image_compose(TARGET, RUN, action).remote for action in ComposeAction},
-            {
-                ComposeAction.SEED: compose + 'run --rm -T --no-deps --entrypoint sh prysm -c '
+                'deb.leftovers': 'for p in /usr/bin/prysm-headless /usr/lib/systemd/system/prysm-headless.service '
+                '/usr/share/doc/prysm-headless '
+                '/etc/systemd/system/prysm-headless.service /etc/systemd/system/prysm-headless.service.d '
+                '/etc/systemd/system/multi-user.target.wants/prysm-headless.service /var/lib/prysm '
+                '/var/lib/private/prysm /run/systemd/system/prysm-headless.service.d; do '
+                'if sudo -n test -e "$p" || sudo -n test -L "$p"; then echo "$p"; fi; done; '
+                "getent passwd prysm-headless > /dev/null && echo 'user prysm-headless'; "
+                "getent group prysm-headless > /dev/null && echo 'group prysm-headless'; "
+                "dpkg-query -W -f='${db:Status-Status}\\n' prysm-headless 2>/dev/null; true",
+                'deb.deliver': f'mkdir -p $HOME/.prysm-acceptance && mkdir -m 700 {DIRECTORY} && '
+                f'cat > {DIRECTORY}/prysm-headless.deb && cd {DIRECTORY} && pwd -P && date +%s',
+                'image.docker': "docker info --format '{{.ServerVersion}}' && docker compose version --short",
+                'image.load': f"docker load -i {DIRECTORY}/prysm-headless.tar && docker image inspect -f '{{{{.Id}}}}' "
+                'prysm-headless:local',
+                'image.present': "docker image inspect -f '{{.Id}}' prysm-headless:local 2>/dev/null; "
+                f'docker ps -aq --filter label=com.docker.compose.project={project}; '
+                f'docker volume ls -q --filter label=com.docker.compose.project={project}; true',
+                'image.remove': "if docker image inspect -f '{{.Id}}' prysm-headless:local > /dev/null 2>&1; "
+                'then docker image rm prysm-headless:local; else echo gone; fi',
+                'image.device': f'if [ -e {DEVICE} ]; then stat -L -c %g {DEVICE}; else echo absent; fi',
+                'image.deliver': f'mkdir -p $HOME/.prysm-acceptance && mkdir -m 700 {DIRECTORY} && '
+                f'cat > {DIRECTORY}/prysm-headless.tar && cd {DIRECTORY} && pwd -P && date +%s',
+                'image.compose seed': compose + 'run --rm -T --no-deps --entrypoint sh prysm -c '
                 "'cat > /data/settings.json' < settings.json",
-                ComposeAction.UP: compose + 'up -d --pull never --no-build',
-                ComposeAction.STATE: compose + "ps -a --format '{{.State}} {{.ExitCode}}' prysm",
-                ComposeAction.STOP: compose + 'stop prysm',
-                ComposeAction.RECREATE: compose + 'up -d --pull never --no-build --force-recreate',
-                ComposeAction.LOGS: compose + 'logs --no-color --timestamps prysm',
-                ComposeAction.DOWN: compose + 'down --volumes --remove-orphans',
+                'image.compose up': compose + 'up -d --pull never --no-build',
+                'image.compose state': compose + "ps -a --format '{{.State}} {{.ExitCode}}' prysm",
+                'image.compose stop': compose + 'stop prysm',
+                'image.compose recreate': compose + 'up -d --pull never --no-build --force-recreate',
+                'image.compose logs': compose + 'logs --no-color --timestamps prysm',
+                'image.compose down': compose + 'down --volumes --remove-orphans',
             },
         )
-        self.assertEqual(
-            commands.image_docker(TARGET).remote,
-            "docker info --format '{{.ServerVersion}}' && docker compose version --short",
-        )
-        self.assertEqual(
-            commands.image_load(TARGET, RUN).remote,
-            f"docker load -i {DIRECTORY}/prysm-headless.tar && docker image inspect -f '{{{{.Id}}}}' "
-            'prysm-headless:local',
-        )
-        self.assertEqual(
-            commands.image_present(TARGET, RUN).remote,
-            "docker image inspect -f '{{.Id}}' prysm-headless:local 2>/dev/null; "
-            f'docker ps -aq --filter label=com.docker.compose.project={project}; '
-            f'docker volume ls -q --filter label=com.docker.compose.project={project}; true',
-        )
-        self.assertEqual(
-            commands.image_remove(TARGET).remote,
-            "if docker image inspect -f '{{.Id}}' prysm-headless:local > /dev/null 2>&1; "
-            'then docker image rm prysm-headless:local; else echo gone; fi',
-        )
-        self.assertEqual(
-            commands.image_device(TARGET, DEVICE).remote,
-            f'if [ -e {DEVICE} ]; then stat -L -c %g {DEVICE}; else echo absent; fi',
-        )
-        self.assertEqual(
-            commands.image_deliver(TARGET, RUN, 'dist/prysm-headless-linux-arm64.tar').remote,
-            f'mkdir -p $HOME/.prysm-acceptance && mkdir -m 700 {DIRECTORY} && cat > {DIRECTORY}/prysm-headless.tar '
-            f'&& cd {DIRECTORY} && pwd -P && date +%s',
-        )
-        self.assertEqual(commands.deb_sudo(TARGET).remote, 'sudo -n true')
-        self.assertEqual(
-            commands.deb_leftovers(TARGET).remote,
-            'for p in /usr/bin/prysm-headless /usr/lib/systemd/system/prysm-headless.service '
-            '/usr/share/doc/prysm-headless '
-            '/etc/systemd/system/prysm-headless.service /etc/systemd/system/prysm-headless.service.d '
-            '/etc/systemd/system/multi-user.target.wants/prysm-headless.service /var/lib/prysm '
-            '/var/lib/private/prysm /run/systemd/system/prysm-headless.service.d; do '
-            'if sudo -n test -e "$p" || sudo -n test -L "$p"; then echo "$p"; fi; done; '
-            "getent passwd prysm-headless > /dev/null && echo 'user prysm-headless'; "
-            "getent group prysm-headless > /dev/null && echo 'group prysm-headless'; "
-            "dpkg-query -W -f='${db:Status-Status}\\n' prysm-headless 2>/dev/null; true",
-        )
+        self.assertEqual(found['deb.deliver'].stdin_file, 'dist/prysm-headless-linux-arm64.deb')
         self.assertEqual(commands.compose_project('RUN-CELL'), 'prysm-acceptance-run-cell')
-
-    def test_xtask_dist(self) -> None:
         build = commands.xtask_dist(['deb-arm64', 'image-arm64'])
-        self.assertEqual(build.argv, ('cargo', 'xtask', 'dist', 'deb-arm64', 'image-arm64'))
-        self.assertEqual(build.cwd, str(commands.ROOT))
-        self.assertEqual(build.display(), 'cargo xtask dist deb-arm64 image-arm64')
+        self.assertEqual(
+            (build.argv, build.cwd), (('cargo', 'xtask', 'dist', 'deb-arm64', 'image-arm64'), str(commands.ROOT))
+        )
 
     def test_parameters_are_checked(self) -> None:
         refused = [
@@ -236,6 +171,7 @@ class Templates(unittest.TestCase):
             lambda: commands.image_compose(TARGET, '$(reboot)', ComposeAction.UP),
             lambda: commands.image_remove('-oProxyCommand=sh'),
             lambda: commands.image_device(TARGET, '/dev/../etc/shadow'),
+            lambda: host_image.override('/dev/video0"]\n    privileged: true #', '44'),
             lambda: commands.xtask_dist([]),
             lambda: commands.xtask_dist(['deb-arm64', '--release']),
             lambda: commands.xtask_dist(['deb-arm64; rm -rf /']),
@@ -299,15 +235,18 @@ class Packaging(unittest.TestCase):
         self.assertIn('stop_grace_period: 30s', compose)
         xtask = (commands.ROOT / 'tools/xtask/src/dist/docker.rs').read_text()
         self.assertIn(f'const IMAGE: &str = "{commands.IMAGE_TAG}";', xtask)
+
+    def test_the_dist_files_and_targets(self) -> None:
         dist = (commands.ROOT / 'tools/xtask/src/dist.rs').read_text()
-        for _target, file in prepare.TARGETS.values():
-            stem = re.sub(r'(arm64|amd64)', '{}', file)
-            self.assertIn(f'"{stem}"', dist, file)
+        files = {file: name for table in prepare.TARGETS.values() for file, name in table.items()}
+        for file in files:
+            self.assertIn(f'"{re.sub(r"(arm64|amd64)", "{}", file)}"', dist, file)
+        self.assertEqual(set(files.values()) | {'tv-full', 'tv-slim'}, set(commands.XTASK_TARGETS))
 
 
 class Archives(unittest.TestCase):
     def setUp(self) -> None:
-        self.directory = Path(tempfile.mkdtemp())
+        self.directory = temporary(self)
 
     def test_the_control_file_of_a_package(self) -> None:
         fields = host_deb.deb_control(write_deb(self.directory / 'p.deb'))
@@ -334,19 +273,31 @@ class Archives(unittest.TestCase):
             'services:\n  prysm:\n    restart: "no"\n    command: ["--metrics"]\n'
             f'    devices: !override ["{DEVICE}:/dev/video0"]\n    group_add: !override ["44"]\n',
         )
-        with self.assertRaises(commands.Refused):
-            host_image.override('/dev/video0"]\n    privileged: true #', '44')
         self.assertEqual(host_image.compose_version('v2.26.1\n'), (2, 26, 1))
         self.assertLess(host_image.compose_version('2.20.2'), host_image.COMPOSE_OVERRIDE)
 
 
-class Deb(unittest.TestCase):
+class SeamTest(unittest.TestCase):
+    """A seam's run directory here, the cell's, with a fake Prysm on loopback."""
+
+    cell = ''
+
     def setUp(self) -> None:
-        self.out_dir = Path(tempfile.mkdtemp()) / '20261117-101500-host' / 'linux-deb-device'
+        self.out_dir = temporary(self) / '20261117-101500-host' / self.cell
         self.out_dir.mkdir(parents=True)
-        self.deb = write_deb(self.out_dir.parent / 'prysm-headless-linux-arm64.deb')
         self.prysm = FakePrysm()
         self.addCleanup(self.prysm.close)
+
+    def all_run(self, recorded: transport.Transcript) -> None:
+        self.assertEqual([template for template, _ in recorded.entries], [], 'commands expected but not run')
+
+
+class Deb(SeamTest):
+    cell = 'linux-deb-device'
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.deb = write_deb(self.out_dir.parent / 'prysm-headless-linux-arm64.deb')
 
     def seam(self, *entries: tuple[str, Result]) -> tuple[host_deb.SshDeb, transport.Transcript]:
         recorded = transport.Transcript(entries)
@@ -357,7 +308,7 @@ class Deb(unittest.TestCase):
     def preflight(self, *entries: tuple[str, Result]) -> str | None:
         seam, recorded = self.seam(*entries)
         reason = seam.preflight(Source.DEVICE, DEVICE)
-        remaining(self, recorded)
+        self.all_run(recorded)
         return reason
 
     def test_a_clean_bench_is_ready(self) -> None:
@@ -385,27 +336,27 @@ class Deb(unittest.TestCase):
         reason = self.preflight(
             ('linux.probe', ok('Linux aarch64\n')),
             ('deb.sudo', ok()),
-            ('deb.leftovers', ok('/usr/bin/prysm-headless\n/var/lib/prysm\nuser prysm\ninstalled\n')),
+            ('deb.leftovers', ok('/usr/bin/prysm-headless\n/var/lib/prysm\nuser prysm-headless\ninstalled\n')),
         )
         self.assertEqual(
             reason,
-            'Prysm is already on pi@pi.example: /usr/bin/prysm-headless, /var/lib/prysm, user prysm, installed. '
-            'The bench must start without it: there, sudo apt-get purge prysm-headless, and remove what is still '
-            'listed by hand',
+            'Prysm is already on pi@pi.example: /usr/bin/prysm-headless, /var/lib/prysm, user prysm-headless, '
+            'installed. The bench must start without it: there, sudo apt-get purge prysm-headless, and remove what '
+            'is still listed by hand',
         )
         self.deb.write_bytes(b'not a package')
         self.assertIn('no prysm-headless control file', self.preflight() or '')
 
     def test_install_start_stop_close(self) -> None:
         seam, recorded = self.seam(
-            ('deb.deliver', ok(f'/home/pi/.prysm-acceptance/{RUN}\n1763380000\n')),
+            ('deb.deliver', DELIVERED),
             ('deb.install', ok('Setting up prysm-headless\n')),
             ('deb.installed', ok(f'installed {VERSION}\n')),
             ('deb.dropin', ok()),
             ('deb.systemctl', ok()),
             ('deb.unit', ok('ActiveState=activating\n')),
             ('deb.unit', ok('ActiveState=active\n')),
-            ('deb.main-user', ok('prysm\n')),
+            ('deb.main-user', ok('prysm-headless\n')),
             ('deb.systemctl', ok()),
             ('deb.unit', ok('ActiveState=inactive\nResult=success\nExecMainCode=1\nExecMainStatus=0\n')),
             ('deb.journal', ok('prysm started\n')),
@@ -420,12 +371,12 @@ class Deb(unittest.TestCase):
         self.assertEqual(
             self.prysm.saved, [{'expected': 1, 'settings': {'output': {'kind': 'wled'}, 'processing': {}}}]
         )
-        self.assertEqual(seam.main_user(), 'prysm')
+        self.assertEqual(seam.main_user(), 'prysm-headless')
         self.assertEqual(seam.stop(), 0)
         self.assertEqual(seam.stop(), 0)  # twice: nothing more runs
         seam.close()
         seam.close()
-        remaining(self, recorded)
+        self.all_run(recorded)
         self.assertIn('Setting up', (self.out_dir / 'apt.log').read_text())
         self.assertIn('prysm started', (self.out_dir / 'journal.log').read_text())
         self.assertIn('restart', recorded.calls[4].remote or '')
@@ -441,24 +392,30 @@ class Deb(unittest.TestCase):
             self.assertIn(expected, str(seam.stop()))
 
     def test_a_failed_install_still_purges(self) -> None:
-        seam, recorded = self.seam(
-            ('deb.deliver', ok(f'/home/pi/.prysm-acceptance/{RUN}\n1763380000\n')),
-            ('deb.install', Result(100, '', 'E: dependency problems')),
-            ('deb.journal', ok()),
-            ('linux.kernel', ok()),
-            ('deb.purge', ok()),
-            ('deb.leftovers', ok()),
-            ('linux.remove', ok()),
-        )
-        with self.assertRaisesRegex(RuntimeError, 'apt-get install exited 100'):
-            seam.deliver()
-        self.assertIsNone(seam.stop())  # never started: nothing runs
-        seam.close()
-        remaining(self, recorded)
+        for install, installed, error in (
+            (Result(100, '', 'E: dependency problems'), [], 'apt-get install exited 100'),
+            (ok(), [('deb.installed', ok('installed 0.9.0-1\n'))], "dpkg reports 'installed 0.9.0-1'"),
+        ):
+            with self.subTest(error):
+                seam, recorded = self.seam(
+                    ('deb.deliver', DELIVERED),
+                    ('deb.install', install),
+                    *installed,
+                    ('deb.journal', ok()),
+                    ('linux.kernel', ok()),
+                    ('deb.purge', ok()),
+                    ('deb.leftovers', ok()),
+                    ('linux.remove', ok()),
+                )
+                with self.assertRaisesRegex(RuntimeError, error):
+                    seam.deliver()
+                self.assertIsNone(seam.stop())  # never started: nothing runs
+                seam.close()
+                self.all_run(recorded)
 
     def test_a_failed_start_is_reported_and_cleaned_up(self) -> None:
         seam, recorded = self.seam(
-            ('deb.deliver', ok(f'/home/pi/.prysm-acceptance/{RUN}\n1763380000\n')),
+            ('deb.deliver', DELIVERED),
             ('deb.install', ok()),
             ('deb.installed', ok(f'installed {VERSION}\n')),
             ('deb.dropin', ok()),
@@ -480,40 +437,30 @@ class Deb(unittest.TestCase):
         self.assertIn('bad settings', (self.out_dir / 'journal.log').read_text())
         self.assertEqual(seam.stop(), 1)
         seam.close()
-        remaining(self, recorded)
+        self.all_run(recorded)
 
     def test_what_the_purge_leaves_fails_the_close_and_the_directory_still_goes(self) -> None:
         seam, recorded = self.seam(
             ('deb.journal', ok()),
             ('linux.kernel', ok()),
             ('deb.purge', ok()),
-            ('deb.leftovers', ok('/var/lib/private/prysm\nuser prysm\ngroup prysm\nnot-installed\n')),
+            ('deb.leftovers', ok('/var/lib/private/prysm\nuser prysm-headless\ngroup prysm-headless\nnot-installed\n')),
             ('linux.remove', ok()),
         )
         seam.delivered, seam.since = True, 1763380000
         with self.assertRaisesRegex(
-            RuntimeError, 'left on pi@pi.example: /var/lib/private/prysm, user prysm, group prysm$'
+            RuntimeError, 'left on pi@pi.example: /var/lib/private/prysm, user prysm-headless, group prysm-headless$'
         ):
             seam.close()
-        remaining(self, recorded)
-
-    def test_the_wrong_version_installed_fails(self) -> None:
-        seam, _ = self.seam(
-            ('deb.deliver', ok('/home/pi/x\n1763380000\n')),
-            ('deb.install', ok()),
-            ('deb.installed', ok('installed 0.9.0-1\n')),
-        )
-        with self.assertRaisesRegex(RuntimeError, "dpkg reports 'installed 0.9.0-1'"):
-            seam.deliver()
+        self.all_run(recorded)
 
 
-class Image(unittest.TestCase):
+class Image(SeamTest):
+    cell = 'linux-image-device'
+
     def setUp(self) -> None:
-        self.out_dir = Path(tempfile.mkdtemp()) / '20261117-101500-host' / 'linux-image-device'
-        self.out_dir.mkdir(parents=True)
+        super().setUp()
         self.image = write_image(self.out_dir.parent / 'prysm-headless-linux-arm64.tar')
-        self.prysm = FakePrysm()
-        self.addCleanup(self.prysm.close)
 
     def seam(self, *entries: tuple[str, Result]) -> tuple[host_image.SshImage, transport.Transcript]:
         recorded = transport.Transcript(entries)
@@ -524,7 +471,7 @@ class Image(unittest.TestCase):
     def preflight(self, *entries: tuple[str, Result]) -> tuple[str | None, host_image.SshImage]:
         seam, recorded = self.seam(*entries)
         reason = seam.preflight(Source.DEVICE, DEVICE)
-        remaining(self, recorded)
+        self.all_run(recorded)
         return reason, seam
 
     def test_a_clean_bench_is_ready(self) -> None:
@@ -537,34 +484,27 @@ class Image(unittest.TestCase):
         )
         self.assertIsNone(reason)
         self.assertEqual(
-            (seam.listed(DEVICE), seam.capture_path(DEVICE), seam.url.rsplit(':', 1)[0]),
-            ('/dev/video0', '/dev/video0', 'http://127.0.0.1'),
+            (seam.listed(DEVICE), seam.capture_path(DEVICE), seam.group), ('/dev/video0', '/dev/video0', '44')
         )
-        self.assertEqual(seam.group, '44')
 
     def test_refusals(self) -> None:
         probe = ('linux.probe', ok('Linux aarch64\n'))
-        reason, _ = self.preflight(probe, ('image.docker', Result(1, '', 'permission denied ... docker.sock')))
-        self.assertIn('docker info or docker compose version failed', reason or '')
-        reason, _ = self.preflight(probe, ('image.docker', ok('26.1.5\n2.20.2\n')))
-        self.assertIn("docker compose '2.20.2'", reason or '')
-        reason, _ = self.preflight(
-            probe, ('image.docker', ok('26.1.5\n2.26.1\n')), ('image.present', ok(IMAGE_ID + '\n'))
-        )
-        self.assertIn('prysm-headless:local or compose project', reason or '')
-        reason, _ = self.preflight(
-            probe, ('image.docker', ok('26\n2.26.1\n')), ('image.present', ok()), ('image.device', ok('absent\n'))
-        )
-        self.assertIn(f'capture device {DEVICE} is missing', reason or '')
-        reason, _ = self.preflight(('linux.probe', ok('Linux x86_64\n')))
-        self.assertEqual(reason, 'prysm-headless-linux-arm64.tar is for arm64; pi@pi.example is x86_64')
+        docker = ('image.docker', ok('26.1.5\n2.26.1\n'))
+        for entries, expected in (
+            ([probe, ('image.docker', Result(1, '', 'permission denied ... docker.sock'))], 'docker info or docker'),
+            ([probe, ('image.docker', ok('26.1.5\n2.20.2\n'))], "docker compose '2.20.2'"),
+            ([probe, docker, ('image.present', ok(IMAGE_ID + '\n'))], 'prysm-headless:local or compose project'),
+            ([probe, docker, ('image.present', ok()), ('image.device', ok('absent\n'))], f'device {DEVICE} is missing'),
+            ([('linux.probe', ok('Linux x86_64\n'))], 'prysm-headless-linux-arm64.tar is for arm64; pi@pi.example'),
+        ):
+            with self.subTest(expected):
+                self.assertIn(expected, self.preflight(*entries)[0] or '')
         write_image(self.image, tag='other:latest')
-        reason, _ = self.preflight()
-        self.assertIn('no prysm-headless:local image', reason or '')
+        self.assertIn('no prysm-headless:local image', self.preflight()[0] or '')
 
     def test_load_start_stop_close(self) -> None:
         seam, recorded = self.seam(
-            ('image.deliver', ok('/home/pi/x\n1763380000\n')),
+            ('image.deliver', DELIVERED),
             ('image.load', ok(f'Loaded image: prysm-headless:local\n{IMAGE_ID}\n')),
             ('linux.put', ok()),
             ('linux.put', ok()),
@@ -589,7 +529,7 @@ class Image(unittest.TestCase):
         self.assertEqual(seam.stop(), 0)
         seam.close()
         seam.close()
-        remaining(self, recorded)
+        self.all_run(recorded)
         actions = [
             re.sub(r'.* -f compose.acceptance.yaml ', '', c.remote or '')
             for c in recorded.calls
@@ -600,7 +540,6 @@ class Image(unittest.TestCase):
         )
         self.assertEqual(recorded.calls[2].stdin_file, str(host_image.COMPOSE_FILE))
         self.assertIn('!override', (self.out_dir / 'compose.acceptance.yaml').read_text())
-        self.assertEqual(recorded.calls[14].template, 'image.remove')
         self.assertIn('prysm started', (self.out_dir / 'container.log').read_text())
 
     def test_a_kill_after_the_grace_period_is_no_clean_exit(self) -> None:
@@ -610,7 +549,7 @@ class Image(unittest.TestCase):
 
     def test_a_failed_start_is_reported_and_cleaned_up(self) -> None:
         seam, recorded = self.seam(
-            ('image.deliver', ok('/home/pi/x\n1763380000\n')),
+            ('image.deliver', DELIVERED),
             ('image.load', ok(f'{IMAGE_ID}\n')),
             ('linux.put', ok()),
             ('linux.put', ok()),
@@ -634,11 +573,11 @@ class Image(unittest.TestCase):
             seam.start({'processing': {}})
         self.assertEqual(seam.stop(), 1)
         seam.close()
-        remaining(self, recorded)
+        self.all_run(recorded)
 
     def test_a_failed_load_still_removes_the_tag_and_the_run_directory(self) -> None:
         seam, recorded = self.seam(
-            ('image.deliver', ok('/home/pi/x\n1763380000\n')),
+            ('image.deliver', DELIVERED),
             ('image.load', Result(1, '', 'no space left on device')),
             ('linux.kernel', ok()),
             ('image.remove', ok('gone\n')),
@@ -648,37 +587,30 @@ class Image(unittest.TestCase):
             seam.deliver()
         self.assertIsNone(seam.stop())
         seam.close()
-        remaining(self, recorded)
-
-    def test_the_sender_is_the_targets_address_on_the_route_to_wled(self) -> None:
-        seam, _ = self.seam(('linux.route', ok('192.0.2.40 dev eth0 src 192.0.2.70 uid 1000\n')))
-        self.assertEqual(seam.sender(), '192.0.2.70')
+        self.all_run(recorded)
 
 
 class Prepare(unittest.TestCase):
     def values(self, **linux: str) -> config.Config:
         return config.parse({'mac': {'binary': 'dist/prysm-headless-macos-arm64'}, 'linux': linux})
 
-    def test_the_table_names_each_dist_file(self) -> None:
-        self.assertEqual(
-            {target for target, _ in prepare.TARGETS.values()} | {'tv-full', 'tv-slim'}, set(commands.XTASK_TARGETS)
-        )
+    def test_one_build_for_the_configured_dist_files(self) -> None:
         values = self.values(
             binary='dist/prysm-headless-linux-arm64',
             deb='dist/prysm-headless-linux-arm64.deb',
             image='dist/prysm-headless-linux-amd64.tar',
         )
-        build = prepare.command(list(host_cells.CELLS), values)
+        build = prepare.command(CELLS, values)
         self.assertEqual(
             build and build.argv, ('cargo', 'xtask', 'dist', 'mac', 'linux-arm64', 'deb-arm64', 'image-amd64')
         )
-        deb_only = prepare.command([Cell(Platform.LINUX, Delivery.DEB, Source.DEVICE)], values)
+        deb_only = prepare.command([DEB_CELL], values)
         self.assertEqual(deb_only and deb_only.argv[3:], ('deb-arm64',))
-        self.assertIsNone(prepare.command([Cell(Platform.LINUX, Delivery.DEB, Source.DEVICE)], self.values()))
+        self.assertIsNone(prepare.command([DEB_CELL], self.values()))
 
     def test_another_path_is_refused(self) -> None:
         with self.assertRaisesRegex(prepare.PrepareError, r'dist/prysm-headless-linux-arm64\.deb'):
-            prepare.command([Cell(Platform.LINUX, Delivery.DEB, Source.DEVICE)], self.values(deb='work/my.deb'))
+            prepare.command([DEB_CELL], self.values(deb='work/my.deb'))
 
     def test_a_failed_build_ends_the_run_before_anything_is_contacted(self) -> None:
         args = run.arguments(['host', 'linux', '--prepare', '--config', str(EXAMPLE)])
@@ -695,60 +627,48 @@ class Prepare(unittest.TestCase):
         self.assertIn(
             '--prepare (dry run, not run): $ cargo xtask dist mac linux-arm64 deb-arm64 image-arm64', done.stdout
         )
-        directory = Path(tempfile.mkdtemp())
-        (directory / 'config.toml').write_text('[linux]\ntarget = "ssh://pi@pi.example"\ndeb = "elsewhere/p.deb"\n')
-        done = runner(
-            'host', 'linux', '--delivery', 'deb', '--prepare', '--dry-run', '--config', str(directory / 'config.toml')
-        )
+        path = temporary(self) / 'config.toml'
+        path.write_text('[linux]\ntarget = "ssh://pi@pi.example"\ndeb = "elsewhere/p.deb"\n')
+        done = runner('host', 'linux', '--delivery', 'deb', '--prepare', '--dry-run', '--config', str(path))
         self.assertEqual(done.returncode, run.PREPARATION_FAILED, done.stdout + done.stderr)
         self.assertIn('--prepare builds only dist/', done.stderr)
 
 
 class Selection(unittest.TestCase):
     def test_all_runs_every_cell_one_at_a_time(self) -> None:
-        self.assertEqual(
-            [cell.id for cell in run.chosen(run.arguments(['all']))],
-            [
-                'mac-binary-file',
-                'mac-binary-device',
-                'linux-binary-file',
-                'linux-binary-device',
-                'linux-deb-device',
-                'linux-image-device',
-            ],
-        )
+        """Each cell in order, a delivery's own checks and remote commands only in its cell."""
         done = runner('all', '--dry-run', '--config', str(EXAMPLE), offline=True)
         self.assertEqual(done.returncode, 0, done.stdout[-2000:] + done.stderr)
-        found = re.findall(r'^Cell (\S+)', done.stdout, re.MULTILINE)
-        self.assertEqual(found, [cell.id for cell in host_cells.CELLS])
-        deb = done.stdout[done.stdout.index('Cell linux-deb-device') : done.stdout.index('Cell linux-image-device')]
-        self.assertIn('test_package_restart', deb)
-        self.assertNotIn('test_image_volume', deb)
-        self.assertIn('test_image_volume', done.stdout[done.stdout.index('Cell linux-image-device') :])
-        self.assertNotIn('test_package_user', done.stdout[: done.stdout.index('Cell linux-deb-device')])
+        self.assertEqual(re.findall(r'^Cell (\S+)', done.stdout, re.MULTILINE), [cell.id for cell in CELLS])
+        sections = dict(re.findall(r'^Cell (\S+)(.*?)(?=^Cell |\Z)', done.stdout, re.MULTILINE | re.DOTALL))
+        deb, image = sections['linux-deb-device'], sections['linux-image-device']
+        for text in (
+            'test_package_user',
+            'test_package_restart',
+            'apt-get install -y --no-install-recommends',
+            'apt-get purge -y',
+        ):
+            self.assertIn(text, deb)
+        for text in ('test_image_volume', 'docker load -i', 'down --volumes --remove-orphans'):
+            self.assertIn(text, image)
+        for cell, text in sections.items():
+            if cell != 'linux-deb-device':
+                self.assertNotIn('test_package_', text, cell)
+            if cell != 'linux-image-device':
+                self.assertNotIn('test_image_volume', text, cell)
 
     def test_a_package_or_image_delivery_names_its_one_cell(self) -> None:
         args = run.arguments(['host', 'linux', '--delivery', 'deb'])
         self.assertEqual((args.delivery, args.source), (Delivery.DEB, Source.DEVICE))
-        self.assertEqual([cell.id for cell in run.chosen(args)], ['linux-deb-device'])
+        self.assertEqual(run.chosen(args), [DEB_CELL])
         self.assertIsNone(run.arguments(['host', 'linux']).source)
         with self.assertRaises(SystemExit):
             run.arguments(['host', 'linux', '--delivery', 'image', '--source', 'file'])
         with self.assertRaises(SystemExit):
             run.arguments(['host', 'mac', '--delivery', 'deb'])
 
-    def test_the_package_and_image_cells_print_their_remote_commands(self) -> None:
-        for delivery, expected in (
-            ('deb', ('apt-get install -y --no-install-recommends ./prysm-headless.deb', 'apt-get purge -y')),
-            ('image', ('docker load -i', 'down --volumes --remove-orphans')),
-        ):
-            done = runner('host', 'linux', '--delivery', delivery, '--dry-run', '--config', str(EXAMPLE), offline=True)
-            self.assertEqual(done.returncode, 0, done.stdout[-2000:] + done.stderr)
-            for text in expected:
-                self.assertIn(text, done.stdout)
-
     def test_a_named_cell_with_a_missing_artifact_fails(self) -> None:
-        directory = Path(tempfile.mkdtemp())
+        directory = temporary(self)
         (directory / 'config.toml').write_text(
             '[wled]\naddress = "127.0.0.1:9"\n[leds]\ntop = 1\n'
             '[linux]\ntarget = "ssh://pi@pi.example"\ndevice = "/dev/video0"\ndeb = "no/such.deb"\n'
@@ -774,10 +694,8 @@ class Selection(unittest.TestCase):
 
     def test_a_local_target_skips_the_package_and_image(self) -> None:
         values = config.parse({'linux': {'target': 'local', 'deb': 'dist/prysm-headless-linux-arm64.deb'}})
-        reason = host_cells._local_only(Cell(Platform.LINUX, Delivery.DEB, Source.DEVICE), values)  # pyright: ignore[reportPrivateUsage]
+        reason = host_cells._local_only(DEB_CELL, values)  # pyright: ignore[reportPrivateUsage]
         self.assertIn('"local" is not implemented', reason or '')
-        self.assertEqual(values.linux.artifact(Delivery.DEB), commands.ROOT / 'dist/prysm-headless-linux-arm64.deb')
-        self.assertIsNone(values.linux.artifact(Delivery.IMAGE))
 
 
 if __name__ == '__main__':

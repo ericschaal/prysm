@@ -234,7 +234,7 @@ may be there before the run, and nothing is left after it.
 - preflight: the package's `Architecture` read from its control file here,
   against `uname -m`; `sudo -n true`; then `deb.leftovers` must find nothing:
   none of the package's files, `/var/lib/prysm` or `/var/lib/private/prysm`,
-  a unit of that name, the run's drop-in, a `prysm` user or group, or a
+  a unit of that name, the run's drop-in, a `prysm-headless` user or group, or a
   package dpkg knows (else a SKIP that lists what it found, or a failure
   when named); the device readable; the listen port free;
 - deliver: the `.deb` copied into the run directory, then
@@ -246,8 +246,7 @@ may be there before the run, and nothing is left after it.
   that runs the unit's own command with `--listen LISTEN --metrics`;
   `daemon-reload`; `systemctl restart`; once the unit is active and the API
   answers, the settings are given through the portal (`PUT
-  /api/v1/settings`), so Prysm writes them into its state directory itself,
-  whichever user owns it;
+  /api/v1/settings`), so Prysm writes them into its state directory itself;
 - stop: `systemctl stop` (SIGTERM; systemd kills after the unit's 30 s); the
   exit code is `ExecMainStatus` when `ExecMainCode` says the process exited,
   otherwise the stop reports the signal or the timeout;
