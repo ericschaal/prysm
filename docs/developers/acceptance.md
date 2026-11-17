@@ -322,8 +322,8 @@ checks. Each fixture and check carries its description (the
 docstring) and what it does for the dry run (`planned`, a `Planner` of the
 module's kind of cell), so there is no separate table of steps. A cell
 module's `CELLS` are its parameters; a check one module takes from another
-(`tv_cells.py` takes `test_wled_live` and `test_fps`) runs with the taking
-module's cells and fixtures.
+(`tv_cells.py` takes those of `tv_checks.py`) runs with the taking module's
+cells and fixtures.
 
 #### The test clip and the colour check
 
@@ -421,6 +421,20 @@ to a receiver on that platform. Each needs `--tv-is-free`: without it `tv`
 refuses (exit code 2, also with `--dry-run`) and `all` runs no TV cell. The
 TV is the owner's daily device, not a bench: a run starts and ends with no
 Prysm on it ([An installed Prysm](#an-installed-prysm-installed)).
+
+The checks any TV runs are in
+[`tv_checks.py`](../../scripts/acceptance/prysm_acceptance/tv_checks.py) and
+reach the TV only through the `Tv` protocol in
+[`tv.py`](../../scripts/acceptance/prysm_acceptance/tv.py) and Prysm's HTTP
+API. The webOS TV is its implementation, `WebosTv` in
+[`webos.py`](../../scripts/acceptance/prysm_acceptance/webos.py) (Luna calls,
+the install service, the app ids). `tv_cells.py` holds the webOS fixtures and
+the webOS package's own checks, and takes the shared checks in their order,
+each with its plan for this TV. A
+[test](../../scripts/acceptance/tests/test_acceptance_tv.py) checks that
+`tv.py` and `tv_checks.py` import nothing of `webos.py` or of the command
+templates (but the `Command` type in `tv.py`) and name nothing of Luna, the
+package or Prysm's webOS app.
 
 `[tv]` in `config.toml`:
 
@@ -723,10 +737,12 @@ The runner's own code is linted, formatted, type-checked and kept in layers.
 Python checks, as CI's `quality` job does; it needs
 [uv](https://docs.astral.sh/uv/). The rules are in
 [`pyproject.toml`](../../scripts/acceptance/pyproject.toml): Ruff, Pyright in
-strict mode, and Import Linter's layers (command line; the TV cells, which
-reuse the host cells' checks; the host cells; their pytest plugin and
-`eyes`; the clip; the feed; the package and image seams; the devices; an
-installed Prysm's backup, `installed.py`; clients; the step runner; base).
+strict mode, and Import Linter's layers (command line; the TV cells; the
+checks any TV runs, which reuse the host cells' checks; the host cells;
+their pytest plugin and `eyes`; the clip; the feed; the package and image
+seams; the devices, the webOS TV among them; an installed Prysm's backup,
+`installed.py`, and the TV the checks drive, `tv.py`; clients; the step
+runner; base).
 Only `transport.py` runs
 commands, and only `commands.py` builds them. One at a time, from the
 repository root:

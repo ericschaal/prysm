@@ -96,7 +96,7 @@ root_package = "prysm_acceptance"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layers: the command line, the TV cells, the host cells, their pytest plugin and eyes, the clip, the feed, the package and image seams, devices, an existing Prysm, clients, the step runner, the bench, base"
+name = "Layers: the command line, the TV cells, the checks any TV runs, the host cells, their pytest plugin and eyes, the clip, the feed, the package and image seams, devices, an existing Prysm and the TV the checks drive, clients, the step runner, the bench, base"
 type = "layers"
 containers = ["prysm_acceptance"]
 # Every module of the package is in a layer; a new one must be placed.
@@ -105,6 +105,7 @@ exhaustive = true
 layers = [
   "run | fake_wled",
   "tv_cells",
+  "tv_checks",
   "host_cells",
   "bench | stage_eyes",
   "edges_clip : colour_page",
@@ -112,8 +113,8 @@ layers = [
   "feed_chromecast",
   "feed_cast",
   "host_deb | host_image",
-  "host | tv | artifact | prepare",
-  "installed",
+  "host | webos | artifact | prepare",
+  "installed | tv",
   "prysm_api | wled_api",
   "plan",
   "checks",
@@ -125,12 +126,13 @@ layers = [
 name = "PyChromecast stays behind the cast feed"
 type = "forbidden"
 source_modules = [
-  "prysm_acceptance.run", "prysm_acceptance.fake_wled", "prysm_acceptance.tv_cells", "prysm_acceptance.host_cells",
+  "prysm_acceptance.run", "prysm_acceptance.fake_wled", "prysm_acceptance.tv_cells", "prysm_acceptance.tv_checks",
+  "prysm_acceptance.host_cells",
   "prysm_acceptance.bench", "prysm_acceptance.stage_eyes", "prysm_acceptance.edges_clip",
   "prysm_acceptance.colour_page", "prysm_acceptance.feed", "prysm_acceptance.feed_chromecast",
   "prysm_acceptance.host", "prysm_acceptance.artifact",
   "prysm_acceptance.host_deb", "prysm_acceptance.host_image", "prysm_acceptance.prepare",
-  "prysm_acceptance.tv", "prysm_acceptance.installed", "prysm_acceptance.prysm_api", "prysm_acceptance.wled_api", "prysm_acceptance.plan",
+  "prysm_acceptance.webos", "prysm_acceptance.tv", "prysm_acceptance.installed", "prysm_acceptance.prysm_api", "prysm_acceptance.wled_api", "prysm_acceptance.plan",
   "prysm_acceptance.checks", "prysm_acceptance.config", "prysm_acceptance.transport", "prysm_acceptance.options",
   "prysm_acceptance.commands", "prysm_acceptance.web",
 ]

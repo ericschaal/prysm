@@ -38,7 +38,7 @@ from typing import cast
 
 import pytest
 
-from prysm_acceptance import bench, commands, host_deb, installed, plan, prepare, stage_eyes, transport, tv, wled_api
+from prysm_acceptance import bench, commands, host_deb, installed, plan, prepare, stage_eyes, transport, webos, wled_api
 from prysm_acceptance import config as configuration
 from prysm_acceptance.checks import Failed
 from prysm_acceptance.config import SSH, Config
@@ -283,7 +283,7 @@ def _existing(name: str, config: Config, run: transport.Transport) -> installed.
     if name == 'tv':
         if not config.tv.target:
             raise configuration.ConfigError('[tv] target is not set')
-        return tv.Tv(run, config.tv.ssh)
+        return webos.WebosTv(run, config.tv.ssh)
     if not config.linux.target.startswith(SSH):
         raise configuration.ConfigError('[linux] target is not "ssh://USER@HOST"')
     return host_deb.DebPrysm(run, config.linux.target.removeprefix(SSH))
@@ -296,8 +296,8 @@ def _restore_plan(existing: installed.Existing, backup: installed.Backup) -> lis
             f'GET {existing.url}/api/v1/state (refused when nothing answers)',
             f'PUT {existing.url}/api/v1/settings',
         ]
-    found = cast('tv.Tv', existing)
-    preferences = tv.backed_up_preferences(backup)
+    found = cast('webos.WebosTv', existing)
+    preferences = webos.backed_up_preferences(backup)
     return [
         *shown(commands.tv_get_state(found.target)),
         "(refused when nothing answers, or the installed package is not the backup's flavour)",

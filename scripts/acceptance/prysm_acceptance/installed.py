@@ -12,7 +12,7 @@ reinstalled. `warning` says so at the end of the run, also after a failure
 or Ctrl-C, with the backup and the command that restores it into the Prysm
 the user reinstalls (`acceptance settings restore TARGET BACKUP`).
 
-`Existing` is what a target implements (`tv.Tv`, `host_deb.DebPrysm`); the
+`Existing` is what a target implements (`webos.WebosTv`, `host_deb.DebPrysm`); the
 rule, the backup's file and the warning are written once, here.
 """
 

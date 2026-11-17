@@ -1,6 +1,7 @@
 """The TV cells' parts against recorded transcripts and fakes on loopback, an existing Prysm's backup and
 restore, the end-of-run warning, and the TV cells' command line and dry runs. Nothing contacts a TV."""
 
+import ast
 from collections.abc import Callable, Iterator, Sequence
 import contextlib
 import io
@@ -30,6 +31,8 @@ from prysm_acceptance import (
     transport,
     tv,
     tv_cells,
+    tv_checks,
+    webos,
 )
 from prysm_acceptance.checks import Bench, Failed, Skipped
 from prysm_acceptance.config import Installed
@@ -55,13 +58,14 @@ DATA_ONLY = ABSENT.replace(f'absent {commands.DATA_DIR}', f'present {commands.DA
 READING = {'tv.reachable', 'tv.paths', 'tv.processes', 'tv.get-state', 'tv.read-data', 'tv.sample-worker'}
 
 
-def recorded(*entries: tuple[str, Result]) -> tv.Tv:
+def recorded(*entries: tuple[str, Result]) -> webos.WebosTv:
     """The TV on a recorded transcript."""
-    return tv.Tv(transport.Transcript(entries), HOST)
+    return webos.WebosTv(transport.Transcript(entries), HOST)
 
 
 def calls(found: tv.Tv) -> list[str]:
-    return [command.template for command in untyped(found.transport).calls]
+    """The templates the TV on a recorded transcript ran."""
+    return [command.template for command in untyped(found).transport.calls]
 
 
 def absent_data() -> list[tuple[str, Result]]:
@@ -69,7 +73,7 @@ def absent_data() -> list[tuple[str, Result]]:
 
 
 def no_wait() -> contextlib.AbstractContextManager[object]:
-    return mock.patch.object(tv.time, 'sleep')
+    return mock.patch.object(webos.time, 'sleep')
 
 
 class TheTv(unittest.TestCase):
@@ -181,11 +185,11 @@ class FakeCast:
         self.settled_times += 1
 
 
-def screen_on(*entries: tuple[str, Result], cast_feed: FakeCast | None = None) -> tv_cells.Screen:
+def screen_on(*entries: tuple[str, Result], cast_feed: FakeCast | None = None) -> tv_checks.Screen:
     found = recorded(*entries)
     ctx = Bench(config.Config(), found.transport, Path(tempfile.mkdtemp()), log=lambda line: None)
     clip = host_cells.Clip(Path('edges.mp4'), edges=True)
-    return tv_cells.Screen(found, ctx, cast('feed_cast.TvCast', cast_feed or FakeCast()), clip)
+    return tv_checks.Screen(found, ctx, cast('feed_cast.TvCast', cast_feed or FakeCast()), clip)
 
 
 class States(unittest.TestCase):
@@ -227,16 +231,16 @@ class States(unittest.TestCase):
             ('tv.get-state', ok(STATE.replace('"video":"available"', '"video":"unknown"'))),
             ('tv.foreground', front('')),
             ('tv.get-state', ok(STATE)),
-            ('tv.foreground', front(tv_cells.CAST_APP)),
+            ('tv.foreground', front(webos.CAST_APP)),
             cast_feed=fed,
         )
-        screen.show(tv_cells.Shown.VIDEO)
-        screen.show(tv_cells.Shown.VIDEO)
+        screen.show(tv_checks.Shown.VIDEO)
+        screen.show(tv_checks.Shown.VIDEO)
         with no_wait():
-            reached = screen.confirm(tv_cells.Shown.VIDEO)
+            reached = screen.confirm(tv_checks.Shown.VIDEO)
         self.assertEqual(
             reached,
-            {'shown': 'video', 'power': 'active', 'video': 'available', 'foreground': tv_cells.CAST_APP, 'size': None},
+            {'shown': 'video', 'power': 'active', 'video': 'available', 'foreground': webos.CAST_APP, 'size': None},
         )
         self.assertEqual((fed.shown, fed.settled_times), (1, 1))
 
@@ -245,22 +249,22 @@ class States(unittest.TestCase):
             ('tv.get-state', ok(STATE.replace('"video":"available"', '"video":"unknown"'))),
             ('tv.foreground', front(tv_cells.HOME_APP)),
         )
-        with mock.patch.object(tv_cells, 'CONFIRM_SECONDS', 0), self.assertRaises(Failed) as failed:
-            screen.confirm(tv_cells.Shown.VIDEO)
+        with mock.patch.object(tv_checks, 'CONFIRM_SECONDS', 0), self.assertRaises(Failed) as failed:
+            screen.confirm(tv_checks.Shown.VIDEO)
         self.assertEqual(
             str(failed.exception),
             f'the video state is not reached: video unknown, not available; {tv_cells.HOME_APP} in front, '
-            f'not {tv_cells.CAST_APP}',
+            f'not {webos.CAST_APP}',
         )
 
     def test_the_screen_saver_is_not_the_ui_state(self) -> None:
         saver = UI_STATE.replace('"power":"active"', '"power":"screen_saver"')
         screen = screen_on(('tv.get-state', ok(saver)), ('tv.foreground', front(commands.APP)))
         with (
-            mock.patch.object(tv_cells, 'CONFIRM_SECONDS', 0),
+            mock.patch.object(tv_checks, 'CONFIRM_SECONDS', 0),
             self.assertRaisesRegex(Failed, 'the ui state is not reached: power screen_saver, not active$'),
         ):
-            screen.confirm(tv_cells.Shown.UI)
+            screen.confirm(tv_checks.Shown.UI)
 
     def test_the_ui_state_stops_the_cast_then_launches_prysms_app_and_video_closes_it(self) -> None:
         fed = FakeCast()
@@ -271,11 +275,11 @@ class States(unittest.TestCase):
             ('tv.close-app', ok('{"returnValue":true}')),
             cast_feed=fed,
         )
-        screen.show(tv_cells.Shown.VIDEO)
-        screen.show(tv_cells.Shown.UI)
+        screen.show(tv_checks.Shown.VIDEO)
+        screen.show(tv_checks.Shown.UI)
         self.assertEqual((screen.casting, screen.bench.cleanups), (False, []))  # the cast stopped first
-        self.assertEqual(screen.confirm(tv_cells.Shown.UI)['foreground'], commands.APP)
-        screen.show(tv_cells.Shown.VIDEO)
+        self.assertEqual(screen.confirm(tv_checks.Shown.UI)['foreground'], commands.APP)
+        screen.show(tv_checks.Shown.VIDEO)
         self.assertEqual(fed.shown, 2)
         self.assertEqual(calls(screen.tv), ['tv.launch-app', 'tv.get-state', 'tv.foreground', 'tv.close-app'])
 
@@ -284,7 +288,7 @@ class States(unittest.TestCase):
         screen = screen_on(cast_feed=fed)
         for _ in range(2):
             with self.assertRaisesRegex(Failed, 'video state is not reached: the clip was not cast: the clip is not'):
-                screen.show(tv_cells.Shown.VIDEO)
+                screen.show(tv_checks.Shown.VIDEO)
         self.assertEqual((fed.shown, screen.bench.cleanups), (1, []))
 
     def test_the_end_stops_the_cast_and_closes_only_prysms_app(self) -> None:
@@ -294,22 +298,22 @@ class States(unittest.TestCase):
             ('tv.get-state', ok(UI_STATE)),
             ('tv.foreground', front(tv_cells.HOME_APP)),
         )
-        screen.show(tv_cells.Shown.UI)
+        screen.show(tv_checks.Shown.UI)
         self.assertEqual(screen.close(), ["Prysm's app not closed: tv.close-app refused: not running"])
         saved = json.loads((screen.bench.out_dir / 'tv-end.json').read_text())
         self.assertEqual(saved, {'foreground': tv_cells.HOME_APP, 'power': 'active'})
 
     def test_the_frames_must_be_of_the_states_size(self) -> None:
-        section = tv_cells.capture(Flavour.FULL, 1280, 720, 30)
-        sized = tv_cells._sized  # pyright: ignore[reportPrivateUsage]
-        self.assertIsNone(sized(tv_cells.Shown.VIDEO, '1280x720', section))
+        section = tv_checks.capture(Flavour.FULL, 1280, 720, 30)
+        sized = tv_checks._sized  # pyright: ignore[reportPrivateUsage]
+        self.assertIsNone(sized(tv_checks.Shown.VIDEO, '1280x720', section))
         self.assertEqual(
-            sized(tv_cells.Shown.VIDEO, '320x180', section), 'frames of 320x180 arrive, not the 1280x720 asked'
+            sized(tv_checks.Shown.VIDEO, '320x180', section), 'frames of 320x180 arrive, not the 1280x720 asked'
         )
-        self.assertIsNone(sized(tv_cells.Shown.UI, '320x180', section))
-        self.assertIsNone(sized(tv_cells.Shown.UI, '256x144', section))
-        self.assertIn('not the UI size (at most 320x180)', sized(tv_cells.Shown.UI, '640x360', section) or '')
-        self.assertEqual(sized(tv_cells.Shown.UI, None, section), 'no frames arrive')
+        self.assertIsNone(sized(tv_checks.Shown.UI, '320x180', section))
+        self.assertIsNone(sized(tv_checks.Shown.UI, '256x144', section))
+        self.assertIn('not the UI size (at most 320x180)', sized(tv_checks.Shown.UI, '640x360', section) or '')
+        self.assertEqual(sized(tv_checks.Shown.UI, None, section), 'no frames arrive')
 
 
 class Wake(unittest.TestCase):
@@ -342,7 +346,7 @@ class Wake(unittest.TestCase):
 
     def test_a_tv_that_stays_off_is_a_reason(self) -> None:
         found = recorded(('tv.reachable', Result(255, '')), ('local.wake-on-lan', ok()))
-        with mock.patch.object(tv, 'WAKE_SECONDS', 0):
+        with mock.patch.object(webos, 'WAKE_SECONDS', 0):
             self.assertIn('after a wake-on-LAN packet', found.reach(self.MAC, lambda: '192.0.2.10') or '')
 
     def test_a_packet_that_cannot_be_sent_is_a_reason(self) -> None:
@@ -632,15 +636,39 @@ def planned_commands(values: config.Config) -> Iterator[commands.Command]:
 
     with mock.patch.object(commands, '_ssh', spy):
         for cell in TV_CELLS:
-            for plan in bench.PLANS[tv_cells.__name__].values():
+            for plan in (*bench.PLANS[tv_cells.__name__].values(), *bench.PLANS[tv_checks.__name__].values()):
                 plan.does(cell, values)
                 plan.undoes(cell, values)
-        existing = tv.Tv(transport.Refusing(), values.tv.ssh)
+        existing = webos.WebosTv(transport.Refusing(), values.tv.ssh)
         run._restore_plan(existing, a_backup())  # pyright: ignore[reportPrivateUsage]
     return iter(built)
 
 
 class TheCells(unittest.TestCase):
+    def test_the_checks_any_tv_runs_know_no_webos(self) -> None:
+        """The seam: the shared checks and the TV they drive (`tv.Tv`) import nothing of `webos` and nothing of
+        the command templates but the `Command` type (`tv.py` only), and name nothing of Luna, the package or
+        Prysm's webOS app. Imports are read from the syntax tree, absolute or relative, as the full name of what
+        each binds; the words are searched in the whole source, comments and docstrings included, ignoring
+        case."""
+        for module, allowed in ((tv, {'prysm_acceptance.commands.Command'}), (tv_checks, set[str]())):
+            source = Path(cast('str', module.__file__)).read_text()
+            with self.subTest(module.__name__):
+                imported: set[str] = set()
+                for node in ast.walk(ast.parse(source)):
+                    if isinstance(node, ast.Import):
+                        imported |= {alias.name for alias in node.names}
+                    elif isinstance(node, ast.ImportFrom):
+                        # A relative import is from this package (the modules are at its top).
+                        base = '.'.join(filter(None, ('prysm_acceptance' if node.level else '', node.module)))
+                        imported |= {f'{base}.{alias.name}' for alias in node.names}
+                for part in ('webos', 'commands'):
+                    within = 'prysm_acceptance.' + part
+                    found = {name for name in imported if name == within or name.startswith(within + '.')}
+                    self.assertLessEqual(found, allowed)
+                for word in ('luna', 'ipk', 'io.prysm.tv'):
+                    self.assertNotIn(word, source.lower())
+
     def test_every_tv_command_the_cells_plan_stays_on_prysms_paths(self) -> None:
         for installed_rule in Installed:
             values = config.load(EXAMPLE)
@@ -674,11 +702,11 @@ class TheCells(unittest.TestCase):
 
     def test_the_capture_is_the_packages_own(self) -> None:
         self.assertEqual(
-            tv_cells.capture(Flavour.FULL, 640, 360, 30),
+            tv_checks.capture(Flavour.FULL, 640, 360, 30),
             {'kind': 'webos', 'width': 640, 'height': 360, 'fps': 30, 'include_ui': False},
         )
-        self.assertTrue(tv_cells.capture(Flavour.FULL, 640, 360, 30, include_ui=True)['include_ui'])
-        self.assertEqual(tv_cells.capture(Flavour.SLIM, 640, 360, 30, encoding=tv.Encoding.RAW)['encoding'], 'raw')
+        self.assertTrue(tv_checks.capture(Flavour.FULL, 640, 360, 30, include_ui=True)['include_ui'])
+        self.assertEqual(tv_checks.capture(Flavour.SLIM, 640, 360, 30, encoding=tv.Encoding.RAW)['encoding'], 'raw')
 
 
 class TheCommandLine(unittest.TestCase):

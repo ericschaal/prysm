@@ -17,7 +17,7 @@ from unittest import mock
 
 from acceptance_fakes import untyped
 
-from prysm_acceptance import config, edges_clip, host, host_cells, prysm_api, stage_eyes, tv, tv_cells
+from prysm_acceptance import config, edges_clip, host, host_cells, prysm_api, stage_eyes, tv, tv_checks, webos
 from prysm_acceptance.checks import Failed
 from prysm_acceptance.options import Cell, Delivery, Flavour, Platform, Source
 from prysm_acceptance.prysm_api import SessionState, Target
@@ -85,8 +85,8 @@ class Fields(unittest.TestCase):
 
     def test_the_tv_service(self) -> None:
         reply = set(names(LUNA, LUNA['StateReply'])) | set(names(LUNA, LUNA['ErrorReply']))
-        self.assertLessEqual(read(tv.LunaReply), reply)
-        self.assertLessEqual(read(tv.Preferences), set(names(LUNA, LUNA['Preferences'])))
+        self.assertLessEqual(read(webos.LunaReply), reply)
+        self.assertLessEqual(read(webos.Preferences), set(names(LUNA, LUNA['Preferences'])))
         self.assertLessEqual(read(tv.TvFailure), set(names(LUNA, LUNA['WorkerFailure'])))
 
     def test_the_closed_sets(self) -> None:
@@ -132,7 +132,7 @@ class Examples(unittest.TestCase):
 
     def test_luna_replies(self) -> None:
         for state in FIXTURES['luna/StateReply']:
-            reply = tv.luna_reply(Result(0, 'garbage\n' + json.dumps(state) + '\n'))
+            reply = webos.luna_reply(Result(0, 'garbage\n' + json.dumps(state) + '\n'))
             self.assertIn(reply['flavor'], tuple(Flavour))
             self.assertIsInstance(reply['worker']['phase'], str)
             self.assertIn(reply.get('lighting'), (None, *Target))
@@ -184,10 +184,10 @@ class WrittenSettings(unittest.TestCase):
         device = untyped(host_cells.capture_settings(Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE), bench, None))
         self.assertEqual((device['kind'], device['path'], device['fps']), ('device', bench.mac.device, 30))
         self.assertLessEqual(set(device), self.fields('DeviceSettings'))
-        remote = untyped(tv_cells.capture(Flavour.SLIM, 640, 360, 30, encoding=Encoding.RAW))
+        remote = untyped(tv_checks.capture(Flavour.SLIM, 640, 360, 30, encoding=Encoding.RAW))
         self.assertEqual(remote['encoding'], 'raw')
         self.assertLessEqual(set(remote), self.fields('RemoteReceiverSettings'))
-        webos = untyped(tv_cells.capture(Flavour.FULL, 640, 360, 30))
+        webos = untyped(tv_checks.capture(Flavour.FULL, 640, 360, 30))
         self.assertEqual(set(webos), set(FIXTURES['WebosSettings'][0]))
         self.assertEqual({member.value for member in Encoding}, values(DESKTOP, 'StreamEncoding'))
 

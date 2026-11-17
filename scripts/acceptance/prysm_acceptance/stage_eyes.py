@@ -8,7 +8,7 @@ API and puts it back afterwards.
 from collections.abc import Callable
 from typing import TypedDict
 
-from prysm_acceptance import commands, prysm_api, tv, web
+from prysm_acceptance import commands, prysm_api, tv, web, webos
 from prysm_acceptance.checks import Answer, Failed, Skipped
 from prysm_acceptance.config import Config
 from prysm_acceptance.plan import Context, Mode, Step
@@ -48,16 +48,16 @@ PATTERNS = ['gray-192', 'red', 'green', 'blue', 'review-grid']
 CLEANUPS = ('dithering set back to its value before the dithering checks', 'a calibration pattern cleared')
 
 
-def _tv(ctx: Ctx) -> tv.Tv | None:
+def _tv(ctx: Ctx) -> webos.WebosTv | None:
     """The configured TV, for its portal address and its state."""
-    return tv.Tv(ctx.transport, ctx.config.tv.ssh) if ctx.config.tv.ssh else None
+    return webos.WebosTv(ctx.transport, ctx.config.tv.ssh) if ctx.config.tv.ssh else None
 
 
 def _portal(ctx: Ctx) -> prysm_api.Prysm | None:
     url = ctx.config.eyes_portal
     found = _tv(ctx)
     if not url and found:
-        url = (found.get_state() or tv.LunaReply()).get('portal') or ''
+        url = (found.get_state() or webos.LunaReply()).get('portal') or ''
     if not url:
         return None
     try:
@@ -145,7 +145,7 @@ def cold_boot(ctx: Ctx) -> tuple[str, object]:
     evidence: dict[str, object] = {'answer': answer, 'note': note}
     found = _tv(ctx)
     if answer == Answer.YES and found:
-        state = found.wait_state(lambda s: s['capturing'], 120, every=5)
+        state = tv.wait_state(found.get_state, lambda s: s['capturing'], 120, every=5)
         evidence['getState'] = state
     return note or answer, evidence
 
