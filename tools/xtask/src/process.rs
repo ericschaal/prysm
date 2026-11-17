@@ -2,6 +2,7 @@
 use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 /// The repository root; xtask lives in `tools/xtask`.
 pub fn root() -> &'static Path {
@@ -37,8 +38,14 @@ pub fn run(command: &mut Command) -> Result<()> {
 /// Echoes and runs `command` and returns its trimmed standard output; its
 /// standard error goes to the terminal, so a long build stays visible.
 pub fn output(command: &mut Command) -> Result<String> {
+    eprintln!("$ {}", display(command));
+    query(command)
+}
+
+/// [`output`] without the echo, for questions such as `git rev-parse HEAD`
+/// rather than steps of the build.
+pub fn query(command: &mut Command) -> Result<String> {
     let line = display(command);
-    eprintln!("$ {line}");
     let output = command
         .stderr(Stdio::inherit())
         .output()
@@ -60,4 +67,27 @@ pub fn display(command: &Command) -> String {
         .map(|part| part.to_string_lossy())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// How long a step took, for progress lines: `4.2s`, or `3m 07s` from a
+/// minute on.
+pub fn duration(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds < 60 {
+        format!("{:.1}s", elapsed.as_secs_f64())
+    } else {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations_are_short() {
+        assert_eq!(duration(Duration::from_millis(4_240)), "4.2s");
+        assert_eq!(duration(Duration::from_secs(187)), "3m 07s");
+        assert_eq!(duration(Duration::from_secs(3_600)), "60m 00s");
+    }
 }

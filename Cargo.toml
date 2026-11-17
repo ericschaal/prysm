@@ -96,15 +96,15 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 
-# Shipped binaries (cargo xtask dist, the Docker image, the .deb) carry no
-# symbols: panics print no function names.
-[profile.release]
-strip = true
+# Desktop release builds (cargo xtask dist, the Docker image, the .deb) keep
+# their symbols, so panics and backtraces name functions.
 
 # The TV packages (packaging/webos/build-ipk.sh): smaller and faster ARMv7
-# binaries, stripped as every release build.
+# binaries, stripped for the TV's small storage (ipk.py refuses unstripped
+# ones).
 [profile.webos]
 inherits = "release"
 lto = "fat"
 codegen-units = 1
 debug = false
+strip = true

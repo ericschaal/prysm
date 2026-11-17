@@ -1,0 +1,8 @@
+# The Rust every build uses: rustup reads this file in the repository, and
+# `rustup toolchain install` installs it. The Dockerfile's `rust:` image
+# carries the same version (an xtask test checks it), and `cargo xtask
+# doctor` reads it. CI jobs add the targets they need (armv7 for the TV).
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

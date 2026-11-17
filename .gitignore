@@ -20,6 +20,9 @@ __pycache__/
 
 # Artifacts from `cargo xtask dist`.
 /dist/
+# The webOS SDK CI unpacks (ci.yml, webos-ipk); ignored so the build's tree is
+# clean, as the release requires of dist/manifest.json.
+/.webos-sdk/
 
 # Prysm settings
 settings.json

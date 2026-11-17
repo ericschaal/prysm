@@ -10,10 +10,14 @@
 # release becomes "Latest" (and `:latest`) only if it is the newest stable one.
 #
 # Environment: GITHUB_REPOSITORY (owner/name), RELEASE_TAG (v1.2.3),
-# RELEASE_VERSION (1.2.3), RELEASE_SHA (the tag's commit), RELEASE_DIRECTORY
-# (the downloaded artifacts: prysm-headless-<arch>.tar, prysm-headless-linux-
-# <arch>.deb, which are attached as prysm-headless_<deb version>_<arch>.deb,
-# and io.prysm.tv-*.ipk), GH_TOKEN; docker is logged in to ghcr.io.
+# RELEASE_VERSION (1.2.3), RELEASE_SHA (the tag's commit), RELEASE_DIRECTORY,
+# GH_TOKEN; docker is logged in to ghcr.io. RELEASE_DIRECTORY holds one
+# directory per CI artifact, each a `cargo xtask dist` output: files under
+# their dist/ names and the manifest.json that records them. Every file must
+# match its manifest entry (this version and commit, a clean tree, the
+# SHA-256). The release attaches prysm-headless-linux-<arch>.deb as Debian's
+# prysm-headless_<deb version>_<arch>.deb and prysm-tv-<flavour>.ipk as
+# io.prysm.tv-<flavour>_<x.y.z>_all.ipk.
 set -euo pipefail
 
 : "${GITHUB_REPOSITORY:?}" "${RELEASE_TAG:?}" "${RELEASE_VERSION:?}" "${RELEASE_SHA:?}" "${RELEASE_DIRECTORY:?}"
@@ -51,34 +55,64 @@ revision_of() {
 }
 
 if [ "$release" != published ]; then
-  # The packages this version must consist of, and nothing else.
-  shopt -s nullglob
-  debs=(./*.deb)
-  ipks=(./*.ipk)
-  [ "${#debs[@]}" -eq 2 ] || fail "expected 2 .deb files, found ${#debs[@]}"
-  [ "${#ipks[@]}" -eq 2 ] || fail "expected 2 .ipk files, found ${#ipks[@]}"
-  for flavour in full slim; do
-    [ -f "io.prysm.tv-${flavour}_${app_version}_all.ipk" ] || fail "no io.prysm.tv-${flavour}_${app_version}_all.ipk"
-  done
-  architectures=()
-  for deb in "${debs[@]}"; do
+  # Moves every artifact here, after checking it against its manifest entry.
+  python3 - "$version" "$RELEASE_SHA" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+version, sha = sys.argv[1:]
+seen = set()
+for manifest in sorted(Path().glob('*/manifest.json')):
+    for name, entry in json.loads(manifest.read_text())['artifacts'].items():
+        path = manifest.parent / name
+        if name in seen:
+            problem = 'is in two artifacts'
+        elif entry['version'] != version:
+            problem = f'is version {entry["version"]}'
+        elif entry['commit'] != sha:
+            problem = f'is from {entry["commit"]}'
+        elif entry['dirty']:
+            problem = 'was built from a tree with uncommitted changes'
+        elif not path.is_file():
+            problem = f'is missing from {manifest.parent}'
+        elif hashlib.sha256(path.read_bytes()).hexdigest() != entry['sha256']:
+            problem = 'does not match its SHA-256'
+        else:
+            seen.add(name)
+            path.rename(name)
+            continue
+        sys.exit(f'publish: {name} {problem}')
+PY
+
+  # The packages this version consists of, under the names users download.
+  assets=()
+  for arch in amd64 arm64; do
+    deb=prysm-headless-linux-$arch.deb
+    [ -f "$deb" ] || fail "no $deb"
+    [ -f "prysm-headless-linux-$arch.tar" ] || fail "no prysm-headless-linux-$arch.tar"
     [ "$(dpkg-deb --field "$deb" Package)" = prysm-headless ] || fail "$deb is not prysm-headless"
+    [ "$(dpkg-deb --field "$deb" Architecture)" = "$arch" ] || fail "$deb is not for $arch"
     packaged=$(dpkg-deb --field "$deb" Version)
     [ "${packaged%-*}" = "$deb_version" ] || fail "$deb has version $packaged, not $deb_version-*"
-    architecture=$(dpkg-deb --field "$deb" Architecture)
-    architectures+=("$architecture")
-    # CI exports prysm-headless-linux-<arch>.deb; users download Debian's name.
-    named="./prysm-headless_${packaged}_${architecture}.deb"
-    [ "$deb" = "$named" ] || mv "$deb" "$named"
+    named=prysm-headless_${packaged}_${arch}.deb
+    mv "$deb" "$named"
+    assets+=("$named")
   done
-  [ "$(printf '%s\n' "${architectures[@]}" | sort | tr '\n' ' ')" = 'amd64 arm64 ' ] || fail "the .debs are for ${architectures[*]}"
+  for flavour in full slim; do
+    [ -f "prysm-tv-$flavour.ipk" ] || fail "no prysm-tv-$flavour.ipk"
+    named=io.prysm.tv-${flavour}_${app_version}_all.ipk
+    mv "prysm-tv-$flavour.ipk" "$named"
+    assets+=("$named")
+  done
 
   for arch in amd64 arm64; do
     target="$image:$version-$arch"
     if docker pull --platform "linux/$arch" "$target" > pull.log 2>&1; then
       [ "$(revision_of "$target")" = "$RELEASE_SHA" ] || fail "$target is not from $RELEASE_SHA"
     elif grep -Eqi 'manifest unknown|name unknown|not found' pull.log; then
-      docker image load --input "prysm-headless-$arch.tar"
+      docker image load --input "prysm-headless-linux-$arch.tar"
       [ "$(revision_of prysm-headless:local)" = "$RELEASE_SHA" ] || fail "the $arch image is not from $RELEASE_SHA"
       docker image tag prysm-headless:local "$target"
       docker image push "$target"
@@ -98,14 +132,14 @@ if [ "$release" != published ]; then
 fi
 
 # Whatever the state: the index has both architectures, each from the commit.
-docker buildx imagetools inspect --raw "$image:$version" > manifest.json
+docker buildx imagetools inspect --raw "$image:$version" > index.json
 python3 - "$image" "$RELEASE_SHA" <<'PY'
 import json
 import subprocess
 import sys
 
 image, sha = sys.argv[1:]
-manifests = json.load(open('manifest.json'))['manifests']
+manifests = json.load(open('index.json'))['manifests']
 platforms = {m['platform']['architecture']: m['digest'] for m in manifests
              if m['platform'].get('os') == 'linux'}
 assert set(platforms) == {'amd64', 'arm64'}, platforms
@@ -120,11 +154,11 @@ digest=$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$image:
 printf '%s@%s\n' "$image" "$digest" > docker-image.txt
 
 if [ "$release" != published ]; then
-  shasum -a 256 ./*.deb ./*.ipk docker-image.txt > SHA256SUMS
+  shasum -a 256 "${assets[@]}" docker-image.txt > SHA256SUMS
   if [ "$release" = missing ]; then
     gh release create "$RELEASE_TAG" --verify-tag --draft --title "Prysm $version" --generate-notes
   fi
-  gh release upload "$RELEASE_TAG" --clobber ./*.deb ./*.ipk docker-image.txt SHA256SUMS
+  gh release upload "$RELEASE_TAG" --clobber "${assets[@]}" docker-image.txt SHA256SUMS
   gh release edit "$RELEASE_TAG" --draft=false --prerelease="$prerelease" --latest=false
 fi
 

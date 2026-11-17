@@ -1,10 +1,11 @@
 //! `cargo xtask check`: what CI checks, in one ordered run. CI's `quality`,
-//! `frontend` and `rust` jobs each run one [`Group`] of it.
+//! `frontend` and two `rust` jobs each run one [`Group`] of it.
 use crate::npm::{self, Script};
 use crate::process;
-use anyhow::{Context, Result};
+use anyhow::{Result, bail};
 use clap::ValueEnum;
 use std::process::Command;
+use std::time::Instant;
 
 /// The checks of one CI job.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -177,20 +178,48 @@ fn steps(groups: &[Group]) -> impl Iterator<Item = Step> {
         .filter(move |step| groups.is_empty() || groups.contains(&step.group()))
 }
 
-/// Runs the steps of `groups` (every step when empty) in order and stops at
-/// the first failure. The npm packages are installed only for frontend
-/// steps, so the other groups need no Node.js.
-pub fn run(groups: &[Group]) -> Result<()> {
+/// Runs the steps of `groups` (every step when empty) in order, timing each.
+/// It stops at the first failure unless `keep_going`, which runs every step
+/// and reports all failures at the end. The npm packages are installed only
+/// for frontend steps, so the other groups need no Node.js.
+pub fn run(groups: &[Group], keep_going: bool) -> Result<()> {
     if steps(groups).any(|step| step.group() == Group::Frontend) {
         npm::install_if_stale()?;
     }
+    let started = Instant::now();
+    let total = steps(groups).count();
+    let mut failed = Vec::new();
     for step in steps(groups) {
         eprintln!("==> {}", step.name());
-        process::run(&mut step.command())
-            .with_context(|| format!("check failed: {}", step.name()))?;
+        let step_started = Instant::now();
+        let result = process::run(&mut step.command());
+        let took = process::duration(step_started.elapsed());
+        match result {
+            Ok(()) => eprintln!("ok: {} ({took})", step.name()),
+            Err(error) => {
+                eprintln!("FAILED: {} ({took}): {error:#}", step.name());
+                failed.push(step.name());
+                if !keep_going {
+                    break;
+                }
+            }
+        }
     }
-    eprintln!("All checks passed.");
-    Ok(())
+    let took = process::duration(started.elapsed());
+    if failed.is_empty() {
+        eprintln!("All {total} checks passed ({took}).");
+        return Ok(());
+    }
+    let stopped = if keep_going {
+        ""
+    } else {
+        "; stopped there (--keep-going runs the rest)"
+    };
+    bail!(
+        "{} of {total} checks failed ({took}): {}{stopped}",
+        failed.len(),
+        failed.join(", ")
+    )
 }
 
 #[cfg(test)]

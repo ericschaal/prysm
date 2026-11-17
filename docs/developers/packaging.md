@@ -2,9 +2,9 @@
 
 | Package | Built by | Output |
 | --- | --- | --- |
-| Docker image `prysm-headless` (amd64, arm64) | [Dockerfile](../../packaging/docker/Dockerfile) | Local image |
+| Docker image `prysm-headless` (amd64, arm64) | [Dockerfile](../../packaging/docker/Dockerfile) | Local image, or `prysm-headless-linux-<arch>.tar` in `dist/`, released as `ghcr.io/<owner>/prysm-headless:<version>` |
 | Debian package `prysm-headless` | Same Dockerfile, `artifacts` target | `prysm-headless-linux-<arch>.deb`, released as `prysm-headless_<version>_<arch>.deb` |
-| TV packages, full and slim | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | `io.prysm.tv-full_<version>_all.ipk`, `io.prysm.tv-slim_<version>_all.ipk` |
+| TV packages, full and slim | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | `prysm-tv-full.ipk`, `prysm-tv-slim.ipk` in `dist/`, released as `io.prysm.tv-full_<version>_all.ipk`, `io.prysm.tv-slim_<version>_all.ipk` |
 
 Reference: [packaging](../../packaging/README.md). Builds never install
 or deploy. Release builds: [releasing](releasing.md).
@@ -33,13 +33,26 @@ docker load --input dist/prysm-headless-linux-arm64.tar   # prysm-headless:local
 
 The Docker targets need buildx; a target for the other architecture is
 emulated and slow. The binary and the `.deb` of one architecture come from one
-Docker build. The image is labelled with the commit
-(`org.opencontainers.image.revision`). Release builds of Rust are stripped
-(`[profile.release]` in `Cargo.toml`), so the Mac binary has no symbols, like
-the Linux ones. The manifest has one entry per file: the version from
-`VERSION`, the commit, whether the tree had uncommitted changes, the SHA-256
-and the build time in UTC. Building a target replaces its entry and keeps
-the others.
+Docker build, and one run bundles the frontend once for the targets that take
+it (`mac`, `tv-*`). The image is labelled with the commit
+(`org.opencontainers.image.revision`). xtask adds the words of
+`XTASK_BUILDX_ARGS`, if set, to every `docker buildx build`; CI passes its
+layer cache that way. Desktop release builds keep their symbols, so a panic or
+backtrace names functions; only the TV's `webos` profile strips
+(`Cargo.toml`).
+
+The manifest has one entry per file: the version from `VERSION`, the commit,
+whether the tree had uncommitted changes, the SHA-256 and the build time in
+UTC. Building a target replaces its entry and keeps the others; entries whose
+file is no longer in `dist/` are dropped. Each target prints how long it took,
+and a run from a tree with uncommitted changes ends with a warning.
+
+CI builds its packages with the same command, so they have the same names:
+the `docker` job runs `dist linux-<arch> deb-<arch> image-<arch>` on amd64 and
+arm64, and `webos-ipk` runs `dist tv-full tv-slim`. Each uploads its `dist/`
+with its manifest as one artifact (`prysm-dist-linux-<arch>`, `prysm-dist-tv`)
+on release runs (the IPKs also on pushes to `main`), and a release checks
+every file against its manifest ([releasing](releasing.md#cut-a-release)).
 
 ## Docker
 

@@ -8,7 +8,10 @@ The product is one Cargo workspace (`Cargo.toml`) and one npm workspace
 
 ## Requirements
 
-- Stable Rust (edition 2024) and Node.js 24+ with npm.
+- [rustup](https://rustup.rs) and Node.js 24+ with npm. The Rust version is
+  pinned in [`rust-toolchain.toml`](../../rust-toolchain.toml), which rustup
+  follows in the repository; `rustup toolchain install` there installs it
+  with clippy and rustfmt.
 - Linux: `clang` and `libclang-dev` (V4L2 bindings are generated with bindgen).
 - macOS: Xcode Command Line Tools.
 - Optional: FFmpeg 9+ on `PATH` for the video-file source and its tests.
@@ -28,6 +31,11 @@ cargo xtask codegen   # contracts from Rust; --check fails on drift, --luna adds
 cargo xtask check     # the checks below, in order
 cargo xtask dist mac  # an artifact in dist/; see packaging
 ```
+
+`doctor` prints one line per tool (on Linux also libclang, looked up in
+`LIBCLANG_PATH` when set, else in `ldconfig -p`) and fails only when a
+tool `check` needs is missing or too old; CI's `frontend` job runs it. xtask
+echoes the commands that build or check, not the questions it asks git.
 
 For day-to-day work, run the hosts with Cargo. They embed the portal bundle
 from `frontend/dist`, so build it first; Cargo never runs npm.
@@ -85,13 +93,15 @@ It plays once (`"repeat": true` loops it); at the end lighting stops cleanly.
 cargo xtask check
 ```
 
-It stops at the first failing step, which it names. The steps fall into
-three groups, one per CI job ([ci.yml](../../.github/workflows/ci.yml)); name
-one or more to run only those, in the same order:
+It prints how long each step took and stops at the first failing step, which
+it names; `--keep-going` runs every step and lists all failures at the end
+(the exit status is still non-zero). The steps fall into three groups, one
+per CI job ([ci.yml](../../.github/workflows/ci.yml)); name one or more to run
+only those, in the same order:
 
 | Group | CI job | Steps |
 | --- | --- | --- |
-| `rust` | `rust` | `cargo fmt --check`, clippy with `-D warnings`, the Rust tests and doctests |
+| `rust` | `rust (ubuntu-24.04)`, `rust (macos-26)` | `cargo fmt --check`, clippy with `-D warnings`, the Rust tests and doctests |
 | `frontend` | `frontend` | lint and formatting, `cargo xtask codegen --check`, typecheck, bundle (`frontend/dist`), tests |
 | `scripts` | `quality` | the Python tests in `scripts/tests` and `packaging/webos/tests`, the [acceptance runner's checks](acceptance.md#develop-the-runner), `scripts/check-doc-links.py` |
 
@@ -102,8 +112,9 @@ cargo xtask check frontend scripts
 
 Only the `frontend` group installs the npm packages and needs Node.js;
 `scripts` needs `uv` (`cargo xtask doctor` checks both). Not included: shellcheck and
-actionlint (CI's `quality` job runs them), the end-to-end tests, the armv7,
-Miri, IPK and Docker jobs. In a full run, the contracts are checked before the
+actionlint (CI's `quality` job runs them), the end-to-end tests, and the
+armv7 and Miri jobs; CI's IPK and Docker jobs build with `cargo xtask dist`
+([packaging](packaging.md#artifacts-in-dist)). In a full run, the contracts are checked before the
 typecheck, so stale contracts fail as such, and the bundle is built before the
 frontend tests and Rust, so the TV tests read it and the hosts embed the real
 portal. Without the bundle, the Rust tests that check it are reported as

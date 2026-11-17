@@ -1,27 +1,31 @@
 # CI: the Cargo workspace (Cargo.toml), the npm workspace (frontend/), the
 # packages and the repository-wide checks. The release workflow calls it (with
-# `release: true` and the tag's commit, the image, .deb and IPKs are kept as
-# artifacts for publishing), so a release is built only from a green run.
-# No path filters: required checks must always report.
+# `release: true` and the tag's commit, the `docker` and `webos-ipk` jobs keep
+# their dist/ outputs as artifacts for publishing), so a release is built only
+# from a green run. No path filters: required checks must always report.
 #
-# `quality`, `frontend` and `rust` each run one group of `cargo xtask check`
-# (tools/xtask/src/check.rs), so they check what a local run checks.
+# `quality`, `frontend` and the two `rust` jobs each run one group of
+# `cargo xtask check` (tools/xtask/src/check.rs), so they check what a local run
+# checks; `docker` and `webos-ipk` build with `cargo xtask dist`, as a local
+# build does. Every job runs the Rust that rust-toolchain.toml pins
+# (`rustup toolchain install` reads it); Miri runs its own pinned nightly.
 #
 # Jobs:
 # - `quality`: shell scripts and workflows, then `check scripts`: script and
 #   TV package tests, the acceptance runner's lint, types, layers and tests
 #   (scripts/acceptance) and Markdown links.
-# - `frontend`: `check frontend`: lint, formatting, generated contracts,
-#   bundles and tests; uploads the bundles. `cargo xtask codegen --check` runs
-#   the Rust contract exporter, which is why this job also needs Rust and
-#   libclang.
-# - `rust` (Linux, macOS): `check rust`: formatting, clippy, tests, doctests.
-#   The hosts embed frontend/dist when it is there and a "not built" page in
-#   debug builds when not (hosts/common/build.rs). Linux downloads the bundles,
-#   so it checks the real portal and builds the e2e binaries with it; macOS
-#   checks the same code without them. `e2e`: the portal in Chromium and
-#   WebKit against those binaries, and the TV app with remote keys in Chromium
-#   on its in-memory demo.
+# - `frontend`: `cargo xtask doctor` (this job has every tool `check` needs),
+#   then `check frontend`: lint, formatting, generated contracts, bundles and
+#   tests; uploads the bundles. `cargo xtask codegen --check` runs the Rust
+#   contract exporter, which is why this job also needs Rust and libclang.
+# - `rust (ubuntu-24.04)`, `rust (macos-26)` (ids `rust-linux`, `rust-macos`):
+#   `check rust`: formatting, clippy, tests, doctests. The hosts embed
+#   frontend/dist when it is there and a "not built" page in debug builds when
+#   not (hosts/common/build.rs). Linux waits for the bundles, so it checks the
+#   real portal and builds the e2e binaries with it; macOS checks the same code
+#   without them and starts at once. `e2e`: the portal in Chromium and WebKit
+#   against those binaries, and the TV app with remote keys in Chromium on its
+#   in-memory demo.
 # - `webos-armv7`: lints (clippy -D warnings) every TV crate that compiles
 #   without the webOS SDK, with Ubuntu's stock soft-float cross compiler (the
 #   C++ in capture-webos-sys and OpenH264 only need a g++; Luna and VTCapture
@@ -30,14 +34,16 @@
 #   feature) need the SDK: their GStreamer sys crates look up the sysroot's
 #   GStreamer with pkg-config.
 # - `webos-ipk`: installs the pinned SDK, checks the Luna bindings against its
-#   headers, lints the SDK-only TV crates and builds both IPKs with
-#   build-ipk.sh, which links against the sysroot and checks the binaries with
-#   ipk.py.
+#   headers, lints the SDK-only TV crates and runs `dist tv-full tv-slim`
+#   (build-ipk.sh links against the sysroot and checks the binaries with
+#   ipk.py).
 # - `miri`: interprets webos-luna-sys's ownership and callback tests on the
 #   x86-64 and armv7 targets, with a pinned nightly (its mock swaps dlopen for
 #   a placeholder library under Miri).
-# - `docker` (amd64, arm64): builds and smoke-tests the prysm-headless image,
-#   checks both compose files, and builds, installs and purges the .deb.
+# - `docker` (amd64, arm64): `dist image-<arch> linux-<arch> deb-<arch>`, then
+#   smoke-tests the image archive, checks both compose files, and installs and
+#   purges the .deb. xtask passes XTASK_BUILDX_ARGS to buildx for the layer
+#   cache.
 #
 # Not here: on-TV tests (native-smoke.py) need a TV.
 name: CI
@@ -95,9 +101,7 @@ jobs:
             packaging/webos/service/setup.sh \
             packaging/webos/tests/tv-acceptance.sh
       - name: Rust for cargo xtask
-        run: |
-          rustup update stable --no-self-update
-          rustup default stable
+        run: rustup toolchain install --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: quality
@@ -126,11 +130,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang libclang-dev
-          rustup update stable --no-self-update
-          rustup default stable
+          rustup toolchain install --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: frontend
+      # Only for doctor: with uv this job has every tool `check` needs, so
+      # doctor fails here if it misjudges one on Linux.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Tools for cargo xtask
+        run: cargo xtask doctor
       # Runs npm ci first, then lint, formatting, generated contracts,
       # typecheck, bundles and tests.
       - name: Frontend checks and bundles
@@ -142,68 +150,66 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  rust:
+  # Two jobs rather than a matrix, so that macOS need not wait for `frontend`;
+  # `rust-macos` repeats this job's shared steps through YAML aliases.
+  rust-linux:
+    name: rust (ubuntu-24.04)
     needs: frontend
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-26]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
-      - name: Update Rust
-        run: |
-          rustup update stable --no-self-update
-          rustup default stable
-          rustup component add clippy rustfmt
+      - &rust
+        name: Rust
+        run: rustup toolchain install --no-self-update
       - name: Linux build dependencies
-        if: runner.os == 'Linux'
         # prysm-capture-device-sys -> v4l2-sys-mit generates its bindings with bindgen.
         # OpenH264 builds without nasm (no assembly), as in the release image.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang libclang-dev
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - &rust-cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: rust
-      # Linux only: the e2e binaries must serve the real portal. macOS checks
-      # the same code with the "not built" page in its place.
+      # The e2e binaries must serve the real portal. macOS checks the same
+      # code with the "not built" page in its place.
       - name: Frontend bundle for the hosts
-        if: runner.os == 'Linux'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: frontend-dist
           path: frontend/dist
       # The file source's real-FFmpeg test skips without ffmpeg on PATH and its
       # filter needs FFmpeg 9+, which Ubuntu 24.04 does not ship.
-      - name: Install FFmpeg 9+
+      - &ffmpeg
+        name: Install FFmpeg 9+
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
           fi
           brew install ffmpeg
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
-      - name: FFmpeg is 9 or newer
+      - &ffmpeg-version
+        name: FFmpeg is 9 or newer
         run: |
           ffmpeg -version | head -n 1
           major=$(ffmpeg -version | sed -n '1s/^ffmpeg version n\{0,1\}\([0-9][0-9]*\).*/\1/p')
           [ "${major:-0}" -ge 9 ]
-      - name: Formatting, clippy, tests and doctests
+      - &check
+        name: Formatting, clippy, tests and doctests
         run: cargo xtask check rust
       # The `e2e` job runs the portal against these. Built by name: the test
       # run above leaves examples only under hashed file names.
       - name: Build the e2e binaries
-        if: runner.os == 'Linux'
         run: >-
           cargo build --locked
           -p prysm-headless -p prysm-capture-remote --example test_sender
           --example fake_devices
           && cargo build --locked -p prysm-headless
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: runner.os == 'Linux'
         with:
           name: e2e-binaries
           path: |
@@ -213,10 +219,22 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  rust-macos:
+    name: rust (macos-26)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - *checkout
+      - *rust
+      - *rust-cache
+      - *ffmpeg
+      - *ffmpeg-version
+      - *check
+
   # The portal in Chromium and WebKit against a real prysm-headless per test
   # (frontend/e2e). Browsers are installed per run, as Playwright advises.
   e2e:
-    needs: rust
+    needs: rust-linux
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -277,9 +295,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends g++-arm-linux-gnueabi qemu-user
-          rustup update stable --no-self-update
-          rustup default stable
-          rustup component add clippy
+          rustup toolchain install --no-self-update
           rustup target add armv7-unknown-linux-gnueabi
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
@@ -299,7 +315,7 @@ jobs:
       # Library tests only: integration tests start the armv7 binaries
       # themselves, which needs binfmt_misc rather than the cargo runner.
       # Skipped test: qemu-user reports a successful spawn for a missing
-      # program (it fails after the fork); the `rust` job runs it natively.
+      # program (it fails after the fork); the `rust` jobs run it natively.
       - name: ABI, exception boundary, Luna wrapper and supervisor tests under qemu
         run: >-
           cargo test --locked --lib
@@ -316,24 +332,26 @@ jobs:
       matrix:
         target: [x86_64-unknown-linux-gnu, armv7-unknown-linux-gnueabi]
     env:
-      MIRI_TOOLCHAIN: nightly-2026-11-01
+      # Overrides rust-toolchain.toml for every rustc and cargo in this job.
+      RUSTUP_TOOLCHAIN: nightly-2026-11-01
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
       - name: Install pinned Miri toolchain
-        run: rustup toolchain install "$MIRI_TOOLCHAIN" --profile minimal --component miri,rust-src --no-self-update
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component miri,rust-src --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: miri-${{ matrix.target }}
       - name: Interpret Luna ownership and callback tests
-        run: cargo +"$MIRI_TOOLCHAIN" miri test --locked -p prysm-webos-luna-sys --target ${{ matrix.target }}
+        run: cargo miri test --locked -p prysm-webos-luna-sys --target ${{ matrix.target }}
 
   webos-ipk:
     # The SDK below is built for aarch64 hosts.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     env:
+      # Ignored by git (.gitignore), so the manifest records a clean tree.
       WEBOS_SDK: ${{ github.workspace }}/.webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -345,14 +363,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: webOS build dependencies
-        # libclang: the contract exporter (prysm-capture-device-sys -> v4l2-sys-mit) and
-        # the Luna binding generator. ares-package: build-ipk.sh.
+        # libclang: the Luna binding generator. ares-package: build-ipk.sh.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev file python3
-          rustup update stable --no-self-update
-          rustup default stable
-          rustup component add clippy
+          rustup toolchain install --no-self-update
           rustup target add armv7-unknown-linux-gnueabi
           npm install --global @webos-tools/cli@3.2.6
       # The pinned webOS SDK (aarch64 build).
@@ -371,10 +386,6 @@ jobs:
         run: >-
           cargo run --locked -p prysm-webos-luna-sys
           --features codegen --bin generate-luna-bindings -- --check
-      - name: Frontend bundles
-        run: |
-          npm --prefix frontend ci
-          npm --prefix frontend run bundle
       - name: Fetch crates
         # build-ipk.sh builds with --offline.
         run: cargo fetch --locked
@@ -386,24 +397,15 @@ jobs:
           cargo clippy --locked --offline --all-targets \
             --target armv7-unknown-linux-gnueabi \
             -p prysm-webos-slim -p prysm-h264-rvenc-sys -p prysm-h264 -- -D warnings
+      # Bundles the frontend once (npm ci first), then build-ipk.sh for each.
       - name: Build and verify both IPKs
-        run: |
-          packaging/webos/build-ipk.sh full --out "$RUNNER_TEMP/ipk/full"
-          packaging/webos/build-ipk.sh slim --out "$RUNNER_TEMP/ipk/slim"
-      # io.prysm.tv-full_<version>_all.ipk and io.prysm.tv-slim_…: one artifact each.
+        run: cargo xtask dist tv-full tv-slim
+      # prysm-tv-full.ipk, prysm-tv-slim.ipk and their manifest.json.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: inputs.release || github.event_name != 'pull_request'
         with:
-          name: prysm-tv-ipk-full
-          path: ${{ runner.temp }}/ipk/full/*.ipk
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: inputs.release || github.event_name != 'pull_request'
-        with:
-          name: prysm-tv-ipk-slim
-          path: ${{ runner.temp }}/ipk/slim/*.ipk
+          name: prysm-dist-tv
+          path: dist/
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -419,49 +421,43 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      ARCH: ${{ matrix.arch }}
+      # Every buildx build xtask runs reads and writes this architecture's
+      # layer cache (the image build runs last; both share the costly stages).
+      XTASK_BUILDX_ARGS: >-
+        --cache-from type=gha,scope=prysm-${{ matrix.arch }}
+        --cache-to type=gha,mode=max,scope=prysm-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - name: Rust for cargo xtask
+        run: rustup toolchain install --no-self-update
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Build image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          file: packaging/docker/Dockerfile
-          target: runtime
-          load: true
-          tags: prysm-headless:local
-          labels: org.opencontainers.image.revision=${{ inputs.ref || github.sha }}
-          cache-from: type=gha,scope=prysm-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=prysm-${{ matrix.arch }}
+      # The cache service's URL and token for `type=gha` in run steps (the
+      # build-push-action passes them itself; xtask runs buildx directly).
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      # prysm-headless-linux-<arch> (binary, .deb, .tar) and manifest.json.
+      - name: Binary, Debian package and image
+        run: cargo xtask dist "linux-$ARCH" "deb-$ARCH" "image-$ARCH"
       - name: Smoke-test image
-        run: packaging/docker/smoke.sh prysm-headless:local
+        run: |
+          docker image load --input "dist/prysm-headless-linux-$ARCH.tar"
+          packaging/docker/smoke.sh prysm-headless:local
       - name: Compose files
         run: |
           docker compose -f packaging/docker/compose.yaml config --quiet
           docker compose -f packaging/docker/compose.truenas.yaml config --quiet
-      # The binary and prysm-headless-linux-<arch>.deb.
-      - name: Build Debian package
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          file: packaging/docker/Dockerfile
-          target: artifacts
-          outputs: type=local,dest=${{ runner.temp }}/deb
-          cache-from: type=gha,scope=prysm-${{ matrix.arch }}
       - name: Inspect, install and purge the Debian package
-        env:
-          DEB_DIRECTORY: ${{ runner.temp }}/deb
-          ARCH: ${{ matrix.arch }}
         run: |
-          deb="$DEB_DIRECTORY/prysm-headless-linux-$ARCH.deb"
+          deb="dist/prysm-headless-linux-$ARCH.deb"
           dpkg-deb --info "$deb"
           dpkg-deb --contents "$deb"
           dpkg-deb --field "$deb" Conflicts | grep -qw prysm-led
           dpkg-deb --contents "$deb" | grep -q '/usr/share/doc/prysm-headless/LICENSE.openh264$'
           # No systemd in the container: checks dependencies, user and layout.
-          docker run --rm -v "$DEB_DIRECTORY:/deb:ro" debian:bookworm-slim sh -euc '
+          docker run --rm -v "$PWD/dist:/deb:ro" debian:bookworm-slim sh -euc '
             apt-get update -qq
             apt-get install -y -qq /deb/prysm-headless-linux-*.deb >/dev/null
             id prysm
@@ -469,21 +465,11 @@ jobs:
             /usr/bin/prysm-headless --help >/dev/null
             apt-get purge -y -qq prysm-headless >/dev/null
             test ! -e /usr/bin/prysm-headless'
-      - name: Export image
-        if: inputs.release
-        run: docker image save --output "${{ runner.temp }}/prysm-headless-${{ matrix.arch }}.tar" prysm-headless:local
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: inputs.release
         with:
-          name: prysm-headless-image-${{ matrix.arch }}
-          path: ${{ runner.temp }}/prysm-headless-${{ matrix.arch }}.tar
+          name: prysm-dist-linux-${{ matrix.arch }}
+          path: dist/
           retention-days: 7
           compression-level: 0
-          if-no-files-found: error
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: inputs.release
-        with:
-          name: prysm-headless-deb-${{ matrix.arch }}
-          path: ${{ runner.temp }}/deb/*.deb
-          retention-days: 7
           if-no-files-found: error

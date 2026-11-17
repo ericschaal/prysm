@@ -118,7 +118,7 @@ Chromium never showed. Touch drags and iOS are not covered: see
 [manual browser checks](#manual-browser-checks).
 
 CI (`e2e` in `.github/workflows/ci.yml`) runs Chromium and WebKit on Linux
-for every push, with the binaries built by the `rust` job, one retry per test
+for every push, with the binaries built by the `rust (ubuntu-24.04)` job, one retry per test
 and traces on retry; the report, traces and videos are uploaded when it
 fails. `.github/workflows/e2e-nightly.yml` runs WebKit (closest to Safari on
 macOS) and Firefox on a macOS runner every night and on demand.

@@ -45,6 +45,11 @@ impl Manifest {
         self.artifacts.insert(file, entry);
     }
 
+    /// Keeps only the entries whose file `keep` accepts.
+    pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        self.artifacts.retain(|file, _| keep(file));
+    }
+
     /// Pretty-printed JSON with a final newline.
     pub fn to_json(&self) -> String {
         let mut json = serde_json::to_string_pretty(self).expect("the manifest serialises");
@@ -84,6 +89,15 @@ mod tests {
         assert_eq!(manifest.artifacts.len(), 2);
         assert_eq!(manifest.artifacts["a"].commit, "kept");
         assert_eq!(manifest.artifacts["b"].commit, "new");
+    }
+
+    #[test]
+    fn retaining_drops_the_other_entries() {
+        let mut manifest = Manifest::default();
+        manifest.insert("gone".into(), entry("a"));
+        manifest.insert("kept".into(), entry("b"));
+        manifest.retain(|file| file == "kept");
+        assert_eq!(manifest.artifacts.keys().collect::<Vec<_>>(), ["kept"]);
     }
 
     #[test]

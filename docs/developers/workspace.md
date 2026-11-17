@@ -168,8 +168,10 @@ cargo test --workspace --all-targets --offline
 (`hosts/common`) embeds the portal bundles for every host that serves one,
 including `prysm-webos`; without `frontend/dist`, a debug build serves a "not
 built" page and a release build fails ([build](README.md#build-and-run)).
-`xtask` depends on no host, so it builds fast on a fresh checkout. Builds do
-not deploy.
+`xtask` depends on no host, so it builds fast on a fresh checkout; CI's
+package jobs build with its `dist` command. Every build uses the Rust that
+[`rust-toolchain.toml`](../../rust-toolchain.toml) pins. Builds do not
+deploy.
 
 ## Not done yet
 

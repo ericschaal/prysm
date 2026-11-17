@@ -6,7 +6,9 @@
 #   TrueNAS image pin agree, and that nothing else carries the version
 #   (scripts/check-release.py);
 # - `build`: runs CI (ci.yml) at that commit with `release: true`, which keeps
-#   the image tars, the .debs and both IPKs as artifacts;
+#   the `cargo xtask dist` output of its `docker` (per architecture) and
+#   `webos-ipk` jobs as artifacts: image archives, binaries, .debs, IPKs and
+#   each job's manifest.json;
 # - `publish`: packaging/release/publish.sh pushes
 #   ghcr.io/<owner>/prysm-headless:<version> (amd64, arm64 and the index),
 #   attaches the packages and publishes the release.
@@ -106,14 +108,14 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: .release-tools
-      # Image tars, .debs and IPKs (prysm-headless-image-*, prysm-headless-deb-*,
-      # prysm-tv-ipk-*), not CI's frontend bundle or e2e binaries.
+      # prysm-dist-linux-amd64, prysm-dist-linux-arm64 and prysm-dist-tv, not
+      # CI's frontend bundle or e2e binaries. Each lands in a directory of its
+      # own with its manifest.json, which publish.sh checks the files against.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.prepare.outputs.published != 'true'
         with:
           pattern: prysm-*
           path: ${{ runner.temp }}/release
-          merge-multiple: true
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:

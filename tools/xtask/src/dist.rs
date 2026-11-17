@@ -1,14 +1,18 @@
 //! `cargo xtask dist`: artifacts under fixed names in `dist/`.
+//!
+//! The Docker targets add the words of `XTASK_BUILDX_ARGS`, when set, to
+//! every `docker buildx build`; CI passes its layer cache options that way.
 use crate::manifest::{Entry, Manifest};
 use crate::npm::{self, Script};
 use crate::process::{self, root, target_dir};
 use anyhow::{Context, Result, bail, ensure};
 use clap::ValueEnum;
 use sha2::{Digest, Sha256};
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 /// What `dist` can build. A new target is one variant here plus one arm in
 /// [`Target::kind`], and a new [`Kind`] one arm in [`Kind::file_name`] and
@@ -115,26 +119,55 @@ impl Kind {
             Self::Tv(flavour) => format!("prysm-tv-{}.ipk", flavour.name()),
         }
     }
+
+    /// Fails when this machine cannot build `self`.
+    fn check_prerequisites(self) -> Result<()> {
+        match self {
+            Self::Mac => ensure!(
+                cfg!(target_os = "macos"),
+                "the mac target builds only on macOS"
+            ),
+            Self::Tv(_) => ensure!(
+                std::env::var_os("WEBOS_SDK").is_some(),
+                "set WEBOS_SDK to the relocated webOS SDK (docs/developers/packaging.md#webos)"
+            ),
+            Self::Binary(_) | Self::Deb(_) | Self::Image(_) => {}
+        }
+        Ok(())
+    }
 }
 
 /// Builds each target in turn and records it in `dist/manifest.json` as soon
 /// as it is done, so an earlier success is kept when a later target fails.
 pub fn run(targets: &[Target]) -> Result<()> {
+    // Before any build, so a missing prerequisite fails in seconds.
+    for target in targets {
+        target.kind().check_prerequisites()?;
+    }
     let dist = root().join("dist");
     fs::create_dir_all(&dist).with_context(|| format!("creating {}", dist.display()))?;
-    let mut builder = Builder {
-        host: Arch::host()?,
-        source: Source::current()?,
-        exported: Vec::new(),
-    };
     // Read first, so a broken manifest fails before a long build.
     let manifest_path = dist.join("manifest.json");
     let mut manifest = Manifest::read(&manifest_path)?;
+    manifest.retain(|file| dist.join(file).is_file());
+    let mut builder = Builder {
+        host: Arch::host()?,
+        source: Source::current()?,
+        buildx_args: std::env::var("XTASK_BUILDX_ARGS")
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect(),
+        bundled: false,
+        exported: Vec::new(),
+    };
+    let started = Instant::now();
     let mut done = Vec::new();
     for &target in targets {
         if done.contains(&target) {
             continue;
         }
+        let target_started = Instant::now();
         let kind = target.kind();
         let name = kind.file_name(builder.host);
         let out = dist.join(&name);
@@ -144,8 +177,18 @@ pub fn run(targets: &[Target]) -> Result<()> {
         let entry = builder.source.entry(sha256(&out)?, SystemTime::now());
         manifest.insert(name.clone(), entry);
         manifest.write(&manifest_path)?;
-        eprintln!("Wrote dist/{name}");
+        let took = process::duration(target_started.elapsed());
+        eprintln!("Wrote dist/{name} ({took})");
         done.push(target);
+    }
+    let took = process::duration(started.elapsed());
+    let plural = if done.len() == 1 { "" } else { "s" };
+    eprintln!("Built {} artifact{plural} ({took}).", done.len());
+    if builder.source.dirty {
+        eprintln!(
+            "warning: the working tree has uncommitted changes; \
+             dist/manifest.json records these artifacts as dirty"
+        );
     }
     Ok(())
 }
@@ -154,22 +197,42 @@ pub fn run(targets: &[Target]) -> Result<()> {
 struct Builder {
     host: Arch,
     source: Source,
+    /// More `docker buildx build` options: the words of `XTASK_BUILDX_ARGS`.
+    buildx_args: Vec<String>,
+    /// Whether this run has bundled the frontend.
+    bundled: bool,
     /// Architectures whose `artifacts` stage this run has exported.
     exported: Vec<Arch>,
 }
 
 impl Builder {
-    /// Builds the artifact of `kind` and copies it to `out`.
+    /// Builds the artifact of `kind` at `out`.
     fn build(&mut self, kind: Kind, out: &Path) -> Result<()> {
         match kind {
-            Kind::Mac => mac(out),
+            Kind::Mac => {
+                self.bundle()?;
+                mac(out)
+            }
             Kind::Binary(arch) | Kind::Deb(arch) => {
                 let exported = self.docker_artifacts(arch)?;
                 copy(&exported.join(kind.file_name(self.host)), out)
             }
-            Kind::Image(arch) => image(arch, &self.source.commit, out),
-            Kind::Tv(flavour) => tv(flavour, out),
+            Kind::Image(arch) => self.image(arch, out),
+            Kind::Tv(flavour) => {
+                self.bundle()?;
+                tv(flavour, out)
+            }
         }
+    }
+
+    /// `npm run bundle`, once per run. The Mac binary and the TV packages
+    /// take it from `frontend/dist`; the Dockerfile bundles on its own.
+    fn bundle(&mut self) -> Result<()> {
+        if !self.bundled {
+            npm::run(Script::Bundle)?;
+            self.bundled = true;
+        }
+        Ok(())
     }
 
     /// Exports the Dockerfile's `artifacts` stage for `arch` (the binary and
@@ -185,21 +248,35 @@ impl Builder {
                 arch,
                 DockerStage::Artifacts,
                 &output,
-                &[],
+                &self.buildx_args,
             ))?;
             self.exported.push(arch);
         }
         Ok(dir)
     }
+
+    /// The Dockerfile's `runtime` stage as an image archive, labelled with
+    /// its commit.
+    fn image(&self, arch: Arch, out: &Path) -> Result<()> {
+        let partial = temporary(out);
+        let output = format!("type=docker,name={IMAGE},dest={}", partial.display());
+        let mut options = vec![
+            "--label".to_owned(),
+            format!("org.opencontainers.image.revision={}", self.source.commit),
+        ];
+        options.extend(self.buildx_args.iter().cloned());
+        process::run(&mut docker_build(
+            arch,
+            DockerStage::Runtime,
+            &output,
+            &options,
+        ))?;
+        rename(&partial, out)
+    }
 }
 
-/// The bundle, then a release build of prysm-headless for this Mac.
+/// A release build of prysm-headless for this Mac.
 fn mac(out: &Path) -> Result<()> {
-    ensure!(
-        cfg!(target_os = "macos"),
-        "the mac target builds only on macOS"
-    );
-    npm::run(Script::Bundle)?;
     process::run(&mut process::command(
         "cargo",
         &["build", "--release", "--locked", "-p", "prysm-headless"],
@@ -207,25 +284,9 @@ fn mac(out: &Path) -> Result<()> {
     copy(&target_dir().join("release/prysm-headless"), out)
 }
 
-/// The image `docker load` restores as `prysm-headless:local`, the name
-/// `packaging/release/publish.sh` expects, labelled with its commit.
+/// The name `docker load` gives the image, which
+/// `packaging/release/publish.sh` and `packaging/docker/smoke.sh` use.
 const IMAGE: &str = "prysm-headless:local";
-
-/// The Dockerfile's `runtime` stage, saved as an image archive.
-fn image(arch: Arch, commit: &str, out: &Path) -> Result<()> {
-    let name = out.file_name().context("an artifact path names a file")?;
-    let archive = target_dir().join("xtask").join(name);
-    fs::create_dir_all(target_dir().join("xtask")).context("creating target/xtask")?;
-    let output = format!("type=docker,name={IMAGE},dest={}", archive.display());
-    let label = format!("org.opencontainers.image.revision={commit}");
-    process::run(&mut docker_build(
-        arch,
-        DockerStage::Runtime,
-        &output,
-        &["--label", &label],
-    ))?;
-    copy(&archive, out)
-}
 
 /// A stage of `packaging/docker/Dockerfile`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,9 +306,8 @@ impl DockerStage {
     }
 }
 
-/// `docker buildx build` of `stage` for `arch` to `output`, with `extra`
-/// options.
-fn docker_build(arch: Arch, stage: DockerStage, output: &str, extra: &[&str]) -> Command {
+/// `docker buildx build` of `stage` for `arch` to `output`, with `options`.
+fn docker_build(arch: Arch, stage: DockerStage, output: &str, options: &[String]) -> Command {
     let platform = format!("linux/{}", arch.name());
     let mut command = process::command(
         "docker",
@@ -264,18 +324,13 @@ fn docker_build(arch: Arch, stage: DockerStage, output: &str, extra: &[&str]) ->
             output,
         ],
     );
-    command.args(extra).arg(".");
+    command.args(options).arg(".");
     command
 }
 
-/// The bundle, then `packaging/webos/build-ipk.sh`, which prints the path of
-/// the package it built.
+/// `packaging/webos/build-ipk.sh`, which prints the path of the package it
+/// built.
 fn tv(flavour: Flavour, out: &Path) -> Result<()> {
-    ensure!(
-        std::env::var_os("WEBOS_SDK").is_some(),
-        "set WEBOS_SDK to the relocated webOS SDK (docs/developers/packaging.md#webos)"
-    );
-    npm::run(Script::Bundle)?;
     let dir = target_dir()
         .join("xtask")
         .join(format!("tv-{}", flavour.name()));
@@ -301,7 +356,7 @@ struct Source {
 
 impl Source {
     fn current() -> Result<Self> {
-        let git = |args: &[&str]| process::output(&mut process::command("git", args));
+        let git = |args: &[&str]| process::query(&mut process::command("git", args));
         Ok(Self {
             commit: git(&["rev-parse", "HEAD"]).context("reading the commit")?,
             dirty: !git(&["status", "--porcelain"])
@@ -321,22 +376,46 @@ impl Source {
     }
 }
 
+/// The file's SHA-256, read in pieces: an image archive is large.
 fn sha256(path: &Path) -> Result<String> {
-    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    Ok(Sha256::digest(bytes)
+    let reading = || format!("reading {}", path.display());
+    let mut file = BufReader::new(File::open(path).with_context(reading)?);
+    let mut hasher = Sha256::new();
+    loop {
+        let chunk = file.fill_buf().with_context(reading)?;
+        if chunk.is_empty() {
+            break;
+        }
+        hasher.update(chunk);
+        let read = chunk.len();
+        file.consume(read);
+    }
+    Ok(hasher
+        .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
 
-/// Copies `from` to `to`, keeping the permissions. The copy goes to a
-/// temporary name first: macOS may kill a signed binary rewritten in place.
-fn copy(from: &Path, to: &Path) -> Result<()> {
-    let mut temporary = to.as_os_str().to_owned();
+/// `path` with `.tmp` appended. Artifacts are written there and then
+/// renamed, so `dist/` never holds half a file under an artifact's name.
+fn temporary(path: &Path) -> PathBuf {
+    let mut temporary = path.as_os_str().to_owned();
     temporary.push(".tmp");
+    temporary.into()
+}
+
+fn rename(from: &Path, to: &Path) -> Result<()> {
+    fs::rename(from, to).with_context(|| format!("renaming {} to {}", from.display(), to.display()))
+}
+
+/// Copies `from` to `to` through a temporary name, keeping the permissions;
+/// macOS may also kill a signed binary rewritten in place.
+fn copy(from: &Path, to: &Path) -> Result<()> {
+    let temporary = temporary(to);
     fs::copy(from, &temporary)
-        .and_then(|_| fs::rename(&temporary, to))
-        .with_context(|| format!("copying {} to {}", from.display(), to.display()))
+        .with_context(|| format!("copying {} to {}", from.display(), temporary.display()))?;
+    rename(&temporary, to)
 }
 
 /// Creates `dir`, removing what an earlier run left in it.
@@ -421,15 +500,11 @@ mod tests {
 
     #[test]
     fn options_come_before_the_context() {
-        let command = docker_build(
-            Arch::Arm64,
-            DockerStage::Runtime,
-            "type=docker",
-            &["--label", "a=b"],
-        );
+        let options = ["--label", "a=b", "--cache-from", "type=gha"].map(String::from);
+        let command = docker_build(Arch::Arm64, DockerStage::Runtime, "type=docker", &options);
         assert!(
             process::display(&command)
-                .ends_with("--target runtime --output type=docker --label a=b ."),
+                .ends_with("--output type=docker --label a=b --cache-from type=gha ."),
             "{}",
             process::display(&command)
         );
@@ -455,5 +530,17 @@ mod tests {
         assert_eq!(entry.version, prysm_version::VERSION);
         assert_eq!(entry.built_at, "2023-11-14T22:13:20Z");
         assert!(entry.dirty);
+    }
+
+    #[test]
+    fn hashes_are_lower_case_hex() {
+        let path = target_dir().join("xtask/sha256-test");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "abc").unwrap();
+        assert_eq!(
+            sha256(&path).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        fs::remove_file(&path).unwrap();
     }
 }

@@ -1,7 +1,20 @@
 //! `cargo xtask doctor`: which tools are installed and what needs them.
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+
+/// The pinned toolchain file, which rustup reads in the repository.
+const RUST_TOOLCHAIN: &str = include_str!("../../../rust-toolchain.toml");
+
+/// The Rust version `rust-toolchain.toml` pins, such as `1.99.1`.
+fn pinned_rust() -> &'static str {
+    RUST_TOOLCHAIN
+        .lines()
+        .find_map(|line| line.strip_prefix("channel = "))
+        .map(|value| value.trim_matches('"'))
+        .expect("rust-toolchain.toml names its channel")
+}
 
 /// A tool a command needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,6 +31,7 @@ enum Tool {
     Buildx,
     /// bindgen needs clang and libclang on Linux (V4L2 bindings).
     Clang,
+    Libclang,
     Ffmpeg,
     /// The relocated webOS SDK in `WEBOS_SDK`, read through its gcc.
     WebosSdk,
@@ -54,7 +68,7 @@ impl fmt::Display for Use {
 struct Version(u32, u32);
 
 impl Tool {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::Cargo,
         Self::Rustc,
         Self::Node,
@@ -65,6 +79,7 @@ impl Tool {
         Self::Docker,
         Self::Buildx,
         Self::Clang,
+        Self::Libclang,
         Self::Ffmpeg,
         Self::WebosSdk,
         Self::AresPackage,
@@ -82,6 +97,7 @@ impl Tool {
             Self::Docker => "docker",
             Self::Buildx => "buildx",
             Self::Clang => "clang",
+            Self::Libclang => "libclang",
             Self::Ffmpeg => "ffmpeg",
             Self::WebosSdk => "webos-sdk",
             Self::AresPackage => "ares-package",
@@ -110,8 +126,8 @@ impl Tool {
     /// The oldest version that works, where one is known.
     fn minimum(self) -> Option<Version> {
         match self {
-            // Edition 2024.
-            Self::Cargo | Self::Rustc => Some(Version(1, 85)),
+            // In the repository, rustup runs exactly this one.
+            Self::Cargo | Self::Rustc => parse_version(pinned_rust()).map(|(version, _)| version),
             Self::Node => Some(Version(24, 0)),
             Self::Python => Some(Version(3, 9)),
             Self::Ffmpeg => Some(Version(9, 0)),
@@ -128,7 +144,7 @@ impl Tool {
             Self::Uv => &[Use::Check],
             Self::Git => &[Use::Check, Use::DistMac, Use::DistLinux, Use::DistTv],
             Self::Docker | Self::Buildx => &[Use::DistLinux],
-            Self::Clang => &[Use::Check, Use::Codegen],
+            Self::Clang | Self::Libclang => &[Use::Check, Use::Codegen],
             Self::Ffmpeg => &[Use::FileSource],
             Self::WebosSdk | Self::AresPackage => &[Use::DistTv],
         }
@@ -136,18 +152,21 @@ impl Tool {
 
     /// Whether this machine needs the tool at all.
     fn applies(self) -> bool {
-        self != Self::Clang || cfg!(target_os = "linux")
+        !matches!(self, Self::Clang | Self::Libclang) || cfg!(target_os = "linux")
     }
 
     fn hint(self) -> &'static str {
         match self {
-            Self::Cargo | Self::Rustc => "install Rust with rustup",
+            Self::Cargo | Self::Rustc => {
+                "install rustup, which runs the Rust that rust-toolchain.toml pins"
+            }
             Self::Node | Self::Npm => "install Node.js 24 or newer",
             Self::Python => "install Python 3.9 or newer",
             Self::Uv => "install uv, see docs/developers/acceptance.md#develop-the-runner",
             Self::Git => "install git",
             Self::Docker | Self::Buildx => "install Docker with the buildx plugin",
-            Self::Clang => "install clang and libclang-dev",
+            Self::Clang => "install clang",
+            Self::Libclang => "install libclang-dev, or set LIBCLANG_PATH to its directory",
             Self::Ffmpeg => "install FFmpeg 9 or newer",
             Self::WebosSdk => {
                 "set WEBOS_SDK to the relocated SDK, see docs/developers/packaging.md#webos"
@@ -171,6 +190,9 @@ enum Status {
 
 impl Status {
     fn of(tool: Tool) -> Self {
+        if tool == Tool::Libclang {
+            return libclang().map_or(Self::Missing, |name| Self::Found(Some(name)));
+        }
         let Some(text) = tool
             .version_command()
             .output()
@@ -216,6 +238,37 @@ fn parse_version(text: &str) -> Option<(Version, &str)> {
     })
 }
 
+/// The file name of a libclang that bindgen would load: in `LIBCLANG_PATH`
+/// (a directory or the file) when set, else one the dynamic loader knows
+/// (`ldconfig -p`), which is where Debian and Ubuntu install it.
+fn libclang() -> Option<String> {
+    let names: Vec<String> = match std::env::var_os("LIBCLANG_PATH") {
+        Some(path) if Path::new(&path).is_dir() => fs::read_dir(path)
+            .ok()?
+            .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+            .collect(),
+        Some(path) => vec![Path::new(&path).file_name()?.to_string_lossy().into_owned()],
+        None => {
+            let cache = Command::new("/sbin/ldconfig").arg("-p").output().ok()?;
+            String::from_utf8_lossy(&cache.stdout)
+                .lines()
+                .filter_map(|line| line.split_whitespace().next())
+                .map(str::to_owned)
+                .collect()
+        }
+    };
+    names.into_iter().find(|name| is_libclang(name))
+}
+
+/// `libclang.so…` or `libclang-<version>.so…`, the names bindgen looks for;
+/// not `libclang-cpp`, the C++ library.
+fn is_libclang(name: &str) -> bool {
+    name.starts_with("libclang.so")
+        || name
+            .strip_prefix("libclang-")
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+}
+
 /// Prints one line per tool; fails when `check` cannot run.
 pub fn run() -> ExitCode {
     let mut check_blocked = false;
@@ -240,7 +293,7 @@ pub fn run() -> ExitCode {
             format!(" ({})", tool.hint())
         };
         println!(
-            "{label:<8} {:<12} {detail:<12} for {uses}{hint}",
+            "{label:<8} {:<12} {detail:<17} for {uses}{hint}",
             tool.name()
         );
         check_blocked |= !status.usable() && tool.uses().contains(&Use::Check);
@@ -323,6 +376,32 @@ mod tests {
         );
         assert!(Status::judge(Some(Version(9, 0)), None).usable());
         assert!(Status::judge(Some(Version(3, 9)), parse_version("Python 3.15.2")).usable());
+    }
+
+    #[test]
+    fn the_dockerfile_builds_with_the_pinned_rust() {
+        assert_eq!(Tool::Rustc.minimum().map(|version| version.0), Some(1));
+        let dockerfile = include_str!("../../../packaging/docker/Dockerfile");
+        let tag = format!("FROM rust:{}-", pinned_rust());
+        assert!(
+            dockerfile.contains(&tag),
+            "packaging/docker/Dockerfile must build with `{tag}…`, as rust-toolchain.toml pins"
+        );
+    }
+
+    #[test]
+    fn libclang_is_the_c_library_in_any_version() {
+        for name in [
+            "libclang.so",
+            "libclang.so.1",
+            "libclang-18.so.18",
+            "libclang-14.so",
+        ] {
+            assert!(is_libclang(name), "{name}");
+        }
+        for name in ["libclang-cpp.so.18", "libclangBasic.a", "libc.so.6"] {
+            assert!(!is_libclang(name), "{name}");
+        }
     }
 
     #[test]

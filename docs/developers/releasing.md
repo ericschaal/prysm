@@ -59,15 +59,21 @@ release, and its first release pull request sets both to `1.0.0`.
    - `prepare`: the tag's commit must be on `main`, and `check-release.py`
      must pass for the tag;
    - `build`: [ci.yml](../../.github/workflows/ci.yml) at that commit with
-     `release: true`, all jobs, including the image and Debian package on
-     amd64 and arm64 (smoke test, install and purge) and both IPKs;
-   - `publish`: [publish.sh](../../packaging/release/publish.sh) pushes
+     `release: true`, all jobs. The `docker` job builds the image, binary and
+     Debian package on amd64 and arm64 with `cargo xtask dist` (smoke test,
+     install and purge), and `webos-ipk` both IPKs; each keeps its `dist/`
+     and `manifest.json` as one artifact
+     ([packaging](packaging.md#artifacts-in-dist));
+   - `publish`: [publish.sh](../../packaging/release/publish.sh) checks every
+     file against its manifest (the release's version and commit, a clean
+     tree, the SHA-256), pushes
      `ghcr.io/<owner>/prysm-headless:<version>-amd64` and `-arm64` and the
      multi-arch `:<version>`, checks that each image is from the tag's commit,
-     attaches `prysm-headless_<deb version>_{amd64,arm64}.deb`,
-     `io.prysm.tv-full_<x.y.z>_all.ipk`, `io.prysm.tv-slim_<x.y.z>_all.ipk`,
-     `docker-image.txt` (the index digest) and `SHA256SUMS`, and publishes the
-     release.
+     attaches the packages under the names users download,
+     `prysm-headless_<deb version>_{amd64,arm64}.deb`,
+     `io.prysm.tv-full_<x.y.z>_all.ipk` and `io.prysm.tv-slim_<x.y.z>_all.ipk`,
+     with `docker-image.txt` (the index digest) and `SHA256SUMS`, and
+     publishes the release.
 
 A version with a suffix (`-rc.1`) is published as a pre-release. A stable
 release becomes "Latest", and the floating `:latest` image tag points at its

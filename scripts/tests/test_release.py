@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import os
@@ -134,9 +135,36 @@ elif tool == 'docker':
 '''
 
 
+# The CI artifacts a release run downloads, one directory each, as
+# `cargo xtask dist` writes them (ci.yml's `docker` and `webos-ipk` jobs).
+DIST = {
+    'prysm-dist-linux-amd64': ['prysm-headless-linux-amd64', 'prysm-headless-linux-amd64.deb',
+                               'prysm-headless-linux-amd64.tar'],
+    'prysm-dist-linux-arm64': ['prysm-headless-linux-arm64', 'prysm-headless-linux-arm64.deb',
+                               'prysm-headless-linux-arm64.tar'],
+    'prysm-dist-tv': ['prysm-tv-full.ipk', 'prysm-tv-slim.ipk'],
+}
+
+
+def write_dist(artifacts, version, layout, edit):
+    """Each directory's files and the manifest.json that records them; `edit`
+    may change an entry after it is written (name, entry)."""
+    for directory, names in layout.items():
+        (artifacts / directory).mkdir()
+        entries = {}
+        for name in names:
+            (artifacts / directory / name).write_text(name)
+            entries[name] = {'version': version, 'commit': 'commit', 'dirty': False,
+                             'sha256': hashlib.sha256(name.encode()).hexdigest(),
+                             'built_at': '2026-11-17T12:00:00Z'}
+            edit(name, entries[name])
+        (artifacts / directory / 'manifest.json').write_text(json.dumps({'artifacts': entries}))
+
+
 class PublishTests(unittest.TestCase):
     def run_publish(self, version='1.2.0', release_state='draft', revision='commit',
-                    stable_tags='v0.2.0 v1.1.0 v1.2.0', files=None, **env):
+                    stable_tags='v0.2.0 v1.1.0 v1.2.0', layout=DIST, edit=lambda name, entry: None,
+                    **env):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
@@ -148,14 +176,8 @@ class PublishTests(unittest.TestCase):
         stub.chmod(0o755)
         for name in ('docker', 'gh', 'dpkg-deb'):
             (bin_dir / name).symlink_to(stub)
-        app = version.split('-')[0]
         deb = version.replace('-', '~') + '-1'
-        if files is None:
-            files = [f'prysm-headless_{deb}_amd64.deb', f'prysm-headless_{deb}_arm64.deb',
-                     f'io.prysm.tv-full_{app}_all.ipk', f'io.prysm.tv-slim_{app}_all.ipk',
-                     'prysm-headless-amd64.tar', 'prysm-headless-arm64.tar']
-        for name in files:
-            (artifacts / name).write_text(name)
+        write_dist(artifacts, version, layout, edit)
         calls = root / 'calls'
         environment = dict(
             os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}',
@@ -186,7 +208,8 @@ class PublishTests(unittest.TestCase):
                      'io.prysm.tv-full_1.2.0_all.ipk', 'io.prysm.tv-slim_1.2.0_all.ipk',
                      'docker-image.txt', 'SHA256SUMS'):
             self.assertTrue(any(arg.endswith(name) for arg in upload[0]), name)
-        self.assertFalse(any(arg.endswith('.tar') for arg in upload[0]))
+        self.assertEqual(len(upload[0][5:]), 6, 'four packages, docker-image.txt and SHA256SUMS')
+        self.assertIn(['docker', 'image', 'load', '--input', 'prysm-headless-linux-arm64.tar'], calls)
         self.assertIn(['gh', 'release', 'edit', 'v1.2.0', '--draft=false', '--prerelease=false',
                        '--latest=false'], calls)
         self.assertIn(['gh', 'release', 'edit', 'v1.2.0', '--latest'], calls)
@@ -226,10 +249,17 @@ class PublishTests(unittest.TestCase):
         self.assertFalse(self.find(calls, 'gh', 'release', 'upload'))
 
     def test_missing_or_wrong_packages_are_refused(self):
+        def change(field, value, only='prysm-tv-slim.ipk'):
+            return lambda name, entry: entry.update({field: value}) if name == only else None
+
         for case, kwargs in (
-                ('no slim ipk', {'files': ['prysm-headless_1.2.0-1_amd64.deb', 'prysm-headless_1.2.0-1_arm64.deb',
-                                           'io.prysm.tv-full_1.2.0_all.ipk',
-                                           'prysm-headless-amd64.tar', 'prysm-headless-arm64.tar']}),
+                ('no slim ipk', {'layout': {**DIST, 'prysm-dist-tv': ['prysm-tv-full.ipk']}}),
+                ('no arm64 artifact', {'layout': {key: DIST[key] for key in DIST if 'arm64' not in key}}),
+                ('a file in two artifacts', {'layout': {**DIST, 'prysm-extra': ['prysm-tv-full.ipk']}}),
+                ('another version', {'edit': change('version', '1.1.0')}),
+                ('another commit', {'edit': change('commit', 'other')}),
+                ('a dirty tree', {'edit': change('dirty', True)}),
+                ('a changed file', {'edit': change('sha256', '0' * 64)}),
                 ('wrong package', {'DEB_PACKAGE': 'prysm-led'}),
                 ('wrong deb version', {'DEB_VERSION': '1.1.0-1'})):
             with self.subTest(case=case):
