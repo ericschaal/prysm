@@ -2,9 +2,8 @@
 its settings and its plan."""
 
 from collections.abc import Iterable, Sequence
-import contextlib
-import io
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
@@ -13,13 +12,11 @@ import unittest
 import urllib.error
 import urllib.request
 
-from acceptance_fakes import NO_OPTIONS, transcript_of, untyped
+from acceptance_fakes import transcript_of, untyped
 
-from prysm_acceptance import config, feed, feed_chromecast, plan, run, stage_desktop, transport
+from prysm_acceptance import config, feed, feed_chromecast, transport
+from prysm_acceptance.checks import Bench, Failed
 from prysm_acceptance.config import ChromecastFeed
-from prysm_acceptance.options import Source
-from prysm_acceptance.plan import Context
-from prysm_acceptance.stage_data import DesktopData
 from prysm_acceptance.transport import Result
 
 # The runner's project: scripts/acceptance.
@@ -111,22 +108,18 @@ class FakeChromecast:
         return 'closed'
 
 
-def context(
-    entries: Sequence[tuple[str, Result]] = (), **settings: object
-) -> tuple[Context[DesktopData], feed_chromecast.Feed]:
-    """A context with recorded ADB and the Chromecast feed its settings describe (any free port)."""
+def context(entries: Sequence[tuple[str, Result]] = (), **settings: object) -> tuple[Bench, feed_chromecast.Feed]:
+    """A bench with recorded ADB and the Chromecast feed its settings describe (any free port)."""
     values = config.parse(
         {
             'wled': {'address': 'wled.example'},
             'leds': {'top': 1},
-            'feed': {'chromecast': {'adb_serial': SERIAL, **settings}},
+            'mac': {'feed': {'chromecast': {'adb_serial': SERIAL, **settings}}},
         }
     )
-    cast('ChromecastFeed', values.feed).serve_port = 0
-    ctx = Context[DesktopData](
-        values, NO_OPTIONS, transport.Transcript(entries), Path(tempfile.mkdtemp()), log=lambda line: None
-    )
-    return ctx, cast('feed_chromecast.Feed', feed.configured(values))
+    cast('ChromecastFeed', values.mac.feed).serve_port = 0
+    ctx = Bench(values, transport.Transcript(entries), Path(tempfile.mkdtemp()), log=lambda line: None)
+    return ctx, cast('feed_chromecast.Feed', feed.configured(values.mac))
 
 
 # Recorded from `ip -f inet -o addr show wlan0` on the Chromecast (address replaced by a documentation one).
@@ -147,30 +140,25 @@ ADB_OK = [
 
 
 class Show(unittest.TestCase):
-    def show(
-        self, ctx: Context[DesktopData], chromecast: feed_chromecast.Feed, player: FakeChromecast
-    ) -> list[plan.Outcome]:
+    def show(self, ctx: Bench, chromecast: feed_chromecast.Feed, player: FakeChromecast) -> tuple[str, list[str]]:
+        """Show the clip, then undo what it registered; the failure (or '') and the undos in their order."""
         made: list[str] = []
         chromecast.player_factory = lambda address: made.append(address) or player
-        clip = str(clip_file())
-        step = plan.Step[DesktopData]('desktop.feed', 'F', 'h', plan.Mode.SETUP, lambda ctx: chromecast.show(ctx, clip))
-        outcomes = plan.execute('desktop', [step], ctx)
+        failure = ''
+        try:
+            chromecast.show(ctx, str(clip_file()))
+        except Failed as error:
+            failure = str(error)
+        undone = [name for name, _, _ in reversed(ctx.cleanups)]
+        self.assertEqual(ctx.undo(), [])
         player.made_for = made
-        return outcomes
+        return failure, undone
 
     def test_plays_the_clip_and_undoes_everything_in_order(self) -> None:
         ctx, chromecast = context(ADB_OK)
         player = FakeChromecast('127.0.0.1')
-        outcomes = self.show(ctx, chromecast, player)
-        self.assertEqual(
-            [(o.name, o.status) for o in outcomes],
-            [
-                ('desktop.feed', plan.Status.PASS),
-                ('desktop.feed-stop', plan.Status.PASS),
-                ('desktop.feed-server', plan.Status.PASS),
-                ('desktop.feed-awake', plan.Status.PASS),
-            ],
-        )
+        failure, undone = self.show(ctx, chromecast, player)
+        self.assertEqual((failure, undone), ('', ['feed.stop', 'feed.server', 'feed.awake']))
         self.assertEqual(player.made_for, ['127.0.0.1'])  # the address ADB read
         self.assertEqual(untyped(player.fetched)[0], 206)
         self.assertEqual(untyped(player.fetched)[1]['Content-Type'], 'video/mp4')
@@ -184,23 +172,19 @@ class Show(unittest.TestCase):
     def test_unreachable_adb_says_what_to_do_and_changes_nothing(self) -> None:
         ctx, chromecast = context([('adb.get-state', Result(1, '', "error: device '0123456789ABCD' not found"))])
         player = FakeChromecast('127.0.0.1')
-        outcomes = self.show(ctx, chromecast, player)
-        self.assertEqual(outcomes[0].status, plan.Status.FAIL)
-        self.assertIn('USB debugging', str(outcomes[0].detail))
-        self.assertIn('adb connect', str(outcomes[0].detail))
-        self.assertIn('feed.chromecast.adb_serial', str(outcomes[0].detail))
-        self.assertEqual(len(outcomes), 1)  # nothing to undo
+        failure, undone = self.show(ctx, chromecast, player)
+        self.assertIn('USB debugging', failure)
+        self.assertIn('adb connect', failure)
+        self.assertIn('feed.chromecast.adb_serial', failure)
+        self.assertEqual(undone, [])  # nothing to undo
         self.assertEqual(player.calls, [])
 
     def test_a_failed_cast_still_runs_every_cleanup(self) -> None:
         ctx, chromecast = context(ADB_OK)
         player = FakeChromecast('127.0.0.1', fail=TimeoutError('no answer on 8009'))
-        outcomes = self.show(ctx, chromecast, player)
-        self.assertEqual(outcomes[0].status, plan.Status.FAIL)
-        self.assertIn('no answer on 8009', str(outcomes[0].detail))
-        self.assertEqual(
-            [o.name for o in outcomes[1:]], ['desktop.feed-stop', 'desktop.feed-server', 'desktop.feed-awake']
-        )
+        failure, undone = self.show(ctx, chromecast, player)
+        self.assertIn('no answer on 8009', failure)
+        self.assertEqual(undone, ['feed.stop', 'feed.server', 'feed.awake'])
         self.assertEqual(player.calls, ['connect', 'close'])
         self.assertIsNone(chromecast.playing)
 
@@ -208,10 +192,9 @@ class Show(unittest.TestCase):
         entries = [*ADB_OK[:5], ('adb.wifi-address', Result(0, '')), ADB_OK[-1]]
         ctx, chromecast = context(entries)
         player = FakeChromecast('x')
-        outcomes = self.show(ctx, chromecast, player)
-        self.assertEqual(outcomes[0].status, plan.Status.FAIL)
-        self.assertIn('no Wi-Fi address', str(outcomes[0].detail))
-        self.assertEqual([o.name for o in outcomes[1:]], ['desktop.feed-awake'])
+        failure, undone = self.show(ctx, chromecast, player)
+        self.assertIn('no Wi-Fi address', failure)
+        self.assertEqual(undone, ['feed.awake'])
         self.assertEqual(player.calls, [])
 
     def test_the_wifi_address_is_parsed_strictly(self) -> None:
@@ -219,17 +202,16 @@ class Show(unittest.TestCase):
         self.assertEqual(feed_chromecast.wifi_address(ctx, SERIAL), '192.0.2.44')
         for output in ('', 'Device "wlan0" does not exist.\n', '15: wlan0    inet 999.0.2.44/24 brd x\n'):
             ctx, _ = context([('adb.wifi-address', Result(0, output))])
-            with self.assertRaisesRegex(plan.Failed, 'no Wi-Fi address'):
+            with self.assertRaisesRegex(Failed, 'no Wi-Fi address'):
                 feed_chromecast.wifi_address(ctx, SERIAL)
 
     def test_a_clip_the_receiver_rejects_fails_at_once(self) -> None:
         ctx, chromecast = context(ADB_OK)
         player = FakeChromecast('127.0.0.1', states=('IDLE',))
         start = time.monotonic()
-        outcomes = self.show(ctx, chromecast, player)
+        failure, _ = self.show(ctx, chromecast, player)
         self.assertLess(time.monotonic() - start, 5)
-        self.assertEqual(outcomes[0].status, plan.Status.FAIL)
-        self.assertIn('IDLE, ERROR', str(outcomes[0].detail))
+        self.assertIn('IDLE, ERROR', failure)
         self.assertEqual(player.calls[-1], 'close')
 
     def test_the_previous_media_ending_is_not_a_failure(self) -> None:
@@ -260,75 +242,73 @@ class Settled(unittest.TestCase):
 
     def test_a_clip_no_longer_playing_fails(self) -> None:
         self.player.states = ['IDLE']
-        with self.assertRaisesRegex(plan.Failed, 'no longer playing on the Chromecast: IDLE, ERROR'):
+        with self.assertRaisesRegex(Failed, 'no longer playing on the Chromecast: IDLE, ERROR'):
             self.chromecast.settled()
 
 
 class Settings(unittest.TestCase):
-    def test_the_section_is_checked(self) -> None:
+    def test_the_table_is_checked(self) -> None:
         for data in (
             {'address': '192.0.2.44'},
             {'adb_serial': '-H evil'},
             {},
             {'adb_serial': SERIAL, 'serve_port': 0},
             {'adb_serial': SERIAL, 'settle_seconds': '5'},
+            {'adb_serial': SERIAL, 'settle_seconds': True},
             {'adb_serial': SERIAL, 'settle_seconds': 61},
             {'adb_serial': SERIAL, 'adb_port': 5555},
         ):
             with self.assertRaises(config.ConfigError, msg=data):
-                config.parse({'feed': {'chromecast': data}})
-        values = config.parse({'feed': {'chromecast': {'adb_serial': '192.0.2.60:37000'}}})
+                config.parse({'mac': {'feed': {'chromecast': data}}})
+        values = config.parse({'mac': {'feed': {'chromecast': {'adb_serial': '192.0.2.60:37000'}}}})
+        chromecast = untyped(values.mac.feed)
         self.assertEqual(
-            (untyped(values.feed).adb_serial, untyped(values.feed).serve_port, untyped(values.feed).settle_seconds),
-            ('192.0.2.60:37000', 18792, 5.0),
+            (chromecast.adb_serial, chromecast.serve_port, chromecast.settle_seconds), ('192.0.2.60:37000', 18792, 5.0)
         )
-        self.assertIsInstance(feed.configured(values), feed_chromecast.Feed)
+        self.assertIsInstance(feed.configured(values.mac), feed_chromecast.Feed)
 
     def test_without_a_feed_there_is_none(self) -> None:
-        self.assertIsNone(config.parse({}).feed)
-        self.assertIsNone(feed.configured(config.parse({})))
+        self.assertIsNone(config.parse({}).mac.feed)
+        self.assertIsNone(feed.configured(config.parse({}).mac))
 
-    def test_other_feeds_and_the_old_section_are_refused(self) -> None:
+    def test_other_feeds_and_the_old_tables_are_refused(self) -> None:
         cases: tuple[dict[str, object], ...] = (
             {'chromecast': {'adb_serial': SERIAL}},
-            {'feed': {'firestick': {}}},
-            {'feed': 'chromecast'},
-            {'feed': {'chromecast': 'yes'}},
+            {'feed': {'chromecast': {'adb_serial': SERIAL}}},
+            {'mac': {'feed': {'firestick': {}}}},
+            {'mac': {'feed': 'chromecast'}},
+            {'mac': {'feed': {'chromecast': 'yes'}}},
         )
         for data in cases:
             with self.assertRaises(config.ConfigError, msg=data):
                 config.parse(data)
 
     def test_the_example_names_a_chromecast(self) -> None:
-        self.assertEqual(untyped(config.load(EXAMPLE).feed).adb_serial, SERIAL)
-
-
-class Options:
-    source, source_path, no_build, display_check, sweep, tv_is_free = Source.DEVICE, None, True, False, False, False
+        self.assertEqual(untyped(config.load(EXAMPLE).mac.feed).adb_serial, SERIAL)
 
 
 class FeedPlan(unittest.TestCase):
-    def dry(self, *arguments: str) -> tuple[int, str]:
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            code = run.main(['desktop', *arguments, '--dry-run', '--config', str(EXAMPLE)])
-        return code, output.getvalue()
+    def dry(self, *arguments: str) -> str:
+        command = [sys.executable, '-m', 'prysm_acceptance.run', 'host', 'mac', *arguments, '--dry-run']
+        done = subprocess.run(
+            [*command, '--config', str(EXAMPLE)], capture_output=True, text=True, timeout=60, check=False
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return done.stdout
 
-    def test_dry_run_lists_the_step_and_what_it_undoes(self) -> None:
-        code, text = self.dry('--source', 'device')
-        self.assertEqual(code, 0, text)
-        self.assertIn('desktop.feed: Picture into the capture card', text)
-        self.assertIn('the Chromecast plays the clip (PLAYING within 30 s)', text)
+    def test_dry_run_lists_the_feed_and_what_it_undoes(self) -> None:
+        text = self.dry('--source', 'device')
+        self.assertIn("feed_shown: The clip on the capture card's input", text)
         self.assertIn('serve http://THIS_COMPUTER:18792/edges.mp4', text)
         self.assertIn('-movflags +faststart', text)
         self.assertIn(f'$ adb -s {SERIAL} get-state', text)
         self.assertIn(f"$ adb -s {SERIAL} shell 'settings put global stay_on_while_plugged_in 7'", text)
         self.assertIn(f"$ adb -s {SERIAL} shell 'ip -f inet -o addr show wlan0'", text)
-        cleanups = text[text.index('Always at the end') :].splitlines()[1:6]
+        undone = text[text.index('At the end') :].splitlines()[1:6]
         self.assertEqual(
-            [line.split()[1:3] for line in cleanups],
+            [line.split()[1:3] for line in undone],
             [
-                ['prysm-headless', 'stopped'],
+                ['Prysm', 'stopped'],
                 ['the', 'Chromecast:'],
                 ['the', 'clip'],
                 ['the', "Chromecast's"],
@@ -337,19 +317,18 @@ class FeedPlan(unittest.TestCase):
         )
 
     def test_the_file_source_never_mentions_it(self) -> None:
-        code, text = self.dry()
-        self.assertEqual(code, 0, text)
+        text = self.dry('--source', 'file')
         self.assertNotIn('Chromecast', text)
         self.assertNotIn('$ adb', text)
 
-    def test_the_old_flag_is_gone(self) -> None:
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
-            run.main(['desktop', '--source', 'device', '--cast', '--dry-run'])
-        self.assertEqual(exited.exception.code, 2)
-
     def test_nothing_imports_pychromecast_until_it_connects(self) -> None:
-        stage_desktop.steps(config.load(EXAMPLE), Options())
-        self.assertNotIn('pychromecast', sys.modules)
+        program = (
+            'import sys; from prysm_acceptance import run; '
+            f"code = run.main(['host', 'mac', '--source', 'device', '--dry-run', '--config', {str(EXAMPLE)!r}]); "
+            "sys.exit(code or ('pychromecast' in sys.modules and 3))"
+        )
+        done = subprocess.run([sys.executable, '-c', program], capture_output=True, text=True, timeout=60, check=False)
+        self.assertEqual(done.returncode, 0, done.stdout[-2000:] + done.stderr)
 
 
 if __name__ == '__main__':

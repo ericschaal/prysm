@@ -21,9 +21,9 @@ import time
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from prysm_acceptance import commands, host
+from prysm_acceptance.checks import Bench, Failed
 from prysm_acceptance.commands import Command
 from prysm_acceptance.config import ChromecastFeed
-from prysm_acceptance.plan import Bench, Failed
 
 if TYPE_CHECKING:
     import pychromecast
@@ -51,7 +51,7 @@ class Player(Protocol):
 
 
 class Feed:
-    """The Chromecast `[feed.chromecast]` names: `show` plays the clip and registers its stops."""
+    """The Chromecast `[PLATFORM.feed.chromecast]` names: `show` plays the clip and registers its stops."""
 
     # What the end of the run undoes, in that order, for the dry run.
     CLEANUPS: ClassVar[tuple[str, ...]] = (
@@ -107,9 +107,9 @@ class Feed:
         evidence['address'] = address
         # Bound by the constructor; started before its cleanup, as shutdown() waits for a running server.
         server = ClipServer(clip, host.local_address(address), settings.serve_port).start()
-        ctx.cleanup('desktop.feed-server', 'Clip server stopped', server.close)
+        ctx.cleanup('feed.server', 'Clip server stopped', server.close)
         player: Player = (self.player_factory or Chromecast)(address)
-        ctx.cleanup('desktop.feed-stop', 'Cast stopped', player.close)
+        ctx.cleanup('feed.stop', 'Cast stopped', player.close)
         evidence['url'] = server.url
         try:
             evidence['device'] = player.connect(CONNECT_SECONDS)
@@ -150,7 +150,7 @@ def keep_awake(ctx: Bench, serial: str) -> dict[str, object]:
         ctx.run(commands.adb_stay_on_put(serial, before))
         return f'stay_on_while_plugged_in {before}'
 
-    ctx.cleanup('desktop.feed-awake', 'Chromecast keep-awake put back', restore)
+    ctx.cleanup('feed.awake', 'Chromecast keep-awake put back', restore)
     ctx.run(commands.adb_stay_on_put(serial, commands.STAY_ON))
     ctx.run(commands.adb_wake(serial))
     power = ''

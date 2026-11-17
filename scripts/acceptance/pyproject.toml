@@ -1,15 +1,16 @@
 # The hardware acceptance runner (docs/developers/acceptance.md) as a uv
 # project. Run from the repository root:
-#   uv run --project scripts/acceptance acceptance desktop --dry-run
-# Its one third-party library is PyChromecast, used only by the Chromecast
-# feed (`[feed.chromecast]`). The checks the runner's own code must pass are
+#   uv run --project scripts/acceptance acceptance host mac --dry-run
+# Its libraries are pytest, which runs the host cells, and PyChromecast, used
+# only by the Chromecast feed (`[mac.feed.chromecast]`). A bench run needs no
+# dev group (`uv run --no-dev`). The checks the runner's own code must pass are
 # listed in docs/developers/acceptance.md ("Develop the runner").
 [project]
 name = "prysm-acceptance"
 version = "0.1.0"
 description = "Prysm's hardware acceptance runner (docs/developers/acceptance.md)"
 requires-python = ">=3.11"
-dependencies = ["pychromecast>=14,<15"]
+dependencies = ["pychromecast>=14,<15", "pytest>=8.4,<10"]
 
 [project.scripts]
 acceptance = "prysm_acceptance.run:main"
@@ -50,13 +51,15 @@ ignore = [
 allowed-confusables = ["–"]
 
 [tool.ruff.lint.per-file-ignores]
-# Only the transport runs the allow-listed commands, and run.py reads the commit
-# with git for the report; nothing else may start a process (TID251 below).
+# Only the transport runs the allow-listed commands; nothing else may start a
+# process (TID251 below).
 "prysm_acceptance/transport.py" = ["S603", "TID251"]
-"prysm_acceptance/run.py" = ["S603", "S607", "TID251"]
 # The tests fetch from their own servers on loopback and name paths that must be
 # refused; their fakes answer every route in one handler and pass JSON of any shape.
 "tests/*" = ["S310", "S108", "C901", "ANN401"]
+# These run the runner's own command line, as the bench does.
+"tests/test_acceptance_host.py" = ["S603", "TID251"]
+"tests/test_acceptance_feed_chromecast.py" = ["S603", "TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "subprocess.run".msg = "commands run through the transport (transport.py), built only by commands.py"
@@ -92,7 +95,7 @@ root_package = "prysm_acceptance"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layers: the command line, stages, their cells and data, checks, the feed, devices, clients, the run, base"
+name = "Layers: the command line, the host cells and their pytest plugin, the stages, their cells and data, checks, the feed, devices, clients, the step runner, the bench, base"
 type = "layers"
 containers = ["prysm_acceptance"]
 # Every module of the package is in a layer; a new one must be placed.
@@ -100,39 +103,48 @@ exhaustive = true
 # Top to bottom; `|` siblings are independent of each other, `:` siblings may import each other.
 layers = [
   "run | fake_wled",
-  "stage_desktop | stage_tv | stage_eyes",
+  "host_cells",
+  "bench | stage_tv | stage_eyes",
   "tv_full | tv_slim",
   "stage_data",
-  "edges_clip : colour_page : modes",
+  "edges_clip : colour_page",
   "feed : feed_chromecast",
-  "host | tv",
-  "prysm_api | wled_api | stream_version",
+  "host | tv | artifact",
+  "prysm_api | wled_api",
   "plan",
-  "config | transport | options",
-  "commands | web",
+  "checks",
+  "config | transport",
+  "options | commands | web",
 ]
 
 [[tool.importlinter.contracts]]
 name = "PyChromecast stays behind the Chromecast feed"
 type = "forbidden"
 source_modules = [
-  "prysm_acceptance.run", "prysm_acceptance.fake_wled", "prysm_acceptance.stage_desktop",
+  "prysm_acceptance.run", "prysm_acceptance.fake_wled", "prysm_acceptance.host_cells", "prysm_acceptance.bench",
   "prysm_acceptance.stage_tv", "prysm_acceptance.stage_eyes", "prysm_acceptance.tv_full",
   "prysm_acceptance.tv_slim", "prysm_acceptance.stage_data", "prysm_acceptance.edges_clip",
-  "prysm_acceptance.colour_page", "prysm_acceptance.modes", "prysm_acceptance.feed", "prysm_acceptance.host",
-  "prysm_acceptance.tv", "prysm_acceptance.prysm_api", "prysm_acceptance.wled_api",
-  "prysm_acceptance.stream_version", "prysm_acceptance.plan", "prysm_acceptance.config",
-  "prysm_acceptance.transport", "prysm_acceptance.options", "prysm_acceptance.commands", "prysm_acceptance.web",
+  "prysm_acceptance.colour_page", "prysm_acceptance.feed", "prysm_acceptance.host", "prysm_acceptance.artifact",
+  "prysm_acceptance.tv", "prysm_acceptance.prysm_api", "prysm_acceptance.wled_api", "prysm_acceptance.plan",
+  "prysm_acceptance.checks", "prysm_acceptance.config", "prysm_acceptance.transport", "prysm_acceptance.options",
+  "prysm_acceptance.commands", "prysm_acceptance.web",
 ]
 forbidden_modules = ["pychromecast"]
 # Through the feed is fine: only feed_chromecast names it, and imports it only when it casts.
 allow_indirect_imports = true
 
+[tool.pytest.ini_options]
+# The runner's own tests; the host cells (prysm_acceptance/host_cells.py) run only through `acceptance host`.
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = ["--strict-markers", "-p", "no:cacheprovider"]
+
 [tool.pyright]
 include = ["prysm_acceptance", "tests"]
+extraPaths = ["tests"]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"
-# Off: Prysm's, WLED's and the TV's replies and a stage's data (`stage_data`)
+# Off: Prysm's, WLED's and the TV's replies and a TV stage's data (`stage_data`)
 # are TypedDicts of only the fields the runner reads, none of them promised.
 # A check indexes the field it needs; a missing one fails that check with a
 # KeyError, which the run reports, as it did before the types.

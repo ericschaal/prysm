@@ -3,8 +3,9 @@
 from collections.abc import Callable
 import time
 
-from prysm_acceptance import modes, prysm_api, tv, web
-from prysm_acceptance.plan import Bench, Context, Failed
+from prysm_acceptance import prysm_api, tv, web
+from prysm_acceptance.checks import Failed
+from prysm_acceptance.plan import Bench, Context
 from prysm_acceptance.prysm_api import Settings, Target, near, section
 from prysm_acceptance.stage_data import TvData
 
@@ -14,7 +15,11 @@ SOAKS = [(640, 360, 30), (1280, 720, 30)]
 
 
 def portal(ctx: Bench) -> prysm_api.Prysm:
-    return prysm_api.Prysm(ctx.config.tv.portal)
+    """The TV's portal at the address `getState` reports (`portal`, once the full worker runs)."""
+    url = (tv.get_state(ctx) or tv.LunaReply()).get('portal')
+    if not url:
+        raise Failed('getState reports no portal address: is the full worker running?')
+    return prysm_api.Prysm(url)
 
 
 def wait_portal(ctx: Bench, seconds: float = 40) -> prysm_api.State:
@@ -22,9 +27,9 @@ def wait_portal(ctx: Bench, seconds: float = 40) -> prysm_api.State:
     while time.monotonic() < deadline:
         try:
             return portal(ctx).state()
-        except (web.Unreachable, RuntimeError):
+        except (Failed, web.Unreachable, RuntimeError):
             time.sleep(1)
-    raise Failed(f'the TV portal {ctx.config.tv.portal} did not answer within {seconds} s')
+    raise Failed(f'the TV portal (getState portal) did not answer within {seconds} s')
 
 
 def put_back(ctx: Ctx) -> None:
@@ -85,7 +90,7 @@ def soak(width: int, height: int, fps: int) -> Callable[[Ctx], tuple[str, object
         finally:
             put_back(ctx)
         result['size'] = f'{width}x{height}@{fps}'
-        if not near(result['fps_mean'], fps, ctx.config.desktop.fps_tolerance):
+        if not near(result['fps_mean'], fps, ctx.config.checks.fps_tolerance):
             raise Failed(f'{result["fps_mean"]} fps over the soak, expected {fps}', result)
         return tv.soak_summary(result), result
 
@@ -97,7 +102,7 @@ def capture_modes(ctx: Ctx) -> tuple[str, object]:
     answer = prysm_api.modes_answer(reply)
     if reply.status != 200 or answer.get('status') != 'known':
         raise Failed(f'capture modes: HTTP {reply.status}', answer)
-    return '; '.join(modes.describe(answer['modes'])), answer
+    return '; '.join(prysm_api.describe_modes(answer['modes'])), answer
 
 
 def sweep(ctx: Ctx) -> tuple[str, object]:

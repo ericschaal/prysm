@@ -1,4 +1,4 @@
-"""Steps, their outcomes, the run (selection, dry run, cleanup) and the report.
+"""The `tv` and `eyes` stages' step runner: steps, outcomes, selection, dry run, cleanup, report.
 
 A step is `setup` (always runs, its failure blocks the rest), `auto` (a
 check the runner makes), `guided` (a person acts or answers) or `skip` (no
@@ -15,16 +15,17 @@ import fnmatch
 import json
 from pathlib import Path
 import signal
-import sys
 import time
 import traceback
 from types import FrameType
-from typing import Generic, Protocol, TypeVar, assert_never, cast
+from typing import Generic, TypeVar, assert_never, cast
 
+from prysm_acceptance import checks
+from prysm_acceptance.checks import Answer, Ask, Failed, Skipped, ask_person
 from prysm_acceptance.commands import Command, Flavour
 from prysm_acceptance.config import Config
 from prysm_acceptance.options import Options
-from prysm_acceptance.transport import Result, Transport
+from prysm_acceptance.transport import Transport
 
 
 class Status(StrEnum):
@@ -44,56 +45,13 @@ class Mode(StrEnum):
     SKIP = 'skip'
 
 
-class Answer(StrEnum):
-    """A person's answer to a guided question."""
-
-    YES = 'y'
-    NO = 'n'
-    SKIP = 'skip'
-
-
-ALL_ANSWERS = (Answer.YES, Answer.NO, Answer.SKIP)
-
-
-class Failed(Exception):
-    """A check that did not hold; `evidence` goes into the report."""
-
-    def __init__(self, message: str, evidence: object = None) -> None:
-        super().__init__(message)
-        self.evidence = evidence
-
-
-class Skipped(Exception):
-    def __init__(self, reason: str, evidence: object = None) -> None:
-        super().__init__(reason)
-        self.evidence = evidence
-
-
 class Interrupted(BaseException):
     """SIGTERM, raised like Ctrl-C so cleanups run."""
 
 
-class Ask(Protocol):
-    """Asks a person one question; the answer and an optional note."""
-
-    def __call__(self, question: str, choices: tuple[Answer, ...] = ALL_ANSWERS) -> tuple[Answer, str]: ...
-
-
-def ask_person(question: str, choices: tuple[Answer, ...] = ALL_ANSWERS) -> tuple[Answer, str]:
-    """One question; the answer and an optional note. Without a terminal: skip."""
-    if not sys.stdin.isatty():
-        return Answer.SKIP, 'no terminal to ask'
-    while True:
-        answer = input(f'\n>>> {question}\n    [{"/".join(choices)}]: ').strip().lower()
-        if answer in choices:
-            break
-    note = input('    note (optional): ').strip()
-    return Answer(answer), note
-
-
-class Bench:
-    """What every step and helper of a run uses: configuration, options, the transport that runs
-    commands, the output directory, cleanups, the report's facts and the person to ask."""
+class Bench(checks.Bench):
+    """What every step and helper of a `tv` or `eyes` run uses: the shared bench, the options,
+    the report's facts and the person to ask."""
 
     def __init__(
         self,
@@ -104,26 +62,10 @@ class Bench:
         ask: Ask | None = None,
         log: Callable[[str], None] = print,
     ) -> None:
-        self.config = config
+        super().__init__(config, transport, out_dir, log)
         self.options = options
-        self.transport = transport
-        self.out_dir = out_dir
         self.facts: dict[str, str] = {}
-        self.cleanups: list[tuple[str, str, Callable[[], object]]] = []
         self.ask = ask or ask_person
-        self.log = log
-
-    def run(self, command: Command, check: bool = True) -> Result:
-        return self.transport.run(command, check=check)
-
-    def cleanup(self, name: str, title: str, action: Callable[[], object]) -> None:
-        """Run `action()` at the end, also on failure or interruption (last registered first)."""
-        self.cleanups.append((name, title, action))
-
-    def save(self, name: str, value: object) -> str:
-        path = self.out_dir / name
-        path.write_text(value if isinstance(value, str) else json.dumps(value, indent=2) + '\n')
-        return str(path)
 
 
 # What a stage's steps pass on to later ones: a TypedDict per stage (`stage_data`).

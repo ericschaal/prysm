@@ -8,6 +8,7 @@ shape fails the check that reads it, as before.
 from collections.abc import Callable, Sequence
 import copy
 from enum import StrEnum
+import re
 import statistics
 import time
 from typing import Literal, NotRequired, TypeAlias, TypedDict, cast, overload
@@ -61,8 +62,17 @@ class Input(TypedDict, total=False):
     behind: str
 
 
+class SessionState(StrEnum):
+    """What the runtime is doing: `State.session.state`."""
+
+    STOPPED = 'stopped'
+    RUNNING = 'running'
+    NATIVE = 'native'
+    FAULTED = 'faulted'
+
+
 class Session(TypedDict):
-    state: str
+    state: SessionState
 
 
 class Failure(TypedDict, total=False):
@@ -156,6 +166,12 @@ class Prysm:
             timeout=self.timeout,
         )
 
+    def version(self) -> str | None:
+        """The running version, `prysm_build_info{version}` in `GET /metrics` (served with `--metrics`)."""
+        text = web.request('GET', self._url('/metrics'), timeout=self.timeout).body.decode(errors='replace')
+        found = re.search(r'^prysm_build_info\{version="([^"]*)"\} 1$', text, re.MULTILINE)
+        return found[1] if found else None
+
     def modes(self, capture: dict[str, object]) -> web.Reply:
         return web.request('POST', self._url('/api/v1/capture/modes'), capture, timeout=self.timeout)
 
@@ -218,12 +234,12 @@ def modes_answer(reply: web.Reply) -> ModesAnswer:
     return cast('ModesAnswer', reply.json())
 
 
-def session(state: State | None) -> str | None:
+def session(state: State | None) -> SessionState | None:
     return (state or State()).get('session', cast('Session', {})).get('state')
 
 
 def running(state: State) -> bool:
-    return session(state) == 'running' and (state.get('input') or Input()).get('receiving', False)
+    return session(state) == SessionState.RUNNING and (state.get('input') or Input()).get('receiving', False)
 
 
 def rates(samples: Sequence[Input | None]) -> Rates:
@@ -244,3 +260,24 @@ def rates(samples: Sequence[Input | None]) -> Rates:
 
 def near(value: float, expected: float, tolerance: float) -> bool:
     return abs(value - expected) <= expected * tolerance
+
+
+def describe_modes(modes: Sequence[CaptureMode]) -> list[str]:
+    """One line per mode, `640x360 @ 30` or spans `176-1920/2 x ... @ 1-30`."""
+
+    def span(s: Span) -> str:
+        return str(s['min']) if s['min'] == s['max'] else f'{s["min"]}-{s["max"]}/{s["step"]}'
+
+    return [f'{span(m["width"])} x {span(m["height"])} @ {span(m["fps"])}' for m in modes]
+
+
+def offers(modes: Sequence[CaptureMode], size: Size) -> bool:
+    """Whether one of `modes` takes exactly this size and rate (the check asks; it resolves nothing)."""
+
+    def within(span: Span, value: int) -> bool:
+        return span['min'] <= value <= span['max'] and (value - span['min']) % max(span['step'], 1) == 0
+
+    return any(
+        within(m['width'], size['width']) and within(m['height'], size['height']) and within(m['fps'], size['fps'])
+        for m in modes
+    )

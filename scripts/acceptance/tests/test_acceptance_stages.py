@@ -1,9 +1,9 @@
-"""The acceptance runner's checks against a fake WLED and a fake Prysm on loopback, its plan and report."""
-# pyright: reportPrivateUsage=false
-# (The tests also check the desktop stage's own `_feed`.)
+"""The acceptance runner's colour check, fake WLED, configuration, artifacts, step runner and dry runs."""
 
 from collections.abc import Callable, Sequence
 import contextlib
+import datetime
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -11,34 +11,32 @@ import socket
 import tempfile
 import threading
 import time
-from typing import Any, ClassVar, Never
+from typing import Any, Never, cast
 import unittest
 
-from acceptance_fakes import NO_OPTIONS, FakePrysm, edges_event, untyped
+from acceptance_fakes import edges_event, untyped
 
 from prysm_acceptance import (
+    artifact,
     colour_page,
     config,
     edges_clip,
-    feed,
-    modes,
+    host_cells,
     plan,
     prysm_api,
     run,
-    stage_desktop,
     stage_eyes,
-    stream_version,
     transport,
     web,
     wled_api,
 )
-from prysm_acceptance.commands import Command, Flavour
-from prysm_acceptance.config import Preset
+from prysm_acceptance.checks import Answer, Bench, Failed
+from prysm_acceptance.commands import Flavour
 from prysm_acceptance.fake_wled import FakeWled
-from prysm_acceptance.options import Source
-from prysm_acceptance.plan import Answer, Bench, Mode
-from prysm_acceptance.prysm_api import CaptureMode, ColorsEvent, Edge, Span
-from prysm_acceptance.stage_data import DesktopData
+from prysm_acceptance.host import Host
+from prysm_acceptance.plan import Mode
+from prysm_acceptance.prysm_api import ColorsEvent, Edge
+from prysm_acceptance.transport import Result
 
 # The runner's project: scripts/acceptance.
 ACCEPTANCE = Path(__file__).resolve().parents[1]
@@ -47,286 +45,6 @@ EXAMPLE = ACCEPTANCE / 'config.example.toml'
 
 # Each edge's two colours, as `edges_clip.expected` gives them.
 Pairs = dict[Edge, tuple[str, ...]]
-
-
-class Devices(unittest.TestCase):
-    """A fake WLED and a fake Prysm that drives it, with the desktop checks' context."""
-
-    def setUp(self) -> None:
-        self.wled = FakeWled(leds=162).start()
-        self.addCleanup(self.wled.close)
-        settings: dict[str, object] = {
-            'output': {
-                'kind': 'wled',
-                'address': self.wled.http_address,
-                'dither': True,
-                'leds': {'top': 1, 'right': 1, 'bottom': 1, 'left': 1},
-            },
-            'capture': {'kind': 'file', 'path': 'clip.mp4', 'width': 640, 'height': 360, 'fps': 30},
-            'processing': {},
-        }
-        self.prysm = FakePrysm(self.wled, settings).start()
-        self.addCleanup(self.prysm.close)
-        values = config.parse({'wled': {'address': self.wled.http_address}, 'desktop': {'seconds': 2}})
-        self.ctx = plan.Context[DesktopData](
-            values, NO_OPTIONS, transport.Refusing(), Path(tempfile.mkdtemp()), log=lambda line: None
-        )
-        wled = wled_api.Wled(self.wled.http_address)
-        self.ctx.data.update(
-            prysm=prysm_api.Prysm(self.prysm.url),
-            wled=wled,
-            local_address='127.0.0.1',
-            fps=30,
-            clip_edges=True,
-            wled_snapshot=wled_api.snapshot(wled),
-        )
-
-
-class DesktopChecks(Devices):
-    def run_steps(self, names: list[str]) -> dict[str, plan.Outcome]:
-        steps = [s for s in stage_desktop.steps(self.ctx.config, Options()) if s.name in names]
-        self.assertEqual(len(steps), len(names))
-        return {o.name: o for o in plan.execute('desktop', steps, self.ctx)}
-
-    def test_the_checks_pass_against_a_well_behaved_prysm(self) -> None:
-        names = [
-            'desktop.processed',
-            'desktop.wled-live',
-            'desktop.fps',
-            'desktop.colours',
-            'desktop.device-native',
-            'desktop.processed-again',
-            'desktop.off',
-            'desktop.dither',
-            'desktop.brightness',
-        ]
-        outcomes = self.run_steps(names)
-        for name in names:
-            self.assertEqual(
-                outcomes[name].status, plan.Status.PASS, (name, outcomes[name].detail, outcomes[name].evidence)
-            )
-        # The brightness check put WLED back.
-        self.assertEqual(wled_api.differences(self.ctx.data['wled'], self.ctx.data['wled_snapshot']), {})
-        dither = [
-            r[2]['settings']['output']['dither'] for r in self.prysm.requests if r[:2] == ('PUT', '/api/v1/settings')
-        ]
-        self.assertEqual(dither, [False, True])
-
-    def test_wled_without_ddp_fails_the_live_check(self) -> None:
-        self.prysm.send_ddp = False
-        outcomes = self.run_steps(['desktop.processed', 'desktop.wled-live'])
-        self.assertEqual(outcomes['desktop.processed'].status, plan.Status.PASS)
-        self.assertEqual(outcomes['desktop.wled-live'].status, plan.Status.FAIL)
-
-    def test_wrong_edge_colours_fail(self) -> None:
-        self.prysm.colours = lambda seconds: edges_event(
-            {
-                'top': ('blue', 'blue'),
-                'right': ('green', 'blue'),
-                'bottom': ('yellow', 'blue'),
-                'left': ('red', 'yellow'),
-            }
-        )
-
-        def colors(seconds: float, timed: bool) -> object:
-            return prysm_api.Prysm(self.prysm.url).colors(1.0, timed)
-
-        untyped(self.ctx.data['prysm']).colors = colors
-        outcomes = self.run_steps(['desktop.colours'])
-        self.assertEqual(outcomes['desktop.colours'].status, plan.Status.FAIL)
-        self.assertIn('wrong colour: top shows blue, blue', str(outcomes['desktop.colours'].detail))
-        self.assertEqual(untyped(outcomes['desktop.colours'].evidence)['samples'][0]['edges']['top'], 'blue, blue')
-
-    def test_the_device_source_resolves_the_preset_like_the_portal(self) -> None:
-        self.ctx.options = Options(source=Source.DEVICE)
-        _, evidence = stage_desktop.source(self.ctx)
-        self.assertEqual(untyped(evidence)['resolved'], {'width': 1280, 'height': 720, 'fps': 30})
-        self.assertEqual(
-            self.prysm.settings['capture'],
-            {'kind': 'device', 'path': 'unique-id-1', 'width': 1280, 'height': 720, 'fps': 30},
-        )
-
-
-class GammaCheck(Devices):
-    """desktop.gamma reads WLED's gamma fields as Prysm parses them, and changes nothing."""
-
-    def gamma(self) -> plan.Outcome:
-        step = next(s for s in stage_desktop.steps(self.ctx.config, Options()) if s.name == 'desktop.gamma')
-        return plan.execute('desktop', [step], self.ctx)[0]
-
-    def test_a_wled_16_configuration_passes_and_is_left_alone(self) -> None:
-        before = json.dumps(self.wled.cfg, sort_keys=True)
-        outcome = self.gamma()
-        self.assertEqual(outcome.status, plan.Status.PASS, (outcome.detail, outcome.evidence))
-        self.assertEqual(outcome.detail, 'WLED 16.0.1-fake: colour gamma 2.2, brightness gamma off')
-        self.assertEqual(
-            outcome.evidence,
-            {'ver': '16.0.1-fake', 'if.live.no-gc': False, 'light.gc.col': 2.2, 'light.gc.bri': 1, 'light.gc.val': 2.2},
-        )
-        self.assertEqual((json.dumps(self.wled.cfg, sort_keys=True), self.wled.posts), (before, []))
-
-    def test_realtime_gamma_off_is_described_as_linear(self) -> None:
-        untyped(self.wled.cfg)['if']['live']['no-gc'] = True
-        self.assertIn('realtime gamma correction off (linear)', str(self.gamma().detail))
-
-    def test_each_missing_wrong_or_out_of_range_field_fails_by_name(self) -> None:
-        cases = [
-            (('if', 'live', 'no-gc'), None, 'if.live.no-gc is missing: Prysm would take realtime'),
-            (('if', 'live', 'no-gc'), 0, 'if.live.no-gc is 0, not true or false: Prysm would refuse'),
-            (('light', 'gc', 'col'), None, 'light.gc.col is missing: Prysm would take the colour gamma as unknown'),
-            (('light', 'gc', 'col'), '2.2', "light.gc.col is '2.2', not a number: Prysm would refuse"),
-            (('light', 'gc', 'col'), True, 'light.gc.col is True, not a number'),
-            (('light', 'gc', 'col'), 3.5, 'light.gc.col is 3.5, outside 0.1–3: Prysm would take the colour'),
-            (('light', 'gc', 'col'), 0.05, 'light.gc.col is 0.05, outside 0.1–3'),
-            (('light', 'gc', 'bri'), None, 'light.gc.bri is missing: Prysm would take the brightness gamma as off'),
-            (('light', 'gc', 'bri'), [1], 'light.gc.bri is [1], not a number: Prysm would refuse'),
-            (('light', 'gc', 'bri'), 0, 'light.gc.bri is 0, outside 0.1–3: Prysm would take the brightness'),
-            (('light', 'gc'), 2.2, 'light or light.gc is not an object: Prysm would refuse'),
-            (('if', 'live'), None, 'if.live is missing or not an object: Prysm would refuse'),
-        ]
-        for path, value, message in cases:
-            cfg = json.loads(json.dumps(self.wled.cfg))
-            parent = cfg
-            for key in path[:-1]:
-                parent = parent[key]
-            if value is None:
-                del parent[path[-1]]
-            else:
-                parent[path[-1]] = value
-            _, problems = wled_api.gamma_fields(cfg)
-            self.assertEqual(len(problems), 1, (path, value, problems))
-            self.assertIn(message, problems[0], (path, value))
-        untyped(self.wled.cfg)['light']['gc']['col'] = 4
-        outcome = self.gamma()
-        self.assertEqual(outcome.status, plan.Status.FAIL)
-        self.assertIn('light.gc.col is 4, outside 0.1–3', str(outcome.detail))
-        self.assertEqual(untyped(outcome.evidence)['light.gc.col'], 4)
-
-    def test_the_dry_run_lists_it_as_a_read(self) -> None:
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            run.main(['desktop', '--dry-run', '--config', str(EXAMPLE)])
-        entry = output.getvalue().split('] desktop.gamma: ')[1].split('\n[')[0]
-        self.assertIn('auto  ] desktop.gamma', output.getvalue())
-        self.assertIn('- GET /json/cfg (read-only)', entry)
-        self.assertIn('not that Prysm applied the value', entry)
-
-
-class FakeFeed:
-    """A feed the runner controls: shows the clip, registers its stop, and settles before each colour check."""
-
-    CLEANUPS: ClassVar[tuple[str, ...]] = ('the fake feed stopped',)
-
-    def __init__(self) -> None:
-        self.calls: list[object] = []
-
-    def preflight(self) -> Never:
-        self.calls.append('preflight')
-        raise plan.Failed('the fake feed misses a tool')
-
-    def how(self) -> str:
-        return 'the fake feed shows the clip'
-
-    def actions(self) -> list[str]:
-        return ['show the clip on the fake feed']
-
-    def commands(self) -> list[Command]:
-        return []
-
-    def show(self, ctx: Bench, clip: str) -> tuple[str, object]:
-        self.calls.append(('show', clip))
-        ctx.cleanup('desktop.fake-feed-stop', 'Fake feed stopped', lambda: self.calls.append('stop') or 'stopped')
-        return 'showing', None
-
-    def settled(self) -> None:
-        self.calls.append('settled')
-
-
-class TheFeed(Devices):
-    """The stage shows the clip on the configured feed, and only for a capture card."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.feed = FakeFeed()
-        configured = feed.configured
-        feed.configured = lambda config: self.feed
-        self.addCleanup(setattr, feed, 'configured', configured)
-
-    def names(self, options: 'Options') -> list[str]:
-        return [s.name for s in stage_desktop.steps(self.ctx.config, options)]
-
-    def test_a_capture_card_gets_the_clip_through_the_feed(self) -> None:
-        options = Options(source=Source.DEVICE)
-        names = self.names(options)
-        self.assertLess(names.index('desktop.clip'), names.index('desktop.feed'))
-        self.assertLess(names.index('desktop.feed'), names.index('desktop.start'))
-        step = next(s for s in stage_desktop.steps(self.ctx.config, options) if s.name == 'desktop.feed')
-        self.assertEqual((step.mode, step.how), ('setup', 'the fake feed shows the clip'))
-        self.assertEqual(
-            stage_desktop.cleanups(self.ctx.config, options),
-            stage_desktop.CLEANUPS[:1] + FakeFeed.CLEANUPS + stage_desktop.CLEANUPS[1:],
-        )
-        self.ctx.data['clip'] = 'RUN_DIR/edges.mp4'
-        outcomes = plan.execute('desktop', [step], self.ctx)
-        self.assertEqual(
-            [(o.name, o.status) for o in outcomes],
-            [('desktop.feed', plan.Status.PASS), ('desktop.fake-feed-stop', plan.Status.PASS)],
-        )
-        self.assertEqual(self.feed.calls, [('show', 'RUN_DIR/edges.mp4'), 'stop'])
-        self.assertIs(self.ctx.data['feed'], self.feed)
-
-    def test_preflight_checks_the_feed_only_for_a_capture_card(self) -> None:
-        self.ctx.config.leds.top = 1
-        self.ctx.options = Options(source=Source.DEVICE)
-        with self.assertRaisesRegex(plan.Failed, 'fake feed misses'):
-            stage_desktop.preflight(self.ctx)
-        self.ctx.options = Options(source=Source.FILE)
-        try:
-            stage_desktop.preflight(self.ctx)
-        except plan.Failed as error:  # only when this computer has no FFmpeg
-            self.assertIn('FFmpeg', str(error))
-        self.assertEqual(self.feed.calls, ['preflight'])
-
-    def test_the_file_source_ignores_the_feed(self) -> None:
-        names = self.names(Options(source=Source.FILE))
-        self.assertNotIn('desktop.feed', names)
-        self.assertIn('desktop.clip', names)
-        self.assertEqual(stage_desktop.cleanups(self.ctx.config, Options()), stage_desktop.CLEANUPS)
-        self.assertIsNone(stage_desktop._feed(self.ctx.config, Options()))
-
-    def test_the_display_check_does_not_use_the_feed(self) -> None:
-        options = Options(source=Source.DEVICE)
-        options.display_check = True
-        names = self.names(options)
-        self.assertNotIn('desktop.clip', names)
-        step = next(s for s in stage_desktop.steps(self.ctx.config, options) if s.name == 'desktop.feed')
-        self.assertEqual(step.mode, 'skip')
-        self.assertIn('--display-check', step.how)
-        self.assertIn('desktop.display-check', names)
-
-    def test_without_a_feed_the_card_is_only_not_black(self) -> None:
-        feed.configured = lambda config: None
-        options = Options(source=Source.DEVICE)
-        self.assertNotIn('desktop.clip', self.names(options))
-        step = next(s for s in stage_desktop.steps(self.ctx.config, options) if s.name == 'desktop.feed')
-        self.assertEqual(step.mode, 'skip')
-        self.assertIn('not black', step.how)
-        self.assertEqual(stage_desktop.cleanups(self.ctx.config, options), stage_desktop.CLEANUPS)
-        self.ctx.data['clip_edges'] = False
-        detail, _ = stage_desktop.colours(self.ctx)
-        self.assertIn('not black', detail)
-
-    def test_colour_checks_wait_for_the_feed(self) -> None:
-        self.ctx.data['feed'] = self.feed
-
-        def colors(seconds: float, timed: bool) -> object:
-            return timeline()
-
-        untyped(self.ctx.data['prysm']).colors = colors
-        detail, _ = stage_desktop.colours(self.ctx)
-        self.assertIn('steps in order', detail)
-        stage_desktop.release(self.ctx)
-        self.assertEqual(self.feed.calls, ['settled', 'settled'])
 
 
 def step(number: int, change: Callable[[Pairs], None] | None = None) -> ColorsEvent:
@@ -350,8 +68,8 @@ class TheColourCheck(unittest.TestCase):
     def judged(self, samples: Sequence[tuple[float, ColorsEvent]]) -> tuple[str, dict[str, object]]:
         return edges_clip.judge(samples, 10.0)
 
-    def fails(self, samples: Sequence[tuple[float, ColorsEvent]], message: str) -> plan.Failed:
-        with self.assertRaisesRegex(plan.Failed, message) as failed:
+    def fails(self, samples: Sequence[tuple[float, ColorsEvent]], message: str) -> Failed:
+        with self.assertRaisesRegex(Failed, message) as failed:
             self.judged(samples)
         return failed.exception
 
@@ -455,7 +173,7 @@ class TheColourCheck(unittest.TestCase):
         self.fails(samples, r'^transition too long: from step 1 to step 2 took 0.4 s \(at most 0.3 s\)')
 
 
-class FakeWledBehaviour(Devices):
+class FakeWledBehaviour(unittest.TestCase):
     def test_ddp_makes_it_live_and_restore_puts_it_back(self) -> None:
         device = FakeWled(http=('127.0.0.1', 0), ddp=('127.0.0.1', 0)).start()
         self.addCleanup(device.close)
@@ -468,17 +186,28 @@ class FakeWledBehaviour(Devices):
         saved = wled_api.snapshot(wled)
         wled.post_state({'on': False, 'lor': 2, 'bri': 3})
         wled.post_cfg({'if': {'live': {'maxbri': True}}})
-        self.assertNotEqual(wled_api.differences(wled, saved), {})
+        wled.post_state({'transition': 0})
+        self.assertEqual(set(wled_api.differences(wled, saved)), {'on', 'bri', 'lor', 'transition', 'maxbri'})
         self.assertEqual(wled_api.restore(wled, saved), {})
 
 
-class StreamVersion(unittest.TestCase):
-    def test_the_stand_in_answers_another_version(self) -> None:
-        stand_in = stream_version.OtherVersion(0, host='127.0.0.1').start()
-        self.addCleanup(stand_in.close)
-        status, protocol = stream_version.ask(f'http://127.0.0.1:{stand_in.port}', stream_version.CURRENT)
-        self.assertEqual((status, protocol), (426, stream_version.OTHER))
-        self.assertEqual(stand_in.requests, 1)
+class Sender(unittest.TestCase):
+    """WLED must report the sender the host seam expects, not any live DDP."""
+
+    def test_another_sender_fails(self) -> None:
+        device = FakeWled(http=('127.0.0.1', 0), ddp=('127.0.0.1', 0)).start()
+        self.addCleanup(device.close)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.sendto(bytes([0x41, 0, 1, 1, 0, 0, 0, 0, 0, 3, 255, 0, 0]), untyped(device.udp).getsockname())
+        time.sleep(0.3)
+
+        class Seam:
+            def sender(self) -> str:
+                return '192.0.2.10'
+
+        prysm = prysm_api.Prysm('http://127.0.0.1:9')  # not reached: the sender fails first
+        with self.assertRaisesRegex(Failed, r'another sender: 127.0.0.1 \(expected 192.0.2.10\)'):
+            host_cells.live_from_host(prysm, wled_api.Wled(device.http_address), cast('Host', Seam()))
 
 
 class ColourPage(unittest.TestCase):
@@ -513,61 +242,106 @@ class ColourPage(unittest.TestCase):
         self.assertIsNone(found['left'])
 
 
-class Modes(unittest.TestCase):
-    @staticmethod
-    def span(lo: int, hi: int, step: int = 1) -> Span:
-        return {'min': lo, 'max': hi, 'step': step}
-
-    def test_exact_then_smallest_wide_covering_size(self) -> None:
-        wide: CaptureMode = {
-            'width': self.span(176, 1920, 2),
-            'height': self.span(144, 1080, 2),
-            'fps': self.span(1, 30),
-        }
-        self.assertEqual(
-            modes.resolve([wide], modes.PRESETS[Preset.BALANCED]), {'width': 640, 'height': 360, 'fps': 30}
-        )
-        self.assertIsNone(modes.resolve([wide], modes.PRESETS[Preset.SMOOTH]))
-        fixed: list[CaptureMode] = [
-            {'width': self.span(800, 800), 'height': self.span(600, 600), 'fps': self.span(30, 30)},
-            {'width': self.span(1280, 1280), 'height': self.span(720, 720), 'fps': self.span(30, 30)},
-            {'width': self.span(1920, 1920), 'height': self.span(1080, 1080), 'fps': self.span(30, 30)},
-        ]
-        self.assertEqual(
-            modes.resolve(fixed, modes.PRESETS[Preset.BALANCED]), {'width': 1280, 'height': 720, 'fps': 30}
-        )
-        self.assertEqual(modes.describe(fixed[:1]), ['800 x 600 @ 30'])
-
-
 class Configuration(unittest.TestCase):
     def test_the_example_parses(self) -> None:
         values = config.load(EXAMPLE)
         self.assertEqual(values.tv.ssh, 'root@' + values.tv.address)
         self.assertEqual(values.sweep.pairs()[0], (320, 180, 30))
+        self.assertEqual((values.mac.target, values.mac.device), ('local', '0x1100000345f2131'))
+        self.assertEqual(untyped(values.mac.capture).fps, 30)
+        self.assertTrue(values.linux.target.startswith('ssh://'))
 
     def test_mistakes_are_refused(self) -> None:
         cases: tuple[dict[str, object], ...] = (
-            {'desktop': {'sekonds': 3}},
+            {'checks': {'sekonds': 3}},
+            {'desktop': {'seconds': 3}},
             {'wled': {'address': 'http://wled'}},
             {'tv': {'flavours': ['fat']}},
-            {'desktop': {'seconds': '3'}},
+            {'checks': {'seconds': '3'}},
+            {'checks': {'fps_tolerance': True}},
+            {'checks': {'fps_tolerance': 2}},
             {'sweep': {'sizes': ['big']}},
             {'receiver': {'url': 'http://x/; reboot'}},
             {'leds': {'top': -1}},
             {'tv': {'ssh': '-oProxyCommand=sh'}},
             {'tv': {'address': 'tv\n'}},
+            {'mac': {'target': 'pi@host'}},
+            {'mac': {'deb': 'dist/prysm-headless-linux-arm64.deb'}},
+            {'mac': {'capture': {'width': 0}}},
+            {'mac': {'listen': '127.0.0.1:18787 --start'}},
+            {'linux': {'target': 'ssh://-oProxyCommand=sh'}},
         )
         for data in cases:
             with self.assertRaises(config.ConfigError, msg=data):
                 config.parse(data)
 
+    def test_a_remote_mac_is_not_implemented(self) -> None:
+        with self.assertRaisesRegex(config.ConfigError, 'a remote Mac is not implemented'):
+            config.parse({'mac': {'target': 'ssh://me@mac.example'}})
+
+    def test_a_whole_number_is_a_float_but_true_is_not(self) -> None:
+        feed = {'adb_serial': 'ABCD1234', 'settle_seconds': 3}
+        self.assertEqual(untyped(config.parse({'mac': {'feed': {'chromecast': feed}}}).mac.feed).settle_seconds, 3)
+        with self.assertRaisesRegex(config.ConfigError, 'expected float'):
+            config.parse({'mac': {'feed': {'chromecast': {**feed, 'settle_seconds': True}}}})
+
+
+class Artifacts(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dist = Path(tempfile.mkdtemp())
+        self.binary = self.dist / 'prysm-headless-macos-arm64'
+        self.binary.write_bytes(b'prysm')
+        self.sha = hashlib.sha256(b'prysm').hexdigest()
+
+    def manifest(self, sha256: str) -> None:
+        entry = {'version': '1.0.0-alpha.0', 'commit': 'abc123', 'dirty': False, 'sha256': sha256, 'built_at': 'x'}
+        (self.dist / 'manifest.json').write_text(json.dumps({'artifacts': {self.binary.name: entry}}))
+
+    def test_hash_and_age_without_a_manifest(self) -> None:
+        found = artifact.inspect(self.binary)
+        self.assertEqual((found.sha256, found.version), (self.sha, None))
+        self.assertIn('version and commit unknown', found.facts()['manifest'])
+
+    def test_a_matching_manifest_gives_the_version_and_commit(self) -> None:
+        self.manifest(self.sha)
+        facts = artifact.inspect(self.binary).facts()
+        self.assertEqual((facts['version'], facts['commit']), ('1.0.0-alpha.0', 'abc123'))
+
+    def test_a_manifest_of_another_build_is_ignored(self) -> None:
+        self.manifest('0' * 64)
+        self.assertIsNone(artifact.inspect(self.binary).entry)
+
+    def test_older_than_the_last_commit_warns(self) -> None:
+        found = artifact.inspect(self.binary)
+        later = (found.modified + datetime.timedelta(hours=1)).isoformat()
+        earlier = (found.modified - datetime.timedelta(hours=1)).isoformat()
+        warning = artifact.older_than_checkout(
+            found, transport.Transcript([('local.git-last-commit-time', Result(0, later))])
+        )
+        self.assertIn('older than the last commit', str(warning))
+        record = transport.Transcript([('local.git-last-commit-time', Result(0, earlier))])
+        self.assertIsNone(artifact.older_than_checkout(found, record))
+        no_git = transport.Transcript([('local.git-last-commit-time', Result(128, '', 'not a repository'))])
+        self.assertIsNone(artifact.older_than_checkout(found, no_git))
+
+
+class TheBench(unittest.TestCase):
+    def test_every_undo_runs_last_first_and_failures_are_reported(self) -> None:
+        bench = Bench(config.parse({}), transport.Refusing(), Path(tempfile.mkdtemp()))
+        done: list[str] = []
+
+        def broken() -> Never:
+            raise RuntimeError('unplugged')
+
+        bench.cleanup('a', 'A', lambda: done.append('a'))
+        bench.cleanup('b', 'B', broken)
+        bench.cleanup('c', 'C', lambda: done.append('c'))
+        self.assertEqual(bench.undo(), ['b: RuntimeError: unplugged'])
+        self.assertEqual((done, bench.cleanups), (['c', 'a'], []))
+
 
 class Options:
-    def __init__(self, source: Source = Source.FILE) -> None:
-        self.source = source
-        self.source_path: str | None = None
-        self.no_build, self.display_check = True, False
-        self.sweep, self.tv_is_free = False, False
+    sweep, tv_is_free = False, False
 
 
 class Plan(unittest.TestCase):
@@ -605,7 +379,7 @@ class Plan(unittest.TestCase):
 
         def setup(ctx: Bench) -> Never:
             ctx.cleanup('a.restore', 'Restore', lambda: restored.append(True) or 'restored')
-            raise plan.Failed('no device', {'why': 'unplugged'})
+            raise Failed('no device', {'why': 'unplugged'})
 
         steps: list[plan.Step[Any]] = [
             plan.Step('a.setup', 'S', 'h', Mode.SETUP, setup),
@@ -666,7 +440,6 @@ class DryRun(unittest.TestCase):
 
     def test_every_stage_prints_its_plan(self) -> None:
         for stage, expected in (
-            ('desktop', 'desktop.sigterm'),
             ('tv', 'tv.slim.uninstall'),
             ('eyes', 'eyes.cold-boot'),
         ):
@@ -677,6 +450,15 @@ class DryRun(unittest.TestCase):
         code, text = self.dry('tv', '--sweep')
         self.assertIn('TV$ timeout 120 luna-send -i luna://com.webos.appInstallService/dev/install', text)
         self.assertIn('tv.full.sweep', text)
+        self.assertIn('$ python3 packaging/webos/ipk.py verify dist/prysm-tv-full.ipk', text)
+        for gone in ('cargo build', 'build-ipk.sh', 'hardware-60', 'tv.slim.version', 'hung-capture', 'tv.headless'):
+            self.assertNotIn(gone, text)
+
+    def test_eyes_keeps_only_what_a_person_must_judge(self) -> None:
+        _, text = self.dry('eyes')
+        self.assertIn('eyes.flicker-no-rerender', text)
+        for gone in ('start-with-tv', 'diagnostics', 'remove-dialog', 'flicker-cold-start', 'flicker-retry-bar'):
+            self.assertNotIn(gone, text)
 
     def test_the_tv_stage_needs_the_owners_word(self) -> None:
         output = io.StringIO()

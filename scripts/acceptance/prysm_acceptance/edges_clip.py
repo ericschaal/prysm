@@ -20,7 +20,7 @@ from itertools import pairwise
 from typing import TypedDict
 
 from prysm_acceptance import colour_page
-from prysm_acceptance.plan import Failed
+from prysm_acceptance.checks import Failed
 from prysm_acceptance.prysm_api import ColorsEvent, Edge
 
 # The corners' colours at the first step, clockwise from the top-left corner.

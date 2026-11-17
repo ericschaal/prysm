@@ -9,8 +9,9 @@ import time
 from typing import NotRequired, TypedDict, cast
 
 from prysm_acceptance import commands, prysm_api
+from prysm_acceptance.checks import Answer, Failed
 from prysm_acceptance.commands import Command, Flavour
-from prysm_acceptance.plan import Answer, Bench, Failed
+from prysm_acceptance.plan import Bench
 from prysm_acceptance.prysm_api import Target
 from prysm_acceptance.transport import CommandFailed, Result
 from prysm_acceptance.web import Reply
@@ -154,8 +155,12 @@ def read_data(ctx: Bench, name: str) -> str | None:
 
 
 def install(ctx: Bench, ipk: str) -> LunaReply:
-    """The documented install: stage, appInstallService, unstage, setup.sh."""
+    """The documented install: verify, stage, appInstallService, unstage, setup.sh.
+
+    `ipk.py verify` refuses a package with files outside the app and service
+    directories; only a package it accepted is staged, whatever its name."""
     host = ctx.config.tv.ssh
+    ctx.run(commands.verify_ipk(ipk))
     ctx.run(commands.tv_stage(host, ipk))
     try:
         result = ctx.run(commands.tv_install(host), check=False)

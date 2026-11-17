@@ -1,11 +1,11 @@
-"""The slim package's checks: the TV streams to a receiver (a prysm-headless here, or --receiver URL)."""
+"""The slim package's checks: the TV streams to a receiver (`[mac] binary` started here, or --receiver URL)."""
 
 from enum import StrEnum
 import time
-from typing import cast
 
-from prysm_acceptance import commands, host, prysm_api, stream_version, tv
-from prysm_acceptance.plan import Context, Failed, Skipped
+from prysm_acceptance import commands, host, prysm_api, tv
+from prysm_acceptance.checks import Failed, Skipped
+from prysm_acceptance.plan import Context
 from prysm_acceptance.prysm_api import Target, near, rates
 from prysm_acceptance.stage_data import TvData
 from prysm_acceptance.web import JsonObject, Reply
@@ -47,11 +47,14 @@ def start_receiver(ctx: Ctx) -> str:
         ctx.data['receiver'] = prysm
         ctx.data['receiver_for_tv'] = config.receiver.url
         return f'using {config.receiver.url}'
-    document = host.settings(host.wled_output(config), {'kind': 'remote'})
-    path = host.write_settings(ctx, 'receiver-settings.json', document)
-    local = host.Headless(ctx, str(path), config.receiver.listen, allow_null_origin=True, name='receiver')
+    binary = config.mac.artifact()
+    if binary is None or not binary.is_file():
+        raise Failed(f'the local receiver runs [mac] binary, and there is none at {binary}')
+    local = host.LocalBinary(
+        ctx.transport, binary, config.receiver.listen, ctx.out_dir, config.wled, name='receiver', allow_null_origin=True
+    )
     ctx.cleanup('tv.stop-receiver', 'Local receiver stopped', lambda: f'exit code {local.stop()}')
-    local.start()
+    local.start(host.settings(host.wled_output(config), {'kind': 'remote'}))
     ctx.data['receiver'] = prysm_api.Prysm(local.url)
     address = config.receiver.advertise or host.local_address(config.tv.address)
     port = config.receiver.listen.rsplit(':', 1)[1]
@@ -140,11 +143,11 @@ def encodings(ctx: Ctx) -> tuple[str, object]:
             failed.append(str(encoding))
             continue
         first = tv.sample_worker(ctx)
-        measured = rates(prysm.sample(ctx.config.desktop.seconds))
+        measured = rates(prysm.sample(ctx.config.checks.seconds))
         measured['tv_cpu'] = tv.cpu_percent(first, tv.sample_worker(ctx))
         measured['tv_encoding'] = (tv.get_state(ctx) or tv.LunaReply()).get('encoding')
         results[encoding] = measured_by[encoding] = measured
-        if not near(measured['fps_mean'], 30, ctx.config.desktop.fps_tolerance) or measured['tv_encoding'] != encoding:
+        if not near(measured['fps_mean'], 30, ctx.config.checks.fps_tolerance) or measured['tv_encoding'] != encoding:
             failed.append(str(encoding))
     prysm.set_target(Target.OFF)
     if failed:
@@ -157,22 +160,9 @@ def soak(ctx: Ctx) -> tuple[str, object]:
     stream(ctx, width, height, fps, encoding)
     result = tv.soak(ctx, receiver(ctx), ctx.config.tv.soak_seconds)
     result['stream'] = f'{encoding} {width}x{height}@{fps}'
-    if not near(result['fps_mean'], fps, ctx.config.desktop.fps_tolerance):
+    if not near(result['fps_mean'], fps, ctx.config.checks.fps_tolerance):
         raise Failed(f'{result["fps_mean"]} fps over the soak, expected {fps}', result)
     return tv.soak_summary(result), result
-
-
-def hardware_60_refused(ctx: Ctx) -> tuple[str, object]:
-    prysm = receiver(ctx)
-    reply = request(prysm, 640, 360, 60, Encoding.H264_HARDWARE)
-    body = cast('prysm_api.Failure | None', reply.json()) if reply.body else None
-    state_failure = prysm.state().get('failure')
-    evidence: dict[str, object] = {'status': reply.status, 'reply': body, 'state_failure': state_failure}
-    prysm.set_target(Target.OFF)
-    failure = body if reply.status != 204 else state_failure
-    if not failure or failure.get('field') not in ('capture.fps', 'capture.encoding'):
-        raise Failed('60 fps with hardware H.264 was not refused on capture.fps', evidence)
-    return f'refused: {failure.get("message")}', evidence
 
 
 def pause_resume(ctx: Ctx) -> tuple[str, object]:
@@ -194,27 +184,6 @@ def pause_resume(ctx: Ctx) -> tuple[str, object]:
     if paused is None or resumed is None:
         raise Failed('the TV did not pause and resume', evidence)
     return f'paused after {paused_after} s, resumed after {evidence["resumed_after_s"]} s', evidence
-
-
-def version_mismatch(ctx: Ctx) -> tuple[str, object]:
-    status, protocol = stream_version.ask(receiver(ctx).base, stream_version.OTHER)
-    evidence: dict[str, object] = {'receiver_answer': {'status': status, 'protocol': protocol}}
-    if status != 426 or protocol != stream_version.CURRENT:
-        raise Failed('the receiver did not answer 426 naming its version', evidence)
-    stand_in = stream_version.OtherVersion(ctx.config.receiver.mismatch_port).start()
-    address = ctx.config.receiver.advertise or host.local_address(ctx.config.tv.address)
-    try:
-        point_tv_at(ctx, f'http://{address}:{stand_in.port}')
-        state = tv.wait_state(ctx, lambda s: (s.get('failure') or tv.TvFailure()).get('kind') == 'version', 30)
-    finally:
-        point_tv_at(ctx, ctx.data['receiver_for_tv'])
-        stand_in.close()
-    evidence['tv_failure'] = state and state['failure']
-    evidence['stand_in_requests'] = stand_in.requests
-    if state is None:
-        raise Failed('the TV did not report a version failure within 30 s', evidence)
-    message = (state['failure'] or tv.TvFailure())['message']
-    return f'receiver 426 {protocol}; TV says: {message[:160]}', evidence
 
 
 def wss(ctx: Ctx) -> tuple[str, object]:

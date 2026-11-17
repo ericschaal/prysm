@@ -1,78 +1,140 @@
 # Hardware acceptance runner
 
 The runner, the package [`scripts/acceptance/prysm_acceptance`](../../scripts/acceptance/prysm_acceptance/run.py),
-checks Prysm on
-real devices: WLED, a capture card, and both TV packages. It is run by hand,
-never by CI or a build. Each check is a named step that ends PASS, FAIL or SKIP
-with its evidence; a run writes `report.md`, `report.json` and its evidence
-(snapshots, logs, CSV tables) to `work/acceptance/<time>-<stage>/`, which is
-not tracked. Copy what matters into [research](../../research/README.md).
-Where the runner is going next (other platforms, artifacts from the
-configuration) is in the [plan](acceptance-plan.md).
+checks Prysm's artifacts on real devices: WLED, a capture card, and both TV
+packages. It is run by hand, never by CI or a build, and it never builds:
+it tests the artifacts the configuration names (`cargo xtask dist`,
+[packaging](packaging.md#artifacts-in-dist)). A run writes its report and
+evidence (snapshots, logs, CSV tables) to `work/acceptance/<time>-<stage>/`,
+which is not tracked. Copy what matters into
+[research](../../research/README.md). Where the runner is going next (Linux,
+the package and the image, the TV on the new configuration) is in the
+[plan](acceptance-plan.md).
 
 ```sh
 cp scripts/acceptance/config.example.toml scripts/acceptance/config.toml   # then fill in
-uv run --project scripts/acceptance acceptance desktop --dry-run
-uv run --project scripts/acceptance acceptance desktop
-uv run --project scripts/acceptance acceptance desktop --source device --display-check
-uv run --project scripts/acceptance acceptance tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
-uv run --project scripts/acceptance acceptance eyes
-uv run --project scripts/acceptance acceptance restore-wled work/acceptance/RUN/wled-snapshot.json
+cargo xtask dist mac                                                        # the artifact under test
+uv run --no-dev --project scripts/acceptance acceptance host mac --dry-run
+uv run --no-dev --project scripts/acceptance acceptance host mac --source file
+uv run --no-dev --project scripts/acceptance acceptance host mac --source device [--display-check]
+uv run --no-dev --project scripts/acceptance acceptance tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
+uv run --no-dev --project scripts/acceptance acceptance eyes
+uv run --no-dev --project scripts/acceptance acceptance restore-wled work/acceptance/RUN/CELL/wled-snapshot.json
 ```
 
 Python 3.11+ and [uv](https://docs.astral.sh/uv/). `scripts/acceptance` is a
 uv project (`pyproject.toml`, `uv.lock`); `uv run --project
 scripts/acceptance` from the repository root installs it into
-`scripts/acceptance/.venv` and runs its `acceptance` command. Its one
-library, [PyChromecast](https://github.com/home-assistant-libs/pychromecast),
-is imported only by a capture card run with the Chromecast feed.
-`--dry-run` prints every step, HTTP call
-and command (TV commands as they run there) and contacts nothing. `--only
-NAME[,NAME]` and `--from NAME` (patterns over step names) select checks; setup
-and cleanup steps always run, so a selected check finds what it needs (for
-`tv`, a package is built and installed only when one of its checks is
-selected). The exit
-code is 0 when nothing failed (skips allowed), 1 on a failure, 2 on bad usage.
-`config.toml` (ignored by git) describes the bench: the addresses (WLED,
-TV, receiver), the feed into the capture card and the LED counts; no
-address is written in the code.
+`scripts/acceptance/.venv` and runs its `acceptance` command. A bench run
+needs no dev group (`--no-dev`). Its libraries are
+[pytest](https://docs.pytest.org/), which runs the host cells, and
+[PyChromecast](https://github.com/home-assistant-libs/pychromecast), imported
+only by a capture card run with the Chromecast feed. `--dry-run` prints what
+would run, with every command and HTTP call (TV commands as they run there),
+and contacts nothing. The exit code is 0 when nothing failed (skips allowed),
+1 on a failure, 2 on bad usage. `config.toml` (ignored by git) describes the
+bench (see [`config.example.toml`](../../scripts/acceptance/config.example.toml)):
+WLED and the LED counts, `[checks]` (sample length, frame-rate tolerance),
+`[mac]` (`target = "local"`; an `ssh://` target is refused as not
+implemented), the TV and its packages, the receiver; no address is written
+in the code.
 
 ## Stages
 
 | Stage | Needs | Person |
 | --- | --- | --- |
-| `desktop` | WLED; FFmpeg 9+ for the file source, or a capture card (with a feed: FFmpeg, and for the Chromecast adb) | Only for `--display-check` set-up |
-| `tv` | The TV (only when its owner says it is free: `--tv-is-free`), WLED, the webOS SDK unless IPKs are given | Standby/wake, and removing the app unless `tv.ares_device` is set |
+| `host mac` | WLED; `[mac] binary`; FFmpeg 9+ for the file source, or a capture card (`[mac] device`; with a feed: FFmpeg, and for the Chromecast adb) | Only for `--display-check` set-up |
+| `tv` | The TV (only when its owner says it is free: `--tv-is-free`), WLED, the IPKs `[tv] ipk_full`, `ipk_slim`; slim with the local receiver: `[mac] binary` | Standby/wake, and removing the app unless `tv.ares_device` is set |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
-### desktop
+### host
 
-Builds (or uses) a release `prysm-headless`, starts it on `127.0.0.1` with a
-temporary settings file (WLED output, neutral processing) and checks through
-the [portal API](../../surfaces/web-portal/HTTP-CONTRACT.md) and WLED's JSON
-API:
+The host cells run under pytest: a cell is a parameter (platform, delivery,
+source), so `mac-binary-file` and `mac-binary-device` today, and Linux, the
+Debian package and the image in later phases. `acceptance host mac` runs
+both Mac cells; `--source file` or `--source device` names one. Other
+arguments go to pytest, so `-k fps`, `-m file` or `-x` select and stop as
+pytest does. A cell whose artifact or tool is missing (no `binary`, no
+`device`, no FFmpeg) is a SKIP with the reason; a cell named with `--source`
+fails instead. The run directory has `report.xml` (JUnit, with each check's
+detail), each cell's `commands.log`, `headless.log`, `artifact.json`,
+`wled-snapshot.json` and `wled-cfg.json` (WLED's configuration, as evidence),
+and `evidence/CHECK.json`. A failure prints its evidence, the log paths and
+the end of the host's log.
 
-- the source: the generated test clip (`--source file`, see below), a
-  given clip (`file:PATH`), or a capture card (`device`: the devices and
-  their modes are printed, the preset resolved as the portal does);
-- with a card and a feed: the generated clip on the card's input (see
-  below);
-- Screen sync starts; WLED reports live DDP from this computer; the frame
-  rate is within 15 % of the source's and nothing falls behind; the colours
-  follow the test clip (a card without a feed: not black);
+The fixtures set up, in order, and their teardowns undo it in reverse, also
+after a failure, Ctrl-C, SIGTERM or SIGHUP:
+
+- **artifact**: the configured binary exists; its SHA-256 and age are
+  recorded, and the version and commit from `manifest.json` next to it when
+  its hash matches; a warning when it is older than the checkout's last
+  commit (one `git log` template);
+- **wled**: `/json/si` and `/json/cfg` saved before anything changes; the
+  runner refuses while something else drives WLED; restored last and
+  compared (`on`, `bri`, `lor`, `transition`, the preset, `if.live.maxbri`);
+- **clip**: the generated test clip (see below), or `--source file:PATH`
+  (the colour check is then "not black");
+- **feed_shown**: with a capture card and a feed, the clip on the card's
+  input (see below);
+- **running**: the host seam (`host.py`) delivers Prysm, writes temporary
+  settings (WLED output, neutral processing, the cell's capture) and starts
+  it; stopped with SIGTERM (KILL after 30 s). Today the seam has one
+  delivery: the binary on this computer as a child process, its output in
+  `headless.log`. The seam also says which sender address WLED should report;
+- **prysm**: the portal API. With a capture card, the configured `device`
+  (Prysm's own device setting: an AVFoundation unique ID on macOS) must be
+  among Prysm's candidates, or the cell fails listing the devices present
+  with their IDs; a mode of `/capture/modes` must take the capture size and
+  rate (`[mac.capture]`, or Prysm's defaults). The runner matches no names
+  and resolves no presets.
+
+The checks, in order, through the
+[portal API](../../surfaces/web-portal/HTTP-CONTRACT.md) and WLED's JSON API:
+
+- the running version (`prysm_build_info` in `/metrics`) is the artifact's
+  from `manifest.json` (a skip without a matching manifest);
+- Screen sync starts: running with frames; WLED reports live DDP from the
+  sender the seam expects; no `output_issue`;
+- the frame rate is within the tolerance of the source's, sent alike,
+  nothing falls behind;
+- the colours follow the test clip (a card without a feed: not black);
 - WLED effects (`device_native`), Screen sync again, off;
 - WLED's brightness: 40 % reported within 5 s at `bri` 102, gone within 35 s
   with Force max brightness, `state.bri` unchanged, `/json/cfg` under 64 KiB;
-- WLED's gamma: `/json/cfg` has the fields Prysm reads, as it parses them
-  (`if.live.no-gc` true or false, `light.gc.col` and `light.gc.bri` numbers
-  within 0.1–3), read only;
-- the Smooth dark colours switch, off and on; with a card, release and
-  re-open;
+- with a card, capture release and re-open;
 - `--display-check`: when the card records this Mac's HDMI output, a local
   page the runner controls shows red, green, blue, white and an edge pattern;
-  each edge must come out as that colour. The card then records this Mac,
-  so the feed is not started for that run;
+  each edge must come out as that colour. The card then records this Mac, so
+  the feed is not started for that run;
 - SIGTERM: exit code 0 and WLED released.
+
+Whether Prysm applies WLED's gamma, and dithering while lighting runs, are
+covered by the product's own tests (`output-wled`, the headless host's system
+tests); dark scenes are a question in `eyes`.
+
+#### Run the Mac file cell
+
+```sh
+cargo xtask dist mac          # dist/prysm-headless-macos-arm64 and dist/manifest.json
+uv run --no-dev --project scripts/acceptance acceptance host mac --source file
+```
+
+with `[wled] address`, the `[leds]` counts and `[mac] binary` set. For a
+rehearsal without lights, run the stand-in
+`uv run --project scripts/acceptance fake-wled --ddp 127.0.0.1:4048` and
+give `--wled 127.0.0.1:18080`; any build of prysm-headless works there
+(`binary = "target/debug/prysm-headless"`, without a manifest the version
+check is a skip).
+
+#### Add a cell
+
+A cell is one more `Cell` in `CELLS` in
+[`host_cells.py`](../../scripts/acceptance/prysm_acceptance/host_cells.py).
+A new delivery is one more implementation of `Host` in `host.py` (deliver,
+start, stop, logs, base URL, expected sender), chosen in `_seam`; the
+checks stay as they are. Each fixture and check carries its description (the
+docstring) and what it does for the dry run (`planned`), so there is no
+separate table of steps.
 
 #### The test clip and the colour check
 
@@ -84,7 +146,7 @@ on, clockwise; nothing moves within a step. Read clockwise, each edge shows
 two colours and its second is the next edge's first. It is H.264 (yuv420p,
 faststart), 30 minutes long and about 2 MB.
 
-`desktop.colours` listens to the colours stream for 10 s. The stream reports
+The colour check listens to the colours stream for 10 s. The stream reports
 `top` and `bottom` left to right and `left` and `right` top to bottom, so
 each edge's halves are read in that order; only the entries between 10 and
 40 % and between 60 and 90 % of an edge count, away from the corners and the
@@ -112,13 +174,13 @@ a look at the lights does.
 A capture card shows whatever is plugged into it, or a "no input" splash.
 To compare the edges with a known picture, the bench needs a feed the runner
 controls: something on the card's HDMI input that can show the test clip and
-stop again. The configuration names it. With a feed, the `desktop.feed` step
-("Picture into the capture card") shows the generated clip on it and the
-colour check compares each edge with the clip, as with the file source.
-Without one, that step is a SKIP that says so, and the colour check can only
-say "not black". The file source needs no feed and never starts it.
+stop again. The configuration names it per platform. With a feed, the
+`feed_shown` fixture shows the generated clip on it and the colour check
+compares each edge with the clip, as with the file source. Without one the
+colour check can only say "not black". The file source needs no feed and
+never starts it.
 
-The supported feed is a Chromecast with Google TV, `[feed.chromecast]`:
+The supported feed is a Chromecast with Google TV, `[mac.feed.chromecast]`:
 
 1. ADB (`adb_serial`) must answer `device`; the runner reads
    `stay_on_while_plugged_in`, sets it to 7 (screen stays on while powered),
@@ -152,38 +214,35 @@ One-time set-up of the Chromecast (with Google TV):
   `adb connect HOST:PORT` with the port that screen shows (it changes) and
   set `adb_serial = "HOST:PORT"`. The runner does not pair or connect.
 
-`[feed.chromecast]` in `config.toml`: `adb_serial` (required),
+`[mac.feed.chromecast]` in `config.toml`: `adb_serial` (required),
 `serve_port` (default 18792) and `settle_seconds` (default 5; the
 Chromecast's player overlay, so it belongs to this feed). Remove the section
 when nothing the runner controls feeds the card. The ADB commands are
 templates in `commands.py` like every other command; everything else about
 the Chromecast is in `feed_chromecast.py`, behind `feed.py`.
 
-The gamma check proves only that this WLED has the configuration layout
-Prysm reads. Prysm does not expose the gamma it applies, so whether it
-applied it stays with the `output-wled` unit tests, and whether dark scenes
-look right is a question in `eyes`. For a rehearsal without lights, run the stand-in
-`uv run --project scripts/acceptance fake-wled --ddp 127.0.0.1:4048` and give
-`--wled 127.0.0.1:18080`.
-
 ### tv
 
-For each package (`full`, then `slim`): build (`build-ipk.sh`) or take the
-configured IPK, check it with `ipk.py verify`, install it the way that works
-on webOS 10 ([packaging](packaging.md)), and check:
+The `tv` stage keeps its own step runner (`plan.py`) until the plan's phase
+4 moves it to the new configuration; `--only NAME[,NAME]` and `--from NAME`
+(patterns over step names) select checks, and setup and cleanup steps always
+run. For each package (`full`, then `slim`): take the configured IPK
+(`tv.ipk_full`, `tv.ipk_slim`, by default the names `cargo xtask dist`
+writes), record its hash and its manifest's version and commit, check it with
+`ipk.py verify` before every install (whatever its name: what it contains
+decides), install it the way that works on webOS 10 ([packaging](packaging.md)),
+and check:
 
 - registration: `getState` answers with that flavour; the app, service,
   manifests and boot hook exist;
-- full: the TV's portal answers and captures with video playing; 90 s soaks
-  at 640 × 360 and 1280 × 720 with the portal's frame rate and the worker's
-  CPU and RSS from `/proc`; `POST /api/v1/capture/modes`;
-- slim, streaming to a `prysm-headless` the runner starts here (or
+- full: the TV's portal (at the address `getState` reports) answers and
+  captures with video playing; 90 s soaks at 640 × 360 and 1280 × 720 with
+  the portal's frame rate and the worker's CPU and RSS from `/proc`;
+  `POST /api/v1/capture/modes`;
+- slim, streaming to `[mac] binary` the runner starts here (or
   `--receiver URL`): the TV's offer is known while the lights are off; each
   encoding streams 640 × 360 at 30 fps; a 90 s soak with hardware H.264 and
-  the worker's CPU and RSS; 60 fps with hardware H.264 is refused
-  on `capture.fps`; pause and resume; a stream version mismatch (the receiver
-  answers 426, and a local stand-in answering another version makes the TV
-  report `version`); optional `wss://`;
+  the worker's CPU and RSS; pause and resume; optional `wss://`;
 - `--sweep`: sizes × rates actually delivered, for capture (full) and for
   each encoding (slim), as `sweep-full.csv` and `sweep-slim.csv`;
 - standby and wake (guided: a person presses power, the runner watches);
@@ -192,16 +251,15 @@ on webOS 10 ([packaging](packaging.md)), and check:
   leave no app, service, manifest, boot hook, staged package, process or
   Luna service; `/var/lib/io.prysm.tv` stays, as documented.
 
-A hung capture has no documented trigger on the installed package: it is a
-SKIP, covered by `native-smoke.py --supervisor` and the supervisor tests.
-
 ### eyes
 
 One question at a time, answered `y`, `n` or `skip` with an optional note:
 the lights match the picture, dark scenes, dithering off and on in a dark room
-(the runner switches it), the TV app's screens and dialogs, the nine TV UI
-polish items, calibration patterns (the runner shows each) and the TV's own
-calibration flow, the portal on a phone, and a cold boot by unplugging.
+(the runner switches it), the TV app's home, portal QR code, waiting for
+video and navigation, that nothing re-renders visibly while idle (until its
+unit test, prysm-skn), calibration patterns (the runner shows each) and the
+TV's own calibration flow, the portal on a phone, and a cold boot by
+unplugging. Like `tv`, it keeps the step runner and its `--only`/`--from`.
 
 ## Safety
 
@@ -226,7 +284,7 @@ calibration flow, the portal on a phone, and a cold boot by unplugging.
   preferences back and puts the settings and lighting back. WLED is
   snapshotted before anything changes (`wled-snapshot.json`) and restored
   last, after Prysm has stopped, also on a failure, Ctrl-C, SIGTERM or SIGHUP;
-  a second Ctrl-C does not cut the restore short. After a hard kill use
+  a second signal does not cut the restore short. After a hard kill use
   `restore-wled`.
 - **The owner decides.** The `tv` stage refuses to start without
   `--tv-is-free`.
@@ -241,21 +299,27 @@ The runner's own code is linted, formatted, type-checked and kept in layers.
 Python checks, as CI's `quality` job does; it needs
 [uv](https://docs.astral.sh/uv/). The rules are in
 [`pyproject.toml`](../../scripts/acceptance/pyproject.toml): Ruff, Pyright in
-strict mode, and Import Linter's layers (command line, stages, their cells,
-checks, the feed, devices, clients, base; stages never import each other).
-Only `transport.py` runs commands, and only `commands.py` builds them; the one
-other process is `git`, which `run.py` asks for the commit in the report. One
-at a time, from the repository root:
+strict mode, and Import Linter's layers (command line, the host cells and
+their pytest plugin, the stages, their cells, checks, the feed, devices,
+clients, base; stages never import each other). Only `transport.py` runs
+commands, and only `commands.py` builds them. One at a time, from the
+repository root:
 
 ```sh
 uv run --locked --directory scripts/acceptance ruff check
 uv run --locked --directory scripts/acceptance ruff format --check
 uv run --locked --directory scripts/acceptance pyright
 uv run --locked --directory scripts/acceptance lint-imports
-uv run --locked --directory scripts/acceptance python -m unittest discover -s tests
+uv run --locked --directory scripts/acceptance pytest
 ```
 
-The tests use fakes and contact no device. `test_acceptance_contract.py`
+The tests use fakes and contact no device; the host cells are tested
+through the runner's command line (the dry run contacts and starts nothing,
+the skip-or-fail rule). A real run of the Mac file cell against
+prysm-headless and the fake WLED on loopback is opt-in, as it needs a built
+binary and UDP port 4048: `cargo build -p prysm-headless`, then
+`PRYSM_ACCEPTANCE_BINARY=target/debug/prysm-headless` with the `pytest`
+line above (from `scripts/acceptance`, give the path from there). `test_acceptance_contract.py`
 checks the fields and requests the runner relies on against Prysm's generated
 contracts in `frontend/packages/contracts/generated/`; after a contract
 change, run it with the rest. Pyright comes with its Node.js runtime from

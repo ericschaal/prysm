@@ -10,10 +10,13 @@ from typing import Any, TypeAlias, TypeVar, cast
 
 from prysm_acceptance import commands
 from prysm_acceptance.commands import Flavour
+from prysm_acceptance.options import Platform
 
 _ADDRESS = re.compile(r'[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?')
 _SIZE = re.compile(r'([0-9]{1,4})x([0-9]{1,4})')
 _URL = re.compile(r'https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/?')
+LOCAL = 'local'
+SSH = 'ssh://'
 
 # The TOML document as tomllib reads it. Every value is checked here before it
 # becomes a typed field.
@@ -22,14 +25,6 @@ Toml: TypeAlias = Mapping[str, Any]
 
 class ConfigError(ValueError):
     pass
-
-
-class Preset(StrEnum):
-    """The portal's size-and-rate presets (`modes.PRESETS`)."""
-
-    BALANCED = 'balanced'
-    SMOOTH = 'smooth'
-    EFFICIENT = 'efficient'
 
 
 class RestoreFlavour(StrEnum):
@@ -53,14 +48,48 @@ class Leds:
 
 
 @dataclass
-class Desktop:
-    headless: str = ''
-    listen: str = '127.0.0.1:18787'
+class Checks:
+    """`[checks]`: how long the frame-rate checks sample and how far the rate may stray."""
+
     seconds: int = 10
     fps_tolerance: float = 0.15
-    device: str = ''
-    preset: Preset = Preset.BALANCED
+
+
+@dataclass
+class Capture:
+    """`[PLATFORM.capture]`: the capture size and rate of the device source (absent: Prysm's defaults)."""
+
+    width: int = 640
+    height: int = 360
+    fps: int = 30
+
+
+@dataclass
+class ChromecastFeed:
+    """`[PLATFORM.feed.chromecast]`: the Chromecast whose HDMI output the capture card records."""
+
+    adb_serial: str = ''
+    serve_port: int = 18792
+    settle_seconds: float = 5.0
+
+
+@dataclass
+class Machine:
+    """`[mac]` or `[linux]`: where and from which artifacts a host cell runs Prysm."""
+
+    target: str = LOCAL
+    binary: str = ''
+    deb: str = ''
+    image: str = ''
+    device: str = ''  # what Prysm's device setting takes: an AVFoundation unique ID, or a V4L2 path
+    listen: str = '127.0.0.1:18787'
     display_port: int = 18790
+    capture: Capture | None = None
+    feed: ChromecastFeed | None = None  # None: no controlled feed into the capture card
+
+    def artifact(self) -> Path | None:
+        """The configured binary, relative to the repository; None without one."""
+        return commands.ROOT / self.binary if self.binary else None
 
 
 @dataclass
@@ -71,16 +100,13 @@ class Tv:
     flavours: list[Flavour] = field(default_factory=lambda: [Flavour.FULL, Flavour.SLIM])
     restore_flavour: RestoreFlavour = RestoreFlavour.AS_FOUND
     soak_seconds: int = 90
-    ipk_full: str = ''
-    ipk_slim: str = ''
-
-    @property
-    def portal(self) -> str:
-        return f'http://{self.address}:8787'
+    # The packages `cargo xtask dist tv-full tv-slim` writes (docs/developers/packaging.md).
+    ipk_full: str = 'dist/prysm-tv-full.ipk'
+    ipk_slim: str = 'dist/prysm-tv-slim.ipk'
 
     def ipk(self, flavour: Flavour) -> str:
-        """The configured package of `flavour` (`ipk_full`, `ipk_slim`); empty: build it."""
-        return self.ipk_full if flavour == Flavour.FULL else self.ipk_slim
+        """The configured package of `flavour`, relative to the repository."""
+        return str(commands.ROOT / (self.ipk_full if flavour == Flavour.FULL else self.ipk_slim))
 
 
 @dataclass
@@ -89,7 +115,6 @@ class Receiver:
     listen: str = '0.0.0.0:8788'
     advertise: str = ''
     wss_url: str = ''
-    mismatch_port: int = 18791
 
 
 @dataclass
@@ -110,75 +135,101 @@ class Sweep:
 
 
 @dataclass
-class ChromecastFeed:
-    """`[feed.chromecast]`: the Chromecast whose HDMI output the capture card records."""
-
-    adb_serial: str = ''
-    serve_port: int = 18792
-    settle_seconds: float = 5.0
-
-
-@dataclass
 class Config:
     wled: str = ''
     leds: Leds = field(default_factory=Leds)
-    desktop: Desktop = field(default_factory=Desktop)
+    checks: Checks = field(default_factory=Checks)
+    mac: Machine = field(default_factory=Machine)
+    linux: Machine = field(default_factory=Machine)
     tv: Tv = field(default_factory=Tv)
     receiver: Receiver = field(default_factory=Receiver)
     sweep: Sweep = field(default_factory=Sweep)
-    feed: ChromecastFeed | None = None  # None: no controlled feed into the capture card
     eyes_portal: str = ''
 
+    def machine(self, platform: Platform) -> Machine:
+        return self.mac if platform == Platform.MAC else self.linux
 
-Section = TypeVar('Section', Leds, Desktop, Tv, Receiver, Sweep, ChromecastFeed)
+
+Section = TypeVar('Section', Leds, Checks, Capture, ChromecastFeed, Machine, Tv, Receiver, Sweep)
 
 
-def _section(data: Toml, name: str, kind: type[Section], label: str | None = None) -> Section:
-    label = label or name
+def _table(data: Toml, name: str, label: str) -> dict[str, Any]:
     table = data.get(name, {})
     if not isinstance(table, dict):
         raise ConfigError(f'[{label}] must be a table')
-    values = cast('dict[str, Any]', table)
+    return dict(cast('dict[str, Any]', table))
+
+
+def _section(values: Mapping[str, Any], kind: type[Section], label: str) -> Section:
+    """`values` as a `kind`: no unknown keys, each value of its default's type (a whole number may be a float)."""
     known = {item.name for item in fields(kind)}
     unknown = set(values) - known
     if unknown:
         raise ConfigError(f'[{label}]: unknown keys {sorted(unknown)}')
     defaults = kind()
     for key, value in values.items():
-        default: object = getattr(defaults, key)
-        expected = type(default)
+        expected = cast('type[object]', type(getattr(defaults, key)))
         if issubclass(expected, StrEnum):
             expected = str  # checked against its members in `parse`
-        # An integer is a float too; the value itself is kept as given.
-        checked = float(value) if expected is float and isinstance(value, int) else value
-        if not isinstance(checked, expected) or isinstance(checked, bool) != (expected is bool):
+        whole = isinstance(value, int) and not isinstance(value, bool)
+        if expected is float and whole:
+            continue
+        if not isinstance(value, expected) or isinstance(value, bool) != (expected is bool):
             raise ConfigError(f'[{label}] {key}: expected {expected.__name__}')
     return kind(**values)
 
 
-def _feed(data: Toml) -> ChromecastFeed | None:
-    """`[feed.chromecast]`, or None without a `[feed]`."""
-    table = data.get('feed', {})
-    if not isinstance(table, dict):
-        raise ConfigError('[feed] must be a table')
-    feeds = cast('dict[str, object]', table)
+def _feed(table: dict[str, Any], label: str) -> ChromecastFeed | None:
+    """`[LABEL.feed.chromecast]`, or None without a feed."""
+    feeds = _table(table, 'feed', f'{label}.feed')
     unknown = set(feeds) - {'chromecast'}
     if unknown:
-        raise ConfigError(f'[feed]: unknown feeds {sorted(unknown)} (supported: chromecast)')
+        raise ConfigError(f'[{label}.feed]: unknown feeds {sorted(unknown)} (supported: chromecast)')
     if 'chromecast' not in feeds:
         return None
-    chromecast = _section(feeds, 'chromecast', ChromecastFeed, 'feed.chromecast')
+    name = f'{label}.feed.chromecast'
+    chromecast = _section(_table(feeds, 'chromecast', name), ChromecastFeed, name)
     if not chromecast.adb_serial:
-        raise ConfigError('feed.chromechromecast.adb_serial is required (the serial adb devices lists)')
+        raise ConfigError(f'{name}.adb_serial is required (the serial adb devices lists)')
     try:
         commands.adb_serial(chromecast.adb_serial)
     except commands.Refused as error:
         raise ConfigError(str(error)) from error
     if not 1 <= chromecast.serve_port <= 65535:
-        raise ConfigError('feed.chromechromecast.serve_port: 1 to 65535')
+        raise ConfigError(f'{name}.serve_port: 1 to 65535')
     if not 0 <= chromecast.settle_seconds <= 60:
-        raise ConfigError('feed.chromechromecast.settle_seconds: 0 to 60')
+        raise ConfigError(f'{name}.settle_seconds: 0 to 60')
     return chromecast
+
+
+def _machine(data: Toml, platform: Platform) -> Machine:
+    """`[mac]` or `[linux]` with its `capture` and `feed` tables."""
+    label = str(platform)
+    table = _table(data, label, label)
+    capture = _section(_table(table, 'capture', f'{label}.capture'), Capture, f'{label}.capture')
+    has_capture = 'capture' in table
+    feed = _feed(table, label)
+    table.pop('capture', None)
+    table.pop('feed', None)
+    host = _section(table, Machine, label)
+    host.capture = capture if has_capture else None
+    host.feed = feed
+    if host.target.startswith(SSH):
+        if platform == Platform.MAC:
+            raise ConfigError(f'[mac] target {host.target!r}: a remote Mac is not implemented; use "local"')
+        try:
+            commands.ssh_target(host.target.removeprefix(SSH))
+        except commands.Refused as error:
+            raise ConfigError(f'[{label}] target: {error}') from error
+    elif host.target != LOCAL:
+        raise ConfigError(f'[{label}] target: "local" or "ssh://USER@HOST"')
+    if platform == Platform.MAC and (host.deb or host.image):
+        raise ConfigError('[mac]: deb and image are Linux deliveries')
+    if not re.fullmatch(r'[0-9.]+:[0-9]{1,5}', host.listen):
+        raise ConfigError(f'[{label}] listen: {host.listen!r} is not ADDRESS:PORT')
+    if host.capture and not all(0 < value <= 4000 for value in vars(host.capture).values()):
+        raise ConfigError(f'[{label}.capture]: width, height and fps 1 to 4000')
+    return host
 
 
 def address(value: str, name: str, required: bool = False) -> str:
@@ -193,23 +244,25 @@ def address(value: str, name: str, required: bool = False) -> str:
 
 
 def parse(data: Toml) -> Config:
-    unknown = set(data) - {'wled', 'leds', 'desktop', 'tv', 'receiver', 'sweep', 'eyes', 'feed'}
+    unknown = set(data) - {'wled', 'leds', 'checks', 'mac', 'linux', 'tv', 'receiver', 'sweep', 'eyes'}
     if unknown:
         raise ConfigError(f'unknown sections {sorted(unknown)}')
-    wled = data.get('wled', {})
     config = Config(
-        wled=address(wled.get('address', ''), 'wled.address'),
-        leds=_section(data, 'leds', Leds),
-        desktop=_section(data, 'desktop', Desktop),
-        tv=_section(data, 'tv', Tv),
-        receiver=_section(data, 'receiver', Receiver),
-        sweep=_section(data, 'sweep', Sweep),
-        feed=_feed(data),
-        eyes_portal=data.get('eyes', {}).get('portal', ''),
+        wled=address(_table(data, 'wled', 'wled').get('address', ''), 'wled.address'),
+        leds=_section(_table(data, 'leds', 'leds'), Leds, 'leds'),
+        checks=_section(_table(data, 'checks', 'checks'), Checks, 'checks'),
+        mac=_machine(data, Platform.MAC),
+        linux=_machine(data, Platform.LINUX),
+        tv=_section(_table(data, 'tv', 'tv'), Tv, 'tv'),
+        receiver=_section(_table(data, 'receiver', 'receiver'), Receiver, 'receiver'),
+        sweep=_section(_table(data, 'sweep', 'sweep'), Sweep, 'sweep'),
+        eyes_portal=_table(data, 'eyes', 'eyes').get('portal', ''),
     )
     for name, count in config.leds.as_settings().items():
         if not 0 <= count <= 16384:
             raise ConfigError(f'leds.{name}: 0 to 16384')
+    if not 0 < config.checks.fps_tolerance < 1:
+        raise ConfigError('checks.fps_tolerance: between 0 and 1')
     _check_tv(config.tv)
     for name in ('url', 'wss_url'):
         value = getattr(config.receiver, name)
@@ -221,7 +274,6 @@ def parse(data: Toml) -> Config:
     for size in config.sweep.sizes:
         if not _SIZE.fullmatch(size):
             raise ConfigError(f'sweep.sizes: {size!r} is not WIDTHxHEIGHT')
-    config.desktop.preset = _member(Preset, config.desktop.preset, 'desktop.preset: balanced, smooth or efficient')
     return config
 
 
@@ -239,7 +291,7 @@ def _check_tv(tv: Tv) -> None:
     tv.restore_flavour = _member(RestoreFlavour, tv.restore_flavour, 'tv.restore_flavour: as-found, full, slim or none')
 
 
-Member = TypeVar('Member', Flavour, Preset, RestoreFlavour)
+Member = TypeVar('Member', Flavour, RestoreFlavour)
 
 
 def _member(kind: type[Member], value: str, refusal: str) -> Member:

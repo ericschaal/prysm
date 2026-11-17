@@ -8,7 +8,6 @@ codegen`); it never copies them.
 """
 
 from collections.abc import Callable, Iterator
-import contextlib
 from enum import StrEnum
 import json
 from pathlib import Path
@@ -18,12 +17,11 @@ from unittest import mock
 
 from acceptance_fakes import untyped
 
-from prysm_acceptance import config, edges_clip, host, modes, plan, prysm_api, stage_desktop, transport, tv, tv_slim
+from prysm_acceptance import config, edges_clip, host, host_cells, prysm_api, stage_eyes, tv, tv_slim
+from prysm_acceptance.checks import Failed
 from prysm_acceptance.commands import Flavour
-from prysm_acceptance.options import Source
-from prysm_acceptance.plan import Context
-from prysm_acceptance.prysm_api import Target
-from prysm_acceptance.stage_data import DesktopData
+from prysm_acceptance.options import Cell, Delivery, Platform, Source
+from prysm_acceptance.prysm_api import SessionState, Target
 from prysm_acceptance.transport import Result
 from prysm_acceptance.tv_slim import Encoding
 from prysm_acceptance.web import Reply
@@ -55,6 +53,11 @@ def values(schemas: Any, name: str) -> set[str]:
     """The values of a closed set (a string enum, or a oneOf of them)."""
     schema = schemas[name]
     return {value for part in schema.get('oneOf', [schema]) for value in part.get('enum', ())}
+
+
+def tags(schemas: Any, name: str, field: str) -> set[str]:
+    """The values of a tagged union's tag `field` (each `oneOf` part names its own)."""
+    return {value for part in schemas[name]['oneOf'] for value in part['properties'][field]['enum']}
 
 
 def read(kind: Any) -> set[str]:
@@ -97,6 +100,10 @@ class Fields(unittest.TestCase):
         for kind, schemas, name in sets:
             with self.subTest(name):
                 self.assertEqual({member.value for member in kind}, values(schemas, name))
+        self.assertEqual({member.value for member in SessionState}, tags(APPLICATION, 'Session', 'state'))
+
+    def test_the_calibration_patterns_eyes_shows(self) -> None:
+        self.assertLessEqual(set(stage_eyes.PATTERNS), values(APPLICATION, 'Pattern'))
 
 
 class Examples(unittest.TestCase):
@@ -116,7 +123,7 @@ class Examples(unittest.TestCase):
     def test_modes_and_colours(self) -> None:
         for answer in FIXTURES['Modes']:
             if answer['status'] == 'known':
-                self.assertEqual(len(modes.describe(answer['modes'])), len(answer['modes']))
+                self.assertEqual(len(prysm_api.describe_modes(answer['modes'])), len(answer['modes']))
         for event in FIXTURES['ColorsEvent']:
             self.assertIsNotNone(edges_clip.decode(event))
         for candidate in FIXTURES['Candidate']:
@@ -168,24 +175,60 @@ class WrittenSettings(unittest.TestCase):
         self.assertLessEqual(set(processing['style']), self.fields('ChosenStyle'))
 
     def test_the_captures(self) -> None:
-        file = sent(self.file_source)['settings']['capture']
+        bench = config.load(EXAMPLE)
+        clip = host_cells.Clip(Path('edges.mp4'), edges=True)
+        file = untyped(host_cells.capture_settings(Cell(Platform.MAC, Delivery.BINARY, Source.FILE), bench, clip))
         self.assertEqual((file['kind'], file['repeat']), ('file', True))
         self.assertLessEqual(set(file), self.fields('FileSettings'))
+        device = untyped(host_cells.capture_settings(Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE), bench, None))
+        self.assertEqual((device['kind'], device['path'], device['fps']), ('device', bench.mac.device, 30))
+        self.assertLessEqual(set(device), self.fields('DeviceSettings'))
         remote = sent(lambda prysm: tv_slim.request(prysm, 640, 360, 30, Encoding.RAW))
         self.assertEqual(remote['settings']['capture']['encoding'], 'raw')
         self.assertLessEqual(set(remote['settings']['capture']), self.fields('RemoteReceiverSettings'))
         self.assertEqual({member.value for member in Encoding}, values(DESKTOP, 'StreamEncoding'))
 
-    def file_source(self, prysm: prysm_api.Prysm) -> None:
-        """The desktop stage's video source step with the generated clip."""
-        ctx = Context[DesktopData](config.parse({}), Options(), transport.Refusing(), Path())
-        ctx.data.update(prysm=prysm, clip='edges.mp4')
-        with contextlib.suppress(plan.Failed):  # the mocked reply is no 200
-            stage_desktop.source(ctx)
+
+class Stub(prysm_api.Prysm):
+    """A Prysm with a capture card in its settings, answering from the generated examples."""
+
+    def __init__(self, modes: list[prysm_api.CaptureMode]) -> None:
+        super().__init__('http://prysm.example')
+        self.answer = {'status': 'known', 'modes': modes}
+
+    def candidates(self, section: str, kind: str) -> list[prysm_api.Candidate]:
+        return [c for c in FIXTURES['Candidate'] if 'path' in c['fields']]
+
+    def state(self) -> prysm_api.State:
+        capture = {'kind': 'device', 'path': '/dev/video0', 'width': 640, 'height': 360, 'fps': 30}
+        return cast('prysm_api.State', {'settings': {'capture': capture}})
+
+    def modes(self, capture: dict[str, object]) -> Reply:
+        return Reply(200, {}, json.dumps(self.answer).encode())
 
 
-class Options:
-    source, source_path, no_build, display_check, sweep, tv_is_free = Source.FILE, None, True, False, False, False
+def mode(width: int, height: int, fps: int) -> prysm_api.CaptureMode:
+    return {'width': span(width), 'height': span(height), 'fps': span(fps)}
+
+
+def span(value: int) -> prysm_api.Span:
+    return {'min': value, 'max': value, 'step': 1}
+
+
+class CaptureDevice(unittest.TestCase):
+    """The configured device among the candidates, offering the size Prysm runs with; no name matching."""
+
+    def test_an_offered_mode_passes(self) -> None:
+        found = untyped(host_cells.device_offered(Stub([mode(1280, 720, 30), mode(640, 360, 30)]), '/dev/video0'))
+        self.assertEqual(found['size'], {'width': 640, 'height': 360, 'fps': 30})
+
+    def test_a_missing_id_lists_the_devices_present(self) -> None:
+        with self.assertRaisesRegex(Failed, r"no capture device 'USB'; present: USB Video \(/dev/video0\)"):
+            host_cells.device_offered(Stub([mode(640, 360, 30)]), 'USB')
+
+    def test_a_size_no_mode_takes_fails(self) -> None:
+        with self.assertRaisesRegex(Failed, r'offers no mode of 640x360 @ 30: 1280 x 720 @ 30'):
+            host_cells.device_offered(Stub([mode(1280, 720, 30), mode(640, 360, 60)]), '/dev/video0')
 
 
 if __name__ == '__main__':

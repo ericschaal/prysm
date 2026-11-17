@@ -8,9 +8,10 @@ API and puts it back afterwards.
 from collections.abc import Callable
 
 from prysm_acceptance import commands, prysm_api, tv, web
+from prysm_acceptance.checks import Answer, Failed, Skipped
 from prysm_acceptance.config import Config
 from prysm_acceptance.options import Options
-from prysm_acceptance.plan import Answer, Context, Failed, Mode, Skipped, Step
+from prysm_acceptance.plan import Context, Mode, Step
 from prysm_acceptance.prysm_api import Target, section
 from prysm_acceptance.stage_data import EyesData
 
@@ -26,43 +27,13 @@ TV_SCREENS: list[tuple[str, str]] = [
         'section read correctly from across the room',
     ),
     ('portal-qr', 'Full: the portal address and QR code show; scanning it opens the portal on a phone'),
-    ('start-with-tv', 'The Start with TV row switches on and off with OK and stays where it is'),
-    ('service-options', 'Service options lists Set up or repair service, View diagnostics, Remove service setup…'),
-    ('diagnostics', 'View diagnostics shows the state and the last worker log lines, and Back closes it'),
-    ('remove-dialog', 'Remove service setup… asks for confirmation (choose Cancel; do not remove)'),
-    ('close-dialog', 'Back on Home asks "Close Prysm?"; Cancel keeps the app open'),
     ('waiting-video', 'With no video (Home screen of the TV or no input) the app says it is waiting for video'),
-    (
-        'slim-address',
-        'Slim: Prysm address dialog, Use this address saves at once; Start capture; '
-        '"Paused by Prysm" while the desktop lights are off',
-    ),
     ('navigation', 'Arrows reach every control in both columns; OK chooses; Back closes one level'),
 ]
 
-# The nine TV UI polish items (prysm-jnu), each something a person sees.
+# TV UI polish (prysm-jnu) a person still checks: the unit test that replaces it is not written yet (prysm-skn).
 FLICKER: list[tuple[str, str]] = [
-    ('mode-focus', 'Pressing Screen sync / WLED effects keeps the focus on the pressed button; the track does not dim'),
-    ('start-with-tv-card', 'Toggling Start with TV does not move the lights card'),
-    (
-        'portal-drop',
-        'A short portal stream drop (e.g. restart lighting) does not blank the lights card '
-        'or cover a calibration pattern',
-    ),
-    (
-        'no-setup-flash',
-        'No "Prysm needs setting up" flash (and no focus jump to the set-up button) '
-        'during normal use or a single Luna drop',
-    ),
-    (
-        'cold-start',
-        'Opening the app cold: no jumps; the portal panel space is reserved, focus starts in place, '
-        'neutral text until the state arrives',
-    ),
-    ('failure-layout', 'A failure (e.g. WLED unplugged) does not move the card or the slim stop button'),
-    ('retry-bar', 'The retry countdown bar does not restart while it counts down'),
     ('no-rerender', 'Nothing flickers or re-renders visibly while idle (the QR code stays still)'),
-    ('title-agrees', 'The title and the lights card never disagree, even briefly, after a change'),
 ]
 
 PATTERNS = ['gray-192', 'red', 'green', 'blue', 'review-grid']
@@ -70,7 +41,9 @@ CLEANUPS = ('dithering set back to its value before the dithering checks', 'a ca
 
 
 def _portal(ctx: Ctx) -> prysm_api.Prysm | None:
-    url = ctx.config.eyes_portal or (ctx.config.tv.portal if ctx.config.tv.address else '')
+    url = ctx.config.eyes_portal
+    if not url and ctx.config.tv.ssh:
+        url = (tv.get_state(ctx) or tv.LunaReply()).get('portal') or ''
     if not url:
         return None
     try:

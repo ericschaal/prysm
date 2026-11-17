@@ -211,6 +211,17 @@ Each phase lands with its tests and CI green before the next starts.
      device and size), the gamma parser, the stream version constants, the
      TV portal port and the IPK name patterns. The TV paths stay explicit as
      the safety allow-list, with a contract test.
+
+   **Landed** ([acceptance.md](acceptance.md#host)): `host mac` on pytest
+   with the local-binary seam, the configuration above (`[mac]`, `[linux]`
+   read but unused), artifacts from the configuration with their manifest,
+   `--dry-run`, and the drops and removals. The `eyes` item about idle
+   re-renders stays until its unit test exists (prysm-skn). What remains of
+   it: the Mac device cell has not run on the bench (its device and mode
+   check is tested against the generated examples only); the TV paths have
+   no generated source to test the allow-list against, so that contract
+   test waits for one; the `tv` stage still reads its old `[tv]` keys
+   (`address`, `ssh`) until phase 4. `--prepare` is phase 3.
 2. **The Linux binary cell.** Copied to a Raspberry Pi 5 over SSH and run
    through the feed.
 3. **The Linux package and image cells and `all`**, with the skip rules. Both

@@ -1,4 +1,12 @@
-"""A prysm-headless process on this computer: build, settings, start, SIGTERM stop."""
+"""The host seam: one way to deliver and run Prysm, the same for every host cell's checks.
+
+`Host` is the interface (docs/developers/acceptance-plan.md, One host seam):
+deliver, start with a settings document, stop, the log, the base URL, and the
+address WLED should report as the sender. `LocalBinary` is the one delivery
+so far: the binary on this computer as a child process, stopped with SIGTERM,
+its output in a file of the run directory. A binary over SSH, the Debian
+package and the image are later implementations of the same interface.
+"""
 
 import json
 from pathlib import Path
@@ -6,13 +14,13 @@ import signal
 import socket
 import subprocess
 import time
-from typing import cast
+from typing import Protocol, cast
 
 from prysm_acceptance import commands, web
+from prysm_acceptance.commands import Command
 from prysm_acceptance.config import Config
-from prysm_acceptance.plan import Bench, Failed
 from prysm_acceptance.prysm_api import Settings, State
-from prysm_acceptance.transport import Process
+from prysm_acceptance.transport import Process, Transport
 from prysm_acceptance.web import Json, JsonObject
 
 # Processing that keeps colours as captured, so measured colours can be compared.
@@ -32,25 +40,6 @@ NEUTRAL_PROCESSING: JsonObject = {
 }
 
 
-def binary(config: Config) -> str:
-    return config.desktop.headless or str(commands.ROOT / 'target/release/prysm-headless')
-
-
-def build(ctx: Bench) -> str:
-    """The setup step that builds a release prysm-headless (or checks the configured binary)."""
-    path = Path(binary(ctx.config))
-    if ctx.config.desktop.headless or ctx.options.no_build:
-        if not path.exists():
-            raise Failed(f'{path} does not exist')
-        return f'using {path}'
-    if not (commands.ROOT / 'frontend/dist/headless').is_dir():
-        raise Failed(
-            'frontend/dist/headless is missing: run npm --prefix frontend ci && npm --prefix frontend run bundle first'
-        )
-    ctx.run(commands.cargo_build_headless())
-    return f'built {path}'
-
-
 def settings(output: JsonObject, capture: JsonObject | None = None) -> Settings:
     document: Settings = {'output': output, 'processing': NEUTRAL_PROCESSING}
     if capture:
@@ -58,9 +47,9 @@ def settings(output: JsonObject, capture: JsonObject | None = None) -> Settings:
     return document
 
 
-def wled_output(config: Config, dither: bool = True) -> JsonObject:
+def wled_output(config: Config) -> JsonObject:
     leds = dict[str, Json](config.leds.as_settings())
-    return {'kind': 'wled', 'address': config.wled, 'leds': leds, 'dither': dither}
+    return {'kind': 'wled', 'address': config.wled, 'leds': leds, 'dither': True}
 
 
 def local_address(towards: str) -> str:
@@ -71,24 +60,82 @@ def local_address(towards: str) -> str:
         return probe.getsockname()[0]
 
 
-class Headless:
-    """One running prysm-headless; `stop` sends SIGTERM and returns the exit code."""
+class Host(Protocol):
+    """Prysm delivered to and running on a platform, as the checks see it."""
+
+    @property
+    def url(self) -> str:
+        """Prysm's base URL, as this computer reaches it."""
+        ...
+
+    @property
+    def log_path(self) -> Path:
+        """Where Prysm's log is kept in the run directory."""
+        ...
+
+    def sender(self) -> str:
+        """The address WLED reports as the sender of Prysm's DDP."""
+        ...
+
+    def commands(self) -> list[Command]:
+        """The commands `deliver` and `start` run, for the dry run."""
+        ...
+
+    def deliver(self) -> str:
+        """Put the artifact where it runs; what was done."""
+        ...
+
+    def start(self, document: Settings, seconds: float = 15) -> State:
+        """Write the settings, start Prysm and wait until its API answers."""
+        ...
+
+    def stop(self, seconds: int = 30) -> int | str | None:
+        """Stop Prysm (SIGTERM, KILL after `seconds`); its exit code, or why there is none."""
+        ...
+
+    def logs(self, lines: int = 20) -> str:
+        """The end of Prysm's log."""
+        ...
+
+
+class LocalBinary:
+    """The binary on this computer, a child process listening on `listen`."""
 
     def __init__(
-        self, ctx: Bench, settings_path: str, listen: str, allow_null_origin: bool = False, name: str = 'headless'
+        self,
+        transport: Transport,
+        binary: Path,
+        listen: str,
+        out_dir: Path,
+        wled: str,
+        name: str = 'headless',
+        allow_null_origin: bool = False,
     ) -> None:
-        self.ctx = ctx
-        self.command = commands.headless(binary(ctx.config), settings_path, listen, allow_null_origin=allow_null_origin)
-        port = listen.rsplit(':', 1)[1]
-        host = listen.rsplit(':', 1)[0]
+        self.transport = transport
+        self.wled = wled
+        self.settings_path = out_dir / f'{name}-settings.json'
+        self.command = commands.headless(
+            str(binary), str(self.settings_path), listen, allow_null_origin=allow_null_origin
+        )
+        host, port = listen.rsplit(':', 1)
         self.url = f'http://{"127.0.0.1" if host == "0.0.0.0" else host}:{port}'
-        self.log_path = ctx.out_dir / f'{name}.log'
+        self.log_path = out_dir / f'{name}.log'
         self.process: Process | None = None
         self.exit_code: int | str | None = None
 
-    def start(self, seconds: float = 15) -> State:
+    def sender(self) -> str:
+        return local_address(self.wled)
+
+    def commands(self) -> list[Command]:
+        return [self.command]
+
+    def deliver(self) -> str:
+        return 'nothing to deliver: the binary runs where it is'
+
+    def start(self, document: Settings, seconds: float = 15) -> State:
+        self.settings_path.write_text(json.dumps(document, indent=2) + '\n')
         with self.log_path.open('ab') as log:
-            self.process = self.ctx.transport.spawn(self.command, stdout=log, stderr=subprocess.STDOUT)
+            self.process = self.transport.spawn(self.command, stdout=log, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
@@ -112,8 +159,7 @@ class Headless:
             self.exit_code = f'killed after no exit within {seconds} s'
         return self.exit_code
 
-
-def write_settings(ctx: Bench, name: str, document: Settings) -> Path:
-    path = ctx.out_dir / name
-    path.write_text(json.dumps(document, indent=2) + '\n')
-    return path
+    def logs(self, lines: int = 20) -> str:
+        if not self.log_path.exists():
+            return ''
+        return ''.join(self.log_path.read_text(errors='replace').splitlines(keepends=True)[-lines:])

@@ -11,11 +11,12 @@ from pathlib import Path
 import time
 from typing import assert_never, cast
 
-from prysm_acceptance import commands, host, stream_version, tv, tv_full, tv_slim, web, wled_api
+from prysm_acceptance import artifact, commands, prysm_api, tv, tv_full, tv_slim, web, wled_api
+from prysm_acceptance.checks import Answer, Failed, Skipped
 from prysm_acceptance.commands import Command, Flavour
 from prysm_acceptance.config import Config, RestoreFlavour
 from prysm_acceptance.options import Options
-from prysm_acceptance.plan import Answer, Bench, Context, Failed, Mode, Skipped, Step
+from prysm_acceptance.plan import Bench, Context, Mode, Step
 from prysm_acceptance.prysm_api import Target
 from prysm_acceptance.stage_data import AsFound, TvData
 
@@ -87,12 +88,17 @@ def preflight(ctx: Ctx) -> tuple[str, object]:
         'lighting': found.get('lighting') if found else None,
         'enabled': found.get('enabled') if found else None,
     }
-    if found and found['flavor'] == Flavour.FULL:
+    portal = found.get('portal') if found else None
+    if found and found['flavor'] == Flavour.FULL and portal:
         try:
-            as_found['settings'] = tv_full.portal(ctx).state()['settings']
+            as_found['settings'] = prysm_api.Prysm(portal).state()['settings']
         except (web.Unreachable, RuntimeError):
             as_found['settings'] = None
     ctx.data['as_found'] = as_found
+    # The runner never builds: the package left at the end must be there before anything changes.
+    restored = left_installed(ctx.config, as_found)
+    if restored and not Path(ctx.config.tv.ipk(restored)).is_file():
+        raise Failed(f'{ctx.config.tv.ipk(restored)} is missing, and the end of the run installs {restored} again')
     ctx.save('tv-as-found.json', as_found)
     _facts(ctx, **{'TV package found': as_found['flavor'] or 'none', 'TV': ssh})
     ctx.cleanup('tv.restore', 'TV left as found (package, preferences, settings, lighting)', lambda: restore(ctx))
@@ -103,20 +109,24 @@ def preflight(ctx: Ctx) -> tuple[str, object]:
     }
 
 
+def left_installed(config: Config, as_found: AsFound) -> Flavour | None:
+    """The package to leave installed at the end (tv.restore_flavour); None: none."""
+    match config.tv.restore_flavour:
+        case RestoreFlavour.AS_FOUND:
+            return as_found['flavor']
+        case RestoreFlavour.NONE:
+            return None
+        case RestoreFlavour.FULL:
+            return Flavour.FULL
+        case RestoreFlavour.SLIM:
+            return Flavour.SLIM
+        case _:
+            assert_never(config.tv.restore_flavour)
+
+
 def restore(ctx: Ctx) -> str:
     as_found = ctx.data['as_found']
-    # The package to leave installed (tv.restore_flavour); None: none.
-    match ctx.config.tv.restore_flavour:
-        case RestoreFlavour.AS_FOUND:
-            flavour = as_found['flavor']
-        case RestoreFlavour.NONE:
-            flavour = None
-        case RestoreFlavour.FULL:
-            flavour = Flavour.FULL
-        case RestoreFlavour.SLIM:
-            flavour = Flavour.SLIM
-        case _:
-            assert_never(ctx.config.tv.restore_flavour)
+    flavour = left_installed(ctx.config, as_found)
     current = tv.get_state(ctx)
     if flavour is None:
         return 'nothing to restore' if current is None else 'left the last package installed'
@@ -130,8 +140,8 @@ def restore(ctx: Ctx) -> str:
         commands.tv_set_preferences(ctx.config.tv.ssh, bool(preferences.get('autostart')), preferences.get('instance')),
     )
     if flavour == Flavour.FULL:
-        prysm = tv_full.portal(ctx)
         tv_full.wait_portal(ctx)
+        prysm = tv_full.portal(ctx)
         settings = as_found.get('settings')
         if settings:
             reply = prysm.replace_settings(settings)
@@ -146,27 +156,18 @@ def restore(ctx: Ctx) -> str:
     return f'{flavour} installed, preferences restored, enabled {bool(as_found.get("enabled"))}'
 
 
-def _package(ctx: Ctx, flavour: Flavour) -> str:
-    configured = ctx.config.tv.ipk(flavour)
-    if configured:
-        return configured
-    ctx.run(commands.build_ipk(flavour))
-    built = sorted(
-        (commands.ROOT / 'target/webos-ipk' / flavour).glob(f'io.prysm.tv-{flavour}_*_all.ipk'),
-        key=lambda p: p.stat().st_mtime,
-    )
-    if not built:
-        raise Failed(f'build-ipk.sh {flavour} left no package')
-    return str(built[-1])
-
-
 def package(flavour: Flavour) -> Run:
-    def run(ctx: Ctx) -> str:
-        ipk = _package(ctx, flavour)
-        ctx.run(commands.verify_ipk(ipk))  # refuses files outside the app and service directories
-        ctx.data.setdefault('ipk', {})[flavour] = ipk
-        _facts(ctx, **{f'Package {flavour}': Path(ipk).name})
-        return f'{ipk} verified'
+    """The configured package: present, its hash and manifest recorded (`tv.install` verifies it)."""
+
+    def run(ctx: Ctx) -> tuple[str, object]:
+        ipk = Path(ctx.config.tv.ipk(flavour))
+        if not ipk.is_file():
+            raise Failed(f'{ipk} does not exist: cargo xtask dist tv-{flavour}, or set tv.ipk_{flavour}')
+        found = artifact.inspect(ipk)
+        ctx.data.setdefault('ipk', {})[flavour] = str(ipk)
+        facts = found.facts()
+        _facts(ctx, **{f'Package {flavour}': ', '.join(f'{key} {value}' for key, value in facts.items())})
+        return f'{ipk.name}: {found.version or "version unknown"}', facts
 
     return run
 
@@ -315,30 +316,16 @@ def steps(config: Config, options: Options) -> list[Step[TvData]]:
                 commands.tv_paths(ssh),
                 *(commands.tv_read_data(ssh, name) for name in commands.DATA_FILES),
             ],
-            actions=[f'GET {config.tv.portal}/api/v1/state (full)'],
+            actions=['GET PORTAL/api/v1/state (full; PORTAL as getState reports it)'],
         ),
     ]
-    if Flavour.SLIM in config.tv.flavours and not config.receiver.url:
-        found.append(
-            Step(
-                'tv.headless',
-                'Release prysm-headless for the receiver',
-                'cargo build --release (or the configured binary)',
-                Mode.SETUP,
-                host.build,
-                group=Flavour.SLIM,
-                commands=lambda: (
-                    [] if config.desktop.headless or options.no_build else [commands.cargo_build_headless()]
-                ),
-            )
-        )
     if Flavour.SLIM in config.tv.flavours:
         found.append(
             Step(
                 'tv.receiver',
                 'Slim receiver',
-                'receiver.url (settings saved and put back), or '
-                'prysm-headless started here with the remote capture, WLED output and --allow-origin null',
+                'receiver.url (settings saved and put back), or [mac] binary '
+                'started here with the remote capture, WLED output and --allow-origin null',
                 Mode.SETUP,
                 tv_slim.start_receiver,
                 group=Flavour.SLIM,
@@ -347,7 +334,7 @@ def steps(config: Config, options: Options) -> list[Step[TvData]]:
                     if config.receiver.url
                     else [
                         commands.headless(
-                            host.binary(config),
+                            config.mac.binary or 'MAC_BINARY',
                             'RUN_DIR/receiver-settings.json',
                             config.receiver.listen,
                             allow_null_origin=True,
@@ -364,11 +351,9 @@ def steps(config: Config, options: Options) -> list[Step[TvData]]:
 def cleanup_commands(config: Config) -> list[Command]:
     """The commands the restore may run, for the dry run."""
     ssh = config.tv.ssh or 'root@TV'
-    ipk = 'target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk'  # or slim, as found
+    ipk = config.tv.ipk_full  # or slim, as found
     return [
         commands.tv_get_state(ssh),
-        commands.build_ipk(Flavour.FULL),
-        commands.verify_ipk(ipk),
         *_install_commands(ssh, ipk),
         commands.tv_set_preferences(ssh, False),
         commands.tv_set_enabled(ssh, False),
@@ -377,6 +362,7 @@ def cleanup_commands(config: Config) -> list[Command]:
 
 def _install_commands(ssh: str, ipk: str) -> list[Command]:
     return [
+        commands.verify_ipk(ipk),
         commands.tv_stage(ssh, ipk),
         commands.tv_install(ssh),
         commands.tv_unstage(ssh),
@@ -386,7 +372,7 @@ def _install_commands(ssh: str, ipk: str) -> list[Command]:
 
 
 def _flavour_steps(config: Config, options: Options, flavour: Flavour, ssh: str) -> list[Step[TvData]]:
-    ipk = config.tv.ipk(flavour) or f'target/webos-ipk/{flavour}/io.prysm.tv-{flavour}_1.0.0_all.ipk'
+    ipk = config.tv.ipk_full if flavour == Flavour.FULL else config.tv.ipk_slim
     prefix = f'tv.{flavour}.'
     state = [commands.tv_get_state(ssh)]
     sample = [commands.tv_sample_worker(ssh)]
@@ -417,19 +403,17 @@ def _flavour_steps(config: Config, options: Options, flavour: Flavour, ssh: str)
         Step(
             prefix + 'package',
             f'{flavour} package',
-            'build-ipk.sh (or the configured IPK); ipk.py verify accepts '
-            'it (no files outside the app and service directories)',
+            f'tv.ipk_{flavour} ({ipk}) exists; its SHA-256, and the version and commit from manifest.json '
+            'next to it when the hash matches, are recorded',
             Mode.SETUP,
             package(flavour),
             group=flavour,
-            commands=lambda: (
-                ([] if config.tv.ipk(flavour) else [commands.build_ipk(flavour)]) + [commands.verify_ipk(ipk)]
-            ),
         ),
         step(
             'install',
             f'Install {flavour}',
-            'staged copy, appInstallService replies "installed", staged copy removed, setup.sh',
+            'ipk.py verify accepts it (no files outside the app and service directories); staged copy, '
+            'appInstallService replies "installed", staged copy removed, setup.sh',
             Mode.SETUP,
             install(flavour),
             _install_commands(ssh, ipk),
@@ -453,7 +437,7 @@ def _flavour_steps(config: Config, options: Options, flavour: Flavour, ssh: str)
                 'the checks that change them',
                 Mode.SETUP,
                 tv_full.portal_step,
-                actions=[f'GET {config.tv.portal}/api/v1/state'],
+                actions=['GET PORTAL/api/v1/state (PORTAL as getState reports it)'],
                 setup_group=True,
             ),
             step(
@@ -471,7 +455,7 @@ def _flavour_steps(config: Config, options: Options, flavour: Flavour, ssh: str)
                 f'soak-{w}x{h}',
                 f'Soak {w}x{h}@{f}',
                 f'{config.tv.soak_seconds} s with lighting on: portal '
-                f'fps within ±{config.desktop.fps_tolerance:.0%}; worker CPU and RSS from /proc every 5 s; '
+                f'fps within ±{config.checks.fps_tolerance:.0%}; worker CPU and RSS from /proc every 5 s; '
                 'settings put back',
                 Mode.AUTO,
                 tv_full.soak(w, h, f),
@@ -525,17 +509,10 @@ def _flavour_steps(config: Config, options: Options, flavour: Flavour, ssh: str)
                 'soak-640x360',
                 'Soak 640x360@30 (hardware H.264)',
                 f'{config.tv.soak_seconds} s: receiver fps '
-                f'within ±{config.desktop.fps_tolerance:.0%}; TV worker CPU and RSS every 5 s',
+                f'within ±{config.checks.fps_tolerance:.0%}; TV worker CPU and RSS every 5 s',
                 Mode.AUTO,
                 tv_slim.soak,
                 sample,
-            ),
-            step(
-                'hardware-60',
-                '60 fps hardware H.264 refused',
-                "starting 640x360@60 h264_hardware is refused on capture.fps with the offer's reason",
-                Mode.AUTO,
-                tv_slim.hardware_60_refused,
             ),
             step(
                 'pause-resume',
@@ -544,17 +521,6 @@ def _flavour_steps(config: Config, options: Options, flavour: Flavour, ssh: str)
                 Mode.AUTO,
                 tv_slim.pause_resume,
                 state,
-            ),
-            step(
-                'version',
-                'Stream version mismatch',
-                f'receiver answers an upgrade offering {stream_version.OTHER} '
-                f'with 426 naming {stream_version.CURRENT}; a local stand-in answering 426 {stream_version.OTHER} '
-                'set as instance: getState failure kind version; instance put back',
-                Mode.AUTO,
-                tv_slim.version_mismatch,
-                [*point, *state],
-                [f'serve the stand-in on 0.0.0.0:{config.receiver.mismatch_port}'],
             ),
             step(
                 'wss',
@@ -590,15 +556,6 @@ def _flavour_steps(config: Config, options: Options, flavour: Flavour, ssh: str)
             Mode.GUIDED,
             standby(flavour),
             state,
-        ),
-        step(
-            'hung-capture',
-            'Hung capture killed',
-            "no documented way to make the installed worker's LG capture "
-            'call hang; the TERM-then-KILL path is covered by native-smoke.py --supervisor (a fake worker ignoring '
-            'SIGTERM) and the supervisor tests',
-            Mode.SKIP,
-            None,
         ),
         step(
             'reinstall',

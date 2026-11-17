@@ -145,7 +145,7 @@ impl Step {
             Self::RunnerFormat => runner(&["ruff", "format", "--check"]),
             Self::RunnerTypes => runner(&["pyright"]),
             Self::RunnerLayers => runner(&["lint-imports"]),
-            Self::RunnerTests => runner(&["python", "-m", "unittest", "discover", "-s", "tests"]),
+            Self::RunnerTests => runner(&["pytest"]),
             Self::DocLinks => python(&["scripts/check-doc-links.py"]),
         }
     }

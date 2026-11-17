@@ -1,10 +1,11 @@
 # Prysm acceptance runner configuration. Copy to scripts/acceptance/config.toml
 # (untracked) and fill in your own addresses; see docs/developers/acceptance.md.
-# Values here are examples in the documentation's placeholder style.
+# Values here are examples in the documentation's placeholder style. Paths are
+# relative to the repository root.
 
 [wled]
 # WLED's host[:port], as in Prysm's settings (no http://).
-address = "192.168.1.30"
+address = "192.168.1.40"
 
 [leds]
 # LEDs per edge, clockwise from the bottom-left corner (as in the portal).
@@ -13,27 +14,37 @@ right = 18
 bottom = 30
 left = 18
 
-[desktop]
-# prysm-headless to run; empty: build and use target/release/prysm-headless.
-headless = ""
-# Where the runner's own prysm-headless listens (localhost: nothing else reaches it).
-listen = "127.0.0.1:18787"
+[checks]
 # Seconds of frame-rate sampling per check.
 seconds = 10
 # Allowed deviation of the measured frame rate from the source's (0.15 = 15 %).
 fps_tolerance = 0.15
-# Part of the capture device's name to pick (empty: the first one found).
-device = ""
-# Size-and-rate preset resolved against the device's modes, as the portal does.
-preset = "balanced"
+
+[mac]
+# Only "local": a remote Mac ("ssh://...") is refused, not implemented.
+target = "local"
+# The artifact under test, as `cargo xtask dist mac` writes it. The runner
+# never builds; without it the Mac cells are skipped (or fail when named).
+binary = "dist/prysm-headless-macos-arm64"
+# The capture card's AVFoundation unique ID, as Prysm's device setting takes
+# it; a wrong one fails listing the devices present. Omit without a card.
+device = "0x1100000345f2131"
+# Where the runner's own Prysm listens (localhost: nothing else reaches it).
+listen = "127.0.0.1:18787"
 # Port of the local colour page for --display-check (localhost only).
 display_port = 18790
 
-[feed.chromecast]
-# What puts a known picture into the capture card for desktop --source device:
-# a Chromecast with Google TV on the card's HDMI input. Remove this section if
-# nothing the runner controls feeds the card; the colour check is then only
-# "not black".
+[mac.capture]
+# The device source's capture size and rate; a mode of the card must take
+# them. Remove the table to use Prysm's defaults (640x360 at 30 fps).
+width = 640
+height = 360
+fps = 30
+
+[mac.feed.chromecast]
+# What puts a known picture into the capture card: a Chromecast with Google
+# TV on the card's HDMI input. Remove this table if nothing the runner
+# controls feeds the card; the colour check is then only "not black".
 # ADB serial (required): the USB serial from `adb devices`, or HOST:PORT after
 # your own `adb connect` for wireless debugging. The runner reads the
 # Chromecast's Wi-Fi address over ADB and casts to it (port 8009).
@@ -42,6 +53,15 @@ adb_serial = "0123456789ABCD"
 serve_port = 18792
 # Seconds the colour checks wait after PLAYING for the player overlay to clear.
 settle_seconds = 5.0
+
+[linux]
+# The Linux cells come with a later phase (docs/developers/acceptance-plan.md);
+# the table is read and checked, not used yet.
+target = "ssh://pi@192.168.1.70"
+binary = "dist/prysm-headless-linux-arm64"
+deb = "dist/prysm-headless-linux-arm64.deb"
+image = "dist/prysm-headless-linux-arm64.tar"
+device = "/dev/v4l/by-id/usb-EXAMPLE-video-index0"
 
 [tv]
 # The TV's address; ssh defaults to root@ADDRESS (an ssh config alias also works).
@@ -53,12 +73,12 @@ flavours = ["full", "slim"]
 # Package left on the TV at the end: as-found, full, slim or none.
 restore_flavour = "as-found"
 soak_seconds = 90
-# Built packages to use; empty: packaging/webos/build-ipk.sh builds them (needs WEBOS_SDK).
-ipk_full = ""
-ipk_slim = ""
+# The packages under test, as `cargo xtask dist tv-full tv-slim` writes them.
+ipk_full = "dist/prysm-tv-full.ipk"
+ipk_slim = "dist/prysm-tv-slim.ipk"
 
 [receiver]
-# Slim: the Prysm the TV streams to. Empty: the runner starts prysm-headless here.
+# Slim: the Prysm the TV streams to. Empty: the runner starts [mac] binary here.
 url = ""
 # Where that local prysm-headless listens; the TV must reach it.
 listen = "0.0.0.0:8788"
@@ -66,8 +86,6 @@ listen = "0.0.0.0:8788"
 advertise = ""
 # Optional https:// Prysm (reverse proxy) for the wss check.
 wss_url = ""
-# Local port of the stand-in Prysm that answers another stream version (426).
-mismatch_port = 18791
 
 [sweep]
 sizes = ["320x180", "640x360", "960x540", "1280x720"]
@@ -75,5 +93,5 @@ rates = [30, 60]
 seconds = 10
 
 [eyes]
-# The portal whose state the guided checks set up; empty: the TV's (full package).
+# The portal whose state the guided checks set up; empty: the TV's (as getState reports it).
 portal = ""

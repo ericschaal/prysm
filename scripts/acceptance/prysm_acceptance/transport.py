@@ -100,7 +100,13 @@ class Real:
     @staticmethod
     def _held(command: Command) -> Result:
         """Keep stdin open (the TV's Luna client replies only then); stop at `until`, `fail`, exit or timeout."""
-        process = subprocess.Popen(command.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(
+            command.argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **command.env},
+        )
         out: list[str] = []
         err: list[str] = []
         readers = [

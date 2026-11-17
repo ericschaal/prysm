@@ -13,7 +13,7 @@ supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
 
-On the Chromecast that feeds the capture card (`[feed.chromecast]`), ADB
+On the Chromecast that feeds the capture card (`[mac.feed.chromecast]`), ADB
 only reads its state and Wi-Fi address, wakes it and reads or sets the one
 keep-awake setting; there is no free-form `adb shell`.
 """
@@ -62,7 +62,6 @@ class Flavour(StrEnum):
 
 
 _HOST = re.compile(r'(?:[A-Za-z0-9_][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*')
-_IPK = re.compile(r'^io\.prysm\.tv-(full|slim)_[0-9]+\.[0-9]+\.[0-9]+_all\.ipk$')
 _INSTANCE = re.compile(r'^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/?$')
 _DEVICE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 _LISTEN = re.compile(r'^[0-9.]+:[0-9]{1,5}$')
@@ -92,7 +91,7 @@ class Command:
     env: dict[str, str] = field(default_factory=dict[str, str])
 
     def display(self) -> str:
-        text = shlex.join(self.argv).replace(str(ROOT) + '/', '')
+        text = shlex.join(self.argv).replace(str(ROOT) + '/', '').replace(str(ROOT), '.')
         if self.stdin_file:
             text += ' < ' + shlex.quote(self.stdin_file)
         if self.hold_stdin:
@@ -217,8 +216,9 @@ def tv_sample_worker(host: str) -> Command:
 
 
 def tv_stage(host: str, ipk: str) -> Command:
-    """Copy a Prysm package to the staging path (the only file written outside Prysm's directories)."""
-    _check(_IPK, Path(ipk).name, 'package name')
+    """Copy a Prysm package to the staging path (the only file written outside Prysm's directories).
+
+    Any file name: `tv.install` stages only a package `verify_ipk` accepted."""
     return _ssh(
         'tv.stage', host, f'mkdir -p {STAGING_DIR} && cat > {STAGING}', 120, stdin_file=_local_file(ipk, 'package')
     )
@@ -281,27 +281,8 @@ def ares_remove(device: str) -> Command:
     )
 
 
-def cargo_build_headless() -> Command:
-    return Command(
-        'local.cargo-build-headless',
-        ('cargo', 'build', '--release', '--locked', '-j', '4', '-p', 'prysm-headless'),
-        3600,
-    )
-
-
-def build_ipk(flavour: Flavour) -> Command:
-    if flavour not in tuple(Flavour):
-        raise Refused(f'flavour {flavour!r}')
-    return Command(
-        'local.build-ipk',
-        (str(ROOT / 'packaging/webos/build-ipk.sh'), str(flavour)),
-        3600,
-        env={'CARGO_BUILD_JOBS': '4'},
-    )
-
-
 def verify_ipk(ipk: str) -> Command:
-    _check(_IPK, Path(ipk).name, 'package name')
+    """`ipk.py verify`: the package installs nothing outside the app and service directories."""
     return Command(
         'local.verify-ipk',
         ('python3', str(ROOT / 'packaging/webos/ipk.py'), 'verify', _local_file(ipk, 'package')),
@@ -309,12 +290,9 @@ def verify_ipk(ipk: str) -> Command:
     )
 
 
-def check_settings(binary: str, settings: str) -> Command:
-    return Command(
-        'local.check-settings',
-        (_local_file(binary, 'headless'), '--check-settings', _local_file(settings, 'settings')),
-        30,
-    )
+def git_last_commit_time() -> Command:
+    """When the checkout's last commit was made (ISO 8601), to warn about an older artifact."""
+    return Command('local.git-last-commit-time', ('git', '-C', str(ROOT), 'log', '-1', '--format=%cI'), 10)
 
 
 def headless(binary: str, settings: str, listen: str, metrics: bool = True, allow_null_origin: bool = False) -> Command:
@@ -456,7 +434,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.paths': lambda: tv_paths('root@tv.example'),
     'tv.processes': lambda: tv_processes('root@tv.example'),
     'tv.sample-worker': lambda: tv_sample_worker('root@tv.example'),
-    'tv.stage': lambda: tv_stage('root@tv.example', 'target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk'),
+    'tv.stage': lambda: tv_stage('root@tv.example', 'dist/prysm-tv-full.ipk'),
     'tv.install': lambda: tv_install('root@tv.example'),
     'tv.unstage': lambda: tv_unstage('root@tv.example'),
     'tv.setup': lambda: tv_setup('root@tv.example'),
@@ -465,11 +443,9 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.set-enabled': lambda: tv_set_enabled('root@tv.example', True),
     'tv.set-preferences': lambda: tv_set_preferences('root@tv.example', False, 'http://192.0.2.20:8787'),
     'local.ares-remove': lambda: ares_remove('tv'),
-    'local.cargo-build-headless': cargo_build_headless,
-    'local.build-ipk': lambda: build_ipk(Flavour.FULL),
-    'local.verify-ipk': lambda: verify_ipk('target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk'),
-    'local.check-settings': lambda: check_settings('target/release/prysm-headless', 'settings.json'),
-    'local.headless': lambda: headless('target/release/prysm-headless', 'settings.json', '127.0.0.1:8787'),
+    'local.verify-ipk': lambda: verify_ipk('dist/prysm-tv-full.ipk'),
+    'local.git-last-commit-time': git_last_commit_time,
+    'local.headless': lambda: headless('dist/prysm-headless-macos-arm64', 'settings.json', '127.0.0.1:8787'),
     'local.ffmpeg-clip': lambda: ffmpeg_edges_clip(
         'clip.mp4', 640, 360, 30, 64, ('ff0000', '00ff00', '0000ff', 'ffff00'), 2
     ),

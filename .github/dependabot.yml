@@ -7,3 +7,11 @@ updates:
     groups:
       github-actions:
         patterns: ['*']
+  # The acceptance runner's locked environment (scripts/acceptance/uv.lock).
+  - package-ecosystem: uv
+    directory: /scripts/acceptance
+    schedule:
+      interval: weekly
+    groups:
+      acceptance-runner:
+        patterns: ['*']

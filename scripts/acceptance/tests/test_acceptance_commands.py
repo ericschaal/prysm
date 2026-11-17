@@ -10,10 +10,11 @@ import unittest
 
 from acceptance_fakes import NO_OPTIONS, transcript_of, untyped
 
-from prysm_acceptance import commands, config, plan, stage_tv, transport, tv
+from prysm_acceptance import commands, config, stage_tv, transport, tv, tv_full
+from prysm_acceptance.checks import Answer, Failed
 from prysm_acceptance.commands import Flavour
 from prysm_acceptance.options import Options
-from prysm_acceptance.plan import Answer, Context
+from prysm_acceptance.plan import Context
 from prysm_acceptance.stage_data import TvData
 from prysm_acceptance.transport import Result
 
@@ -159,15 +160,13 @@ class AllowList(unittest.TestCase):
             lambda: commands.tv_reachable('-oProxyCommand=sh'),
             lambda: commands.tv_reachable('root@tv;reboot'),
             lambda: commands.tv_read_data('root@tv', '../../etc/passwd'),
-            lambda: commands.tv_stage('root@tv', 'io.prysm.tv-full_1.0.0_all.ipk;reboot'),
-            lambda: commands.tv_stage('root@tv', 'other.ipk'),
+            lambda: commands.tv_stage('root@tv', '-oProxyCommand.ipk'),
             lambda: commands.tv_set_preferences('root@tv', False, 'http://x/;reboot'),
             lambda: commands.tv_set_preferences('root@tv', False, "http://x'$(reboot)"),
             lambda: commands.tv_set_preferences('root@tv', cast('bool', 'yes')),
             lambda: commands.tv_set_enabled('root@tv', cast('bool', 1)),
             lambda: commands.ares_remove('tv; rm -rf /'),
-            lambda: commands.build_ipk(cast('Flavour', 'both')),
-            lambda: commands.verify_ipk('/tmp/evil.ipk'),
+            lambda: commands.verify_ipk('-evil.ipk'),
             lambda: commands.headless('bin', 'settings.json', '0.0.0.0:8787 --start'),
             lambda: commands.ffmpeg_edges_clip(
                 'c.mp4', 640, 360, 30, 16, ("ff0000';x", '00ff00', '0000ff', 'ffff00'), 2
@@ -244,14 +243,14 @@ class AllowList(unittest.TestCase):
                 self.assertNotIn("'ssh'", text, path.name)
                 self.assertNotIn("'adb'", text, path.name)
                 self.assertNotIn('luna://', text, path.name)
-            if path.name not in ('transport.py', 'run.py'):
+            if path.name != 'transport.py':
                 self.assertIsNone(re.search(r'subprocess\.(run|Popen|call|check_\w+)\(|os\.system', text), path.name)
 
-    def test_the_desktop_stage_only_knows_its_feed(self) -> None:
-        text = (PACKAGE / 'stage_desktop.py').read_text().lower()
+    def test_the_host_cells_only_know_their_feed(self) -> None:
+        text = (PACKAGE / 'host_cells.py').read_text().lower()
         for word in ('chromecast', 'adb', 'clipserver', 'clip server', 'feed_chromecast'):
             self.assertNotIn(word, text)
-        self.assertIsNone(re.search(r'\bcast', text))
+        self.assertIsNone(re.search(r'\bcast', re.sub(r'\bcast\(|, cast\b', '', text)))  # typing.cast is no cast
 
     def test_no_real_addresses(self) -> None:
         documents = [*ACCEPTANCE.glob('*'), *PACKAGE.glob('*'), ACCEPTANCE.parents[1] / 'docs/developers/acceptance.md']
@@ -329,6 +328,7 @@ class RecordedTv(unittest.TestCase):
     def test_install_follows_the_documented_path(self) -> None:
         ctx = context(
             [
+                ('local.verify-ipk', Result(0, '')),
                 ('tv.stage', Result(0, '')),
                 ('tv.install', Result(0, '{"details":{"state":"installed"}}')),
                 ('tv.unstage', Result(0, '')),
@@ -336,22 +336,33 @@ class RecordedTv(unittest.TestCase):
                 ('tv.get-state', Result(0, STATE)),
             ]
         )
-        state = tv.install(ctx, 'target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk')
+        state = tv.install(ctx, 'dist/prysm-tv-full.ipk')
         self.assertEqual(state['flavor'], 'full')
-        self.assertEqual(transcript_of(ctx).calls[0].argv[-2], 'root@tv.example')
-        self.assertEqual(transcript_of(ctx).calls[0].stdin_file, 'target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk')
+        verify, stage = transcript_of(ctx).calls[:2]
+        self.assertEqual(verify.argv[-2:], ('verify', 'dist/prysm-tv-full.ipk'))
+        self.assertEqual(stage.argv[-2], 'root@tv.example')
+        self.assertEqual(stage.stdin_file, 'dist/prysm-tv-full.ipk')
+
+    def test_a_package_the_verifier_refuses_is_never_staged(self) -> None:
+        ctx = context([('local.verify-ipk', Result(1, '', 'outside the app and service directories'))])
+        with self.assertRaises(transport.CommandFailed):
+            tv.install(ctx, 'dist/prysm-tv-full.ipk')
+        self.assertEqual([c.template for c in transcript_of(ctx).calls], ['local.verify-ipk'])
 
     def test_a_failed_install_still_removes_the_staged_package(self) -> None:
         ctx = context(
             [
+                ('local.verify-ipk', Result(0, '')),
                 ('tv.stage', Result(0, '')),
                 ('tv.install', Result(1, '{"returnValue":false,"errorText":"bad package"}')),
                 ('tv.unstage', Result(0, '')),
             ]
         )
-        with self.assertRaises(plan.Failed):
-            tv.install(ctx, 'io.prysm.tv-slim_1.0.0_all.ipk')
-        self.assertEqual([c.template for c in transcript_of(ctx).calls], ['tv.stage', 'tv.install', 'tv.unstage'])
+        with self.assertRaises(Failed):
+            tv.install(ctx, 'dist/prysm-tv-slim.ipk')
+        self.assertEqual(
+            [c.template for c in transcript_of(ctx).calls], ['local.verify-ipk', 'tv.stage', 'tv.install', 'tv.unstage']
+        )
 
     def test_uninstall_checks_that_nothing_is_left(self) -> None:
         ctx = context(
@@ -378,7 +389,7 @@ class RecordedTv(unittest.TestCase):
                 ('tv.get-state', Result(1, '')),
             ]
         )
-        with self.assertRaises(plan.Failed) as failure:
+        with self.assertRaises(Failed) as failure:
             stage_tv.uninstall(ctx)
         self.assertIn(commands.HOOK, str(failure.exception))
 
@@ -398,7 +409,7 @@ class RecordedTv(unittest.TestCase):
                 ('tv.set-enabled', ok),
             ]
         )
-        ctx.config.tv.ipk_slim = 'io.prysm.tv-slim_1.0.0_all.ipk'
+        ctx.data['ipk'] = {Flavour.SLIM: 'dist/prysm-tv-slim.ipk'}
         ctx.data['as_found'] = {
             'flavor': Flavour.SLIM,
             'enabled': True,
@@ -409,6 +420,13 @@ class RecordedTv(unittest.TestCase):
         preferences = str(transcript_of(ctx).calls[-2].remote)
         self.assertIn('"autostart":true,"instance":"http://192.0.2.20:8787"', preferences)
         self.assertIn('"enabled":true', str(transcript_of(ctx).calls[-1].remote))
+
+    def test_the_full_portal_is_where_getstate_says(self) -> None:
+        ctx = context([('tv.get-state', Result(0, STATE))])
+        self.assertEqual(tv_full.portal(ctx).base, 'http://192.0.2.50:8787')
+        ctx = context([('tv.get-state', Result(0, STATE.replace('"http://192.0.2.50:8787"', 'null')))])
+        with self.assertRaisesRegex(Failed, 'no portal address'):
+            tv_full.portal(ctx)
 
     def test_worker_load_from_proc(self) -> None:
         reading = (
