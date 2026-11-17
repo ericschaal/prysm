@@ -197,8 +197,23 @@ class Plan:
     stop: list[str] = field(default_factory=list[str])
 
 
-class Host(Protocol):
-    """Prysm delivered to and running on a platform, as the checks see it."""
+class Sender(Protocol):
+    """What drives WLED in a cell, as the shared checks see it: a host's Prysm, or a TV's."""
+
+    def sender(self) -> str:
+        """The address WLED reports as the sender of Prysm's DDP."""
+        ...
+
+    def fetch(self) -> None:
+        """Bring what the target keeps (Prysm's log, the kernel's USB lines) into the run directory."""
+        ...
+
+
+class Host(Sender, Protocol):
+    """Prysm delivered to and running on a platform, as the checks see it.
+
+    `source` None: no capture of its own to check (a slim TV cell's receiver, which captures the TV's
+    stream)."""
 
     @property
     def url(self) -> str:
@@ -210,15 +225,11 @@ class Host(Protocol):
         """Where Prysm's log is kept in the run directory."""
         ...
 
-    def sender(self) -> str:
-        """The address WLED reports as the sender of Prysm's DDP."""
-        ...
-
-    def plan(self, source: Source, device: str) -> Plan:
+    def plan(self, source: Source | None, device: str) -> Plan:
         """What `preflight`, `deliver`, `start`, `stop` and `close` do, for the dry run."""
         ...
 
-    def preflight(self, source: Source, device: str) -> str | None:
+    def preflight(self, source: Source | None, device: str) -> str | None:
         """Why the target cannot run this cell (reachable, architecture, FFmpeg, device, port); None if it can."""
         ...
 
@@ -250,10 +261,6 @@ class Host(Protocol):
         """The end of Prysm's log."""
         ...
 
-    def fetch(self) -> None:
-        """Bring what the target keeps (Prysm's log, the kernel's USB lines) into the run directory."""
-        ...
-
     def close(self) -> None:
         """Fetch, then remove what `deliver` put on the target. Safe to repeat."""
         ...
@@ -275,32 +282,31 @@ class LocalBinary:
         listen: str,
         out_dir: Path,
         wled: str,
-        name: str = 'headless',
-        allow_null_origin: bool = False,
     ) -> None:
         self.transport = transport
         self.binary = binary
         self.wled = wled
-        self.settings_path = out_dir / f'{name}-settings.json'
-        self.command = commands.headless(
-            str(binary), str(self.settings_path), listen, allow_null_origin=allow_null_origin
-        )
+        self.settings_path = out_dir / 'headless-settings.json'
+        self.command = commands.headless(str(binary), str(self.settings_path), listen)
         self.url = listen_url('127.0.0.1', listen)
-        self.log_path = out_dir / f'{name}.log'
+        self.log_path = out_dir / 'headless.log'
         self.process: Process | None = None
         self.exit_code: int | str | None = None
 
     def sender(self) -> str:
         return local_address(self.wled)
 
-    def plan(self, source: Source, device: str) -> Plan:
+    def plan(self, source: Source | None, device: str) -> Plan:
         return Plan(
-            preflight=['an ELF (Linux) binary only: this computer runs Linux on its machine, and a device is readable'],
+            preflight=[
+                'an ELF (Linux) binary only: this computer runs Linux on its machine'
+                + (', and the device is readable' if source == Source.DEVICE else '')
+            ],
             start=[f'$ {self.command.display()} &'],
             stop=['Prysm stopped with SIGTERM (KILL after 30 s)'],
         )
 
-    def preflight(self, source: Source, device: str) -> str | None:
+    def preflight(self, source: Source | None, device: str) -> str | None:
         machine = elf_machine(self.binary)
         if machine is None:
             return None  # not ELF: a Mac binary, which the Mac runs or refuses itself
@@ -404,12 +410,11 @@ class SshBinary:
     def sender(self) -> str:
         return route_source(self.transport, self.target, self.wled)
 
-    def plan(self, source: Source, device: str) -> Plan:
+    def plan(self, source: Source | None, device: str) -> Plan:
         checks = [
             commands.linux_probe(self.target),
-            commands.linux_ffmpeg_version(self.target)
-            if source == Source.FILE
-            else commands.linux_device(self.target, device or '/dev/DEVICE'),
+            *([commands.linux_ffmpeg_version(self.target)] if source == Source.FILE else []),
+            *([commands.linux_device(self.target, device or '/dev/DEVICE')] if source == Source.DEVICE else []),
             commands.linux_port_free(self.target, self.port),
         ]
         start = [
@@ -455,7 +460,7 @@ class SshBinary:
             return f'{self.binary.name} is built for {built or "no ELF machine"}; {self.target} is {machine}'
         return None
 
-    def preflight(self, source: Source, device: str) -> str | None:
+    def preflight(self, source: Source | None, device: str) -> str | None:
         reason = self._system()
         if reason:
             return reason
@@ -463,7 +468,7 @@ class SshBinary:
             reason = ffmpeg_too_old(self._run(commands.linux_ffmpeg_version(self.target)).stdout)
             if reason:
                 return reason
-        else:
+        elif source == Source.DEVICE:
             self.device_node, reason = device_node(self.transport, self.target, device)
             if self.device_node is None:
                 return reason

@@ -340,12 +340,29 @@ class Deb(SeamTest):
         )
         self.assertEqual(
             reason,
-            'Prysm is already on pi@pi.example: /usr/bin/prysm-headless, /var/lib/prysm, user prysm-headless, '
-            'installed. The bench must start without it: there, sudo apt-get purge prysm-headless, and remove what '
-            'is still listed by hand',
+            'Prysm is on the linux target: /usr/bin/prysm-headless, /var/lib/prysm, user prysm-headless, installed. '
+            'Nothing was changed. Remove it there, or set [linux] installed = "replace" to back up its settings and '
+            'uninstall it (it is not reinstalled)',
         )
         self.deb.write_bytes(b'not a package')
         self.assertIn('no prysm-headless control file', self.preflight() or '')
+
+    def test_replace_leaves_an_installed_package_for_the_cell(self) -> None:
+        recorded = transport.Transcript(
+            [
+                ('linux.probe', ok('Linux aarch64\n')),
+                ('deb.sudo', ok()),
+                ('deb.leftovers', ok('/usr/bin/prysm-headless\ninstalled\n')),
+                ('linux.device', ok('/dev/video0\n')),
+                ('linux.port-free', ok()),
+            ]
+        )
+        seam = host_deb.SshDeb(
+            recorded, TARGET, self.deb, self.prysm.listen, self.out_dir, '192.0.2.40', config.Installed.REPLACE
+        )
+        self.assertIsNone(seam.preflight(Source.DEVICE, DEVICE))
+        self.assertEqual(seam.found, ['/usr/bin/prysm-headless', 'installed'])
+        self.all_run(recorded)
 
     def test_install_start_stop_close(self) -> None:
         seam, recorded = self.seam(
@@ -617,7 +634,7 @@ class Prepare(unittest.TestCase):
         failed = mock.Mock()
         failed.return_value.run.return_value = Result(101, '', 'error: could not compile')
         with mock.patch.object(run.transport, 'Real', failed), mock.patch.object(run.pytest, 'main') as tests:
-            self.assertEqual(run.host(args), run.PREPARATION_FAILED)
+            self.assertEqual(run.cells(args), run.PREPARATION_FAILED)
         tests.assert_not_called()
         self.assertEqual(failed.return_value.run.call_args.args[0].argv, ('cargo', 'xtask', 'dist', 'linux-arm64'))
 

@@ -6,14 +6,22 @@ API and puts it back afterwards.
 """
 
 from collections.abc import Callable
+from typing import TypedDict
 
 from prysm_acceptance import commands, prysm_api, tv, web
 from prysm_acceptance.checks import Answer, Failed, Skipped
 from prysm_acceptance.config import Config
-from prysm_acceptance.options import Options
 from prysm_acceptance.plan import Context, Mode, Step
-from prysm_acceptance.prysm_api import Target, section
-from prysm_acceptance.stage_data import EyesData
+from prysm_acceptance.prysm_api import Prysm, Target, section
+from prysm_acceptance.web import Json
+
+
+class EyesData(TypedDict, total=False):
+    """What the steps pass on (`plan.Context.data`): a key is filled by the step that provides it."""
+
+    portal: Prysm | None
+    dither: Json  # output.dither before the dithering checks
+
 
 Ctx = Context[EyesData]
 # Sets up, through the portal, the state a question needs; what it did.
@@ -40,10 +48,16 @@ PATTERNS = ['gray-192', 'red', 'green', 'blue', 'review-grid']
 CLEANUPS = ('dithering set back to its value before the dithering checks', 'a calibration pattern cleared')
 
 
+def _tv(ctx: Ctx) -> tv.Tv | None:
+    """The configured TV, for its portal address and its state."""
+    return tv.Tv(ctx.transport, ctx.config.tv.ssh) if ctx.config.tv.ssh else None
+
+
 def _portal(ctx: Ctx) -> prysm_api.Prysm | None:
     url = ctx.config.eyes_portal
-    if not url and ctx.config.tv.ssh:
-        url = (tv.get_state(ctx) or tv.LunaReply()).get('portal') or ''
+    found = _tv(ctx)
+    if not url and found:
+        url = (found.get_state() or tv.LunaReply()).get('portal') or ''
     if not url:
         return None
     try:
@@ -129,13 +143,14 @@ def cold_boot(ctx: Ctx) -> tuple[str, object]:
         'Do the lights start by themselves (answer once the picture is back)?'
     )
     evidence: dict[str, object] = {'answer': answer, 'note': note}
-    if answer == Answer.YES and ctx.config.tv.ssh:
-        state = tv.wait_state(ctx, lambda s: s['capturing'], 120, every=5)
+    found = _tv(ctx)
+    if answer == Answer.YES and found:
+        state = found.wait_state(lambda s: s['capturing'], 120, every=5)
         evidence['getState'] = state
     return note or answer, evidence
 
 
-def steps(config: Config, options: Options) -> list[Step[EyesData]]:
+def steps(config: Config) -> list[Step[EyesData]]:
     found: list[Step[EyesData]] = [
         Step(
             'eyes.lights-match',

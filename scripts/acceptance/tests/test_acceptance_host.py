@@ -26,6 +26,7 @@ import socket, subprocess, sys
 def refused(*args, **kwargs):
     raise AssertionError('the dry run contacted or started something')
 socket.socket.connect = refused
+socket.socket.sendto = refused
 socket.create_connection = refused
 subprocess.Popen.__init__ = refused
 from prysm_acceptance import run
@@ -46,7 +47,8 @@ class DryRun(unittest.TestCase):
             ['host', 'mac'],
             ['host', 'mac', '--source', 'device', '--display-check'],
             ['host', 'linux'],
-            ['tv'],
+            ['tv', 'full', '--tv-is-free'],
+            ['tv', 'slim', '--receiver', 'linux', '--tv-is-free'],
             ['eyes'],
         ):
             done = runner(*arguments, '--dry-run', '--config', str(EXAMPLE), offline=True)

@@ -5,10 +5,10 @@ checks Prysm's artifacts on real devices: WLED, a capture card, a Linux
 computer over SSH, and both TV packages. It is run by hand, never by CI or a build, and it never builds:
 it tests the artifacts the configuration names (`cargo xtask dist`,
 [packaging](packaging.md#artifacts-in-dist)). A run writes its report and
-evidence (snapshots, logs, CSV tables) to `work/acceptance/<time>-<stage>/`,
+evidence (snapshots, logs, backups) to `work/acceptance/<time>-<stage>/`,
 which is not tracked. Copy what matters into
-[research](../../research/README.md). Where the runner is going next (the
-TV on the new configuration) is in the [plan](acceptance-plan.md).
+[research](../../research/README.md). How it came to this shape is in the
+[plan](acceptance-plan.md).
 
 ```sh
 cp scripts/acceptance/config.example.toml scripts/acceptance/config.toml   # then fill in
@@ -18,10 +18,12 @@ uv run --no-dev --project scripts/acceptance acceptance host mac --source file
 uv run --no-dev --project scripts/acceptance acceptance host mac --source device [--display-check]
 uv run --no-dev --project scripts/acceptance acceptance host linux [--source file|device]
 uv run --no-dev --project scripts/acceptance acceptance host linux --delivery deb|image
-uv run --no-dev --project scripts/acceptance acceptance all [--prepare]
-uv run --no-dev --project scripts/acceptance acceptance tv --tv-is-free [--flavour full] [--sweep] [--wss-url https://HOST]
+uv run --no-dev --project scripts/acceptance acceptance tv full --tv-is-free
+uv run --no-dev --project scripts/acceptance acceptance tv slim --receiver mac|linux --tv-is-free
+uv run --no-dev --project scripts/acceptance acceptance all [--tv-is-free] [--prepare]
 uv run --no-dev --project scripts/acceptance acceptance eyes
 uv run --no-dev --project scripts/acceptance acceptance restore-wled work/acceptance/RUN/CELL/wled-snapshot.json
+uv run --no-dev --project scripts/acceptance acceptance settings restore tv|linux work/acceptance/RUN/CELL/prysm-backup.json
 ```
 
 Python 3.11+ and [uv](https://docs.astral.sh/uv/). `scripts/acceptance` is a
@@ -29,7 +31,7 @@ uv project (`pyproject.toml`, `uv.lock`); `uv run --project
 scripts/acceptance` from the repository root installs it into
 `scripts/acceptance/.venv` and runs its `acceptance` command. A bench run
 needs no dev group (`--no-dev`). Its libraries are
-[pytest](https://docs.pytest.org/), which runs the host cells, and
+[pytest](https://docs.pytest.org/), which runs the host and TV cells, and
 [PyChromecast](https://github.com/home-assistant-libs/pychromecast), imported
 only by a capture card run with the Chromecast feed. `--dry-run` prints what
 would run, with every command and HTTP call (TV commands as they run there),
@@ -38,8 +40,8 @@ and contacts nothing. The exit code is 0 when nothing failed (skips allowed),
 bench (see [`config.example.toml`](../../scripts/acceptance/config.example.toml)):
 WLED and the LED counts, `[checks]` (sample length, frame-rate tolerance),
 `[mac]` (`target = "local"`; an `ssh://` target is refused as not
-implemented), `[linux]` (`target = "ssh://USER@HOST"` or `"local"`), the TV and its packages, the receiver; no address is written
-in the code.
+implemented), `[linux]` (`target = "ssh://USER@HOST"` or `"local"`), `[tv]`
+(the TV and its packages, below); no address is written in the code.
 
 ## Stages
 
@@ -47,10 +49,10 @@ in the code.
 | --- | --- | --- |
 | `host mac` | WLED; `[mac] binary`; FFmpeg 9+ for the file source, or a capture card (`[mac] device`; with a feed: FFmpeg, and for the Chromecast adb) | Only for `--display-check` set-up |
 | `host linux` | WLED; `[linux] binary` and `target`; over SSH a key the runner can use without a prompt; FFmpeg here for the clip; FFmpeg 9+ on the target for the file source, or a capture card on it (`[linux] device`; with a feed: adb here) | No |
-| `host linux --delivery deb` | As the device cell, with `[linux] deb` instead of `binary`, an SSH target with passwordless sudo and no Prysm installed | No |
+| `host linux --delivery deb` | As the device cell, with `[linux] deb` instead of `binary`, an SSH target with passwordless sudo and no Prysm installed (or `[linux] installed = "replace"`) | No |
 | `host linux --delivery image` | As the device cell, with `[linux] image`, an SSH target with Docker and its compose plugin 2.24.4+ for the ssh user, and no `prysm-headless:local` image | No |
-| `all` | Whatever each host cell needs; a cell without it is skipped | As its cells |
-| `tv` | The TV (only when its owner says it is free: `--tv-is-free`), WLED, the IPKs `[tv] ipk_full`, `ipk_slim`; slim with the local receiver: `[mac] binary` | Standby/wake, and removing the app unless `tv.ares_device` is set |
+| `tv full`, `tv slim --receiver mac\|linux` | `--tv-is-free` (the owner says the TV may be used now); WLED; `[tv] target` and the package (`ipk_full`, `ipk_slim`); slim: the receiver's `[mac]` or `[linux] binary`; no Prysm on the TV (or `[tv] installed = "replace"`) | Standby and wake; removing the app unless `[tv] ares_device` is set |
+| `all` | Whatever each host cell needs, and with `--tv-is-free` each TV cell's; a cell without it is skipped | As its cells |
 | `eyes` | A portal (the TV's, or `--portal`) | Every step |
 
 ### host
@@ -68,17 +70,17 @@ a SKIP with the reason; a named cell fails instead.
 
 `acceptance all` runs every host cell, one at a time, each skipped with the
 reason when its artifact, tool or device is missing; none is named, so none
-fails for that. It covers the host cells only: the `tv` stage keeps its own
-step runner, needs `--tv-is-free` and a person, and joins `all` when the
-plan's phase 4 moves it; `eyes` is a person's stage. With one capture card
-on the bench, leave `device` out of the platform whose computer does not
-have it.
+fails for that. With `--tv-is-free` it then runs the [TV cells](#tv) the
+same way (a slim cell whose receiver has no binary configured is skipped);
+without it, none. `eyes` is a person's stage. With one capture card on the
+bench, leave `device` out of the platform whose computer does not have it.
 
-`--prepare` (with `host` or `all`) first asks the build system for the
+`--prepare` (with `host`, `tv` or `all`) first asks the build system for the
 artifacts of the chosen cells, as one `cargo xtask dist TARGET...` run in
 the repository (a template in `commands.py`), and waits for it. Which target
-makes which artifact is a closed table in `prepare.py`: (platform, delivery,
-architecture) to the target and the file it writes in `dist/`. The
+makes which artifact is a closed table in `prepare.py`: the configuration key
+(`[linux] deb`, `[tv] ipk_slim` ...) and the file in `dist/` to the target that
+writes it; a slim TV cell needs its package and its receiver's binary. The
 architecture is taken from the configured file name, so `--prepare` refuses
 an artifact configured anywhere but under its `dist/` name. A cell without a
 configured artifact is not built (and is skipped as usual). A failed or
@@ -235,8 +237,16 @@ may be there before the run, and nothing is left after it.
   against `uname -m`; `sudo -n true`; then `deb.leftovers` must find nothing:
   none of the package's files, `/var/lib/prysm` or `/var/lib/private/prysm`,
   a unit of that name, the run's drop-in, a `prysm-headless` user or group, or a
-  package dpkg knows (else a SKIP that lists what it found, or a failure
-  when named); the device readable; the listen port free;
+  package dpkg knows (else, with `[linux] installed = "refuse"`, the default, a
+  SKIP that lists what it found, or a failure when named; with `"replace"` see
+  [An installed Prysm](#an-installed-prysm-installed)); the device readable;
+  the listen port free;
+- replace (only with `"replace"` and something found, after the WLED
+  snapshot): the settings and target read from the installed unit's portal on
+  its default `HOST:8787` (stops when it does not answer, or while an
+  administrator's unit or drop-in is under `/etc/systemd/system`, which the
+  purge would leave), then `deb.purge` and `deb.leftovers`, which must find
+  nothing;
 - deliver: the `.deb` copied into the run directory, then
   `sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y
   --no-install-recommends ./prysm-headless.deb` there (its output in
@@ -309,8 +319,11 @@ the shared checks stay as they are. A check of what only that delivery adds
 is marked `@only(Delivery.X)` and is not collected for other cells, so
 dropping a delivery is dropping its module, templates, cell and those
 checks. Each fixture and check carries its description (the
-docstring) and what it does for the dry run (`planned`), so there is no
-separate table of steps.
+docstring) and what it does for the dry run (`planned`, a `Planner` of the
+module's kind of cell), so there is no separate table of steps. A cell
+module's `CELLS` are its parameters; a check one module takes from another
+(`tv_cells.py` takes `test_wled_live` and `test_fps`) runs with the taking
+module's cells and fixtures.
 
 #### The test clip and the colour check
 
@@ -399,33 +412,145 @@ the Chromecast is in `feed_chromecast.py`, behind `feed.py`.
 
 ### tv
 
-The `tv` stage keeps its own step runner (`plan.py`) until the plan's phase
-4 moves it to the new configuration; `--only NAME[,NAME]` and `--from NAME`
-(patterns over step names) select checks, and setup and cleanup steps always
-run. For each package (`full`, then `slim`): take the configured IPK
-(`tv.ipk_full`, `tv.ipk_slim`, by default the names `cargo xtask dist`
-writes), record its hash and its manifest's version and commit, check it with
-`ipk.py verify` before every install (whatever its name: what it contains
-decides), install it the way that works on webOS 10 ([packaging](packaging.md)),
-and check:
+The TV cells run under pytest like the host cells, from
+[`tv_cells.py`](../../scripts/acceptance/prysm_acceptance/tv_cells.py):
+`tv-full` (`acceptance tv full`), and `tv-slim-mac` and `tv-slim-linux`
+(`acceptance tv slim --receiver mac|linux`), where the slim package streams
+to a receiver on that platform. Each needs `--tv-is-free`: without it `tv`
+refuses (exit code 2, also with `--dry-run`) and `all` runs no TV cell. The
+TV is the owner's daily device, not a bench: a run starts and ends with no
+Prysm on it ([An installed Prysm](#an-installed-prysm-installed)).
 
-- registration: `getState` answers with that flavour; the app, service,
-  manifests and boot hook exist;
-- full: the TV's portal (at the address `getState` reports) answers and
-  captures with video playing; 90 s soaks at 640 × 360 and 1280 × 720 with
-  the portal's frame rate and the worker's CPU and RSS from `/proc`;
-  `POST /api/v1/capture/modes`;
-- slim, streaming to `[mac] binary` the runner starts here (or
-  `--receiver URL`): the TV's offer is known while the lights are off; each
-  encoding streams 640 × 360 at 30 fps; a 90 s soak with hardware H.264 and
-  the worker's CPU and RSS; pause and resume; optional `wss://`;
-- `--sweep`: sizes × rates actually delivered, for capture (full) and for
-  each encoding (slim), as `sweep-full.csv` and `sweep-slim.csv`;
-- standby and wake (guided: a person presses power, the runner watches);
-- reinstall keeps preferences, the full settings and the lighting;
-- uninstall: the supervisor's `uninstall` and `ares-remove` (or the person)
-  leave no app, service, manifest, boot hook, staged package, process or
-  Luna service; `/var/lib/io.prysm.tv` stays, as documented.
+`[tv]` in `config.toml`:
+
+- `target`: `"ssh://root@HOST"`, with a key that works without a prompt. HOST
+  must resolve here: the wake-on-LAN packet leaves on the route to it;
+- `ipk_full`, `ipk_slim`: the packages under test (by default the names
+  `cargo xtask dist tv-full tv-slim` writes);
+- `mac` (optional): the TV's hardware address. When the TV does not answer
+  over SSH, the runner sends it one wake-on-LAN magic packet (a UDP broadcast
+  to port 9 from this computer's address towards the TV, `local.wake-on-lan`)
+  and tries SSH every 5 s for 90 s; a TV that still does not answer skips the
+  cell (fails it when named). Without `mac` an unreachable TV is that skip at
+  once. The runner never puts the TV to sleep;
+- `installed`: `"refuse"` (default) or `"replace"`, below;
+- `soak_seconds`: each soak's length (default 90).
+
+The slim receiver is the host cells' binary seam on that platform: `[mac]
+binary` started here, or `[linux] binary` on the Linux target over SSH,
+listening on the platform's `listen` port on all interfaces (`0.0.0.0`) so
+the TV reaches it. The TV is pointed at it as `http://ADDRESS:PORT`, ADDRESS
+being this computer's address towards the TV or the Linux target's. Its
+settings are the host cells' (WLED output, neutral processing) with the
+remote capture at 640 × 360 and 30 fps, hardware H.264.
+
+The fixtures set up, in order, and their teardowns undo it in reverse, also
+after a failure, Ctrl-C, SIGTERM or SIGHUP:
+
+- **artifact**: WLED and the LEDs configured, `[tv] target` set, the package
+  (and for slim the receiver's binary) present, else a SKIP (a failure when
+  named); `ipk.py verify` accepts the package (by what it contains, whatever
+  its name); its hash, age, version and commit recorded as for the host cells;
+- **target**: the TV reachable (woken as above), the old `io.prysm.capture`
+  app not running, and what of Prysm is there: the app, the service, the Luna
+  manifests and boot hook, the staged package, a process under `io.prysm.*`,
+  `getState` answering, or the data files in `/var/lib/io.prysm.tv` that an
+  uninstall leaves (`tv-found.json`);
+- **receiver** (slim): the receiver's preflight, as the host cells' (over SSH:
+  reachable, `uname -m` against the binary, the port free);
+- **wled**: the host cells' snapshot, refused while something else drives WLED
+  (a Prysm lighting it from the TV included: the runner does not switch it
+  off), restored and compared last;
+- **cleared**: with `installed = "replace"`, what the target found is backed
+  up and uninstalled (below);
+- **package**: the package installed the way that works on webOS 10
+  ([packaging](packaging.md)): verified, staged as
+  `/media/developer/temp/io.prysm.tv.ipk`, `appInstallService` until
+  `installed`, unstaged, `setup.sh`, `getState`. At the end it is uninstalled:
+  the supervisor's `uninstall`, then the app removed through
+  `appInstallService` until `removed`, then nothing
+  of the above but the data files may be left (else the teardown fails, saying
+  what is left);
+- **prysm**: full: the TV's portal at the address `getState` reports, given
+  the run's settings (WLED output, neutral processing, the webOS capture at
+  640 × 360 and 30 fps) with `PUT /api/v1/settings`; slim: the receiver
+  delivered and started, then the TV's `setPreferences` (`instance`, the
+  receiver) and `setEnabled true`, as the app does; the receiver is stopped
+  and removed at the end;
+- **running**: the sender WLED should see: the TV (the host of the portal
+  address `getState` reports) or the receiver's, as the host cells find it.
+  A failure fetches the TV worker's recent log lines from `getState`
+  (`tv-worker.log`) and the receiver's logs.
+
+The checks, in order (`@only` marks a package's own):
+
+- registered: `getState` answers as the cell's package with its worker; the
+  app, service, manifests and boot hook exist;
+- `test_wled_live` and `test_fps`, the host cells' own: Screen sync lights
+  WLED with live DDP from the expected sender, no `output_issue`; the frame
+  rate within the tolerance, sent alike, never behind. Full needs video
+  playing on the TV;
+- capturing: `getState` says capturing with a frame rate;
+- full: the TV's capture modes are known (`POST /api/v1/capture/modes`);
+- slim: with the receiver off, the TV's offer is known for each encoding; each
+  encoding streams at 30 fps and `getState` names it (with the worker's CPU);
+  the receiver off pauses the TV's capture and on resumes it;
+- the soak: `soak_seconds` at 640 × 360 and 1280 × 720 (full) or 640 × 360
+  hardware H.264 (slim), the frame rate within the tolerance, the worker's
+  CPU and RSS from `/proc` every 5 s;
+- standby and wake (a person presses power): standby seen when the TV
+  answers, then active with the worker running and capturing within 90 s;
+- reinstall while lighting: the same package again keeps the preferences (and
+  the full package's settings), and lighting resumes by itself.
+
+That nothing of Prysm is left after the uninstall is the `package` fixture's
+teardown, so it is checked also after a failure.
+
+#### An installed Prysm (`installed`)
+
+One rule for every target that installs Prysm (the TV, and the Linux package
+cell with `[linux] installed`; `[mac]` refuses the key): no Prysm before a run
+and none after it.
+
+- `"refuse"` (the default): the cell stops in its preflight, before anything
+  changes, and lists what it found.
+- `"replace"`: after the WLED snapshot (so a Prysm lighting WLED is refused
+  first), the runner reads what a user would lose through the installed
+  Prysm's own API and saves it as `prysm-backup.json` in the cell's run
+  directory: the settings and lighting target from its portal (the full
+  package's at the address `getState` reports; the Linux package's at
+  `HOST:8787`), and on the TV `getState`'s flavour, preferences (`autostart`,
+  `instance`), `enabled` and lighting, and the data files `tv.json`,
+  `settings.json` and `resume.json` as they are. It reads the file back and
+  compares it. When the backup cannot be taken (an installed Prysm that does
+  not answer) or does not compare, the cell stops and nothing is removed.
+  Otherwise the end-of-run warning is registered and Prysm is uninstalled
+  (the TV's uninstall above; the package purged), and must leave nothing.
+  The cell then runs and cleans up as always: the target ends without Prysm.
+  Data files without an installed Prysm (an earlier uninstall, or an earlier
+  run, leaves them) are backed up the same way and nothing is uninstalled.
+
+After `replace`, the end of the run (also after a failure or Ctrl-C) prints a
+warning: Prysm was removed and NOT reinstalled, reinstalling the right version
+is the user's, the backup's path, and the command that restores it:
+
+```sh
+uv run --no-dev --project scripts/acceptance acceptance settings restore tv work/acceptance/RUN/CELL/prysm-backup.json
+```
+
+`settings restore tv|linux BACKUP` sends the backup to the Prysm reinstalled
+on that configured target through its API and refuses when no Prysm answers
+there (or, on the TV, when the other package is installed): the TV's
+preferences with `setPreferences` and, for the full package, the settings
+with `PUT /api/v1/settings`; the Linux package's settings likewise. It does
+not switch lighting on, set `enabled` or a lighting target: it says what the
+lighting was, and the user switches it on. `--dry-run` prints what it would
+send. The run leaves the TV's data files in `/var/lib/io.prysm.tv` with the
+run's values (the runner never deletes them). Within one run they are the
+run's own once a TV cell has started installing, so the next TV cell does not
+count them; a later run on the default `"refuse"` stops on them, and a later
+`"replace"` backs up those values: restore the first run's backup, as its
+warning says.
 
 ### eyes
 
@@ -435,7 +560,10 @@ the lights match the picture, dark scenes, dithering off and on in a dark room
 video and navigation, that nothing re-renders visibly while idle (until its
 unit test, prysm-skn), calibration patterns (the runner shows each) and the
 TV's own calibration flow, the portal on a phone, and a cold boot by
-unplugging. Like `tv`, it keeps the step runner and its `--only`/`--from`.
+unplugging. It is a plain script on the step runner `plan.py`, with
+`--only NAME[,NAME]` and `--from NAME` (patterns over step names; setup and
+cleanup steps always run); it reads the TV's portal address and, after a cold
+boot, its state with `getState` when `[tv] target` is set.
 
 ## Safety
 
@@ -444,11 +572,13 @@ unplugging. Like `tv`, it keeps the step runner and its `--only`/`--from`.
   parameters are checked against fixed patterns and nothing from the
   configuration becomes shell text. The TV commands only read, stage the
   package as `/media/developer/temp/io.prysm.tv.ipk` (removed after each
-  install), install through `com.webos.appInstallService`, run the package's
-  `setup.sh` and the supervisor's `uninstall`, and call Prysm's own Luna
-  methods. Nothing writes to system partitions or deletes
-  `/var/lib/io.prysm.tv`. [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
-  enumerate every template and check the paths it names. On the Chromecast,
+  install), install and remove the app through `com.webos.appInstallService`,
+  run the package's `setup.sh` and the supervisor's `uninstall`, and call
+  Prysm's own Luna methods; here, one wake-on-LAN packet. Nothing
+  writes to system partitions or deletes `/var/lib/io.prysm.tv`.
+  [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
+  enumerate every template and check the paths it names, and every TV command
+  the TV cells' plans name ([test](../../scripts/acceptance/tests/test_acceptance_tv.py)). On the Chromecast,
   ADB only reads its state and Wi-Fi address, wakes it and reads or sets
   `stay_on_while_plugged_in`; there is no free-form `adb shell`.
 - **A Linux target.** The binary cells write only in the run directory under
@@ -457,23 +587,22 @@ unplugging. Like `tv`, it keeps the step runner and its `--only`/`--from`.
   remove the directory at the end. The package cell also changes, with
   `sudo -n` in its `deb.*` templates only: the package's own files through
   apt-get (install, purge), the runtime drop-in under `/run/systemd/system/`,
-  the unit's state (`systemctl`); Prysm writes its settings itself. The image
+  the unit's state (`systemctl`), and with `installed = "replace"` an installed
+  package (purged after its backup); Prysm writes its settings itself. The image
   cell changes only Docker's own storage (the loaded image, the run's compose
   project with its container, network and volume), without sudo. A test
   enumerates these templates and the paths they may write.
 - **Bounded.** Every command has a timeout; `luna-send` runs with its stdin
   held open and a remote `timeout`, as `install-ipk.sh` does.
-- **Left as found.** The `tv` stage saves `getState`, the files in
-  `/var/lib/io.prysm.tv` and the full portal's settings first (and stops if
-  an installed Prysm does not answer, since it could not be put back), and at
-  the end installs the package it found (`tv.restore_flavour`), sets the
-  preferences back and puts the settings and lighting back. WLED is
-  snapshotted before anything changes (`wled-snapshot.json`) and restored
-  last, after Prysm has stopped, also on a failure, Ctrl-C, SIGTERM or SIGHUP;
-  a second signal does not cut the restore short. After a hard kill use
+- **No Prysm before or after.** A Prysm found on the TV or the package
+  cell's target is refused unless `installed = "replace"`, which removes it
+  only after a backup that reads back as written, and never reinstalls it
+  ([An installed Prysm](#an-installed-prysm-installed)). WLED is snapshotted
+  before anything changes (`wled-snapshot.json`) and restored last, after
+  Prysm has stopped, also on a failure, Ctrl-C, SIGTERM or SIGHUP; a second
+  signal does not cut the restore short. After a hard kill use
   `restore-wled`.
-- **The owner decides.** The `tv` stage refuses to start without
-  `--tv-is-free`.
+- **The owner decides.** No TV cell runs without `--tv-is-free`.
 
 On macOS, a Local Network refusal (`EHOSTUNREACH`) means the app running the
 script needs Local Network access; the runner says so.
@@ -485,10 +614,11 @@ The runner's own code is linted, formatted, type-checked and kept in layers.
 Python checks, as CI's `quality` job does; it needs
 [uv](https://docs.astral.sh/uv/). The rules are in
 [`pyproject.toml`](../../scripts/acceptance/pyproject.toml): Ruff, Pyright in
-strict mode, and Import Linter's layers (command line, the host cells and
-their pytest plugin, the stages, their cells, checks, the feed, the package
-and image seams, devices,
-clients, base; stages never import each other). Only `transport.py` runs
+strict mode, and Import Linter's layers (command line; the TV cells, which
+reuse the host cells' checks; the host cells; their pytest plugin and
+`eyes`; the clip; the feed; the package and image seams; the devices; an
+installed Prysm's backup, `installed.py`; clients; the step runner; base).
+Only `transport.py` runs
 commands, and only `commands.py` builds them. One at a time, from the
 repository root:
 
@@ -500,9 +630,10 @@ uv run --locked --directory scripts/acceptance lint-imports
 uv run --locked --directory scripts/acceptance pytest
 ```
 
-The tests use fakes and contact no device; the host cells are tested
-through the runner's command line (the dry run contacts and starts nothing,
-the skip-or-fail rule). A real run of the Mac file cell against
+The tests use fakes and contact no device; the host and TV cells are tested
+through the runner's command line (the dry run contacts, sends and starts
+nothing, the skip-or-fail rule, `--tv-is-free`), and the TV's commands,
+the wake, the backup and restore against recorded transcripts. A real run of the Mac file cell against
 prysm-headless and the fake WLED on loopback is opt-in, as it needs a built
 binary and UDP port 4048: `cargo build -p prysm-headless`, then
 `PRYSM_ACCEPTANCE_BINARY=target/debug/prysm-headless` with the `pytest`

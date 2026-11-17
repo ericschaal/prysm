@@ -12,6 +12,9 @@ boot hook and data directory, through the documented install path
 supervisor's own `uninstall`. The one file outside them is the staged
 package, `STAGING`, removed after each install. Nothing writes to a system
 partition, and nothing deletes `DATA_DIR` (the owner's settings live there).
+When the TV does not answer and `[tv] mac` is set, the runner sends it one
+wake-on-LAN packet (`local.wake-on-lan`, a UDP broadcast, no process); it
+never puts the TV to sleep.
 
 On a Linux target over SSH (`[linux] target = "ssh://USER@HOST"`) the runner
 writes only in the run's own directory, `$HOME/.prysm-acceptance/RUN` (the
@@ -72,18 +75,10 @@ INSTALL_TIMEOUT = 120
 LUNA_TIMEOUT = 12
 
 
-class Flavour(StrEnum):
-    """The two TV packages."""
-
-    FULL = 'full'
-    SLIM = 'slim'
-
-
 _HOST = re.compile(r'(?:[A-Za-z0-9_][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*')
 _INSTANCE = re.compile(r'^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/?$')
-_DEVICE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 _LISTEN = re.compile(r'^[0-9.]+:[0-9]{1,5}$')
-_ORIGIN = re.compile(r'^(null|https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?)$')
+_MAC_ADDRESS = re.compile(r'[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}')
 
 
 class Refused(ValueError):
@@ -91,11 +86,23 @@ class Refused(ValueError):
 
 
 @dataclass(frozen=True)
+class Datagram:
+    """One UDP packet sent from `source` (this computer's address on the route to the receiver) to
+    `address`:`port`, broadcast allowed."""
+
+    source: str
+    address: str
+    port: int
+    payload: bytes
+
+
+@dataclass(frozen=True)
 class Command:
     """One allow-listed command, ready to run.
 
     `until`/`fail` (regular expressions) end a held-stdin command early on a
-    matching reply; `stdin_file` streams a local file to it."""
+    matching reply; `stdin_file` streams a local file to it. A `datagram`
+    is sent instead of starting a process (`argv` then only names it)."""
 
     template: str
     argv: tuple[str, ...]
@@ -108,8 +115,12 @@ class Command:
     background: bool = False
     env: dict[str, str] = field(default_factory=dict[str, str])
     cwd: str | None = None
+    datagram: Datagram | None = None
 
     def display(self) -> str:
+        if self.datagram:
+            sent = self.datagram
+            return f'(UDP from {sent.source} to {sent.address}:{sent.port}) {" ".join(self.argv)}'
         text = shlex.join(self.argv)
         if self.stdin_file:
             text += ' < ' + shlex.quote(self.stdin_file)
@@ -254,21 +265,24 @@ def tv_stage(host: str, ipk: str) -> Command:
     )
 
 
-def tv_install(host: str) -> Command:
-    """Install the staged package through the TV's install service."""
-    payload = json.dumps({'id': APP, 'ipkUrl': STAGING, 'subscribe': True}, separators=(',', ':'))
-    remote = (
-        f'timeout {INSTALL_TIMEOUT} luna-send -i luna://com.webos.appInstallService/dev/install {shlex.quote(payload)}'
-    )
+def _install_service(template: str, host: str, method: str, payload: dict[str, object], until: str) -> Command:
+    """A call to the TV's install service for Prysm's app, held until it reports `until`."""
+    request = shlex.quote(json.dumps({'id': APP, **payload, 'subscribe': True}, separators=(',', ':')))
+    remote = f'timeout {INSTALL_TIMEOUT} luna-send -i luna://com.webos.appInstallService/dev/{method} {request}'
     return _ssh(
-        'tv.install',
+        template,
         host,
         remote,
         INSTALL_TIMEOUT + 10,
         hold_stdin=True,
-        until=r'"installed"',
+        until=until,
         fail=r'"returnValue":\s*false|failed|FAILED',
     )
+
+
+def tv_install(host: str) -> Command:
+    """Install the staged package through the TV's install service."""
+    return _install_service('tv.install', host, 'install', {'ipkUrl': STAGING}, r'"installed"')
 
 
 def tv_unstage(host: str) -> Command:
@@ -283,6 +297,12 @@ def tv_setup(host: str) -> Command:
 def tv_supervisor_uninstall(host: str) -> Command:
     """The supervisor's own uninstall: stops the worker, removes hook and manifests, rescans."""
     return _ssh('tv.supervisor-uninstall', host, f'{SUPERVISOR} uninstall', 90)
+
+
+def tv_remove_app(host: str) -> Command:
+    """Remove the app through the TV's install service (what the webOS CLI's `ares-install --remove` calls),
+    after the supervisor's uninstall: the package has no removal script."""
+    return _install_service('tv.remove-app', host, 'remove', {}, r'"removed"')
 
 
 def tv_get_state(host: str) -> Command:
@@ -304,11 +324,13 @@ def tv_set_preferences(host: str, autostart: bool, instance: str | None = None) 
 # ---- this computer ---------------------------------------------------------
 
 
-def ares_remove(device: str) -> Command:
-    """Remove the app with the webOS CLI (`ares-remove`), as tested on the TV."""
-    return Command(
-        'local.ares-remove', ('ares-remove', '--device', _check(_DEVICE, device, 'tv.ares_device'), APP), 120
-    )
+def wake_on_lan(mac: str, source: str) -> Command:
+    """The wake-on-LAN magic packet for the TV's hardware address `mac` (`[tv] mac`): six 0xFF bytes and the
+    address 16 times, broadcast to UDP port 9 from `source`, this computer's address towards the TV."""
+    checked = _check(_MAC_ADDRESS, mac, 'tv.mac')
+    payload = b'\xff' * 6 + bytes.fromhex(checked.replace(':', '')) * 16
+    datagram = Datagram(_ipv4(source), '255.255.255.255', 9, payload)
+    return Command('local.wake-on-lan', ('wake-on-LAN magic packet for', checked), 5, datagram=datagram)
 
 
 def verify_ipk(ipk: str) -> Command:
@@ -325,19 +347,16 @@ def git_last_commit_time() -> Command:
     return Command('local.git-last-commit-time', ('git', '-C', str(ROOT), 'log', '-1', '--format=%cI'), 10)
 
 
-def headless(binary: str, settings: str, listen: str, metrics: bool = True, allow_null_origin: bool = False) -> Command:
-    """prysm-headless on `listen`, until stopped (SIGTERM)."""
-    argv = [
+def headless(binary: str, settings: str, listen: str) -> Command:
+    """prysm-headless on `listen` with --metrics, until stopped (SIGTERM)."""
+    argv = (
         _local_file(binary, 'headless'),
         _local_file(settings, 'settings'),
         '--listen',
         _check(_LISTEN, listen, 'listen'),
-    ]
-    if metrics:
-        argv.append('--metrics')
-    if allow_null_origin:
-        argv += ['--allow-origin', _check(_ORIGIN, 'null', 'origin')]
-    return Command('local.headless', tuple(argv), 0, background=True, env={'RUST_LOG': 'warn,prysm=info'})
+        '--metrics',
+    )
+    return Command('local.headless', argv, 0, background=True, env={'RUST_LOG': 'warn,prysm=info'})
 
 
 def ffmpeg_edges_clip(
@@ -858,6 +877,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.unstage': lambda: tv_unstage('root@tv.example'),
     'tv.setup': lambda: tv_setup('root@tv.example'),
     'tv.supervisor-uninstall': lambda: tv_supervisor_uninstall('root@tv.example'),
+    'tv.remove-app': lambda: tv_remove_app('root@tv.example'),
     'tv.get-state': lambda: tv_get_state('root@tv.example'),
     'tv.set-enabled': lambda: tv_set_enabled('root@tv.example', True),
     'tv.set-preferences': lambda: tv_set_preferences('root@tv.example', False, 'http://192.0.2.20:8787'),
@@ -893,7 +913,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'image.load': lambda: image_load('pi@pi.example', 'RUN-CELL'),
     'image.compose': lambda: image_compose('pi@pi.example', 'RUN-CELL', ComposeAction.UP),
     'image.remove': lambda: image_remove('pi@pi.example'),
-    'local.ares-remove': lambda: ares_remove('tv'),
+    'local.wake-on-lan': lambda: wake_on_lan('00:00:5E:00:53:01', '192.0.2.10'),
     'local.verify-ipk': lambda: verify_ipk('dist/prysm-tv-full.ipk'),
     'local.git-last-commit-time': git_last_commit_time,
     'local.xtask-dist': lambda: xtask_dist(['linux-arm64', 'deb-arm64']),

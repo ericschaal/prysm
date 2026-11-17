@@ -1,13 +1,14 @@
-"""The pytest plugin that runs the host cells (`acceptance host`, docs/developers/acceptance.md).
+"""The pytest plugin that runs the cells (`acceptance host`, `tv` and `all`, docs/developers/acceptance.md).
 
-A cell is the `cell` parameter of a test module's `CELLS`; its fixtures and
-checks are in that module (`host_cells`). This plugin adds what every run
-shares: the configuration, a run directory with each cell's bench (commands,
-logs, evidence), SIGTERM and SIGHUP ending a run like Ctrl-C so the
-fixtures' teardowns restore the devices, the failure report (evidence, log
-paths and the host log's end), and `--dry-run`, which prints each selected
-cell's fixtures and checks with their commands and actions from `planned`
-and runs nothing.
+A cell is the `cell` parameter of a cell module's `CELLS`; its fixtures and
+checks are in that module (`host_cells`, `tv_cells`). This plugin adds what
+every run shares: the configuration, a run directory with each cell's bench
+(commands, logs, evidence), SIGTERM and SIGHUP ending a run like Ctrl-C so
+the fixtures' teardowns restore the devices, the failure report (evidence,
+log paths and the log's end), the warnings a cell leaves for the end of the
+run (`warn_at_end`: a Prysm it removed), and `--dry-run`, which prints each
+selected cell's fixtures and checks with their commands and actions from
+`planned` and runs nothing.
 
 A cell named with `--cells` fails when its artifact or tool is missing
 (`unavailable`); any other cell is a skip that says why.
@@ -21,9 +22,8 @@ import inspect
 import json
 from pathlib import Path
 import signal
-import sys
-from types import FrameType
-from typing import NoReturn, TypeVar, cast
+from types import FrameType, ModuleType
+from typing import Any, Generic, NoReturn, TypeVar, cast
 
 import pytest
 
@@ -31,64 +31,72 @@ from prysm_acceptance import commands, transport
 from prysm_acceptance import config as configuration
 from prysm_acceptance.checks import Bench, Failed
 from prysm_acceptance.config import Config
-from prysm_acceptance.host import Host
-from prysm_acceptance.options import Cell, Delivery, Platform, Source
+from prysm_acceptance.host import Sender
+from prysm_acceptance.options import Cell, Delivery, Flavour, Platform, Source, TvCell
 
 # The runner's project: scripts/acceptance, where config.toml lives.
 HERE = Path(__file__).resolve().parents[1]
 RUN_DIR = pytest.StashKey[Path]()
 CONFIG = pytest.StashKey[Config]()
+WARNINGS = pytest.StashKey[list[str]]()
 SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-
-# What a fixture or check does, for the dry run: lines for this cell and configuration.
-Lines = Callable[[Cell, Config], list[str]]
+# A host cell or a TV cell; each cell module's fixtures and checks take its own kind.
+AnyCell = Cell | TvCell
+Kind = TypeVar('Kind', Cell, TvCell)
 
 
 @dataclass(frozen=True)
 class Planned:
-    """A fixture's or check's description (its docstring) and what it does and undoes."""
+    """A fixture's or check's description (its docstring) and what it does and undoes, as lines for a cell
+    (of its module's kind) and the configuration."""
 
     description: str
-    does: Lines
-    undoes: Lines
+    does: Callable[[Any, Config], list[str]]
+    undoes: Callable[[Any, Config], list[str]]
 
 
-# Filled by `planned` as the cells' module is imported, in its order: fixtures first, then checks.
-PLANS: dict[str, Planned] = {}
+# Filled by `planned` as the cell modules are imported, by module and in its order: fixtures first, then checks.
+PLANS: dict[str, dict[str, Planned]] = {}
 Function = TypeVar('Function', bound=Callable[..., object])
 
 
-def _none(cell: Cell, config: Config) -> list[str]:
+def _none(cell: object, config: Config) -> list[str]:
     return []
 
 
-def planned(does: Lines = _none, undoes: Lines = _none) -> Callable[[Function], Function]:
-    """Records a fixture's or check's docstring and commands and actions for the dry run.
+class Planner(Generic[Kind]):
+    """`planned` for a cell module's own kind of cell: `planned = Planner[Cell]()`."""
 
-    Put it under `@pytest.fixture`, so it sees the function itself."""
+    def __call__(
+        self, does: Callable[[Kind, Config], list[str]] = _none, undoes: Callable[[Kind, Config], list[str]] = _none
+    ) -> Callable[[Function], Function]:
+        """Records a fixture's or check's docstring and commands and actions for the dry run.
 
-    def record(function: Function) -> Function:
-        PLANS[function.__name__] = Planned(inspect.getdoc(function) or function.__name__, does, undoes)
-        return function
+        Put it under `@pytest.fixture`, so it sees the function itself."""
 
-    return record
+        def record(function: Function) -> Function:
+            description = inspect.getdoc(function) or function.__name__
+            PLANS.setdefault(function.__module__, {})[function.__name__] = Planned(description, does, undoes)
+            return function
+
+        return record
 
 
-def only(*deliveries: Delivery) -> pytest.MarkDecorator:
-    """A check of what these deliveries add: it is not collected for the other cells."""
-    return pytest.mark.only(*deliveries)
+def only(*parts: Delivery | Flavour) -> pytest.MarkDecorator:
+    """A check of what these deliveries or TV packages add: it is not collected for the other cells."""
+    return pytest.mark.only(*parts)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Deselect a delivery's own checks (`only`) for the other deliveries' cells."""
+    """Deselect a delivery's or package's own checks (`only`) for the other cells."""
     kept: list[pytest.Item] = []
     dropped: list[pytest.Item] = []
     for item in items:
         mark = item.get_closest_marker('only')
         cell = None
         if isinstance(item, pytest.Function) and hasattr(item, 'callspec'):
-            cell = cast('Cell | None', item.callspec.params.get('cell'))
-        mine = mark is None or cell is None or cell.delivery in mark.args
+            cell = cast('AnyCell | None', item.callspec.params.get('cell'))
+        mine = mark is None or cell is None or any(part in cell.id.split('-') for part in mark.args)
         (kept if mine else dropped).append(item)
     if dropped:
         config.hook.pytest_deselected(items=dropped)
@@ -103,7 +111,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption('--dry-run', action='store_true', help='print what each cell would do; run and contact nothing')
     group.addoption('--clip', help='file source: this clip instead of the generated one (colour check: not black)')
     group.addoption('--display-check', action='store_true', help="device source: colour fields on this Mac's display")
+    group.addoption('--tv-is-free', action='store_true', help='the TV cells run (the owner said the TV may be used)')
     group.addoption('--runs', default=str(commands.ROOT / 'work' / 'acceptance'), help='where run directories go')
+    group.addoption('--stage', default='host', help='the run directory is named TIME-STAGE')
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -122,13 +132,15 @@ def pytest_configure(config: pytest.Config) -> None:
     except configuration.ConfigError as error:
         raise pytest.UsageError(f'config: {error}') from error
     config.stash[CONFIG] = values
-    for kind in (Platform, Delivery, Source):
+    config.stash[WARNINGS] = []
+    config.addinivalue_line('markers', 'tv: the TV cells')
+    for kind in (Platform, Delivery, Source, Flavour):
         for member in kind:
             config.addinivalue_line('markers', f'{member}: the cells of {kind.__name__.lower()} {member}')
     if dry_run:
         return
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-    run_dir = Path(str(config.getoption('runs'))) / f'{stamp}-host'
+    run_dir = Path(str(config.getoption('runs'))) / f'{stamp}-{config.getoption("stage")}'
     run_dir.mkdir(parents=True)
     config.stash[RUN_DIR] = run_dir
     # The report: JUnit XML with each check's detail, unless --junitxml says where.
@@ -163,9 +175,13 @@ def _named(config: pytest.Config) -> list[str]:
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """The collecting module's cells (a check one cell module takes from another runs with its own cells)."""
     if 'cell' not in metafunc.fixturenames:
         return
-    cells = cast('list[Cell]', getattr(sys.modules[metafunc.function.__module__], 'CELLS', []))
+    module = cast('ModuleType', metafunc.module)  # pyright: ignore[reportUnknownMemberType] -- untyped in pytest
+    cells = cast('list[AnyCell]', getattr(module, 'CELLS', []))
+    if cells and isinstance(cells[0], TvCell) and not metafunc.config.getoption('tv_is_free'):
+        cells = []  # only when the owner said the TV may be used now
     wanted = _named(metafunc.config)
     unknown = set(wanted) - {cell.id for cell in cells}
     if unknown:
@@ -179,8 +195,8 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 
 
 @pytest.fixture(scope='module')
-def cell(request: pytest.FixtureRequest) -> Cell:
-    return cast('Cell', request.param)
+def cell(request: pytest.FixtureRequest) -> AnyCell:
+    return cast('AnyCell', request.param)
 
 
 @pytest.fixture(scope='session')
@@ -189,7 +205,7 @@ def config(request: pytest.FixtureRequest) -> Config:
 
 
 @pytest.fixture(scope='module')
-def bench(cell: Cell, config: Config, request: pytest.FixtureRequest) -> Iterator[Bench]:
+def bench(cell: AnyCell, config: Config, request: pytest.FixtureRequest) -> Iterator[Bench]:
     """This cell's bench: the configuration, the commands' transport and log, its run directory."""
     out_dir = request.config.stash[RUN_DIR] / cell.id
     out_dir.mkdir()
@@ -202,11 +218,22 @@ def bench(cell: Cell, config: Config, request: pytest.FixtureRequest) -> Iterato
         yield Bench(config, transport.Real(log), out_dir, log)
 
 
-def unavailable(request: pytest.FixtureRequest, cell: Cell, reason: str) -> NoReturn:
+def unavailable(request: pytest.FixtureRequest, cell: AnyCell, reason: str) -> NoReturn:
     """A missing artifact or tool: a failure for a cell named with --cells, else a skip."""
     if cell.id in _named(request.config):
         pytest.fail(f'{cell.id}: {reason}', pytrace=False)
     pytest.skip(f'{cell.id}: {reason}')
+
+
+def warn_at_end(request: pytest.FixtureRequest, text: str) -> None:
+    """`text` is printed at the end of the run, also after a failure, Ctrl-C, SIGTERM or SIGHUP."""
+    request.config.stash[WARNINGS].append(text)
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: pytest.Config) -> None:
+    for text in config.stash.get(WARNINGS, list[str]()):
+        terminalreporter.write_sep('!', 'WARNING', red=True, bold=True)
+        terminalreporter.write_line(text, red=True, bold=True)
 
 
 @pytest.fixture
@@ -250,7 +277,7 @@ def pytest_runtest_makereport(
     seam = item.funcargs.get('running') if isinstance(item, pytest.Function) else None
     if seam is not None:
         try:
-            cast('Host', seam).fetch()  # a remote host's log and kernel lines, as they are now
+            cast('Sender', seam).fetch()  # a remote host's log and kernel lines, the TV's log, as they are now
         except Exception as fetched:  # the report still shows what is here
             report.sections.append(('logs not fetched', f'{type(fetched).__name__}: {fetched}'))
     run_dir = item.config.stash[RUN_DIR]
@@ -270,30 +297,33 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
         return None
     values = session.config.stash[CONFIG]
     reporter = cast('pytest.TerminalReporter', session.config.pluginmanager.get_plugin('terminalreporter'))
-    by_cell: dict[Cell, list[pytest.Function]] = {}
+    by_cell: dict[AnyCell, list[pytest.Function]] = {}
     for item in session.items:
         if isinstance(item, pytest.Function):
-            by_cell.setdefault(cast('Cell', item.callspec.params['cell']), []).append(item)
+            by_cell.setdefault(cast('AnyCell', item.callspec.params['cell']), []).append(item)
     for cell, items in by_cell.items():
         _print_plan(cell, values, items, reporter.write_line)
     return True
 
 
-def _print_plan(cell: Cell, values: Config, items: list[pytest.Function], write: Callable[[str], None]) -> None:
+def _print_plan(cell: AnyCell, values: Config, items: list[pytest.Function], write: Callable[[str], None]) -> None:
+    """The fixtures of the cell's module, then each check from the module that defines it."""
     used = {name for item in items for name in item.fixturenames}
-    fixtures = [name for name in PLANS if name in used]
+    module = PLANS.get(cast('ModuleType', items[0].module).__name__, {})
+    fixtures = [name for name in module if name in used]
     write(f'\nCell {cell.id} (dry run: nothing is executed, nothing is contacted)')
     write('\nSet up, in this order:')
     for name in fixtures:
-        _print_one(write, name, PLANS[name].description, PLANS[name].does(cell, values))
+        _print_one(write, name, module[name].description, module[name].does(cell, values))
     write('\nChecks, in this order:')
     for item in items:
-        plan = PLANS.get(item.originalname)
+        function = cast('Callable[..., object]', item.function)  # pyright: ignore[reportUnknownMemberType]
+        plan = PLANS.get(function.__module__, {}).get(item.originalname)
         if plan:
             _print_one(write, item.originalname, plan.description, plan.does(cell, values))
     write('\nAt the end (also after a failure, Ctrl-C, SIGTERM or SIGHUP), in this order:')
     for name in reversed(fixtures):
-        for line in PLANS[name].undoes(cell, values):
+        for line in module[name].undoes(cell, values):
             write(f'  - {line}')
 
 

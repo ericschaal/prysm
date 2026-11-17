@@ -1,9 +1,11 @@
 """The Debian package cell's seam: the package installed on a Linux target over SSH and run as its systemd unit.
 
-`SshDeb` is a `host.Host`. The target is a test bench: nothing of Prysm may
-be there before the run (`deb.leftovers`: the package, its files and state,
-a unit, the unit's `prysm-headless` user or group; the preflight refuses,
-saying what it found), and nothing is left after it: `close` always purges
+`SshDeb` is a `host.Host`. Nothing of Prysm may be there before the run
+(`deb.leftovers`: the package, its files and state, a unit, the unit's
+`prysm-headless` user or group): the preflight refuses, saying what it
+found, or with `[linux] installed = "replace"` the cell backs it up through
+its portal and purges it (`DebPrysm`, `installed.py`). Nothing is left after
+the run: `close` always purges
 the package and fails when `deb.leftovers` still finds anything, which it
 reports and leaves for a person. In between the runner copies the package
 into its run directory (as the binary cell does), installs it with apt-get
@@ -26,8 +28,9 @@ import io
 from pathlib import Path
 import tarfile
 
-from prysm_acceptance import commands
+from prysm_acceptance import commands, installed
 from prysm_acceptance.commands import UnitAction
+from prysm_acceptance.config import Installed
 from prysm_acceptance.host import (
     DEBIAN_MACHINES,
     SAMPLE_SINCE,
@@ -45,9 +48,13 @@ from prysm_acceptance.host import (
     wait_for_state,
     write_settings,
 )
+from prysm_acceptance.installed import Backup
 from prysm_acceptance.options import Source
 from prysm_acceptance.prysm_api import Prysm, Settings, State
 from prysm_acceptance.transport import Result, Transport
+
+# Where the installed unit's Prysm listens: its default address, as the package runs it without a drop-in.
+UNIT_LISTEN = '0.0.0.0:8787'
 
 
 def deb_control(path: Path) -> dict[str, str]:
@@ -88,12 +95,71 @@ def leftovers(text: str) -> list[str]:
     return [line for line in found if line != 'not-installed']
 
 
-class SshDeb:
-    """The package from `deb` installed on `target` (USER@HOST), its unit listening on `listen`."""
+class DebPrysm:
+    """The package as it may already be installed on `target` (USER@HOST), for `installed.Existing`: found with
+    `deb.leftovers`, backed up through its portal on `UNIT_LISTEN`, purged."""
 
-    def __init__(self, transport: Transport, target: str, deb: Path, listen: str, out_dir: Path, wled: str) -> None:
+    name = 'linux'
+
+    def __init__(self, transport: Transport, target: str) -> None:
         self.transport = transport
         self.target = commands.ssh_target(target)
+        self.url = listen_url(self.target, UNIT_LISTEN)
+
+    def found(self) -> list[str]:
+        return leftovers(self.transport.run(commands.deb_leftovers(self.target)).stdout)
+
+    def backup(self, found: list[str]) -> Backup:
+        """The settings and target of the Prysm the unit runs. Refused while an administrator's unit or drop-in
+        under /etc is there: the purge would leave it."""
+        kept = [path for path in found if path.startswith('/etc/')]
+        if kept:
+            raise RuntimeError(f'{", ".join(kept)} on {self.target} would outlive the purge: remove it there first')
+        state = Prysm(self.url).state()
+        return {
+            'target': self.name,
+            'host': self.target,
+            'taken': installed.stamp(),
+            'found': found,
+            'portal': {'url': self.url, 'settings': state['settings'], 'target': state['target']},
+            'luna': None,
+            'files': {},
+        }
+
+    def remove(self) -> list[str]:
+        self.transport.run(commands.deb_purge(self.target))
+        return self.found()
+
+    def restore(self, backup: Backup) -> list[str]:
+        """The settings into the reinstalled package's Prysm; its lighting is not switched on."""
+        portal = backup['portal']
+        if portal is None:
+            raise RuntimeError('the backup holds no settings')
+        reply = Prysm(self.url).replace_settings(portal['settings'])
+        if reply.status != 200:
+            raise RuntimeError(f'PUT {self.url}/api/v1/settings: HTTP {reply.status} {reply.body[:300]!r}')
+        return [f'settings into {self.url}', f'lighting was {portal["target"]}: not switched on; use the portal']
+
+
+class SshDeb:
+    """The package from `deb` installed on `target` (USER@HOST), its unit listening on `listen`. A Prysm found
+    installed is refused, or with `installed = "replace"` left for the cell to replace (`existing`, `found`)."""
+
+    def __init__(
+        self,
+        transport: Transport,
+        target: str,
+        deb: Path,
+        listen: str,
+        out_dir: Path,
+        wled: str,
+        policy: Installed = Installed.REFUSE,
+    ) -> None:
+        self.transport = transport
+        self.target = commands.ssh_target(target)
+        self.existing = DebPrysm(transport, target)
+        self.policy = policy
+        self.found: list[str] = []  # what of Prysm the preflight found, for `replace`
         self.deb = deb
         self.listen = listen
         self.wled = wled
@@ -123,14 +189,18 @@ class SshDeb:
     def capture_path(self, device: str) -> str:
         return device
 
-    def plan(self, source: Source, device: str) -> Plan:
+    def plan(self, source: Source | None, device: str) -> Plan:
         target = self.target
         return Plan(
             preflight=[
                 f'{self.deb.name}: Architecture from its control file, compared with uname -m on the target',
                 *shown(commands.linux_probe(target), commands.deb_sudo(target), commands.deb_leftovers(target)),
-                '(refused while anything of Prysm is on the target, a prysm-headless user or group included: the bench '
-                'starts clean)',
+                '(anything of Prysm on the target, a prysm-headless user or group included: '
+                + (
+                    'refused, nothing is changed; [linux] installed = "refuse")'
+                    if self.policy == Installed.REFUSE
+                    else 'replaced after the WLED snapshot; [linux] installed = "replace")'
+                ),
                 *shown(
                     commands.linux_device(target, device or '/dev/DEVICE'), commands.linux_port_free(target, self.port)
                 ),
@@ -166,7 +236,7 @@ class SshDeb:
             ],
         )
 
-    def preflight(self, source: Source, device: str) -> str | None:
+    def preflight(self, source: Source | None, device: str) -> str | None:
         return self._system() or self._clean(device)
 
     def _system(self) -> str | None:
@@ -186,13 +256,13 @@ class SshDeb:
         return None
 
     def _clean(self, device: str) -> str | None:
-        """Why the bench is not ready: Prysm already there, the device missing, the port taken; None when it is."""
-        found = leftovers(self._run(commands.deb_leftovers(self.target)).stdout)
-        if found:
-            return (
-                f'Prysm is already on {self.target}: {", ".join(found)}. The bench must start without it: there, '
-                'sudo apt-get purge prysm-headless, and remove what is still listed by hand'
-            )
+        """Why the bench is not ready: Prysm already there (with `refuse`), the device missing, the port taken;
+        None when it is."""
+        self.found = self.existing.found()
+        if self.policy == Installed.REFUSE:
+            reason = installed.refusal(self.existing, self.found)
+            if reason:
+                return reason
         self.device_node, reason = device_node(self.transport, self.target, device)
         if self.device_node is None:
             return reason
@@ -285,8 +355,7 @@ class SshDeb:
 
         def purge() -> None:
             nonlocal left
-            self._run(commands.deb_purge(self.target))
-            left = leftovers(self._run(commands.deb_leftovers(self.target)).stdout)
+            left = self.existing.remove()
 
         cleanup(self.fetch, purge, self._remove)
         if left:

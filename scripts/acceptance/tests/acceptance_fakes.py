@@ -10,12 +10,8 @@ import threading
 from typing import Any, cast
 
 from prysm_acceptance.checks import Bench
-from prysm_acceptance.options import Options
 from prysm_acceptance.prysm_api import ColorsEvent, Edge
 from prysm_acceptance.transport import Result, Transcript
-
-# The checks under test read no option.
-NO_OPTIONS = cast('Options', None)
 
 
 def untyped(value: object) -> Any:

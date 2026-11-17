@@ -267,6 +267,36 @@ Each phase lands with its tests and CI green before the next starts.
 4. **The TV stages on the new configuration**, slim with a Mac or a Linux
    receiver.
 
+   **Landed** ([acceptance.md](acceptance.md#tv)) and run on the TV:
+   the cells `tv-full`, `tv-slim-mac` and `tv-slim-linux` on pytest
+   (`acceptance tv full`, `acceptance tv slim --receiver mac|linux`, and
+   `acceptance all --tv-is-free`), each only with `--tv-is-free`; the WLED
+   snapshot, the TV and the installed package as fixtures with teardowns;
+   the host cells' WLED and frame-rate checks shared; the slim receiver on
+   the host cells' binary seam (`LocalBinary`, `SshBinary`); `[tv]` with
+   `target`, `ipk_full`, `ipk_slim`, `mac` (wake-on-LAN, one allow-listed
+   packet), `installed` and `soak_seconds`, and `[receiver]`,
+   `[sweep]`, `address`, `ssh`, `flavours` and `restore_flavour` removed;
+   `installed = "refuse" | "replace"` for the TV and the Linux package cell,
+   written once (`installed.py`), with the backup, the end-of-run warning
+   and `acceptance settings restore`. `plan.py` stays for `eyes`. Dropped:
+   `--sweep` (a measurement table, not acceptance), the `wss://` check (it
+   needed a reverse proxy in `[receiver]`), and restoring the package found
+   at the end (`restore_flavour`; the runner no longer reinstalls).
+   On the bench TV (webOS 10, showing its screen saver, so the capture
+   includes the TV's own picture): `replace` backed up and removed an
+   installed full package, and the backup matched a copy taken by hand;
+   `tv-full` passed (30 fps in both soaks, the reinstall kept the settings,
+   the uninstall left nothing); `tv-slim-mac` passed with all three
+   encodings at 30 fps; `tv-slim-linux` passed but for the raw encoding,
+   4 fps to a Raspberry Pi 5 where the two H.264 encodings held 30 (not
+   retried, the cause not yet found). The app is removed through
+   `appInstallService`, as it is installed. What remains unverified: the
+   wake-on-LAN packet (the TV answered), `acceptance settings restore`
+   against a reinstalled Prysm (only its dry run on the real backup),
+   standby and wake (a person presses power), and `replace` on the Linux
+   package cell.
+
 
 A first package stage exists outside the tree (written before this plan, a
 separate `linux` stage that builds its own package). It passed on a Raspberry

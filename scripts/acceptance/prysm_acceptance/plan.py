@@ -1,4 +1,4 @@
-"""The `tv` and `eyes` stages' step runner: steps, outcomes, selection, dry run, cleanup, report.
+"""The `eyes` stage's step runner: steps, outcomes, selection, dry run, cleanup, report.
 
 A step is `setup` (always runs, its failure blocks the rest), `auto` (a
 check the runner makes), `guided` (a person acts or answers) or `skip` (no
@@ -22,9 +22,8 @@ from typing import Generic, TypeVar, assert_never, cast
 
 from prysm_acceptance import checks
 from prysm_acceptance.checks import Answer, Ask, Failed, Skipped, ask_person
-from prysm_acceptance.commands import Command, Flavour
+from prysm_acceptance.commands import Command
 from prysm_acceptance.config import Config
-from prysm_acceptance.options import Options
 from prysm_acceptance.transport import Transport
 
 
@@ -50,20 +49,18 @@ class Interrupted(BaseException):
 
 
 class Bench(checks.Bench):
-    """What every step and helper of a `tv` or `eyes` run uses: the shared bench, the options,
-    the report's facts and the person to ask."""
+    """What every step and helper of an `eyes` run uses: the shared bench, the report's facts and the person
+    to ask."""
 
     def __init__(
         self,
         config: Config,
-        options: Options,
         transport: Transport,
         out_dir: Path,
         ask: Ask | None = None,
         log: Callable[[str], None] = print,
     ) -> None:
         super().__init__(config, transport, out_dir, log)
-        self.options = options
         self.facts: dict[str, str] = {}
         self.ask = ask or ask_person
 
@@ -78,13 +75,12 @@ class Context(Bench, Generic[Data]):
     def __init__(
         self,
         config: Config,
-        options: Options,
         transport: Transport,
         out_dir: Path,
         ask: Ask | None = None,
         log: Callable[[str], None] = print,
     ) -> None:
-        super().__init__(config, options, transport, out_dir, ask, log)
+        super().__init__(config, transport, out_dir, ask, log)
         # Empty: every key of a stage's data is filled by the step that provides it.
         self.data = cast('Data', {})
 
@@ -98,7 +94,6 @@ class Step(Generic[Data]):
     run: Callable[[Context[Data]], object] | None = None
     commands: Callable[[], Iterable[Command]] | None = None  # for the dry run
     actions: list[str] = field(default_factory=list[str])  # HTTP calls and other actions, for the dry run
-    group: Flavour | None = None  # a setup step with a group runs only when a check of that group is selected
 
     def __post_init__(self) -> None:
         self.mode = Mode(self.mode)
@@ -173,15 +168,12 @@ def execute(
 ) -> list[Outcome]:
     """Run the steps; cleanups at the end whatever happens. Returns the outcomes."""
     chosen = selected(steps, only, start)
-    groups = {s.group for s in steps if s.mode != Mode.SETUP and s.name in chosen}
     outcomes: list[Outcome] = []
     blocked = None
     previous = {number: signal.signal(number, _raise_interrupted) for number in (signal.SIGTERM, signal.SIGHUP)}
     try:
         for step in steps:
             if step.mode != Mode.SETUP and step.name not in chosen:
-                continue
-            if step.mode == Mode.SETUP and step.group and step.group not in groups:
                 continue
             if blocked:
                 outcomes.append(Outcome(step.name, step.title, step.mode, Status.SKIP, f'blocked: {blocked} failed'))

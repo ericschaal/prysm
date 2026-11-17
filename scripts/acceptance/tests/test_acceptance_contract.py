@@ -17,13 +17,12 @@ from unittest import mock
 
 from acceptance_fakes import untyped
 
-from prysm_acceptance import config, edges_clip, host, host_cells, prysm_api, stage_eyes, tv, tv_slim
+from prysm_acceptance import config, edges_clip, host, host_cells, prysm_api, stage_eyes, tv, tv_cells
 from prysm_acceptance.checks import Failed
-from prysm_acceptance.commands import Flavour
-from prysm_acceptance.options import Cell, Delivery, Platform, Source
+from prysm_acceptance.options import Cell, Delivery, Flavour, Platform, Source
 from prysm_acceptance.prysm_api import SessionState, Target
 from prysm_acceptance.transport import Result
-from prysm_acceptance.tv_slim import Encoding
+from prysm_acceptance.tv import Encoding
 from prysm_acceptance.web import Reply
 
 GENERATED = Path(__file__).resolve().parents[3] / 'frontend/packages/contracts/generated'
@@ -183,9 +182,11 @@ class WrittenSettings(unittest.TestCase):
         device = untyped(host_cells.capture_settings(Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE), bench, None))
         self.assertEqual((device['kind'], device['path'], device['fps']), ('device', bench.mac.device, 30))
         self.assertLessEqual(set(device), self.fields('DeviceSettings'))
-        remote = sent(lambda prysm: tv_slim.request(prysm, 640, 360, 30, Encoding.RAW))
-        self.assertEqual(remote['settings']['capture']['encoding'], 'raw')
-        self.assertLessEqual(set(remote['settings']['capture']), self.fields('RemoteReceiverSettings'))
+        remote = untyped(tv_cells.capture(Flavour.SLIM, 640, 360, 30, Encoding.RAW))
+        self.assertEqual(remote['encoding'], 'raw')
+        self.assertLessEqual(set(remote), self.fields('RemoteReceiverSettings'))
+        webos = untyped(tv_cells.capture(Flavour.FULL, 640, 360, 30))
+        self.assertEqual(set(webos), set(FIXTURES['WebosSettings'][0]))
         self.assertEqual({member.value for member in Encoding}, values(DESKTOP, 'StreamEncoding'))
 
 

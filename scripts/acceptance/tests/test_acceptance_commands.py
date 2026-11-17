@@ -1,22 +1,14 @@
-"""The acceptance runner's allow-list, its transport and the TV steps against a recorded transcript."""
+"""The acceptance runner's allow-list and its transport."""
 
-from collections.abc import Sequence
 from pathlib import Path
 import re
+import socket
 import sys
-import tempfile
 from typing import cast
 import unittest
+from unittest import mock
 
-from acceptance_fakes import NO_OPTIONS, transcript_of, untyped
-
-from prysm_acceptance import commands, config, stage_tv, transport, tv, tv_full
-from prysm_acceptance.checks import Answer, Failed
-from prysm_acceptance.commands import Flavour
-from prysm_acceptance.options import Options
-from prysm_acceptance.plan import Context
-from prysm_acceptance.stage_data import TvData
-from prysm_acceptance.transport import Result
+from prysm_acceptance import commands, transport
 
 # The runner's project: scripts/acceptance.
 ACCEPTANCE = Path(__file__).resolve().parents[1]
@@ -53,6 +45,28 @@ TV_PROGRAMS = {
     commands.SETUP,
     commands.SUPERVISOR,
 }
+
+
+def confined(test: unittest.TestCase, command: commands.Command) -> None:
+    """`command` runs on the TV over ssh and names, reads and writes only the allow-listed paths."""
+    test.assertEqual(command.argv[0], 'ssh')
+    test.assertEqual(command.argv[-1], command.remote)
+    test.assertIn('BatchMode=yes', command.argv)
+    test.assertIsNone(FORBIDDEN.search(without_uris(command.remote)), command.remote)
+    for path in paths(command.remote):
+        test.assertTrue(
+            path.startswith(commands.TV_READ_PATHS + commands.TV_WRITE_PATHS), f'{path} in {command.remote}'
+        )
+    remote = command.remote or ''
+    for written in re.findall(r'(?:>|rm -f|mkdir -p)\s+(\S+)', remote):
+        if written.startswith('/'):
+            test.assertIn(written, commands.TV_WRITE_PATHS, command.remote)
+        else:
+            test.assertRegex(written, r'^(/dev/null|"\$\w+")$')
+    test.assertNotIn(
+        commands.DATA_DIR + '/',
+        re.sub(r'cat /var/lib/io\.prysm\.tv/\w+\.json|-f /var/lib/io\.prysm\.tv/\w+\.json', '', remote),
+    )
 
 
 def without_uris(text: str | None) -> str:
@@ -94,29 +108,7 @@ class AllowList(unittest.TestCase):
         self.assertTrue(tv_templates)
         for command in tv_templates:
             with self.subTest(command.template):
-                self.assertEqual(command.argv[0], 'ssh')
-                self.assertEqual(command.argv[-1], command.remote)
-                self.assertIn('BatchMode=yes', command.argv)
-                self.assertIsNone(FORBIDDEN.search(without_uris(command.remote)), command.remote)
-                for path in paths(command.remote):
-                    self.assertTrue(
-                        path.startswith(commands.TV_READ_PATHS + commands.TV_WRITE_PATHS), f'{path} in {command.remote}'
-                    )
-                remote = command.remote or ''
-                for written in re.findall(r'(?:>|rm -f|mkdir -p)\s+(\S+)', remote):
-                    if written.startswith('/'):
-                        self.assertIn(written, commands.TV_WRITE_PATHS, command.remote)
-                    else:
-                        self.assertRegex(written, r'^(/dev/null|"\$\w+")$')
-                self.assertNotIn(
-                    commands.DATA_DIR + '/',
-                    re.sub(
-                        r'cat /var/lib/io\.prysm\.tv/\w+\.json|'
-                        r'-f /var/lib/io\.prysm\.tv/\w+\.json',
-                        '',
-                        remote,
-                    ),
-                )
+                confined(self, command)
 
     def test_luna_calls_only_prysm_and_the_install_service(self) -> None:
         for factory in commands.TEMPLATES.values():
@@ -125,7 +117,7 @@ class AllowList(unittest.TestCase):
                 self.assertRegex(
                     uri,
                     r'^luna://(io\.prysm\.tv\.service/(getState|setPreferences|setEnabled)|'
-                    r'com\.webos\.appInstallService/dev/install)$',
+                    r'com\.webos\.appInstallService/dev/(install|remove))$',
                 )
             if command.remote and 'luna-send' in command.remote:
                 self.assertTrue(command.hold_stdin, command.template)
@@ -165,7 +157,10 @@ class AllowList(unittest.TestCase):
             lambda: commands.tv_set_preferences('root@tv', False, "http://x'$(reboot)"),
             lambda: commands.tv_set_preferences('root@tv', cast('bool', 'yes')),
             lambda: commands.tv_set_enabled('root@tv', cast('bool', 1)),
-            lambda: commands.ares_remove('tv; rm -rf /'),
+            lambda: commands.tv_remove_app('root@tv;reboot'),
+            lambda: commands.wake_on_lan('00:00:5E:00:53:01; reboot', '192.0.2.10'),
+            lambda: commands.wake_on_lan('00-00-5E-00-53-01', '192.0.2.10'),
+            lambda: commands.wake_on_lan('00:00:5E:00:53:01', 'tv.example'),
             lambda: commands.verify_ipk('-evil.ipk'),
             lambda: commands.headless('bin', 'settings.json', '0.0.0.0:8787 --start'),
             lambda: commands.ffmpeg_edges_clip(
@@ -236,6 +231,29 @@ class AllowList(unittest.TestCase):
         )
         self.assertEqual((command.template, command.timeout), ('local.ffmpeg-clip', 300))
 
+    def test_the_wake_is_one_magic_packet(self) -> None:
+        command = commands.wake_on_lan('00:00:5E:00:53:01', '192.0.2.10')
+        self.assertEqual(
+            (command.template, command.argv),
+            ('local.wake-on-lan', ('wake-on-LAN magic packet for', '00:00:5E:00:53:01')),
+        )
+        self.assertEqual(
+            command.datagram,
+            commands.Datagram('192.0.2.10', '255.255.255.255', 9, b'\xff' * 6 + bytes.fromhex('00005E005301') * 16),
+        )
+        self.assertEqual(
+            command.display(),
+            '(UDP from 192.0.2.10 to 255.255.255.255:9) wake-on-LAN magic packet for 00:00:5E:00:53:01',
+        )
+
+    def test_prysm_headless_runs_with_its_metrics(self) -> None:
+        command = commands.headless('dist/prysm-headless-macos-arm64', 'settings.json', '0.0.0.0:18787')
+        self.assertEqual(
+            command.argv,
+            ('dist/prysm-headless-macos-arm64', 'settings.json', '--listen', '0.0.0.0:18787', '--metrics'),
+        )
+        self.assertTrue(command.background)
+
     def test_only_the_allow_list_names_ssh_or_spawns(self) -> None:
         for path in PACKAGE.glob('*.py'):
             text = path.read_text()
@@ -297,159 +315,22 @@ class HeldStdin(unittest.TestCase):
     def test_the_dry_run_transport_refuses_everything(self) -> None:
         with self.assertRaises(RuntimeError):
             transport.Refusing().run(commands.tv_reachable('root@tv'))
+        with self.assertRaises(RuntimeError):
+            transport.Refusing().run(commands.wake_on_lan('00:00:5E:00:53:01', '192.0.2.10'))
 
-
-STATE = (
-    '{"returnValue":true,"flavor":"full","preferences":{"autostart":false},"enabled":true,'
-    '"lighting":"processed","power":"active","video":"available","worker":{"phase":"running"},'
-    '"capturing":true,"fps":30,"portal":"http://192.0.2.50:8787","failure":null,"encoding":null,'
-    '"paused":false,"log":[]}'
-)
-ABSENT = (
-    '\n'.join(f'absent {p}' for p in (*commands.INSTALLED_PATHS, commands.STAGING)) + f'\npresent {commands.DATA_DIR}\n'
-)
-
-
-def context(entries: list[tuple[str, Result]], answers: Sequence[tuple[Answer, str]] = ()) -> Context[TvData]:
-    settings = config.parse({'tv': {'address': 'tv.example', 'ares_device': 'tv'}, 'wled': {'address': 'wled.example'}})
-    replies = list(answers)
-    out = Path(tempfile.mkdtemp())
-    return Context[TvData](
-        settings,
-        NO_OPTIONS,
-        transport.Transcript(entries),
-        out,
-        ask=lambda question, choices=(): replies.pop(0),
-        log=lambda line: None,
-    )
-
-
-class RecordedTv(unittest.TestCase):
-    def test_install_follows_the_documented_path(self) -> None:
-        ctx = context(
-            [
-                ('local.verify-ipk', Result(0, '')),
-                ('tv.stage', Result(0, '')),
-                ('tv.install', Result(0, '{"details":{"state":"installed"}}')),
-                ('tv.unstage', Result(0, '')),
-                ('tv.setup', Result(0, '')),
-                ('tv.get-state', Result(0, STATE)),
-            ]
-        )
-        state = tv.install(ctx, 'dist/prysm-tv-full.ipk')
-        self.assertEqual(state['flavor'], 'full')
-        verify, stage = transcript_of(ctx).calls[:2]
-        self.assertEqual(verify.argv[-2:], ('verify', 'dist/prysm-tv-full.ipk'))
-        self.assertEqual(stage.argv[-2], 'root@tv.example')
-        self.assertEqual(stage.stdin_file, 'dist/prysm-tv-full.ipk')
-
-    def test_a_package_the_verifier_refuses_is_never_staged(self) -> None:
-        ctx = context([('local.verify-ipk', Result(1, '', 'outside the app and service directories'))])
-        with self.assertRaises(transport.CommandFailed):
-            tv.install(ctx, 'dist/prysm-tv-full.ipk')
-        self.assertEqual([c.template for c in transcript_of(ctx).calls], ['local.verify-ipk'])
-
-    def test_a_failed_install_still_removes_the_staged_package(self) -> None:
-        ctx = context(
-            [
-                ('local.verify-ipk', Result(0, '')),
-                ('tv.stage', Result(0, '')),
-                ('tv.install', Result(1, '{"returnValue":false,"errorText":"bad package"}')),
-                ('tv.unstage', Result(0, '')),
-            ]
-        )
-        with self.assertRaises(Failed):
-            tv.install(ctx, 'dist/prysm-tv-slim.ipk')
-        self.assertEqual(
-            [c.template for c in transcript_of(ctx).calls], ['local.verify-ipk', 'tv.stage', 'tv.install', 'tv.unstage']
-        )
-
-    def test_uninstall_checks_that_nothing_is_left(self) -> None:
-        ctx = context(
-            [
-                ('tv.supervisor-uninstall', Result(0, '')),
-                ('local.ares-remove', Result(0, '')),
-                ('tv.paths', Result(0, ABSENT)),
-                ('tv.processes', Result(0, '')),
-                ('tv.get-state', Result(1, '', 'Service does not exist')),
-            ]
-        )
-        detail, evidence = stage_tv.uninstall(ctx)
-        self.assertIn('nothing left', detail)
-        self.assertIn(commands.DATA_DIR, untyped(evidence)['kept_by_design'])
-
-    def test_uninstall_fails_on_leftovers(self) -> None:
-        left = ABSENT.replace(f'absent {commands.HOOK}', f'present {commands.HOOK}')
-        ctx = context(
-            [
-                ('tv.supervisor-uninstall', Result(0, '')),
-                ('local.ares-remove', Result(0, '')),
-                ('tv.paths', Result(0, left)),
-                ('tv.processes', Result(0, f'812 {commands.WORKER}\n')),
-                ('tv.get-state', Result(1, '')),
-            ]
-        )
-        with self.assertRaises(Failed) as failure:
-            stage_tv.uninstall(ctx)
-        self.assertIn(commands.HOOK, str(failure.exception))
-
-    def test_restore_reinstalls_the_package_found_and_its_preferences(self) -> None:
-        ok = Result(0, '{"returnValue":true}')
-        slim = STATE.replace('"flavor":"full"', '"flavor":"slim"')
-        ctx = context(
-            [
-                ('tv.get-state', Result(1, '')),  # nothing installed after the uninstall check
-                ('local.verify-ipk', Result(0, '')),
-                ('tv.stage', Result(0, '')),
-                ('tv.install', Result(0, '"installed"')),
-                ('tv.unstage', Result(0, '')),
-                ('tv.setup', Result(0, '')),
-                ('tv.get-state', Result(0, slim)),
-                ('tv.set-preferences', ok),
-                ('tv.set-enabled', ok),
-            ]
-        )
-        ctx.data['ipk'] = {Flavour.SLIM: 'dist/prysm-tv-slim.ipk'}
-        ctx.data['as_found'] = {
-            'flavor': Flavour.SLIM,
-            'enabled': True,
-            'lighting': None,
-            'preferences': {'autostart': True, 'instance': 'http://192.0.2.20:8787'},
-        }
-        self.assertIn('slim installed', stage_tv.restore(ctx))
-        preferences = str(transcript_of(ctx).calls[-2].remote)
-        self.assertIn('"autostart":true,"instance":"http://192.0.2.20:8787"', preferences)
-        self.assertIn('"enabled":true', str(transcript_of(ctx).calls[-1].remote))
-
-    def test_the_full_portal_is_where_getstate_says(self) -> None:
-        ctx = context([('tv.get-state', Result(0, STATE))])
-        self.assertEqual(tv_full.portal(ctx).base, 'http://192.0.2.50:8787')
-        ctx = context([('tv.get-state', Result(0, STATE.replace('"http://192.0.2.50:8787"', 'null')))])
-        with self.assertRaisesRegex(Failed, 'no portal address'):
-            tv_full.portal(ctx)
-
-    def test_worker_load_from_proc(self) -> None:
-        reading = (
-            '1000.00 900.00\n0.50 0.40 0.30 1/100 812\n'
-            'stat 812 (prysm-webos-wor) S 1 812 0 0 -1 0 0 0 0 0 300 100 0 0 20 0\nVmRSS:\t   10240 kB\n'
-        )
-        later = reading.replace('1000.00', '1010.00').replace(' 300 100 ', ' 600 200 ')
-        ctx = context([('tv.sample-worker', Result(0, reading)), ('tv.sample-worker', Result(0, later))])
-        first, second = tv.sample_worker(ctx), tv.sample_worker(ctx)
-        self.assertEqual(first['rss_kb'], 10240)
-        self.assertEqual(tv.cpu_percent(first, second), 40.0)
-
-    def test_the_stage_refuses_without_the_owner_saying_the_tv_is_free(self) -> None:
-        settings = config.parse(
-            {'tv': {'address': 'tv.example'}, 'wled': {'address': 'wled.example'}, 'leds': {'top': 10}}
-        )
-
-        class Args:
-            tv_is_free = False
-
-        self.assertIn('--tv-is-free', str(stage_tv.refuse(settings, cast('Options', Args()))))
-        Args.tv_is_free = True
-        self.assertIsNone(stage_tv.refuse(settings, cast('Options', Args())))
+    def test_a_datagram_is_sent_and_nothing_started(self) -> None:
+        sockets = mock.MagicMock()
+        with (
+            mock.patch.object(transport.socket, 'socket', sockets),
+            mock.patch.object(transport.subprocess, 'Popen') as popen,
+        ):
+            result = transport.Real(log=lambda line: None).run(commands.wake_on_lan('00:00:5E:00:53:01', '192.0.2.10'))
+        self.assertTrue(result.ok)
+        popen.assert_not_called()
+        sockets.assert_called_once_with(socket.AF_INET, socket.SOCK_DGRAM)
+        sender = sockets.return_value.__enter__.return_value
+        sender.bind.assert_called_once_with(('192.0.2.10', 0))
+        sender.sendto.assert_called_once_with(b'\xff' * 6 + bytes.fromhex('00005E005301') * 16, ('255.255.255.255', 9))
 
 
 if __name__ == '__main__':

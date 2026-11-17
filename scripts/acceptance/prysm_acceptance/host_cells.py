@@ -3,14 +3,16 @@
 `acceptance host` runs this module with pytest and the `bench` plugin; a cell
 is the `cell` parameter (`mac-binary-file`, `linux-binary-device`, `linux-deb-device` and so on).
 Its fixtures set up, in order: the artifact and tools, the target (the seam
-in `host`, and whether it can run the cell), WLED's snapshot, the clip,
-the feed into the capture card, Prysm delivered and running, and its API;
+in `host`, and whether it can run the cell), WLED's snapshot, a Prysm already
+installed replaced (the package cell with `[linux] installed = "replace"`),
+the clip, the feed into the capture card, Prysm delivered and running, and its API;
 the checks follow in this module's order and the teardowns undo it in
 reverse. Each fixture and check says what it does in its docstring and, for
 the dry run, in `planned`.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
@@ -29,24 +31,26 @@ from prysm_acceptance import (
     host,
     host_deb,
     host_image,
+    installed,
     options,
     prysm_api,
     transport,
     wled_api,
 )
 from prysm_acceptance.artifact import Artifact
-from prysm_acceptance.bench import only, planned, unavailable, uninterrupted
+from prysm_acceptance.bench import Planner, only, unavailable, uninterrupted, warn_at_end
 from prysm_acceptance.checks import Answer, Bench, Failed, ask_person
-from prysm_acceptance.config import SSH, Config, Machine
+from prysm_acceptance.config import SSH, Config, Installed, Machine
 from prysm_acceptance.edges_clip import CLIP
 from prysm_acceptance.feed import Feed
-from prysm_acceptance.host import Host
+from prysm_acceptance.host import Host, Sender
 from prysm_acceptance.options import Cell, Delivery, Source
 from prysm_acceptance.prysm_api import ColorsEvent, Prysm, SessionState, Target, near, rates, session
 from prysm_acceptance.web import JsonObject
 from prysm_acceptance.wled_api import Wled
 
 CELLS = list(options.CELLS)
+planned = Planner[Cell]()
 # The `record` fixture: a passed check's detail and evidence.
 Record = Callable[[str, object], None]
 
@@ -106,7 +110,7 @@ def _seam(cell: Cell, config: Config, run: transport.Transport, out_dir: Path) -
                 return host.SshBinary(run, target, artifact, machine.listen, out_dir, config.wled)
             return host.LocalBinary(run, artifact, machine.listen, out_dir, config.wled)
         case Delivery.DEB:
-            return host_deb.SshDeb(run, target, artifact, machine.listen, out_dir, config.wled)
+            return host_deb.SshDeb(run, target, artifact, machine.listen, out_dir, config.wled, machine.installed)
         case Delivery.IMAGE:
             return host_image.SshImage(run, target, artifact, out_dir, config.wled)
         case _:
@@ -190,23 +194,31 @@ def target(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRequ
     return seam
 
 
-@pytest.fixture(scope='module')
-@planned(
-    does=lambda cell, config: [
+def wled_saved(cell: object, config: Config) -> list[str]:
+    """The `wled` fixture's set-up, for the dry run (the TV cells' too)."""
+    return [
         f'GET http://{config.wled}/json/si and /json/cfg: saved (wled-snapshot.json, the configuration as '
-        'evidence in wled-cfg.json); refuses while something else drives WLED'
-    ],
-    undoes=lambda cell, config: [
+        'evidence in wled-cfg.json); refuses while something else drives WLED, before anything changes'
+    ]
+
+
+def wled_restored(cell: object, config: Config) -> list[str]:
+    """The `wled` fixture's teardown, for the dry run (the TV cells' too)."""
+    return [
         'WLED restored from wled-snapshot.json (live off, preset, on, bri, lor, transition, if.live.maxbri) and '
         'compared; by hand: acceptance restore-wled RUN_DIR/CELL/wled-snapshot.json'
-    ],
-)
-def wled(config: Config, bench: Bench, target: Host) -> Iterator[Wled]:
-    """WLED as found, saved before anything changes and put back last, also after a failure or Ctrl-C."""
+    ]
+
+
+@contextlib.contextmanager
+def wled_as_found(config: Config, bench: Bench) -> Generator[Wled, None, None]:
+    """WLED saved, refused while something else drives it; put back and compared at the end (the `wled`
+    fixture of every cell)."""
     client = Wled(config.wled)
     saved = wled_api.snapshot(client)
     if saved['info'].get('live'):
-        # Two senders would fight over the LEDs and no check could be trusted.
+        # Two senders would fight over the LEDs and no check could be trusted; and the runner never switches
+        # someone's lighting off.
         pytest.fail(f'WLED is already driven by {saved["info"].get("lip")}: turn that lighting off first')
     path = bench.save('wled-snapshot.json', saved)
     bench.save('wled-cfg.json', wled_api.cfg(client.cfg_raw()))
@@ -215,6 +227,54 @@ def wled(config: Config, bench: Bench, target: Host) -> Iterator[Wled]:
         left = wled_api.restore(client, saved)
     if left:
         pytest.fail(f'WLED still differs from the snapshot: {left} (acceptance restore-wled {path})')
+
+
+@pytest.fixture(scope='module')
+@planned(does=wled_saved, undoes=wled_restored)
+def wled(config: Config, bench: Bench, target: Host) -> Iterator[Wled]:
+    """WLED as found, saved before anything changes and put back last, also after a failure or Ctrl-C."""
+    with wled_as_found(config, bench) as client:
+        yield client
+
+
+def replaced(existing: str, policy: Installed, steps: list[str]) -> list[str]:
+    """What `installed = "replace"` does on a target, for the dry run (the TV cells' too)."""
+    if policy == Installed.REFUSE:
+        return [f'nothing: a Prysm on the {existing} target stops the preflight ([{existing}] installed = "refuse")']
+    return [
+        f'when the preflight found Prysm on the {existing} target: its settings read through its API, saved as '
+        f'RUN_DIR/CELL/{installed.BACKUP}, read back and compared (else it stops: nothing removed); the end of the '
+        'run then warns that Prysm was removed and not reinstalled, with the restore command',
+        *steps,
+    ]
+
+
+def _replaced(cell: Cell, config: Config) -> list[str]:
+    if cell.delivery != Delivery.DEB:
+        return []
+    target = _ssh_host(cell, config)
+    existing = host_deb.DebPrysm(transport.Refusing(), target or 'USER@HOST')
+    return replaced(
+        'linux',
+        config.linux.installed,
+        [
+            f'GET {existing.url}/api/v1/state (refused while an administrator unit or drop-in is under /etc)',
+            *host.shown(commands.deb_purge(existing.target), commands.deb_leftovers(existing.target)),
+            '(anything still listed stops the cell)',
+        ],
+    )
+
+
+@pytest.fixture(scope='module')
+@planned(does=_replaced)
+def cleared(cell: Cell, bench: Bench, request: pytest.FixtureRequest, target: Host, wled: Wled) -> None:
+    """With `[linux] installed = "replace"`, the package the preflight found replaced (the package cell).
+
+    After the WLED snapshot, so Prysm lighting WLED is refused before anything is removed."""
+    if not isinstance(target, host_deb.SshDeb) or not target.found:
+        return
+    path = bench.out_dir / installed.BACKUP
+    bench.log(installed.replace(target.existing, target.found, path, lambda text: warn_at_end(request, text)))
 
 
 @pytest.fixture(scope='module')
@@ -278,6 +338,7 @@ def running(
     bench: Bench,
     target: Host,
     wled: Wled,
+    cleared: None,
     clip: Clip | None,
     feed_shown: Feed | None,
 ) -> Iterator[Host]:
@@ -370,7 +431,7 @@ def device_offered(prysm: Prysm, device: str, listed_as: str | None = None) -> o
 # ---- helpers the checks share ----------------------------------------------
 
 
-def _processed(prysm: Prysm, seconds: float = 15) -> prysm_api.State:
+def processed(prysm: Prysm, seconds: float = 15) -> prysm_api.State:
     """Screen sync on: target processed answered 204, then running with frames."""
     reply = prysm.set_target(Target.PROCESSED)
     if reply.status != 204:
@@ -381,8 +442,8 @@ def _processed(prysm: Prysm, seconds: float = 15) -> prysm_api.State:
     return state
 
 
-def live_from_host(prysm: Prysm, lights: Wled, seam: Host) -> wled_api.Si:
-    """WLED reports live DDP from the sender the host seam expects, and Prysm no output issue."""
+def live_from_host(prysm: Prysm, lights: Wled, seam: Sender) -> wled_api.Si:
+    """WLED reports live DDP from the sender the seam (or the TV) expects, and Prysm no output issue."""
     expected = seam.sender()
     si = lights.wait(lambda s: s['info'].get('live') and s['info'].get('lm') == 'DDP', 10)
     if si is None:
@@ -425,12 +486,12 @@ def test_version(prysm: Prysm, artifact: Artifact, record: Record) -> None:
 
 
 @planned(does=lambda cell, config: ['PUT /api/v1/target processed', f'GET http://{config.wled}/json/si'])
-def test_wled_live(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
+def test_wled_live(prysm: Prysm, wled: Wled, running: Sender, record: Record) -> None:
     """Screen sync starts and WLED shows Prysm.
 
     Target processed is 204, the session runs with frames within 15 s; WLED reports live DDP from the sender
-    the host seam expects; no output_issue."""
-    state = _processed(prysm)
+    the seam expects (a TV cell: the TV, or the slim package's receiver); no output_issue."""
+    state = processed(prysm)
     si = live_from_host(prysm, wled, running)
     record(f'running at {(state["input"] or {}).get("fps")} fps; live DDP from {si["info"]["lip"]}', si['info'])
 
@@ -440,7 +501,7 @@ def test_fps(prysm: Prysm, config: Config, record: Record) -> None:
     """Frame rate: the input's fps within the tolerance of the source's, sent fps alike, never behind."""
     expected = _running_size(prysm)['fps']
     tolerance = config.checks.fps_tolerance
-    _processed(prysm)
+    processed(prysm)
     measured = rates(prysm.sample(config.checks.seconds))
     measured['expected'] = expected
     if not near(measured['fps_mean'], expected, tolerance):
@@ -458,7 +519,7 @@ def test_colours(prysm: Prysm, clip: Clip | None, feed_shown: Feed | None, recor
 
     Each edge's two halves are nearest the clip's two colours among nine, in the right direction; at least two
     steps, in order, 2 s apart. A clip of unknown content, or a card without a feed: not black."""
-    _processed(prysm)
+    processed(prysm)
     if feed_shown:
         feed_shown.settled()
     if clip and clip.edges:
@@ -507,7 +568,7 @@ def test_targets(prysm: Prysm, wled: Wled, running: Host, record: Record) -> Non
             )
         evidence[target] = si['state']
         if target == Target.DEVICE_NATIVE:
-            _processed(prysm)
+            processed(prysm)
             evidence[Target.PROCESSED] = live_from_host(prysm, wled, running)['info']
     record('native: WLED on, not live; processed: live again; off: WLED off', evidence)
 
@@ -533,7 +594,7 @@ def test_brightness(prysm: Prysm, wled: Wled, record: Record) -> None:
         raise Failed('/json/cfg is 64 KiB or more', evidence)
     if evidence['maxbri'] is None or evidence['scale_bri'] is None:
         raise Failed('/json/cfg lacks if.live.maxbri or light.scale-bri', evidence)
-    _processed(prysm)
+    processed(prysm)
     bri = wled.si()['state'].get('bri', 128)
     try:
         wled.post_state({'bri': 102})
@@ -567,7 +628,7 @@ def test_release(cell: Cell, prysm: Prysm, config: Config, feed_shown: Feed | No
     reply = prysm.set_target(Target.OFF)
     if reply.status != 204 or prysm.wait(lambda s: session(s) == SessionState.STOPPED, 10) is None:
         raise Failed('Prysm did not stop', prysm.state())
-    state = _processed(prysm, seconds=20)
+    state = processed(prysm, seconds=20)
     measured = rates(prysm.sample(config.checks.seconds))
     if measured['fps_mean'] <= 0:
         raise Failed('no frames after re-opening', measured)
@@ -601,7 +662,7 @@ def test_display_check(
         )
         if answer != Answer.YES:
             pytest.skip(f'operator skipped the display set-up {note}'.strip())
-        _processed(prysm)
+        processed(prysm)
         results: dict[str, object] = {}
         ok = True
         for name, edges in colour_page.FIELDS:
@@ -630,7 +691,7 @@ def test_display_check(
 def _settings_kept(prysm: Prysm, wled: Wled, seam: Host, renew: Callable[[], prysm_api.State]) -> object:
     """While lighting, `renew` Prysm (a unit restart, a new container): it answers idle with the settings it had,
     and Screen sync lights WLED from the expected sender again."""
-    _processed(prysm)
+    processed(prysm)
     saved = prysm.state()['settings']
     state = renew()
     evidence: dict[str, object] = {'target': state['target'], 'session': session(state)}
@@ -638,7 +699,7 @@ def _settings_kept(prysm: Prysm, wled: Wled, seam: Host, renew: Callable[[], pry
         raise Failed(f'not idle after the restart: target {state["target"]}, session {session(state)}', evidence)
     if state['settings'] != saved:
         raise Failed('the settings did not come back', {**evidence, 'before': saved, 'after': state['settings']})
-    _processed(prysm)
+    processed(prysm)
     evidence['wled'] = live_from_host(prysm, wled, seam)['info']
     return evidence
 
@@ -692,7 +753,7 @@ def test_image_volume(prysm: Prysm, wled: Wled, running: Host, record: Record) -
 @planned(does=lambda cell, config: ['PUT /api/v1/target processed', 'SIGTERM to Prysm'])
 def test_sigterm(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
     """Clean exit: SIGTERM while lighting, exit code 0 and WLED released."""
-    _processed(prysm)
+    processed(prysm)
     start = time.monotonic()
     code = running.stop()
     seconds = round(time.monotonic() - start, 1)

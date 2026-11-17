@@ -6,12 +6,13 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import threading
 import time
 from typing import IO, Protocol, TypeAlias
 
-from prysm_acceptance.commands import Command
+from prysm_acceptance.commands import Command, Datagram
 
 # Where a spawned command's output goes: a file, or `subprocess.STDOUT` for stderr.
 Sink: TypeAlias = IO[bytes] | int
@@ -67,7 +68,10 @@ class Real:
             raise ValueError(f'{command.template} runs in the background: use spawn')
         self.log('$ ' + command.display())
         start = time.monotonic()
-        result = self._held(command) if command.hold_stdin else self._plain(command)
+        if command.datagram:
+            result = self._send(command.datagram)
+        else:
+            result = self._held(command) if command.hold_stdin else self._plain(command)
         result.seconds = time.monotonic() - start
         if check and not result.ok:
             raise CommandFailed(command, result)
@@ -80,6 +84,18 @@ class Real:
         return subprocess.Popen(
             command.argv, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, env={**os.environ, **command.env}
         )
+
+    @staticmethod
+    def _send(datagram: Datagram) -> Result:
+        """One UDP packet from `datagram.source` (so a broadcast leaves on that interface)."""
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            try:
+                sender.bind((datagram.source, 0))
+                sender.sendto(datagram.payload, (datagram.address, datagram.port))
+            except OSError as error:
+                return Result(1, '', f'UDP to {datagram.address}:{datagram.port}: {error}')
+        return Result(0, '')
 
     @staticmethod
     def _plain(command: Command) -> Result:

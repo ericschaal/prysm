@@ -31,7 +31,6 @@ from prysm_acceptance import (
     wled_api,
 )
 from prysm_acceptance.checks import Answer, Bench, Failed
-from prysm_acceptance.commands import Flavour
 from prysm_acceptance.fake_wled import FakeWled
 from prysm_acceptance.host import Host
 from prysm_acceptance.plan import Mode
@@ -245,8 +244,8 @@ class ColourPage(unittest.TestCase):
 class Configuration(unittest.TestCase):
     def test_the_example_parses(self) -> None:
         values = config.load(EXAMPLE)
-        self.assertEqual(values.tv.ssh, 'root@' + values.tv.address)
-        self.assertEqual(values.sweep.pairs()[0], (320, 180, 30))
+        self.assertEqual((values.tv.ssh, values.tv.installed), ('root@192.168.1.50', config.Installed.REFUSE))
+        self.assertEqual(values.linux.installed, config.Installed.REFUSE)
         self.assertEqual((values.mac.target, values.mac.device), ('local', '0x1100000345f2131'))
         self.assertEqual(untyped(values.mac.capture).fps, 30)
         self.assertTrue(values.linux.target.startswith('ssh://'))
@@ -256,15 +255,21 @@ class Configuration(unittest.TestCase):
             {'checks': {'sekonds': 3}},
             {'desktop': {'seconds': 3}},
             {'wled': {'address': 'http://wled'}},
-            {'tv': {'flavours': ['fat']}},
+            {'tv': {'target': 'root@tv'}},
+            {'tv': {'target': 'ssh://-oProxyCommand=sh'}},
+            {'tv': {'mac': '00:00:5E:00:53'}},
+            {'tv': {'installed': 'keep'}},
+            {'tv': {'address': 'tv.example'}},
+            {'tv': {'restore_flavour': 'none'}},
+            {'linux': {'installed': 'reinstall'}},
+            {'mac': {'installed': 'replace'}},
             {'checks': {'seconds': '3'}},
             {'checks': {'fps_tolerance': True}},
             {'checks': {'fps_tolerance': 2}},
-            {'sweep': {'sizes': ['big']}},
-            {'receiver': {'url': 'http://x/; reboot'}},
+            {'sweep': {'sizes': ['640x360']}},
+            {'receiver': {'url': 'http://192.0.2.20:8788'}},
             {'leds': {'top': -1}},
-            {'tv': {'ssh': '-oProxyCommand=sh'}},
-            {'tv': {'address': 'tv\n'}},
+            {'tv': {'ssh': 'root@tv'}},
             {'mac': {'target': 'pi@host'}},
             {'mac': {'deb': 'dist/prysm-headless-linux-arm64.deb'}},
             {'mac': {'capture': {'width': 0}}},
@@ -340,14 +345,10 @@ class TheBench(unittest.TestCase):
         self.assertEqual((done, bench.cleanups), (['c', 'a'], []))
 
 
-class Options:
-    sweep, tv_is_free = False, False
-
-
 class Plan(unittest.TestCase):
     def context(self) -> plan.Context[Any]:
         return plan.Context[Any](
-            config.parse({}), Options(), transport.Refusing(), Path(tempfile.mkdtemp()), log=lambda line: None
+            config.parse({}), transport.Refusing(), Path(tempfile.mkdtemp()), log=lambda line: None
         )
 
     def test_selection_keeps_setup_steps(self) -> None:
@@ -361,17 +362,6 @@ class Plan(unittest.TestCase):
         self.assertEqual(plan.selected(steps, [], 'a.two'), {'a.two', 'a.three'})
         names = [o.name for o in plan.execute('a', steps, self.context(), only=['a.three'])]
         self.assertEqual(names, ['a.setup', 'a.three'])
-
-    def test_a_grouped_setup_runs_only_for_its_selected_checks(self) -> None:
-        installed: list[str] = []
-        steps: list[plan.Step[Any]] = [
-            plan.Step('tv.full.install', 'I', 'h', Mode.SETUP, lambda c: installed.append('full'), group=Flavour.FULL),
-            plan.Step('tv.full.soak', 'S', 'h', Mode.AUTO, lambda c: None, group=Flavour.FULL),
-            plan.Step('tv.slim.install', 'I', 'h', Mode.SETUP, lambda c: installed.append('slim'), group=Flavour.SLIM),
-            plan.Step('tv.slim.soak', 'S', 'h', Mode.AUTO, lambda c: None, group=Flavour.SLIM),
-        ]
-        plan.execute('tv', steps, self.context(), only=['tv.slim.*'])
-        self.assertEqual(installed, ['slim'])
 
     def test_a_failed_setup_blocks_but_cleanups_run_and_the_report_says_so(self) -> None:
         ctx = self.context()
@@ -438,33 +428,17 @@ class DryRun(unittest.TestCase):
             code = run.main([*arguments, '--dry-run', '--config', str(EXAMPLE)])
         return code, output.getvalue()
 
-    def test_every_stage_prints_its_plan(self) -> None:
-        for stage, expected in (
-            ('tv', 'tv.slim.uninstall'),
-            ('eyes', 'eyes.cold-boot'),
-        ):
-            code, text = self.dry(stage)
-            self.assertEqual(code, 0)
-            self.assertIn(expected, text)
-            self.assertIn('nothing is executed', text)
-        code, text = self.dry('tv', '--sweep')
-        self.assertIn('TV$ timeout 120 luna-send -i luna://com.webos.appInstallService/dev/install', text)
-        self.assertIn('tv.full.sweep', text)
-        self.assertIn('$ python3 packaging/webos/ipk.py verify dist/prysm-tv-full.ipk', text)
-        for gone in ('cargo build', 'build-ipk.sh', 'hardware-60', 'tv.slim.version', 'hung-capture', 'tv.headless'):
-            self.assertNotIn(gone, text)
+    def test_eyes_prints_its_plan(self) -> None:
+        code, text = self.dry('eyes')
+        self.assertEqual(code, 0)
+        self.assertIn('eyes.cold-boot', text)
+        self.assertIn('nothing is executed', text)
 
     def test_eyes_keeps_only_what_a_person_must_judge(self) -> None:
         _, text = self.dry('eyes')
         self.assertIn('eyes.flicker-no-rerender', text)
         for gone in ('start-with-tv', 'diagnostics', 'remove-dialog', 'flicker-cold-start', 'flicker-retry-bar'):
             self.assertNotIn(gone, text)
-
-    def test_the_tv_stage_needs_the_owners_word(self) -> None:
-        output = io.StringIO()
-        with contextlib.redirect_stderr(output):
-            self.assertEqual(run.main(['tv', '--config', str(EXAMPLE)]), 2)
-        self.assertIn('--tv-is-free', output.getvalue())
 
 
 if __name__ == '__main__':

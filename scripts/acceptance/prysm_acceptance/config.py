@@ -9,11 +9,9 @@ import tomllib
 from typing import Any, TypeAlias, TypeVar, cast
 
 from prysm_acceptance import commands
-from prysm_acceptance.commands import Flavour
-from prysm_acceptance.options import Delivery, Platform
+from prysm_acceptance.options import Delivery, Flavour, Platform
 
 _ADDRESS = re.compile(r'[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?')
-_SIZE = re.compile(r'([0-9]{1,4})x([0-9]{1,4})')
 _URL = re.compile(r'https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/?')
 LOCAL = 'local'
 SSH = 'ssh://'
@@ -29,13 +27,12 @@ class ConfigError(ValueError):
     pass
 
 
-class RestoreFlavour(StrEnum):
-    """The package the `tv` stage leaves installed at the end."""
+class Installed(StrEnum):
+    """What a cell does with a Prysm it finds on its target (`[tv] installed`, `[linux] installed`): there is
+    none before a run and none after it."""
 
-    AS_FOUND = 'as-found'
-    FULL = 'full'
-    SLIM = 'slim'
-    NONE = 'none'
+    REFUSE = 'refuse'  # stop before changing anything, saying what was found
+    REPLACE = 'replace'  # back up its settings, verify the backup, uninstall it; never reinstalled
 
 
 @dataclass
@@ -88,6 +85,7 @@ class Machine:
     display_port: int = 18790
     capture: Capture = field(default_factory=Capture)
     feed: ChromecastFeed | None = None  # None: no controlled feed into the capture card
+    installed: Installed = Installed.REFUSE  # Linux only: the package cell's rule for an installed Prysm
 
     def artifact(self, delivery: Delivery = Delivery.BINARY) -> Path | None:
         """The configured artifact of `delivery` (`binary`, `deb` or `image`), relative to the repository; None
@@ -98,44 +96,25 @@ class Machine:
 
 @dataclass
 class Tv:
-    address: str = ''
-    ssh: str = ''
-    ares_device: str = ''
-    flavours: list[Flavour] = field(default_factory=lambda: [Flavour.FULL, Flavour.SLIM])
-    restore_flavour: RestoreFlavour = RestoreFlavour.AS_FOUND
-    soak_seconds: int = 90
+    """`[tv]`: the TV over SSH and the packages under test."""
+
+    target: str = ''  # ssh://root@HOST
     # The packages `cargo xtask dist tv-full tv-slim` writes (docs/developers/packaging.md).
     ipk_full: str = 'dist/prysm-tv-full.ipk'
     ipk_slim: str = 'dist/prysm-tv-slim.ipk'
+    mac: str = ''  # the TV's hardware address for wake-on-LAN; empty: an unreachable TV is not woken
+    installed: Installed = Installed.REFUSE
+    soak_seconds: int = 90
 
-    def ipk(self, flavour: Flavour) -> str:
-        """The configured package of `flavour`, relative to the repository."""
-        return str(commands.ROOT / (self.ipk_full if flavour == Flavour.FULL else self.ipk_slim))
+    @property
+    def ssh(self) -> str:
+        """The target as ssh names it (root@HOST); empty when not configured."""
+        return self.target.removeprefix(SSH)
 
-
-@dataclass
-class Receiver:
-    url: str = ''
-    listen: str = '0.0.0.0:8788'
-    advertise: str = ''
-    wss_url: str = ''
-
-
-@dataclass
-class Sweep:
-    sizes: list[str] = field(default_factory=lambda: ['320x180', '640x360', '960x540', '1280x720'])
-    rates: list[int] = field(default_factory=lambda: [30, 60])
-    seconds: int = 10
-
-    def pairs(self) -> list[tuple[int, int, int]]:
-        found: list[tuple[int, int, int]] = []
-        for size in self.sizes:
-            match = _SIZE.fullmatch(size)
-            if match is None:
-                raise ConfigError(f'sweep.sizes: {size!r} is not WIDTHxHEIGHT')
-            width, height = int(match[1]), int(match[2])
-            found += [(width, height, rate) for rate in self.rates]
-        return found
+    def ipk(self, flavour: Flavour) -> Path | None:
+        """The configured package of `flavour`, relative to the repository; None without one."""
+        name = self.ipk_full if flavour == Flavour.FULL else self.ipk_slim
+        return commands.ROOT / name if name else None
 
 
 @dataclass
@@ -146,15 +125,13 @@ class Config:
     mac: Machine = field(default_factory=Machine)
     linux: Machine = field(default_factory=Machine)
     tv: Tv = field(default_factory=Tv)
-    receiver: Receiver = field(default_factory=Receiver)
-    sweep: Sweep = field(default_factory=Sweep)
     eyes_portal: str = ''
 
     def machine(self, platform: Platform) -> Machine:
         return self.mac if platform == Platform.MAC else self.linux
 
 
-Section = TypeVar('Section', Leds, Checks, Capture, ChromecastFeed, Machine, Tv, Receiver, Sweep)
+Section = TypeVar('Section', Leds, Checks, Capture, ChromecastFeed, Machine, Tv)
 
 
 def _table(data: Toml, name: str, label: str) -> dict[str, Any]:
@@ -220,6 +197,9 @@ def _machine(data: Toml, platform: Platform) -> Machine:
     _target(host, platform, listen_given='listen' in table)
     if platform == Platform.MAC and (host.deb or host.image):
         raise ConfigError('[mac]: deb and image are Linux deliveries')
+    if platform == Platform.MAC and 'installed' in table:
+        raise ConfigError('[mac] installed: only the Linux package cell installs Prysm')
+    host.installed = _installed(host.installed, label)
     if platform == Platform.LINUX and host.device:
         try:
             commands.v4l2_device(host.device)
@@ -262,7 +242,7 @@ def address(value: str, name: str, required: bool = False) -> str:
 
 
 def parse(data: Toml) -> Config:
-    unknown = set(data) - {'wled', 'leds', 'checks', 'mac', 'linux', 'tv', 'receiver', 'sweep', 'eyes'}
+    unknown = set(data) - {'wled', 'leds', 'checks', 'mac', 'linux', 'tv', 'eyes'}
     if unknown:
         raise ConfigError(f'unknown sections {sorted(unknown)}')
     config = Config(
@@ -272,8 +252,6 @@ def parse(data: Toml) -> Config:
         mac=_machine(data, Platform.MAC),
         linux=_machine(data, Platform.LINUX),
         tv=_section(_table(data, 'tv', 'tv'), Tv, 'tv'),
-        receiver=_section(_table(data, 'receiver', 'receiver'), Receiver, 'receiver'),
-        sweep=_section(_table(data, 'sweep', 'sweep'), Sweep, 'sweep'),
         eyes_portal=_table(data, 'eyes', 'eyes').get('portal', ''),
     )
     for name, count in config.leds.as_settings().items():
@@ -282,42 +260,31 @@ def parse(data: Toml) -> Config:
     if not 0 < config.checks.fps_tolerance < 1:
         raise ConfigError('checks.fps_tolerance: between 0 and 1')
     _check_tv(config.tv)
-    for name in ('url', 'wss_url'):
-        value = getattr(config.receiver, name)
-        if value and not _URL.fullmatch(value):
-            raise ConfigError(f'receiver.{name}: {value!r} is not scheme://host[:port]')
-    address(config.receiver.advertise, 'receiver.advertise')
     if config.eyes_portal and not _URL.fullmatch(config.eyes_portal):
         raise ConfigError('eyes.portal: http://host[:port]')
-    for size in config.sweep.sizes:
-        if not _SIZE.fullmatch(size):
-            raise ConfigError(f'sweep.sizes: {size!r} is not WIDTHxHEIGHT')
     return config
 
 
 def _check_tv(tv: Tv) -> None:
-    """`[tv]`: the address, the ssh target (root@ADDRESS by default), the flavours."""
-    address(tv.address, 'tv.address')
-    if tv.address and not tv.ssh:
-        tv.ssh = 'root@' + tv.address
-    if tv.ssh:
-        try:
-            commands.ssh_target(tv.ssh)
-        except commands.Refused as error:
-            raise ConfigError(str(error)) from error
-    tv.flavours = [_member(Flavour, flavour, f'tv.flavours: {flavour!r}') for flavour in tv.flavours]
-    tv.restore_flavour = _member(RestoreFlavour, tv.restore_flavour, 'tv.restore_flavour: as-found, full, slim or none')
-
-
-Member = TypeVar('Member', Flavour, RestoreFlavour)
-
-
-def _member(kind: type[Member], value: str, refusal: str) -> Member:
-    """`value` as a member of `kind`; `refusal` when it is none."""
+    """`[tv]`: the ssh target, the hardware address for wake-on-LAN, the rule for an installed Prysm."""
     try:
-        return kind(value)
+        if tv.target:
+            if not tv.target.startswith(SSH):
+                raise ConfigError('[tv] target: "ssh://root@HOST"')
+            commands.ssh_target(tv.ssh)
+        if tv.mac:
+            commands.wake_on_lan(tv.mac, '192.0.2.1')
+    except commands.Refused as error:
+        raise ConfigError(f'[tv] {error}') from error
+    tv.installed = _installed(tv.installed, 'tv')
+
+
+def _installed(value: str, label: str) -> Installed:
+    """`[label] installed` as a member of `Installed`."""
+    try:
+        return Installed(value)
     except ValueError:
-        raise ConfigError(refusal) from None
+        raise ConfigError(f'[{label}] installed: "refuse" or "replace"') from None
 
 
 def load(path: Path) -> Config:

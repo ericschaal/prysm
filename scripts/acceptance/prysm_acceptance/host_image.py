@@ -145,7 +145,7 @@ class SshImage:
     def capture_path(self, device: str) -> str:
         return CONTAINER_DEVICE
 
-    def plan(self, source: Source, device: str) -> Plan:
+    def plan(self, source: Source | None, device: str) -> Plan:
         target, run = self.target, self.run
 
         def compose(*actions: ComposeAction) -> list[str]:
@@ -186,7 +186,7 @@ class SshImage:
             ],
         )
 
-    def preflight(self, source: Source, device: str) -> str | None:
+    def preflight(self, source: Source | None, device: str) -> str | None:
         return self._system() or self._clean(device)
 
     def _system(self) -> str | None:

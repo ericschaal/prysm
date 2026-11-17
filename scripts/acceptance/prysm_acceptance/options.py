@@ -1,13 +1,12 @@
-"""The closed sets a run is chosen by (a host cell's platform, delivery and source) and the
-command-line options the `tv` stage reads (`run.arguments` parses them)."""
+"""The closed sets a run is chosen by: a host cell's platform, delivery and source, and a TV cell's package
+and slim receiver."""
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
 
 
 class Platform(StrEnum):
-    """Where a host cell runs Prysm (`[mac]`, `[linux]`)."""
+    """Where a host cell runs Prysm (`[mac]`, `[linux]`); also where a slim TV cell's receiver runs."""
 
     MAC = 'mac'
     LINUX = 'linux'
@@ -28,6 +27,13 @@ class Source(StrEnum):
     DEVICE = 'device'
 
 
+class Flavour(StrEnum):
+    """The two TV packages."""
+
+    FULL = 'full'
+    SLIM = 'slim'
+
+
 @dataclass(frozen=True)
 class Cell:
     """One host cell: a pytest parameter, `mac-binary-file` and so on."""
@@ -41,6 +47,18 @@ class Cell:
         return f'{self.platform}-{self.delivery}-{self.source}'
 
 
+@dataclass(frozen=True)
+class TvCell:
+    """One TV cell: `tv-full`, or `tv-slim-mac` and `tv-slim-linux` with the receiver on that platform."""
+
+    flavour: Flavour
+    receiver: Platform | None = None
+
+    @property
+    def id(self) -> str:
+        return '-'.join(('tv', self.flavour, *([self.receiver] if self.receiver else [])))
+
+
 # Every host cell, in the order `acceptance all` runs them. The Debian package and the image have no
 # `file` source (docs/developers/acceptance-plan.md, Cells).
 CELLS = (
@@ -51,12 +69,9 @@ CELLS = (
     Cell(Platform.LINUX, Delivery.DEB, Source.DEVICE),
     Cell(Platform.LINUX, Delivery.IMAGE, Source.DEVICE),
 )
-
-
-class Options(Protocol):
-    """The options the `tv` and `eyes` stages' plans and steps depend on; read-only."""
-
-    @property
-    def sweep(self) -> bool: ...
-    @property
-    def tv_is_free(self) -> bool: ...
+# Every TV cell, in the order `acceptance all --tv-is-free` runs them, after the host cells.
+TV_CELLS = (
+    TvCell(Flavour.FULL),
+    TvCell(Flavour.SLIM, Platform.MAC),
+    TvCell(Flavour.SLIM, Platform.LINUX),
+)

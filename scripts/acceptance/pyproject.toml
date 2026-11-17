@@ -60,6 +60,7 @@ allowed-confusables = ["–"]
 # These run the runner's own command line, as the bench does.
 "tests/test_acceptance_host.py" = ["S603", "TID251"]
 "tests/test_acceptance_feed_chromecast.py" = ["S603", "TID251"]
+"tests/test_acceptance_tv.py" = ["S603", "TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "subprocess.run".msg = "commands run through the transport (transport.py), built only by commands.py"
@@ -95,7 +96,7 @@ root_package = "prysm_acceptance"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layers: the command line, the host cells and their pytest plugin, the stages, their cells and data, checks, the feed, the package and image seams, devices, clients, the step runner, the bench, base"
+name = "Layers: the command line, the TV cells, the host cells, their pytest plugin and eyes, the clip, the feed, the package and image seams, devices, an existing Prysm, clients, the step runner, the bench, base"
 type = "layers"
 containers = ["prysm_acceptance"]
 # Every module of the package is in a layer; a new one must be placed.
@@ -103,14 +104,14 @@ exhaustive = true
 # Top to bottom; `|` siblings are independent of each other, `:` siblings may import each other.
 layers = [
   "run | fake_wled",
+  "tv_cells",
   "host_cells",
-  "bench | stage_tv | stage_eyes",
-  "tv_full | tv_slim",
-  "stage_data",
+  "bench | stage_eyes",
   "edges_clip : colour_page",
   "feed : feed_chromecast",
   "host_deb | host_image",
   "host | tv | artifact | prepare",
+  "installed",
   "prysm_api | wled_api",
   "plan",
   "checks",
@@ -122,12 +123,11 @@ layers = [
 name = "PyChromecast stays behind the Chromecast feed"
 type = "forbidden"
 source_modules = [
-  "prysm_acceptance.run", "prysm_acceptance.fake_wled", "prysm_acceptance.host_cells", "prysm_acceptance.bench",
-  "prysm_acceptance.stage_tv", "prysm_acceptance.stage_eyes", "prysm_acceptance.tv_full",
-  "prysm_acceptance.tv_slim", "prysm_acceptance.stage_data", "prysm_acceptance.edges_clip",
+  "prysm_acceptance.run", "prysm_acceptance.fake_wled", "prysm_acceptance.tv_cells", "prysm_acceptance.host_cells",
+  "prysm_acceptance.bench", "prysm_acceptance.stage_eyes", "prysm_acceptance.edges_clip",
   "prysm_acceptance.colour_page", "prysm_acceptance.feed", "prysm_acceptance.host", "prysm_acceptance.artifact",
   "prysm_acceptance.host_deb", "prysm_acceptance.host_image", "prysm_acceptance.prepare",
-  "prysm_acceptance.tv", "prysm_acceptance.prysm_api", "prysm_acceptance.wled_api", "prysm_acceptance.plan",
+  "prysm_acceptance.tv", "prysm_acceptance.installed", "prysm_acceptance.prysm_api", "prysm_acceptance.wled_api", "prysm_acceptance.plan",
   "prysm_acceptance.checks", "prysm_acceptance.config", "prysm_acceptance.transport", "prysm_acceptance.options",
   "prysm_acceptance.commands", "prysm_acceptance.web",
 ]
@@ -140,7 +140,7 @@ allow_indirect_imports = true
 testpaths = ["tests"]
 pythonpath = ["tests"]
 addopts = ["--strict-markers", "-p", "no:cacheprovider"]
-markers = ["only(delivery, ...): a host cells' check of what these deliveries add (bench.only)"]
+markers = ["only(part, ...): a check of what these deliveries or TV packages add (bench.only)"]
 
 [tool.pyright]
 include = ["prysm_acceptance", "tests"]
