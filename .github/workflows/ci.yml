@@ -439,9 +439,16 @@ jobs:
         with:
           key: docker
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      # The cache service's URL and token for `type=gha` in run steps (the
-      # build-push-action passes them itself; xtask runs buildx directly).
-      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      # The cache service's URL and token for `type=gha`: actions get them in
+      # ACTIONS_* variables and run steps do not, so this passes them on (the
+      # build-push-action reads them itself; xtask runs buildx in a run step).
+      - name: Cache service for buildx
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            for (const [name, value] of Object.entries(process.env)) {
+              if (name.startsWith('ACTIONS_')) core.exportVariable(name, value);
+            }
       # prysm-headless-linux-<arch> (binary, .deb, .tar) and manifest.json.
       - name: Binary, Debian package and image
         run: cargo xtask dist "linux-$ARCH" "deb-$ARCH" "image-$ARCH"
