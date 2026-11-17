@@ -315,8 +315,13 @@ Each phase lands with its tests and CI green before the next starts.
    worker at 51 % CPU). In a first run the UI checks passed too (320 × 180;
    no frames and no failure without the UI, frames again with it); in every
    run after it the worker's UI capture failed to open (`HAL_GAL_Init failed
-   with status -1`), so the UI checks failed, also alone on a fresh install.
-   The slim cells have not run with the states.
+   with status -1`): a worker had ended holding the graphics driver's lock,
+   which only a reboot of the TV released. After the reboot `tv-full` passed
+   all eleven checks and `tv-slim-mac` all thirteen (raw at 30 fps with
+   640 × 360 frames). `tv-slim-linux` passed eleven and failed two: raw did
+   not reach 30 fps to the Pi over Wi-Fi at 640 × 360 (83 Mbit/s), and the
+   overlay check's steps were 1.67 to 2.4 s apart where 2 s ± 0.3 s is
+   required. Standby was skipped in each: it needs a person at the remote.
 
 
 A first package stage exists outside the tree (written before this plan, a
