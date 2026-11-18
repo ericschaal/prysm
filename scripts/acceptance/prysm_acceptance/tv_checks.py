@@ -23,7 +23,7 @@ import pytest
 
 from prysm_acceptance import edges_clip, feed_cast, host_cells, prysm_api, tv
 from prysm_acceptance.bench import only
-from prysm_acceptance.checks import Answer, Bench, Failed, Skipped, ask_person
+from prysm_acceptance.checks import Answer, Bench, Failed, Skipped, ask_person, tell_person
 from prysm_acceptance.config import Config
 from prysm_acceptance.host import Host, Sender, shown
 from prysm_acceptance.host_cells import Clip, Record, processed
@@ -43,6 +43,8 @@ UI_LIMIT = (320, 180)
 CONFIRM_SECONDS = 20
 # How long the check without frames watches that none come and nothing fails.
 QUIET_SECONDS = 10
+# How long the TV may still report active after a person said its screen is off.
+STANDBY_SECONDS = 60
 
 TvPlan = Callable[[Tv, TvCell, Config], list[str]]
 Check = TypeVar('Check', bound=Callable[..., object])
@@ -639,13 +641,17 @@ def test_ui_off(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> N
         *state_plan(found, Shown.UI, config, include_ui=True),
         'a person puts the TV in standby with the remote, then wakes it',
         *shown(found.state_command()),
-        '(every 3 s: standby seen if the TV answers, then active, worker running and capturing within 90 s)',
+        f'(every 3 s: the TV not active, or not answering, within {STANDBY_SECONDS} s; after the wake, active, '
+        'worker running and capturing within 90 s)',
+        "then the UI state again (standby ended Prysm's app):",
+        *state_plan(found, Shown.UI, config, include_ui=True),
     ]
 )
 def test_standby(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> None:
-    """Standby and wake (a person presses power), from the UI state: getState shows standby if the TV answers,
-    then active with the worker running and capturing within 90 s of waking. The runner never puts the TV to
-    sleep. Last: it ends the states the other checks set."""
+    """Standby and wake (a person presses power), from the UI state: the TV leaves active (a TV in standby may
+    not answer at all), then is active with the worker running and capturing within 90 s of waking, and the UI
+    state is reached again (standby ended Prysm's app). The runner never puts the TV to sleep. Last: it ends
+    the states the other checks set."""
     reached = in_state(screen, Shown.UI, prysm, _ui_section(cell))
     answer, note = ask_person(
         "Put the TV in standby with the remote's power button (do not unplug). Answer y once the screen is off.",
@@ -653,7 +659,12 @@ def test_standby(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> 
     )
     if answer != Answer.YES:
         pytest.skip(f'standby skipped {note}'.strip())
-    asleep = tv.wait_state(screen.tv.get_state, lambda s: s['power'] != Power.ACTIVE, 60, every=3)
+    tell_person(f'waiting until the TV is not active, or does not answer (up to {STANDBY_SECONDS} s)')
+    deadline = time.monotonic() + STANDBY_SECONDS
+    while (asleep := screen.tv.get_state()) is not None and asleep['power'] == Power.ACTIVE:
+        if time.monotonic() >= deadline:
+            raise Failed(f'the TV is still active {STANDBY_SECONDS} s after the answer', asleep)
+        time.sleep(3)
     evidence: dict[str, object] = {'state': reached, 'standby_state': asleep}
     answer, note = ask_person(
         'Wake the TV with the power button. Answer y when the picture is back.',
@@ -661,6 +672,7 @@ def test_standby(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> 
     )
     if answer != Answer.YES:
         pytest.skip(f'wake skipped {note}'.strip())
+    tell_person('waiting until the worker runs and captures again (up to 90 s)')
     awake = tv.wait_state(
         screen.tv.get_state,
         lambda s: s['power'] == Power.ACTIVE and s['worker']['phase'] == 'running' and s['capturing'],
@@ -670,4 +682,7 @@ def test_standby(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> 
     evidence['wake_state'] = awake
     if awake is None:
         raise Failed('capture did not resume within 90 s of waking', evidence)
+    # Standby ended Prysm's app: in front again, the UI state is as before, and the teardown has an app to close.
+    tell_person("bringing Prysm's app to the front again and waiting for its frames")
+    evidence['again'] = in_state(screen, Shown.UI, prysm, _ui_section(cell))
     record(f'standby seen: {asleep["power"] if asleep else "no answer"}; capture resumed', evidence)

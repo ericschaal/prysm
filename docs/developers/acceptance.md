@@ -595,8 +595,10 @@ The checks, in order (`@only` marks a package's own):
   and nothing failing (no `failure` in Prysm's state or the TV's `getState`,
   the session not faulted), as designed; then with the UI again the frames
   return, of the UI size;
-- standby and wake (UI state; a person presses power): standby seen when the
-  TV answers, then active with the worker running and capturing within 90 s.
+- standby and wake (UI state; a person presses power): the TV not active, or
+  not answering, within 60 s; after the wake, active with the worker running
+  and capturing within 90 s, then the UI state again (standby ends Prysm's
+  app).
   Last, as it ends the other states; deselect it (`-k "not standby"`) when
   nobody is at the TV.
 

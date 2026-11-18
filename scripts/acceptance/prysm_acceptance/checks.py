@@ -57,10 +57,17 @@ def ask_person(question: str, choices: tuple[Answer, ...] = ALL_ANSWERS) -> tupl
             answer = input(f'\n>>> {question}\n    [{"/".join(choices)}]: ').strip().lower()
             if answer in choices:
                 break
-        note = input('    note (optional): ').strip()
+        note = input('    note (optional, Enter for none): ').strip()
     except EOFError:
         return Answer.SKIP, 'no answer (end of input)'
     return Answer(answer), note
+
+
+def tell_person(text: str) -> None:
+    """One line for the person at the terminal, so a wait after their answer is not silent; nothing without a
+    terminal."""
+    if sys.stdin.isatty():
+        print(f'    ... {text}', flush=True)
 
 
 # One undo: its name, its title and what it does (a detail, or anything).

@@ -82,9 +82,9 @@ pub(crate) struct Limits {
     /// driver lock held until a reboot) would block that long every time.
     pub ui_retry: Duration,
     pub ui_retry_max: Duration,
-    /// How long `close` waits for certified release. Below the forwarder's
-    /// 5 s and the engine's 10 s stop deadlines so the adapter reports first,
-    /// and below the supervisor's 5 s TERM-to-KILL window.
+    /// How long `close` waits for certified release. Below the TV hosts'
+    /// 6 s stop deadline, so the adapter reports first, which is below the
+    /// supervisor's 8 s TERM-to-KILL window.
     pub release: Duration,
     /// How often an idle native thread rechecks the video signal.
     pub poll: Duration,
