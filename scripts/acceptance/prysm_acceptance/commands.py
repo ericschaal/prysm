@@ -320,7 +320,7 @@ def tv_get_state(host: str) -> Command:
 
 def tv_uninstall(host: str) -> Command:
     """The Luna `uninstall` (as the app): replies at once, stops the worker gracefully, then deregisters and
-    exits. The data directory stays."""
+    exits, before every install and uninstall. The data directory stays."""
     return _prysm('tv.uninstall', host, 'uninstall', {}, app=True)
 
 

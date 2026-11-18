@@ -278,9 +278,17 @@ def exercise_worker(args, remote, state, directory, worker):
 
 
 def cleanup(remote, directory, supervisor, worker, manifest):
-    for executable in (supervisor, worker):
-        for pid in remote.pids(executable):
-            remote.run(f'kill -KILL {pid}', check=False)
+    # TERM, never KILL: the supervisor stops its worker (TERM, its own KILL 8 s
+    # later) before it exits, and a worker killed with the TV UI capture open
+    # leaves the TV's capture locked until a reboot.
+    pids = ' '.join(str(pid) for executable in (supervisor, worker) for pid in remote.pids(executable))
+    if pids:
+        remote.run(f'kill -TERM {pids}; timeout 20 sh -c '
+                   f'"for p in {pids}; do while kill -0 \\$p 2>/dev/null; do sleep 0.2; done; done"',
+                   timeout=25, check=False)
+    left = remote.pids(supervisor) + remote.pids(worker)
+    if left:
+        raise RuntimeError(f'probe processes {left} still run 20 s after TERM; leaving {directory} for inspection')
     if manifest is not None:
         current = remote.run(f'cat {MANIFEST}', check=False)
         if current.returncode == 0 and current.stdout == manifest:

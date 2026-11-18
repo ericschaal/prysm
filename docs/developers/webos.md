@@ -102,9 +102,15 @@ scripts. The Luna method `uninstall` (only the app may call it) replies at
 once, stops the worker gracefully (TERM, KILL 8 s later), then removes the
 hook and manifests, rescans and exits. The `uninstall` subcommand only
 deregisters (hook, manifests, rescan); it does not stop a running Prysm.
-Preferences and settings stay either way. Remove the setup before the app, or
-the registration stays behind; removing the app ends a running Prysm
-abruptly, so stop it first (the Luna method does).
+Preferences, settings and the intent in `resume.json` stay either way.
+Remove the setup before the app, or the registration stays behind; removing
+the app ends a running Prysm abruptly, so stop it first (the Luna method
+does). Installing over a running Prysm ends it abruptly too, so
+`install-ipk.sh` and the acceptance runner first call the Luna `uninstall`,
+wait until no Prysm process is left (refusing to install while one remains),
+then install and run `setup.sh`, which re-registers and resumes the intent.
+Installs through Homebrew Channel or the TV's own UI cannot be hooked this
+way: an IPK carries no scripts.
 
 Nothing detects or migrates the old `io.prysm.capture` app; it must be removed
 first.

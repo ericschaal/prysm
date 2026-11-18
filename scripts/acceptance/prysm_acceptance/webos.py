@@ -199,13 +199,16 @@ class WebosTv:
     # ---- install and uninstall -------------------------------------------------
 
     def install(self, ipk: str) -> LunaReply:
-        """The documented install: verify, stage, appInstallService, unstage, setup.sh.
+        """The documented install: verify, stage, Prysm stopped (`stop`), appInstallService, unstage, setup.sh.
 
         `ipk.py verify` refuses a package with files outside the app and service
-        directories; only a package it accepted is staged, whatever its name."""
+        directories; only a package it accepted is staged, whatever its name.
+        Raises `installed.Kept`, nothing installed, while a Prysm process still runs: the install service
+        would end it abruptly."""
         self._run(commands.verify_ipk(ipk))
         self._run(commands.tv_stage(self.target, ipk))
         try:
+            self.stop()
             result = self._run(commands.tv_install(self.target), check=False)
         finally:
             self._run(commands.tv_unstage(self.target), check=False)
@@ -235,23 +238,30 @@ class WebosTv:
             time.sleep(2)
         return left
 
-    def uninstall(self) -> list[str]:
+    def stop(self) -> None:
         """Prysm stopped through its Luna `uninstall` (the worker stops gracefully, then the supervisor
-        deregisters and exits), no Prysm process left, the supervisor's `uninstall` (deregisters what is still
-        registered), then the app removed through the TV's install service; what of Prysm is still there
-        (`installed`). A refused or unanswered Luna `uninstall` is waited for the same way.
+        deregisters and exits; preferences, settings and the intent stay, so setup.sh brings it back as it
+        was), and no Prysm process left. A refused or unanswered Luna `uninstall` (nothing installed or
+        running) is waited for the same way.
 
-        Raises `installed.Kept`, the app left installed, while a Prysm process still runs: the install
-        service would end it abruptly, and a worker killed with the TV UI capture open leaves the TV's
-        capture locked until a reboot."""
+        Raises `installed.Kept` while a Prysm process still runs: the install service would end it
+        abruptly, and a worker killed with the TV UI capture open leaves the TV's capture locked until a
+        reboot."""
         stopping = self._run(commands.tv_uninstall(self.target), check=False)
         left = self.running()
         if left:
             raise installed.Kept(
                 f'Prysm still runs {STOP_SECONDS} s after its Luna uninstall '
-                f'({", ".join(" ".join(process) for process in left)}), so the app was not removed',
+                f'({", ".join(" ".join(process) for process in left)}), so it was left installed as it is',
                 (stopping.stdout + stopping.stderr)[-2000:],
             )
+
+    def uninstall(self) -> list[str]:
+        """Prysm stopped (`stop`), the supervisor's `uninstall` (deregisters what is still registered), then
+        the app removed through the TV's install service; what of Prysm is still there (`installed`).
+
+        Raises `installed.Kept`, the app left installed, while a Prysm process still runs."""
+        self.stop()
         self._run(commands.tv_supervisor_uninstall(self.target), check=False)
         removed = self._run(commands.tv_remove_app(self.target), check=False)
         time.sleep(3)

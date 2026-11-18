@@ -155,7 +155,9 @@ native API notices, plus `javascript.txt`, which the frontend build writes
 from the packages that end up in that host's bundles; the build fails if one
 has no licence file. The slim package adds OpenH264, gstreamer-rs and gtk-rs.
 
-Install on a TV: [LG TV](../users/webos.md#1-install).
+Install on a TV: [LG TV](../users/webos.md#1-install). `install-ipk.sh`
+stops a running Prysm through its Luna `uninstall` before the install
+service would end it abruptly ([webOS](webos.md#files-on-the-tv)).
 
 ## TV package checks
 

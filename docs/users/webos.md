@@ -46,8 +46,9 @@ prints the steps):
 packaging/webos/install-ipk.sh root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
 ```
 
-The helper copies the package to the TV, installs it through the TV's install
-service and runs the service setup. `ares-install` does not work on webOS 10
+The helper copies the package to the TV, stops a running Prysm gracefully,
+installs the package through the TV's install service and runs the service
+setup; lighting resumes and your preferences stay. `ares-install` does not work on webOS 10
 ("Unable to exec"); use the helper.
 
 After every install or update the service must be set up again; the helper

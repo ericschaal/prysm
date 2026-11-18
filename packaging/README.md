@@ -275,10 +275,16 @@ Install through the TV's install service instead;
 packaging/webos/install-ipk.sh root@TV target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk
 ```
 
-By hand:
+The helper first stops a running Prysm through its Luna `uninstall` and
+installs nothing while a process under `io.prysm.*` is left: the install
+service would end it abruptly
+([webOS](../docs/developers/webos.md#files-on-the-tv)).
+
+By hand (wait until no Prysm process is left before the install):
 
 ```sh
 ssh root@TV 'mkdir -p /media/developer/temp && cat > /media/developer/temp/io.prysm.tv.ipk' < io.prysm.tv-full_1.0.0_all.ipk
+(sleep 14) | ssh root@TV "timeout 12 luna-send -a io.prysm.tv -n 1 luna://io.prysm.tv.service/uninstall '{}'"
 (sleep 122) | ssh root@TV "timeout 120 luna-send -i luna://com.webos.appInstallService/dev/install \
   '{\"id\":\"io.prysm.tv\",\"ipkUrl\":\"/media/developer/temp/io.prysm.tv.ipk\",\"subscribe\":true}'"
 ssh root@TV /media/developer/apps/usr/palm/services/io.prysm.tv.service/setup.sh

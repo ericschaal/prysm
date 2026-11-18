@@ -324,23 +324,26 @@ def cleared(bench: Bench, request: pytest.FixtureRequest, target: OnTv, wled: Wl
     bench.log(installed.replace(target.tv, target.found, path, lambda text: warn_at_end(request, text)))
 
 
+def _stop_plan(ssh: str) -> list[str]:
+    return [
+        *shown(commands.tv_uninstall(ssh), commands.tv_processes(ssh)),
+        f'(every 2 s until no Prysm process is left; one still there after {webos.STOP_SECONDS} s fails, and '
+        'Prysm is left installed as it is: removing or replacing it would end it abruptly)',
+    ]
+
+
 def _install_plan(ssh: str, ipk: str) -> list[str]:
-    return shown(
-        commands.verify_ipk(ipk),
-        commands.tv_stage(ssh, ipk),
-        commands.tv_install(ssh),
-        commands.tv_unstage(ssh),
-        commands.tv_setup(ssh),
-        commands.tv_get_state(ssh),
-    )
+    return [
+        *shown(commands.verify_ipk(ipk), commands.tv_stage(ssh, ipk)),
+        *_stop_plan(ssh),
+        *shown(commands.tv_install(ssh), commands.tv_unstage(ssh), commands.tv_setup(ssh), commands.tv_get_state(ssh)),
+    ]
 
 
 def _uninstall_plan(config: Config) -> list[str]:
     ssh = _ssh(config)
     return [
-        *shown(commands.tv_uninstall(ssh), commands.tv_processes(ssh)),
-        f'(every 2 s until no Prysm process is left; one still there after {webos.STOP_SECONDS} s fails, and the '
-        'app is NOT removed: removing it would end Prysm abruptly)',
+        *_stop_plan(ssh),
         *shown(
             commands.tv_supervisor_uninstall(ssh),
             commands.tv_remove_app(ssh),
@@ -368,7 +371,8 @@ def _uninstall_plan(config: Config) -> list[str]:
 def package(
     cell: TvCell, config: Config, request: pytest.FixtureRequest, target: OnTv, cleared: None
 ) -> Iterator[LunaReply]:
-    """The package installed the documented way (verified, staged, appInstallService, unstaged, setup.sh).
+    """The package installed the documented way (verified, staged, Prysm stopped, appInstallService, unstaged,
+    setup.sh).
 
     At the end, also after a failure, it is uninstalled (Prysm's Luna uninstall, no Prysm process left, the
     supervisor's uninstall, then the app removed through the TV's install service) and nothing of Prysm may be
@@ -564,8 +568,9 @@ test_soak = taken(tv_checks.test_soak)
     ]
 )
 def test_reinstall(cell: TvCell, config: Config, screen: Screen, target: OnTv, prysm: Prysm, record: Record) -> None:
-    """Reinstall while lighting, in the video state: the same package installed again keeps the preferences (and
-    the full package's settings), lighting or the stream resumes by itself, and the TV still shows the video."""
+    """Reinstall while lighting, in the video state: the same package installed again (the running Prysm
+    stopped through its Luna uninstall first) keeps the preferences (and the full package's settings), lighting
+    or the stream resumes by itself, and the TV still shows the video."""
     reached = in_state(screen, Shown.VIDEO, prysm, tv_checks.video_section(cell))
     before = cast('LunaReply', target.tv.get_state())
     settings = prysm.state()['settings']

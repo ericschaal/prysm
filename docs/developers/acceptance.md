@@ -488,12 +488,15 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   up and uninstalled (below);
 - **package**: the package installed the way that works on webOS 10
   ([packaging](packaging.md)): verified, staged as
-  `/media/developer/temp/io.prysm.tv.ipk`, `appInstallService` until
-  `installed`, unstaged, `setup.sh`, `getState`. At the end it is uninstalled:
-  Prysm's Luna `uninstall`, called as the app (the worker stops gracefully,
-  then the supervisor deregisters and exits; refused or unanswered, the
-  runner goes on), no process under `io.prysm.*` left (polled every 2 s for
-  30 s), the supervisor's `uninstall` subcommand (deregisters what is still
+  `/media/developer/temp/io.prysm.tv.ipk`, Prysm stopped (below),
+  `appInstallService` until `installed`, unstaged, `setup.sh`, `getState`.
+  Stopping Prysm, before every install and uninstall: Prysm's Luna
+  `uninstall`, called as the app (the worker stops gracefully, then the
+  supervisor deregisters and exits; refused or unanswered, as when nothing is
+  installed, the runner goes on), then no process under `io.prysm.*` left
+  (polled every 2 s for 30 s); while one remains nothing is installed or
+  removed. At the end it is uninstalled: Prysm stopped, the supervisor's
+  `uninstall` subcommand (deregisters what is still
   registered), then the app removed through `appInstallService` until
   `removed`, then nothing of the above but the data files may be left (else
   the teardown fails, saying what is left). While a Prysm process still runs the app is
@@ -576,7 +579,8 @@ The checks, in order (`@only` marks a package's own):
   1280 × 720 (full) or 640 × 360 hardware H.264 (slim), the frames arriving
   at that size, the frame rate within the tolerance, the worker's CPU and RSS
   from `/proc` every 5 s;
-- reinstall while lighting (video state): the same package again keeps the
+- reinstall while lighting (video state): the same package again (Prysm
+  stopped first, as for every install) keeps the
   preferences (and the full package's settings), lighting resumes by itself,
   and the video state is confirmed again after it;
 - UI only (UI state, the capture with the UI): the frames within the UI size,

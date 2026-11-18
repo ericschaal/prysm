@@ -63,7 +63,7 @@ class MetadataTests(unittest.TestCase):
         self.assertFalse((HERE / 'service/package.json').exists())
         self.assertEqual(list((HERE / 'service').glob('*.js')), [])
 
-    def test_install_helper_uses_the_install_service_then_setup(self):
+    def test_install_helper_stops_prysm_then_uses_the_install_service_then_setup(self):
         script = HERE / 'install-ipk.sh'
         text = script.read_text()
         self.assertNotIn('ares-install ', text.split('set -eu', 1)[1])
@@ -84,6 +84,10 @@ class MetadataTests(unittest.TestCase):
                 # luna-send keeps its stdin: every call is fed by a sleep.
                 self.assertEqual(plan.count('luna-send'), plan.count('(sleep '))
                 self.assertLess(plan.index('appInstallService'), plan.index(INSTALLED + 'setup.sh'))
+                # A running Prysm is stopped through its Luna uninstall (as the app) before the install
+                # service would end it abruptly.
+                self.assertLess(plan.index('luna-send -a io.prysm.tv -n 1 luna://io.prysm.tv.service/uninstall'),
+                                plan.index('appInstallService'))
             # Anything else is not a Prysm TV package, the unsuffixed name included.
             for other in ('other.ipk', 'io.prysm.tv_1.0.0_all.ipk', 'io.prysm.tv-other_1.0.0_all.ipk'):
                 path = Path(directory) / other

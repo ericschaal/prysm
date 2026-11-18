@@ -14,6 +14,13 @@
 # not running until setup runs again. The service resumes the lighting it had
 # before the update (the intent is kept per boot in /var/lib/io.prysm.tv).
 #
+# The install service ends a running Prysm abruptly, and a worker killed with
+# the TV UI capture open leaves the TV's capture locked until a reboot. So a
+# running Prysm is first asked to uninstall over Luna (the worker stops with
+# TERM, the service deregisters and exits; preferences, settings and the
+# intent stay), and nothing is installed while a Prysm process remains. If
+# the install then fails, Prysm stays stopped until this is run again.
+#
 # luna-send waits for replies only while its stdin is open, so every call
 # keeps it open with `(sleep N) | ssh ...` and bounds it with `timeout`.
 # --dry-run prints the commands and touches nothing. Builds never call this.
@@ -23,6 +30,9 @@ APP=io.prysm.tv
 TEMP=/media/developer/temp
 SETUP=/media/developer/apps/usr/palm/services/$APP.service/setup.sh
 INSTALL_TIMEOUT=120
+# The worker's 8 s TERM-to-KILL window, then the service's rescan (bounded at
+# 10 s) before it exits.
+STOP_SECONDS=30
 
 dry_run=false
 if [ "${1:-}" = --dry-run ]; then
@@ -49,6 +59,22 @@ if [ ! -f "$ipk" ]; then
 fi
 remote=$TEMP/$name
 payload="{\"id\":\"$APP\",\"ipkUrl\":\"$remote\",\"subscribe\":true}"
+
+# On the TV: the running service asked to uninstall (refused or unanswered
+# when nothing is installed or running), then Prysm's processes (executables
+# under an io.prysm.* path) polled every 2 s until none is left; those still
+# there are printed.
+stop="timeout 12 luna-send -a $APP -n 1 luna://$APP.service/uninstall '{}' || true
+i=0
+while :; do
+    left=\$(for e in /proc/[0-9]*/exe; do l=\$(readlink \"\$e\" 2>/dev/null) && case \$l in */io.prysm.*) echo \"\${e%/exe} \$l\";; esac; done)
+    [ -z \"\$left\" ] && exit 0
+    [ \$i -ge $STOP_SECONDS ] && break
+    sleep 2
+    i=\$((i + 2))
+done
+echo \"\$left\"
+exit 1"
 
 # On the TV: luna-send in the background with the held stdin (fd 3: an
 # asynchronous command would otherwise read /dev/null), its replies polled
@@ -111,6 +137,11 @@ held() {
 }
 
 copy
+if ! held $((12 + STOP_SECONDS)) "$stop"; then
+    run ssh "$host" "rm -f $remote"
+    echo "$0: Prysm still runs $STOP_SECONDS s after its uninstall (the processes above), so nothing was installed: the install would end it abruptly" >&2
+    exit 1
+fi
 status=0
 held "$INSTALL_TIMEOUT" "$install" || status=$?
 run ssh "$host" "rm -f $remote"

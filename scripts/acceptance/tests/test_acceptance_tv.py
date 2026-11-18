@@ -54,7 +54,8 @@ NO_SERVICE = Result(1, '', 'Service does not exist: io.prysm.tv.service')
 ABSENT = ''.join(f'absent {path}\n' for path in (*commands.INSTALLED_PATHS, commands.DATA_DIR, commands.STAGING))
 INSTALLED = ABSENT.replace('absent /media', 'present /media').replace(f'absent {commands.DATA_DIR}', 'present /var/lib')
 DATA_ONLY = ABSENT.replace(f'absent {commands.DATA_DIR}', f'present {commands.DATA_DIR}')
-# Prysm stopped before an uninstall removes the app: its Luna uninstall, no process, the supervisor's uninstall.
+# Prysm stopped before an uninstall removes the app: its Luna uninstall, no process, the supervisor's uninstall
+# (an install stops it with the first two).
 STOPPED = [('tv.uninstall', ok('{"returnValue":true}')), ('tv.processes', ok()), ('tv.supervisor-uninstall', ok())]
 # The templates that only read the TV.
 READING = {'tv.reachable', 'tv.paths', 'tv.processes', 'tv.get-state', 'tv.read-data', 'tv.sample-worker'}
@@ -83,12 +84,14 @@ class TheTv(unittest.TestCase):
         found = recorded(
             ('local.verify-ipk', ok()),
             ('tv.stage', ok()),
+            *STOPPED[:2],
             ('tv.install', ok('{"details":{"state":"installed"}}')),
             ('tv.unstage', ok()),
             ('tv.setup', ok()),
             ('tv.get-state', ok(STATE)),
         )
-        self.assertEqual(found.install('dist/prysm-tv-full.ipk')['flavor'], 'full')
+        with no_wait():
+            self.assertEqual(found.install('dist/prysm-tv-full.ipk')['flavor'], 'full')
         verify, stage = untyped(found.transport).calls[:2]
         self.assertEqual(verify.argv[-2:], ('verify', 'dist/prysm-tv-full.ipk'))
         self.assertEqual((stage.argv[-2], stage.stdin_file), (HOST, 'dist/prysm-tv-full.ipk'))
@@ -103,12 +106,34 @@ class TheTv(unittest.TestCase):
         found = recorded(
             ('local.verify-ipk', ok()),
             ('tv.stage', ok()),
+            ('tv.uninstall', NO_SERVICE),
+            ('tv.processes', ok()),
             ('tv.install', Result(1, '{"returnValue":false,"errorText":"bad package"}')),
             ('tv.unstage', ok()),
         )
-        with self.assertRaises(Failed):
+        with no_wait(), self.assertRaises(Failed):
             found.install('dist/prysm-tv-slim.ipk')
-        self.assertEqual(calls(found), ['local.verify-ipk', 'tv.stage', 'tv.install', 'tv.unstage'])
+        self.assertEqual(
+            calls(found), ['local.verify-ipk', 'tv.stage', 'tv.uninstall', 'tv.processes', 'tv.install', 'tv.unstage']
+        )
+
+    def test_nothing_is_installed_over_a_prysm_that_keeps_running(self) -> None:
+        still = ok(f'812 {commands.WORKER}\n')
+        found = recorded(
+            ('local.verify-ipk', ok()),
+            ('tv.stage', ok()),
+            ('tv.uninstall', ok('{"returnValue":true}')),
+            ('tv.processes', still),
+            ('tv.processes', still),
+            ('tv.unstage', ok()),
+        )
+        clock = mock.patch.object(webos.time, 'monotonic', side_effect=[0, 0, webos.STOP_SECONDS])
+        with clock, no_wait(), self.assertRaisesRegex(installed.Kept, 'left installed as it is'):
+            found.install('dist/prysm-tv-full.ipk')
+        self.assertEqual(
+            calls(found),
+            ['local.verify-ipk', 'tv.stage', 'tv.uninstall', 'tv.processes', 'tv.processes', 'tv.unstage'],
+        )
 
     def test_uninstall_stops_prysm_before_the_app_is_removed(self) -> None:
         found = recorded(
@@ -137,7 +162,7 @@ class TheTv(unittest.TestCase):
         still = ok(f'812 {commands.SUPERVISOR}\n')
         found = recorded(('tv.uninstall', NO_SERVICE), ('tv.processes', still), ('tv.processes', still))
         clock = mock.patch.object(webos.time, 'monotonic', side_effect=[0, 0, webos.STOP_SECONDS])
-        with clock, no_wait(), self.assertRaisesRegex(installed.Kept, 'the app was not removed') as raised:
+        with clock, no_wait(), self.assertRaisesRegex(installed.Kept, 'left installed as it is') as raised:
             found.uninstall()
         self.assertEqual(calls(found), ['tv.uninstall', 'tv.processes', 'tv.processes'])
         self.assertIn('Service does not exist', untyped(raised.exception).evidence)
