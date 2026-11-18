@@ -490,13 +490,13 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   ([packaging](packaging.md)): verified, staged as
   `/media/developer/temp/io.prysm.tv.ipk`, `appInstallService` until
   `installed`, unstaged, `setup.sh`, `getState`. At the end it is uninstalled:
-  capture stopped as the TV app stops it when Prysm answers (full: lighting
-  off with `PUT /api/v1/target` when the portal answers; slim:
-  `setEnabled false`), the supervisor's `uninstall` (which stops Prysm, then
-  deregisters it), no process under `io.prysm.*` left (polled every 2 s for
-  20 s), then the app removed through `appInstallService` until `removed`,
-  then nothing of the above but the data files may be left (else the teardown
-  fails, saying what is left). While a Prysm process still runs the app is
+  Prysm's Luna `uninstall`, called as the app (the worker stops gracefully,
+  then the supervisor deregisters and exits; refused or unanswered, the
+  runner goes on), no process under `io.prysm.*` left (polled every 2 s for
+  30 s), the supervisor's `uninstall` subcommand (deregisters what is still
+  registered), then the app removed through `appInstallService` until
+  `removed`, then nothing of the above but the data files may be left (else
+  the teardown fails, saying what is left). While a Prysm process still runs the app is
   NOT removed and the teardown fails: removing it would end Prysm abruptly,
   and a worker killed with the TV UI capture open leaves the TV's capture
   locked until a reboot;
@@ -655,10 +655,7 @@ and none after it.
   before the app is removed; the package purged) and must leave nothing; the
   end-of-run warning is registered also when that fails or is interrupted.
   A TV Prysm that does not stop is left installed, and the warning says so
-  instead. An installed Prysm whose `uninstall` subcommand predates stopping
-  the supervisor leaves its processes running, so it is left installed too
-  (its registration removed by that `uninstall`): update it, or remove it by
-  hand.
+  instead.
   The cell then runs and cleans up as always: the target ends without Prysm.
   Data files without an installed Prysm (an earlier uninstall, or an earlier
   run, leaves them) are backed up the same way and nothing is uninstalled.

@@ -304,9 +304,7 @@ def tv_setup(host: str) -> Command:
 
 
 def tv_supervisor_uninstall(host: str) -> Command:
-    """The supervisor's own uninstall: stops the running supervisor (SIGTERM; its worker stops and releases the
-    capture first), then removes hook and manifests and rescans. A supervisor that does not exit within its
-    bound fails it, nothing deregistered."""
+    """The supervisor's own uninstall: removes hook and manifests and rescans; it does not stop a running Prysm."""
     return _ssh('tv.supervisor-uninstall', host, f'{SUPERVISOR} uninstall', 90)
 
 
@@ -318,6 +316,12 @@ def tv_remove_app(host: str) -> Command:
 
 def tv_get_state(host: str) -> Command:
     return _prysm('tv.get-state', host, 'getState', {})
+
+
+def tv_uninstall(host: str) -> Command:
+    """The Luna `uninstall` (as the app): replies at once, stops the worker gracefully, then deregisters and
+    exits. The data directory stays."""
+    return _prysm('tv.uninstall', host, 'uninstall', {}, app=True)
 
 
 def tv_set_enabled(host: str, enabled: bool) -> Command:
@@ -910,6 +914,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'tv.supervisor-uninstall': lambda: tv_supervisor_uninstall('root@tv.example'),
     'tv.remove-app': lambda: tv_remove_app('root@tv.example'),
     'tv.get-state': lambda: tv_get_state('root@tv.example'),
+    'tv.uninstall': lambda: tv_uninstall('root@tv.example'),
     'tv.set-enabled': lambda: tv_set_enabled('root@tv.example', True),
     'tv.set-preferences': lambda: tv_set_preferences('root@tv.example', False, 'http://192.0.2.20:8787'),
     'tv.foreground': lambda: tv_foreground('root@tv.example'),

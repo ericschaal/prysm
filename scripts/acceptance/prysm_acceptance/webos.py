@@ -3,8 +3,6 @@ uninstall, Prysm's files, the worker's load (`tv.Tv`), and Prysm as it may alrea
 (`installed.Existing`)."""
 
 from collections.abc import Callable
-import contextlib
-import http.client
 import json
 import re
 import time
@@ -22,8 +20,9 @@ from prysm_acceptance.transport import Result, Transport
 WAKE_SECONDS = 90
 # The TV's Cast receiver, which plays the clip.
 CAST_APP = 'com.webos.chromecast'
-# How long Prysm's processes may take to go after the supervisor's `uninstall` returned (it waits for them).
-STOP_SECONDS = 20
+# How long Prysm's processes may take to go after the Luna `uninstall`: the worker's 8 s TERM-to-KILL window,
+# then the supervisor's rescan (bounded at 10 s) before it exits.
+STOP_SECONDS = 30
 
 
 class Preferences(TypedDict, total=False):
@@ -229,22 +228,6 @@ class WebosTv:
             found.append(f'the Luna service {commands.SERVICE} ({state.get("flavor")})')
         return found
 
-    def stop_capture(self) -> None:
-        """Capture stopped the way the TV app stops it, when Prysm answers: the full package's lighting off
-        through its portal, the slim package disabled. Best effort: the supervisor's `uninstall` stops Prysm
-        gracefully too; this also releases the capture of an installed Prysm whose `uninstall` predates that."""
-        state = self.get_state()
-        if state is None:
-            return
-        if state.get('flavor') == Flavour.SLIM:
-            self._run(commands.tv_set_enabled(self.target, False), check=False)
-            return
-        url = state.get('portal')
-        if url:
-            # Whatever the portal answers, or a portal address that is not one.
-            with contextlib.suppress(RuntimeError, ValueError, OSError, http.client.HTTPException):
-                prysm_api.Prysm(url).set_target(Target.OFF)
-
     def running(self) -> list[list[str]]:
         """Prysm's processes (`processes`) once none is left, waiting up to `STOP_SECONDS`; those still there."""
         deadline = time.monotonic() + STOP_SECONDS
@@ -253,24 +236,23 @@ class WebosTv:
         return left
 
     def uninstall(self) -> list[str]:
-        """Capture stopped (`stop_capture`), the supervisor's `uninstall` (which stops Prysm, then deregisters
-        it), no Prysm process left, then the app removed through the TV's install service; what of Prysm is
-        still there (`installed`).
+        """Prysm stopped through its Luna `uninstall` (the worker stops gracefully, then the supervisor
+        deregisters and exits), no Prysm process left, the supervisor's `uninstall` (deregisters what is still
+        registered), then the app removed through the TV's install service; what of Prysm is still there
+        (`installed`). A refused or unanswered Luna `uninstall` is waited for the same way.
 
         Raises `installed.Kept`, the app left installed, while a Prysm process still runs: the install
         service would end it abruptly, and a worker killed with the TV UI capture open leaves the TV's
         capture locked until a reboot."""
-        self.stop_capture()
-        stopped = self._run(commands.tv_supervisor_uninstall(self.target), check=False)
+        stopping = self._run(commands.tv_uninstall(self.target), check=False)
         left = self.running()
         if left:
             raise installed.Kept(
-                f"Prysm still runs {STOP_SECONDS} s after the supervisor's uninstall "
-                f'({", ".join(" ".join(process) for process in left)}), so the app was not removed. Its capture '
-                'was stopped first (full: lighting off; slim: disabled), and that uninstall may have removed its '
-                'Luna registration and boot hook',
-                (stopped.stdout + stopped.stderr)[-2000:],
+                f'Prysm still runs {STOP_SECONDS} s after its Luna uninstall '
+                f'({", ".join(" ".join(process) for process in left)}), so the app was not removed',
+                (stopping.stdout + stopping.stderr)[-2000:],
             )
+        self._run(commands.tv_supervisor_uninstall(self.target), check=False)
         removed = self._run(commands.tv_remove_app(self.target), check=False)
         time.sleep(3)
         left = self.installed()

@@ -93,23 +93,18 @@ The TV app sets the service up through the Homebrew Channel's `exec` of
 | `/var/lib/webosbrew/init.d/io.prysm.tv` | Boot hook; runs `setup` at boot |
 | `/var/lib/io.prysm.tv/tv.json` | Preferences (supervisor) |
 | `/var/lib/io.prysm.tv/resume.json` | Intent and boot ID (supervisor) |
-| `/var/lib/io.prysm.tv/supervisor.lock` | Held by the running supervisor; empty |
 | `/var/lib/io.prysm.tv/settings.json` | Full only: portal settings (worker's engine) |
 
 `prysm-webos-service setup` writes the manifests and boot hook (refusing
 unrelated content), rescans Luna and activates the service, all with bounded
 waits. It must run after every install or update: IPKs carry no install
-scripts. `uninstall` stops Prysm, removes the hook and manifests and rescans;
-preferences and settings stay. The Luna method stops the worker and then the
-service itself. The subcommand sends the running supervisor SIGTERM (it stops
-its worker first) and waits for it up to 12 s, above the worker's
-TERM-to-KILL window; a supervisor still running then fails the subcommand and
-nothing is deregistered. It finds the supervisor by `supervisor.lock`, which
-`run` holds for its lifetime (one supervisor per identity), and holds that
-lock itself while it deregisters, so a supervisor Luna starts meanwhile exits
-at once ([lock](../../hosts/webos-service/src/lock.rs)). Remove the setup
-before the app, or the registration stays behind; removing the app ends a
-running Prysm abruptly, so stop it first (the subcommand does).
+scripts. The Luna method `uninstall` (only the app may call it) replies at
+once, stops the worker gracefully (TERM, KILL 8 s later), then removes the
+hook and manifests, rescans and exits. The `uninstall` subcommand only
+deregisters (hook, manifests, rescan); it does not stop a running Prysm.
+Preferences and settings stay either way. Remove the setup before the app, or
+the registration stays behind; removing the app ends a running Prysm
+abruptly, so stop it first (the Luna method does).
 
 Nothing detects or migrates the old `io.prysm.capture` app; it must be removed
 first.

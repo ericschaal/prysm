@@ -116,7 +116,7 @@ class AllowList(unittest.TestCase):
             for uri in re.findall(r'luna://\S+', command.remote or ''):
                 self.assertRegex(
                     uri,
-                    r'^luna://(io\.prysm\.tv\.service/(getState|setPreferences|setEnabled)|'
+                    r'^luna://(io\.prysm\.tv\.service/(getState|setPreferences|setEnabled|uninstall)|'
                     r'com\.webos\.appInstallService/dev/(install|remove)|'
                     r'com\.webos\.service\.applicationManager/(getForegroundAppInfo|launch|closeByAppId))$',
                 )

@@ -54,8 +54,8 @@ NO_SERVICE = Result(1, '', 'Service does not exist: io.prysm.tv.service')
 ABSENT = ''.join(f'absent {path}\n' for path in (*commands.INSTALLED_PATHS, commands.DATA_DIR, commands.STAGING))
 INSTALLED = ABSENT.replace('absent /media', 'present /media').replace(f'absent {commands.DATA_DIR}', 'present /var/lib')
 DATA_ONLY = ABSENT.replace(f'absent {commands.DATA_DIR}', f'present {commands.DATA_DIR}')
-# Prysm stopped before an uninstall removes the app: nothing answering, the supervisor's uninstall, no process.
-STOPPED = [('tv.get-state', NO_SERVICE), ('tv.supervisor-uninstall', ok()), ('tv.processes', ok())]
+# Prysm stopped before an uninstall removes the app: its Luna uninstall, no process, the supervisor's uninstall.
+STOPPED = [('tv.uninstall', ok('{"returnValue":true}')), ('tv.processes', ok()), ('tv.supervisor-uninstall', ok())]
 # The templates that only read the TV.
 READING = {'tv.reachable', 'tv.paths', 'tv.processes', 'tv.get-state', 'tv.read-data', 'tv.sample-worker'}
 
@@ -121,11 +121,9 @@ class TheTv(unittest.TestCase):
         with no_wait():
             self.assertEqual(found.uninstall(), [])
 
-    def test_the_full_package_lights_off_through_its_portal_first(self) -> None:
-        prysm = FakePrysm()
-        self.addCleanup(prysm.close)
+    def test_an_unanswered_luna_uninstall_still_deregisters_and_removes_the_app(self) -> None:
         found = recorded(
-            ('tv.get-state', ok(STATE.replace('192.0.2.50:8787', prysm.listen))),
+            ('tv.uninstall', NO_SERVICE),
             *STOPPED[1:],
             ('tv.remove-app', ok()),
             ('tv.paths', ok(DATA_ONLY)),
@@ -134,32 +132,15 @@ class TheTv(unittest.TestCase):
         )
         with no_wait():
             self.assertEqual(found.uninstall(), [])
-        self.assertEqual(prysm.targets, ['off'])
-
-    def test_the_slim_package_is_disabled_and_a_silent_portal_skipped(self) -> None:
-        found = recorded(('tv.get-state', ok(SLIM)), ('tv.set-enabled', ok('{"returnValue":true}')))
-        found.stop_capture()
-        self.assertIn('"enabled":false', untyped(found.transport).calls[1].remote)
-        with socket.socket() as probe:
-            probe.bind(('127.0.0.1', 0))
-            closed = f'127.0.0.1:{probe.getsockname()[1]}'
-        found = recorded(('tv.get-state', ok(STATE.replace('192.0.2.50:8787', closed))))
-        found.stop_capture()
-        self.assertEqual(calls(found), ['tv.get-state'])
 
     def test_a_prysm_that_keeps_running_is_left_installed(self) -> None:
         still = ok(f'812 {commands.SUPERVISOR}\n')
-        found = recorded(
-            ('tv.get-state', NO_SERVICE),
-            ('tv.supervisor-uninstall', Result(1, '', 'the running supervisor (pid 812) did not exit within 12 s')),
-            ('tv.processes', still),
-            ('tv.processes', still),
-        )
+        found = recorded(('tv.uninstall', NO_SERVICE), ('tv.processes', still), ('tv.processes', still))
         clock = mock.patch.object(webos.time, 'monotonic', side_effect=[0, 0, webos.STOP_SECONDS])
         with clock, no_wait(), self.assertRaisesRegex(installed.Kept, 'the app was not removed') as raised:
             found.uninstall()
-        self.assertNotIn('tv.remove-app', calls(found))
-        self.assertIn('did not exit', untyped(raised.exception).evidence)
+        self.assertEqual(calls(found), ['tv.uninstall', 'tv.processes', 'tv.processes'])
+        self.assertIn('Service does not exist', untyped(raised.exception).evidence)
 
     def test_processes_still_stopping_are_waited_for(self) -> None:
         found = recorded(('tv.processes', ok(f'812 {commands.WORKER}\n')), ('tv.processes', ok()))

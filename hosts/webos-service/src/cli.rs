@@ -1,7 +1,6 @@
 //! The supervisor process: arguments, private directories, signals.
 use crate::identity::Identity;
 use crate::install::{FsInstaller, Installer};
-use crate::lock;
 use crate::state::Flavor;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use prysm_ports::chain;
@@ -33,7 +32,7 @@ enum Action {
     Run(RunArgs),
     /// Write the Luna manifests and boot hook, rescan, activate (setup.sh, boot hook)
     Setup(Sandbox),
-    /// Stop the running service and its worker, remove the boot hook and manifests and rescan; preferences stay
+    /// Remove the boot hook and manifests and rescan; preferences stay
     Uninstall(Sandbox),
 }
 
@@ -104,11 +103,9 @@ fn run(flavor: Flavor, action: Action) -> Result<(), String> {
             println!("{} is registered and running", identity.service);
             Ok(())
         }
-        Action::Uninstall(_) => uninstall(&identity.state_dir, lock::STOP_BOUND, &mut installer),
+        Action::Uninstall(_) => installer.uninstall().map_err(|error| chain(&error)),
         Action::Run(run) => {
             private_dir(&identity.state_dir, sandbox.is_none())?;
-            // Before registering or starting a worker; held until exit.
-            let _held = lock::hold(&identity.state_dir).map_err(|error| chain(&error))?;
             let stop = Arc::new(AtomicUsize::new(0));
             for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
                 let value = usize::try_from(signal).map_err(|error| error.to_string())?;
@@ -121,19 +118,6 @@ fn run(flavor: Flavor, action: Action) -> Result<(), String> {
             crate::luna::serve(&identity, stop, deadline).map_err(|error| chain(&error))
         }
     }
-}
-
-/// Stop the running supervisor (and with it its worker, which releases the
-/// capture tap), then deregister while holding its lock. A supervisor still
-/// running after `bound` leaves the registration in place.
-fn uninstall(
-    state_dir: &Path,
-    bound: Duration,
-    installer: &mut impl Installer,
-) -> Result<(), String> {
-    let _held = lock::stop(state_dir, bound)
-        .map_err(|error| format!("{}; nothing was deregistered", chain(&error)))?;
-    installer.uninstall().map_err(|error| chain(&error))
 }
 
 /// A sandbox is a private `prysm-supervisor.*` directory under the
@@ -241,35 +225,6 @@ mod tests {
         let other = tempfile::tempdir().unwrap();
         fs::set_permissions(other.path(), fs::Permissions::from_mode(0o700)).unwrap();
         assert!(sandbox_root(other.path()).is_err());
-    }
-
-    #[test]
-    fn uninstall_stops_the_running_supervisor_first() {
-        use crate::lock::tests::{Holder, Role};
-        use crate::service::tests::FakeInstaller;
-        let dir = tempfile::tempdir().unwrap();
-        let mut installer = FakeInstaller::default();
-        uninstall(dir.path(), Duration::from_secs(1), &mut installer).unwrap();
-        assert_eq!(*installer.0.borrow(), ["uninstall"], "nothing ran");
-
-        let holder = Holder::start(dir.path(), Role::Supervisor);
-        let mut installer = FakeInstaller::default();
-        uninstall(dir.path(), Duration::from_secs(5), &mut installer).unwrap();
-        assert!(holder.terminated());
-        assert_eq!(*installer.0.borrow(), ["uninstall"]);
-    }
-
-    #[test]
-    fn a_supervisor_that_does_not_stop_keeps_its_registration() {
-        use crate::lock::tests::{Holder, Role};
-        use crate::service::tests::FakeInstaller;
-        let dir = tempfile::tempdir().unwrap();
-        let _holder = Holder::start(dir.path(), Role::Stubborn);
-        let mut installer = FakeInstaller::default();
-        let error = uninstall(dir.path(), Duration::from_millis(300), &mut installer).unwrap_err();
-        assert!(error.contains("did not exit"), "{error}");
-        assert!(error.contains("nothing was deregistered"), "{error}");
-        assert!(installer.0.borrow().is_empty());
     }
 
     #[test]
