@@ -217,6 +217,11 @@ def wled_restored(cell: object, config: Config) -> list[str]:
     ]
 
 
+def driven(lip: str | None) -> str:
+    """Why a cell stops while the sender `lip` drives WLED."""
+    return f'WLED is already driven by {lip}: turn that lighting off first'
+
+
 @contextlib.contextmanager
 def wled_as_found(config: Config, bench: Bench) -> Generator[Wled, None, None]:
     """WLED saved, refused while something else drives it; put back and compared at the end (the `wled`
@@ -224,9 +229,9 @@ def wled_as_found(config: Config, bench: Bench) -> Generator[Wled, None, None]:
     client = Wled(config.wled)
     saved = wled_api.snapshot(client)
     if saved['info'].get('live'):
-        # Two senders would fight over the LEDs and no check could be trusted; and the runner never switches
-        # someone's lighting off.
-        pytest.fail(f'WLED is already driven by {saved["info"].get("lip")}: turn that lighting off first')
+        # Two senders would fight over the LEDs and no check could be trusted; and the runner switches no
+        # lighting off but that of the Prysm a TV cell replaces (`tv_cells.clear`), which it stops before this.
+        pytest.fail(driven(saved['info'].get('lip')))
     path = bench.save('wled-snapshot.json', saved)
     bench.save('wled-cfg.json', wled_api.cfg(client.cfg_raw()))
     yield client

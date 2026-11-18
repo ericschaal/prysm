@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Protocol, TypedDict, cast
 
 from prysm_acceptance.checks import Failed
-from prysm_acceptance.prysm_api import Settings, Target
+from prysm_acceptance.prysm_api import Prysm, Settings, Target
 from prysm_acceptance.web import Json, JsonObject
 
 BACKUP = 'prysm-backup.json'
@@ -73,7 +73,7 @@ class Existing(Protocol):
 
     def restore(self, backup: Backup) -> list[str]:
         """Send what `backup` holds to the Prysm reinstalled there, through its API; what was done. Raises when
-        no Prysm answers. Lighting is not switched on."""
+        no Prysm answers. Lighting is switched on when the backup recorded it on (`lighting`)."""
         ...
 
 
@@ -127,6 +127,17 @@ def replace(existing: Existing, found: list[str], path: Path, warn: Callable[[st
     if left:
         raise Failed(f'the uninstall left on the {existing.name} target: {", ".join(left)}')
     return f'backed up in {path}, then uninstalled'
+
+
+def lighting(prysm: Prysm, target: Target) -> str:
+    """The lighting target the backup recorded, put back through `prysm`'s API: switched on when it was on, left
+    as it is when it was off (the restored Prysm starts as its preferences say); what was done."""
+    if target == Target.OFF:
+        return f'lighting was {target}: left as it is'
+    reply = prysm.set_target(target)
+    if reply.status != 204:
+        raise RuntimeError(f'PUT {prysm.base}/api/v1/target: HTTP {reply.status} {reply.body[:300]!r}')
+    return f'lighting {target}, as backed up'
 
 
 def stamp() -> str:

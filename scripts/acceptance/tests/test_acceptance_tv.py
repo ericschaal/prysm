@@ -23,10 +23,12 @@ from prysm_acceptance import (
     bench,
     commands,
     config,
+    fake_wled,
     feed_cast,
     host_cells,
     host_deb,
     installed,
+    prysm_api,
     run,
     transport,
     tv,
@@ -571,16 +573,99 @@ class Replace(unittest.TestCase):
         )
 
 
-class Restore(unittest.TestCase):
-    """`settings restore`: the backup into the reinstalled Prysm through its API; never lighting."""
+class Lighting(Existing):
+    """The TV's Prysm as `tv_cells.clear` sees it: its portal address from getState, and lighting the fake WLED
+    from `sender` until it is removed."""
 
-    def test_a_slim_backup_sets_the_preferences_and_leaves_lighting(self) -> None:
-        found = recorded(('tv.get-state', ok(SLIM)), ('tv.set-preferences', ok('{"returnValue":true}')))
+    def __init__(self, portal: str | None, sender: str) -> None:
+        super().__init__(a_backup)
+        self.portal = portal
+        self.lights = fake_wled.FakeWled().start()
+        self.lights.ddp_from, self.lights.ddp_at = sender, sys.float_info.max
+
+    def get_state(self) -> JsonObject:
+        return {'portal': self.portal}
+
+    def backup(self, found: list[str]) -> Backup:
+        self.done.append(f'backup, WLED live {untyped(self.lights.si())["info"]["live"]}')
+        return self.make()
+
+    def remove(self) -> list[str]:
+        self.lights.ddp_at = 0.0
+        return super().remove()
+
+
+class Clear(unittest.TestCase):
+    """`tv_cells.clear`: with replace, the TV's own lighting is backed up, then stopped; another sender refused."""
+
+    def clear(self, existing: Lighting) -> str:
+        self.addCleanup(existing.lights.close)
+        path = Path(tempfile.mkdtemp()) / installed.BACKUP
+        lights = tv_cells.Wled(existing.lights.http_address)
+        return tv_cells.clear(cast('webos.WebosTv', existing), ['x'], lights, path, lambda text: None)
+
+    def test_another_sender_is_refused_with_nothing_changed(self) -> None:
+        for portal in ('http://192.0.2.50:8787', None):  # a slim Prysm reports no portal: its receiver lights
+            with self.subTest(portal):
+                existing = Lighting(portal, '192.0.2.99')
+                with self.assertRaisesRegex(Failed, 'WLED is already driven by 192.0.2.99'):
+                    self.clear(existing)
+                self.assertEqual(existing.done, [])
+
+    def test_the_tvs_own_lighting_is_backed_up_lit_then_stopped(self) -> None:
+        existing = Lighting('http://192.0.2.50:8787', '192.0.2.50')
+        self.clear(existing)
+        self.assertEqual(existing.done, ['backup, WLED live True', 'remove'])
+        self.assertFalse(untyped(existing.lights.si())['info']['live'])
+
+    def test_wled_still_live_after_the_uninstall_fails(self) -> None:
+        existing = Lighting('http://192.0.2.50:8787', '192.0.2.50')
+        with (
+            mock.patch.object(existing, 'remove', return_value=[]),  # the uninstall does not stop the frames
+            mock.patch.object(tv_cells, 'RELEASED_SECONDS', 0),
+            self.assertRaisesRegex(Failed, 'still live 0 s'),
+        ):
+            self.clear(existing)
+
+
+class Restore(unittest.TestCase):
+    """`settings restore`: the backup into the reinstalled Prysm through its API, lighting on only if it was."""
+
+    def test_a_slim_backup_sets_the_preferences_then_enables_as_it_was(self) -> None:
+        found = recorded(
+            ('tv.get-state', ok(SLIM)),
+            ('tv.set-preferences', ok('{"returnValue":true}')),
+            ('tv.set-enabled', ok('{"returnValue":true}')),
+        )
         done = found.restore(a_backup())
         sent = untyped(found.transport).calls[1].remote
         self.assertIn('"autostart":true,"instance":"http://192.0.2.20:8787"', sent)
-        self.assertIn('not switched on', done[-1])
+        self.assertIn('"enabled":true', untyped(found.transport).calls[2].remote)
+        self.assertIn('lighting: enabled (streaming to its instance), as backed up', done[-1])
+
+    def test_a_slim_backup_not_enabled_leaves_it(self) -> None:
+        found = recorded(('tv.get-state', ok(SLIM)), ('tv.set-preferences', ok('{"returnValue":true}')))
+        luna = {'flavor': 'slim', 'preferences': SLIM_PREFERENCES, 'enabled': False, 'lighting': None}
+        self.assertEqual(found.restore(a_backup(luna=luna))[-1], 'lighting: not enabled, left as it is')
         self.assertNotIn('tv.set-enabled', calls(found))
+
+    def test_a_full_backup_puts_the_lighting_target_back_only_when_it_was_on(self) -> None:
+        prysm = FakePrysm()
+        self.addCleanup(prysm.close)
+        luna = {'flavor': 'full', 'preferences': {'autostart': False, 'instance': None}, 'enabled': True}
+        for target, sent, said in (
+            (prysm_api.Target.PROCESSED, ['processed'], 'lighting processed, as backed up'),
+            (prysm_api.Target.OFF, [], 'lighting was off: left as it is'),
+        ):
+            with self.subTest(target):
+                prysm.targets.clear()
+                found = recorded(('tv.get-state', ok(STATE)), ('tv.set-preferences', ok('{"returnValue":true}')))
+                portal: installed.Portal = {'url': 'http://192.0.2.50:8787', 'settings': {'leds': {}}, 'target': target}
+                with mock.patch.object(
+                    webos.WebosTv, 'wait_portal', return_value=prysm_api.Prysm(f'http://{prysm.listen}')
+                ):
+                    done = found.restore(a_backup(luna=luna, portal=portal))
+                self.assertEqual((prysm.targets, done[-1]), (sent, said))
 
     def test_nothing_answering_is_refused(self) -> None:
         found = recorded(('tv.get-state', NO_SERVICE))
@@ -599,8 +684,11 @@ class Restore(unittest.TestCase):
         existing.url = f'http://{prysm.listen}'
         backup = existing.backup(['/usr/bin/prysm-headless'])
         self.assertEqual(untyped(backup['portal'])['target'], 'off')
-        self.assertIn('not switched on', existing.restore(backup)[-1])
-        self.assertEqual(len(prysm.saved), 1)
+        self.assertEqual(existing.restore(backup)[-1], 'lighting was off: left as it is')
+        self.assertEqual((len(prysm.saved), prysm.targets), (1, []))
+        untyped(backup['portal'])['target'] = 'processed'
+        self.assertEqual(existing.restore(backup)[-1], 'lighting processed, as backed up')
+        self.assertEqual(prysm.targets, ['processed'])
 
     def test_the_linux_package_refuses_an_admin_unit_and_a_silent_prysm(self) -> None:
         existing = host_deb.DebPrysm(transport.Refusing(), 'pi@pi.example')
@@ -637,7 +725,7 @@ class Restore(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn('luna://io.prysm.tv.service/setPreferences', done.stdout)
         self.assertIn('"autostart":true,"instance":"http://192.0.2.20:8787"', done.stdout)
-        self.assertIn('lighting is not switched on', done.stdout)
+        self.assertIn('luna://io.prysm.tv.service/setEnabled', done.stdout)
         other = runner('settings', 'restore', 'linux', str(path), '--dry-run', '--config', str(EXAMPLE), offline=True)
         self.assertEqual(other.returncode, 2)
         self.assertIn('is not a backup of the linux target', other.stderr)
@@ -804,8 +892,8 @@ class TheCommandLine(unittest.TestCase):
                     for name in (
                         'artifact',
                         'target',
-                        'wled',
                         'cleared',
+                        'wled',
                         'package',
                         'prysm',
                         'running',
@@ -885,7 +973,7 @@ class TheCommandLine(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / 'config.toml'
         path.write_text(EXAMPLE.read_text().replace('installed = "refuse"', 'installed = "replace"'))
         done = self.dry('tv', 'full', '--tv-is-free', path=path)
-        cleared = done.stdout[done.stdout.index('  cleared: ') : done.stdout.index('  package: ')]
+        cleared = done.stdout[done.stdout.index('  cleared: ') : done.stdout.index('  wled: ')]
         self.assertIn(installed.BACKUP, cleared)
         self.assertIn('prysm-webos-service uninstall', cleared)
         deb = self.dry('host', 'linux', '--delivery', 'deb', path=path).stdout

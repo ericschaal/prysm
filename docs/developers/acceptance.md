@@ -481,11 +481,16 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   leaves (`tv-found.json`);
 - **receiver** (slim): the receiver's preflight, as the host cells' (over SSH:
   reachable, `uname -m` against the binary, the port free);
-- **wled**: the host cells' snapshot, refused while something else drives WLED
-  (a Prysm lighting it from the TV included: the runner does not switch it
-  off), restored and compared last;
 - **cleared**: with `installed = "replace"`, what the target found is backed
-  up and uninstalled (below);
+  up and uninstalled (below). While WLED is live, only a sender that is the
+  TV itself (the host of the portal address `getState` reports, so a full
+  package) goes on: the backup is taken while it still lights, so it records
+  the lighting as found, the uninstall stops it, and WLED must then leave
+  live within 10 s. Any other sender (an owner's slim receiver included)
+  stops the cell before anything changes;
+- **wled**: the host cells' snapshot, after **cleared**, so it is of WLED
+  undriven; refused while something else drives WLED; restored and compared
+  last;
 - **package**: the package installed the way that works on webOS 10
   ([packaging](packaging.md)): verified, staged as
   `/media/developer/temp/io.prysm.tv.ipk`, Prysm stopped (below),
@@ -645,8 +650,10 @@ and none after it.
 
 - `"refuse"` (the default): the cell stops in its preflight, before anything
   changes, and lists what it found.
-- `"replace"`: after the WLED snapshot (so a Prysm lighting WLED is refused
-  first), the runner reads what a user would lose through the installed
+- `"replace"`: the Linux package cell after the WLED snapshot (so a Prysm
+  lighting WLED is refused first); the TV cells before it, refusing first a
+  sender other than the TV and stopping the TV's own lighting with the
+  uninstall ([tv](#tv), **cleared**). The runner reads what a user would lose through the installed
   Prysm's own API and saves it as `prysm-backup.json` in the cell's run
   directory: the settings and lighting target from its portal (the full
   package's at the address `getState` reports; the Linux package's at
@@ -676,10 +683,12 @@ uv run --no-dev --project scripts/acceptance acceptance settings restore tv work
 on that configured target through its API and refuses when no Prysm answers
 there (or, on the TV, when the other package is installed): the TV's
 preferences with `setPreferences` and, for the full package, the settings
-with `PUT /api/v1/settings`; the Linux package's settings likewise. It does
-not switch lighting on, set `enabled` or a lighting target: it says what the
-lighting was, and the user switches it on. `--dry-run` prints what it would
-send. The run leaves the TV's data files in `/var/lib/io.prysm.tv` with the
+with `PUT /api/v1/settings`; the Linux package's settings likewise. Then it
+puts the lighting back as the backup recorded it, and says what it did: the
+full package's and the Linux package's lighting target with `PUT
+/api/v1/target`, the slim package's `setEnabled true`; lighting that was off
+(not enabled), or a backup of only data files, is left as it is.
+`--dry-run` prints what it would send. The run leaves the TV's data files in `/var/lib/io.prysm.tv` with the
 run's values (the runner never deletes them). Within one run they are the
 run's own once a TV cell has started installing, so the next TV cell does not
 count them; a later run on the default `"refuse"` stops on them, and a later
@@ -734,7 +743,8 @@ boot, its state with `getState` when `[tv] target` is set.
   cell's target is refused unless `installed = "replace"`, which removes it
   only after a backup that reads back as written, and never reinstalls it
   ([An installed Prysm](#an-installed-prysm-installed)). WLED is snapshotted
-  before anything changes (`wled-snapshot.json`) and restored last, after
+  before anything changes (`wled-snapshot.json`; in a TV cell, after the
+  replaced Prysm's own lighting stopped) and restored last, after
   Prysm has stopped, also on a failure, Ctrl-C, SIGTERM or SIGHUP; a second
   signal does not cut the restore short. After a hard kill use
   `restore-wled`.

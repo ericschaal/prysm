@@ -131,14 +131,15 @@ class DebPrysm:
         return self.found()
 
     def restore(self, backup: Backup) -> list[str]:
-        """The settings into the reinstalled package's Prysm; its lighting is not switched on."""
+        """The settings, then the lighting target, into the reinstalled package's Prysm."""
         portal = backup['portal']
         if portal is None:
             raise RuntimeError('the backup holds no settings')
-        reply = Prysm(self.url).replace_settings(portal['settings'])
+        prysm = Prysm(self.url)
+        reply = prysm.replace_settings(portal['settings'])
         if reply.status != 200:
             raise RuntimeError(f'PUT {self.url}/api/v1/settings: HTTP {reply.status} {reply.body[:300]!r}')
-        return [f'settings into {self.url}', f'lighting was {portal["target"]}: not switched on; use the portal']
+        return [f'settings into {self.url}', installed.lighting(prysm, portal['target'])]
 
 
 class SshDeb:

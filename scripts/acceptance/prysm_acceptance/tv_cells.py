@@ -6,12 +6,13 @@ and the `bench` plugin; a cell is the `cell` parameter (`tv-full`,
 `tv-slim-mac`, `tv-slim-linux`). Its fixtures set up, in order: the package
 (and the slim receiver's binary), the TV (reached over SSH, woken with
 wake-on-LAN when `[tv] mac` is set, and what of Prysm is on it: refused, or
-replaced after the WLED snapshot; nobody using it: only the home screen,
+replaced before the WLED snapshot; nobody using it: only the home screen,
 Prysm or the Cast receiver in front), the slim receiver's target (the host
-cells' seam), WLED's snapshot, a Prysm already on the TV replaced, the
-package installed, the Prysm that lights WLED (the TV's own portal, or the
-receiver with the TV streaming to it), what WLED should see, the test clip,
-and the `screen`: what the TV shows.
+cells' seam), a Prysm already on the TV replaced (its own lighting of WLED
+stopped, any other sender refused), WLED's snapshot, the package installed,
+the Prysm that lights WLED (the TV's own portal, or the receiver with the TV
+streaming to it), what WLED should see, the test clip, and the `screen`:
+what the TV shows.
 
 Its checks are the webOS package's own (registered, reinstall) and, between
 them in their order, those any TV runs (`tv_checks`), taken with their plans
@@ -26,7 +27,7 @@ only Prysm's own files there (`commands.TV_READ_PATHS`, `TV_WRITE_PATHS`),
 and launches or closes no app but Prysm's.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 import socket
@@ -75,6 +76,9 @@ EXAMPLE_TV = 'root@TV'
 # Set once a TV cell of this run starts installing its package: from then on the data files on the TV
 # (which no uninstall removes) are the run's own, not the owner's.
 INSTALLED_BY_RUN = pytest.StashKey[bool]()
+# How long WLED may stay live after the TV's Prysm was uninstalled, as after a host's SIGTERM (`test_sigterm`):
+# the worker has stopped by then, and WLED leaves live a few seconds after the last frame.
+RELEASED_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -218,7 +222,7 @@ def _target_plan(cell: TvCell, config: Config) -> list[str]:
         + (
             'refused, nothing is changed; [tv] installed = "refuse")'
             if config.tv.installed == Installed.REFUSE
-            else 'replaced after the WLED snapshot; [tv] installed = "replace")'
+            else 'backed up, then uninstalled, before the WLED snapshot; [tv] installed = "replace")'
         ),
     ]
 
@@ -285,12 +289,24 @@ def receiver(cell: TvCell, config: Config, bench: Bench, request: pytest.Fixture
     return seam
 
 
-@pytest.fixture(scope='module')
-@planned(does=wled_saved, undoes=wled_restored)
-def wled(config: Config, bench: Bench, receiver: Host | None) -> Iterator[Wled]:
-    """WLED as found, saved before anything changes and put back last, also after a failure or Ctrl-C."""
-    with wled_as_found(config, bench) as client:
-        yield client
+def clear(found: WebosTv, prysm: list[str], lights: Wled, path: Path, warn: Callable[[str], None]) -> str:
+    """`installed = "replace"`: the Prysm the TV had backed up and uninstalled (`installed.replace`).
+
+    While WLED is live only the TV's own sender (the host of the portal address getState reports, as
+    `running` takes it; a slim Prysm's receiver is not the TV) goes on; any other stops the cell before
+    anything changes. The TV's own Prysm is
+    backed up still lighting, so the backup records its lighting as found, and the uninstall stops it; WLED
+    must then leave live within `RELEASED_SECONDS`, so the WLED snapshot after it is of WLED undriven, as for
+    every cell."""
+    sender = lights.si()['info']
+    if sender.get('live'):
+        portal = (found.get_state() or LunaReply()).get('portal')
+        if not portal or urlsplit(portal).hostname != sender.get('lip'):
+            raise Failed(host_cells.driven(sender.get('lip')))
+    done = installed.replace(found, prysm, path, warn)
+    if sender.get('live') and lights.wait(lambda si: not si['info'].get('live'), RELEASED_SECONDS) is None:
+        raise Failed(f'WLED is still live {RELEASED_SECONDS} s after Prysm on the TV was uninstalled', lights.si())
+    return done
 
 
 def _cleared_plan(cell: TvCell, config: Config) -> list[str]:
@@ -299,6 +315,10 @@ def _cleared_plan(cell: TvCell, config: Config) -> list[str]:
         'tv',
         config.tv.installed,
         [
+            f'GET http://{config.wled}/json/si; while WLED is live:',
+            *shown(commands.tv_get_state(ssh)),
+            '(a sender that is not the TV, the host of the portal address getState reports, refuses the cell before '
+            'anything changes)',
             *shown(*(commands.tv_read_data(ssh, name) for name in commands.DATA_FILES), commands.tv_get_state(ssh)),
             '(nothing answering while Prysm is installed stops the cell, nothing removed)',
             'the full package:',
@@ -306,22 +326,40 @@ def _cleared_plan(cell: TvCell, config: Config) -> list[str]:
             'GET PORTAL/api/v1/state (PORTAL as getState reports it, within 40 s)',
             'then, unless only data files were found:',
             *_uninstall_plan(config),
+            f'when the TV was lighting WLED: GET http://{config.wled}/json/si until it is not live (within '
+            f'{RELEASED_SECONDS} s, else the cell fails), before the WLED snapshot',
         ],
     )
 
 
 @pytest.fixture(scope='module')
 @planned(does=_cleared_plan)
-def cleared(bench: Bench, request: pytest.FixtureRequest, target: OnTv, wled: Wled) -> None:
-    """With `[tv] installed = "replace"`, the Prysm the TV had backed up and uninstalled.
+def cleared(config: Config, bench: Bench, request: pytest.FixtureRequest, target: OnTv, receiver: Host | None) -> None:
+    """With `[tv] installed = "replace"`, the Prysm the TV had backed up and uninstalled (`clear`): the TV's own
+    lighting of WLED is stopped by the uninstall, after the backup recorded it; another sender is refused before
+    anything is removed.
 
-    After the WLED snapshot, so Prysm lighting WLED is refused before anything is removed. Its data files
-    stay on the TV (the runner never deletes them); the run changes them, and the backup holds them as they
-    were."""
+    Before the WLED snapshot, so the snapshot is of WLED undriven. Its data files stay on the TV (the runner
+    never deletes them); the run changes them, and the backup holds them as they were."""
     if not target.found:
         return
     path = bench.out_dir / installed.BACKUP
-    bench.log(installed.replace(target.tv, target.found, path, lambda text: warn_at_end(request, text)))
+    bench.log(clear(target.tv, target.found, Wled(config.wled), path, lambda text: warn_at_end(request, text)))
+
+
+@pytest.fixture(scope='module')
+@planned(
+    does=lambda cell, config: [
+        *wled_saved(cell, config),
+        '(after cleared: a Prysm replaced on the TV, and its own lighting, are gone by then)',
+    ],
+    undoes=wled_restored,
+)
+def wled(config: Config, bench: Bench, cleared: None) -> Iterator[Wled]:
+    """WLED as found, saved before anything changes but the replaced Prysm (`cleared`) and put back last, also
+    after a failure or Ctrl-C."""
+    with wled_as_found(config, bench) as client:
+        yield client
 
 
 def _stop_plan(ssh: str) -> list[str]:
@@ -369,7 +407,7 @@ def _uninstall_plan(config: Config) -> list[str]:
     ],
 )
 def package(
-    cell: TvCell, config: Config, request: pytest.FixtureRequest, target: OnTv, cleared: None
+    cell: TvCell, config: Config, request: pytest.FixtureRequest, target: OnTv, wled: Wled
 ) -> Iterator[LunaReply]:
     """The package installed the documented way (verified, staged, Prysm stopped, appInstallService, unstaged,
     setup.sh).

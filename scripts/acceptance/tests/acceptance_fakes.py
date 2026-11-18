@@ -30,13 +30,15 @@ def ok(stdout: str = '') -> Result:
 
 
 class FakePrysm:
-    """`GET /api/v1/state` and `PUT /api/v1/settings` on loopback, as a seam's start uses them; the saved
-    settings come back in the state. Prysm listens on `listen`."""
+    """`GET /api/v1/state`, `PUT /api/v1/settings` and `PUT /api/v1/target` on loopback, as a seam's start and a
+    restore use them; the saved settings come back in the state, the targets put are in `targets`. Prysm listens
+    on `listen`."""
 
     def __init__(self) -> None:
         self.saved: list[object] = []
+        self.targets: list[object] = []
         settings: dict[str, object] = {}
-        saved = self.saved
+        saved, targets = self.saved, self.targets
 
         class Handler(BaseHTTPRequestHandler):
             def reply(self, value: object) -> None:
@@ -52,6 +54,11 @@ class FakePrysm:
 
             def do_PUT(self) -> None:
                 body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                if self.path == '/api/v1/target':
+                    targets.append(body['target'])
+                    self.send_response(204)
+                    self.end_headers()
+                    return
                 saved.append(body)
                 settings.clear()
                 settings.update(body['settings'])

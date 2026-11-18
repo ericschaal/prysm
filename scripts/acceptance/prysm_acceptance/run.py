@@ -21,8 +21,8 @@ artifact, tool or device is missing. --prepare first builds the chosen
 cells' configured artifacts with `cargo xtask dist`. `eyes` takes --only
 NAME[,NAME] and --from NAME (patterns over step names; setup and cleanup
 always run). `settings restore` sends a backup a cell took before it removed
-Prysm (`installed = "replace"`) to the Prysm reinstalled on that target.
-Reports go to work/acceptance/<time>-<stage>/.
+Prysm (`installed = "replace"`) to the Prysm reinstalled on that target,
+lighting on again when the backup recorded it on. Reports go to work/acceptance/<time>-<stage>/.
 Exit code: 0 all passed (skips allowed), 1 a failure, 2 bad usage, 3 the
 preparation (--prepare) failed and nothing was contacted.
 """
@@ -295,6 +295,7 @@ def _restore_plan(existing: installed.Existing, backup: installed.Backup) -> lis
         return [
             f'GET {existing.url}/api/v1/state (refused when nothing answers)',
             f'PUT {existing.url}/api/v1/settings',
+            f'PUT {existing.url}/api/v1/target with the backed-up target, unless it was off (then left as it is)',
         ]
     found = cast('webos.WebosTv', existing)
     preferences = webos.backed_up_preferences(backup)
@@ -302,8 +303,10 @@ def _restore_plan(existing: installed.Existing, backup: installed.Backup) -> lis
         *shown(commands.tv_get_state(found.target)),
         "(refused when nothing answers, or the installed package is not the backup's flavour)",
         *(shown(found.preferences_command(preferences)) if preferences is not None else []),
-        'full: GET PORTAL/api/v1/state, PUT PORTAL/api/v1/settings (PORTAL as getState reports it)',
-        'lighting is not switched on',
+        'full: GET PORTAL/api/v1/state, PUT PORTAL/api/v1/settings (PORTAL as getState reports it), then PUT '
+        'PORTAL/api/v1/target with the backed-up target, unless it was off (then left as it is)',
+        'slim, when the backup has it enabled (else left as it is):',
+        *shown(commands.tv_set_enabled(found.target, True)),
     ]
 
 

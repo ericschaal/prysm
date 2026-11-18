@@ -336,7 +336,9 @@ class WebosTv:
     def restore(self, backup: Backup) -> list[str]:
         """The preferences, and for the full package the portal's settings, into the Prysm reinstalled here; from
         the files when the backup holds only them. Refuses when nothing answers or the package is the other
-        flavour. Lighting and `enabled` are left as they are."""
+        flavour. Then the lighting as the backup recorded it: full, the portal's target (`installed.lighting`);
+        slim, `setEnabled` when it was enabled. Lighting that was off, or not recorded (only files), is left as
+        it is."""
         state = self.get_state()
         if state is None:
             raise RuntimeError(f'no Prysm answers on {self.target} (the Luna service {commands.SERVICE} getState)')
@@ -356,8 +358,17 @@ class WebosTv:
             if reply.status != 200:
                 raise RuntimeError(f'PUT {prysm.base}/api/v1/settings: HTTP {reply.status} {reply.body[:300]!r}')
             done.append(f'settings into {prysm.base}')
-        lighting = (luna or {}).get('lighting')
-        done.append(f'lighting was {lighting or "unknown"}: not switched on; use the TV app')
+            if backup['portal']:
+                done.append(installed.lighting(prysm, backup['portal']['target']))
+        if luna is None:
+            done.append('lighting: not in the backup (only data files), left as it is')
+        elif flavour == Flavour.SLIM:
+            # Slim lights through its receiver: `enabled` (streaming to it) is what the TV holds of the lighting.
+            if luna.get('enabled'):
+                self.call(commands.tv_set_enabled(self.target, True))
+                done.append('lighting: enabled (streaming to its instance), as backed up')
+            else:
+                done.append('lighting: not enabled, left as it is')
         return done
 
 
