@@ -17,6 +17,8 @@ const TEST: Limits = Limits {
     preparation: Duration::from_secs(2),
     pending: Duration::from_secs(2),
     retry: Duration::from_millis(5),
+    ui_retry: Duration::from_millis(5),
+    ui_retry_max: Duration::from_millis(20),
     release: Duration::from_secs(2),
     poll: Duration::from_millis(5),
 };
@@ -68,12 +70,15 @@ struct Script {
     opens: usize,
     releases: usize,
     acquires: usize,
-    /// The UI tap fails to open, fails every acquisition, or fails once.
-    ui_open_fails: bool,
+    /// The UI tap fails to open (fatally or not), fails every acquisition,
+    /// or fails once.
+    ui_open_fails: Option<bool>,
     ui_fails: bool,
     ui_fail_once: bool,
     ui_value: u8,
     ui_opens: usize,
+    /// When each UI open was attempted.
+    ui_opened_at: Vec<Instant>,
     ui_releases: usize,
     /// Taps open right now, and the most ever open together.
     open_taps: usize,
@@ -109,11 +114,12 @@ impl Driver {
                 opens: 0,
                 releases: 0,
                 acquires: 0,
-                ui_open_fails: false,
+                ui_open_fails: None,
                 ui_fails: false,
                 ui_fail_once: false,
                 ui_value: 200,
                 ui_opens: 0,
+                ui_opened_at: Vec::new(),
                 ui_releases: 0,
                 open_taps: 0,
                 most_open: 0,
@@ -193,14 +199,15 @@ impl Backend for Driver {
         assert_eq!(settings.ui_size(), (320, 180));
         let mut script = self.enter("UI open");
         script.ui_opens += 1;
+        script.ui_opened_at.push(Instant::now());
         script.record("UI open");
-        if script.ui_open_fails {
+        if let Some(fatal) = script.ui_open_fails {
             return Err(Fault {
                 error: Error::adapter(
                     "cannot open webOS UI capture",
-                    std::io::Error::other("cannot load libhalgal.so.1"),
+                    std::io::Error::other("HAL_GAL_Init failed with status -1"),
                 ),
-                fatal: false,
+                fatal,
             });
         }
         script.opened();
@@ -217,7 +224,7 @@ impl Tap for FakeUiTap {
         if script.ui_fails || std::mem::take(&mut script.ui_fail_once) {
             return Err(Fault {
                 error: Error::other("HAL_GAL_CaptureFrameBuffer failed with status -1"),
-                fatal: true, // UI faults never end the source, even "fatal" ones
+                fatal: false,
             });
         }
         Ok(Acquired::Frame(ui_frame(script.ui_value)))
@@ -277,11 +284,15 @@ fn start_with(driver: &Driver, video: &VideoSignal, limits: Limits) -> WebosFram
 
 /// Default settings (`include_ui` on), fast.
 fn start_ui(driver: &Driver, video: &VideoSignal) -> WebosFrames {
+    start_ui_with(driver, video, TEST)
+}
+
+fn start_ui_with(driver: &Driver, video: &VideoSignal, limits: Limits) -> WebosFrames {
     let settings = WebosSettings {
         fps: 60,
         ..WebosSettings::default()
     };
-    WebosFrames::start(driver.clone(), settings, video.clone(), TEST).unwrap()
+    WebosFrames::start(driver.clone(), settings, video.clone(), limits).unwrap()
 }
 
 fn start(driver: &Driver, video: &VideoSignal) -> WebosFrames {
@@ -614,11 +625,17 @@ fn without_include_ui_there_are_no_frames_without_video() {
     closes_cleanly(frames);
 }
 
-/// The UI tap failed before its first frame: no retries, no failure, video
-/// still works, and the source idles without video from then on.
-fn assert_unsupported_once(driver: &Driver, video: &VideoSignal, mut frames: WebosFrames) {
+/// A UI open that cannot heal: no retries, no failure, video still works,
+/// and the source idles without video from then on.
+#[test]
+fn missing_ui_capture_is_unsupported_once() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    driver.with(|s| s.ui_open_fails = Some(true));
+    let mut frames = start_ui(&driver, &video);
     eventually(|| driver.count(|s| s.ui_opens) == 1);
-    thread::sleep(TEST.retry * 20);
+    thread::sleep(TEST.ui_retry_max * 5);
     assert!(frames.next_frame(SHORT).unwrap().is_idle());
     assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
 
@@ -627,32 +644,134 @@ fn assert_unsupported_once(driver: &Driver, video: &VideoSignal, mut frames: Web
     assert_eq!(next(&mut frames).as_slice(), &[5; 96]);
     video.set(Video::Unavailable);
     eventually(|| driver.count(|s| s.releases) == 1);
-    thread::sleep(TEST.retry * 20);
+    thread::sleep(TEST.ui_retry_max * 5);
     assert!(frames.next_frame(SHORT).unwrap().is_idle());
     assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
     closes_cleanly(frames);
-}
-
-#[test]
-fn missing_ui_capture_is_unsupported_once() {
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    video.set(Video::Unavailable);
-    driver.with(|s| s.ui_open_fails = true);
-    let frames = start_ui(&driver, &video);
-    assert_unsupported_once(&driver, &video, frames);
     assert_eq!(driver.count(|s| s.ui_releases), 0, "nothing was opened");
 }
 
 #[test]
-fn failed_first_ui_capture_is_unsupported_once() {
+fn failing_ui_capture_is_retried_until_it_works() {
     let driver = Driver::new();
     let video = VideoSignal::default();
     video.set(Video::Unavailable);
     driver.with(|s| s.ui_fails = true);
-    let frames = start_ui(&driver, &video);
-    assert_unsupported_once(&driver, &video, frames);
-    assert_eq!(driver.count(|s| s.ui_releases), 1, "UI tap not released");
+    // Waits long enough that the retries do not end before it works.
+    let limits = Limits {
+        ui_retry_max: Duration::from_secs(1),
+        ..TEST
+    };
+    let mut frames = start_ui_with(&driver, &video, limits);
+    eventually(|| driver.count(|s| s.ui_opens) >= 3);
+    assert!(frames.next_frame(SHORT).unwrap().is_idle(), "no failure");
+    driver.with(|s| s.ui_fails = false);
+    assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
+    closes_cleanly(frames);
+    let script = driver.script();
+    assert_eq!(
+        script.ui_releases, script.ui_opens,
+        "a UI tap was not released"
+    );
+}
+
+/// A UI open that keeps failing through the longest wait (5, 10, 20 ms
+/// here) is not opened again.
+#[test]
+fn ui_capture_failing_through_the_longest_wait_is_unsupported() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    driver.with(|s| s.ui_open_fails = Some(false));
+    let mut frames = start_ui(&driver, &video);
+    eventually(|| driver.count(|s| s.ui_opens) == 4);
+    thread::sleep(TEST.ui_retry_max * 5);
+    assert!(frames.next_frame(SHORT).unwrap().is_idle(), "no failure");
+    assert_eq!(driver.count(|s| s.ui_opens), 4, "UI capture was retried");
+    closes_cleanly(frames);
+}
+
+#[test]
+fn ui_retries_back_off_to_a_cap_and_end() {
+    let tv = Limits::TV;
+    let waits: Vec<_> =
+        std::iter::successors(tv.ui_backoff(None), |&wait| tv.ui_backoff(Some(wait)))
+            .map(|wait| wait.as_secs())
+            .collect();
+    assert_eq!(waits, [5, 10, 20, 40, 60]);
+}
+
+/// The gaps between the UI open attempts from `first` on.
+fn ui_open_gaps(driver: &Driver, first: usize) -> Vec<Duration> {
+    let script = driver.script();
+    script.ui_opened_at[first..]
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect()
+}
+
+#[test]
+fn ui_open_failures_wait_longer_each_time_and_a_frame_resets_the_wait() {
+    let limits = Limits {
+        ui_retry: Duration::from_millis(50),
+        ui_retry_max: Duration::from_millis(400),
+        ..TEST
+    };
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    driver.with(|s| s.ui_open_fails = Some(false));
+    let mut frames = start_ui_with(&driver, &video, limits);
+    eventually(|| driver.count(|s| s.ui_opens) >= 4);
+    // Lower bounds only: a loaded host may wake late, never early.
+    for (gap, wait) in ui_open_gaps(&driver, 0).into_iter().zip([50, 100, 200]) {
+        assert!(gap >= Duration::from_millis(wait), "{gap:?} < {wait} ms");
+    }
+
+    // The next open (after at least 400 ms) works; after a frame, the next
+    // streak starts again at 50 ms, then 100 ms, not at 400 ms.
+    driver.with(|s| s.ui_open_fails = None);
+    assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
+    let base = driver.count(|s| s.ui_opens);
+    driver.with(|s| {
+        s.ui_open_fails = Some(false);
+        s.ui_fail_once = true;
+    });
+    eventually(|| driver.count(|s| s.ui_opens) >= base + 2);
+    let gap = ui_open_gaps(&driver, base)[0];
+    assert!(
+        gap >= Duration::from_millis(100) && gap < Duration::from_millis(400),
+        "{gap:?}"
+    );
+    assert!(frames.next_frame(SHORT).is_ok(), "UI failures never fail");
+    closes_cleanly(frames);
+}
+
+#[test]
+fn only_a_missing_ui_library_or_device_is_permanent() {
+    use prysm_capture_webos_sys as sys;
+    let device = |kind| sys::Error::Device {
+        path: "/dev/gfx",
+        source: std::io::Error::from(kind),
+    };
+    assert!(backend::ui_open_fault(device(std::io::ErrorKind::NotFound)).fatal);
+    assert!(!backend::ui_open_fault(device(std::io::ErrorKind::OutOfMemory)).fatal);
+    let status = sys::Error::Status {
+        operation: "HAL_GAL_Init",
+        code: -1,
+    };
+    let fault = backend::ui_open_fault(status);
+    assert!(!fault.fatal);
+    assert_eq!(
+        chain(&fault.error),
+        "cannot open webOS UI capture: HAL_GAL_Init failed with status -1"
+    );
+    if std::path::Path::new("/dev/gfx").exists() {
+        return; // On a TV this would open real hardware; not a host test.
+    }
+    let load = sys::UiCapture::open(320, 180).err().unwrap();
+    assert!(matches!(load, sys::Error::Load { .. }), "{load}");
+    assert!(backend::ui_open_fault(load).fatal);
 }
 
 #[test]

@@ -68,6 +68,20 @@ fn fault(context: &str, error: sys::Error) -> Fault {
     }
 }
 
+/// A TV UI open that cannot heal in this process (the library or a symbol
+/// is missing, or `/dev/gfx` is) is fatal; any other failure is retried.
+pub(crate) fn ui_open_fault(error: sys::Error) -> Fault {
+    let fatal = match &error {
+        sys::Error::Load { .. } => true,
+        sys::Error::Device { source, .. } => source.kind() == std::io::ErrorKind::NotFound,
+        _ => false,
+    };
+    Fault {
+        fatal,
+        error: Error::adapter("cannot open webOS UI capture", error),
+    }
+}
+
 /// A signal handler interrupting LG's native calls can corrupt their caller;
 /// signals go to the host's other threads instead.
 fn block_signals() -> Result<(), Fault> {
@@ -99,8 +113,7 @@ impl Backend for Lg {
         // HAL GAL binds the tap to this thread; the kernel log names a held
         // lock by thread id (`K_pid`).
         tracing::info!(thread = os_thread(), "opening the TV UI tap");
-        let capture = UiCapture::open(width, height)
-            .map_err(|error| fault("cannot open webOS UI capture", error))?;
+        let capture = UiCapture::open(width, height).map_err(ui_open_fault)?;
         Ok(Box::new(HalTap {
             capture,
             converter: Nv12Converter::default(),

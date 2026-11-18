@@ -51,6 +51,13 @@ Code: [webos-service](../../hosts/webos-service/src/lib.rs),
 - The supervisor logs which signal stopped it. The worker logs opening and
   releasing the TV UI tap with the capture thread's kernel id (`thread`), the
   id a kernel log names as a capture lock's holder (`K_pid`).
+- Without video the capture takes the TV UI. A missing `libhalgal` (or one
+  of its symbols) or `/dev/gfx` turns that off until the worker restarts;
+  any other UI failure is retried after 5, 10, 20, 40 and 60 s (a frame
+  resets the wait), and one after that turns it off too: a failing open
+  can block for seconds, and a stop during one is reported as an
+  unconfirmed release. The first failure of a run logs a warning, the rest debug
+  ([native loop](../../adapters/capture-webos/src/source/native.rs)).
 - The supervisor reaps a worker before starting another. Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.
 - A worker runs while the TV is on (active or screen saver) and, for slim,

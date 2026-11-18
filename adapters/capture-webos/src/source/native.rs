@@ -18,7 +18,10 @@ enum Kind {
 enum UiSupport {
     Untried,
     Works,
-    /// It failed before its first frame: reported once, never retried.
+    /// It failed since its last frame (or since the start); the last wait.
+    Failing(Duration),
+    /// It cannot work in this process, or kept failing through the longest
+    /// wait: reported once, never retried.
     Unsupported,
 }
 
@@ -161,7 +164,9 @@ impl<B: Backend> Native<B> {
             Ok(Acquired::Frame(frame)) => {
                 self.not_ready_since = None;
                 self.pending_since = None;
-                if kind == Kind::Ui && self.ui == UiSupport::Untried {
+                // The first frame, or the first after failures, ends the
+                // backoff and is reported once.
+                if kind == Kind::Ui && self.ui != UiSupport::Works {
                     self.ui = UiSupport::Works;
                     tracing::info!(
                         width = frame.width(),
@@ -199,21 +204,50 @@ impl<B: Backend> Native<B> {
     }
 
     /// Fatal video faults end the source; others release the tap and retry
-    /// later. UI faults never end the source; one before the UI tap's first
-    /// frame marks UI capture unsupported, so it is reported once and not
-    /// retried (lighting then idles without video, as with `include_ui` off).
+    /// later. UI faults never end the source: a fatal one, or one after the
+    /// longest wait, marks UI capture unsupported, reported once and not
+    /// retried (lighting then idles without video, as with `include_ui`
+    /// off); others retry with a backoff that a frame resets, so a long
+    /// session without video regains the TV UI after a transient failure.
     fn recover(&mut self, kind: Kind, fault: Fault) -> Result<()> {
-        if kind == Kind::Ui && self.ui == UiSupport::Untried {
-            self.ui = UiSupport::Unsupported;
-            tracing::warn!(
-                error = %chain(&fault.error),
-                "TV UI capture is unsupported; no frames while there is no video"
-            );
-        } else if kind == Kind::Video && fault.fatal {
-            return Err(fault.error);
-        }
+        let wait = match kind {
+            Kind::Video if fault.fatal => return Err(fault.error),
+            Kind::Video => self.limits.retry,
+            Kind::Ui => {
+                let previous = match self.ui {
+                    UiSupport::Failing(wait) => Some(wait),
+                    _ => None,
+                };
+                let next = if fault.fatal {
+                    None
+                } else {
+                    self.limits.ui_backoff(previous)
+                };
+                let error = chain(&fault.error);
+                match next {
+                    None => {
+                        self.ui = UiSupport::Unsupported;
+                        tracing::warn!(
+                            %error,
+                            "TV UI capture is unsupported; no frames while there is no video"
+                        );
+                        self.limits.retry
+                    }
+                    Some(wait) => {
+                        // Only the first failure of a streak is news.
+                        if previous.is_none() {
+                            tracing::warn!(%error, retry_in = ?wait, "TV UI capture failed; retrying");
+                        } else {
+                            tracing::debug!(%error, retry_in = ?wait, "TV UI capture failed; retrying");
+                        }
+                        self.ui = UiSupport::Failing(wait);
+                        wait
+                    }
+                }
+            }
+        };
         self.release_tap()?;
-        self.retry_at = Instant::now() + self.limits.retry;
+        self.retry_at = Instant::now() + wait;
         Ok(())
     }
 

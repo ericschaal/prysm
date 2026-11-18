@@ -27,11 +27,13 @@ pub(crate) enum Acquired {
 #[derive(Debug)]
 pub(crate) struct Fault {
     pub error: Error,
+    /// Retrying in this process cannot succeed: a video fault ends the
+    /// source, a TV UI fault disables UI capture for the session.
     pub fatal: bool,
 }
 
 impl Fault {
-    /// A failure that ends the source.
+    /// A failure that cannot heal in this process.
     pub(crate) fn fatal(error: Error) -> Self {
         Self { error, fatal: true }
     }
@@ -72,6 +74,14 @@ pub(crate) struct Limits {
     /// Delay before reopening after a recoverable failure or between
     /// preparation attempts.
     pub retry: Duration,
+    /// Delay before reopening the TV UI tap after its first failure since a
+    /// frame; it doubles with each further failure up to `ui_retry_max`,
+    /// and a failure after that wait is the last. Slower than `retry`, and
+    /// bounded: a failing UI open can block for as long as `release`, so a
+    /// close during one is unconfirmed, and a tap that never opens (its
+    /// driver lock held until a reboot) would block that long every time.
+    pub ui_retry: Duration,
+    pub ui_retry_max: Duration,
     /// How long `close` waits for certified release. Below the forwarder's
     /// 5 s and the engine's 10 s stop deadlines so the adapter reports first,
     /// and below the supervisor's 5 s TERM-to-KILL window.
@@ -86,9 +96,22 @@ impl Limits {
         preparation: Duration::from_secs(10),
         pending: Duration::from_secs(2),
         retry: Duration::from_secs(1),
+        ui_retry: Duration::from_secs(5),
+        ui_retry_max: Duration::from_secs(60),
         release: Duration::from_secs(4),
         poll: Duration::from_millis(100),
     };
+
+    /// The wait after a TV UI failure, given the previous wait of the same
+    /// streak of failures (`None`: the first since a frame); `None` once the
+    /// longest wait did not help either.
+    pub(crate) fn ui_backoff(&self, previous: Option<Duration>) -> Option<Duration> {
+        match previous {
+            None => Some(self.ui_retry),
+            Some(wait) if wait >= self.ui_retry_max => None,
+            Some(wait) => Some((wait * 2).min(self.ui_retry_max)),
+        }
+    }
 }
 
 /// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Idle`]
