@@ -39,7 +39,7 @@ shlibs=$(cd "$work/shlibs" && dpkg-shlibdeps -O -e"$package" 2>/dev/null \
 
 install -D -m 0755 "$binary" "$root/usr/bin/$package"
 install -D -m 0644 "$here/$package.service" "$root/usr/lib/systemd/system/$package.service"
-install -D -m 0644 "$repo/hosts/headless/settings.example.json" \
+install -D -m 0644 "$repo/crates/hosts/headless/settings.example.json" \
     "$root/usr/share/doc/$package/examples/settings.example.json"
 {
     printf 'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n'
@@ -52,7 +52,7 @@ install -D -m 0644 "$repo/hosts/headless/settings.example.json" \
     printf ' found in /usr/share/common-licenses/Apache-2.0.\n'
 } >"$work/copyright"
 install -D -m 0644 "$work/copyright" "$root/usr/share/doc/$package/copyright"
-install -D -m 0644 "$repo/adapters/h264/LICENSE.openh264" \
+install -D -m 0644 "$repo/crates/adapters/h264/LICENSE.openh264" \
     "$root/usr/share/doc/$package/LICENSE.openh264"
 # Outside the pipeline below so that a failing date stops the script (no pipefail in sh).
 changelog_date=$(date -R -u ${SOURCE_DATE_EPOCH:+-d "@$SOURCE_DATE_EPOCH"})

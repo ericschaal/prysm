@@ -17,7 +17,7 @@ from prysm_acceptance.transport import Transport
 
 
 class Entry(TypedDict):
-    """One artifact in `manifest.json` (tools/xtask/src/manifest.rs), the fields read here."""
+    """One artifact in `manifest.json` (crates/tools/xtask/src/manifest.rs), the fields read here."""
 
     version: str
     commit: str

@@ -99,12 +99,12 @@ cp "$binaries/$worker" "$stage/service/prysm-webos-worker"
 cp "$root/LICENSE" "$stage/service/licenses/prysm.txt"
 cp "$notices" "$stage/service/licenses/javascript.txt"
 for notice in hyperion tv-native-apis; do
-  cp "$root/adapters/capture-webos-sys/LICENSE.$notice" "$stage/service/licenses/$notice.txt"
+  cp "$root/crates/adapters/capture-webos-sys/LICENSE.$notice" "$stage/service/licenses/$notice.txt"
 done
 if [ "$flavour" = slim ]; then
-  cp "$root/adapters/h264/LICENSE.openh264" "$stage/service/licenses/openh264.txt"
+  cp "$root/crates/adapters/h264/LICENSE.openh264" "$stage/service/licenses/openh264.txt"
   for notice in gstreamer-rs gtk-rs; do
-    cp "$root/adapters/h264-rvenc-sys/LICENSE.$notice" "$stage/service/licenses/$notice.txt"
+    cp "$root/crates/adapters/h264-rvenc-sys/LICENSE.$notice" "$stage/service/licenses/$notice.txt"
   done
 fi
 chmod 755 "$stage/service/setup.sh" "$stage/service/prysm-webos-service" "$stage/service/prysm-webos-worker"

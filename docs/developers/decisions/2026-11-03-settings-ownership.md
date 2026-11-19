@@ -20,6 +20,6 @@ documents checked against a revision.
 Changed in 1.x ([workspace](../workspace.md)): the selected mode (Screen sync or
 device effects) is no longer saved; `--start` requests lighting at launch.
 The settings path is a required argument and there are no `PRYSM_*`
-environment variables ([args.rs](../../../hosts/common/src/args.rs)).
+environment variables ([args.rs](../../../crates/hosts/common/src/args.rs)).
 The engine replaces the controller; loaded settings that no longer validate
 are kept and reported instead of stopping startup.

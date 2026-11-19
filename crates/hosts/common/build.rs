@@ -9,7 +9,8 @@ use std::path::Path;
 const BUNDLES: [&str; 2] = ["headless", "webos"];
 
 fn main() {
-    let root = Path::new(&env::var_os("CARGO_MANIFEST_DIR").expect("set by Cargo")).join("../..");
+    let root =
+        Path::new(&env::var_os("CARGO_MANIFEST_DIR").expect("set by Cargo")).join("../../..");
     // "debug" for every profile that inherits from dev, "release" for the
     // ones that inherit from release (release, bench and webos). Shipping
     // profiles inherit from release, whatever else they change.

@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// The repository root; xtask lives in `tools/xtask`.
+/// The repository root; xtask lives in `crates/tools/xtask`.
 pub fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
-        .nth(2)
-        .expect("tools/xtask is two levels below the repository root")
+        .nth(3)
+        .expect("crates/tools/xtask is three levels below the repository root")
 }
 
 /// Cargo's target directory: `CARGO_TARGET_DIR` or `target/`.

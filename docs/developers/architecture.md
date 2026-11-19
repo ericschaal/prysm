@@ -17,15 +17,15 @@ Reference: [workspace map](workspace.md).
 
 | Owner | Where | Owns |
 | --- | --- | --- |
-| Engine | [`prysm-runtime` engine.rs](../../crates/runtime/src/engine.rs) | One Tokio task and the only mailbox: settings, revision, lighting target, calibration pattern, at most one session. |
-| Session | [session.rs](../../crates/runtime/src/session.rs) | One OS thread per lighting run: the source, the processor and the output. |
-| Adapters | [`adapters`](../../adapters) | One trait each, no channels or state machines: `FrameSource`, `LedOutput`, `SettingsStore`, `FrameSink`. |
-| Surfaces | [`surfaces`](../../surfaces) | Ways in and out: the web portal, the terminal UI, the TV links. Each gets an `EngineHandle` and a `Shutdown`. |
-| Hosts | [`hosts`](../../hosts) | Executables: a list of adapters and surfaces, plus process options. |
+| Engine | [`prysm-runtime` engine.rs](../../crates/engine/runtime/src/engine.rs) | One Tokio task and the only mailbox: settings, revision, lighting target, calibration pattern, at most one session. |
+| Session | [session.rs](../../crates/engine/runtime/src/session.rs) | One OS thread per lighting run: the source, the processor and the output. |
+| Adapters | [`crates/adapters`](../../crates/adapters) | One trait each, no channels or state machines: `FrameSource`, `LedOutput`, `SettingsStore`, `FrameSink`. |
+| Surfaces | [`crates/surfaces`](../../crates/surfaces) | Ways in and out: the web portal, the terminal UI, the TV links. Each gets an `EngineHandle` and a `Shutdown`. |
+| Hosts | [`crates/hosts`](../../crates/hosts) | Executables: a list of adapters and surfaces, plus process options. |
 
-Ports and settings types are in [`prysm-ports`](../../crates/ports/src/lib.rs).
-[`prysm-core`](../../crates/core/src/lib.rs) (frame and colour types, colour
-correction) and [`prysm-processor`](../../crates/processor/src/lib.rs) are shared by the
+Ports and settings types are in [`prysm-ports`](../../crates/engine/ports/src/lib.rs).
+[`prysm-core`](../../crates/engine/core/src/lib.rs) (frame and colour types, colour
+correction) and [`prysm-processor`](../../crates/engine/processor/src/lib.rs) are shared by the
 runtime and the adapters; keep application, serialisation and runtime code out
 of `prysm-core`.
 
@@ -53,7 +53,7 @@ Whoever owns the hardware answers for it, in three tiers:
    protocol and format bounds. The settings schema's limits are at least as
    wide as any hardware's answer.
 2. `SourceFactory::modes` says what the hardware selected by the settings
-   delivers now, as [`Modes`](../../crates/ports/src/modes.rs): ranges where
+   delivers now, as [`Modes`](../../crates/engine/ports/src/modes.rs): ranges where
    it takes any value in them, fixed modes where it offers fixed ones,
    unknown only when it cannot be asked. The portal serves it as
    `POST /api/v1/capture/modes`, off the engine's mailbox.
@@ -74,14 +74,14 @@ Processing assumes sRGB; the file source tone-maps HDR before it. YUYV and
 NV12 are sampled in place at full precision; a capture card that names no
 YCbCr matrix gets BT.709 from 720 lines up and BT.601 below. The WLED output
 encodes the linear colours for the gamma WLED applies, read from its
-configuration (sRGB until read; see [`observe.rs`](../../adapters/output-wled/src/observe.rs)).
+configuration (sRGB until read; see [`observe.rs`](../../crates/adapters/output-wled/src/observe.rs)).
 Unless the output's `dither` is off, it dithers each LED between the two
 light levels WLED can show around the wanted light (its gamma table, then its
 brightness), with a fixed threshold per LED place shared by the LED's three
 channels, so dim colours average out across the strip without flicker; off,
 it rounds to the nearest byte. WLED's current limiter, RGBW auto-white and
 colour correction are not modelled
-([`dither.rs`](../../adapters/output-wled/src/dither.rs)). The
+([`dither.rs`](../../crates/adapters/output-wled/src/dither.rs)). The
 settings' chosen style is resolved to plain values when `Processing::config`
 builds the processor's `Config`; the processor never learns about styles.
 
@@ -101,7 +101,7 @@ frames arrive and the mean latency per link (`State.input`).
 
 Preview and LED-colour streams are demand-driven: with no viewer, the session
 publishes nothing and nothing is encoded. See
-[portal contract](../../surfaces/web-portal/HTTP-CONTRACT.md#preview).
+[portal contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#preview).
 
 ## Shutdown ordering
 
@@ -129,9 +129,10 @@ The two TV workers run under one supervisor, `prysm-webos-service`; see
 
 ## Workspace map
 
-`crates` (core types, processor, ports, runtime, wire protocol, TV link),
-`adapters` (sources, outputs, settings file, H.264, Luna and capture
-bindings), `surfaces`,
-`hosts`, `tools/export-contracts` (OpenAPI for frontend codegen),
+Every crate is under `crates/`, one folder per layer: `engine` (core types,
+processor, ports, runtime, wire protocol, TV link, version), `adapters`
+(sources, outputs, settings file, H.264, Luna and capture bindings),
+`surfaces`, `hosts`, `tools` (`export-contracts`: OpenAPI for frontend
+codegen; `xtask`). Outside it:
 `frontend` (portal and TV bundles), `packaging` (Docker, Debian, IPKs).
 Contract ownership: [CONTRACTS.md](contracts.md).

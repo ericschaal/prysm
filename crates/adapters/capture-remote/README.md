@@ -20,7 +20,7 @@ has a listener of its own:
   `include_ui` blends the sender's on-screen menus into the picture;
   `encoding` is `h264_hardware` (the TV's encoder), `h264_software`
   (OpenH264 on the TV) or `raw`. The host gives its `incoming()`
-  [`Handoff`](../../crates/ports/src/handoff.rs) to the web portal
+  [`Handoff`](../../engine/ports/src/handoff.rs) to the web portal
   (`WebPortal::capture_stream`), which answers the WebSocket upgrade at
   `/api/v1/capture/stream` and hands the connection over as a plain blocking
   socket. `open` takes those connections on one receive thread, which also
@@ -80,7 +80,7 @@ preview.
 ## Wire protocol (version 5)
 
 One WebSocket carries one stream. **The version is the WebSocket
-subprotocol** `prysm-capture.v5` ([`CAPTURE_PROTOCOL`](../../crates/ports/src/handoff.rs)):
+subprotocol** `prysm-capture.v5` ([`CAPTURE_PROTOCOL`](../../engine/ports/src/handoff.rs)):
 the sender offers it in `Sec-WebSocket-Protocol`, the portal answers `101`
 with it, or `426 Upgrade Required` naming the one it speaks when the sender
 offers another (or none). The sender then fails with `WireError::Version {
@@ -89,7 +89,7 @@ when the peer names none); the slim TV worker shows it as its waiting reason.
 
 **The offer** (new in version 5) travels in the upgrade request's
 `prysm-capture-offer` header
-([`CAPTURE_OFFER_HEADER`](../../crates/ports/src/handoff.rs)): compact JSON,
+([`CAPTURE_OFFER_HEADER`](../../engine/ports/src/handoff.rs)): compact JSON,
 a map from encoding to the modes the sender streams in it, an encoding it
 lacks absent:
 

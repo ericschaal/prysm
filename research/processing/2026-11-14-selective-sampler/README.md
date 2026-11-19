@@ -4,7 +4,7 @@ Date: 2026-11-14. Status: offline measurement of a new Picture setting, **Colour
 (`color_focus_percent`, default 0, off); not yet run on the TV or the LEDs. Platform:
 macOS on an Apple M5 Pro, one thread, cargo 1.99.0. Processor at `HEAD` = `71cbfc7` plus
 the uncommitted working-tree change that adds
-[`color_focus.rs`](../../../crates/processor/src/nodes/spatial_sampler/color_focus.rs).
+[`color_focus.rs`](../../../crates/engine/processor/src/nodes/spatial_sampler/color_focus.rs).
 Settings: sample density 128, spatial reach (Edge depth) 10 % unless stated, black-bar
 removal off. User guide: [Picture settings](../../../docs/users/configuration.md#processing).
 Background: [how much colour the plain average loses](../2026-11-14-mean-colourfulness/README.md).

@@ -233,11 +233,11 @@ class Packaging(unittest.TestCase):
         self.assertRegex(compose, r'(?m)^  prysm:$')
         self.assertIn('prysm-data:/data', compose)
         self.assertIn('stop_grace_period: 30s', compose)
-        xtask = (commands.ROOT / 'tools/xtask/src/dist/docker.rs').read_text()
+        xtask = (commands.ROOT / 'crates/tools/xtask/src/dist/docker.rs').read_text()
         self.assertIn(f'const IMAGE: &str = "{commands.IMAGE_TAG}";', xtask)
 
     def test_the_dist_files_and_targets(self) -> None:
-        dist = (commands.ROOT / 'tools/xtask/src/dist.rs').read_text()
+        dist = (commands.ROOT / 'crates/tools/xtask/src/dist.rs').read_text()
         files = {file: name for table in prepare.TARGETS.values() for file, name in table.items()}
         for file in files:
             self.assertIn(f'"{re.sub(r"(arm64|amd64)", "{}", file)}"', dist, file)

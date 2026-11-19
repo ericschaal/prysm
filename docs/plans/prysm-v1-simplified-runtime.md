@@ -272,12 +272,12 @@ new adapter crate and one builder line; no shared crate changes.
 | Crate (v1 path) | As built |
 | --- | --- |
 | `prysm-core`, `prysm-processor` (root workspace) | Unchanged |
-| `prysm-ports` (`crates/ports`) | Ports, `Registry`, factories, `Settings`, `Snapshot`, one `Error`, `LatestSlot` |
-| `prysm-runtime` (`crates/runtime`) | `Engine`/`EngineHandle`, `Forwarder`, `Surface<H>`, `Shutdown`, `Prysm` builder, `NullOutput`, `Preview`/`PreviewWatch`, `Counters`, `sample_rgb`; the session thread is internal; fakes behind feature `testkit` |
-| `prysm-protocol` (`crates/protocol`) | JSON wire values and OpenAPI roots |
-| `prysm-output-wled`, `prysm-capture-device`, `prysm-capture-remote`, `prysm-capture-webos`, `prysm-settings-file` (`adapters/`) | Plain adapters: `Wled`, `DeviceSource`, `RemoteReceiver`/`RemoteSender`, the webOS capture, `SettingsFile` |
-| `prysm-surface-tui`, `prysm-web-portal` (`surfaces/`) | `Tui` and `WebPortal` surfaces |
-| `prysm-headless`, `prysm-tui`, `prysm-host` (`hosts/`) | Desktop host binaries and their shared process code |
+| `prysm-ports` (`crates/engine/ports`) | Ports, `Registry`, factories, `Settings`, `Snapshot`, one `Error`, `LatestSlot` |
+| `prysm-runtime` (`crates/engine/runtime`) | `Engine`/`EngineHandle`, `Forwarder`, `Surface<H>`, `Shutdown`, `Prysm` builder, `NullOutput`, `Preview`/`PreviewWatch`, `Counters`, `sample_rgb`; the session thread is internal; fakes behind feature `testkit` |
+| `prysm-protocol` (`crates/engine/protocol`) | JSON wire values and OpenAPI roots |
+| `prysm-output-wled`, `prysm-capture-device`, `prysm-capture-remote`, `prysm-capture-webos`, `prysm-settings-file` (`crates/adapters/`) | Plain adapters: `Wled`, `DeviceSource`, `RemoteReceiver`/`RemoteSender`, the webOS capture, `SettingsFile` |
+| `prysm-surface-tui`, `prysm-web-portal` (`crates/surfaces/`) | `Tui` and `WebPortal` surfaces |
+| `prysm-headless`, `prysm-tui`, `prysm-host` (`crates/hosts/`) | Desktop host binaries and their shared process code |
 | `prysm-contract`, `prysm-flow`, `prysm-application`, `prysm-output`, `output-terminal`, `control-terminal`, `assemblies`, `testkit` | Removed |
 
 ## What is given up

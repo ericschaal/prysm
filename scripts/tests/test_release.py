@@ -19,8 +19,8 @@ def copy_version_files(root):
     for name in ('VERSION', 'Cargo.toml', '.release-please-manifest.json', release.COMPOSE):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, root / name)
-    (root / 'crates/version/src').mkdir(parents=True)
-    shutil.copyfile(ROOT / 'crates/version/src/lib.rs', root / 'crates/version/src/lib.rs')
+    (root / 'crates/engine/version/src').mkdir(parents=True)
+    shutil.copyfile(ROOT / 'crates/engine/version/src/lib.rs', root / 'crates/engine/version/src/lib.rs')
 
 
 def set_version(root, version):
@@ -61,7 +61,7 @@ class VersionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r'workspace\.package'):
                 release.release_version(root)
             shutil.copyfile(ROOT / 'Cargo.toml', cargo)
-            source = root / 'hosts/common/src/args.rs'
+            source = root / 'crates/hosts/common/src/args.rs'
             source.parent.mkdir(parents=True)
             source.write_text('const V: &str = env!("CARGO_PKG_VERSION");\n')
             with self.assertRaisesRegex(ValueError, 'CARGO_PKG_VERSION'):
@@ -249,7 +249,7 @@ class PublishTests(unittest.TestCase):
         self.assertFalse(self.find(calls, 'gh', 'release', 'upload'))
 
     def test_missing_or_wrong_packages_are_refused(self):
-        # Each manifest refusal has a Rust test (tools/xtask/src/release.rs);
+        # Each manifest refusal has a Rust test (crates/tools/xtask/src/release.rs);
         # one here proves publish.sh stops on it.
         def from_other_commit(name, entry):
             if name == 'prysm-tv-slim.ipk':

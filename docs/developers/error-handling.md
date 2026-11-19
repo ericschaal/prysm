@@ -1,6 +1,6 @@
 # Error handling
 
-The runtime has one error type, [`prysm_ports::Error`](../../crates/ports/src/error.rs).
+The runtime has one error type, [`prysm_ports::Error`](../../crates/engine/ports/src/error.rs).
 Its variants are what callers match on; never match on message text.
 
 | Variant | Meaning | Portal `kind` |
@@ -14,7 +14,7 @@ Its variants are what callers match on; never match on message text.
 | `Panicked`, `Closed` | A runtime task panicked, or the engine stopped | `internal` (500), `unavailable` (503) |
 
 The full wire mapping is in the
-[portal contract](../../surfaces/web-portal/HTTP-CONTRACT.md#failures).
+[portal contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#failures).
 
 ## Rules
 

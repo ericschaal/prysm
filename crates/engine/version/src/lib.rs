@@ -7,7 +7,7 @@
 //! or `+build`, fails the build.
 
 /// The full version, such as `1.2.3` or `1.0.0-alpha.0`.
-pub const VERSION: &str = include_str!("../../../VERSION").trim_ascii_end();
+pub const VERSION: &str = include_str!("../../../../VERSION").trim_ascii_end();
 
 /// `MAJOR.MINOR.PATCH` without a pre-release or build suffix: what the TV
 /// packages' `appinfo.json` and Luna manifests accept.

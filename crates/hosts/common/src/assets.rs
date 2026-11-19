@@ -8,13 +8,14 @@ use prysm_web_portal::{Caching, FrontendAsset};
 /// the same adapters, so they share one bundle.
 #[cfg(bundle_headless)]
 pub const HEADLESS: &[FrontendAsset] =
-    include!("../../../frontend/dist/headless/web-portal/assets.rs");
+    include!("../../../../frontend/dist/headless/web-portal/assets.rs");
 #[cfg(not(bundle_headless))]
 pub const HEADLESS: &[FrontendAsset] = NOT_BUILT;
 
 /// The full TV worker's portal (`prysm-webos`).
 #[cfg(bundle_webos)]
-pub const WEBOS: &[FrontendAsset] = include!("../../../frontend/dist/webos/web-portal/assets.rs");
+pub const WEBOS: &[FrontendAsset] =
+    include!("../../../../frontend/dist/webos/web-portal/assets.rs");
 #[cfg(not(bundle_webos))]
 pub const WEBOS: &[FrontendAsset] = NOT_BUILT;
 

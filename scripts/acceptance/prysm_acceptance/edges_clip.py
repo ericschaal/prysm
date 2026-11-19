@@ -33,7 +33,7 @@ STEP_SECONDS = 2
 CLIP = {'width': 640, 'height': 360, 'fps': 30, 'seconds': 1800}
 
 # The colours stream reports `top` and `bottom` left to right, `left` and
-# `right` top to bottom (`LedColors` in crates/protocol/src/colors.rs; WLED's
+# `right` top to bottom (`LedColors` in crates/engine/protocol/src/colors.rs; WLED's
 # own order, clockwise from the bottom-left corner, is applied only when
 # sending). So each edge's entries run from the first corner to the second
 # (corners numbered clockwise from the top-left, 0 to 3):

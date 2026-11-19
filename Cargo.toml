@@ -1,40 +1,40 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/ports",
-    "crates/runtime",
-    "crates/protocol",
-    "crates/webos-link",
-    "crates/core",
-    "crates/processor",
-    "crates/version",
-    "adapters/capture-device",
-    "adapters/capture-device-sys",
-    "adapters/capture-file",
-    "adapters/capture-remote",
-    "adapters/capture-webos",
-    "adapters/capture-webos-sys",
-    "adapters/h264",
-    "adapters/h264-rvenc-sys",
-    "adapters/output-wled",
-    "adapters/settings-file",
-    "adapters/webos-luna-sys",
-    "surfaces/tui",
-    "surfaces/web-portal",
-    "hosts/common",
-    "hosts/headless",
-    "hosts/tui",
-    "hosts/webos",
-    "hosts/webos-slim",
-    "hosts/webos-service",
-    "tools/export-contracts",
-    "tools/xtask",
+    "crates/engine/ports",
+    "crates/engine/runtime",
+    "crates/engine/protocol",
+    "crates/engine/webos-link",
+    "crates/engine/core",
+    "crates/engine/processor",
+    "crates/engine/version",
+    "crates/adapters/capture-device",
+    "crates/adapters/capture-device-sys",
+    "crates/adapters/capture-file",
+    "crates/adapters/capture-remote",
+    "crates/adapters/capture-webos",
+    "crates/adapters/capture-webos-sys",
+    "crates/adapters/h264",
+    "crates/adapters/h264-rvenc-sys",
+    "crates/adapters/output-wled",
+    "crates/adapters/settings-file",
+    "crates/adapters/webos-luna-sys",
+    "crates/surfaces/tui",
+    "crates/surfaces/web-portal",
+    "crates/hosts/common",
+    "crates/hosts/headless",
+    "crates/hosts/tui",
+    "crates/hosts/webos",
+    "crates/hosts/webos-slim",
+    "crates/hosts/webos-service",
+    "crates/tools/export-contracts",
+    "crates/tools/xtask",
 ]
-default-members = ["hosts/headless", "hosts/tui"]
+default-members = ["crates/hosts/headless", "crates/hosts/tui"]
 
 [workspace.package]
 # Not the product version: that is the VERSION file alone, read by
-# prysm-version (crates/version). The crates are never published.
+# prysm-version (crates/engine/version). The crates are never published.
 version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
@@ -42,34 +42,34 @@ publish = false
 
 [workspace.dependencies]
 # Frame and colour types, processing
-prysm-core = { path = "crates/core" }
-prysm-processor = { path = "crates/processor" }
+prysm-core = { path = "crates/engine/core" }
+prysm-processor = { path = "crates/engine/processor" }
 # The product version (VERSION)
-prysm-version = { path = "crates/version" }
+prysm-version = { path = "crates/engine/version" }
 # Runtime
-prysm-ports = { path = "crates/ports" }
-prysm-runtime = { path = "crates/runtime" }
-prysm-protocol = { path = "crates/protocol" }
-prysm-webos-link = { path = "crates/webos-link" }
+prysm-ports = { path = "crates/engine/ports" }
+prysm-runtime = { path = "crates/engine/runtime" }
+prysm-protocol = { path = "crates/engine/protocol" }
+prysm-webos-link = { path = "crates/engine/webos-link" }
 # Adapters
-prysm-capture-device = { path = "adapters/capture-device" }
-prysm-capture-device-sys = { path = "adapters/capture-device-sys" }
-prysm-capture-file = { path = "adapters/capture-file" }
-prysm-capture-remote = { path = "adapters/capture-remote" }
-prysm-capture-webos = { path = "adapters/capture-webos" }
-prysm-h264 = { path = "adapters/h264" }
-prysm-webos-luna-sys = { path = "adapters/webos-luna-sys" }
-prysm-output-wled = { path = "adapters/output-wled" }
-prysm-settings-file = { path = "adapters/settings-file" }
+prysm-capture-device = { path = "crates/adapters/capture-device" }
+prysm-capture-device-sys = { path = "crates/adapters/capture-device-sys" }
+prysm-capture-file = { path = "crates/adapters/capture-file" }
+prysm-capture-remote = { path = "crates/adapters/capture-remote" }
+prysm-capture-webos = { path = "crates/adapters/capture-webos" }
+prysm-h264 = { path = "crates/adapters/h264" }
+prysm-webos-luna-sys = { path = "crates/adapters/webos-luna-sys" }
+prysm-output-wled = { path = "crates/adapters/output-wled" }
+prysm-settings-file = { path = "crates/adapters/settings-file" }
 # Surfaces and hosts
-prysm-surface-tui = { path = "surfaces/tui" }
-prysm-web-portal = { path = "surfaces/web-portal" }
-prysm-host = { path = "hosts/common" }
+prysm-surface-tui = { path = "crates/surfaces/tui" }
+prysm-web-portal = { path = "crates/surfaces/web-portal" }
+prysm-host = { path = "crates/hosts/common" }
 # External
 # Only the features the hosts' help and usage errors need; no colour or suggestions.
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 futures = "0.3"
-# Data-parallel sampling on a dedicated pool (crates/processor/src/workers.rs).
+# Data-parallel sampling on a dedicated pool (crates/engine/processor/src/workers.rs).
 rayon = "1.11"
 libloading = "0.9"
 nix = "0.31"

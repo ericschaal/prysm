@@ -1,8 +1,9 @@
 # Workspace
 
-Prysm is one Cargo workspace at the repository root plus the npm workspace in
+Prysm is one Cargo workspace at the repository root, with every crate under
+`crates/` in one folder per layer, plus the npm workspace in
 [`frontend/`](../../frontend/README.md). Concurrency lives in
-[`prysm-runtime`](../../crates/runtime/src/lib.rs): one engine task owns settings
+[`prysm-runtime`](../../crates/engine/runtime/src/lib.rs): one engine task owns settings
 and intent, one session thread owns a source, the processor and an output.
 Adapters are single-trait objects with no channels or state machines. Design
 and rationale: [simplified runtime](../plans/prysm-v1-simplified-runtime.md).
@@ -12,14 +13,14 @@ The implementation before 1.0 is in the tag `pre-1.0-consolidation`.
 
 | Directory | Crates | Role |
 | --- | --- | --- |
-| `crates/` | [`prysm-core`](../../crates/core/src/lib.rs), [`prysm-processor`](../../crates/processor/src/lib.rs), [`prysm-ports`](../../crates/ports/src/lib.rs), [`prysm-runtime`](../../crates/runtime/src/lib.rs), [`prysm-protocol`](../../crates/protocol/src/lib.rs), [`prysm-webos-link`](../../crates/webos-link/src/lib.rs), [`prysm-version`](../../crates/version/src/lib.rs) | Frame and colour types, colour correction; edge sampling and smoothing; ports and settings; engine, session, builder; JSON wire types; TV supervisor ↔ worker protocol; the product version from `VERSION` |
-| `adapters/` | [`capture-device`](../../adapters/capture-device/src/lib.rs) (+ [`-sys`](../../adapters/capture-device-sys/src/lib.rs): V4L2 and AVFoundation), [`capture-file`](../../adapters/capture-file/src/lib.rs), [`capture-remote`](../../adapters/capture-remote/README.md), [`capture-webos`](../../adapters/capture-webos/src/lib.rs) (+ `-sys`), [`h264`](../../adapters/h264/src/lib.rs) (+ [`-rvenc-sys`](../../adapters/h264-rvenc-sys/src/lib.rs)), [`webos-luna-sys`](../../adapters/webos-luna-sys/src/lib.rs), [`output-wled`](../../adapters/output-wled/src/lib.rs), [`settings-file`](../../adapters/settings-file/README.md) | `FrameSource`, `FrameSink`, `LedOutput` and `SettingsStore` implementations; the Luna bus; H.264 for the remote stream |
-| `surfaces/` | [`tui`](../../surfaces/tui/src/lib.rs), [`web-portal`](../../surfaces/web-portal/HTTP-CONTRACT.md) | Ways in and out of a running engine |
-| `hosts/` | [`headless`](../../hosts/headless/src/main.rs), [`tui`](../../hosts/tui/src/main.rs), [`common`](../../hosts/common/src/lib.rs) (`prysm-host`); TV: [`webos`](../../hosts/webos/src/main.rs), [`webos-slim`](../../hosts/webos-slim/src/main.rs), [`webos-service`](../../hosts/webos-service/src/lib.rs) | Executables: a builder list plus process options; the TV workers and their supervisor ([design](../plans/prysm-v1-webos-supervisor.md)) |
-| `tools/` | [`export-contracts`](../../tools/export-contracts/src/main.rs), [`xtask`](../../tools/xtask/src/main.rs) | OpenAPI documents for frontend codegen; `cargo xtask`, the build entry point ([develop](README.md#build-and-run)) |
+| `crates/engine/` | [`prysm-core`](../../crates/engine/core/src/lib.rs), [`prysm-processor`](../../crates/engine/processor/src/lib.rs), [`prysm-ports`](../../crates/engine/ports/src/lib.rs), [`prysm-runtime`](../../crates/engine/runtime/src/lib.rs), [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs), [`prysm-webos-link`](../../crates/engine/webos-link/src/lib.rs), [`prysm-version`](../../crates/engine/version/src/lib.rs) | Frame and colour types, colour correction; edge sampling and smoothing; ports and settings; engine, session, builder; JSON wire types; TV supervisor ↔ worker protocol; the product version from `VERSION` |
+| `crates/adapters/` | [`capture-device`](../../crates/adapters/capture-device/src/lib.rs) (+ [`-sys`](../../crates/adapters/capture-device-sys/src/lib.rs): V4L2 and AVFoundation), [`capture-file`](../../crates/adapters/capture-file/src/lib.rs), [`capture-remote`](../../crates/adapters/capture-remote/README.md), [`capture-webos`](../../crates/adapters/capture-webos/src/lib.rs) (+ `-sys`), [`h264`](../../crates/adapters/h264/src/lib.rs) (+ [`-rvenc-sys`](../../crates/adapters/h264-rvenc-sys/src/lib.rs)), [`webos-luna-sys`](../../crates/adapters/webos-luna-sys/src/lib.rs), [`output-wled`](../../crates/adapters/output-wled/src/lib.rs), [`settings-file`](../../crates/adapters/settings-file/README.md) | `FrameSource`, `FrameSink`, `LedOutput` and `SettingsStore` implementations; the Luna bus; H.264 for the remote stream |
+| `crates/surfaces/` | [`tui`](../../crates/surfaces/tui/src/lib.rs), [`web-portal`](../../crates/surfaces/web-portal/HTTP-CONTRACT.md) | Ways in and out of a running engine |
+| `crates/hosts/` | [`headless`](../../crates/hosts/headless/src/main.rs), [`tui`](../../crates/hosts/tui/src/main.rs), [`common`](../../crates/hosts/common/src/lib.rs) (`prysm-host`); TV: [`webos`](../../crates/hosts/webos/src/main.rs), [`webos-slim`](../../crates/hosts/webos-slim/src/main.rs), [`webos-service`](../../crates/hosts/webos-service/src/lib.rs) | Executables: a builder list plus process options; the TV workers and their supervisor ([design](../plans/prysm-v1-webos-supervisor.md)) |
+| `crates/tools/` | [`export-contracts`](../../crates/tools/export-contracts/src/main.rs), [`xtask`](../../crates/tools/xtask/src/main.rs) | OpenAPI documents for frontend codegen; `cargo xtask`, the build entry point ([develop](README.md#build-and-run)) |
 | `frontend/` | npm workspace | Portal and TV bundles; see its [README](../../frontend/README.md) |
 
-Contracts: [ownership and generation](contracts.md), [portal HTTP](../../surfaces/web-portal/HTTP-CONTRACT.md),
+Contracts: [ownership and generation](contracts.md), [portal HTTP](../../crates/surfaces/web-portal/HTTP-CONTRACT.md),
 [UI and host assemblies](ui-assemblies.md).
 
 ## Hosts
@@ -45,7 +46,7 @@ stops without a failure and the target becomes `off`. The `remote` source
 receives the TV's WebSocket on the portal (`/api/v1/capture/stream`), only
 while lighting runs, and asks the sender for the stream its settings describe
 (size, rate, menus, encoding; see
-[capture-remote](../../adapters/capture-remote/README.md)); the TV's slim worker
+[capture-remote](../../crates/adapters/capture-remote/README.md)); the TV's slim worker
 takes the one Prysm address (`http://host:8787`, or `https://` behind a
 reverse proxy), reconnects every second (resolving a host name at each
 attempt), reports that it is waiting meanwhile, captures and encodes as
@@ -58,11 +59,11 @@ state.
 
 ```sh
 cargo run -p prysm-headless -- --help
-cargo run -p prysm-tui -- hosts/tui/settings.example.json
+cargo run -p prysm-tui -- crates/hosts/tui/settings.example.json
 ```
 
-Both take a JSON settings file (examples: [headless](../../hosts/headless/settings.example.json),
-[tui](../../hosts/tui/settings.example.json)) and the same process options on the command line:
+Both take a JSON settings file (examples: [headless](../../crates/hosts/headless/settings.example.json),
+[tui](../../crates/hosts/tui/settings.example.json)) and the same process options on the command line:
 
 ```text
 Usage: prysm-headless [OPTIONS] <settings.json>
@@ -84,7 +85,7 @@ Options:
 
 `--no-portal` excludes the portal options, `'*'` excludes other origins and
 `--check-settings` takes no other option; bad arguments exit 2. `--metrics`
-serves [Prometheus metrics](../../surfaces/web-portal/HTTP-CONTRACT.md#metrics).
+serves [Prometheus metrics](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#metrics).
 `--check-settings` validates the settings file against the host's capture and
 output kinds, prints `settings OK` or the invalid field with its causes and
 exits 0 or 1, without opening a device or the portal. Log lines (`tracing`
@@ -94,7 +95,7 @@ stderr as `prysm-headless: warn <target>: <message> <fields>`, filtered by
 terminal they go only to `--log-file`. The TV workers log the same way to
 stderr. The portal is reachable on the LAN
 without a password and refuses browser pages from other sites unless allowed;
-see [portal access](../../surfaces/web-portal/HTTP-CONTRACT.md#access). Hosts print
+see [portal access](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#access). Hosts print
 the portal URL, start idle, report state changes on stderr, stop on
 SIGINT/SIGTERM (the TUI also on `q`) and exit non-zero if shutdown failed.
 
@@ -165,7 +166,7 @@ cargo test --workspace --all-targets --offline
 ```
 
 `cargo build` builds the two hosts (the default members). `prysm-host`
-(`hosts/common`) embeds the portal bundles for every host that serves one,
+(`crates/hosts/common`) embeds the portal bundles for every host that serves one,
 including `prysm-webos`; without `frontend/dist`, a debug build serves a "not
 built" page and a release build fails ([build](README.md#build-and-run)).
 `xtask` depends on no host, so it builds fast on a fresh checkout; CI's

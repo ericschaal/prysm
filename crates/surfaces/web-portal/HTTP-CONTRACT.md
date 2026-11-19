@@ -1,7 +1,7 @@
 # Portal HTTP contract
 
-The web portal is a [`Surface`](../../crates/runtime/src/surface.rs) of the
-[simplified runtime](../../docs/plans/prysm-v1-simplified-runtime.md). It
+The web portal is a [`Surface`](../../engine/runtime/src/surface.rs) of the
+[simplified runtime](../../../docs/plans/prysm-v1-simplified-runtime.md). It
 serves the host's frontend bundle and a small JSON API over plain HTTP/1.1 on
 any address, typically the LAN, without authentication.
 Every API call maps to one `EngineHandle` call; the portal keeps no state of its
@@ -34,7 +34,7 @@ Prysm::builder(store).source(..).output(..).surface(portal).run(shutdown).await
   from `--metrics`. Off by default.
 - `.capture_stream(remote.incoming())` serves the [capture stream](#capture-stream)
   and hands its connections to that `remote` source through its
-  [`Handoff`](../../crates/ports/src/handoff.rs). Without it the path is `404`.
+  [`Handoff`](../../engine/ports/src/handoff.rs). Without it the path is `404`.
 - Construction validates and returns `Error::Invalid` with field
   `portal.access` (an entry that is neither `scheme://host[:port]` nor exactly
   `null`; `*` needs `AnyOrigin`) or `portal.assets` (not absolute, under
@@ -48,7 +48,7 @@ Prysm::builder(store).source(..).output(..).surface(portal).run(shutdown).await
 ## Routes
 
 API routes need no credentials; the origin policy in [Access](#access) applies
-to every `/api/` request. Revisions are JSON numbers. Wire types are generated from [prysm-protocol](../../crates/protocol/src/lib.rs)
+to every `/api/` request. Revisions are JSON numbers. Wire types are generated from [prysm-protocol](../../engine/protocol/src/lib.rs)
 into `@prysm/contracts/application`.
 
 | Method and path | Body | Success |

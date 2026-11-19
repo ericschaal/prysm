@@ -5,7 +5,7 @@
 # from a green run. No path filters: required checks must always report.
 #
 # `quality`, `frontend` and the two `rust` jobs each run one group of
-# `cargo xtask check` (tools/xtask/src/check.rs), so they check what a local run
+# `cargo xtask check` (crates/tools/xtask/src/check.rs), so they check what a local run
 # checks; `docker` and `webos-ipk` build with `cargo xtask dist`, as a local
 # build does. Every job runs the Rust that rust-toolchain.toml pins
 # (`rustup toolchain install` reads it); Miri runs its own pinned nightly.
@@ -21,7 +21,7 @@
 # - `rust (ubuntu-24.04)`, `rust (macos-26)` (ids `rust-linux`, `rust-macos`):
 #   `check rust`: formatting, clippy, tests, doctests. The hosts embed
 #   frontend/dist when it is there and a "not built" page in debug builds when
-#   not (hosts/common/build.rs). Linux waits for the bundles, so it checks the
+#   not (crates/hosts/common/build.rs). Linux waits for the bundles, so it checks the
 #   real portal and builds the e2e binaries with it; macOS checks the same code
 #   without them and starts at once. `e2e`: the portal in Chromium and WebKit
 #   against those binaries, and the TV app with remote keys in Chromium on its
@@ -92,7 +92,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck -x adapters/capture-device-sys/video_test.sh \
+          shellcheck -x crates/adapters/capture-device-sys/video_test.sh \
             packaging/debian/build-deb.sh packaging/debian/postinst \
             packaging/debian/prerm packaging/debian/postrm \
             packaging/docker/smoke.sh packaging/release/publish.sh \
