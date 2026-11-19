@@ -217,8 +217,8 @@ Each phase lands with its tests and CI green before the next starts.
    read but unused), artifacts from the configuration with their manifest,
    `--dry-run`, and the drops and removals. The `eyes` item about idle
    re-renders stays until its unit test exists (prysm-skn). What remains of
-   it: the Mac device cell has not run on the bench (its device and mode
-   check is tested against the generated examples only); the TV paths have
+   it: the Mac device cell had not run on the bench (it passed on
+   2026-11-19, below); the TV paths have
    no generated source to test the allow-list against, so that contract
    test waits for one; the `tv` stage still reads its old `[tv]` keys
    (`address`, `ssh`) until phase 4. `--prepare` is phase 3.
@@ -261,9 +261,9 @@ Each phase lands with its tests and CI green before the next starts.
    artifacts with one `cargo xtask dist` before anything is contacted (exit
    code 3 when it fails). Both cells passed on a Raspberry Pi 5 on 2026-11-17
    (Debian 13, Docker 26.1.5, compose 2.26.1) through the capture card and
-   the Chromecast feed, and left nothing behind. What remains: `--prepare`
-   has not run a real build, and `target = "local"` for these cells is not
-   implemented.
+   the Chromecast feed, and left nothing behind. `--prepare` ran a real
+   build on 2026-11-18 (below). What remains: `target = "local"` for these
+   cells is not implemented.
 4. **The TV stages on the new configuration**, slim with a Mac or a Linux
    receiver.
 
@@ -322,6 +322,36 @@ Each phase lands with its tests and CI green before the next starts.
    not reach 30 fps to the Pi over Wi-Fi at 640 × 360 (83 Mbit/s), and the
    overlay check's steps were 1.67 to 2.4 s apart where 2 s ± 0.3 s is
    required. Standby was skipped in each: it needs a person at the remote.
+
+   The lock was lost because Prysm was removed, or installed over, while its
+   worker ran. Since 2026-11-18 the runner and `install-ipk.sh` first ask the
+   running service to uninstall and wait until no Prysm process is left
+   ([webOS](webos.md#files-on-the-tv)). With that, on 2026-11-18 and 19, as
+   the fixes of those two days landed:
+   - `tv-full` passed its eleven checks in each of six runs and
+     `tv-slim-mac` its thirteen in one; `tv-slim-linux`, in one, passed
+     twelve and failed raw at 30 fps to the Pi over Wi-Fi, as before (the
+     overlay check's pace held). The kernel log named no failed graphics
+     open after any run.
+   - Standby and wake passed twice on `tv-full` with a person at the
+     remote: in standby the TV did not answer, and after the wake the worker
+     ran and captured again.
+   - `replace` ran with the TV's own Prysm lighting WLED: the backup
+     recorded the lighting, the uninstall stopped it, and `acceptance
+     settings restore` put the settings and the lighting back into the
+     reinstalled package; the settings matched a copy taken by hand.
+   - `acceptance all --prepare` built the Mac and Linux artifacts and every
+     configured host cell passed (41 checks; the Mac device cell skipped,
+     the one capture card being on the Pi).
+   - The Mac device cell passed its eight checks (the card at 1280 × 720 and
+     30 fps through the Chromecast feed) when started from a terminal with
+     camera permission. Started from an app without it, Prysm opens the
+     card, receives no frame and reports nothing, as FFmpeg does.
+
+   What remains unverified: the runner's own wake-on-LAN packet (the TV
+   answered each time), `replace` on the Linux package cell, `target =
+   "local"` on a Linux runner, and on the TV the retry after a failed UI
+   open, which only the capture adapter's tests exercise.
 
 
 A first package stage exists outside the tree (written before this plan, a
