@@ -80,8 +80,8 @@ cargo xtask dist deb-arm64   # or deb-amd64
 ```
 
 This runs the Dockerfile's `artifacts` target for that platform and writes
-`dist/prysm-headless-linux-<arch>.deb`; a release attaches it under Debian's
-name, `prysm-headless_<version>_<arch>.deb`.
+`dist/prysm-headless-linux-<arch>.deb`; a release attaches it as
+`prysm-headless_<version>_<arch>.deb`, with the product version.
 [build-deb.sh](../../packaging/debian/build-deb.sh) does the
 assembly with `dpkg-deb` and also runs on any Debian or Ubuntu with
 `dpkg-dev`. The binary is built on Debian 12 and needs glibc 2.34+ and systemd.
