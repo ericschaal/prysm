@@ -106,7 +106,7 @@ jobs:
         with:
           key: quality
       # The acceptance runner's checks run in its locked uv environment.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Script, TV package and acceptance runner checks, repository links
         run: cargo xtask check scripts
       - name: GitHub Actions workflows
@@ -136,7 +136,7 @@ jobs:
           key: frontend
       # Only for doctor: with uv this job has every tool `check` needs, so
       # doctor fails here if it misjudges one on Linux.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Tools for cargo xtask
         run: cargo xtask doctor
       # Runs npm ci first, then lint, formatting, generated contracts,
