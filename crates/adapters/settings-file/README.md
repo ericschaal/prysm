@@ -72,7 +72,7 @@ the adapter's factory, not here.
 `processing.style` is the chosen style: `{ "kind": "natural" }` (the
 default), `"calm"`, `"vivid"`, `"game"` or `"custom"`. A built-in style stores
 only its name; its values are the table in
-[`Style::built_in`](../../crates/ports/src/style.rs), so an update can retune
+[`Style::built_in`](../../engine/ports/src/style.rs), so an update can retune
 it. `processing.custom_style` holds the user's own values, applied while the
 kind is `custom` and kept while another style is chosen; it is omitted until
 first tuned, and `custom` without it is refused. Every one of its seven
@@ -119,7 +119,7 @@ control is -100 to 100 and omitted ones are 0. `warmth` and `tint` balance
 white, `midtones` lightens or darkens them; `red`, `green` and `blue` each turn
 that colour toward the next (`hue` positive: red toward green, green toward
 blue, blue toward red) and make it softer or stronger (`strength`), without
-moving white ([correction maths](../../crates/core/src/correction.rs)). A
+moving white ([correction maths](../../engine/core/src/correction.rs)). A
 refused control names its path, such as
 `processing.calibrations[0].correction.red.strength`. `active_calibration` names the
 applied calibration; without it no correction is applied. Both are omitted when empty.

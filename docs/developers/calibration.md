@@ -5,7 +5,7 @@ Calibrating uses two small pieces, not a session:
 - **Calibrations** are ordinary settings: `processing.calibrations` (at most
   32) and `processing.active_calibration`, saved through `PUT /api/v1/settings` and
   applied at the next frame. The correction maths is in `prysm-core`
-  ([correction.rs](../../crates/core/src/correction.rs)) and runs
+  ([correction.rs](../../crates/engine/core/src/correction.rs)) and runs
   after colour boost and the dark-scene glow, before brightness, for the LEDs
   and the preview alike: a midtone curve on the shared peak, then one 3x3
   matrix in linear light, white balance times the primaries' matrix. Each
@@ -21,7 +21,7 @@ Calibrating uses two small pieces, not a session:
 
 There are no tokens, leases or locks. The TV app and the phone both follow
 `State.calibration` on the state stream. Patterns and rules:
-[portal contract](../../surfaces/web-portal/HTTP-CONTRACT.md#calibration).
+[portal contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#calibration).
 
 ## Flow
 

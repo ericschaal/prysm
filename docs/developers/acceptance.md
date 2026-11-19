@@ -125,7 +125,7 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   and resolves no presets.
 
 The checks, in order, through the
-[portal API](../../surfaces/web-portal/HTTP-CONTRACT.md) and WLED's JSON API:
+[portal API](../../crates/surfaces/web-portal/HTTP-CONTRACT.md) and WLED's JSON API:
 
 - the running version (`prysm_build_info` in `/metrics`) is the artifact's
   from `manifest.json` (a skip without a matching manifest);

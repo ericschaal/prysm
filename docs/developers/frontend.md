@@ -4,7 +4,7 @@
 desktop portal (served by `prysm-headless` and `prysm-tui`), the TV's own
 portal (full package), and the TV app for each package. The Rust hosts embed
 the browser bundles at compile time
-([`prysm_host::assets`](../../hosts/common/src/assets.rs)); a debug build
+([`prysm_host::assets`](../../crates/hosts/common/src/assets.rs)); a debug build
 without them serves a "not built" page and a release build fails. The TV
 bundles go into the IPKs. `cargo xtask check frontend` runs this workspace's
 checks as CI's `frontend` job does.
@@ -18,7 +18,7 @@ Start a host, then the dev server in a second terminal:
 ```sh
 npm --prefix frontend ci
 npm --prefix frontend run bundle
-cargo run -p prysm-tui -- hosts/tui/settings.example.json
+cargo run -p prysm-tui -- crates/hosts/tui/settings.example.json
 ```
 
 ```sh
@@ -154,7 +154,7 @@ job.
 
 The system behind the portal (the TV stream over `ws://` and `wss://`, a fake
 WLED on 127.0.0.1, settings files across restarts) is tested without a
-browser in [`hosts/headless/tests/system.rs`](../../hosts/headless/tests/system.rs).
+browser in [`crates/hosts/headless/tests/system.rs`](../../crates/hosts/headless/tests/system.rs).
 
 ### Manual browser checks
 

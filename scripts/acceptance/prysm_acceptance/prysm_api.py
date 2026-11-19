@@ -1,4 +1,4 @@
-"""Prysm's portal API (surfaces/web-portal/HTTP-CONTRACT.md), as the checks use it.
+"""Prysm's portal API (crates/surfaces/web-portal/HTTP-CONTRACT.md), as the checks use it.
 
 The replies are typed here, at the edge, as the TypedDicts below: the parts of
 the contract the checks read. They are not validated; a reply of another

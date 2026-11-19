@@ -878,7 +878,7 @@ def image_remove(host: str) -> Command:
 
 # ---- the build system (--prepare) -------------------------------------------
 
-# The `cargo xtask dist` targets (tools/xtask/src/dist.rs) the runner may ask for.
+# The `cargo xtask dist` targets (crates/tools/xtask/src/dist.rs) the runner may ask for.
 XTASK_TARGETS = (
     'mac',
     'linux-arm64',

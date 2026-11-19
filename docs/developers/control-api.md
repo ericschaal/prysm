@@ -2,7 +2,7 @@
 
 The web portal is a surface over the engine: every API call is one engine
 command or watch. The complete contract (routes, bodies, limits, status codes)
-is [HTTP-CONTRACT.md](../../surfaces/web-portal/HTTP-CONTRACT.md); generated
+is [HTTP-CONTRACT.md](../../crates/surfaces/web-portal/HTTP-CONTRACT.md); generated
 types live in `@prysm/contracts/application` ([contracts](contracts.md)).
 
 ## Routes at a glance
@@ -37,7 +37,7 @@ origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
 
 - The settings file holds everything a user changes at run time: `capture`,
   `output`, `processing` (with the style and calibrations). Format:
-  [settings-file](../../adapters/settings-file/README.md).
+  [settings-file](../../crates/adapters/settings-file/README.md).
 - Process options (settings path, `--listen`, `--allow-origin`, `--metrics`,
   `--start`, `--log-file`) are command-line only and never in the file. There
   are no `PRYSM_*` environment variables.

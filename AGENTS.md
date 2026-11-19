@@ -1,7 +1,7 @@
 # Working on Prysm
 
 Prysm turns screen colours into WLED LED colours. It is one Cargo workspace at
-the repository root (`crates/`, `adapters/`, `surfaces/`, `hosts/`, `tools/`)
+the repository root (`crates/`: `engine/`, `adapters/`, `surfaces/`, `hosts/`, `tools/`)
 and the npm workspace in `frontend/`; packaging is in `packaging/`. It builds
 two desktop hosts (`prysm-headless`, `prysm-tui`) and two LG webOS TV packages
 (full, slim) under one supervisor. Use the maintained documentation rather

@@ -2,7 +2,7 @@
 
 Date: 2026-11-14. Status: offline model of the spatial sampler on real frames; nothing
 was run on the TV or the LEDs. Platform: macOS, Python 3 (standard library only).
-Sampler: [`spatial_sampler.rs`](../../../crates/processor/src/nodes/spatial_sampler.rs)
+Sampler: [`spatial_sampler.rs`](../../../crates/engine/processor/src/nodes/spatial_sampler.rs)
 at `57cc93a`, sample density 128, spatial reach 10 %.
 
 ## Question

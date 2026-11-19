@@ -26,7 +26,7 @@ Releases: [releasing](releasing.md).
   settings file.
 - Rust owns contracts. After a settings, state or route change, run
   `cargo xtask codegen` and update the
-  [portal contract](../../surfaces/web-portal/HTTP-CONTRACT.md).
+  [portal contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md).
 - Change callers, fixtures and docs together. Test the changed behaviour.
 - TV tests on hardware keep isolation (probe identity, private directory),
   timeouts and cleanup. Builds do not deploy.

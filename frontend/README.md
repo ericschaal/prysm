@@ -20,7 +20,7 @@ npm --prefix frontend run e2e:tv        # TV app with remote keys in Chromium (i
 `npm run bundle` builds the four entry points (and the browser bundles' Rust
 asset lists) into `dist`; `npm test` runs the schema/drift and DOM tests, and
 its TV tests read `dist`, so bundle first. Bundle before compiling a Rust host:
-[`prysm_host::assets`](../hosts/common/src/assets.rs) embeds the asset lists
+[`prysm_host::assets`](../crates/hosts/common/src/assets.rs) embeds the asset lists
 (a debug build without them serves a "not built" page, a release build
 fails); Cargo never launches npm.
 
@@ -32,11 +32,11 @@ npm --prefix frontend run dev:webos-slim
 ```
 
 The browser portals connect at once to the same-origin
-[portal API](../surfaces/web-portal/HTTP-CONTRACT.md), which needs no
+[portal API](../crates/surfaces/web-portal/HTTP-CONTRACT.md), which needs no
 credentials. The two portal dev servers forward `/api` to a running
 Prysm ([dev.config.mjs](dev.config.mjs)): `http://127.0.0.1:8787` unless
 `PRYSM` names another one. Start a host first
-(`cargo run -p prysm-headless -- hosts/headless/settings.example.json`);
+(`cargo run -p prysm-headless -- crates/hosts/headless/settings.example.json`);
 without one the page says "Invalid state stream response." The TV entry points use the Luna client of the TV supervisor;
 their `demo.html` pages run the same UI on an
 [in-memory supervisor](testkit/luna.ts) and portal (flags `?offline`,

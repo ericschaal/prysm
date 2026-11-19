@@ -1,6 +1,6 @@
 // Dev servers of the browser portals only: forwards the portal API to a
 // running Prysm, so the page works with hot reload. Start a host first, e.g.
-//   cargo run -p prysm-headless -- hosts/headless/settings.example.json
+//   cargo run -p prysm-headless -- crates/hosts/headless/settings.example.json
 // PRYSM names another one (the TV: PRYSM=http://192.168.1.5:8787).
 import { fileURLToPath } from 'node:url';
 

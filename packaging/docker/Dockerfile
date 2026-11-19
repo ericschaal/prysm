@@ -29,11 +29,7 @@ WORKDIR /src
 # VERSION: the product version, compiled in by prysm-version and read by
 # build-deb.sh.
 COPY Cargo.toml Cargo.lock VERSION ./
-COPY adapters/ adapters/
 COPY crates/ crates/
-COPY hosts/ hosts/
-COPY surfaces/ surfaces/
-COPY tools/ tools/
 COPY packaging/debian/ packaging/debian/
 COPY --from=frontend /src/frontend/dist/ frontend/dist/
 ARG TARGETARCH
@@ -47,7 +43,7 @@ FROM build AS deb
 ARG TARGETARCH
 RUN packaging/debian/build-deb.sh /out/prysm-headless /deb/prysm-headless-linux-${TARGETARCH}.deb
 
-# Named as in dist/ (tools/xtask/src/dist.rs), with the architecture, so both
+# Named as in dist/ (crates/tools/xtask/src/dist.rs), with the architecture, so both
 # architectures' files can sit in one directory.
 FROM scratch AS artifacts
 ARG TARGETARCH
@@ -69,7 +65,7 @@ RUN apt-get update \
 COPY --from=build /out/prysm-headless /usr/bin/prysm-headless
 COPY LICENSE /usr/share/doc/prysm-headless/LICENSE
 # The binary includes OpenH264 (BSD 2-clause), built from source.
-COPY adapters/h264/LICENSE.openh264 /usr/share/doc/prysm-headless/LICENSE.openh264
+COPY crates/adapters/h264/LICENSE.openh264 /usr/share/doc/prysm-headless/LICENSE.openh264
 LABEL org.opencontainers.image.title="Prysm" \
     org.opencontainers.image.description="Video capture to WLED with a web portal (prysm-headless)" \
     org.opencontainers.image.source="https://github.com/ericschaal/prysm" \
