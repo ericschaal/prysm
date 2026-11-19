@@ -4,7 +4,7 @@
 **Platform:** project webOS 25 (10.3.2-34) TV, ARM soft-float SDK.
 The sections below refer to different versions; superseded UI fallback and
 older Node cutover notes do not describe current production behavior.
-**Current contract:** [supervisor](../../apps/prysm-webos-service/README.md) and
+**Current contract:** `apps/prysm-webos-service/README.md` (in the tag `pre-1.0-consolidation`) and
 [lifecycle/permissions](../../docs/developers/webos.md).
 
 ## Initial verification

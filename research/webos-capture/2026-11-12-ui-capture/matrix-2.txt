@@ -1,0 +1,8 @@
+# Session 2: smallest working size, NV12 conversion cost, repeat of the key sizes.
+serial-192x108  20 serial 192 108 60
+serial-256x144  20 serial 256 144 60
+serial-320x180  20 serial 320 180 150
+serial-640x360  20 serial 640 360 150
+pace-640x360-30 20 pace 640 360 90 30
+thread-base     20 thread 320 180 10 0
+thread-640-30   20 thread 640 360 10 30

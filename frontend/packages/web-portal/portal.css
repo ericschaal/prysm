@@ -1,0 +1,3009 @@
+/*
+ * Prysm browser portal: base, layout, components, then the Home and
+ * Settings pages. Tokens live in tokens.css; the setup and calibrate flows
+ * in flows.css. Served from the bundle: the portal's CSP allows no inline
+ * style attributes in markup.
+ */
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+:root {
+  font-family: var(--font);
+  font-size: 100%;
+  line-height: var(--leading);
+  color: var(--fg);
+  background: var(--bg);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  /* The hero's glow may spill past the column, never past the page. */
+  overflow-x: clip;
+  background: var(--bg);
+  transition: background-color var(--duration-slow) var(--ease-out);
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1,
+h2,
+h3 {
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  text-wrap: balance;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+button,
+a,
+input,
+select,
+summary {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+a {
+  color: var(--accent-ink);
+  text-underline-offset: 3px;
+}
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+small {
+  font-size: var(--text-small);
+  color: var(--muted);
+}
+:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+}
+[hidden] {
+  display: none !important;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── Layout: one centred column, phone first ──────────────────────────── */
+.portal {
+  width: min(100% - calc(var(--hit) - var(--space-1)), 600px);
+  margin: 0 auto;
+  padding-bottom: var(--space-8);
+}
+.portal-page {
+  display: grid;
+  gap: var(--space-5);
+}
+.portal-flow {
+  display: grid;
+  gap: var(--space-4);
+}
+@media (min-width: 900px) {
+  .portal {
+    width: min(100% - var(--space-8), var(--measure));
+  }
+  /* Home sets its two cards side by side, not far wider than Settings. */
+  .portal.wide {
+    width: min(100% - var(--space-8), 960px);
+  }
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+.portal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: calc(var(--hit) + var(--space-6));
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-title);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+.brand > span {
+  color: var(--accent);
+}
+.brand-mark {
+  width: var(--space-5);
+  height: var(--space-5);
+  margin-right: var(--space-2);
+  fill: none;
+  stroke-linejoin: round;
+}
+.brand-prism {
+  stroke: var(--fg);
+  stroke-width: 2;
+}
+.brand-ray {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.header-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: calc(-1 * var(--space-2));
+}
+/* Connected is the normal case: said to screen readers, not shown. */
+.connection.online {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.connection.offline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  color: var(--alert);
+}
+.connection.offline::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: breathe 2.4s var(--ease-in-out) infinite;
+}
+/* Settings, named: an icon and its word. */
+.header-link {
+  gap: var(--space-2);
+  padding-inline: var(--space-3) var(--space-4);
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+.header-link svg {
+  width: var(--icon);
+  height: var(--icon);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+@media (hover: hover) {
+  .header-link:hover:enabled {
+    border-color: transparent;
+    background: var(--accent-soft);
+    color: var(--fg);
+  }
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--hit);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--text-body);
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition:
+    background-color var(--duration) var(--ease-out),
+    border-color var(--duration) var(--ease-out),
+    color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out),
+    opacity var(--duration) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+@media (hover: hover) {
+  button:hover:enabled {
+    background: var(--accent-soft);
+    border-color: var(--line-strong);
+  }
+}
+button:active:enabled {
+  transform: scale(0.98);
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-fill);
+  font-weight: var(--weight-strong);
+}
+@media (hover: hover) {
+  button.primary:hover:enabled {
+    border-color: transparent;
+    background: var(--accent-hover);
+  }
+}
+button.quiet {
+  border-color: transparent;
+  color: var(--accent-ink);
+  padding-inline: var(--space-3);
+}
+@media (hover: hover) {
+  button.quiet:hover:enabled {
+    border-color: transparent;
+  }
+}
+button.danger {
+  color: var(--alert);
+}
+@media (hover: hover) {
+  button.danger:hover:enabled {
+    background: var(--alert-soft);
+  }
+}
+button[aria-busy='true'] {
+  cursor: progress;
+}
+
+/* ── Notices ──────────────────────────────────────────────────────────── */
+.notice {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-2);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+  overflow-wrap: anywhere;
+  animation: fade-up var(--duration-slow) var(--ease-out) both;
+}
+.notice:focus {
+  outline: none;
+}
+.notice:focus-visible {
+  outline: 2px solid var(--accent-ink);
+}
+.notice.warning {
+  background: var(--alert-soft);
+  color: var(--alert);
+}
+.notice.error {
+  background: var(--alert-soft);
+  color: var(--alert);
+}
+.notice p + button,
+.notice p {
+  margin-bottom: var(--space-3);
+}
+.notice p:last-child {
+  margin-bottom: 0;
+}
+/* Prysm was updated: what happened, and the reload beside it. */
+.notice.updated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+.notice.updated p {
+  margin: 0;
+}
+
+/* ── Fields ───────────────────────────────────────────────────────────── */
+.field {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  min-width: 0;
+  align-content: start;
+}
+.field label,
+legend {
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.unit {
+  font-weight: var(--weight-regular);
+  color: var(--muted);
+}
+.help {
+  margin-top: -2px;
+  font-size: var(--text-small);
+  color: var(--muted);
+  line-height: var(--leading);
+}
+/* Help that disagrees with what is typed, such as the lights' own LED count. */
+.help[data-tone='warning'] {
+  color: var(--alert);
+}
+.field input:not([type='checkbox'], [type='range'], [type='radio']),
+.field select {
+  width: 100%;
+  min-height: var(--space-7);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-1);
+  background: var(--surface);
+  font-size: var(--text-body);
+  font-variant-numeric: tabular-nums;
+  transition:
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out);
+}
+.field
+  input:not([type='checkbox'], [type='range'], [type='radio'])::placeholder {
+  color: var(--muted);
+}
+@media (hover: hover) {
+  .field
+    input:not([type='checkbox'], [type='range'], [type='radio']):hover:enabled,
+  .field select:hover:enabled {
+    border-color: var(--line-strong);
+  }
+}
+.field input:not([type='checkbox'], [type='range'], [type='radio']):focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+.field select {
+  appearance: none;
+  padding-right: var(--hit);
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 22px) 52%,
+    calc(100% - 17px) 52%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+.field input:disabled,
+.field select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.field [aria-invalid='true'] {
+  border-color: var(--alert);
+}
+@media (hover: hover) {
+  .field [aria-invalid='true']:hover:enabled {
+    border-color: var(--alert);
+  }
+}
+/*
+ * The line under a control: help, or in its place the problem. Both share
+ * one grid cell, so the slot keeps the taller one's height and never moves
+ * what follows. An empty slot still keeps one line.
+ */
+.field-note {
+  display: grid;
+  min-height: calc(var(--text-small) * var(--leading));
+}
+.field-note > * {
+  grid-area: 1 / 1;
+}
+.field-note[data-state='error'] > .help,
+.field-note[data-state='help'] > .field-error {
+  visibility: hidden;
+}
+.field-error {
+  color: var(--alert);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+.field-note[data-state='error'] > .field-error {
+  animation: fade-in var(--duration) var(--ease-out) both;
+}
+/* A text button inside a sentence, such as “Try again”. */
+button.link {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: var(--weight-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A form's one status line, kept above its buttons. */
+.form-status,
+.problem-line {
+  min-height: calc(var(--text-small) * var(--leading));
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+/* Two lines kept, so a longer message never pushes the buttons down. */
+.form-status {
+  display: flex;
+  align-items: flex-end;
+  min-height: calc(2 * var(--text-small) * var(--leading));
+}
+/* What to check, under a problem, in the usual colour. */
+.form-status-hint {
+  display: block;
+  color: var(--muted);
+}
+.form-status:focus {
+  outline: none;
+}
+.form-status[data-tone='ok'] {
+  color: var(--ok);
+}
+.form-status[data-tone='warning'] {
+  color: var(--alert);
+}
+.form-status[data-tone='error'],
+.problem-line {
+  color: var(--alert);
+}
+@media (forced-colors: active) {
+  .field select {
+    appearance: auto;
+    background-image: none;
+  }
+}
+
+/* Toggle: a checkbox drawn as a switch, the label first. */
+.field.check {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-4);
+}
+.field.check label {
+  grid-row: 1;
+  grid-column: 1;
+  cursor: pointer;
+}
+.field.check input {
+  grid-row: 1;
+  grid-column: 2;
+  appearance: none;
+  position: relative;
+  width: 50px;
+  height: 30px;
+  margin: 0;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+  cursor: pointer;
+  transition: background-color var(--duration) var(--ease-out);
+}
+.field.check input::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: 50%;
+  background: var(--on-fill);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+  transition: transform var(--duration) var(--ease-out);
+}
+.field.check input:checked {
+  background: var(--accent);
+}
+.field.check input:checked::before {
+  transform: translateX(20px);
+}
+.field.check input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.field.check .help,
+.field.check .field-error {
+  grid-column: 1 / -1;
+}
+@media (forced-colors: active) {
+  .field.check input {
+    appearance: auto;
+  }
+  .field.check input::before {
+    display: none;
+  }
+}
+
+/*
+ * Slider rhythm, one rule on every page and Home: a slider is a group of
+ * label and value, track, and its help line (reserved even when empty).
+ * Inside a group the parts sit close (the track about 16 px from each);
+ * groups stand 32 px apart, so they never run together. A slider without
+ * help counts its empty line in that gap.
+ */
+.field.range {
+  margin-bottom: var(--space-6);
+}
+.field.range:has(> .field-note > .help:empty) {
+  margin-bottom: calc(var(--space-6) - var(--text-small) * var(--leading));
+}
+
+/*
+ * Slider: one style everywhere, Home's. A filled track (`--fill-from`,
+ * `--fill-to`, set by the field) in the text's own colour, a clear thumb.
+ */
+.range-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+/* A slider named by its ends: what each end does, its value between them. */
+.range-ends {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.range-ends > span:last-child {
+  text-align: right;
+}
+.range output {
+  color: var(--muted);
+  font-size: var(--text-body);
+  font-variant-numeric: tabular-nums;
+}
+.range input {
+  --rest: color-mix(in srgb, var(--fg) 20%, transparent);
+  --track: linear-gradient(
+    90deg,
+    var(--rest) var(--fill-from, 0%),
+    color-mix(in srgb, var(--fg) 75%, transparent) var(--fill-from, 0%)
+      var(--fill-to, 0%),
+    var(--rest) var(--fill-to, 0%)
+  );
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: var(--hit);
+  /* The hit area is taller than the track: tuck it into the field's gaps. */
+  margin: -10px 0;
+  background: transparent;
+  cursor: pointer;
+}
+.range input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.range input::-webkit-slider-runnable-track {
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--track);
+}
+.range input::-moz-range-track {
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--track);
+}
+.range input::-webkit-slider-thumb {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -9px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--on-fill);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.08),
+    0 2px 8px rgb(0 0 0 / 0.3);
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out);
+}
+.range input::-moz-range-thumb {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--on-fill);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.08),
+    0 2px 8px rgb(0 0 0 / 0.3);
+}
+.range input:active:enabled::-webkit-slider-thumb {
+  transform: scale(1.1);
+}
+.range input:focus-visible {
+  outline: none;
+}
+.range input:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    var(--ring),
+    0 2px 8px rgb(0 0 0 / 0.3);
+}
+.range input:focus-visible::-moz-range-thumb {
+  box-shadow: var(--ring);
+}
+@media (forced-colors: active) {
+  .range input {
+    appearance: auto;
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  column-gap: var(--space-5);
+}
+/*
+ * Blocks of a form follow each other at one distance: a field's control is
+ * followed by its kept note line and margin, which make --space-block, so
+ * any other block is followed by --space-block too. One that keeps a note
+ * line of its own, as a field does, is followed by a field's margin.
+ */
+fieldset {
+  min-width: 0;
+  margin: 0 0 var(--space-block);
+  padding: 0;
+  border: 0;
+}
+fieldset:where(:has(> .field-note:last-child:not([data-said='false']))) {
+  margin-bottom: var(--space-3);
+}
+/* A group of sliders keeps the sliders' own rhythm, which ends it. */
+fieldset:where(:has(.range)) {
+  margin-bottom: 0;
+}
+legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+}
+/* A group's note line sits under it as a field's does under its control. */
+fieldset > .field-note {
+  margin-top: var(--space-2);
+}
+
+/* Form actions: the buttons at the end. */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+/* ── Home ─────────────────────────────────────────────────────────────── */
+.overline {
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-weight: var(--weight-strong);
+  letter-spacing: 0.08em;
+  line-height: var(--leading);
+  text-transform: uppercase;
+}
+/* A group of rows is named in full ink: it outranks the rows’ own quiet lines. */
+.group > .overline {
+  padding-top: var(--space-4);
+  color: var(--fg);
+}
+.home-grid {
+  display: grid;
+  gap: var(--space-5);
+}
+/* Without the LED drawing the setup card is short: no empty stretch. */
+.setup-card:not(:has(.led-map)) {
+  align-self: start;
+}
+@media (min-width: 900px) {
+  /* Two cards of one width: the controls, and the setup they drive. */
+  .home-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-5);
+  }
+}
+
+/* The light card: a night stage; its light drifts while the lights are on. */
+@property --light-a {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #e0479e;
+}
+@property --light-b {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #22c3ee;
+}
+@property --light-c {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #6b4dff;
+}
+@property --light-d {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff8a4c;
+}
+/* The frame holds the light's colours for the card and the LED drawing. */
+.light-frame {
+  --light-a: var(--aurora-1);
+  --light-b: var(--aurora-2);
+  --light-c: var(--aurora-3);
+  --light-d: var(--aurora-4);
+  display: grid;
+  /* Switching modes cross-fades the colours; turning on starts in them. */
+  transition:
+    --light-a var(--duration-mix) var(--ease-in-out),
+    --light-b var(--duration-mix) var(--ease-in-out),
+    --light-c var(--duration-mix) var(--ease-in-out),
+    --light-d var(--duration-mix) var(--ease-in-out);
+}
+.light-frame[data-palette='effects'] {
+  --light-a: var(--effects-1);
+  --light-b: var(--effects-2);
+  --light-c: var(--effects-3);
+  --light-d: var(--effects-4);
+}
+/*
+ * A failed or faulted session: a calm warning lamp, not an alarm. The same
+ * aurora in deep red and rose, low and still drifting slowly; no ignition.
+ * The colours cross-fade from whatever was showing.
+ */
+.light-frame[data-palette='error'] {
+  --light-a: var(--error-1);
+  --light-b: var(--error-2);
+  --light-c: var(--error-3);
+  --light-d: var(--error-4);
+}
+/*
+ * Screen sync with the LEDs' colours streaming: the card's four fields take
+ * them (see live-colors.ts), easing from one update to the next.
+ */
+.home-grid[data-live='colors'] .light-frame[data-palette='sync'] {
+  --light-a: var(--live-a);
+  --light-b: var(--live-b);
+  --light-c: var(--live-c);
+  --light-d: var(--live-d);
+  transition:
+    --light-a var(--duration-led) var(--ease-out),
+    --light-b var(--duration-led) var(--ease-out),
+    --light-c var(--duration-led) var(--ease-out),
+    --light-d var(--duration-led) var(--ease-out);
+}
+.light-card {
+  --pad: var(--space-5);
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  align-content: start;
+  padding: var(--pad);
+  border-radius: var(--radius-3);
+  background:
+    radial-gradient(
+      120% 70% at 50% -10%,
+      color-mix(in srgb, var(--fg) 5%, transparent),
+      transparent 70%
+    ),
+    var(--surface);
+  /* All its colour stays inside: outside, the same neutral lift as the setup card. */
+  box-shadow:
+    0 0 0 1px var(--line) inset,
+    var(--shadow);
+  color: var(--fg);
+}
+@media (min-width: 900px) {
+  .light-card {
+    --pad: var(--space-6);
+  }
+}
+
+/*
+ * Four soft lights, each drifting on its own slow path (transform only). The
+ * drift never stops; turning on grows the whole light out of the power
+ * button in one long ease-out, and turning off draws it back in.
+ */
+.aurora {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.aurora-light {
+  position: absolute;
+  inset: 0;
+  /* The power button's centre: the light is born there. */
+  transform-origin: calc(100% - var(--pad) - 38px) calc(var(--pad) + 56px);
+  transform: scale(0.2);
+  opacity: 0;
+  transition:
+    transform var(--duration-light-off) var(--ease-in-out),
+    opacity var(--duration-light-off) var(--ease-in-out);
+}
+.aurora span {
+  position: absolute;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  will-change: transform;
+  animation: drift-a 23s var(--ease-in-out) infinite alternate;
+}
+.aurora span:nth-child(1) {
+  top: -38%;
+  left: -30%;
+  width: 95%;
+  background: radial-gradient(closest-side, var(--light-a), transparent);
+}
+.aurora span:nth-child(2) {
+  top: -30%;
+  right: -32%;
+  width: 90%;
+  background: radial-gradient(closest-side, var(--light-b), transparent);
+  animation-name: drift-b;
+  animation-duration: 29s;
+}
+.aurora span:nth-child(3) {
+  top: 8%;
+  left: 10%;
+  width: 85%;
+  background: radial-gradient(closest-side, var(--light-c), transparent);
+  animation-name: drift-c;
+  animation-duration: 37s;
+}
+.aurora span:nth-child(4) {
+  top: -42%;
+  left: 28%;
+  width: 55%;
+  opacity: 0.7;
+  background: radial-gradient(closest-side, var(--light-d), transparent);
+  animation-name: drift-d;
+  animation-duration: 19s;
+}
+/* A darker rim under the overline, and a calmer floor under the controls. */
+.aurora::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) 45%, transparent),
+    transparent 14%,
+    transparent 22%,
+    color-mix(in srgb, var(--surface) 62%, transparent) 62%,
+    color-mix(in srgb, var(--surface) 80%, transparent)
+  );
+}
+/* Failed or faulted: the warning lamp, low. */
+.light-card[data-mood='problem'] .aurora-light {
+  transform: none;
+  opacity: 0.55;
+  transition:
+    transform var(--duration-light-on) var(--ease-light),
+    opacity var(--duration-mix) var(--ease-in-out);
+}
+/* Starting: a small glow gathers at the button while Prysm gets ready. */
+.light-card[data-mood='starting']:not([data-lit='true']) .aurora-light {
+  transform: scale(0.28);
+  opacity: 0.22;
+  transition:
+    transform var(--duration-light-on) var(--ease-light),
+    opacity var(--duration-light-on) var(--ease-light);
+}
+/*
+ * Lit: the light grows to rest. Opacity rises a little slower than the
+ * size, so the light is never brighter near the button than it rests.
+ */
+.light-card[data-lit='true'] .aurora-light {
+  transform: none;
+  opacity: 0.9;
+  transition:
+    transform var(--duration-light-on) var(--ease-light),
+    opacity var(--duration-light-on) var(--ease-out);
+}
+.light-card[data-lit='true'][data-mode='device_native'] .aurora-light {
+  opacity: 0.62;
+}
+/*
+ * The ignition, on top of the growth and in its direction: a brief lift of
+ * the light (at most about 13% above rest, at about 40% of the way) and a
+ * feathered wavefront in the mode's own colours that leaves the button and
+ * crosses the card once. Opacity and transform only; it plays once per
+ * turn-on, alternating names a/b so each turn-on restarts it.
+ */
+/* The effects rest dimmer, so their ignition is gentler in proportion. */
+.light-card[data-mode='device_native'] {
+  --ignite-strength: 0.5;
+}
+.aurora-crest,
+.aurora-wave {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.aurora-crest {
+  inset: 0;
+  background:
+    radial-gradient(
+      90% 70% at calc(100% - var(--pad) - 38px) calc(var(--pad) + 56px),
+      color-mix(in srgb, var(--light-c) 45%, transparent),
+      transparent 75%
+    ),
+    radial-gradient(
+      70% 60% at 20% 20%,
+      color-mix(in srgb, var(--light-a) 50%, transparent),
+      transparent 75%
+    );
+}
+.aurora-wave {
+  /* A circle wide enough to cross the card, centred on the power button. */
+  left: calc(100% - var(--pad) - 38px);
+  top: calc(var(--pad) + 56px);
+  width: 420%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    transparent 38%,
+    color-mix(in srgb, var(--light-c) 16%, transparent) 56%,
+    color-mix(in srgb, var(--light-b) 30%, transparent) 70%,
+    color-mix(in srgb, var(--light-a) 18%, transparent) 82%,
+    transparent 96%
+  );
+  transform: translate(-50%, -50%) scale(0.02);
+}
+.light-card[data-ignite='a'] .aurora-crest {
+  animation: crest-a var(--duration-ignite) linear;
+}
+.light-card[data-ignite='b'] .aurora-crest {
+  animation: crest-b var(--duration-ignite) linear;
+}
+.light-card[data-ignite='a'] .aurora-wave {
+  animation: wave-a var(--duration-wave) cubic-bezier(0.25, 0.55, 0.35, 1);
+}
+.light-card[data-ignite='b'] .aurora-wave {
+  animation: wave-b var(--duration-wave) cubic-bezier(0.25, 0.55, 0.35, 1);
+}
+@keyframes crest-a {
+  0% {
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+  }
+  40% {
+    opacity: var(--ignite-strength, 1);
+    animation-timing-function: cubic-bezier(0.2, 0.6, 0.35, 1);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes crest-b {
+  0% {
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+  }
+  40% {
+    opacity: var(--ignite-strength, 1);
+    animation-timing-function: cubic-bezier(0.2, 0.6, 0.35, 1);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes wave-a {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.02);
+  }
+  18% {
+    opacity: var(--ignite-strength, 1);
+  }
+  60% {
+    opacity: calc(var(--ignite-strength, 1) * 0.75);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes wave-b {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.02);
+  }
+  18% {
+    opacity: var(--ignite-strength, 1);
+  }
+  60% {
+    opacity: calc(var(--ignite-strength, 1) * 0.75);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* Turning off is simple: an ignition still playing stops at once. */
+.light-card:not([data-lit='true']) .aurora-crest,
+.light-card:not([data-lit='true']) .aurora-wave,
+.light-card:not([data-lit='true']) .power-wrap,
+.light-card:not([data-lit='true']) .power-wrap::after {
+  animation: none;
+}
+
+/* The lamp ignites: a small push out, and a halo that settles. */
+.light-card[data-ignite='a'] .power-wrap {
+  animation: ignite-a var(--duration-lamp) cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.light-card[data-ignite='b'] .power-wrap {
+  animation: ignite-b var(--duration-lamp) cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.power-wrap::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--fg) 50%, transparent),
+    0 0 30px 6px color-mix(in srgb, var(--light-c) 55%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.light-card[data-ignite='a'] .power-wrap::after {
+  animation: halo-a var(--duration-wave) cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.light-card[data-ignite='b'] .power-wrap::after {
+  animation: halo-b var(--duration-wave) cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+@keyframes ignite-a {
+  from {
+    transform: scale(0.94);
+  }
+}
+@keyframes ignite-b {
+  from {
+    transform: scale(0.94);
+  }
+}
+@keyframes halo-a {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+@keyframes halo-b {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+@keyframes drift-a {
+  to {
+    transform: translate3d(22%, 16%, 0) rotate(40deg) scale(1.15);
+  }
+}
+@keyframes drift-b {
+  to {
+    transform: translate3d(-26%, 22%, 0) scale(0.85);
+  }
+}
+@keyframes drift-c {
+  to {
+    transform: translate3d(14%, -18%, 0) scale(1.2);
+  }
+}
+@keyframes drift-d {
+  to {
+    transform: translate3d(-40%, 30%, 0) scale(1.3);
+  }
+}
+
+.light-card > * {
+  min-width: 0;
+}
+.light-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  /* The overline sits above both, with air; the button centres on the word's capitals. */
+  margin-top: var(--space-2);
+}
+.light-card .overline {
+  color: var(--muted);
+  transition: color var(--duration-light-off) var(--ease-in-out);
+}
+/* Over the brightest light, full strength keeps it readable (measured ≥ 4.5:1). */
+.light-card[data-lit='true'] .overline {
+  color: var(--fg);
+  transition: color var(--duration-light-on) var(--ease-light);
+}
+/* Off, On and Stopped share one cell and cross-fade: no snap, no shift. */
+.light-word {
+  display: grid;
+  /* Every word on one baseline, whatever its size. */
+  align-items: baseline;
+  min-width: 0;
+  /* Optical: without its descender room the word's capitals sit centred. */
+  padding-bottom: 0.06em;
+  font-size: var(--text-hero);
+  font-weight: var(--weight-strong);
+  /* Tight, yet the two f's crossbars stay apart in "Off" (no collision). */
+  letter-spacing: -0.025em;
+  line-height: 1;
+  font-kerning: normal;
+}
+/*
+ * Each word sits on the same baseline and left edge and only its opacity
+ * changes. Colours are opaque: overlapping glyphs (the ff) show no seam.
+ */
+.light-word span {
+  grid-area: 1 / 1;
+  color: var(--muted);
+  opacity: 0;
+  /* The old word leaves quickly; the new one comes after: never two at once. */
+  transition: opacity var(--duration-fast) var(--ease-in-out);
+}
+.light-word span[data-shown='true'] {
+  opacity: 1;
+  transition: opacity var(--duration-slow) var(--ease-out) var(--duration-fast);
+}
+.light-word [data-word='On'] {
+  color: var(--fg);
+  text-shadow: 0 0 36px color-mix(in srgb, var(--fg) 28%, transparent);
+}
+.light-word [data-word='Stopped'] {
+  /* A longer word, said calmly: smaller than On and Off, same baseline. */
+  font-size: var(--text-hero);
+  letter-spacing: -0.03em;
+  /* Near-white, faintly rose: it must stand apart from the red lamp. */
+  color: var(--fg);
+}
+/* "On" arrives with the light, at the light's pace. */
+.light-card[data-lit='true'] .light-word [data-word='On'] {
+  transition: opacity var(--duration-light-on) var(--ease-light)
+    var(--duration-fast);
+}
+
+/*
+ * The card's line of words: a problem or a warning with its fix, else (off)
+ * what the power button will do. Its space is kept in every state, sized for
+ * a problem line and its row of actions, so nothing below moves.
+ */
+.light-info {
+  display: grid;
+  min-height: calc(
+    var(--space-3) + 1.5em + var(--space-3) + 36px + var(--space-1)
+  );
+}
+.light-info > * {
+  grid-area: 1 / 1;
+  transition: opacity var(--duration-slow) var(--ease-in-out);
+}
+.light-info > div {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: var(--space-3);
+  /* Room for focus rings. */
+  margin: 0 calc(-1 * var(--space-1));
+  padding: 0 var(--space-1) var(--space-1);
+  opacity: 0;
+}
+.light-info[data-shown='true'] > div {
+  opacity: 1;
+}
+.light-calm[data-shown='false'] {
+  opacity: 0;
+}
+.light-info p {
+  padding-top: var(--space-3);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.light-info .light-calm {
+  color: var(--muted);
+}
+.light-info[data-tone='problem'] p,
+.light-card[data-lit='true'] .light-info[data-tone='note'] p {
+  /* Over the light, full strength (measured ≥ 4.5:1). */
+  color: var(--fg);
+}
+.light-info[data-tone='warning'] p {
+  color: var(--alert);
+}
+/* Lit, a paler amber keeps the warning readable over the light. */
+.light-card[data-lit='true'] .light-info[data-tone='warning'] p {
+  color: var(--fg);
+}
+/*
+ * Try again and Details: slim to see (36 px), 44 px to touch. The extra
+ * reach is an invisible edge around each, inside the line's kept space.
+ */
+.light-info button {
+  position: relative;
+  min-height: 36px;
+  padding-inline: var(--space-4);
+  border-color: var(--line-strong);
+  font-size: var(--text-small);
+}
+.light-info button::after,
+.light-details summary::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--space-1)) 0;
+}
+/* A button's edge starts inside its 1 px border. */
+.light-info button::after {
+  inset: -5px -1px;
+}
+@media (hover: hover) {
+  .light-info button:hover:enabled {
+    border-color: color-mix(in srgb, var(--fg) 36%, transparent);
+    background: color-mix(in srgb, var(--fg) 8%, transparent);
+  }
+}
+
+/* The power button: a dark ring when off, a lit lamp when on. */
+.power-wrap {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.power {
+  position: relative;
+  isolation: isolate;
+  width: 76px;
+  height: 76px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--muted);
+  transition:
+    border-color var(--duration) var(--ease-out),
+    color var(--duration-light-off) var(--ease-in-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+/* A click in flight keeps the button as it is; only "cannot" greys it. */
+.power:disabled {
+  opacity: 1;
+}
+.power[data-unavailable='true']:disabled {
+  opacity: 0.4;
+}
+/* The lamp: drawn under the icon and faded in with the light (opacity only). */
+.power::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -1px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 28%,
+    var(--fg),
+    color-mix(in srgb, var(--accent) 16%, var(--fg)) 70%
+  );
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--fg) 8%, transparent),
+    0 0 28px color-mix(in srgb, var(--fg) 32%, transparent);
+  opacity: 0;
+  transition: opacity var(--duration-light-off) var(--ease-in-out);
+}
+.power svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+@media (hover: hover) {
+  .power:hover:enabled {
+    border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+    background: color-mix(in srgb, var(--fg) 8%, transparent);
+    color: var(--fg);
+  }
+}
+.power:active:enabled {
+  transform: scale(0.95);
+}
+.light-card[data-lit='true'] .power {
+  border-color: transparent;
+  color: var(--bg);
+  transition:
+    border-color var(--duration) var(--ease-out),
+    color var(--duration-slow) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+.light-card[data-lit='true'] .power::before {
+  opacity: 1;
+  /* The lamp lights first and softly; the room's light follows. */
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+@media (hover: hover) {
+  .light-card[data-lit='true'] .power:hover:enabled {
+    background: transparent;
+    color: var(--bg);
+  }
+}
+/* On but stopped: the button still turns it off, without the glow. */
+.light-card[data-mood='problem'] .power[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--alert) 50%, transparent);
+  background: var(--alert-soft);
+  color: var(--alert);
+  box-shadow: none;
+}
+/* Switching: a thin ring turning around the button. */
+.power::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border: 2px solid transparent;
+  border-top-color: var(--accent-ink);
+  border-radius: 50%;
+  opacity: 0;
+  /* Turning while it fades out too, so it never freezes mid-turn. */
+  animation: spin 0.9s linear infinite;
+  transition: opacity var(--duration-slow) var(--ease-in-out);
+}
+/* Shown only for a slow operation, and held: it fades, never flickers. */
+.power[data-ring='true']::after {
+  opacity: 1;
+}
+/* Try again and Details on one row; open, the details take the full width. */
+.light-info-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+.light-info-actions .light-details[open] {
+  flex-basis: 100%;
+  order: 1;
+}
+/* The technical message behind a failure, for whoever wants it. */
+.light-details {
+  color: var(--muted);
+  font-size: var(--text-small);
+}
+.light-details summary {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  cursor: pointer;
+  color: var(--muted);
+}
+@media (hover: hover) {
+  .light-details summary:hover {
+    color: var(--fg);
+  }
+}
+.light-details p {
+  padding-top: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+/* What is missing, with the one fix. */
+.light-setup {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-5);
+  margin-top: var(--space-3);
+  max-width: 36ch;
+  color: var(--muted);
+}
+
+/*
+ * The mode: two option cards side by side, each an icon, its name and one
+ * line on what it does. Selected speaks the calibration chips' language:
+ * a light fill with dark ink; lit, the fill takes the light's own colours.
+ * Off, the chosen card is only outlined: what Power will turn on, nothing
+ * that runs. The other card is quiet but plainly a button.
+ */
+.modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+.mode {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-content: stretch;
+  justify-items: start;
+  column-gap: var(--space-2);
+  row-gap: 2px;
+  min-width: 0;
+  min-height: calc(var(--hit) + var(--space-6));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--muted);
+  text-align: left;
+  transition:
+    background var(--duration) var(--ease-out),
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out),
+    color var(--duration) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+.mode-icon {
+  grid-row: 1;
+  width: var(--icon);
+  height: var(--icon);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mode-name {
+  grid-row: 1;
+  font-size: var(--text-body);
+  font-weight: var(--weight-strong);
+  white-space: nowrap;
+}
+/* One short line, written to fit: never cut with an ellipsis. */
+.mode-line {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: var(--text-small);
+  white-space: nowrap;
+}
+@media (hover: hover) {
+  .mode:hover:enabled {
+    border-color: color-mix(in srgb, var(--fg) 36%, transparent);
+    background: color-mix(in srgb, var(--fg) 8%, transparent);
+    color: var(--fg);
+  }
+}
+.mode:active:enabled {
+  transform: scale(0.98);
+}
+/* Off, the chosen card is outlined: the mode Power will turn on. */
+.modes[data-mode='processed'] [data-target='processed'],
+.modes[data-mode='device_native'] [data-target='device_native'] {
+  border-color: color-mix(in srgb, var(--fg) 72%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 72%, transparent) inset;
+  color: var(--fg);
+}
+/* Lit, it is filled, as a chosen calibration is, in the light's colours. */
+.light-card[data-lit='true']
+  .modes[data-mode='processed']
+  [data-target='processed'],
+.light-card[data-lit='true']
+  .modes[data-mode='device_native']
+  [data-target='device_native'] {
+  border-color: transparent;
+  box-shadow: none;
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--light-a) 32%, var(--fg)),
+    color-mix(in srgb, var(--light-c) 26%, var(--fg)) 55%,
+    color-mix(in srgb, var(--light-b) 32%, var(--fg))
+  );
+  color: var(--bg);
+}
+.light-card[data-lit='true'] .modes [aria-checked='true'] .mode-line {
+  color: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mode {
+    transition: none;
+  }
+}
+/* A phone's half card: a little tighter, so name and line fit whole. */
+@media (max-width: 480px) {
+  .mode {
+    column-gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+  }
+  .mode-icon {
+    width: var(--icon);
+    height: var(--icon);
+  }
+  .mode-name {
+    font-size: var(--text-small);
+  }
+  .mode-line {
+    font-size: var(--text-small);
+  }
+}
+/* Only a mode that cannot run looks disabled; a click in flight does not. */
+.mode:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.mode[data-unavailable='true'] {
+  opacity: 0.38;
+}
+.mode[aria-busy='true'] .mode-icon {
+  animation: breathe 1.1s var(--ease-in-out) infinite;
+}
+.mode-reason {
+  margin-top: calc(-1 * var(--space-5));
+  margin-bottom: var(--space-5);
+  color: var(--muted);
+}
+/*
+ * Prysm's picture controls stay in place in every mode; while the lights
+ * show their own effects they go quiet (and out of reach), as they do not
+ * reach the lights then.
+ */
+.picture-controls {
+  transition: opacity var(--duration-slow) var(--ease-in-out);
+}
+.picture-controls[data-quiet='true'] {
+  opacity: 0.32;
+}
+
+/* Brightness: the track fills with the light's own colours while lit. */
+/* Home's one slider ends the card's controls: no gap of its own after it. */
+.light-card .field.range.brightness {
+  margin-bottom: 0;
+}
+.light-card .brightness label {
+  font-weight: var(--weight-strong);
+}
+.light-card .brightness output {
+  min-width: 4ch;
+  color: var(--fg);
+  font-weight: var(--weight-strong);
+  text-align: right;
+}
+/* The fill takes the light's colours as the light comes on (one tint, eased). */
+@property --tint {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 0%;
+}
+.light-card .range input {
+  --tint: 0%;
+  --track:
+    linear-gradient(
+      90deg,
+      transparent var(--fill-to, 0%),
+      color-mix(in srgb, var(--fg) 20%, transparent) var(--fill-to, 0%)
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(
+        in srgb,
+        var(--light-a) var(--tint),
+        color-mix(in srgb, var(--fg) 75%, transparent)
+      ),
+      color-mix(
+          in srgb,
+          var(--light-c) var(--tint),
+          color-mix(in srgb, var(--fg) 75%, transparent)
+        )
+        55%,
+      color-mix(
+        in srgb,
+        var(--light-b) var(--tint),
+        color-mix(in srgb, var(--fg) 75%, transparent)
+      )
+    );
+  transition: --tint var(--duration-light-off) var(--ease-in-out);
+}
+.light-card[data-lit='true'] .range input {
+  --tint: 100%;
+  transition: --tint var(--duration-light-on) var(--ease-in-out);
+}
+
+/* Calibrations: one tap each. */
+.chips-label {
+  display: block;
+  padding-top: var(--space-5);
+  font-weight: var(--weight-strong);
+}
+/* The calibrations wrap onto more rows: every chip whole, nothing cut. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+.chip {
+  flex: none;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  padding: 0 var(--space-4);
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--muted);
+  font-size: var(--text-body);
+  line-height: calc(var(--hit) - 2px);
+  scroll-snap-align: start;
+}
+@media (hover: hover) {
+  .chip:hover:enabled {
+    border-color: color-mix(in srgb, var(--fg) 36%, transparent);
+    background: color-mix(in srgb, var(--fg) 8%, transparent);
+    color: var(--fg);
+  }
+}
+.chip[aria-pressed='true'] {
+  border-color: transparent;
+  background: var(--fg);
+  color: var(--bg);
+  font-weight: var(--weight-strong);
+}
+@media (hover: hover) {
+  .chip[aria-pressed='true']:hover:enabled {
+    background: var(--on-fill);
+    color: var(--bg);
+  }
+}
+.chip.add {
+  /* An action, not a name: never cut short. */
+  max-width: none;
+  border-style: dashed;
+  color: var(--muted);
+}
+/* Home's problem line sits in the card's bottom padding: it takes no room. */
+.light-card .quick-picture {
+  position: relative;
+}
+.light-card .quick-picture > .problem-line {
+  position: absolute;
+  top: 100%;
+  inset-inline: 0;
+  margin-top: var(--space-2);
+}
+/* On Home a failed save shows once, under the chips, with its retry. */
+.light-card .brightness .field-note {
+  display: none;
+}
+.device-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (hover: hover) {
+  .device-link:hover {
+    color: var(--fg);
+  }
+}
+.device-link::after {
+  content: '↗';
+  margin-left: var(--space-1);
+}
+
+/*
+ * Live light: the LEDs' colours arrive (at most 10 a second) as custom
+ * properties on the Home grid, written by useLiveColors; nothing re-renders.
+ * The card's fields and the LED drawing in Your setup read them.
+ */
+@property --live-a {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #e0479e;
+}
+@property --live-b {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #22c3ee;
+}
+@property --live-c {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #6b4dff;
+}
+@property --live-d {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff8a4c;
+}
+@property --led-t {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
+@property --led-r {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
+@property --led-b {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
+@property --led-l {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
+/* Your setup: where the picture comes from, where the colours go. */
+.setup-card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-5);
+  border-radius: var(--radius-3);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--line) inset,
+    var(--shadow);
+}
+@media (min-width: 900px) {
+  .setup-card {
+    /* A little less at the sides: room for a device name on one line. */
+    padding: var(--space-6) var(--space-5);
+  }
+}
+/*
+ * The signal path: Video, Prysm, Lights, joined by hairlines. A column when
+ * the card is narrow, a row when wide. Icons and hairlines sit in one fixed
+ * row; every label is placed beside or above its hairline, never in a row of
+ * its own, so no state change moves anything.
+ */
+.setup-card {
+  container-type: inline-size;
+}
+.path {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  column-gap: var(--space-4);
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.path-stop {
+  display: contents;
+}
+.path-icon {
+  display: grid;
+  grid-column: 1;
+  place-items: center;
+  width: calc(var(--hit) - var(--space-1));
+  height: calc(var(--hit) - var(--space-1));
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+  color: var(--muted);
+  transition:
+    color var(--duration-slow) var(--ease-out),
+    box-shadow var(--duration-slow) var(--ease-out);
+}
+.path-icon svg {
+  width: var(--icon);
+  height: var(--icon);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.path-icon .ray {
+  stroke-width: 1.2;
+  opacity: 0.7;
+}
+.path-text {
+  display: grid;
+  grid-column: 2;
+  align-content: center;
+  min-width: 0;
+}
+.path-name {
+  overflow-wrap: anywhere;
+  font-size: var(--text-small);
+  font-weight: var(--weight-strong);
+  line-height: 1.3;
+  text-wrap: balance;
+}
+.path-fact {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A fact and a figure share the line: the fact's text gives way, the figure never. */
+.path-fact:has(.path-figure) {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+.path-fact-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.path-figure {
+  flex: none;
+}
+@container (max-width: 399px) {
+  .path-fact:has(.path-figure) {
+    justify-content: flex-start;
+  }
+}
+/* A link: the hairline between two icons, and what it carries beside it. */
+.path-link {
+  position: relative;
+  grid-column: 1 / -1;
+  /* Room for its name and its numbers beside it, a line each. */
+  height: calc(var(--hit) - var(--space-1));
+}
+.path-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 19.5px;
+  width: 1px;
+  overflow: hidden;
+  background: var(--line-strong);
+  transition: background-color var(--duration-slow) var(--ease-out);
+}
+/* The light travelling the hairline while frames flow (transform only). */
+.path-pulse {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 45%;
+  background: linear-gradient(transparent, var(--accent), transparent);
+  opacity: 0;
+  transform: translateY(-100%);
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+.path-label {
+  position: absolute;
+  top: 50%;
+  left: calc(calc(var(--hit) - var(--space-1)) + var(--space-4));
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  transform: translateY(-50%);
+  transition: color var(--duration-slow) var(--ease-out);
+}
+/* Column: beside the hairline, the protocol at the top, the numbers below. */
+.path-protocol {
+  top: 3px;
+  transform: none;
+}
+.path-numbers {
+  top: auto;
+  bottom: 3px;
+  transform: none;
+}
+.path-link[data-state='flowing'] .path-line {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.path-link[data-state='flowing'] .path-pulse {
+  opacity: 1;
+  animation: travel-down 1.6s linear infinite;
+}
+.path-link[data-state='flowing'] .path-label {
+  color: var(--muted);
+}
+.path-link[data-state='failed'] .path-line {
+  background: color-mix(in srgb, var(--alert) 55%, transparent);
+}
+/* Lit stops: what the light passes through. */
+.setup-card[data-path='flowing'] .path-icon {
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent) inset;
+}
+.setup-card[data-path='effects'] .path-stop:last-child .path-icon {
+  color: var(--effects-1);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--effects-1) 55%, transparent)
+    inset;
+}
+.path-stop[data-failed='true'] .path-icon {
+  color: var(--alert);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--alert) 55%, transparent) inset;
+}
+/*
+ * Working, but behind: the step that keeps Prysm from keeping up, in orange.
+ * Never red (that is a failure, and a failure shows no flowing path).
+ */
+.path-stop[data-behind='true'] .path-icon {
+  color: var(--alert);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--alert) 60%, transparent) inset;
+}
+.path-stop[data-behind='true'] .path-figure {
+  color: var(--alert);
+}
+.path-link[data-behind='true'] .path-line {
+  background: color-mix(in srgb, var(--alert) 70%, transparent);
+}
+.path-link[data-behind='true'] .path-pulse {
+  background: linear-gradient(transparent, var(--alert), transparent);
+}
+.path-link[data-behind='true'] .path-numbers {
+  color: var(--alert);
+}
+@keyframes travel-down {
+  to {
+    transform: translateY(240%);
+  }
+}
+@keyframes travel-across {
+  to {
+    transform: translateX(240%);
+  }
+}
+/*
+ * Wide: one row, left to right. Row one holds the icons and hairlines at a
+ * fixed height; row two the names and facts. Narrow link columns leave the
+ * names room to sit on one line.
+ */
+@container (min-width: 400px) {
+  .path {
+    --link: 16px;
+    /* Each stop's column, and how far its hairline reaches to the icons. */
+    --stop: calc((100cqw - 2 * var(--link)) / 3);
+    --reach: calc((var(--stop) - 40px) / 2 - 8px);
+    grid-template-columns:
+      minmax(0, 1fr) var(--link) minmax(0, 1fr) var(--link)
+      minmax(0, 1fr);
+    grid-template-rows: 40px auto;
+    column-gap: 0;
+    row-gap: var(--space-3);
+  }
+  .path-icon {
+    grid-row: 1;
+    grid-column: auto;
+    justify-self: center;
+  }
+  .path-stop:nth-child(1) > * {
+    grid-column: 1;
+  }
+  .path-stop:nth-child(3) > * {
+    grid-column: 3;
+  }
+  .path-stop:nth-child(5) > * {
+    grid-column: 5;
+  }
+  .path-text {
+    grid-row: 2;
+    align-content: start;
+    text-align: center;
+  }
+  .path-link {
+    grid-row: 1;
+    grid-column: auto;
+    height: auto;
+  }
+  .path-line {
+    top: 50%;
+    bottom: auto;
+    left: calc(-1 * var(--reach));
+    right: calc(-1 * var(--reach));
+    width: auto;
+    height: 1px;
+  }
+  .path-pulse {
+    inset: 0 auto 0 0;
+    width: 45%;
+    height: auto;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    transform: translateX(-100%);
+  }
+  .path-link[data-state='flowing'] .path-pulse {
+    animation-name: travel-across;
+  }
+  .path-link[data-behind='true'] .path-pulse {
+    background: linear-gradient(90deg, transparent, var(--alert), transparent);
+  }
+  /* Row: the protocol above the hairline, the numbers below; one each side. */
+  .path-label {
+    top: auto;
+    bottom: calc(50% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .path-numbers {
+    top: calc(50% + 6px);
+    bottom: auto;
+  }
+}
+/* The drawing is for room to spare: on a phone the path says enough. */
+@container (max-width: 399px) {
+  .setup-card .led-map {
+    display: none;
+  }
+}
+
+/*
+ * The TV seen from the front, on its stand, with the LED band around it as
+ * the light: the designed colours when screen sync is idle, the LEDs' own
+ * while they stream, the warm effects palette for the lights' own effects,
+ * a dim neutral band when off or stopped.
+ */
+.led-map {
+  display: grid;
+  flex: 1;
+  align-content: center;
+  margin: var(--space-5) 0 var(--space-2);
+}
+.led-map svg {
+  display: block;
+  width: 100%;
+  max-width: 400px;
+  height: auto;
+  margin: 0 auto;
+  overflow: visible;
+}
+.led-map-screen {
+  fill: var(--bg);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.led-map-stand {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.led-map-count {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
+}
+.led-map-edge line {
+  stroke: var(--band, var(--line-strong));
+  stroke-width: 4;
+  stroke-linecap: round;
+  transition: stroke var(--duration-led) var(--ease-out);
+}
+.led-map-edge line.halo {
+  stroke-width: 10;
+  opacity: 0.55;
+}
+.led-map-edge.empty line {
+  --band: var(--line);
+  stroke-dasharray: 2 6;
+}
+.led-map-edge.empty line.halo {
+  opacity: 0;
+}
+/* The band's colours follow the light card. */
+/*
+ * Screen sync: the band is a readout, so it shows only real colours. With a
+ * colours stream it stays neutral until the first ones arrive (and again on
+ * idle or a lost stream); the designed colours only for a host without one.
+ */
+.home-grid[data-colors='none']:has(
+    .light-frame[data-lit='true'][data-palette='sync']
+  )
+  .led-map {
+  --band-top: var(--aurora-3);
+  --band-right: var(--aurora-2);
+  --band-bottom: var(--accent-ink);
+  --band-left: var(--aurora-1);
+}
+.home-grid:has(.light-frame[data-lit='true'][data-palette='effects']) .led-map {
+  --band-top: var(--effects-4);
+  --band-right: var(--effects-2);
+  --band-bottom: var(--effects-3);
+  --band-left: var(--effects-1);
+}
+.home-grid[data-live='colors']:has(
+    .light-frame[data-lit='true'][data-palette='sync']
+  )
+  .led-map {
+  --band-top: var(--led-t);
+  --band-right: var(--led-r);
+  --band-bottom: var(--led-b);
+  --band-left: var(--led-l);
+}
+.edge-top {
+  --band: var(--band-top);
+}
+.edge-right {
+  --band: var(--band-right);
+}
+.edge-bottom {
+  --band: var(--band-bottom);
+}
+.edge-left {
+  --band: var(--band-left);
+}
+.setup-card .path {
+  margin-bottom: var(--space-5);
+}
+.setup-change {
+  margin: auto 0 calc(-1 * var(--space-3));
+}
+.setup-change .row:last-child {
+  border-bottom: 0;
+}
+
+/* ── Live preview (from Settings) ─────────────────────────────────────── */
+.page-intro {
+  max-width: 56ch;
+  color: var(--muted);
+}
+.preview {
+  container-type: inline-size;
+  animation: fade-in var(--duration-slow) var(--ease-out) both;
+}
+.preview-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-2);
+  background: var(--bg);
+  box-shadow: var(--shadow-stage);
+}
+.preview[data-view='frame'] .preview-canvas {
+  box-shadow:
+    var(--shadow-stage),
+    -30px 0 70px -24px var(--aurora-1),
+    30px 0 70px -24px var(--aurora-2),
+    0 30px 70px -30px var(--aurora-3);
+  animation: picture-in var(--duration-warm) var(--ease-out) both;
+}
+.preview-message {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  padding: var(--space-6);
+  border-radius: var(--radius-2);
+  background: var(--bg);
+  box-shadow: var(--shadow-stage);
+  color: var(--muted);
+  font-size: var(--text-small);
+  text-align: center;
+  text-wrap: balance;
+}
+.preview[data-view='connecting'] .preview-message {
+  animation: breathe 2.4s var(--ease-in-out) infinite;
+}
+.preview-info {
+  margin-top: var(--space-4);
+  color: var(--muted);
+  font-size: var(--text-small);
+  text-align: center;
+}
+
+/* ── Settings ─────────────────────────────────────────────────────────── */
+.page-heading {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.page-heading h2 {
+  font-size: var(--text-display);
+  letter-spacing: -0.03em;
+}
+.page-heading h2:focus {
+  outline: none;
+}
+.back {
+  margin-left: calc(-1 * var(--space-3));
+  padding-right: var(--space-4);
+  gap: var(--space-1);
+  font-size: var(--text-small);
+}
+.back svg {
+  width: var(--icon);
+  height: var(--icon);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* The page's one save status, under the title. Its line is always there. */
+.save-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--text-small) * var(--leading));
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+.save-status-mark {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--ok);
+  transition: background-color var(--duration) var(--ease-out);
+}
+.save-status[data-phase='saving'] .save-status-mark,
+.save-status[data-phase='offline'] .save-status-mark {
+  background: var(--alert);
+}
+.save-status[data-phase='saving'] .save-status-mark {
+  animation: breathe 1.2s var(--ease-in-out) infinite;
+}
+.save-status[data-phase='failed'] {
+  color: var(--alert);
+}
+.save-status[data-phase='failed'] .save-status-mark {
+  background: var(--alert);
+}
+
+.chevron {
+  flex: none;
+  width: var(--icon);
+  height: var(--icon);
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--duration) var(--ease-out);
+}
+/* A row that opens below: its chevron points down, and up while open. */
+.row-toggle .chevron {
+  transform: rotate(90deg);
+}
+.row-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(-90deg);
+}
+
+/* The video source or lights editor, under Settings. */
+.section-editor {
+  container-type: inline-size;
+  padding-top: 0;
+}
+/*
+ * Whether the section works, first on its page: a 16:9 tile (the live
+ * picture, or the section's mark) beside a title and one line, and a
+ * chevron when the whole card opens the large preview. The tile keeps the
+ * card's height, so it changes in place.
+ */
+.section-status {
+  margin: var(--space-4) 0 var(--space-block);
+  border-radius: var(--radius-2);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line) inset;
+  transition: background-color var(--duration) var(--ease-out);
+}
+.section-status-main {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-3);
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+}
+button.section-status-main {
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  button.section-status-main:hover:enabled {
+    background: none;
+  }
+  button.section-status-main:hover .section-status-title {
+    color: var(--accent-ink);
+  }
+}
+button.section-status-main:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+.section-status[data-tone='problem'] {
+  background: var(--alert-soft);
+}
+.section-status[data-tone='warning'] {
+  background: var(--alert-soft);
+}
+.section-status-tile {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-1);
+  background: var(--bg);
+  color: var(--muted);
+}
+/* The lights have no picture: their mark, as on Home's path. */
+.section-status[data-section='output'] .section-status-main {
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+.section-status[data-section='output'] button.section-status-main {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+}
+.section-status[data-section='output'] .section-status-tile {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: none;
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+  color: var(--muted);
+}
+.section-status-tile > * {
+  grid-area: 1 / 1;
+}
+.section-status-tile canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: fade-in var(--duration-slow) var(--ease-out) both;
+}
+.section-status-tile svg {
+  width: var(--space-5);
+  height: var(--space-5);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.section-status[data-tone='ok'] .section-status-tile {
+  color: var(--ok);
+}
+.section-status[data-tone='busy'] .section-status-tile svg {
+  animation: breathe 1.6s var(--ease-in-out) infinite;
+}
+.section-status[data-tone='problem'] .section-status-tile {
+  color: var(--alert);
+}
+.section-status[data-tone='warning'] .section-status-tile {
+  color: var(--alert);
+}
+.section-status-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+/* The title with a dot in the status colour, as the save line has. */
+.section-status-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+.section-status-title::before {
+  content: '';
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--muted);
+}
+.section-status[data-tone='ok'] .section-status-title::before {
+  background: var(--ok);
+}
+.section-status[data-tone='busy'] .section-status-title::before {
+  background: var(--alert);
+  animation: breathe 1.2s var(--ease-in-out) infinite;
+}
+.section-status[data-tone='warning'] .section-status-title::before {
+  background: var(--alert);
+}
+.section-status[data-tone='problem'] .section-status-title {
+  color: var(--alert);
+}
+.section-status[data-tone='problem'] .section-status-title::before {
+  background: var(--alert);
+}
+.section-status-detail,
+.section-status-more {
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading);
+  overflow-wrap: anywhere;
+}
+.section-status-more {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+}
+/* The save bar stays in reach at the bottom while there is something to save. */
+.section-editor .page-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  background: var(--bg);
+}
+.section-editor .page-actions[hidden] {
+  display: none;
+}
+.section-editor .page-actions > .form-status {
+  flex-basis: 100%;
+  min-height: 0;
+}
+.section-editor .page-actions > .form-status:empty {
+  display: none;
+}
+.section-editor .page-actions > .form-status button.link {
+  min-height: var(--hit);
+}
+/* Options most setups never change: one row, closed. */
+.advanced > .row-toggle {
+  min-height: calc(var(--hit) + var(--space-2));
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.advanced > div {
+  padding-top: var(--space-4);
+}
+/*
+ * The size-and-rate choice says what it has to say under its rows, above
+ * Advanced. With nothing to say the line takes no room, and the Advanced
+ * toggle is one more row of the list: one line between them, not two.
+ */
+.picture-choice:has(+ .advanced) {
+  margin-bottom: var(--space-2);
+}
+.picture-choice > .field-note[data-said='false'] {
+  min-height: 0;
+  margin-top: 0;
+}
+.picture-choice:has(> .field-note[data-said='false']):has(+ .advanced) {
+  margin-bottom: 0;
+}
+.picture-choice:has(> .field-note[data-said='false'])
+  + .advanced
+  > .row-toggle {
+  border-top: 0;
+}
+
+/* ── Settings and its pages: one column of rows in small-headed groups ── */
+.group {
+  display: grid;
+  gap: var(--space-2);
+}
+.rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.row {
+  border-bottom: 1px solid var(--line);
+}
+/* Label, its value on the line beneath, a chevron: the whole row is the link. */
+.row-link,
+.row-choice label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: calc(var(--hit) + var(--space-5));
+  padding: var(--space-3) 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .row-link:hover:enabled {
+    background: none;
+  }
+}
+@media (hover: hover) {
+  .row-link:hover:enabled .row-label,
+  .row-choice label:hover:has(input:enabled) .row-label {
+    color: var(--accent-ink);
+  }
+}
+.row-link:focus-visible,
+.row-choice label:has(input:focus-visible) {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+.row-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.row-label {
+  font-weight: 500;
+  transition: color var(--duration) var(--ease-out);
+}
+.row-value {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * A live problem joins the value's line after the device's name, in the
+ * error colour; the name gives way first, so the problem reads whole.
+ */
+.row-value[data-problem='true'] {
+  display: flex;
+  min-width: 0;
+}
+.row-lead {
+  flex: 0 1 auto;
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.row-problem {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--alert);
+  text-overflow: ellipsis;
+}
+.row-fact {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--hit) + var(--space-5));
+  padding: var(--space-3) 0;
+}
+.row-fact .row-value {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/*
+ * A switch row: the on/off control in the chevron's place. The switch is
+ * taller than a label line, so less padding keeps the row a link row's height.
+ */
+.row-switch {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--hit) + var(--space-5));
+  padding: var(--space-3) 0;
+}
+.row-switch > *,
+.row-switch .field {
+  flex: 1;
+  margin-bottom: 0;
+}
+.row-switch .field.check {
+  row-gap: 2px;
+}
+/*
+ * The switch spans the label and its line, so it sits centred on the row
+ * as a chevron does, not on the label alone.
+ */
+.row-switch .field.check input {
+  grid-row: 1 / span 2;
+}
+.row-switch .field.check .field-note {
+  grid-row: 2;
+  grid-column: 1;
+}
+.row-switch .field.check label {
+  font-weight: 500;
+}
+/* A choice row: a radio drawn as a tick in the chevron's place. */
+.row-choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.row-check {
+  flex: none;
+  width: var(--icon);
+  height: var(--icon);
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Every option shows its ring; the chosen one is filled and ticked. */
+.row-ring {
+  stroke: var(--line-strong);
+  transition:
+    fill var(--duration) var(--ease-out),
+    stroke var(--duration) var(--ease-out);
+}
+.row-tick {
+  stroke: var(--on-fill);
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease-out);
+}
+.row-choice input:checked ~ .row-check .row-ring {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+.row-choice input:checked ~ .row-check .row-tick {
+  opacity: 1;
+}
+@media (hover: hover) {
+  .row-choice label:hover:has(input:enabled:not(:checked)) .row-ring {
+    stroke: var(--accent-ink);
+  }
+}
+/* Forced colours drop the fill's colour: the system's own say which. */
+@media (forced-colors: active) {
+  .row-ring {
+    stroke: CanvasText;
+  }
+  .row-choice input:checked ~ .row-check .row-ring {
+    fill: Highlight;
+    stroke: Highlight;
+  }
+  .row-tick {
+    stroke: HighlightText;
+  }
+}
+/* Locked, as a disabled field is, until it is known what can be chosen. */
+.row-choice label:has(input:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+/* A choice's line is read whole: it wraps instead of being cut. */
+.row-choice .row-text > .row-value {
+  white-space: normal;
+}
+/*
+ * What a choice sets, quiet, on its label’s line: every row keeps two lines
+ * at most and one height, so ticking one never moves the list.
+ */
+.row-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+}
+.row-heading .row-value {
+  font-variant-numeric: tabular-nums;
+}
+/*
+ * A page's end: its actions under a divider, from the left, the main one
+ * first and a destructive one last and quiet. What happened sits beside
+ * them (below on a phone), in a line kept for it, so nothing moves.
+ */
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+  margin-top: var(--space-2);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+/* After a row's line, the bar's divider is that line: one, not two. */
+:is(.advanced, .rows) + .page-actions {
+  margin-top: -1px;
+}
+.page-actions > .actions {
+  justify-content: flex-start;
+  margin: 0;
+}
+.page-actions > .form-status {
+  flex: 1 1 220px;
+  align-items: center;
+}
+.page-actions button.danger.quiet {
+  color: var(--muted);
+}
+.page-actions button.danger.quiet:focus-visible {
+  background: var(--alert-soft);
+  color: var(--alert);
+}
+@media (hover: hover) {
+  .page-actions button.danger.quiet:hover:enabled {
+    background: var(--alert-soft);
+    color: var(--alert);
+  }
+}
+@media (max-width: 640px) {
+  .page-actions > .actions {
+    width: 100%;
+  }
+  .page-actions > .actions > button {
+    flex: 1 1 auto;
+  }
+}
+
+/* ── Style, Detail and a calibration: sliders in one column, as Home's ──── */
+.sliders,
+.calibration-page {
+  container-type: inline-size;
+}
+/* What a disclosure row opens starts a group's gap below it. */
+.disclosure-body > * {
+  margin-top: var(--space-5);
+}
+.calibration-page > .rows {
+  margin-bottom: var(--space-block);
+}
+
+/* ── Found devices ────────────────────────────────────────────────────── */
+.find {
+  margin: 0 0 var(--space-block);
+}
+.find > button[aria-busy='true']::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.find .notice {
+  margin-top: var(--space-3);
+}
+.found {
+  display: grid;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--radius-2);
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+.found li {
+  animation: fade-up var(--duration-slow) var(--ease-out) both;
+}
+.found li + li {
+  border-top: 1px solid var(--line);
+}
+.found li:nth-child(2) {
+  animation-delay: 50ms;
+}
+.found li:nth-child(n + 3) {
+  animation-delay: 100ms;
+}
+.found button {
+  display: block;
+  position: relative;
+  width: 100%;
+  min-height: 56px;
+  padding: var(--space-3) var(--space-7) var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+}
+.found li:first-child button {
+  border-radius: var(--radius-2) var(--radius-2) 0 0;
+}
+.found li:last-child button {
+  border-radius: 0 0 var(--radius-2) var(--radius-2);
+}
+.found li:only-child button {
+  border-radius: var(--radius-2);
+}
+.found button[aria-pressed='true'] {
+  background: var(--accent-soft);
+}
+.found button[aria-pressed='true']::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: var(--icon);
+  width: 6px;
+  height: var(--space-3);
+  margin-top: calc(-1 * var(--space-2));
+  border-right: 2px solid var(--accent-ink);
+  border-bottom: 2px solid var(--accent-ink);
+  transform: rotate(45deg);
+}
+.found-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+/* Under the found devices: what the lookup found, and Look again. */
+/*
+ * The devices' heading carries Look again at its end, so the action takes
+ * no line of its own; on a narrow screen it wraps under the heading.
+ */
+.device-rows > legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: var(--space-4);
+  width: 100%;
+}
+.device-rows > legend > button.link {
+  font-size: var(--text-small);
+}
+/* What the lookup has to say, under the rows; nothing, no line. */
+.device-rows > .help:not(:empty) {
+  margin-top: var(--space-2);
+}
+
+/* ── LED layout (WLED editor) ─────────────────────────────────────────── */
+/* Each edge's count sits on its own edge of the drawing. */
+.led-layout {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 72px;
+  grid-template-areas:
+    '. top .'
+    'left screen right'
+    '. bottom .';
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  max-width: 480px;
+  margin: 0 auto;
+}
+.led-edge-top {
+  grid-area: top;
+}
+.led-edge-right {
+  grid-area: right;
+}
+.led-edge-bottom {
+  grid-area: bottom;
+}
+.led-edge-left {
+  grid-area: left;
+}
+.led-edge-top,
+.led-edge-bottom {
+  width: 88px;
+  justify-self: center;
+}
+/* The label and note are read out; the place says which edge it is. */
+.led-count label,
+.led-count .field-note {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.led-count.field {
+  margin: 0;
+}
+.led-count.field input:not([type='checkbox'], [type='range'], [type='radio']) {
+  min-height: var(--hit);
+  padding-inline: var(--space-2);
+  text-align: center;
+}
+.led-layout svg {
+  grid-area: screen;
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.leds > .field-note {
+  text-align: center;
+}
+.screen {
+  fill: var(--bg);
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+.screen-label {
+  fill: var(--fg);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+.screen-label[data-invalid='true'] {
+  fill: var(--alert);
+}
+.screen-sublabel {
+  fill: var(--muted);
+  font-size: 11px;
+}
+/* Each strip drawn as LEDs: round dots, coloured like light on a wall. */
+.strip line {
+  stroke: var(--aurora-3);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 0 9;
+}
+.strip-left line {
+  stroke: var(--aurora-1);
+}
+.strip-right line {
+  stroke: var(--aurora-2);
+}
+.strip-bottom line {
+  stroke: var(--accent-ink);
+}
+.strip.empty line {
+  stroke: var(--line-strong);
+  stroke-width: 3;
+  stroke-dasharray: 2 7;
+}
+.strip .arrow {
+  fill: var(--muted);
+}
+.start circle {
+  fill: var(--accent);
+}
+.start text {
+  fill: var(--fg);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ── Motion ───────────────────────────────────────────────────────────── */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes picture-in {
+  from {
+    opacity: 0;
+    filter: brightness(1.4) saturate(0.5);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

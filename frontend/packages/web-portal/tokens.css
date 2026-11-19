@@ -1,0 +1,176 @@
+/*
+ * Prysm design tokens: the only place values are chosen. Components use
+ * these names and nothing else (no raw colours, sizes or spacings). The TV
+ * (packages/tv-ui/tv.css) uses the same names and ratios on its own rem.
+ *
+ * Colour: five tokens, each with a dark and a light value. Every other
+ * colour on a page is a fixed mix of them, defined once below (roles). The
+ * light art (the aurora on Home) is the one exception: light is the content
+ * there, as the calibration patterns and the LEDs' own colours are.
+ *
+ * Theme: dark by default (a living room at night); light follows the
+ * system's `prefers-color-scheme` unless the viewer chose one, which sets
+ * `data-theme` on the root element (see theme.tsx). The light card and the
+ * picture stage are night in both themes.
+ */
+:root {
+  color-scheme: dark;
+
+  /* ── Colour: the five ─────────────────────────────────────────────── */
+  --bg: #0b0c11;
+  --fg: #ecedf3;
+  --accent: #5b47d5;
+  --ok: #4fd1b5;
+  --alert: #ff8f7a;
+
+  /* ── Type: five sizes, two weights, two line heights ───────────────── */
+  --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --text-small: 0.8125rem;
+  --text-body: 1rem;
+  --text-title: 1.25rem;
+  --text-display: 2rem;
+  /* Home's lights word only. */
+  --text-hero: clamp(3.5rem, 2.9rem + 3vw, 4.5rem);
+  --weight-regular: 400;
+  --weight-strong: 600;
+  --leading-tight: 1.2;
+  --leading: 1.5;
+
+  /* ── Spacing: eight steps on a 4 px base ──────────────────────────── */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  /*
+   * Between stacked blocks of a form: what a field leaves under its control
+   * (the gap to its note, the note's kept line, its margin), so a list or a
+   * card is followed by the same space as a field is.
+   */
+  --space-block: calc(
+    var(--space-2) + var(--text-small) * var(--leading) + var(--space-3)
+  );
+
+  /* ── Size ──────────────────────────────────────────────────────────── */
+  --radius-1: 0.5rem;
+  --radius-2: 1rem;
+  --radius-3: 1.5rem;
+  --radius-pill: 999px;
+  /* The smallest touch target, and the height of every field. */
+  --hit: 2.75rem;
+  --icon: 1.25rem;
+  /* The reading column. */
+  --measure: 40rem;
+
+  /* ── Light art: the aurora's palettes (not UI colours) ─────────────── */
+  --aurora-1: #e0479e;
+  --aurora-2: #22c3ee;
+  --aurora-3: #6b4dff;
+  --aurora-4: #ff8a4c;
+  --effects-1: #ff9a52;
+  --effects-2: #f2557f;
+  --effects-3: #8d55f0;
+  --effects-4: #ffc46b;
+  --error-1: #b0163f;
+  --error-2: #e0516e;
+  --error-3: #7a1434;
+  --error-4: #c43a52;
+
+  /* ── Motion ────────────────────────────────────────────────────────── */
+  /* Live LED colours ease between updates (they arrive up to 10 a second). */
+  --duration-led: 320ms;
+  --duration-fast: 120ms;
+  --duration: 200ms;
+  --duration-slow: 320ms;
+  --duration-warm: 700ms;
+  /* The light growing out of the power button, and drawing back in. */
+  --duration-light-on: 1600ms;
+  --duration-light-off: 500ms;
+  --duration-mix: 900ms;
+  /* The ignition on top of it: the wavefront, the lift, the lamp. */
+  --duration-wave: 1000ms;
+  --duration-ignite: 1300ms;
+  --duration-lamp: 550ms;
+  --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1);
+  --ease-in-out: cubic-bezier(0.55, 0, 0.3, 1);
+  --ease-light: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Light, by choice. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f7f7f9;
+  --fg: #17181f;
+  --ok: #14785a;
+  --alert: #b4361f;
+  --on-fill: var(--bg);
+  --shadow: 0 12px 32px rgb(0 0 0 / 0.08);
+}
+
+/* Light, from the system, unless the viewer chose dark. Same values as above. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+    --bg: #f7f7f9;
+    --fg: #17181f;
+    --ok: #14785a;
+    --alert: #b4361f;
+    --on-fill: var(--bg);
+    --shadow: 0 12px 32px rgb(0 0 0 / 0.08);
+  }
+}
+
+/* Night in either theme: the light card and the picture stage. */
+.light-card,
+.preview-canvas,
+.preview-message,
+.led-map-screen {
+  color-scheme: dark;
+  --bg: #0b0c11;
+  --fg: #ecedf3;
+  --ok: #4fd1b5;
+  --alert: #ff8f7a;
+  --on-fill: var(--fg);
+}
+
+/*
+ * Roles: fixed mixes of the five, declared again wherever the five change,
+ * so each scope mixes its own values. Muted text is ≥ 5:1 on bg and surface
+ * in both themes.
+ */
+:root,
+.light-card,
+.preview-canvas,
+.preview-message,
+.led-map-screen {
+  --surface: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  --surface-2: color-mix(in srgb, var(--fg) 9%, var(--bg));
+  --line: color-mix(in srgb, var(--fg) 10%, transparent);
+  --line-strong: color-mix(in srgb, var(--fg) 20%, transparent);
+  --muted: color-mix(in srgb, var(--fg) 68%, var(--bg));
+  --accent-ink: color-mix(in srgb, var(--accent) 50%, var(--fg));
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, var(--fg));
+  --alert-soft: color-mix(in srgb, var(--alert) 12%, transparent);
+  --ok-soft: color-mix(in srgb, var(--ok) 12%, transparent);
+  /* Text and knobs on a filled control (accent, a slider thumb, a switch). */
+  --on-fill: var(--fg);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent-ink) 40%, transparent);
+  /* Elevation: one level. Shadows are the absence of light, not a colour. */
+  --shadow: 0 12px 32px rgb(0 0 0 / 0.3);
+  --shadow-stage: 0 20px 60px rgb(0 0 0 / 0.45);
+}
+/* The light theme's own fill text, after the roles (the roles set it to fg). */
+:root[data-theme='light'] {
+  --on-fill: var(--bg);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --on-fill: var(--bg);
+  }
+}

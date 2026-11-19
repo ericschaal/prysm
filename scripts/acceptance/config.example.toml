@@ -1,0 +1,137 @@
+# Prysm acceptance runner configuration. Copy to scripts/acceptance/config.toml
+# (untracked) and fill in your own addresses; see docs/developers/acceptance.md.
+# Values here are examples in the documentation's placeholder style. Paths are
+# relative to the repository root.
+
+[wled]
+# WLED's host[:port], as in Prysm's settings (no http://).
+address = "192.168.1.40"
+
+[leds]
+# LEDs per edge, clockwise from the bottom-left corner (as in the portal).
+top = 30
+right = 18
+bottom = 30
+left = 18
+
+[checks]
+# Seconds of frame-rate sampling per check.
+seconds = 10
+# Allowed deviation of the measured frame rate from the source's (0.15 = 15 %).
+fps_tolerance = 0.15
+
+[mac]
+# Only "local": a remote Mac ("ssh://...") is refused, not implemented.
+target = "local"
+# The artifact under test, as `cargo xtask dist mac` writes it. The runner
+# never builds; without it the Mac cells are skipped (or fail when named).
+binary = "dist/prysm-headless-macos-arm64"
+# The capture card's AVFoundation unique ID, as Prysm's device setting takes
+# it; a wrong one fails listing the devices present. Omit without a card.
+device = "0x1100000345f2131"
+# Where the runner's own Prysm listens (localhost: nothing else reaches it).
+listen = "127.0.0.1:18787"
+# Port of the local colour page for --display-check (localhost only).
+display_port = 18790
+
+[mac.capture]
+# The device source's capture size and rate; a mode of the card must take
+# them. Without the table: 640x360 at 30 fps.
+width = 640
+height = 360
+fps = 30
+
+[mac.feed.chromecast]
+# What puts a known picture into the capture card: a Chromecast with Google
+# TV on the card's HDMI input. Remove this table if nothing the runner
+# controls feeds the card; the colour check is then only "not black".
+# ADB serial (required): the USB serial from `adb devices`, or HOST:PORT after
+# your own `adb connect` for wireless debugging. The runner reads the
+# Chromecast's Wi-Fi address over ADB and casts to it (port 8009).
+adb_serial = "0123456789ABCD"
+# Port on this computer that serves the clip to the Chromecast.
+serve_port = 18792
+# Seconds the colour checks wait after PLAYING for the player overlay to clear.
+settle_seconds = 5.0
+
+[linux]
+# "ssh://USER@HOST" (a Linux computer on the LAN, reached with your own ssh
+# keys and BatchMode: no prompts) or "local" (this computer). HOST must also
+# be an address this computer reaches over HTTP: an ssh config alias is not.
+target = "ssh://pi@192.168.1.70"
+# The artifact under test, as `cargo xtask dist` writes it; its ELF machine
+# must be the target's (uname -m). The runner copies it to
+# ~/.prysm-acceptance/RUN on the target and removes that directory at the end.
+binary = "dist/prysm-headless-linux-arm64"
+# The Debian package (cell linux-deb-device) and the image (linux-image-device),
+# as `cargo xtask dist deb-arm64 image-arm64` writes them; each optional. Both
+# need an ssh target, and the target must have no image prysm-headless:local
+# and no Prysm installed (see `installed`); the runner purges or removes what
+# it installed at the end. The package needs passwordless sudo there; the
+# image Docker and its compose plugin (2.24.4+) for the ssh user (in the
+# `docker` group, no sudo). The image listens on compose.yaml's port 8787.
+deb = "dist/prysm-headless-linux-arm64.deb"
+image = "dist/prysm-headless-linux-arm64.tar"
+# The package cell with Prysm already installed on the target: "refuse" (the
+# default) stops before changing anything; "replace" reads its settings
+# through its portal (port 8787), saves and verifies a backup in the run
+# directory, purges it, and does NOT reinstall it: the end of the run says how
+# to restore the settings once you have reinstalled it.
+installed = "refuse"
+# The capture card: a V4L2 path on the target, preferably the stable
+# /dev/v4l/by-id/...-video-index0 link (/dev/videoN can change between boots).
+# Omit without a card.
+device = "/dev/v4l/by-id/usb-EXAMPLE-video-index0"
+# Where Prysm listens on the target (the binary, the slim TV cell's receiver,
+# and the package through a runtime drop-in). With an ssh target the default
+# is 0.0.0.0:18787, so the runner on this computer reaches it over the LAN.
+# listen = "0.0.0.0:18787"
+
+# [linux.capture] and [linux.feed.chromecast] are as for [mac]. The feed runs
+# here (ADB, the cast library and the clip server are on this computer) while
+# the card is on the target.
+[linux.capture]
+width = 640
+height = 360
+fps = 30
+
+[linux.feed.chromecast]
+adb_serial = "0123456789ABCD"
+serve_port = 18792
+settle_seconds = 5.0
+
+[tv]
+# The TV over SSH: root on a rooted LG TV, with your own key (BatchMode: no
+# prompts). HOST must resolve here; WLED should see the TV at that address.
+target = "ssh://root@192.168.1.50"
+# The packages under test, as `cargo xtask dist tv-full tv-slim` writes them.
+ipk_full = "dist/prysm-tv-full.ipk"
+ipk_slim = "dist/prysm-tv-slim.ipk"
+# The TV's hardware address: when the TV does not answer over SSH, the runner
+# sends it one wake-on-LAN packet and waits for it. Omit to never wake it.
+mac = "00:00:5E:00:53:01"
+# Prysm already on the TV (the app, the service or the data files an
+# uninstall leaves): "refuse" (the default) stops before changing anything;
+# "replace" backs up its preferences, settings and data files through its own
+# API and files, verifies the backup, uninstalls it, and does NOT reinstall it.
+installed = "refuse"
+# Seconds of each soak (lighting or streaming, the worker's CPU and memory).
+soak_seconds = 90
+# The slim cells' receiver is [mac] (on this computer) or [linux] (over SSH):
+# its binary, listening on its listen port on the LAN, so the TV reaches it.
+
+[tv.feed.cast]
+# The TV cells always cast the test clip, with a known overlay over its
+# bottom, to the TV's own Cast receiver (the host of `target`, port 8009):
+# it is the video state the video checks measure in. The first cast from this
+# computer shows a prompt on the TV: the runner asks you on this terminal to
+# accept it with the remote. This table is optional; without it, these
+# defaults.
+# Port on this computer that serves the clip and the overlay to the TV.
+serve_port = 18792
+# Seconds the video checks wait after PLAYING for the player's own overlay to clear.
+settle_seconds = 5.0
+
+[eyes]
+# The portal whose state the guided checks set up; empty: the TV's (as getState reports it).
+portal = ""

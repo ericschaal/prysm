@@ -1,0 +1,6 @@
+The ppid=16006, pid=16007, tid=16010 open GAL-SE/mmap success.
+# thread ui=640x360 ui_hz=30 ui_opened=1 ui_failed=0 ui_frames=308 ui_busy_mean_us=15222 ui_cpu_ms=1311
+# video_frames=300 wall_ms=9966 process_cpu_ms=1333 cpu_share_of_one_core=13.4%
+# video_wake_late n=300 mean_us=187 p50=73 p95=172 p99=3021 max=3039
+# video_work n=300 mean_us=169 p50=161 p95=200 p99=330 max=742
+# video_interval n=299 mean_us=33333 p50=33334 p95=33427 p99=36279 max=36295

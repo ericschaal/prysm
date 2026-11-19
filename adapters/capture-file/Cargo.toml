@@ -1,0 +1,27 @@
+[package]
+name = "prysm-capture-file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Video-file playback through an FFmpeg subprocess as a blocking Prysm frame source"
+
+[features]
+# `utoipa::ToSchema` for the settings, for the contract exporter.
+schema = ["dep:utoipa"]
+
+[dependencies]
+prysm-core.workspace = true
+prysm-ports.workspace = true
+nix = { workspace = true, features = ["poll"] }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+utoipa = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "prysm-capture-device"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Local video device capture (V4L2 / AVFoundation) as a blocking Prysm frame source"
+
+[features]
+# `utoipa::ToSchema` for the settings, for the contract exporter.
+schema = ["dep:utoipa"]
+
+[dependencies]
+prysm-capture-device-sys.workspace = true
+prysm-core.workspace = true
+prysm-ports.workspace = true
+serde.workspace = true
+utoipa = { workspace = true, optional = true }
+
+[dev-dependencies]
+anyhow = "1"
+serde_json.workspace = true
+
+[lints]
+workspace = true

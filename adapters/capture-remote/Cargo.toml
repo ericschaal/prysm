@@ -1,0 +1,38 @@
+[package]
+name = "prysm-capture-remote"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Blocking WebSocket frame transport from a capture-only host to a lighting host's portal"
+
+[features]
+# `utoipa::ToSchema` for the settings, for the contract exporter.
+schema = ["dep:utoipa"]
+# A stand-in for the portal's upgrade and hand-over, for tests.
+testkit = []
+
+[dependencies]
+prysm-core.workspace = true
+prysm-ports.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+prysm-h264.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+tungstenite = { workspace = true, features = ["handshake", "rustls-tls-native-roots"] }
+# wss: ring as the crypto provider, and the system's certificate
+# authorities, loaded once per process.
+rustls.workspace = true
+rustls-native-certs.workspace = true
+utoipa = { workspace = true, optional = true }
+
+[dev-dependencies]
+prysm-capture-remote = { path = ".", features = ["testkit"] }
+prysm-runtime = { workspace = true, features = ["testkit"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+
+[lints]
+workspace = true

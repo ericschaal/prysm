@@ -1,0 +1,517 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index c5f3526..38bb353 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1944,6 +1944,7 @@ dependencies = [
+ name = "prysm-processor"
+ version = "0.0.0"
+ dependencies = [
++ "cc",
+  "prysm-core",
+  "rayon",
+  "tracing",
+diff --git a/crates/core/src/yuv_rgb.rs b/crates/core/src/yuv_rgb.rs
+index a795b6b..e97d5f9 100644
+--- a/crates/core/src/yuv_rgb.rs
++++ b/crates/core/src/yuv_rgb.rs
+@@ -44,6 +44,13 @@ impl YuvToRgb {
+         }
+     }
+ 
++    /// `[bias, y, r_v, g_v, g_u, b_u]` in 13-bit fixed point, for kernels
++    /// that must convert exactly as [`Self::rgb`] does.
++    #[must_use]
++    pub fn coefficients(&self) -> [i32; 6] {
++        [self.bias, self.y, self.r_v, self.g_v, self.g_u, self.b_u]
++    }
++
+     /// One pixel from its luma and (shared) chroma samples.
+     #[inline]
+     #[must_use]
+diff --git a/crates/processor/Cargo.toml b/crates/processor/Cargo.toml
+index f3044e5..ba18759 100644
+--- a/crates/processor/Cargo.toml
++++ b/crates/processor/Cargo.toml
+@@ -11,6 +11,9 @@ prysm-core.workspace = true
+ rayon.workspace = true
+ tracing.workspace = true
+ 
++[build-dependencies]
++cc = "1"
++
+ # Not the workspace lints: examples/frame_recycling.rs counts allocations with
+ # an unsafe GlobalAlloc, which `forbid` would reject.
+ [lints.rust]
+diff --git a/crates/processor/src/frames/frame_view.rs b/crates/processor/src/frames/frame_view.rs
+index bce986d..88204ab 100644
+--- a/crates/processor/src/frames/frame_view.rs
++++ b/crates/processor/src/frames/frame_view.rs
+@@ -177,6 +177,162 @@ impl FrameView {
+         let [r, g, b] = sum.map(|channel| (channel / count as f64) as f32);
+         LinearColor::new(r, g, b)
+     }
++
++    /// [`Self::average_linear_every`] for each of `cells` (viewport-relative
++    /// `[x0, y0, x1, y1]`) into `out`. With the NEON kernel, NV12 at step 1 is
++    /// summed a run of adjacent cells of one row band at a time, each picture
++    /// row read once; the sums are exact integers, so the grouping of cells
++    /// never changes a mean.
++    pub fn average_cells(&self, cells: &[[u32; 4]], step: u32, out: &mut [LinearColor]) {
++        #[cfg(prysm_neon)]
++        if step <= 1 && neon::average_nv12_cells(self, cells, out) {
++            return;
++        }
++        for (color, &[x0, y0, x1, y1]) in out.iter_mut().zip(cells) {
++            *color = self.average_linear_every(x0, y0, x1, y1, step);
++        }
++    }
++}
++
++/// The NEON cell sums of `nv12_neon.c` (built by `build.rs` where NEON exists).
++#[cfg(prysm_neon)]
++#[allow(unsafe_code, reason = "one FFI call into the NEON kernel")]
++mod neon {
++    use super::FrameView;
++    use prysm_core::{LinearColor, PixelFormat, YuvToRgb};
++    use std::sync::OnceLock;
++
++    /// Linear light per sRGB code in units of 2^-20, as the kernel sums it.
++    const SCALE: f64 = 1_048_576.0;
++
++    unsafe extern "C" {
++        /// See `nv12_neon.c` for the contract.
++        fn prysm_nv12_cell_sums(
++            luma: *const u8,
++            chroma: *const u8,
++            width: u32,
++            y0: u32,
++            y1: u32,
++            edges: *const u32,
++            n: u32,
++            coefficients: *const [i32; 6],
++            table: *const [u32; 256],
++            sums: *mut u64,
++        );
++    }
++
++    #[allow(
++        clippy::cast_possible_truncation,
++        clippy::cast_sign_loss,
++        reason = "linear light in 0..=1 scaled to 2^20"
++    )]
++    fn table() -> &'static [u32; 256] {
++        static TABLE: OnceLock<[u32; 256]> = OnceLock::new();
++        TABLE.get_or_init(|| {
++            std::array::from_fn(|code| {
++                let srgb = code as f64 / 255.0;
++                let linear = if srgb <= 0.040_45 {
++                    srgb / 12.92
++                } else {
++                    ((srgb + 0.055) / 1.055).powf(2.4)
++                };
++                (linear * SCALE).round() as u32
++            })
++        })
++    }
++
++    /// Fills `out` and returns true for an NV12 frame whose coefficients fit
++    /// the kernel's 16-bit multipliers; otherwise returns false untouched.
++    #[allow(
++        clippy::cast_possible_truncation,
++        clippy::cast_precision_loss,
++        reason = "means of bounded sums, returned as f32 colour"
++    )]
++    pub(super) fn average_nv12_cells(
++        view: &FrameView,
++        cells: &[[u32; 4]],
++        out: &mut [LinearColor],
++    ) -> bool {
++        let PixelFormat::NV12 { range, matrix } = view.frame.format() else {
++            return false;
++        };
++        let Some((luma, chroma)) = view.frame.nv12_planes() else {
++            return false;
++        };
++        let coefficients = YuvToRgb::new(range, matrix).coefficients();
++        let (width, height) = (view.frame.width(), view.frame.height());
++        if coefficients[1..].iter().any(|&c| i16::try_from(c).is_err()) || width % 2 != 0 {
++            return false;
++        }
++        let row = width as usize;
++        let clip_x = |x: u32| view.viewport.x.saturating_add(x).min(width);
++        let clip_y = |y: u32| view.viewport.y.saturating_add(y).min(height);
++        let (mut edges, mut sums) = (Vec::new(), Vec::new());
++        let mut start = 0;
++        while start < cells.len() {
++            // A run: cells of the same rows, each starting where the last ends.
++            let [_, y0, _, y1] = cells[start];
++            let mut end = start + 1;
++            // (Research: `PRYSM_NEON=cell` keeps every run to one cell.)
++            while end < cells.len()
++                && !cfg!(prysm_neon_per_cell)
++                && cells[end][1] == y0
++                && cells[end][3] == y1
++                && cells[end][0] == cells[end - 1][2]
++            {
++                end += 1;
++            }
++            let run = &cells[start..end];
++            let (y0, y1) = (clip_y(y0), clip_y(y1));
++            edges.clear();
++            edges.push(clip_x(run[0][0]));
++            edges.extend(run.iter().map(|cell| clip_x(cell[2])));
++            let ascending = edges.windows(2).all(|pair| pair[0] <= pair[1]);
++            let rows_present =
++                luma.len() >= y1 as usize * row && chroma.len() >= (y1 as usize).div_ceil(2) * row;
++            if !ascending || !rows_present {
++                for (color, &[x0, y0, x1, y1]) in out[start..end].iter_mut().zip(run) {
++                    *color = view.average_linear_every(x0, y0, x1, y1, 1);
++                }
++                start = end;
++                continue;
++            }
++            sums.clear();
++            sums.resize(run.len() * 3, 0_u64);
++            if y0 < y1 && edges[0] < edges[run.len()] {
++                // SAFETY: rows y0..y1 lie inside both planes (checked above),
++                // `edges` holds run.len() + 1 ascending columns <= width, and
++                // `sums` holds 3 * run.len() values.
++                unsafe {
++                    prysm_nv12_cell_sums(
++                        luma.as_ptr(),
++                        chroma.as_ptr(),
++                        width,
++                        y0,
++                        y1,
++                        edges.as_ptr(),
++                        run.len() as u32,
++                        &raw const coefficients,
++                        table(),
++                        sums.as_mut_ptr(),
++                    );
++                }
++            }
++            let means = out[start..end].iter_mut().zip(sums.as_chunks::<3>().0);
++            for ((color, sum), pair) in means.zip(edges.windows(2)) {
++                let count = u64::from(pair[1] - pair[0]) * u64::from(y1.saturating_sub(y0));
++                *color = if count == 0 {
++                    LinearColor::black()
++                } else {
++                    let scale = count as f64 * SCALE;
++                    let [r, g, b] = [0, 1, 2].map(|c| (sum[c] as f64 / scale) as f32);
++                    LinearColor::new(r, g, b)
++                };
++            }
++            start = end;
++        }
++        true
++    }
+ }
+ 
+ #[cfg(test)]
+@@ -349,6 +505,8 @@ pub mod tests {
+                 matrix: YuvStandardMatrix::Smpte240,
+             },
+         ];
++        // The table-free NEON curve is a polynomial within 2.1e-5 of the exact one.
++        const BOUND: f64 = if cfg!(prysm_neon_arith) { 2.5e-5 } else { 1e-6 };
+         let mut worst = 0.0_f64;
+         for format in formats {
+             let size = format.expected_size(width, height).unwrap().unwrap();
+@@ -388,9 +546,19 @@ pub mod tests {
+                 // and an empty one.
+                 let x_edges = [0, 1, 4, 9, 9, 16, 27, 38, 47, 60];
+                 for (rows, step) in [(0..30, 1), (3..17, 2), (1..28, 3), (2..25, 5), (7..8, 4)] {
+-                    for edge in x_edges.windows(2) {
+-                        let cell =
++                    // One row band of adjacent cells, averaged together.
++                    let cells: Vec<_> = x_edges
++                        .windows(2)
++                        .map(|edge| [edge[0], rows.start, edge[1], rows.end])
++                        .collect();
++                    let mut means = vec![LinearColor::black(); cells.len()];
++                    view.average_cells(&cells, step, &mut means);
++                    for (edge, &cell) in x_edges.windows(2).zip(&means) {
++                        let single =
+                             view.average_linear_every(edge[0], rows.start, edge[1], rows.end, step);
++                        if !cfg!(prysm_neon) || step != 1 {
++                            assert_eq!(cell, single);
++                        }
+                         let clip =
+                             |origin: u32, offset: u32, limit: u32| (origin + offset).min(limit);
+                         let xs = clip(vx, edge[0], width)..clip(vx, edge[1], width);
+@@ -416,7 +584,7 @@ pub mod tests {
+                             let error = (f64::from(actual) - expected).abs();
+                             worst = worst.max(error);
+                             assert!(
+-                                error <= 1e-6,
++                                error <= BOUND,
+                                 "{format:?} at ({vx}, {vy}), step {step}, {edge:?}: {actual} vs {expected}"
+                             );
+                         }
+diff --git a/crates/processor/src/nodes/spatial_sampler.rs b/crates/processor/src/nodes/spatial_sampler.rs
+index e842f68..8ef4829 100644
+--- a/crates/processor/src/nodes/spatial_sampler.rs
++++ b/crates/processor/src/nodes/spatial_sampler.rs
+@@ -321,9 +321,7 @@ impl SpatialSampler {
+         }
+         let (cells, step) = (&self.cells, self.step);
+         workers.for_each_chunk(&mut self.cell_colors, CELL_CHUNK, |offset, colors| {
+-            for (color, &[x0, y0, x1, y1]) in colors.iter_mut().zip(&cells[offset..]) {
+-                *color = view.average_linear_every(x0, y0, x1, y1, step);
+-            }
++            view.average_cells(&cells[offset..offset + colors.len()], step, colors);
+         });
+         mark(Stage::CellAverages);
+ 
+diff --git a/crates/processor/build.rs b/crates/processor/build.rs
+new file mode 100644
+index 0000000..f5d080a
+--- /dev/null
++++ b/crates/processor/build.rs
+@@ -0,0 +1,42 @@
++//! Compiles the NEON cell-sum kernel (`src/frames/nv12_neon.c`) on CPUs with
++//! NEON and sets `cfg(prysm_neon)` for `frame_view.rs`; elsewhere nothing is
++//! compiled and the Rust loop is used. Research build: `PRYSM_NEON=off`
++//! disables the kernel, `PRYSM_NEON=arith` selects the table-free curve and
++//! `PRYSM_NEON=cell` calls the kernel cell by cell instead of per row band.
++
++fn main() {
++    println!("cargo::rustc-check-cfg=cfg(prysm_neon, prysm_neon_arith, prysm_neon_per_cell)");
++    println!("cargo::rerun-if-changed=src/frames/nv12_neon.c");
++    println!("cargo::rerun-if-env-changed=PRYSM_NEON");
++    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
++    let features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();
++    // Cargo leaves CARGO_CFG_TARGET_FEATURE empty for the armv7 cross build
++    // (seen with packaging/webos/env.sh), so its `+neon` flag is read too.
++    let flags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
++    let arm_neon = features.split(',').any(|f| f == "neon")
++        || flags.split(['\x1f', ',']).any(|f| f == "+neon");
++    let neon = arch == "aarch64" || (arch == "arm" && arm_neon);
++    let variant = std::env::var("PRYSM_NEON").unwrap_or_default();
++    if !neon || variant == "off" {
++        return;
++    }
++    let mut build = cc::Build::new();
++    build.file("src/frames/nv12_neon.c").opt_level(3);
++    // The NEON is written out; GCC's own vectorisation of the scalar cell
++    // sums went through the stack and was slower than the scalar loop.
++    build.flag_if_supported("-fno-tree-vectorize");
++    build.flag_if_supported("-fno-tree-slp-vectorize");
++    if arch == "arm" {
++        // cc already passes -march=armv7-a+simd; schedule for the TV's core.
++        build.flag("-mtune=cortex-a9");
++    }
++    if variant == "arith" {
++        build.define("PRYSM_NEON_ARITH", None);
++        println!("cargo::rustc-cfg=prysm_neon_arith");
++    }
++    if variant == "cell" {
++        println!("cargo::rustc-cfg=prysm_neon_per_cell");
++    }
++    build.compile("prysm_nv12_neon");
++    println!("cargo::rustc-cfg=prysm_neon");
++}
+diff --git a/crates/processor/src/frames/nv12_neon.c b/crates/processor/src/frames/nv12_neon.c
+new file mode 100644
+index 0000000..16ef16e
+--- /dev/null
++++ b/crates/processor/src/frames/nv12_neon.c
+@@ -0,0 +1,197 @@
++/*
++ * Linear-light sums of NV12 cells with NEON (armv7 with NEON, aarch64).
++ *
++ * The contract is prysm_nv12_cell_sums below; frame_view.rs is the only
++ * caller. YUV to 8-bit RGB is bit-exact with prysm_core::YuvToRgb (13-bit
++ * fixed point, 32-bit lanes). Linear light is in units of 2^-20:
++ *
++ * - default: 8-bit RGB is stored, then each channel is looked up in the
++ *   caller's 2^20 table and summed by scalar code (exact table values);
++ * - PRYSM_NEON_ARITH: the sRGB curve is a degree-5 f32 polynomial in NEON
++ *   (within 2.1e-5 of the exact curve), with no table; only the sums are
++ *   scalar.
++ *
++ * Sums cannot overflow: a chunk sums at most CHUNK pixels of at most 2^20
++ * each in u32 (2^27), then adds to the caller's u64.
++ */
++#include <arm_neon.h>
++#include <stddef.h>
++#include <stdint.h>
++
++typedef struct {
++    int32_t bias, y, r_v, g_v, g_u, b_u;
++} prysm_yuv;
++
++/* Pixels converted at a time; a multiple of 16. */
++#define CHUNK 128
++#define PRECISION 13
++#define ROUND (1 << (PRECISION - 1))
++
++#ifdef PRYSM_NEON_ARITH
++typedef uint32_t sample; /* linear light, 2^-20 */
++#else
++typedef uint8_t sample; /* 8-bit sRGB code */
++#endif
++
++static inline uint8_t channel(int32_t value) {
++    value = (value + ROUND) >> PRECISION;
++    return (uint8_t)(value < 0 ? 0 : value > 255 ? 255 : value);
++}
++
++#ifdef PRYSM_NEON_ARITH
++/* Degree-5 fit of the IEC 61966-2-1 decoding over codes 11..255, in the
++ * code itself (coefficients pre-divided by 255^k); codes 0..10 are on the
++ * linear segment. */
++static const float CURVE[6] = {
++    0.0010205572471022606f,
++    0.029987264424562454f / 255.0f,
++    0.5397341251373291f / (255.0f * 255.0f),
++    0.6094415187835693f / (255.0f * 255.0f * 255.0f),
++    -0.2392449975013733f / (255.0f * 255.0f * 255.0f * 255.0f),
++    0.059081509709358215f / (255.0f * 255.0f * 255.0f * 255.0f * 255.0f),
++};
++#define SEGMENT (1.0f / (255.0f * 12.92f))
++#define SCALE 1048576.0f
++
++/* The same operations as linear4, one value at a time. */
++static inline uint32_t linear_scalar(uint8_t code) {
++    float c = code, v;
++    if (code <= 10) {
++        v = c * (SEGMENT * SCALE) + 0.5f;
++    } else {
++        v = CURVE[5] * SCALE;
++        for (int k = 4; k >= 1; k--) v = v * c + CURVE[k] * SCALE;
++        v = v * c + (CURVE[0] * SCALE + 0.5f);
++    }
++    return (uint32_t)v;
++}
++
++static inline uint32x4_t linear4(uint16x4_t codes) {
++    uint32x4_t wide = vmovl_u16(codes);
++    float32x4_t c = vcvtq_f32_u32(wide);
++    float32x4_t v = vdupq_n_f32(CURVE[5] * SCALE);
++    for (int k = 4; k >= 1; k--) v = vmlaq_f32(vdupq_n_f32(CURVE[k] * SCALE), v, c);
++    /* The constant term carries the + 0.5 that rounds the truncation below. */
++    v = vmlaq_f32(vdupq_n_f32(CURVE[0] * SCALE + 0.5f), v, c);
++    float32x4_t segment = vmlaq_n_f32(vdupq_n_f32(0.5f), c, SEGMENT * SCALE);
++    /* An integer compare: GCC turns vcleq_f32 into per-lane VFP compares. */
++    return vcvtq_u32_f32(vbslq_f32(vcleq_u32(wide, vdupq_n_u32(10)), segment, v));
++}
++
++/* Pixels 2j and 2j + 1 come as even[j] and odd[j]. */
++static inline void store2(uint32_t *out, uint8x8_t even, uint8x8_t odd) {
++    uint8x8x2_t pixels = vzip_u8(even, odd);
++    uint16x8_t lo = vmovl_u8(pixels.val[0]), hi = vmovl_u8(pixels.val[1]);
++    vst1q_u32(out, linear4(vget_low_u16(lo)));
++    vst1q_u32(out + 4, linear4(vget_high_u16(lo)));
++    vst1q_u32(out + 8, linear4(vget_low_u16(hi)));
++    vst1q_u32(out + 12, linear4(vget_high_u16(hi)));
++}
++#define FROM_CODE(code) linear_scalar(code)
++#else
++static inline void store2(uint8_t *out, uint8x8_t even, uint8x8_t odd) {
++    uint8x8x2_t pixels = {{even, odd}};
++    vst2_u8(out, pixels); /* interleaves back to picture order */
++}
++#define FROM_CODE(code) (code)
++#endif
++
++/* Eight 8-bit codes from two halves of 32-bit fixed point (rounding already
++ * added), clamped to 0..255 as YuvToRgb does. */
++static inline uint8x8_t narrow8(int32x4_t lo, int32x4_t hi) {
++    return vqmovn_u16(vcombine_u16(vqshrun_n_s32(lo, PRECISION), vqshrun_n_s32(hi, PRECISION)));
++}
++
++/* Converts columns [x, end) of one row; x is even. Pixel x + i lands at
++ * index i of r, g, b. */
++static void convert(const uint8_t *luma, const uint8_t *uv, uint32_t x, uint32_t end,
++                    const prysm_yuv *k, sample *r, sample *g, sample *b) {
++    /* Black level, the 128 chroma offset and rounding, folded per channel. */
++    const int32_t base = ROUND - k->bias * k->y;
++    const int32x4_t kr = vdupq_n_s32(base - 128 * k->r_v);
++    const int32x4_t kg = vdupq_n_s32(base + 128 * (k->g_v + k->g_u));
++    const int32x4_t kb = vdupq_n_s32(base - 128 * k->b_u);
++    const int16_t lanes[4] = {(int16_t)k->y, (int16_t)k->r_v, (int16_t)k->g_v, (int16_t)k->g_u};
++    const int16x4_t c = vld1_s16(lanes);
++    const int16x4_t cb = vdup_n_s16((int16_t)k->b_u);
++    uint32_t i = 0;
++    for (; x + i + 16 <= end; i += 16) {
++        /* Luma split into even and odd pixels, so pixel pair j of both uses
++         * chroma sample j without duplicating it. */
++        uint8x8x2_t ys = vld2_u8(luma + x + i);
++        uint8x8x2_t uvs = vld2_u8(uv + x + i); /* 8 U, 8 V */
++        int16x8_t ye = vreinterpretq_s16_u16(vmovl_u8(ys.val[0]));
++        int16x8_t yo = vreinterpretq_s16_u16(vmovl_u8(ys.val[1]));
++        int16x8_t u = vreinterpretq_s16_u16(vmovl_u8(uvs.val[0]));
++        int16x8_t v = vreinterpretq_s16_u16(vmovl_u8(uvs.val[1]));
++        /* One channel: chroma term per pair (lo: pairs 0-3, hi: 4-7), plus luma. */
++#define CHANNEL(lo, hi, out)                                                         \
++    store2(out,                                                                      \
++           narrow8(vmlal_lane_s16(lo, vget_low_s16(ye), c, 0),                       \
++                   vmlal_lane_s16(hi, vget_high_s16(ye), c, 0)),                     \
++           narrow8(vmlal_lane_s16(lo, vget_low_s16(yo), c, 0),                       \
++                   vmlal_lane_s16(hi, vget_high_s16(yo), c, 0)))
++        CHANNEL(vmlal_lane_s16(kr, vget_low_s16(v), c, 1),
++                vmlal_lane_s16(kr, vget_high_s16(v), c, 1), r + i);
++        CHANNEL(vmlsl_lane_s16(vmlsl_lane_s16(kg, vget_low_s16(v), c, 2), vget_low_s16(u), c, 3),
++                vmlsl_lane_s16(vmlsl_lane_s16(kg, vget_high_s16(v), c, 2), vget_high_s16(u), c, 3),
++                g + i);
++        CHANNEL(vmlal_lane_s16(kb, vget_low_s16(u), cb, 0),
++                vmlal_lane_s16(kb, vget_high_s16(u), cb, 0), b + i);
++#undef CHANNEL
++    }
++    for (; x + i < end; i++) {
++        uint32_t pair = (x + i) & ~1u;
++        int32_t yy = ((int32_t)luma[x + i] - k->bias) * k->y;
++        int32_t u = (int32_t)uv[pair] - 128, v = (int32_t)uv[pair + 1] - 128;
++        r[i] = FROM_CODE(channel(yy + k->r_v * v));
++        g[i] = FROM_CODE(channel(yy - k->g_v * v - k->g_u * u));
++        b[i] = FROM_CODE(channel(yy + k->b_u * u));
++    }
++}
++
++/*
++ * Adds the linear light of n adjacent cells of one NV12 picture to sums.
++ *
++ * luma and chroma are the picture's planes, width bytes per row (width is
++ * even); cell i covers columns [edges[i], edges[i + 1]) of rows [y0, y1),
++ * with edges ascending and edges[n] <= width, and rows inside both planes.
++ * sums[3 * i .. 3 * i + 3] receives cell i's R, G, B in units of 2^-20.
++ * Each picture row is read once for all n cells.
++ */
++void prysm_nv12_cell_sums(const uint8_t *luma, const uint8_t *chroma, uint32_t width,
++                          uint32_t y0, uint32_t y1, const uint32_t *edges, uint32_t n,
++                          const prysm_yuv *k, const uint32_t *lut, uint64_t *sums) {
++    sample r[CHUNK], g[CHUNK], b[CHUNK];
++#ifdef PRYSM_NEON_ARITH
++    (void)lut;
++#define LINEAR(s) (s)
++#else
++#define LINEAR(s) lut[s]
++#endif
++    const uint32_t start = edges[0], end = edges[n];
++    for (uint32_t y = y0; y < y1; y++) {
++        const uint8_t *luma_row = luma + (size_t)y * width;
++        const uint8_t *uv_row = chroma + (size_t)(y / 2) * width;
++        uint32_t cell = 0;
++        for (uint32_t x = start & ~1u; x < end; x += CHUNK) {
++            uint32_t chunk_end = x + CHUNK < end ? x + CHUNK : end;
++            convert(luma_row, uv_row, x, chunk_end, k, r, g, b);
++            for (; cell < n; cell++) {
++                uint32_t lo = edges[cell] > x ? edges[cell] : x;
++                uint32_t hi = edges[cell + 1] < chunk_end ? edges[cell + 1] : chunk_end;
++                uint32_t sr = 0, sg = 0, sb = 0;
++                for (uint32_t i = lo - x; i < hi - x; i++) {
++                    sr += LINEAR(r[i]);
++                    sg += LINEAR(g[i]);
++                    sb += LINEAR(b[i]);
++                }
++                sums[3 * cell] += sr;
++                sums[3 * cell + 1] += sg;
++                sums[3 * cell + 2] += sb;
++                if (edges[cell + 1] > chunk_end) break; /* continues in the next chunk */
++            }
++        }
++    }
++#undef LINEAR
++}

@@ -1,0 +1,468 @@
+diff --git a/crates/core/src/yuv_rgb.rs b/crates/core/src/yuv_rgb.rs
+index a795b6b..7cee1e5 100644
+--- a/crates/core/src/yuv_rgb.rs
++++ b/crates/core/src/yuv_rgb.rs
+@@ -44,6 +44,16 @@ impl YuvToRgb {
+         }
+     }
+ 
++    /// `[bias, y, r_v, g_v, g_u, b_u]` in 13-bit fixed point, for SIMD
++    /// kernels that must convert exactly as [`Self::rgb`] does. Every
++    /// coefficient is below 4 (the largest, `b_u`, is about 2.14), so all fit
++    /// 16-bit multipliers.
++    #[must_use]
++    pub fn coefficients(&self) -> [i16; 6] {
++        [self.bias, self.y, self.r_v, self.g_v, self.g_u, self.b_u]
++            .map(|c| i16::try_from(c).expect("13-bit coefficients below 4 fit 16 bits"))
++    }
++
+     /// One pixel from its luma and (shared) chroma samples.
+     #[inline]
+     #[must_use]
+@@ -99,6 +109,7 @@ mod tests {
+                 (YuvStandardMatrix::Smpte240, (0.212, 0.087)),
+             ] {
+                 let convert = YuvToRgb::new(range, matrix);
++                let _fits_16_bits = convert.coefficients();
+                 for y in codes.clone() {
+                     for u in codes.clone() {
+                         for v in codes.clone() {
+diff --git a/crates/processor/Cargo.toml b/crates/processor/Cargo.toml
+index f3044e5..e8f3163 100644
+--- a/crates/processor/Cargo.toml
++++ b/crates/processor/Cargo.toml
+@@ -6,6 +6,10 @@ license.workspace = true
+ publish.workspace = true
+ description = "Video edge colour sampling and smoothing for Prysm"
+ 
++[features]
++# NEON cell averages on 32-bit ARM (the TV); needs a nightly toolchain.
++nightly-neon = []
++
+ [dependencies]
+ prysm-core.workspace = true
+ rayon.workspace = true
+diff --git a/crates/processor/src/frames/frame_view.rs b/crates/processor/src/frames/frame_view.rs
+index bce986d..9d4282e 100644
+--- a/crates/processor/src/frames/frame_view.rs
++++ b/crates/processor/src/frames/frame_view.rs
+@@ -177,6 +177,20 @@ impl FrameView {
+         let [r, g, b] = sum.map(|channel| (channel / count as f64) as f32);
+         LinearColor::new(r, g, b)
+     }
++
++    /// [`Self::average_linear_every`] for each of `cells` (viewport-relative
++    /// `[x0, y0, x1, y1]`) into `out`. Where NEON is available, NV12 at step 1
++    /// is summed a row band of cells at a time (see `cells_neon.rs`).
++    pub fn average_cells(&self, cells: &[[u32; 4]], step: u32, out: &mut [LinearColor]) {
++        super::cells::average_cells(self, cells, step, out);
++    }
++
++    /// The portable path: each cell on its own.
++    pub(super) fn average_each(&self, cells: &[[u32; 4]], step: u32, out: &mut [LinearColor]) {
++        for (color, &[x0, y0, x1, y1]) in out.iter_mut().zip(cells) {
++            *color = self.average_linear_every(x0, y0, x1, y1, step);
++        }
++    }
+ }
+ 
+ #[cfg(test)]
+@@ -388,8 +402,15 @@ pub mod tests {
+                 // and an empty one.
+                 let x_edges = [0, 1, 4, 9, 9, 16, 27, 38, 47, 60];
+                 for (rows, step) in [(0..30, 1), (3..17, 2), (1..28, 3), (2..25, 5), (7..8, 4)] {
+-                    for edge in x_edges.windows(2) {
+-                        let cell =
++                    // The row band's cells together, and each on its own.
++                    let cells: Vec<_> = x_edges
++                        .windows(2)
++                        .map(|edge| [edge[0], rows.start, edge[1], rows.end])
++                        .collect();
++                    let mut together = vec![LinearColor::black(); cells.len()];
++                    view.average_cells(&cells, step, &mut together);
++                    for (edge, &together) in x_edges.windows(2).zip(&together) {
++                        let alone =
+                             view.average_linear_every(edge[0], rows.start, edge[1], rows.end, step);
+                         let clip =
+                             |origin: u32, offset: u32, limit: u32| (origin + offset).min(limit);
+@@ -411,14 +432,17 @@ pub mod tests {
+                                 sum / f64::from(count)
+                             }
+                         });
+-                        for (actual, expected) in [cell.r, cell.g, cell.b].into_iter().zip(expected)
+-                        {
+-                            let error = (f64::from(actual) - expected).abs();
+-                            worst = worst.max(error);
+-                            assert!(
+-                                error <= 1e-6,
+-                                "{format:?} at ({vx}, {vy}), step {step}, {edge:?}: {actual} vs {expected}"
+-                            );
++                        for cell in [together, alone] {
++                            for (actual, expected) in
++                                [cell.r, cell.g, cell.b].into_iter().zip(expected)
++                            {
++                                let error = (f64::from(actual) - expected).abs();
++                                worst = worst.max(error);
++                                assert!(
++                                    error <= 1e-6,
++                                    "{format:?} at ({vx}, {vy}), step {step}, {edge:?}: {actual} vs {expected}"
++                                );
++                            }
+                         }
+                     }
+                 }
+diff --git a/crates/processor/src/frames/mod.rs b/crates/processor/src/frames/mod.rs
+index cf249cb..57edb68 100644
+--- a/crates/processor/src/frames/mod.rs
++++ b/crates/processor/src/frames/mod.rs
+@@ -1,3 +1,17 @@
++/// Cell averages: `cells_neon.rs` where the build enables NEON and Rust may
++/// use it (aarch64 on stable; 32-bit ARM with the `nightly-neon` feature),
++/// else `cells.rs`. The only place the choice is made.
++#[cfg_attr(
++    all(
++        target_feature = "neon",
++        any(
++            target_arch = "aarch64",
++            all(target_arch = "arm", feature = "nightly-neon")
++        )
++    ),
++    path = "cells_neon.rs"
++)]
++mod cells;
+ mod frame_view;
+ 
+ pub use frame_view::{FrameView, Viewport, luma_at};
+diff --git a/crates/processor/src/lib.rs b/crates/processor/src/lib.rs
+index 6e79bd1..921e36c 100644
+--- a/crates/processor/src/lib.rs
++++ b/crates/processor/src/lib.rs
+@@ -1,3 +1,10 @@
++// The 32-bit ARM NEON intrinsics and their target features are unstable
++// (rust-lang/rust#111800); `nightly-neon` opts the TV build into them.
++#![cfg_attr(
++    all(feature = "nightly-neon", target_arch = "arm"),
++    feature(stdarch_arm_neon_intrinsics, arm_target_feature)
++)]
++
+ use frames::{FrameView, Viewport};
+ use nodes::{BlackBarDetector, SpatialSampler, TemporalSmoother};
+ use prysm_core::{ColorCorrection, Config, EdgeColors, Frame, LinearColor, PixelFormat};
+diff --git a/crates/processor/src/nodes/spatial_sampler.rs b/crates/processor/src/nodes/spatial_sampler.rs
+index e842f68..8ef4829 100644
+--- a/crates/processor/src/nodes/spatial_sampler.rs
++++ b/crates/processor/src/nodes/spatial_sampler.rs
+@@ -321,9 +321,7 @@ impl SpatialSampler {
+         }
+         let (cells, step) = (&self.cells, self.step);
+         workers.for_each_chunk(&mut self.cell_colors, CELL_CHUNK, |offset, colors| {
+-            for (color, &[x0, y0, x1, y1]) in colors.iter_mut().zip(&cells[offset..]) {
+-                *color = view.average_linear_every(x0, y0, x1, y1, step);
+-            }
++            view.average_cells(&cells[offset..offset + colors.len()], step, colors);
+         });
+         mark(Stage::CellAverages);
+ 
+diff --git a/crates/processor/src/frames/cells.rs b/crates/processor/src/frames/cells.rs
+new file mode 100644
+index 0000000..5ebf570
+--- /dev/null
++++ b/crates/processor/src/frames/cells.rs
+@@ -0,0 +1,13 @@
++//! Cell averages without SIMD: each cell on its own (`cells_neon.rs` is the
++//! NEON version, chosen in `frames/mod.rs`).
++use super::FrameView;
++use prysm_core::LinearColor;
++
++pub(super) fn average_cells(
++    view: &FrameView,
++    cells: &[[u32; 4]],
++    step: u32,
++    out: &mut [LinearColor],
++) {
++    view.average_each(cells, step, out);
++}
+diff --git a/crates/processor/src/frames/cells_neon.rs b/crates/processor/src/frames/cells_neon.rs
+new file mode 100644
+index 0000000..c096c62
+--- /dev/null
++++ b/crates/processor/src/frames/cells_neon.rs
+@@ -0,0 +1,278 @@
++//! Cell averages with NEON (chosen over `cells.rs` in `frames/mod.rs`).
++//!
++//! NV12 at step 1 is summed a run of adjacent cells of one row band at a
++//! time, each picture row read once: 16 pixels at a time go from YUV to 8-bit
++//! RGB in NEON, bit-exact with [`YuvToRgb::rgb`], then each code is looked up
++//! in a 2^20 fixed-point linear table and summed as an integer. Other formats
++//! and steps take the portable path.
++//!
++//! Sums cannot overflow: a chunk adds at most `CHUNK` values of at most 2^20
++//! in `u32` (2^27) before they go into the cell's `u64`.
++#![allow(
++    unsafe_code,
++    reason = "NEON loads and stores, and the call into the NEON kernel"
++)]
++
++use super::FrameView;
++use prysm_core::{LinearColor, PixelFormat, YuvToRgb};
++use std::ops::Range;
++use std::sync::OnceLock;
++
++#[cfg(target_arch = "aarch64")]
++use core::arch::aarch64 as simd;
++#[cfg(target_arch = "arm")]
++use core::arch::arm as simd;
++use simd::{
++    uint8x8_t, uint8x8x2_t, uint16x4_t, uint32x4_t, vcombine_u16, vdup_n_u16, vdupq_n_u32,
++    vget_high_u16, vget_low_u16, vld1_u16, vld2_u8, vmlal_lane_u16, vmlsl_lane_u16, vmovl_u8,
++    vqmovn_u16, vqshrun_n_s32, vreinterpretq_s32_u32, vst2_u8,
++};
++
++/// Linear light per sRGB code is summed in units of 2^-20.
++const SCALE: f64 = 1_048_576.0;
++/// Pixels converted at a time; a multiple of 16.
++const CHUNK: usize = 128;
++const PRECISION: i32 = 13;
++
++pub(super) fn average_cells(
++    view: &FrameView,
++    cells: &[[u32; 4]],
++    step: u32,
++    out: &mut [LinearColor],
++) {
++    let (PixelFormat::NV12 { range, matrix }, Some((luma, chroma)), 0 | 1) =
++        (view.frame.format(), view.frame.nv12_planes(), step)
++    else {
++        return view.average_each(cells, step, out);
++    };
++    let convert = YuvToRgb::new(range, matrix);
++    let width = view.frame.width();
++    let clip_x = |x: u32| view.viewport.x.saturating_add(x).min(width) as usize;
++    let clip_y = |y: u32| view.viewport.y.saturating_add(y).min(view.frame.height()) as usize;
++    let planes = Planes {
++        luma,
++        chroma,
++        width: width as usize,
++    };
++    let (mut edges, mut sums) = (Vec::new(), Vec::new());
++    let mut start = 0;
++    while start < cells.len() {
++        // A run: non-empty cells of the same rows, each starting where the
++        // last ends. A reversed cell is a run of its own and averages black.
++        let joins = |a: [u32; 4], b: [u32; 4]| {
++            a[0] <= a[2] && b[0] <= b[2] && (a[1], a[3], a[2]) == (b[1], b[3], b[0])
++        };
++        let mut end = start + 1;
++        while end < cells.len() && joins(cells[end - 1], cells[end]) {
++            end += 1;
++        }
++        let run = &cells[start..end];
++        let rows = clip_y(run[0][1])..clip_y(run[0][3]).max(clip_y(run[0][1]));
++        edges.clear();
++        edges.push(clip_x(run[0][0]));
++        for cell in run {
++            edges.push(clip_x(cell[2]).max(edges[edges.len() - 1]));
++        }
++        sums.clear();
++        sums.resize(run.len(), [0_u64; 3]);
++        row_band(&planes, rows.clone(), &edges, &convert, &mut sums);
++        let means = out[start..end].iter_mut().zip(&sums).zip(edges.windows(2));
++        for ((color, sum), pair) in means {
++            *color = mean(sum, (pair[1] - pair[0]) * rows.len());
++        }
++        start = end;
++    }
++}
++
++struct Planes<'a> {
++    luma: &'a [u8],
++    chroma: &'a [u8],
++    width: usize,
++}
++
++#[allow(
++    clippy::cast_possible_truncation,
++    clippy::cast_precision_loss,
++    reason = "means of bounded sums, returned as f32 colour"
++)]
++fn mean(sum: &[u64; 3], count: usize) -> LinearColor {
++    if count == 0 {
++        return LinearColor::black();
++    }
++    let scale = count as f64 * SCALE;
++    let [r, g, b] = sum.map(|channel| (channel as f64 / scale) as f32);
++    LinearColor::new(r, g, b)
++}
++
++/// Adds the linear light of the cells between consecutive `edges` (ascending
++/// columns) over `rows` to `sums`.
++fn row_band(
++    planes: &Planes,
++    rows: Range<usize>,
++    edges: &[usize],
++    convert: &YuvToRgb,
++    sums: &mut [[u64; 3]],
++) {
++    let table = table();
++    let width = planes.width;
++    let (first, last) = (edges[0], edges[edges.len() - 1]);
++    let mut rgb = [[0_u8; CHUNK]; 3];
++    for y in rows {
++        let luma = &planes.luma[y * width..][..width];
++        let uv = &planes.chroma[y / 2 * width..][..width];
++        let mut cell = 0;
++        for x in (first & !1..last).step_by(CHUNK) {
++            let end = (x + CHUNK).min(last);
++            // NV12 widths are even, so the last pair's chroma is in the row.
++            convert_span(
++                convert,
++                &luma[x..end],
++                &uv[x..end.next_multiple_of(2)],
++                &mut rgb,
++            );
++            while cell < sums.len() {
++                let (lo, hi) = (edges[cell].max(x) - x, edges[cell + 1].min(end) - x);
++                let mut sum = [0_u32; 3];
++                if lo < hi {
++                    let [r, g, b] = rgb.each_ref().map(|plane| &plane[lo..hi]);
++                    for ((&r, &g), &b) in r.iter().zip(g).zip(b) {
++                        sum[0] += table[usize::from(r)];
++                        sum[1] += table[usize::from(g)];
++                        sum[2] += table[usize::from(b)];
++                    }
++                }
++                for (total, part) in sums[cell].iter_mut().zip(sum) {
++                    *total += u64::from(part);
++                }
++                if edges[cell + 1] > end {
++                    break; // the cell continues in the next chunk
++                }
++                cell += 1;
++            }
++        }
++    }
++}
++
++/// Converts a span that starts at an even column (`uv` is its chroma, to the
++/// next even column): pixel `i` lands at `rgb[channel][i]`.
++fn convert_span(convert: &YuvToRgb, luma: &[u8], uv: &[u8], rgb: &mut [[u8; CHUNK]; 3]) {
++    // SAFETY: this module is compiled only when the whole build enables NEON
++    // (frames/mod.rs requires `target_feature = "neon"`), and 32-bit ARM
++    // targets with NEON are ARMv7, so the kernel's target features are present.
++    let done = unsafe { convert_blocks(convert.coefficients(), luma, uv, rgb) };
++    for i in done..luma.len() {
++        let pair = i & !1;
++        let (r, g, b) = convert.rgb(luma[i], uv[pair], uv[pair + 1]);
++        [rgb[0][i], rgb[1][i], rgb[2][i]] = [r, g, b];
++    }
++}
++
++/// YUV to 8-bit RGB for whole 16-pixel blocks; returns the pixels converted.
++/// The same fixed point as [`YuvToRgb::rgb`]: black level, the 128 chroma
++/// offset and rounding fold into one constant per channel, products are
++/// 32-bit, and narrowing saturates to 0..=255.
++///
++/// The arithmetic is unsigned and wraps: codes and coefficients are all
++/// non-negative, the signs are in the choice of multiply-add or -subtract, and
++/// every true result fits `i32`, so reading the wrapped `u32` as `i32` is
++/// exact. Unsigned operands are what lets LLVM keep the 16-bit widening
++/// multiplies; with signed lanes it widened the zero-extended codes to 32 bits
++/// and used full 32-bit multiplies.
++#[target_feature(enable = "neon")]
++#[cfg_attr(target_arch = "arm", target_feature(enable = "v7"))]
++#[allow(
++    clippy::cast_sign_loss,
++    reason = "wrapping unsigned arithmetic, see above"
++)]
++fn convert_blocks(k: [i16; 6], luma: &[u8], uv: &[u8], rgb: &mut [[u8; CHUNK]; 3]) -> usize {
++    let [bias, y, r_v, g_v, g_u, b_u] = k.map(i32::from);
++    let base = (1 << (PRECISION - 1)) - bias * y;
++    let constant = |value: i32| vdupq_n_u32(value as u32);
++    let kr = constant(base - 128 * r_v);
++    let kg = constant(base + 128 * (g_v + g_u));
++    let kb = constant(base - 128 * b_u);
++    let lanes = [y, r_v, g_v, g_u].map(|c| c as u16);
++    // SAFETY: `lanes` holds the four u16 the load reads.
++    let c: uint16x4_t = unsafe { vld1_u16(lanes.as_ptr()) };
++    let cb = vdup_n_u16(b_u as u16);
++    // Eight codes from two halves of 32-bit fixed point.
++    let narrow = |lo: uint32x4_t, hi: uint32x4_t| -> uint8x8_t {
++        let shift = |x| vqshrun_n_s32::<PRECISION>(vreinterpretq_s32_u32(x));
++        vqmovn_u16(vcombine_u16(shift(lo), shift(hi)))
++    };
++    let (ys, _) = luma.as_chunks::<16>();
++    let (uvs, _) = uv.as_chunks::<16>();
++    let [r, g, b] = rgb.each_mut().map(|plane| plane.as_chunks_mut::<16>().0);
++    let blocks = ys
++        .iter()
++        .zip(uvs)
++        .zip(r.iter_mut().zip(g.iter_mut()).zip(b.iter_mut()));
++    let mut done = 0;
++    for ((ys, uvs), ((r, g), b)) in blocks {
++        // Opaque per block, so LLVM cannot hoist the coefficients' widening
++        // out of the loop, which also loses the widening multiplies (seen on
++        // armv7: 32-bit `vmla.i32` instead of `vmlal.u16`).
++        let (c, cb) = std::hint::black_box((c, cb));
++        // SAFETY: each array holds the 16 bytes the de-interleaving load reads.
++        // Luma splits into even and odd pixels, so pixel pair j of both uses
++        // chroma sample j; chroma splits into 8 U and 8 V.
++        let (ys, uvs) = unsafe { (vld2_u8(ys.as_ptr()), vld2_u8(uvs.as_ptr())) };
++        let (ye, yo, u, v) = (
++            vmovl_u8(ys.0),
++            vmovl_u8(ys.1),
++            vmovl_u8(uvs.0),
++            vmovl_u8(uvs.1),
++        );
++        // One channel from its chroma terms for pairs 0-3 and 4-7, plus luma.
++        let channel = |lo: uint32x4_t, hi: uint32x4_t, out: &mut [u8; 16]| {
++            let even = narrow(
++                vmlal_lane_u16::<0>(lo, vget_low_u16(ye), c),
++                vmlal_lane_u16::<0>(hi, vget_high_u16(ye), c),
++            );
++            let odd = narrow(
++                vmlal_lane_u16::<0>(lo, vget_low_u16(yo), c),
++                vmlal_lane_u16::<0>(hi, vget_high_u16(yo), c),
++            );
++            // SAFETY: `out` holds the 16 bytes the interleaving store writes,
++            // back in picture order.
++            unsafe { vst2_u8(out.as_mut_ptr(), uint8x8x2_t(even, odd)) };
++        };
++        let (vl, vh) = (vget_low_u16(v), vget_high_u16(v));
++        let (ul, uh) = (vget_low_u16(u), vget_high_u16(u));
++        channel(
++            vmlal_lane_u16::<1>(kr, vl, c),
++            vmlal_lane_u16::<1>(kr, vh, c),
++            r,
++        );
++        let green = |v, u| vmlsl_lane_u16::<3>(vmlsl_lane_u16::<2>(kg, v, c), u, c);
++        channel(green(vl, ul), green(vh, uh), g);
++        channel(
++            vmlal_lane_u16::<0>(kb, ul, cb),
++            vmlal_lane_u16::<0>(kb, uh, cb),
++            b,
++        );
++        done += 16;
++    }
++    done
++}
++
++/// Linear light per sRGB code in units of 2^-20 (IEC 61966-2-1).
++#[allow(
++    clippy::cast_possible_truncation,
++    clippy::cast_sign_loss,
++    reason = "linear light in 0..=1 scaled to 2^20"
++)]
++fn table() -> &'static [u32; 256] {
++    static TABLE: OnceLock<[u32; 256]> = OnceLock::new();
++    TABLE.get_or_init(|| {
++        std::array::from_fn(|code| {
++            let srgb = code as f64 / 255.0;
++            let linear = if srgb <= 0.040_45 {
++                srgb / 12.92
++            } else {
++                ((srgb + 0.055) / 1.055).powf(2.4)
++            };
++            (linear * SCALE).round() as u32
++        })
++    })
++}

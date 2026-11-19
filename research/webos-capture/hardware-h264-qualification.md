@@ -5,7 +5,8 @@
 reduced input overhead in short target-TV samples. No universal performance claim follows.
 **Platform and limits:** project webOS 25 TV, stated resolutions and workloads.
 Earlier RGB/NV16, UI-fallback and composition results describe removed paths.
-**Current contract:** [hardware H.264](../../docs/developers/hardware-h264.md).
+**Current contract:** [two TV packages, explicit stream encoding](../../docs/developers/decisions/2026-11-12-two-tv-packages.md)
+and the [slim encoder check](../../packaging/README.md#checking-the-slim-h264-encoder-on-a-tv).
 
 ## Combined capture observation (0.1.22)
 
@@ -14,7 +15,7 @@ capture. Visible UI no longer requires a separate HAL copy or CPU composition
 when that tap is available. Readiness-driven UI fallback remains supported.
 The deployed 640×360/30 fps sample averaged 12.9 ms per whole iteration; hardware
 output wait remained dominant at 11.9 ms. See
-[combined capture deployment](../../research/webos-capture/2026-11-02-encoder-latency/combined-deployment.md).
+[combined capture deployment](2026-11-02-encoder-latency/combined-deployment.md).
 
 ## Direct output qualification on 2026-11-02
 
@@ -59,7 +60,7 @@ Eight hardware phase histograms expose conversion, upload, synchronization start
 and end, submission, output wait, collection and normalization. Grafana's
 expanded **Hardware H.264** section below stream health separates preparation
 and collection from output wait, so the smaller phases remain readable.
-The [metric catalog](../../observability/CATALOG.md) defines their boundaries.
+The metric catalog (`observability/CATALOG.md` in the tag `pre-1.0-consolidation`) defines their boundaries.
 
 On the project TV, a baseline → updated → baseline experiment used the same
 changing 640×360 inputs, 30 FPS and 2 Mbit/s. Each format had five warmup inputs

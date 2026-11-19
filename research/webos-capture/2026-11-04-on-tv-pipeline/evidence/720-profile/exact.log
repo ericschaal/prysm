@@ -1,0 +1,14 @@
+MEAN_CPU_CORES 1.724
+2026-11-04T16:12:35.614752Z  INFO prysm_webos_local::native::vtcapture: video capture started width=1280 height=720 includes_ui=true
+2026-11-04T16:12:40.499195Z  INFO prysm_webos_local: local DDP output frames=73 elapsed_ms=5026
+2026-11-04T16:12:45.531469Z  INFO prysm_webos_local: local DDP output frames=160 elapsed_ms=10058
+2026-11-04T16:12:50.562439Z  INFO prysm_webos_local: local DDP output frames=246 elapsed_ms=15089
+2026-11-04T16:12:55.600643Z  INFO prysm_webos_local: local DDP output frames=333 elapsed_ms=20128
+2026-11-04T16:13:00.642848Z  INFO prysm_webos_local: local DDP output frames=419 elapsed_ms=25170
+2026-11-04T16:13:05.688482Z  INFO prysm_webos_local: local DDP output frames=506 elapsed_ms=30215
+2026-11-04T16:13:10.717199Z  INFO prysm_webos_local: local DDP output frames=588 elapsed_ms=35244
+2026-11-04T16:13:15.769446Z  INFO prysm_webos_local: local DDP output frames=674 elapsed_ms=40296
+2026-11-04T16:13:20.817594Z  INFO prysm_webos_local: local DDP output frames=758 elapsed_ms=45345
+2026-11-04T16:13:25.864675Z  INFO prysm_webos_local: local DDP output frames=843 elapsed_ms=50392
+2026-11-04T16:13:30.890782Z  INFO prysm_webos_local: local DDP output frames=927 elapsed_ms=55418
+2026-11-04T16:13:35.623352Z  INFO prysm_webos_local: local capture stopped frames=1009 elapsed_ms=60150

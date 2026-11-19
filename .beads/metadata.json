@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "prysm",
+  "project_id": "afd70ffd-5bd0-4285-8ad1-693bba543dfb"
+}

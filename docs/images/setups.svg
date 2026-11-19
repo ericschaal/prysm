@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="590" viewBox="0 0 1280 590" role="img" aria-labelledby="title desc">
+  <title id="title">Three ways to run Prysm</title>
+  <desc id="desc">Capture card: an HDMI source feeds a capture card on a computer that runs Prysm. LG TV, full package: the TV itself runs Prysm. LG TV, slim package: the TV sends its picture to a computer that runs Prysm. In all three, Prysm sends colours to WLED, which drives the LEDs.</desc>
+  <defs>
+    <linearGradient id="spectrum"><stop stop-color="#ff91b2"/><stop offset=".28" stop-color="#c8a4ff"/><stop offset=".65" stop-color="#8db5ff"/><stop offset="1" stop-color="#85dfd7"/></linearGradient>
+    <marker id="tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1l6 3-6 3" fill="none" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <rect width="1280" height="590" rx="28" fill="#f7f7fb"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="56" y="112" fill="#292c38" font-size="20" font-weight="600" letter-spacing="-.3">Capture card</text>
+    <text x="56" y="134" fill="#616577" font-size="13">Works with any TV and any</text>
+    <text x="56" y="152" fill="#616577" font-size="13">HDMI source.</text>
+    <rect x="888" y="80" width="150" height="76" rx="14" fill="#fff" stroke="#e2dced" stroke-width="1.5"/>
+    <text x="963" y="119" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">WLED</text>
+    <text x="963" y="138" text-anchor="middle" fill="#616577" font-size="12">LED controller</text>
+    <rect x="1074" y="80" width="150" height="76" rx="14" fill="#fff" stroke="url(#spectrum)" stroke-width="3"/>
+    <text x="1149" y="119" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">LEDs</text>
+    <text x="1149" y="138" text-anchor="middle" fill="#616577" font-size="12">around the screen</text>
+    <path d="M857 118H882" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+    <path d="M1043 118H1068" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+    <path d="M56 207H1224" stroke="#e7e3f0"/>
+    <text x="56" y="289" fill="#292c38" font-size="20" font-weight="600" letter-spacing="-.3">LG TV, full package</text>
+    <text x="56" y="311" fill="#616577" font-size="13">Nothing but the TV and WLED.</text>
+    <text x="56" y="329" fill="#616577" font-size="13">Needs a rooted LG webOS TV.</text>
+    <rect x="888" y="257" width="150" height="76" rx="14" fill="#fff" stroke="#e2dced" stroke-width="1.5"/>
+    <text x="963" y="296" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">WLED</text>
+    <text x="963" y="315" text-anchor="middle" fill="#616577" font-size="12">LED controller</text>
+    <rect x="1074" y="257" width="150" height="76" rx="14" fill="#fff" stroke="url(#spectrum)" stroke-width="3"/>
+    <text x="1149" y="296" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">LEDs</text>
+    <text x="1149" y="315" text-anchor="middle" fill="#616577" font-size="12">around the screen</text>
+    <path d="M857 295H882" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+    <path d="M1043 295H1068" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+    <path d="M56 384H1224" stroke="#e7e3f0"/>
+    <text x="56" y="466" fill="#292c38" font-size="20" font-weight="600" letter-spacing="-.3">LG TV, slim package</text>
+    <text x="56" y="488" fill="#616577" font-size="13">The TV only sends the picture;</text>
+    <text x="56" y="506" fill="#616577" font-size="13">a computer does the work.</text>
+    <rect x="888" y="434" width="150" height="76" rx="14" fill="#fff" stroke="#e2dced" stroke-width="1.5"/>
+    <text x="963" y="473" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">WLED</text>
+    <text x="963" y="492" text-anchor="middle" fill="#616577" font-size="12">LED controller</text>
+    <rect x="1074" y="434" width="150" height="76" rx="14" fill="#fff" stroke="url(#spectrum)" stroke-width="3"/>
+    <text x="1149" y="473" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">LEDs</text>
+    <text x="1149" y="492" text-anchor="middle" fill="#616577" font-size="12">around the screen</text>
+    <path d="M857 472H882" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+    <path d="M1043 472H1068" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+    <rect x="330" y="80" width="150" height="76" rx="14" fill="#fff" stroke="#e2dced" stroke-width="1.5"/>
+    <text x="405" y="119" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">HDMI source</text>
+    <text x="405" y="138" text-anchor="middle" fill="#616577" font-size="12">console, player, box</text>
+    <rect x="516" y="80" width="150" height="76" rx="14" fill="#fff" stroke="#e2dced" stroke-width="1.5"/>
+    <text x="591" y="119" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">Capture card</text>
+    <text x="591" y="138" text-anchor="middle" fill="#616577" font-size="12">HDMI in, USB out</text>
+    <rect x="702" y="80" width="150" height="76" rx="14" fill="#efe9fb" stroke="#8f72d8" stroke-width="2"/>
+    <rect x="719" y="68" width="116" height="24" rx="12" fill="#8f72d8"/>
+    <text x="777" y="84.5" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Prysm runs here</text>
+    <text x="777" y="119" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">Computer</text>
+    <text x="777" y="138" text-anchor="middle" fill="#616577" font-size="12">such as a Raspberry Pi</text>
+    <path d="M485 118H510" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+    <path d="M671 118H696" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+    <rect x="702" y="257" width="150" height="76" rx="14" fill="#efe9fb" stroke="#8f72d8" stroke-width="2"/>
+    <rect x="719" y="245" width="116" height="24" rx="12" fill="#8f72d8"/>
+    <text x="777" y="261.5" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Prysm runs here</text>
+    <text x="777" y="296" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">LG TV</text>
+    <text x="777" y="315" text-anchor="middle" fill="#616577" font-size="12">captures its own picture</text>
+    <rect x="516" y="434" width="150" height="76" rx="14" fill="#fff" stroke="#e2dced" stroke-width="1.5"/>
+    <text x="591" y="473" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">LG TV</text>
+    <text x="591" y="492" text-anchor="middle" fill="#616577" font-size="12">sends the picture</text>
+    <rect x="702" y="434" width="150" height="76" rx="14" fill="#efe9fb" stroke="#8f72d8" stroke-width="2"/>
+    <rect x="719" y="422" width="116" height="24" rx="12" fill="#8f72d8"/>
+    <text x="777" y="438.5" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Prysm runs here</text>
+    <text x="777" y="473" text-anchor="middle" fill="#292c38" font-size="16" font-weight="600">Computer</text>
+    <text x="777" y="492" text-anchor="middle" fill="#616577" font-size="12">on your network</text>
+    <path d="M671 472H696" stroke="#9a94ab" stroke-width="1.5" stroke-linecap="round" marker-end="url(#tip)"/>
+  </g>
+</svg>

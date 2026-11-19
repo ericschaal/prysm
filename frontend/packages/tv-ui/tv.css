@@ -1,0 +1,1004 @@
+/*
+ * Prysm on the TV: a calm 10-foot screen for the living room, driven by the
+ * remote. One focal point: what the lights do, in plain words, and the one
+ * action. Everything else is quiet.
+ *
+ * 1rem = 1.5625vw: 30 px at 1920 × 1080, 20 px at 1280 × 720, so the layout
+ * is the same at every TV resolution. Content stays inside a 5% overscan
+ * margin (LG asks for at least 20 px). Four type sizes: display, title, body
+ * (30 px at 1080p) and small (27 px), the sizes of LG's own TV apps
+ * (Sandstone body and small body); LG's floor is 20 px. Every control is at
+ * least --hit tall (78 px; LG recommends 75 px at 1080p).
+ *
+ * webOS TV rules followed here: one focused control at a time, always
+ * visible and told apart at a glance (light fill, dark text, ring, lift);
+ * disabled controls dimmed, never only recoloured; controls that look like
+ * controls before they have focus (every control has a fill at rest, and
+ * nothing else does); no pure white fields (the QR codes sit on the light --fg).
+ *
+ * Rhythm: spacing only from the --space scale, radii only from the --radius
+ * scale; both columns start with a small label on the same line.
+ *
+ * Chromium 53 (webOS 4): flexbox without gap, custom properties (never in
+ * media queries or keyframes), transforms, transitions, keyframes, gradients.
+ * No grid, :focus-visible, :is(), clamp(), inset, aspect-ratio or rgb(… / a).
+ *
+ * Motion: only opacity and transform. Focus moves in 120 ms; screens and
+ * dialogs arrive in 260 ms; the lights coming on fade the glow in over
+ * 520 ms. The one repeating animation is the small live dot. Nothing is
+ * drawn or animated over a calibration pattern; reduced motion stops all.
+ *
+ * Nothing moves between states: the headline, its one line of detail, the
+ * quiet line under it and the lights' message each keep their space.
+ *
+ * Colour roles share their names and dark values with the web portal
+ * (packages/web-portal/tokens.css). Glow appears only where light is the
+ * message: behind the status while screen sync runs.
+ */
+
+/* ---- Tokens ---- */
+:root {
+  color-scheme: dark;
+
+  /*
+   * Colour: the portal’s five (packages/web-portal/tokens.css, dark values),
+   * as r, g, b so rgba() can mix them: Chromium 53 has no color-mix().
+   */
+  --bg: 11, 12, 17;
+  --fg: 236, 237, 243;
+  --accent: 91, 71, 213;
+  --ok: 79, 209, 181;
+  --alert: 255, 143, 122;
+  /* Light art: the glow behind the status while screen sync runs. */
+  --glow-1: 123, 102, 255;
+  --glow-2: 214, 91, 192;
+  --glow-3: 62, 195, 235;
+  /* Disabled: dimmed as a whole, never only recoloured. */
+  --disabled-opacity: 0.42;
+
+  /* Type: the portal’s five names on this rem (30 px at 1080p); small is LG’s small body. */
+  --font:
+    'LG Smart UI', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, sans-serif;
+  --font-mono: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+  --text-small: 0.9rem;
+  --text-body: 1rem;
+  --text-title: 1.25rem;
+  --text-display: 2rem;
+  --text-hero: 2.6rem;
+  --weight-regular: 400;
+  --weight-strong: 600;
+  --leading-tight: 1.2;
+  --leading: 1.4;
+
+  /* Spacing: the portal’s eight steps. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  /* LG’s overscan margin, not a step of the scale. */
+  --safe-x: 5vw;
+  --safe-y: 5vh;
+
+  /* Size: the portal’s radii, touch target and measure. */
+  --radius-1: 0.5rem;
+  --radius-2: 1rem;
+  --hit: 2.75rem;
+  --measure: 40rem;
+  /* The left column’s controls (primary, modes) share one width. */
+  --control-width: 28rem;
+
+  --duration-fast: 120ms;
+  --duration: 260ms;
+  --duration-bloom: 520ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  font-family: var(--font);
+  font-size: 1.5625vw;
+  line-height: var(--leading);
+  color: rgb(var(--fg));
+  background: rgb(var(--bg));
+}
+
+/* ---- Base ---- */
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: rgb(var(--bg));
+}
+[hidden] {
+  display: none !important;
+}
+/* Read out, not shown. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+h1,
+h2,
+p {
+  margin: 0;
+  font-weight: var(--weight-regular);
+}
+code {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+button {
+  display: block;
+  min-height: var(--hit);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-1);
+  background: none;
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+/* Focus is the remote's cursor: a light fill, an accent ring and a lift. */
+button:focus,
+.mode[aria-pressed='true']:focus {
+  outline: none;
+  background: rgb(var(--fg));
+  color: rgb(var(--bg));
+  box-shadow: 0 0 0 0.1rem rgb(var(--accent));
+  transform: scale(1.03);
+}
+/*
+ * Rows and the primary lift from their left edge, so the column keeps one
+ * straight edge while focus moves; the segments and centred answers lift
+ * from their centre.
+ */
+.primary,
+.setting,
+.choice {
+  -webkit-transform-origin: 0 50%;
+  transform-origin: 0 50%;
+}
+/* Unavailable: dimmed as a whole, so it reads as off from the sofa. */
+button:disabled {
+  cursor: default;
+  opacity: var(--disabled-opacity);
+}
+
+/* ---- Layout ---- */
+/* The light on the wall: it blooms behind the status while screen sync runs. */
+.tv::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background:
+    radial-gradient(
+      ellipse at 18% 34%,
+      rgba(var(--glow-1), 0.2),
+      rgba(var(--glow-1), 0) 50%
+    ),
+    radial-gradient(
+      ellipse at 6% 78%,
+      rgba(var(--glow-2), 0.12),
+      rgba(var(--glow-2), 0) 45%
+    ),
+    radial-gradient(
+      ellipse at 42% 8%,
+      rgba(var(--glow-3), 0.1),
+      rgba(var(--glow-3), 0) 45%
+    );
+  opacity: 0;
+  pointer-events: none;
+  /* Opacity only: a scaled full-screen layer shows its edges while it fades. */
+  transition: opacity var(--duration-bloom) var(--ease-out);
+}
+.tv.ready::before {
+  opacity: 1;
+}
+/* Above the glow. */
+#app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: var(--safe-y) var(--safe-x);
+  animation: arrive var(--duration) var(--ease-out) backwards;
+}
+.header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-5);
+}
+.logo {
+  width: 1.2rem;
+  height: 1.2rem;
+  margin-right: var(--space-2);
+  fill: none;
+  stroke: rgba(var(--fg), 0.72);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.brand {
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.brand-dot {
+  color: rgb(var(--accent));
+}
+.brand-sub {
+  margin-left: var(--space-3);
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+}
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+/* Columns scroll when they must; the padding leaves room for the focus lift. */
+.column {
+  min-width: 0;
+  overflow-y: auto;
+  margin: calc(-1 * var(--space-5));
+  padding: var(--space-5);
+}
+.column[data-column='status'] {
+  flex: 1.55;
+}
+.column[data-column='settings'] {
+  flex: 1;
+  margin-left: var(--space-7);
+}
+
+/* ---- Status: the focal point ---- */
+.section-label {
+  display: flex;
+  align-items: center;
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+}
+.status-dot {
+  position: relative;
+  flex-shrink: 0;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: rgba(var(--fg), 0.6);
+}
+.ready .status-dot {
+  background: rgb(var(--ok));
+}
+.attention .status-dot {
+  background: rgb(var(--alert));
+}
+/* Live: a ring leaves the dot every few seconds while frames flow. */
+.ready .status-dot::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 50%;
+  background: rgb(var(--ok));
+  animation: live 2.8s ease-out infinite;
+}
+/* One line each: the copy is written to fit; the ellipsis is only a guard. */
+.overview h1,
+.description,
+.meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overview h1 {
+  margin-top: var(--space-3);
+  font-size: var(--text-hero);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.03em;
+  animation: rise var(--duration) var(--ease-out) backwards;
+}
+.description {
+  margin-top: var(--space-2);
+  color: rgba(var(--fg), 0.72);
+  font-size: var(--text-body);
+  line-height: var(--leading);
+}
+/* The quiet line: a countdown or the frame rate, else empty but kept. */
+.meta {
+  margin-top: var(--space-2);
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading);
+}
+/* The time left until the restart, before its words. */
+.retry-bar {
+  display: inline-block;
+  width: 6rem;
+  height: 0.12rem;
+  margin-right: var(--space-3);
+  border-radius: 0.06rem;
+  background: rgb(var(--alert));
+  vertical-align: middle;
+  transform-origin: 0 50%;
+  animation: countdown linear forwards;
+}
+/*
+ * ---- Controls ----
+ * Three kinds, each with one resting shape that focus lights up in place:
+ * the primary action (accent fill), tonal buttons and list rows (a dark
+ * fill one step above their ground), and the lighting modes (a segmented
+ * track). Anything with a fill can be pressed; information sits on the
+ * background without one.
+ */
+/* Full without a task: the button's box, empty, so the lights never move. */
+.primary,
+.primary-slot {
+  width: var(--control-width);
+  min-height: calc(var(--hit) + var(--space-1));
+  margin-top: var(--space-5);
+}
+.primary {
+  background: rgb(var(--accent));
+  color: rgb(var(--fg));
+  font-weight: var(--weight-strong);
+  text-align: center;
+}
+/*
+ * Its words still matter while it waits ("Please wait…"): grey, not faded.
+ * Waiting it stays focusable (busy), so focus does not jump away and back.
+ */
+.primary:disabled,
+.primary[aria-busy='true']:not(:focus) {
+  background: rgba(var(--fg), 0.08);
+  color: rgba(var(--fg), 0.6);
+  opacity: 1;
+}
+.tonal,
+.danger {
+  min-width: 10rem;
+  background: rgba(var(--fg), 0.12);
+  color: rgb(var(--fg));
+  text-align: center;
+}
+.danger {
+  color: rgb(var(--alert));
+}
+/* Focus wins over every resting colour: dark text on the light fill. */
+.tonal:focus {
+  color: rgb(var(--bg));
+}
+.danger:focus {
+  background: rgb(var(--alert));
+  color: rgb(var(--bg));
+  box-shadow: 0 0 0 0.1rem rgb(var(--alert));
+}
+
+/* ---- Your lights: the main control, a segmented track ---- */
+/*
+ * Right under the status: the status line, its quiet line, then the
+ * service's one button (in the full package often only its reserved place)
+ * and the lights, each step the same --space-6 apart.
+ */
+.lighting {
+  margin-top: var(--space-5);
+}
+.card-title {
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+}
+.modes {
+  display: flex;
+  width: var(--control-width);
+  margin-top: var(--space-3);
+  padding: var(--space-1);
+  border-radius: var(--radius-1);
+  background: rgba(var(--fg), 0.08);
+}
+.mode {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  padding: var(--space-1) var(--space-3);
+  border-radius: calc(var(--radius-1) - var(--space-1));
+  color: rgba(var(--fg), 0.72);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mode + .mode {
+  margin-left: var(--space-1);
+}
+/*
+ * The three states never share a look: chosen is an accent tint with bold
+ * words and a dot; focused is the light fill (with the dot, now accent, when
+ * it is also the chosen one); unavailable is dimmed.
+ */
+.mode[aria-pressed='true'] {
+  background: rgba(var(--accent), 0.5);
+  color: rgb(var(--fg));
+  font-weight: var(--weight-strong);
+}
+.mode[aria-pressed='true']::before {
+  content: '';
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin: 0 var(--space-2) 0.12rem 0;
+  border-radius: 50%;
+  background: rgb(var(--fg));
+  vertical-align: middle;
+}
+.mode:focus {
+  transform: scale(1.05);
+}
+.mode[aria-pressed='true']:focus::before {
+  background: rgb(var(--accent));
+}
+/* Only what the chosen mode does not say; two lines kept, at most two used. */
+.lighting-status {
+  position: relative;
+  width: var(--control-width);
+  height: 2.8em;
+  margin-top: var(--space-3);
+  overflow: hidden;
+  color: rgba(var(--fg), 0.72);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+/* A problem: calm, a small amber mark beside plain words. */
+.lighting.attention .lighting-status {
+  padding-left: var(--space-4);
+}
+.lighting.attention .lighting-status::before {
+  content: '';
+  position: absolute;
+  top: 0.5em;
+  left: 0;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: rgb(var(--alert));
+}
+
+/*
+ * First run, no lights yet: the portal's QR code, large, in the modes'
+ * place. Information, so no fill of its own; the code sits on its paper.
+ */
+.setup-lights {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-5);
+}
+.setup-qr {
+  flex-shrink: 0;
+  width: 9rem;
+  height: 9rem;
+  margin-right: var(--space-5);
+  border-radius: var(--radius-1);
+}
+.setup-qr rect {
+  fill: rgb(var(--fg));
+}
+.setup-text {
+  min-width: 0;
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+  word-wrap: break-word;
+}
+.setup-step {
+  display: block;
+  color: rgb(var(--fg));
+  font-size: var(--text-body);
+}
+.setup-text code {
+  display: block;
+  margin: var(--space-2) 0;
+  color: rgb(var(--fg));
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+/* ---- Secondary column: the portal (information) and the settings (a list) ---- */
+.portal-address {
+  display: flex;
+  align-items: flex-start;
+}
+/* No address yet: its place is kept, with nothing in it to read or scan. */
+.portal-address.empty {
+  visibility: hidden;
+}
+.portal-qr {
+  flex-shrink: 0;
+  width: 4.6rem;
+  height: 4.6rem;
+  margin-right: var(--space-4);
+  border-radius: calc(var(--radius-1) - var(--space-1));
+}
+/* Paper, not a white field: the quiet zone takes the paper colour too. */
+.portal-qr rect,
+.qr rect {
+  fill: rgb(var(--fg));
+}
+.portal-text {
+  min-width: 0;
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+  word-wrap: break-word;
+}
+.portal-text code {
+  display: block;
+  margin: var(--space-2) 0 var(--space-1);
+  color: rgb(var(--fg));
+  font-size: var(--text-body);
+  line-height: var(--leading-tight);
+}
+.settings:first-child {
+  margin-top: 0;
+}
+.settings {
+  margin-top: var(--space-6);
+}
+.setting-list {
+  margin-top: var(--space-3);
+}
+/*
+ * A row at rest: one height, label on the left, its value quieter on the
+ * right, then what OK does: a chevron opens something, a switch flips.
+ */
+.setting {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--hit);
+  padding: 0 var(--space-5);
+  background: rgba(var(--fg), 0.08);
+}
+.setting + .setting {
+  margin-top: var(--space-2);
+}
+.setting:focus {
+  transform: scale(1.02);
+}
+.setting-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.setting-value {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 55%;
+  margin-left: var(--space-4);
+  overflow: hidden;
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.setting:focus .setting-value {
+  color: rgba(var(--bg), 0.7);
+}
+/* A switch says On or Off by itself; the words are kept for screen readers. */
+.setting[role='switch'] .setting-value {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+/* Drawn, not a glyph: the TV's font may not have one. */
+.chevron {
+  flex-shrink: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin: 0 0.1rem 0 var(--space-4);
+  border-top: 0.12rem solid rgba(var(--fg), 0.6);
+  border-right: 0.12rem solid rgba(var(--fg), 0.6);
+  transform: rotate(45deg);
+}
+.setting:focus .chevron {
+  border-color: rgba(var(--bg), 0.7);
+}
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 1.1rem;
+  margin-left: var(--space-4);
+  border-radius: 0.55rem;
+  background: rgba(var(--fg), 0.12);
+  box-shadow: 0 0 0 0.06rem rgba(var(--fg), 0.24) inset;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: rgba(var(--fg), 0.6);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.setting[aria-checked='true'] .switch {
+  background: rgb(var(--accent));
+  box-shadow: none;
+}
+.setting[aria-checked='true'] .switch::after {
+  background: rgb(var(--fg));
+  transform: translateX(0.9rem);
+}
+.setting:focus .switch {
+  background: rgba(var(--bg), 0.25);
+}
+.setting:focus .switch::after {
+  background: rgba(var(--bg), 0.7);
+}
+.setting[aria-checked='true']:focus .switch {
+  background: rgb(var(--accent));
+}
+.setting[aria-checked='true']:focus .switch::after {
+  background: rgb(var(--fg));
+}
+.setting:disabled .chevron,
+.setting:disabled .switch {
+  visibility: hidden;
+}
+
+/* ---- Messages and key help ---- */
+.notice {
+  min-height: 1.4rem;
+  color: rgba(var(--fg), 0.72);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+.notice.error {
+  color: rgb(var(--alert));
+}
+/* Two lines of room are always kept for a message, so nothing above moves when one comes. */
+.key-help {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 3.3rem;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid rgba(var(--fg), 0.08);
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+}
+.key-help span {
+  margin-right: var(--space-6);
+}
+.key-help b {
+  margin-right: var(--space-2);
+  color: rgba(var(--fg), 0.72);
+  font-weight: var(--weight-strong);
+}
+/* The latest message sits in the key-help line, right aligned. */
+#notice {
+  flex: 1;
+  min-width: 0;
+  max-height: 2.8em;
+  overflow: hidden;
+  margin-left: var(--space-4);
+  text-align: right;
+}
+
+/* ---- Dialogs: the same rows and buttons, one step lighter ---- */
+/* Typing: the dialog sits high, clear of the TV's on-screen keyboard. */
+.modal.top {
+  align-items: flex-start;
+}
+.modal {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--safe-y) var(--safe-x);
+  background: rgba(var(--bg), 0.85);
+  animation: fade var(--duration) var(--ease-out) backwards;
+}
+.dialog {
+  width: var(--measure);
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: var(--space-6);
+  border-radius: var(--radius-2);
+  /* Opaque: one surface step laid over the background, never the page through it. */
+  background:
+    linear-gradient(rgba(var(--fg), 0.08), rgba(var(--fg), 0.08)),
+    rgb(var(--bg));
+  animation: arrive var(--duration) var(--ease-out) backwards;
+}
+.dialog h2 {
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+.dialog-description {
+  margin-top: var(--space-2);
+  color: rgba(var(--fg), 0.72);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+#dialog-body {
+  margin-top: var(--space-5);
+}
+#dialog-body:empty {
+  display: none;
+}
+/* A list choice: a row with a line of detail. */
+.choice {
+  display: block;
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  background: rgba(var(--fg), 0.12);
+}
+.choice + .choice {
+  margin-top: var(--space-2);
+}
+.choice:focus {
+  transform: scale(1.02);
+}
+.choice-name,
+.choice-detail {
+  display: block;
+}
+.choice-detail {
+  margin-top: var(--space-1);
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+}
+.choice:focus .choice-detail {
+  color: rgba(var(--bg), 0.7);
+}
+/* The answers along the bottom, centred; the dialog's way out is one of them. */
+.dialog-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-6);
+}
+.dialog-actions button + button {
+  margin-left: var(--space-4);
+}
+.dialog-actions .primary {
+  width: auto;
+  min-width: 10rem;
+  min-height: var(--hit);
+  margin-top: 0;
+}
+.dialog label {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: rgba(var(--fg), 0.6);
+  font-size: var(--text-small);
+}
+.dialog input {
+  display: block;
+  width: 100%;
+  min-height: var(--hit);
+  padding: var(--space-2) var(--space-4);
+  border: 0.1rem solid rgba(var(--fg), 0.24);
+  border-radius: var(--radius-1);
+  background: rgba(var(--bg), 0.6);
+  font-size: var(--text-body);
+}
+.dialog input:focus {
+  outline: none;
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 0 0.1rem rgb(var(--accent));
+}
+.dialog input[aria-invalid='true'] {
+  border-color: rgb(var(--alert));
+}
+.dialog input::-webkit-input-placeholder {
+  color: rgba(var(--fg), 0.6);
+}
+.dialog form .notice {
+  margin-top: var(--space-2);
+}
+.dialog form .dialog-actions {
+  margin-top: var(--space-4);
+}
+.diagnostics {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-1);
+  background: rgba(var(--bg), 0.6);
+  color: rgba(var(--fg), 0.72);
+  font: 0.8rem/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  /* A long log scrolls here (Up/Down, or the Magic Remote's wheel); Back stays in view. */
+  max-height: 15rem;
+  overflow-y: auto;
+}
+
+/* Pressed: the control sinks under OK. */
+button:active {
+  transform: scale(0.97);
+}
+
+/* ---- Calibration ---- */
+/* The pattern is the whole screen, alone: no overlay, no motion, no cursor. */
+.calibration {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: #000;
+}
+.calibration.showing {
+  cursor: none;
+}
+.pattern-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+/* While the phone has not chosen a pattern: the QR code over the gray one. */
+.calibration-waiting {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--safe-y) var(--safe-x);
+  background: rgb(var(--bg));
+  animation: fade var(--duration) var(--ease-out) backwards;
+}
+.calibration-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.calibration-copy {
+  width: 22rem;
+  margin-right: var(--space-7);
+}
+.calibration-copy h1 {
+  font-size: var(--text-display);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.03em;
+}
+#calibration-hint {
+  margin-top: var(--space-4);
+  color: rgba(var(--fg), 0.72);
+}
+.calibration-copy .notice {
+  margin-top: var(--space-4);
+}
+.qr-card {
+  min-width: 14rem;
+  max-width: 26rem;
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-radius: var(--radius-2);
+  background: rgb(var(--fg));
+  color: rgb(var(--bg));
+  text-align: center;
+}
+.qr {
+  display: block;
+  width: 12rem;
+  height: 12rem;
+  margin: 0 auto var(--space-3);
+}
+#calibration-address {
+  display: block;
+  font-size: var(--text-small);
+  word-wrap: break-word;
+}
+
+/* ---- Motion ---- */
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.3rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes live {
+  from {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  60%,
+  to {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+@keyframes countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* A narrow desktop window (the demo), never a TV. */
+@media (max-width: 1000px) {
+  :root {
+    font-size: 20px;
+  }
+  .layout {
+    flex-direction: column;
+  }
+  .column[data-column='settings'] {
+    margin: var(--space-6) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  }
+}

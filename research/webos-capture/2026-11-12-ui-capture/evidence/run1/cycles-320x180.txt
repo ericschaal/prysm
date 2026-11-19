@@ -1,0 +1,14 @@
+The ppid=15053, pid=15054, tid=15054 open GAL-SE/mmap success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+The ppid=15053, pid=15054, tid=15054 get GAL-SE success.
+# cycles 320x180 done=10
+# open n=10 mean_us=980 p50=605 p95=4087 p99=4087 max=4087
+# first_capture n=10 mean_us=4430 p50=4330 p95=5601 p99=5601 max=5601
+# close n=10 mean_us=152 p50=154 p95=172 p99=172 max=172

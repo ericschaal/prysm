@@ -1,0 +1,31 @@
+[package]
+name = "prysm-h264-rvenc-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The webOS TV's GStreamer rvenc H.264 encoder with DMA-BUF input, behind a safe handle"
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+# Only the TV (32-bit ARM Linux) builds the GStreamer pipeline; every other
+# target compiles a stub, so desktop builds need no GStreamer.
+[target.'cfg(all(target_os = "linux", target_arch = "arm"))'.dependencies]
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = "0.25"
+gstreamer-allocators = "0.25"
+libc = "0.2"
+memmap2 = "0.9"
+
+# One of the four crates allowed to use `unsafe` (with capture-device-sys,
+# capture-webos-sys and webos-luna-sys): DMA-BUF allocation, mapping and
+# synchronisation. Every block carries a SAFETY note.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"

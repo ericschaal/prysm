@@ -1,0 +1,52 @@
+{
+  "calibration": {
+    "profiles": [
+      {
+        "name": "Replay",
+        "id": "00000000-0000-4000-8000-000000000001",
+        "correction": {
+          "warmth": 48,
+          "tint": -11,
+          "midtones": 0,
+          "intensity": 14,
+          "hue": [
+            3,
+            7,
+            -44,
+            27,
+            1,
+            -16
+          ]
+        }
+      }
+    ],
+    "active": "00000000-0000-4000-8000-000000000001"
+  },
+  "source": "prysm",
+  "input": {
+    "type": "webos",
+    "refresh_rate_hz": 30,
+    "capture_resolution": [
+      1280,
+      720
+    ]
+  },
+  "output": {
+    "type": "wled",
+    "url": "http://127.0.0.1/",
+    "leds": {
+      "top": 51,
+      "right": 31,
+      "bottom": 49,
+      "left": 31
+    }
+  },
+  "processing": {
+    "brightness_percent": 100,
+    "shadow_lift_percent": 0,
+    "smoothing_seconds": 0.1,
+    "sample_density": 256,
+    "spatial_reach_percent": 15,
+    "remove_black_bars": true
+  }
+}

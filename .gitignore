@@ -18,8 +18,19 @@ __pycache__/
 # Local investigation workspaces and generated handoff bundles.
 /work/
 
+# Artifacts from `cargo xtask dist`.
+/dist/
+# The webOS SDK CI unpacks (ci.yml, webos-ipk); ignored so the build's tree is
+# clean, as the release requires of dist/manifest.json.
+/.webos-sdk/
+
 # Prysm settings
 settings.json
+
+# The acceptance runner's local addresses (scripts/acceptance/config.example.toml)
+/scripts/acceptance/config.toml
+# Its uv environment (uv run --project scripts/acceptance)
+/scripts/acceptance/.venv/
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
@@ -27,3 +38,10 @@ settings.json
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*

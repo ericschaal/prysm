@@ -1,0 +1,12 @@
+# Session 1, 2026-11-12 16:32 CET: sizes, pacing, open/close, background thread.
+serial-160x90   20 serial 160 90 120
+serial-320x180  20 serial 320 180 120 dump
+serial-640x360  20 serial 640 360 120 dump
+serial-1280x720 20 serial 1280 720 60
+pace-320x180-10 20 pace 320 180 60 10
+pace-320x180-30 20 pace 320 180 90 30
+cycles-320x180  30 cycles 320 180 10
+thread-base     20 thread 320 180 10 0
+thread-320-10   20 thread 320 180 10 10
+thread-320-30   20 thread 320 180 10 30
+thread-640-30   20 thread 640 360 10 30

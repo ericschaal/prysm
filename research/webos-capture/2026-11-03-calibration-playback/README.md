@@ -28,7 +28,8 @@ webOS application installer. No return-to-input command was sent.
 
 ## Assets and reproduction
 
-Run `python3 scripts/calibration-patterns.py` from the repository root, or add
+Run `python3 scripts/calibration-patterns.py` from a checkout of the tag
+`pre-1.0-consolidation` (the generator was removed afterwards), or add
 `--check` to verify existing files. It requires FFmpeg with libx264 and ffprobe.
 The current assets were generated with FFmpeg 9.0.2 and libx264, one encoder
 thread, CRF 12, constrained baseline level 3.0, YUV420p, 640×360, 30 fps, a

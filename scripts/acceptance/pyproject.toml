@@ -1,0 +1,159 @@
+# The hardware acceptance runner (docs/developers/acceptance.md) as a uv
+# project. Run from the repository root:
+#   uv run --project scripts/acceptance acceptance host mac --dry-run
+# Its libraries are pytest, which runs the host cells, and PyChromecast, used
+# only by the cast feeds (`[mac.feed.chromecast]`, `[tv.feed.cast]`). A bench run needs no
+# dev group (`uv run --no-dev`). The checks the runner's own code must pass are
+# listed in docs/developers/acceptance.md ("Develop the runner").
+[project]
+name = "prysm-acceptance"
+version = "0.1.0"
+description = "Prysm's hardware acceptance runner (docs/developers/acceptance.md)"
+requires-python = ">=3.11"
+dependencies = ["pychromecast>=14,<15", "pytest>=8.4,<10"]
+
+[project.scripts]
+acceptance = "prysm_acceptance.run:main"
+fake-wled = "prysm_acceptance.fake_wled:main"
+
+[dependency-groups]
+dev = ["ruff>=0.14", "pyright[nodejs]>=1.1.400", "import-linter>=2.5"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "prysm_acceptance"
+module-root = ""
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F", "I", "B", "UP", "SIM", "C4", "PTH", "RET", "RUF", "PL", "C90", "N", "ANN", "S", "TID",
+  "PIE", "A", "FA", "PERF", "PGH",
+]
+ignore = [
+  # HTTP statuses (200, 204, 426) and the documented limits read better in place than as names.
+  "PLR2004",
+  # Failed, Skipped, Interrupted, Refused and Unreachable name outcomes; an Error suffix would not read better.
+  "N818",
+  # The receiver and the version stand-in listen on all interfaces on purpose: the TV must reach them.
+  "S104",
+]
+# The report's prose uses the en dash of ranges (0.1–3).
+allowed-confusables = ["–"]
+
+[tool.ruff.lint.per-file-ignores]
+# Only the transport runs the allow-listed commands; nothing else may start a
+# process (TID251 below).
+"prysm_acceptance/transport.py" = ["S603", "TID251"]
+# The tests fetch from their own servers on loopback and name paths that must be
+# refused; their fakes answer every route in one handler and pass JSON of any shape.
+"tests/*" = ["S310", "S108", "C901", "ANN401"]
+# These run the runner's own command line, as the bench does.
+"tests/test_acceptance_host.py" = ["S603", "TID251"]
+"tests/test_acceptance_feed.py" = ["S603", "TID251"]
+"tests/test_acceptance_tv.py" = ["S603", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"subprocess.run".msg = "commands run through the transport (transport.py), built only by commands.py"
+"subprocess.Popen".msg = "commands run through the transport (transport.py), built only by commands.py"
+"subprocess.call".msg = "commands run through the transport (transport.py), built only by commands.py"
+"subprocess.check_call".msg = "commands run through the transport (transport.py), built only by commands.py"
+"subprocess.check_output".msg = "commands run through the transport (transport.py), built only by commands.py"
+"subprocess.getoutput".msg = "commands run through the transport (transport.py), built only by commands.py"
+"os.system".msg = "commands run through the transport (transport.py), built only by commands.py"
+"os.popen".msg = "commands run through the transport (transport.py), built only by commands.py"
+
+[tool.ruff.lint.flake8-builtins]
+# BaseHTTPRequestHandler.log_message's parameter, kept in overrides.
+builtins-ignorelist = ["format"]
+
+[tool.ruff.lint.pep8-naming]
+extend-ignore-names = ["do_GET", "do_POST", "do_PUT", "do_HEAD"]
+
+[tool.ruff.lint.pylint]
+# The command templates and the step builders take each of their fields.
+max-args = 8
+max-positional-args = 8
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+
+[tool.ruff.lint.mccabe]
+# 12: the held-stdin transport and the clip server's range handling, each one loop.
+max-complexity = 12
+
+[tool.importlinter]
+root_package = "prysm_acceptance"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers: the command line, the TV cells, the checks any TV runs, the host cells, their pytest plugin and eyes, the clip, the feed, the package and image seams, devices, an existing Prysm and the TV the checks drive, clients, the step runner, the bench, base"
+type = "layers"
+containers = ["prysm_acceptance"]
+# Every module of the package is in a layer; a new one must be placed.
+exhaustive = true
+# Top to bottom; `|` siblings are independent of each other, `:` siblings may import each other.
+layers = [
+  "run | fake_wled",
+  "tv_cells",
+  "tv_checks",
+  "host_cells",
+  "bench | stage_eyes",
+  "edges_clip : colour_page",
+  "feed",
+  "feed_chromecast",
+  "feed_cast",
+  "host_deb | host_image",
+  "host | webos | artifact | prepare",
+  "installed | tv",
+  "prysm_api | wled_api",
+  "plan",
+  "checks",
+  "config | transport",
+  "options | commands | web",
+]
+
+[[tool.importlinter.contracts]]
+name = "PyChromecast stays behind the cast feed"
+type = "forbidden"
+source_modules = [
+  "prysm_acceptance.run", "prysm_acceptance.fake_wled", "prysm_acceptance.tv_cells", "prysm_acceptance.tv_checks",
+  "prysm_acceptance.host_cells",
+  "prysm_acceptance.bench", "prysm_acceptance.stage_eyes", "prysm_acceptance.edges_clip",
+  "prysm_acceptance.colour_page", "prysm_acceptance.feed", "prysm_acceptance.feed_chromecast",
+  "prysm_acceptance.host", "prysm_acceptance.artifact",
+  "prysm_acceptance.host_deb", "prysm_acceptance.host_image", "prysm_acceptance.prepare",
+  "prysm_acceptance.webos", "prysm_acceptance.tv", "prysm_acceptance.installed", "prysm_acceptance.prysm_api", "prysm_acceptance.wled_api", "prysm_acceptance.plan",
+  "prysm_acceptance.checks", "prysm_acceptance.config", "prysm_acceptance.transport", "prysm_acceptance.options",
+  "prysm_acceptance.commands", "prysm_acceptance.web",
+]
+forbidden_modules = ["pychromecast"]
+# Through the feed is fine: only feed_cast names it, and imports it only when it casts.
+allow_indirect_imports = true
+
+[tool.pytest.ini_options]
+# The runner's own tests; the host cells (prysm_acceptance/host_cells.py) run only through `acceptance host`.
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = ["--strict-markers", "-p", "no:cacheprovider"]
+markers = ["only(part, ...): a check of what these deliveries or TV packages add (bench.only)"]
+
+[tool.pyright]
+include = ["prysm_acceptance", "tests"]
+extraPaths = ["tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+# Off: Prysm's, WLED's and the TV's replies and a TV stage's data (`stage_data`)
+# are TypedDicts of only the fields the runner reads, none of them promised.
+# A check indexes the field it needs; a missing one fails that check with a
+# KeyError, which the run reports, as it did before the types.
+reportTypedDictNotRequiredAccess = false

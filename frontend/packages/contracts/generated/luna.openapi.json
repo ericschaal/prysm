@@ -1,0 +1,372 @@
+{
+  "components": {
+    "schemas": {
+      "DoneReply": {
+        "description": "The `uninstall` reply.",
+        "properties": {
+          "returnValue": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "returnValue"
+        ],
+        "type": "object"
+      },
+      "ErrorReply": {
+        "description": "Any failed call.",
+        "properties": {
+          "errorText": {
+            "type": "string"
+          },
+          "returnValue": {
+            "enum": [
+              false
+            ],
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "returnValue",
+          "errorText"
+        ],
+        "type": "object"
+      },
+      "FailureKind": {
+        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the encoder the receiver requested could not start or failed;\nthe receiver is told, and another encoding chosen in its portal may work.\n`receiver` (slim): the receiver is unavailable (not lighting, unreachable,\nor its name does not resolve); the worker keeps reconnecting. `version`\n(slim): Prysm speaks another capture stream version; both need the same\nrelease, and the worker retries every 10 s. `other`: anything else.",
+        "enum": [
+          "encoder",
+          "receiver",
+          "version",
+          "other"
+        ],
+        "type": "string"
+      },
+      "Flavor": {
+        "description": "Which package this supervisor belongs to.",
+        "enum": [
+          "full",
+          "slim"
+        ],
+        "type": "string"
+      },
+      "GetStateRequest": {
+        "additionalProperties": false,
+        "description": "`getState` request.",
+        "properties": {
+          "subscribe": {
+            "description": "Keep sending the state on every change.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "LightingTarget": {
+        "description": "What the user wants the LEDs to do.",
+        "enum": [
+          "off",
+          "processed",
+          "device_native"
+        ],
+        "type": "string"
+      },
+      "Phase": {
+        "description": "The worker process, as `{ \"phase\": … }`.",
+        "oneOf": [
+          {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "stopped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "stopping"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Waiting before the next start after a failure.",
+            "properties": {
+              "phase": {
+                "enum": [
+                  "retrying"
+                ],
+                "type": "string"
+              },
+              "seconds": {
+                "description": "Whole seconds until the next start, rounded up, when this state\nwas sent (at least 1). The app counts down from when it received\nit; no clock is shared.",
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "seconds",
+              "phase"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Power": {
+        "description": "TV power as `com.webos.service.tvpower` reports it.",
+        "enum": [
+          "unknown",
+          "active",
+          "screen_saver",
+          "asleep"
+        ],
+        "type": "string"
+      },
+      "Preferences": {
+        "additionalProperties": false,
+        "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional). Fields marked \"Slim only\" must stay unset (`null` or absent)\nin the full package.",
+        "properties": {
+          "autostart": {
+            "default": false,
+            "description": "Start enabled (full: processed lighting) when the service starts.",
+            "type": "boolean"
+          },
+          "instance": {
+            "default": null,
+            "description": "Slim only: the headless Prysm's address, such as\n`http://192.168.1.20:8787` or `https://prysm.example.com` (through a\nreverse proxy). The TV streams its picture there, and the TV app\nlinks to its portal. Only the syntax is checked when saved; the TV\nresolves a host name at every connection attempt, and one that does\nnot resolve is reported as the receiver wait.",
+            "example": "http://192.168.1.20:8787",
+            "maxLength": 256,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SetEnabledRequest": {
+        "additionalProperties": false,
+        "description": "`setEnabled` request.",
+        "properties": {
+          "enabled": {
+            "description": "Slim: frames should flow. Full: processed lighting (or off).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "SlimEncoding": {
+        "description": "How the slim package encodes the frames it sends: the encoding its\nreceiver requested (set in the desktop portal). Exactly this encoder is\nused; one that cannot start or fails is a failure, never a switch to\nanother. `h264_hardware`: the TV's hardware H.264 encoder (about\n2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);\n`raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).",
+        "enum": [
+          "h264_hardware",
+          "h264_software",
+          "raw"
+        ],
+        "type": "string"
+      },
+      "State": {
+        "description": "The `getState` reply and subscription payload (plus LS2's `returnValue`).\nFields marked \"Full only\" are `null` in the slim package.",
+        "properties": {
+          "capturing": {
+            "description": "Frames are flowing. Full: lighting runs and frames arrive (false\nwhile it waits for video). Slim: frames were sent in the last second.\nAlways false unless `worker` is `running`.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "Slim: frames should flow. Full: lighting is not off.",
+            "type": "boolean"
+          },
+          "encoding": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SlimEncoding",
+                "description": "Slim only: the encoding of the frames being sent while connected to\nthe receiver; always the one the receiver requested (set in the\ndesktop portal's remote capture settings)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkerFailure",
+                "description": "The current failure (or, slim, the receiver wait): what it is and\nits message with the causes."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "flavor": {
+            "$ref": "#/components/schemas/Flavor",
+            "description": "The installed package; both install as `io.prysm.tv`."
+          },
+          "fps": {
+            "description": "Frames per second over about the last second, rounded, while the\nworker measures them (full: lighting runs; slim: connected and\nsending); 0 while it waits for frames. Always null unless `worker` is\n`running`.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lighting": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LightingTarget",
+                "description": "Full only: the engine's target, including changes made in the portal."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "log": {
+            "description": "The latest worker stderr lines, oldest first (at most 20).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "paused": {
+            "description": "Slim only: the receiver paused the stream because its lighting is\noff; the TV capture is stopped until the receiver asks again. Not a\nfailure. Always false unless `worker` is `running`.",
+            "type": "boolean"
+          },
+          "portal": {
+            "description": "Full only: the portal's LAN address once the worker reported it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "power": {
+            "$ref": "#/components/schemas/Power"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/Preferences"
+          },
+          "video": {
+            "$ref": "#/components/schemas/Video"
+          },
+          "worker": {
+            "$ref": "#/components/schemas/Phase"
+          }
+        },
+        "required": [
+          "flavor",
+          "preferences",
+          "enabled",
+          "power",
+          "video",
+          "worker",
+          "capturing",
+          "paused",
+          "log"
+        ],
+        "type": "object"
+      },
+      "StateReply": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/State"
+          },
+          {
+            "properties": {
+              "returnValue": {
+                "enum": [
+                  true
+                ],
+                "type": "boolean"
+              },
+              "subscribed": {
+                "description": "On `getState` and subscription updates: whether the caller is subscribed.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "returnValue"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "A successful state reply: [`State`] with LS2's `returnValue`."
+      },
+      "UninstallRequest": {
+        "additionalProperties": false,
+        "description": "`uninstall` request: an empty object.",
+        "type": "object"
+      },
+      "Video": {
+        "description": "The TV's main video output.",
+        "enum": [
+          "unknown",
+          "unavailable",
+          "available"
+        ],
+        "type": "string"
+      },
+      "WorkerFailure": {
+        "additionalProperties": false,
+        "description": "A failure: what it is and its message with the causes.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/FailureKind"
+          },
+          "message": {
+            "description": "What failed, with its cause chain (cut to 1 KiB).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "The TV supervisor: Luna service, power and video gating, worker lifecycle, setup",
+    "license": {
+      "identifier": "Apache-2.0",
+      "name": "Apache-2.0"
+    },
+    "title": "Prysm TV service (luna://io.prysm.tv.service)",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

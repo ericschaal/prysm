@@ -1,0 +1,4 @@
+rgb 34232472
+9773195335b2b8c0dc8083c10b3c0846c0589a60e1b17a17935ff70737eb8a90  /tmp/prysm-grid-replay.XXscYzYr/b-out/rgb
+ddp 8928
+00a55e53278d29db523e7efd585e2583b73498c7b6e0b8fc51d193d4147d6882  /tmp/prysm-grid-replay.XXscYzYr/b-out/ddp

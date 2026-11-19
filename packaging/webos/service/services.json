@@ -1,11 +1,11 @@
 {
-  "id": "io.prysm.capture.service",
-  "description": "Prysm native TV capture supervisor",
+  "id": "io.prysm.tv.service",
+  "description": "Prysm TV supervisor",
   "engine": "native",
   "executable": "prysm-webos-service",
   "services": [
     {
-      "name": "io.prysm.capture.service"
+      "name": "io.prysm.tv.service"
     }
   ]
 }

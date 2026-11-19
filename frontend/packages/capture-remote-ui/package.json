@@ -1,0 +1,15 @@
+{
+  "name": "@prysm/capture-remote-ui",
+  "version": "1.0.0-alpha.0",
+  "private": true,
+  "type": "module",
+  "exports": "./index.ts",
+  "peerDependencies": {
+    "react": "19.3.0"
+  },
+  "dependencies": {
+    "@prysm/capture-webos-ui": "1.0.0-alpha.0",
+    "@prysm/contracts": "1.0.0-alpha.0",
+    "@prysm/web-portal": "1.0.0-alpha.0"
+  }
+}
