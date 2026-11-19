@@ -32,6 +32,13 @@ The example publishes port 8787 (the portal, which also receives the TV's
 picture) and starts Prysm with `--allow-origin null`, which the slim TV app
 needs. It does not use host networking.
 
+That option has a cost. The portal has no password and normally refuses
+requests from other sites' pages; with `--allow-origin null` it also accepts
+pages that have no origin, and any website can embed one. A page opened by
+someone on your network could then read Prysm's state, change its settings
+and drive the lights. If no slim TV app controls this Prysm, delete the
+`command:` line from the YAML before installing.
+
 [TrueNAS custom app reference](https://apps.truenas.com/managing-apps/installing-custom-apps/).
 
 ## 3. Connect the TV and lights
