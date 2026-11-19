@@ -4,7 +4,7 @@ Date: 2026-11-14
 
 The spatial sampler's three per-frame loops (cell averages, the lights'
 weighted means and colour focus) run in chunks on a small rayon pool that
-the `PrysmProcessor` owns: [`workers.rs`](../../../crates/processor/src/workers.rs).
+the `PrysmProcessor` owns: [`workers.rs`](../../../crates/engine/processor/src/workers.rs).
 This is a contained exception to
 [one runtime, plain blocking adapters](2026-11-12-one-runtime-plain-adapters.md):
 the processor stays one blocking call on the session thread. Every chunk has

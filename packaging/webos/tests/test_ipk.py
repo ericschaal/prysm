@@ -26,8 +26,8 @@ def load(name):
 
 class MetadataTests(unittest.TestCase):
     def test_package_files_match_the_supervisor(self):
-        identity = (ROOT / 'hosts/webos-service/src/identity.rs').read_text()
-        service_rs = (ROOT / 'hosts/webos-service/src/service.rs').read_text()
+        identity = (ROOT / 'crates/hosts/webos-service/src/identity.rs').read_text()
+        service_rs = (ROOT / 'crates/hosts/webos-service/src/service.rs').read_text()
         app_id = re.search(r'pub const APP_ID: &str = "(.+?)";', identity).group(1)
         supervisor = re.search(r'pub const SUPERVISOR: &str = "(.+?)";', identity).group(1)
         worker = re.search(r'pub const WORKER: &str = "(.+?)";', identity).group(1)
@@ -227,8 +227,8 @@ class PackageTests(unittest.TestCase):
         ipk.secure(self.package)
         ipk.verify(self.package)
         # The notices the slim package copies exist in the repository.
-        for path in ('adapters/h264/LICENSE.openh264', 'adapters/h264-rvenc-sys/LICENSE.gstreamer-rs',
-                     'adapters/h264-rvenc-sys/LICENSE.gtk-rs'):
+        for path in ('crates/adapters/h264/LICENSE.openh264', 'crates/adapters/h264-rvenc-sys/LICENSE.gstreamer-rs',
+                     'crates/adapters/h264-rvenc-sys/LICENSE.gtk-rs'):
             self.assertTrue((ROOT / path).is_file(), path)
         self.assertIn('LICENSE.openh264', (HERE / 'build-ipk.sh').read_text())
 

@@ -505,7 +505,7 @@ fn neither_package_has_a_capture_preference() {
 #[test]
 fn packaged_api_permissions_list_every_method() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../packaging/webos/service/supervisor.api.json");
+        .join("../../../packaging/webos/service/supervisor.api.json");
     let api: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let service = format!("{}.service", crate::identity::APP_ID);
     let expected: Vec<String> = Method::ALL

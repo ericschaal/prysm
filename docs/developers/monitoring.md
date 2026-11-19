@@ -13,7 +13,7 @@ origin policy. They are totals the session already keeps (frames received and
 sent, processing and output-write time, write failures, opens) plus the
 target, session state, revision and input rate. There are no system or
 per-adapter metrics and no histograms. Names and meanings:
-[portal contract](../../surfaces/web-portal/HTTP-CONTRACT.md#metrics).
+[portal contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#metrics).
 
 The TV workers have no metrics switch; use the rate in the TV app and the
 portal's state instead.

@@ -2,7 +2,7 @@
 
 Which `cargo xtask dist` target makes which artifact is the closed table
 `TARGETS`: for a configuration key, each file a target writes to dist/
-(tools/xtask/src/dist.rs). A cell can be prepared only when its
+(crates/tools/xtask/src/dist.rs). A cell can be prepared only when its
 configuration names one of those files in dist/; otherwise preparing fails,
 as it would test another file than the one built. A cell without a
 configured artifact is not prepared (it is skipped, or fails when named, as

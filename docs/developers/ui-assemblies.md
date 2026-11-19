@@ -19,7 +19,7 @@ supervisor over stdio and have no Luna surface.
 
 On the Rust side every UI is a runtime surface over one `EngineHandle`; see the
 [simplified runtime](../plans/prysm-v1-simplified-runtime.md) and the
-[portal HTTP contract](../../surfaces/web-portal/HTTP-CONTRACT.md).
+[portal HTTP contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md).
 
 ## Frontend wiring
 
@@ -64,7 +64,7 @@ result or rejecting with a typed `Failure`. The
 `httpApplicationClient()` talks to the page's own portal, and
 `httpApplicationClient({ baseUrl: 'http://192.168.1.20:8787' })` to a remote one
 that allows the page's origin (`--allow-origin`; a `file://` app needs `null`, see
-[portal access](../../surfaces/web-portal/HTTP-CONTRACT.md#access)). The portal needs
+[portal access](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#access)). The portal needs
 no credentials.
 [application-state](../../frontend/STATE.md) holds the latest state and command
 feedback in one RTK store per frontend.

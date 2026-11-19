@@ -37,7 +37,7 @@ from prysm_acceptance.wled_api import Wled
 # size, the slim package streams hardware H.264.
 CAPTURE = (640, 360, 30)
 SOAKS = {Flavour.FULL: [(640, 360, 30), (1280, 720, 30)], Flavour.SLIM: [(640, 360, 30)]}
-# The TV's UI capture is at most this size, whatever was asked (adapters/capture-webos settings.rs `ui_size`).
+# The TV's UI capture is at most this size, whatever was asked (crates/adapters/capture-webos settings.rs `ui_size`).
 UI_LIMIT = (320, 180)
 # How long the TV may take to report a state the runner set.
 CONFIRM_SECONDS = 20

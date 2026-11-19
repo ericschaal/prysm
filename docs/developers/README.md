@@ -20,7 +20,7 @@ The product is one Cargo workspace (`Cargo.toml`) and one npm workspace
 ## Build and run
 
 `cargo xtask` is the entry point for generating, checking and building
-([tools/xtask](../../tools/xtask/src/main.rs)). It runs the npm scripts,
+([crates/tools/xtask](../../crates/tools/xtask/src/main.rs)). It runs the npm scripts,
 Cargo, the Dockerfile, the TV package script and the Python checks in the
 right order, and runs `npm ci` first when `frontend/node_modules` is missing
 or older than `frontend/package-lock.json`.
@@ -51,7 +51,7 @@ Without the bundle, a debug build still compiles: Cargo warns, and the portal
 shows one page saying the frontend is not built and how to build it. The API
 works as usual, so Rust lints and tests need no npm. A release build (and the
 `webos` profile) fails instead, so a shipped binary always carries the portal
-([hosts/common/build.rs](../../hosts/common/build.rs)). The next build after
+([crates/hosts/common/build.rs](../../crates/hosts/common/build.rs)). The next build after
 `npm run bundle` embeds it.
 
 This builds the two desktop hosts:
@@ -66,7 +66,7 @@ Both take a settings file and the same options:
 ```sh
 cargo run -p prysm-headless -- --help
 cargo run -p prysm-headless -- my-settings.json
-cargo run -p prysm-tui -- hosts/tui/settings.example.json
+cargo run -p prysm-tui -- crates/hosts/tui/settings.example.json
 ```
 
 A missing settings file means "not set up": the portal opens the setup wizard
@@ -79,11 +79,11 @@ Options, logging and exit codes: [hosts](workspace.md#hosts).
 
 The `file` source plays a video through FFmpeg 9+ and is for development only:
 neither the Docker image nor the Debian package includes FFmpeg. Edit the path
-in [settings.file.example.json](../../hosts/tui/settings.file.example.json),
+in [settings.file.example.json](../../crates/hosts/tui/settings.file.example.json),
 then:
 
 ```sh
-cargo run -p prysm-tui -- hosts/tui/settings.file.example.json
+cargo run -p prysm-tui -- crates/hosts/tui/settings.file.example.json
 ```
 
 It plays once (`"repeat": true` loops it); at the end lighting stops cleanly.

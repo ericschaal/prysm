@@ -1,6 +1,6 @@
 # Packaging prysm-headless
 
-Two ways to run the [headless host](../hosts/headless/src/main.rs) on Linux:
+Two ways to run the [headless host](../crates/hosts/headless/src/main.rs) on Linux:
 a Docker image and a Debian package with a systemd service. Both are built by
 [`docker/Dockerfile`](docker/Dockerfile) from the repository root, for
 `linux/amd64` and `linux/arm64` (Raspberry Pi OS 64-bit). They assume a machine
@@ -19,10 +19,10 @@ The portal listens on port **8787** on every interface: open
 `http://<machine>:8787`. It has no password, so anyone who can reach the port
 can control the lights; keep it on a trusted LAN. Browser pages from other
 sites are refused unless allowed with `--allow-origin`
-([access](../surfaces/web-portal/HTTP-CONTRACT.md#access)).
+([access](../crates/surfaces/web-portal/HTTP-CONTRACT.md#access)).
 
-Settings are one JSON file ([format](../adapters/settings-file/README.md),
-[example](../hosts/headless/settings.example.json)). A missing file means
+Settings are one JSON file ([format](../crates/adapters/settings-file/README.md),
+[example](../crates/hosts/headless/settings.example.json)). A missing file means
 "unconfigured": the host starts idle and the portal writes the file on the
 first save. Hosts start idle; add `--start` to request lighting at launch.
 
@@ -139,7 +139,7 @@ capture section of the worker's `settings.json`, edited in the TV's own
 portal (default 640x360 at 30 fps). Slim: the `remote` capture section of the
 desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
 320x180 at 30 fps with menus, hardware H.264), which the receiver sends to the
-TV on every connection ([wire protocol](../adapters/capture-remote/README.md));
+TV on every connection ([wire protocol](../crates/adapters/capture-remote/README.md));
 the TV captures and encodes as asked. Saving other capture settings restarts
 lighting, the TV reconnects within a second and follows the new request.
 `receiver` is `host:port`, the host an IP address or a name such as
@@ -208,9 +208,9 @@ three numbers there. The `appinfo.json` in this repository has no version;
 [`ipk.py appinfo`](webos/ipk.py) adds it while packaging.
 
 The slim worker encodes its stream with H.264 by default
-([`prysm-h264`](../adapters/h264/src/lib.rs)): the TV's hardware encoder
+([`prysm-h264`](../crates/adapters/h264/src/lib.rs)): the TV's hardware encoder
 (`rvenc`, GStreamer with DMA-BUF input, in
-[`h264-rvenc-sys`](../adapters/h264-rvenc-sys/src/lib.rs)) or OpenH264 compiled
+[`h264-rvenc-sys`](../crates/adapters/h264-rvenc-sys/src/lib.rs)) or OpenH264 compiled
 in, as the desktop's `remote` capture `encoding` requests (`h264_hardware`,
 the default, `h264_software` or `raw`). If that encoder fails the TV reports
 `failure_kind: encoder` and refuses the request, so lighting on the desktop
@@ -255,7 +255,7 @@ WEBOS_SDK=… cargo run -p prysm-webos-luna-sys \
 ```
 
 The generator needs libclang; without `--check` it rewrites
-`adapters/webos-luna-sys/src/generated/` from the SDK headers.
+`crates/adapters/webos-luna-sys/src/generated/` from the SDK headers.
 
 [`tests/native-smoke.py`](webos/tests/native-smoke.py) is the on-TV smoke test
 (`--host root@TV --flavour full|slim [--supervisor | --capture]`, `--dry-run`

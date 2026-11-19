@@ -8,7 +8,7 @@ use std::process::{Command, ExitCode};
 use strum::{EnumIter, IntoEnumIterator};
 
 /// The pinned toolchain file, which rustup reads in the repository.
-const RUST_TOOLCHAIN: &str = include_str!("../../../rust-toolchain.toml");
+const RUST_TOOLCHAIN: &str = include_str!("../../../../rust-toolchain.toml");
 
 /// The Rust version `rust-toolchain.toml` pins, such as `1.99.1`.
 fn pinned_rust() -> String {
@@ -465,7 +465,7 @@ mod tests {
             Tool::Rustc.minimum().map(|version| version.to_string()),
             Some(pinned_rust())
         );
-        let dockerfile = include_str!("../../../packaging/docker/Dockerfile");
+        let dockerfile = include_str!("../../../../packaging/docker/Dockerfile");
         let tag = format!("FROM rust:{}-", pinned_rust());
         assert!(
             dockerfile.contains(&tag),

@@ -27,10 +27,10 @@ it. Capture therefore runs in a worker process under a supervisor.
 
 The flavour is compiled into each supervisor binary, and each package ships
 only its own pair, so a supervisor cannot start the other package's worker.
-Code: [webos-service](../../hosts/webos-service/src/lib.rs),
-[webos](../../hosts/webos/src/main.rs),
-[webos-slim](../../hosts/webos-slim/src/main.rs),
-[webos-link](../../crates/webos-link/src/lib.rs).
+Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
+[webos](../../crates/hosts/webos/src/main.rs),
+[webos-slim](../../crates/hosts/webos-slim/src/main.rs),
+[webos-link](../../crates/engine/webos-link/src/lib.rs).
 
 ## Supervisor and worker
 
@@ -47,7 +47,7 @@ Code: [webos-service](../../hosts/webos-service/src/lib.rs),
   can leave the TV's capture locked until a reboot. One that does not finish
   is bounded by its own stop deadline and, until it exits, holds the capture
   lock `/tmp/prysm-capture.lock`, so no other worker opens a tap meanwhile
-  ([`guard_parent`](../../crates/webos-link/src/worker.rs)).
+  ([`guard_parent`](../../crates/engine/webos-link/src/worker.rs)).
 - The supervisor logs which signal stopped it. The worker logs opening and
   releasing the TV UI tap with the capture thread's kernel id (`thread`), the
   id a kernel log names as a capture lock's holder (`K_pid`).
@@ -57,7 +57,7 @@ Code: [webos-service](../../hosts/webos-service/src/lib.rs),
   resets the wait), and one after that turns it off too: a failing open
   can block for seconds, and a stop during one is reported as an
   unconfirmed release. The first failure of a run logs a warning, the rest debug
-  ([native loop](../../adapters/capture-webos/src/source/native.rs)).
+  ([native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
 - The supervisor reaps a worker before starting another. Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.
 - A worker runs while the TV is on (active or screen saver) and, for slim,
@@ -76,7 +76,7 @@ name at each attempt; follows the receiver's stream request (size, rate,
 menus, encoding); closes capture while the receiver has paused the stream. An
 encoder failure is reported as `failure_kind: encoder` and refused until the
 desktop asks for another encoding; nothing falls back on its own. Wire
-protocol: [capture-remote](../../adapters/capture-remote/README.md).
+protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
 ## Luna API
 
@@ -85,7 +85,7 @@ Service `io.prysm.tv.service`: `getState` (any caller, subscribable),
 application ID). Preferences hold only `autostart` and, for slim, `instance`
 (the desktop portal) and `receiver` (`host:port`). Picture settings live in a
 portal, never in Luna. Types: generated `@prysm/contracts/luna` from
-[schema.rs](../../hosts/webos-service/src/schema.rs).
+[schema.rs](../../crates/hosts/webos-service/src/schema.rs).
 
 The TV app sets the service up through the Homebrew Channel's `exec` of
 `setup.sh`, because the service does not exist yet at that point.

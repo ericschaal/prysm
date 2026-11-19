@@ -4,7 +4,7 @@
 The product version is the `VERSION` file alone. Release Please owns it
 (release-type `simple`) and also updates the one pinned copy, the image tag in
 packaging/docker/compose.truenas.yaml (`x-release-please-version`). The Rust
-code reads VERSION at compile time (crates/version); the crates themselves are
+code reads VERSION at compile time (crates/engine/version); the crates themselves are
 `0.0.0`, and the OpenAPI documents carry their API's version, not this one.
 `.release-please-manifest.json` holds the last released version, so it is
 compared only for a tag: by then the release pull request has set it.
@@ -36,13 +36,12 @@ def release_version(root, tag=None):
     if crates != CRATE_VERSION:
         raise ValueError(f'[workspace.package] version is {crates}: keep it {CRATE_VERSION}; '
                          'the product version is VERSION alone')
-    for directory in ('crates', 'adapters', 'surfaces', 'hosts', 'tools'):
-        for source in sorted((root / directory).rglob('*.rs')):
-            if 'target' in source.relative_to(root).parts:
-                continue
-            if 'CARGO_PKG_VERSION' in source.read_text():
-                raise ValueError(f'{source.relative_to(root)} uses CARGO_PKG_VERSION (0.0.0); '
-                                 'use prysm_version::VERSION')
+    for source in sorted((root / 'crates').rglob('*.rs')):
+        if 'target' in source.relative_to(root).parts:
+            continue
+        if 'CARGO_PKG_VERSION' in source.read_text():
+            raise ValueError(f'{source.relative_to(root)} uses CARGO_PKG_VERSION (0.0.0); '
+                             'use prysm_version::VERSION')
     pins = re.findall(r'prysm-headless:(\S+) # x-release-please-version', (root / COMPOSE).read_text())
     if pins != [version]:
         raise ValueError(f'{COMPOSE} must pin prysm-headless:{version} # x-release-please-version, has {pins}')

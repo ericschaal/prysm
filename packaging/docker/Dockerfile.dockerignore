@@ -5,16 +5,8 @@
 !VERSION
 !Cargo.toml
 !Cargo.lock
-!adapters/
-!adapters/**
 !crates/
 !crates/**
-!hosts/
-!hosts/**
-!surfaces/
-!surfaces/**
-!tools/
-!tools/**
 !frontend/
 !frontend/**
 !packaging/debian/
