@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.0-rc.1](https://github.com/ericschaal/prysm/compare/v0.2.0...v1.0.0-rc.1) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* Prysm 1.0, one runtime with plain adapters
+
+### Features
+
+* Prysm 1.0, one runtime with plain adapters ([1e6c18f](https://github.com/ericschaal/prysm/commit/1e6c18fabf7731a3ae5ddb9924909336e5fd283e))
+
+
+### Bug Fixes
+
+* **ci:** separate external link audits from pull request checks ([#10](https://github.com/ericschaal/prysm/issues/10)) ([69ac65e](https://github.com/ericschaal/prysm/commit/69ac65edb8032f8df2e2861522912c3358e4b82e))
+* **release:** preserve repository context during publication ([#9](https://github.com/ericschaal/prysm/issues/9)) ([5398be7](https://github.com/ericschaal/prysm/commit/5398be7aa83f6bbeed3fa6a4cb70220c3e2ea9d4))
+
 ## 0.2.0 (2026-11-04)
 
 First packaged Prysm release.
