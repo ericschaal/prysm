@@ -72,7 +72,7 @@ release, and its first release pull request sets both to `1.0.0`.
      `ghcr.io/<owner>/prysm-headless:<version>-amd64` and `-arm64` and the
      multi-arch `:<version>`, checks that each image is from the tag's commit,
      attaches the packages under the names users download,
-     `prysm-headless_<deb version>_{amd64,arm64}.deb`,
+     `prysm-headless_<version>_{amd64,arm64}.deb`,
      `io.prysm.tv-full_<x.y.z>_all.ipk` and `io.prysm.tv-slim_<x.y.z>_all.ipk`,
      with `docker-image.txt` (the index digest) and `SHA256SUMS`, and
      publishes the release.

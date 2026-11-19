@@ -18,8 +18,10 @@
 # release-artifacts`, built from this script's checkout, checks every file
 # against its manifest entry (this version and commit, a clean tree, the
 # SHA-256) before anything is published. The release attaches
-# prysm-headless-linux-<arch>.deb as Debian's
-# prysm-headless_<deb version>_<arch>.deb and prysm-tv-<flavour>.ipk as
+# prysm-headless-linux-<arch>.deb as prysm-headless_<version>_<arch>.deb (the
+# product version, not Debian's: GitHub replaces the `~` of a Debian
+# pre-release version in an asset's name, and SHA256SUMS would then name files
+# that are not there) and prysm-tv-<flavour>.ipk as
 # io.prysm.tv-<flavour>_<x.y.z>_all.ipk.
 set -euo pipefail
 
@@ -76,7 +78,7 @@ if [ "$release" != published ]; then
     [ "$(dpkg-deb --field "$deb" Architecture)" = "$arch" ] || fail "$deb is not for $arch"
     packaged=$(dpkg-deb --field "$deb" Version)
     [ "${packaged%-*}" = "$deb_version" ] || fail "$deb has version $packaged, not $deb_version-*"
-    named=prysm-headless_${packaged}_${arch}.deb
+    named=prysm-headless_${version}_${arch}.deb
     mv "$deb" "$named"
     assets+=("$named")
   done

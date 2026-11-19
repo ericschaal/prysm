@@ -204,7 +204,7 @@ class PublishTests(unittest.TestCase):
                        f'{image}:1.2.0-amd64', f'{image}:1.2.0-arm64'], calls)
         upload = self.find(calls, 'gh', 'release', 'upload')
         self.assertEqual(len(upload), 1)
-        for name in ('prysm-headless_1.2.0-1_amd64.deb', 'prysm-headless_1.2.0-1_arm64.deb',
+        for name in ('prysm-headless_1.2.0_amd64.deb', 'prysm-headless_1.2.0_arm64.deb',
                      'io.prysm.tv-full_1.2.0_all.ipk', 'io.prysm.tv-slim_1.2.0_all.ipk',
                      'docker-image.txt', 'SHA256SUMS'):
             self.assertTrue(any(arg.endswith(name) for arg in upload[0]), name)
@@ -229,6 +229,11 @@ class PublishTests(unittest.TestCase):
                        '--latest=false'], calls)
         self.assertFalse(self.find(calls, 'gh', 'release', 'edit', 'v2.0.0-rc.1', '--latest'))
         self.assertFalse([call for call in calls if any(arg.endswith(':latest') for arg in call)])
+        # GitHub replaces `~` in an asset's name, so the Debian version is not in it.
+        upload = self.find(calls, 'gh', 'release', 'upload')[0]
+        for arch in ('amd64', 'arm64'):
+            self.assertTrue(any(arg.endswith(f'prysm-headless_2.0.0-rc.1_{arch}.deb') for arg in upload), arch)
+        self.assertFalse([arg for arg in upload if '~' in arg])
 
     def test_an_older_version_does_not_move_latest(self):
         result, calls, _ = self.run_publish(stable_tags='v1.2.0 v1.10.0')
