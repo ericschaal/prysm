@@ -73,11 +73,22 @@ def inspect(path: Path) -> Artifact:
     return Artifact(path, found, modified, entry)
 
 
-def older_than_checkout(artifact: Artifact, transport: Transport) -> str | None:
-    """A warning when the artifact is older than the checkout's last commit; None otherwise or when unknown."""
-    result = transport.run(commands.git_last_commit_time(), check=False)
+def stale(artifact: Artifact, transport: Transport) -> str | None:
+    """A warning when the artifact may not be the checkout's build; None otherwise or when git is unknown.
+
+    With a matching manifest: built from another commit than HEAD, or from a dirty tree. Without one the
+    file time is all there is: older than the last commit."""
+    result = transport.run(commands.git_last_commit(), check=False)
+    head, _, time = result.stdout.strip().partition(' ')
+    if not result.ok or not head:
+        return None
+    if artifact.entry:
+        if artifact.entry['commit'] != head:
+            return f'{artifact.path.name} was built from {artifact.entry["commit"]}, not HEAD {head}: rebuild it?'
+        dirty = artifact.entry['dirty']
+        return f'{artifact.path.name} was built from a tree with uncommitted changes: rebuild it?' if dirty else None
     try:
-        committed = datetime.datetime.fromisoformat(result.stdout.strip())
+        committed = datetime.datetime.fromisoformat(time)
     except ValueError:
         return None
     if artifact.modified >= committed:
