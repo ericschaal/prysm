@@ -1,6 +1,7 @@
 //! The service with the real process launcher and a shell script as the
 //! worker: spawn, commands, status, TERM, reap, restart, and the binaries'
 //! argument handling. Time-bounded throughout.
+use prysm_webos_service::identity::APP_ID;
 use prysm_webos_service::install::{InstallError, Installer};
 use prysm_webos_service::launcher::ProcessLauncher;
 use prysm_webos_service::machine::Spec;
@@ -41,7 +42,7 @@ impl Installer for NoInstaller {
 const WORKER: &str = r#"#!/bin/sh
 trap 'echo "TERM" >&2; exit 0' TERM
 echo "args: $*" >&2
-echo '{"type":"status","flavor":"full","capturing":false,"fps":null,"target":"off","portal":"http://10.0.0.2:8787/","failure":null}'
+echo '{"type":"status","flavor":"full","capturing":false,"target":"off","portal":"http://10.0.0.2:8787/"}'
 exec 3<&0
 while read -r line <&3; do echo "command: $line" >&2; done &
 while :; do sleep 0.05; done
@@ -75,7 +76,7 @@ fn supervises_a_real_child_process() {
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
         flavor: Flavor::Full,
-        app_id: "io.prysm.tv".into(),
+        app_id: APP_ID.into(),
         program: worker(dir.path()),
         spec: Spec::Full {
             settings: dir.path().join("settings.json"),
@@ -99,7 +100,7 @@ fn supervises_a_real_child_process() {
     let reply = service.request(
         &mut bus,
         "setEnabled",
-        "io.prysm.tv",
+        APP_ID,
         r#"{"enabled":true}"#,
         Instant::now(),
     );

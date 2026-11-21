@@ -31,7 +31,7 @@ card cannot see.
 | Raspberry Pi OS, Debian, Ubuntu | `prysm-headless` `.deb` (arm64, amd64) | [Debian](docs/users/debian.md) |
 | Any Linux with Docker | `ghcr.io/ericschaal/prysm-headless` | [Docker](docs/users/docker.md) |
 | TrueNAS SCALE | the same image | [TrueNAS](docs/users/truenas.md) |
-| A rooted LG TV | `io.prysm.tv`, full or slim | [LG TV](docs/users/webos.md) |
+| A rooted LG TV | `io.github.ericschaal.prysm`, full or slim | [LG TV](docs/users/webos.md) |
 | macOS, or Linux from source | build `prysm-headless` | [Build](docs/developers/README.md#build-and-run) |
 
 Packages are attached to the [GitHub releases](https://github.com/ericschaal/prysm/releases).

@@ -219,7 +219,7 @@ Prysm keeps all of the above in one JSON file:
 | Debian package | `/var/lib/prysm/settings.json` |
 | Docker | `/data/settings.json` in the container's volume |
 | TrueNAS | `settings.json` in the app's dataset |
-| LG TV, full package | `/var/lib/io.prysm.tv/settings.json` on the TV |
+| LG TV, full package | `/var/lib/io.github.ericschaal.prysm/settings.json` on the TV |
 | From source | The path you pass on the command line |
 
 The portal creates the file on the first save. Back it up before upgrades.

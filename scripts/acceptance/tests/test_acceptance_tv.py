@@ -45,19 +45,19 @@ from prysm_acceptance.web import JsonObject
 
 HOST = 'root@tv.example'
 STATE = (
-    '{"returnValue":true,"flavor":"full","preferences":{"autostart":false,"instance":null},'
+    '{"returnValue":true,"flavor":"full","preferences":{"autostart":false},'
     '"lighting":"processed","power":"active","video":"available",'
     '"worker":{"phase":"running","capturing":true,"fps":30,"portal":"http://192.0.2.50:8787"},'
-    '"failure":null,"log":["prysm-webos: portal on 0.0.0.0:8787"]}'
+    '"log":["prysm-webos: portal on 0.0.0.0:8787"]}'
 )
 SLIM = (
-    '{"returnValue":true,"flavor":"slim","preferences":{"autostart":false,"instance":null},'
+    '{"returnValue":true,"flavor":"slim","preferences":{"autostart":false},'
     '"enabled":true,"power":"active","video":"available",'
-    '"worker":{"phase":"running","capturing":true,"fps":30,"encoding":null,"paused":false},'
-    '"failure":null,"log":[]}'
+    '"worker":{"phase":"running","capturing":true,"fps":30,"paused":false},'
+    '"log":[]}'
 )
 SLIM_PREFERENCES: JsonObject = {'autostart': True, 'instance': 'http://192.0.2.20:8787'}
-NO_SERVICE = Result(1, '', 'Service does not exist: io.prysm.tv.service')
+NO_SERVICE = Result(1, '', f'Service does not exist: {commands.SERVICE}')
 ABSENT = ''.join(f'absent {path}\n' for path in (*commands.INSTALLED_PATHS, commands.DATA_DIR, commands.STAGING))
 INSTALLED = ABSENT.replace('absent /media', 'present /media').replace(f'absent {commands.DATA_DIR}', 'present /var/lib')
 DATA_ONLY = ABSENT.replace(f'absent {commands.DATA_DIR}', f'present {commands.DATA_DIR}')
@@ -222,7 +222,7 @@ class TheTv(unittest.TestCase):
             ok(SLIM.replace('"capturing":true', '"capturing":false').replace('"paused":false', '"paused":true'))
         )
         self.assertEqual((tv.capturing(paused), tv.paused(paused), tv.portal(slim)), (False, True, None))
-        running = '{"phase":"running","capturing":true,"fps":30,"encoding":null,"paused":false}'
+        running = '{"phase":"running","capturing":true,"fps":30,"paused":false}'
         stopping = webos.luna_reply(ok(SLIM.replace(running, '{"phase":"stopping"}')))
         self.assertEqual((tv.capturing(stopping), tv.fps(stopping), tv.running(stopping)), (False, None, None))
 
@@ -593,12 +593,12 @@ class Replace(unittest.TestCase):
         backup = found.backup([commands.APP_DIR])
         self.assertEqual(
             (backup['portal'], untyped(backup['luna'])['preferences'], backup['files']['resume.json']),
-            (None, {'autostart': False, 'instance': None}, '{"boot":"b","intent":"processed"}'),
+            (None, {'autostart': False}, '{"boot":"b","intent":"processed"}'),
         )
         # The slim package's intent is `enabled`; it has no lighting of its own.
         self.assertEqual(
             backup['luna'],
-            {'flavor': 'slim', 'preferences': {'autostart': False, 'instance': None}, 'enabled': True},
+            {'flavor': 'slim', 'preferences': {'autostart': False}, 'enabled': True},
         )
 
 
@@ -681,7 +681,7 @@ class Restore(unittest.TestCase):
     def test_a_full_backup_puts_the_lighting_target_back_only_when_it_was_on(self) -> None:
         prysm = FakePrysm()
         self.addCleanup(prysm.close)
-        luna = {'flavor': 'full', 'preferences': {'autostart': False, 'instance': None}, 'lighting': 'processed'}
+        luna = {'flavor': 'full', 'preferences': {'autostart': False}, 'lighting': 'processed'}
         for target, sent, said in (
             (prysm_api.Target.PROCESSED, ['processed'], 'lighting processed, as backed up'),
             (prysm_api.Target.OFF, [], 'lighting was off: left as it is'),
@@ -752,9 +752,9 @@ class Restore(unittest.TestCase):
         path.write_text(json.dumps(a_backup()))
         done = runner('settings', 'restore', 'tv', str(path), '--dry-run', '--config', str(EXAMPLE), offline=True)
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn('luna://io.prysm.tv.service/setPreferences', done.stdout)
+        self.assertIn(f'luna://{commands.SERVICE}/setPreferences', done.stdout)
         self.assertIn('"autostart":true,"instance":"http://192.0.2.20:8787"', done.stdout)
-        self.assertIn('luna://io.prysm.tv.service/setEnabled', done.stdout)
+        self.assertIn(f'luna://{commands.SERVICE}/setEnabled', done.stdout)
         other = runner('settings', 'restore', 'linux', str(path), '--dry-run', '--config', str(EXAMPLE), offline=True)
         self.assertEqual(other.returncode, 2)
         self.assertIn('is not a backup of the linux target', other.stderr)
@@ -850,7 +850,7 @@ class TheCells(unittest.TestCase):
                     within = 'prysm_acceptance.' + part
                     found = {name for name in imported if name == within or name.startswith(within + '.')}
                     self.assertLessEqual(found, allowed)
-                for word in ('luna', 'ipk', 'io.prysm.tv'):
+                for word in ('luna', 'ipk', commands.APP):
                     self.assertNotIn(word, source.lower())
 
     def test_every_tv_command_the_cells_plan_stays_on_prysms_paths(self) -> None:
@@ -956,7 +956,7 @@ class TheCommandLine(unittest.TestCase):
                     'luna://com.webos.service.applicationManager/getForegroundAppInfo',
                     'until power active, video available, com.webos.chromecast in front',
                     'luna://com.webos.service.applicationManager/launch',
-                    'until power active, video unavailable, io.prysm.tv in front',
+                    f'until power active, video unavailable, {commands.APP} in front',
                     'the frames that arrive are at most 320x180',
                 ):
                     self.assertIn(line, text)

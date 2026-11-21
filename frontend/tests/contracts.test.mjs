@@ -123,6 +123,7 @@ test('the Luna document covers both flavors with one State', () => {
   const state = validate('luna/State');
   assert.equal(state({ ...full, flavor: 'other' }), false);
   assert.equal(state({ ...full, power: 'on' }), false);
+  assert.equal(state({ ...full, failure: null }), false, 'omitted, not null');
   // A package's own fields are required, and the other flavor's do not fit.
   const { lighting, ...withoutLighting } = full;
   assert.equal(lighting, 'processed');

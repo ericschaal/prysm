@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 /// Where the full worker serves the portal.
 pub const PORTAL: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8787);
 /// The TV app of both packages.
-pub const APP_ID: &str = "io.prysm.tv";
+pub const APP_ID: &str = "io.github.ericschaal.prysm";
 /// The supervisor's installed file name in both packages.
 pub const SUPERVISOR: &str = "prysm-webos-service";
 /// The worker's installed file name in both packages.
@@ -122,21 +122,24 @@ mod tests {
     fn both_flavors_install_under_one_identity() {
         let full = Identity::production(Flavor::Full);
         let slim = Identity::production(Flavor::Slim);
-        assert_eq!(full.service, "io.prysm.tv.service");
-        assert_eq!(full.app_id, "io.prysm.tv");
+        assert_eq!(full.service, "io.github.ericschaal.prysm.service");
+        assert_eq!(full.app_id, "io.github.ericschaal.prysm");
         assert!(
             full.worker
-                .ends_with("io.prysm.tv.service/prysm-webos-worker")
+                .ends_with("io.github.ericschaal.prysm.service/prysm-webos-worker")
         );
         assert!(
             full.layout
                 .supervisor
-                .ends_with("io.prysm.tv.service/prysm-webos-service")
+                .ends_with("io.github.ericschaal.prysm.service/prysm-webos-service")
         );
-        assert_eq!(full.state_dir, Path::new("/var/lib/io.prysm.tv"));
+        assert_eq!(
+            full.state_dir,
+            Path::new("/var/lib/io.github.ericschaal.prysm")
+        );
         assert_eq!(
             full.layout.hook,
-            Path::new("/var/lib/webosbrew/init.d/io.prysm.tv")
+            Path::new("/var/lib/webosbrew/init.d/io.github.ericschaal.prysm")
         );
         // Everything but the build-time flavor is shared.
         assert_eq!(
@@ -155,8 +158,8 @@ mod tests {
     #[test]
     fn sandbox_stays_under_its_root() {
         let id = Identity::sandbox(Flavor::Slim, Path::new("/tmp/p"), Path::new("/opt/b"), None);
-        assert_eq!(id.app_id, "io.prysm.tv.probe");
-        assert_eq!(id.service, "io.prysm.tv.probe.service");
+        assert_eq!(id.app_id, "io.github.ericschaal.prysm.probe");
+        assert_eq!(id.service, "io.github.ericschaal.prysm.probe.service");
         assert!(id.preferences().starts_with("/tmp/p"));
         assert!(id.layout.manifests.starts_with("/tmp/p"));
         assert!(id.layout.hook.starts_with("/tmp/p"));

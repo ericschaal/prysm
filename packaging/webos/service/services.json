@@ -1,11 +1,11 @@
 {
-  "id": "io.prysm.tv.service",
+  "id": "io.github.ericschaal.prysm.service",
   "description": "Prysm TV supervisor",
   "engine": "native",
   "executable": "prysm-webos-service",
   "services": [
     {
-      "name": "io.prysm.tv.service"
+      "name": "io.github.ericschaal.prysm.service"
     }
   ]
 }

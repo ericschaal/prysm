@@ -27,7 +27,7 @@ STOP_SECONDS = 30
 
 class Preferences(TypedDict, total=False):
     autostart: bool
-    instance: str | None
+    instance: str
 
 
 class LunaReply(tv.State, total=False):

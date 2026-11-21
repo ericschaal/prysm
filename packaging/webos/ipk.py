@@ -11,8 +11,8 @@
                          write SOURCE's appinfo.json to DEST with the app
                          version derived from the product version; print it
 
-Both flavours install the same paths (app io.prysm.tv, service
-io.prysm.tv.service), so one allowlist covers both.
+Both flavours install the same paths (app APP_ID, service APP_ID.service),
+so one allowlist covers both.
 """
 import io
 import json
@@ -24,7 +24,7 @@ import sys
 import tarfile
 import tempfile
 
-APP_ID = 'io.prysm.tv'
+APP_ID = 'io.github.ericschaal.prysm'
 SERVICE_ID = APP_ID + '.service'
 APP = f'usr/palm/applications/{APP_ID}/'
 SERVICE = f'usr/palm/services/{SERVICE_ID}/'

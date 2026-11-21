@@ -13,9 +13,11 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApplicationError } from '@prysm/application-client';
 import {
+  APP_ID,
   CALL_TIMEOUT_MS,
   HOMEBREW_EXEC,
   RESUBSCRIBE_MS,
+  SERVICE_URI,
   SETUP_SCRIPT,
   isState,
   lunaTvService,
@@ -28,6 +30,7 @@ import {
   instanceAddress,
   localPortal,
   retrySeconds,
+  sentPreferences,
   shown,
   tvStatus,
   completePreferences,
@@ -240,6 +243,7 @@ test('generated Rust states are accepted; contract violations are not', () => {
     'a restart says when',
   );
   assert(!isState({ ...state(), failure: 'x' }), 'a failure has a kind');
+  assert(!isState({ ...state(), failure: null }), 'absent, not null');
   assert(isState({ ...state(), failure: { kind: 'receiver', message: 'x' } }));
   assert(!isState({ ...state(), failure: { kind: 'later', message: 'x' } }));
   assert(!isState({ ...state(), worker: { ...state().worker, fps: '30' } }));
@@ -284,7 +288,7 @@ test('the state subscription retries after unsubscribed, malformed and refused r
   const stop = lunaTvService(bridge.factory).watch((event) =>
     events.push(event),
   );
-  assert.equal(bridge.channels[0].uri, 'luna://io.prysm.tv.service/getState');
+  assert.equal(bridge.channels[0].uri, `${SERVICE_URI}/getState`);
   assert.deepEqual(bridge.channels[0].payload, { subscribe: true });
   bridge.channels[0].reply({
     returnValue: true,
@@ -366,18 +370,15 @@ test('commands carry the contract payloads and fail with typed errors', async ()
   const bridge = manualBridge();
   const service = lunaTvService(bridge.factory);
   const saving = service.setPreferences({ autostart: true });
-  assert.equal(
-    bridge.channels[0].uri,
-    'luna://io.prysm.tv.service/setPreferences',
-  );
+  assert.equal(bridge.channels[0].uri, `${SERVICE_URI}/setPreferences`);
   assert.deepEqual(bridge.channels[0].payload, { autostart: true });
   bridge.channels[0].reply({
     returnValue: false,
-    errorText: 'only io.prysm.tv may change Prysm',
+    errorText: `only ${APP_ID} may change Prysm`,
   });
   await assert.rejects(saving, {
     kind: 'refused',
-    message: 'only io.prysm.tv may change Prysm',
+    message: `only ${APP_ID} may change Prysm`,
   });
   const removing = service.uninstall();
   assert.deepEqual(bridge.channels[1].payload, {});
@@ -412,9 +413,10 @@ test('setup runs setup.sh through the Homebrew Channel and reports its stderr', 
   const ok = service.setup();
   assert.equal(bridge.channels[0].uri, HOMEBREW_EXEC);
   assert.deepEqual(bridge.channels[0].payload, { command: SETUP_SCRIPT });
+  assert.equal(SERVICE_URI, `luna://${APP_ID}.service`);
   assert.equal(
     SETUP_SCRIPT,
-    '/media/developer/apps/usr/palm/services/io.prysm.tv.service/setup.sh',
+    `/media/developer/apps/usr/palm/services/${APP_ID}.service/setup.sh`,
   );
   bridge.channels[0].reply({ returnValue: true, stdoutString: '' });
   await ok;
@@ -870,6 +872,10 @@ test('preferences are completed with their defaults', () => {
   assert.deepEqual(completePreferences({ autostart: true }), {
     autostart: true,
     instance: null,
+  });
+  // No address is omitted on the wire, never sent as `null`.
+  assert.deepEqual(sentPreferences({ autostart: true, instance: null }), {
+    autostart: true,
   });
 });
 

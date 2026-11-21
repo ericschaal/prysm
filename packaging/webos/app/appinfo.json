@@ -1,5 +1,5 @@
 {
-  "id": "io.prysm.tv",
+  "id": "io.github.ericschaal.prysm",
   "vendor": "Prysm",
   "type": "web",
   "main": "index.html",

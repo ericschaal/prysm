@@ -1,6 +1,7 @@
 //! The installer in a temporary root, with shell scripts for `ls-control`
 //! and `luna-send`.
 use super::*;
+use crate::identity::APP_ID;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 struct Sandbox {
@@ -43,11 +44,11 @@ fn sandbox() -> Sandbox {
         "echo \"$@\" > \"$0.args\"; echo '{\"returnValue\":true}'",
     );
     let layout = Layout {
-        id: "io.prysm.tv".into(),
+        id: APP_ID.into(),
         manifests: root.join("manifests.d"),
         service_dir: root.join("service"),
         supervisor: root.join("service/prysm-webos-service"),
-        hook: root.join("init.d/io.prysm.tv"),
+        hook: root.join(our_hook()),
         scanner: root.join("ls-control"),
         luna_send: root.join("luna-send"),
         hook_log: root.join("setup.log"),
@@ -55,6 +56,16 @@ fn sandbox() -> Sandbox {
     let mut installer = FsInstaller::new(layout);
     installer.timeout = Duration::from_secs(5);
     Sandbox { dir, installer }
+}
+
+/// Our manifest `name` (`supervisor`, `worker`), relative to the root.
+fn manifest(name: &str) -> String {
+    format!("manifests.d/{APP_ID}.{name}.json")
+}
+
+/// Our boot hook, relative to the root.
+fn our_hook() -> String {
+    format!("init.d/{APP_ID}")
 }
 
 impl Sandbox {
@@ -82,8 +93,7 @@ fn manifests_carry_the_product_version() {
     let mut s = sandbox();
     s.installer.install().unwrap();
     for name in ["supervisor", "worker"] {
-        let manifest: Value =
-            serde_json::from_str(&s.read(&format!("manifests.d/io.prysm.tv.{name}.json"))).unwrap();
+        let manifest: Value = serde_json::from_str(&s.read(&manifest(name))).unwrap();
         assert_eq!(manifest["version"], MANIFEST_VERSION, "{name}");
     }
 }
@@ -93,9 +103,8 @@ fn install_is_idempotent_and_uninstall_removes_only_ours() {
     let mut s = sandbox();
     s.installer.install().unwrap();
     s.installer.install().unwrap();
-    let supervisor: Value =
-        serde_json::from_str(&s.read("manifests.d/io.prysm.tv.supervisor.json")).unwrap();
-    assert_eq!(supervisor["id"], "io.prysm.tv.supervisor");
+    let supervisor: Value = serde_json::from_str(&s.read(&manifest("supervisor"))).unwrap();
+    assert_eq!(supervisor["id"], format!("{APP_ID}.supervisor"));
     assert!(
         supervisor["roleFiles"][0]
             .as_str()
@@ -106,19 +115,18 @@ fn install_is_idempotent_and_uninstall_removes_only_ours() {
         supervisor["apiPermissionFiles"].as_array().unwrap().len(),
         1
     );
-    let worker: Value =
-        serde_json::from_str(&s.read("manifests.d/io.prysm.tv.worker.json")).unwrap();
+    let worker: Value = serde_json::from_str(&s.read(&manifest("worker"))).unwrap();
     assert!(
         worker["roleFiles"][0]
             .as_str()
             .unwrap()
             .ends_with("worker.role.json")
     );
-    let hook = s.read("init.d/io.prysm.tv");
+    let hook = s.read(&our_hook());
     assert!(hook.starts_with("#!/bin/sh\n"));
     assert!(hook.contains("prysm-webos-service' setup >"), "{hook}");
     assert_eq!(
-        fs::metadata(s.path("init.d/io.prysm.tv"))
+        fs::metadata(s.path(&our_hook()))
             .unwrap()
             .permissions()
             .mode()
@@ -129,16 +137,16 @@ fn install_is_idempotent_and_uninstall_removes_only_ours() {
 
     s.installer.uninstall().unwrap();
     s.installer.uninstall().unwrap();
-    assert!(!s.path("manifests.d/io.prysm.tv.supervisor.json").exists());
-    assert!(!s.path("manifests.d/io.prysm.tv.worker.json").exists());
-    assert!(!s.path("init.d/io.prysm.tv").exists());
+    assert!(!s.path(&manifest("supervisor")).exists());
+    assert!(!s.path(&manifest("worker")).exists());
+    assert!(!s.path(&our_hook()).exists());
     assert_eq!(s.read("scans").lines().count(), 4);
 }
 
 #[test]
 fn unrelated_files_are_never_replaced_or_removed() {
     let mut s = sandbox();
-    let manifest = s.path("manifests.d/io.prysm.tv.worker.json");
+    let manifest = s.path(&manifest("worker"));
     fs::write(&manifest, r#"{"id":"someone.else"}"#).unwrap();
     let unrelated =
         |e: &InstallError| matches!(e, InstallError::UnrelatedManifest(p) if *p == manifest);
@@ -151,15 +159,15 @@ fn unrelated_files_are_never_replaced_or_removed() {
     fs::remove_file(&manifest).unwrap();
 
     fs::create_dir_all(s.path("init.d")).unwrap();
-    fs::write(s.path("init.d/io.prysm.tv"), "#!/bin/sh\nother\n").unwrap();
-    let hook = s.path("init.d/io.prysm.tv");
+    fs::write(s.path(&our_hook()), "#!/bin/sh\nother\n").unwrap();
+    let hook = s.path(&our_hook());
     let unrelated = |e: &InstallError| matches!(e, InstallError::UnrelatedHook(p) if *p == hook);
     assert_fails(s.installer.install(), unrelated);
     assert_fails(s.installer.uninstall(), unrelated);
-    assert_eq!(s.read("init.d/io.prysm.tv"), "#!/bin/sh\nother\n");
+    assert_eq!(s.read(&our_hook()), "#!/bin/sh\nother\n");
 
-    fs::remove_file(s.path("init.d/io.prysm.tv")).unwrap();
-    nix::unistd::mkfifo(&s.path("init.d/io.prysm.tv"), nix::sys::stat::Mode::S_IRUSR).unwrap();
+    fs::remove_file(s.path(&our_hook())).unwrap();
+    nix::unistd::mkfifo(&s.path(&our_hook()), nix::sys::stat::Mode::S_IRUSR).unwrap();
     // A FIFO is refused without blocking.
     assert_fails(s.installer.install(), |e| {
         matches!(e, InstallError::Hook { .. })
@@ -173,7 +181,7 @@ fn unrelated_files_are_never_replaced_or_removed() {
 fn our_manifest_of_another_version_is_replaced_atomically() {
     let mut s = sandbox();
     s.installer.install().unwrap();
-    let path = s.path("manifests.d/io.prysm.tv.supervisor.json");
+    let path = s.path(&manifest("supervisor"));
     let current = fs::read(&path).unwrap();
     let mut old: Value = serde_json::from_slice(&current).unwrap();
     old["version"] = "0.9.0".into();
@@ -206,7 +214,7 @@ fn our_manifest_of_another_version_is_replaced_atomically() {
     assert_eq!(fs::metadata(&path).unwrap().ino(), metadata.ino());
 
     // Uninstall removes ours of any version.
-    let worker = s.path("manifests.d/io.prysm.tv.worker.json");
+    let worker = s.path(&manifest("worker"));
     let mut old: Value = serde_json::from_slice(&fs::read(&worker).unwrap()).unwrap();
     old["version"] = "2.0.0".into();
     fs::write(&worker, serde_json::to_vec(&old).unwrap()).unwrap();
@@ -220,9 +228,11 @@ fn our_manifest_of_another_version_is_replaced_atomically() {
 #[test]
 fn a_manifest_with_our_id_but_other_role_files_is_refused() {
     let mut s = sandbox();
-    let path = s.path("manifests.d/io.prysm.tv.worker.json");
-    let foreign = r#"{"id":"io.prysm.tv.worker","version":"1.0.0","roleFiles":["/elsewhere/worker.role.json"]}"#;
-    fs::write(&path, foreign).unwrap();
+    let path = s.path(&manifest("worker"));
+    let foreign = format!(
+        r#"{{"id":"{APP_ID}.worker","version":"1.0.0","roleFiles":["/elsewhere/worker.role.json"]}}"#
+    );
+    fs::write(&path, &foreign).unwrap();
     let unrelated =
         |e: &InstallError| matches!(e, InstallError::UnrelatedManifest(p) if *p == path);
     assert_fails(s.installer.install(), unrelated);
@@ -235,17 +245,14 @@ fn a_manifest_with_our_id_but_other_role_files_is_refused() {
 #[test]
 fn our_hook_of_another_release_is_replaced() {
     let mut s = sandbox();
-    let hook = s.path("init.d/io.prysm.tv");
+    let hook = s.path(&our_hook());
     fs::create_dir_all(s.path("init.d")).unwrap();
-    let old = "#!/bin/sh\n# Prysm (io.prysm.tv): older text.\n/old/path setup &\n";
-    fs::write(&hook, old).unwrap();
+    let old = format!("#!/bin/sh\n# Prysm ({APP_ID}): older text.\n/old/path setup &\n");
+    fs::write(&hook, &old).unwrap();
     let link = s.path("old-hook");
     fs::hard_link(&hook, &link).unwrap();
     s.installer.install().unwrap();
-    assert_eq!(
-        s.read("init.d/io.prysm.tv"),
-        s.installer.layout.hook_script()
-    );
+    assert_eq!(s.read(&our_hook()), s.installer.layout.hook_script());
     assert_eq!(
         fs::read_to_string(&link).unwrap(),
         old,
@@ -255,7 +262,7 @@ fn our_hook_of_another_release_is_replaced() {
         fs::metadata(&hook).unwrap().permissions().mode() & 0o777,
         0o755
     );
-    fs::write(&hook, old).unwrap();
+    fs::write(&hook, &old).unwrap();
     s.installer.uninstall().unwrap();
     assert!(!hook.exists());
 }
@@ -265,11 +272,11 @@ fn our_hook_of_another_release_is_replaced() {
 fn a_hook_failure_still_rescans() {
     let mut s = sandbox();
     fs::create_dir_all(s.path("init.d")).unwrap();
-    fs::write(s.path("init.d/io.prysm.tv"), "#!/bin/sh\nother\n").unwrap();
+    fs::write(s.path(&our_hook()), "#!/bin/sh\nother\n").unwrap();
     assert_fails(s.installer.install(), |e| {
         matches!(e, InstallError::UnrelatedHook(_))
     });
-    assert!(s.path("manifests.d/io.prysm.tv.worker.json").exists());
+    assert!(s.path(&manifest("worker")).exists());
     assert_eq!(s.read("scans"), "scan-services\n");
     assert_fails(s.installer.uninstall(), |e| {
         matches!(e, InstallError::UnrelatedHook(_))
@@ -281,7 +288,7 @@ fn a_hook_failure_still_rescans() {
 #[test]
 fn a_broken_manifest_is_refused_with_the_remedy() {
     let mut s = sandbox();
-    let path = s.path("manifests.d/io.prysm.tv.supervisor.json");
+    let path = s.path(&manifest("supervisor"));
     fs::write(&path, "{\"id\":").unwrap();
     let result = s.installer.install();
     assert_fails(
@@ -289,7 +296,10 @@ fn a_broken_manifest_is_refused_with_the_remedy() {
         |e| matches!(e, InstallError::InvalidManifest { path: p, .. } if *p == path),
     );
     let message = s.installer.install().unwrap_err().to_string();
-    assert!(message.contains("io.prysm.tv.supervisor.json"), "{message}");
+    assert!(
+        message.contains(&format!("{APP_ID}.supervisor.json")),
+        "{message}"
+    );
     assert!(
         message.contains("delete it, then run setup again"),
         "{message}"
@@ -317,10 +327,10 @@ fn rescan_failures_and_hangs_are_errors() {
 #[test]
 fn activation_asks_for_state_and_checks_the_reply() {
     let mut s = sandbox();
-    s.installer.activate("io.prysm.tv.service").unwrap();
+    s.installer.activate("app.test.service").unwrap();
     assert_eq!(
         s.read("luna-send.args").trim(),
-        "-w 5000 -n 1 luna://io.prysm.tv.service/getState {}"
+        "-w 5000 -n 1 luna://app.test.service/getState {}"
     );
     script(
         &s.path("luna-send"),

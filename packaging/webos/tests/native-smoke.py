@@ -4,7 +4,7 @@
 Runs the cargo binaries from a webOS build (build-ipk.sh, or cargo with
 env.sh and --profile webos) on a rooted TV over SSH, never the installed
 package: everything lives in a private /tmp/prysm-supervisor.* directory, the
-Luna name is io.prysm.tv.probe.service, the service runs with `run --sandbox
+Luna name is <app id>.probe.service, the service runs with `run --sandbox
 DIR --run-for N`, and the only file outside that directory is one probe
 manifest, removed afterwards only if it is still exactly ours.
 
@@ -33,19 +33,19 @@ import time
 
 HERE = Path(__file__).resolve().parents[1]
 ROOT = HERE.parents[1]
+spec = importlib.util.spec_from_file_location('ipk', HERE / 'ipk.py')
+ipk = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ipk)
 
 
 def manifest_version():
     """The Luna manifest version: the product version's major.minor.patch,
     as ipk.py gives the packaged appinfo.json."""
-    spec = importlib.util.spec_from_file_location('ipk', HERE / 'ipk.py')
-    ipk = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ipk)
     return ipk.app_version(ipk.product_version(ROOT / 'VERSION'))
-APP = 'io.prysm.tv.probe'
+APP = ipk.APP_ID + '.probe'
 SERVICE = APP + '.service'
 MANIFEST = f'/var/luna-service2/manifests.d/{APP}.json'
-INSTALLED_SERVICE = 'io.prysm.tv.service'
+INSTALLED_SERVICE = ipk.SERVICE_ID
 TARGET = 'armv7-unknown-linux-gnueabi/webos'
 # Cargo binaries (supervisor, worker) per flavour: identity.rs build_names.
 BINARIES = {
@@ -55,10 +55,8 @@ BINARIES = {
 # What a fake worker of each flavour reports (webos-link WorkerStatus): nothing
 # captured; the full one's engine stays off.
 STATUS = {
-    'full': json.dumps({'type': 'status', 'flavor': 'full', 'capturing': False, 'fps': None,
-                        'target': 'off', 'portal': None, 'failure': None}),
-    'slim': json.dumps({'type': 'status', 'flavor': 'slim', 'capturing': False, 'fps': None,
-                        'encoding': None, 'paused': False, 'failure': None}),
+    'full': json.dumps({'type': 'status', 'flavor': 'full', 'capturing': False, 'target': 'off'}),
+    'slim': json.dumps({'type': 'status', 'flavor': 'slim', 'capturing': False, 'paused': False}),
 }
 
 

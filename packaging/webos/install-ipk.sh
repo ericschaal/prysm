@@ -1,18 +1,18 @@
 #!/bin/sh
 # Install a Prysm TV package (full or slim) on a rooted TV over SSH.
 #
-#   install-ipk.sh [--dry-run] root@TV io.prysm.tv-full_1.0.0_all.ipk
+#   install-ipk.sh [--dry-run] root@TV io.github.ericschaal.prysm-full_1.0.0_all.ipk
 #
 # The file is a release asset or build-ipk.sh's output,
-# io.prysm.tv-full_<version>_all.ipk or io.prysm.tv-slim_<version>_all.ipk;
-# both install as the app io.prysm.tv.
+# $APP-full_<version>_all.ipk or $APP-slim_<version>_all.ipk; both install
+# as the app $APP.
 #
 # `ares-install` fails with "Unable to exec" on webOS 10, so this copies the
 # IPK to /media/developer/temp/ and installs it through
 # com.webos.appInstallService/dev/install, then runs the package's setup.sh
 # (Luna registration, rescan, activation): after an install the service is
 # not running until setup runs again. The service resumes the lighting it had
-# before the update (the intent is kept per boot in /var/lib/io.prysm.tv).
+# before the update (the intent is kept per boot in /var/lib/$APP).
 #
 # The install service ends a running Prysm abruptly, and a worker killed with
 # the TV UI capture open leaves the TV's capture locked until a reboot. So a
@@ -26,7 +26,7 @@
 # A connection to the TV is given up after 8 s. --dry-run prints the commands and touches nothing. Builds never call this.
 set -eu
 
-APP=io.prysm.tv
+APP=io.github.ericschaal.prysm
 TEMP=/media/developer/temp
 SETUP=/media/developer/apps/usr/palm/services/$APP.service/setup.sh
 INSTALL_TIMEOUT=120
@@ -62,12 +62,12 @@ payload="{\"id\":\"$APP\",\"ipkUrl\":\"$remote\",\"subscribe\":true}"
 
 # On the TV: the running service asked to uninstall (refused or unanswered
 # when nothing is installed or running), then Prysm's processes (executables
-# under an io.prysm.* path) polled every 2 s until none is left; those still
+# under a $APP.* path) polled every 2 s until none is left; those still
 # there are printed.
 stop="timeout 12 luna-send -a $APP -n 1 luna://$APP.service/uninstall '{}' || true
 i=0
 while :; do
-    left=\$(for e in /proc/[0-9]*/exe; do l=\$(readlink \"\$e\" 2>/dev/null) && case \$l in */io.prysm.*) echo \"\${e%/exe} \$l\";; esac; done)
+    left=\$(for e in /proc/[0-9]*/exe; do l=\$(readlink \"\$e\" 2>/dev/null) && case \$l in */$APP.*) echo \"\${e%/exe} \$l\";; esac; done)
     [ -z \"\$left\" ] && exit 0
     [ \$i -ge $STOP_SECONDS ] && break
     sleep 2

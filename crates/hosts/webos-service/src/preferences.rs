@@ -11,13 +11,14 @@ use std::path::{Path, PathBuf};
 pub const MAX_BYTES: usize = 65_536;
 
 /// `tv.json` and the `setPreferences` request (complete, every field
-/// optional). Fields marked "Slim only" must stay unset (`null` or absent)
+/// optional, an unset one absent). Fields marked "Slim only" must stay unset
 /// in the full package.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Preferences {
     /// Start enabled (full: processed lighting) when the service starts.
+    #[serde(default)]
     pub autostart: bool,
     /// Slim only: the headless Prysm's address, such as
     /// `http://192.168.1.20:8787` or `https://prysm.example.com` (through a
@@ -25,9 +26,10 @@ pub struct Preferences {
     /// links to its portal. Only the syntax is checked when saved; the TV
     /// resolves a host name at every connection attempt, and one that does
     /// not resolve is reported as the receiver wait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schema(value_type = Option<String>, max_length = 256, example = "http://192.168.1.20:8787")
+        schema(value_type = Option<String>, nullable = false, max_length = 256, example = "http://192.168.1.20:8787")
     )]
     pub instance: Option<PrysmAddress>,
 }

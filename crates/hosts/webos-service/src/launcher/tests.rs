@@ -34,7 +34,7 @@ fn exit_within(worker: &mut ProcessWorker, limit: Duration) -> Option<Exit> {
 #[test]
 fn events_logs_commands_and_exit_code() {
     let mut worker = sh(
-        r#"echo '{"type":"status","flavor":"full","capturing":true,"fps":null,"target":"off","portal":null,"failure":null}'
+        r#"echo '{"type":"status","flavor":"full","capturing":true,"target":"off"}'
 echo started >&2
 read command
 echo "got $command" >&2

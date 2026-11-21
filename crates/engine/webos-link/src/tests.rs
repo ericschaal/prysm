@@ -50,8 +50,8 @@ fn events_round_trip() {
             encode(&Event::Status(WorkerStatus::Slim(SlimStatus::default()))).unwrap()
         )
         .unwrap(),
-        "{\"type\":\"status\",\"flavor\":\"slim\",\"capturing\":false,\"fps\":null,\
-         \"encoding\":null,\"paused\":false,\"failure\":null}\n"
+        "{\"type\":\"status\",\"flavor\":\"slim\",\"capturing\":false,\"paused\":false}\n",
+        "absent values are omitted"
     );
     let paused = Event::Status(WorkerStatus::Slim(SlimStatus {
         paused: true,
@@ -105,27 +105,26 @@ fn unknown_types_and_fields_are_rejected() {
             "{text}"
         );
     }
-    const SLIM: &str = r#""capturing":false,"fps":null,"encoding":null,"paused":false"#;
-    const FULL: &str =
-        r#""capturing":false,"fps":null,"target":"off","portal":null,"failure":null"#;
+    const SLIM: &str = r#""capturing":false,"paused":false"#;
+    const FULL: &str = r#""capturing":false,"target":"off""#;
     // Both base lines are valid, so each rejection below is for its change.
     for valid in [
-        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"failure":null}}"#),
+        format!(r#"{{"type":"status","flavor":"slim",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL}}}"#),
     ] {
         assert!(decode::<Event>(valid.as_bytes()).is_ok(), "{valid}");
     }
     for text in [
-        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"failure":null,"pid":1}}"#),
+        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"pid":1}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL},"pid":1}}"#),
         r#"{"type":"faulted","cause":"x","code":3}"#.to_owned(),
         // No flavour, an unknown one, or the other flavour's fields.
-        format!(r#"{{"type":"status",{SLIM},"failure":null}}"#),
-        format!(r#"{{"type":"status","flavor":"tv",{SLIM},"failure":null}}"#),
-        format!(r#"{{"type":"status","flavor":"full",{SLIM},"failure":null}}"#),
+        format!(r#"{{"type":"status",{SLIM}}}"#),
+        format!(r#"{{"type":"status","flavor":"tv",{SLIM}}}"#),
+        format!(r#"{{"type":"status","flavor":"full",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"slim",{FULL}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL},"paused":false}}"#),
-        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"failure":null,"portal":null}}"#),
+        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"portal":"x"}}"#),
         // The failure as two fields, or a failure without its kind.
         format!(
             r#"{{"type":"status","flavor":"slim",{SLIM},"failure":"x","failure_kind":"other"}}"#
@@ -217,7 +216,7 @@ fn parse<A: clap::Parser>(argv: &[String]) -> Result<A, clap::Error> {
 #[test]
 fn full_args_round_trip_and_reject_mistakes() {
     let args = FullArgs {
-        settings: PathBuf::from("/var/lib/io.prysm.tv/settings.json"),
+        settings: PathBuf::from("/var/lib/prysm/settings.json"),
         listen: "0.0.0.0:8787".parse().unwrap(),
         lighting: LightingTarget::DeviceNative,
     };
@@ -226,7 +225,7 @@ fn full_args_round_trip_and_reject_mistakes() {
         argv,
         strings(&[
             "--settings",
-            "/var/lib/io.prysm.tv/settings.json",
+            "/var/lib/prysm/settings.json",
             "--listen",
             "0.0.0.0:8787",
             "--lighting",

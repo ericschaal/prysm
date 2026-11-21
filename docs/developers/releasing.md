@@ -66,7 +66,7 @@ Covered:
   which is a major change. Additions keep the number and are minor: an older
   Prysm refuses a newer file by the unknown field's name;
 - the TV parts one installed version uses of another: the Luna service
-  `io.prysm.tv.service` with `getState` and `uninstall` (an update calls the
+  `io.github.ericschaal.prysm.service` with `getState` and `uninstall` (an update calls the
   installed service's), and the supervisor's `setup` command, which an older
   boot hook runs;
 - the capture stream between a slim TV and a desktop Prysm, by its protocol
@@ -75,8 +75,8 @@ Covered:
   [hosts](workspace.md#hosts) documents: 0 after a clean stop, 1 on failure,
   2 for bad arguments; `--check-settings` 0 when valid, else 1;
 - package and image names: the Debian package `prysm-headless`, the image
-  `ghcr.io/<owner>/prysm-headless`, the IPKs `io.prysm.tv-full` and
-  `io.prysm.tv-slim`.
+  `ghcr.io/<owner>/prysm-headless`, the IPKs
+  `io.github.ericschaal.prysm-full` and `io.github.ericschaal.prysm-slim`.
 
 Not covered: the Rust crates (`0.0.0`, never published) and their APIs, the
 Luna methods only the same package's TV app calls (`setPreferences`,
@@ -132,7 +132,7 @@ contract (timings, colours produced).
      multi-arch `:<version>`, checks that each image is from the tag's commit,
      attaches the packages under the names users download,
      `prysm-headless_<version>_{amd64,arm64}.deb`,
-     `io.prysm.tv-full_<x.y.z>_all.ipk` and `io.prysm.tv-slim_<x.y.z>_all.ipk`,
+     `io.github.ericschaal.prysm-full_<x.y.z>_all.ipk` and `io.github.ericschaal.prysm-slim_<x.y.z>_all.ipk`,
      with `docker-image.txt` (the index digest) and `SHA256SUMS`, and
      publishes the release.
 

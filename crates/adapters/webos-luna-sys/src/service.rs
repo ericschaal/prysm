@@ -70,7 +70,7 @@ pub trait Handler {
 
 #[derive(Debug, Clone)]
 pub struct Config<'a> {
-    /// The service name to register, such as `io.prysm.tv.service`.
+    /// The service name to register, such as `io.github.ericschaal.prysm.service`.
     pub name: &'a str,
     /// Methods in category `/`.
     pub methods: &'a [&'a str],

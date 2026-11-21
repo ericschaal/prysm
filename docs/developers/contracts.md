@@ -70,7 +70,7 @@ webOS hosts import from `host-webos`.
 
 ### Luna document
 
-`luna` describes `luna://io.prysm.tv.service`, the TV supervisor both
+`luna` describes `luna://io.github.ericschaal.prysm.service`, the TV supervisor both
 packages install under one name. It is one document for both flavors: `State`
 carries the installed package's own fields in `Package`, tagged by `flavor`
 (full: `lighting`, `FullWorker`; slim: `enabled`, `SlimWorker`), and each
