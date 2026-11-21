@@ -230,7 +230,8 @@ impl Modes {
     ///
     /// # Errors
     /// The first wrong field (`width`, else `height`, else `fps`, relative to
-    /// the section) with what is delivered instead.
+    /// the section) with what is delivered instead, the reason naming the
+    /// field in words, since the portal shows the reason without the field.
     pub fn check(&self, width: u32, height: u32, fps: u32) -> Result<(), ValidationError> {
         let Self::Known(modes) = self else {
             return Ok(());
@@ -246,7 +247,7 @@ impl Modes {
             return Err(ValidationError::new(
                 "width",
                 format!(
-                    "this source delivers {}",
+                    "this source delivers a width of {}",
                     listed(modes.iter().map(Mode::width))
                 ),
             ));
@@ -260,7 +261,7 @@ impl Modes {
             return Err(ValidationError::new(
                 "height",
                 format!(
-                    "at width {width} this source delivers {}",
+                    "at width {width} this source delivers a height of {}",
                     listed(wide.iter().map(|m| m.height))
                 ),
             ));
@@ -271,7 +272,7 @@ impl Modes {
         Err(ValidationError::new(
             "fps",
             format!(
-                "at {width}x{height} this source delivers {}",
+                "at {width}x{height} this source delivers a frame rate of {}",
                 listed(sized.iter().map(|m| m.fps))
             ),
         ))
@@ -422,19 +423,25 @@ mod tests {
         let error = |w, h, fps| modes.check(w, h, fps).unwrap_err();
         assert_eq!(
             error(800, 360, 30),
-            ValidationError::new("width", "this source delivers 640, 1280 or 1920")
+            ValidationError::new("width", "this source delivers a width of 640, 1280 or 1920")
         );
         assert_eq!(
             error(1280, 360, 30),
-            ValidationError::new("height", "at width 1280 this source delivers 720")
+            ValidationError::new(
+                "height",
+                "at width 1280 this source delivers a height of 720"
+            )
         );
         assert_eq!(
             error(1280, 720, 45),
-            ValidationError::new("fps", "at 1280x720 this source delivers 1 to 30 or 60")
+            ValidationError::new(
+                "fps",
+                "at 1280x720 this source delivers a frame rate of 1 to 30 or 60"
+            )
         );
         assert_eq!(
             error(1920, 1080, 12).reason,
-            "at 1920x1080 this source delivers 5 to 30 in steps of 5"
+            "at 1920x1080 this source delivers a frame rate of 5 to 30 in steps of 5"
         );
         let many = Modes::Known(
             (1..=9)
@@ -443,7 +450,7 @@ mod tests {
         );
         assert_eq!(
             many.check(50, 100, 30).unwrap_err().reason,
-            "this source delivers 100, 200, 300, 400, 500, 600 or 3 more"
+            "this source delivers a width of 100, 200, 300, 400, 500, 600 or 3 more"
         );
         assert_eq!(
             Modes::Known(Vec::new())

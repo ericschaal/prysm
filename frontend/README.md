@@ -258,7 +258,8 @@ supervisor in each of its states and play the phone's calibration part). See the
     follows from the saved numbers; a saved size and rate no preset sets is
     one more ticked row, "Custom", until a preset replaces it. One that a
     known answer excludes moves to the first preset (or to the size of a
-    preset ticked earlier), and the line kept under the rows says so (an
+    preset ticked earlier), and the line kept under the rows says so ("This
+    device doesn't offer 640 × 360 at 30 fps. Balanced is chosen.", an
     unsaved change); following a ticked preset to a deliverable size is
     silent. The line takes no room while empty (Advanced then follows the
     rows as one more row), so the rows never move; the file source's own
@@ -266,7 +267,9 @@ supervisor in each of its states and play the phone's calibration part). See the
     locked on the current choice, with the reason while the hardware is out
     of reach ("The TV isn't connected.", "Plug in the device …"). A source
     that delivers nothing shows no rows; the field that selects it says so
-    (a device: "Prysm can't capture from this device."; a TV encoding it
+    (a device says why: "This device offers no picture Prysm can use." when
+    it lists nothing Prysm captures, else "This device doesn't offer 30 or
+    60 fps at a size Prysm can use."; a TV encoding it
     does not offer is not listed, and a saved one stays listed, in sight,
     saying so). A refused size or rate is said in that line, and the rows
     take the focus.
