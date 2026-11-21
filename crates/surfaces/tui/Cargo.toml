@@ -13,9 +13,9 @@ prysm-core.workspace = true
 futures.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync", "rt"] }
-ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache"] }
 # Level-triggered /dev/tty polling: bounded reads never strand input after a scroll burst.
-crossterm = { version = "0.28", default-features = false, features = ["events", "use-dev-tty"] }
+crossterm = { version = "0.29", default-features = false, features = ["events", "use-dev-tty"] }
 
 [dev-dependencies]
 prysm-runtime = { workspace = true, features = ["testkit"] }
