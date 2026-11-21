@@ -4,19 +4,20 @@
  * (docs/plans/prysm-v1-webos-supervisor.md §5–6) loosely: no worker, power or
  * timing, but the same replies, validation messages and subscription.
  */
-import type {
-  BridgeFactory,
-  Flavor,
-  FullWorker,
-  LightingTarget,
-  Power,
-  Preferences,
-  ServiceBridge,
-  SlimEncoding,
-  SlimWorker,
-  State,
-  Video,
-  WorkerFailure,
+import {
+  isEnabled,
+  type BridgeFactory,
+  type Flavor,
+  type FullWorker,
+  type LightingTarget,
+  type Power,
+  type Preferences,
+  type ServiceBridge,
+  type SlimEncoding,
+  type SlimWorker,
+  type State,
+  type Video,
+  type WorkerFailure,
 } from '@prysm/webos-platform';
 
 /** Where the worker process is, as the supervisor tracks it. */
@@ -62,25 +63,35 @@ export type FakeFacts = FullFacts | SlimFacts;
 export type FakeChange =
   Partial<Omit<FullFacts, 'flavor'>> | Partial<Omit<SlimFacts, 'flavor'>>;
 
-const commonKeys = [
-  'preferences',
-  'power',
-  'video',
-  'failure',
-  'log',
-  'worker',
-  'capturing',
-  'fps',
-];
-const ownKeys: Record<Flavor, string[]> = {
-  full: ['lighting', 'portal'],
-  slim: ['enabled', 'encoding', 'paused'],
+/** A package's own facts: those it does not share with the other. */
+type Own<Facts> = Exclude<keyof Facts, keyof CommonFacts | 'flavor'>;
+/** Keyed by every fact, so the compiler keeps them in step with the types. */
+const commonKeys: Record<keyof CommonFacts, true> = {
+  preferences: true,
+  power: true,
+  video: true,
+  failure: true,
+  log: true,
+  worker: true,
+  capturing: true,
+  fps: true,
 };
+const fullKeys: Record<Own<FullFacts>, true> = { lighting: true, portal: true };
+const slimKeys: Record<Own<SlimFacts>, true> = {
+  enabled: true,
+  encoding: true,
+  paused: true,
+};
+const ownKeys: Record<Flavor, object> = { full: fullKeys, slim: slimKeys };
 
 /** `change` applied to `facts`; a key of the other package throws. */
 function apply(facts: FakeFacts, change: FakeChange) {
+  const known = [
+    ...Object.keys(commonKeys),
+    ...Object.keys(ownKeys[facts.flavor]),
+  ];
   for (const key of Object.keys(change))
-    if (!commonKeys.includes(key) && !ownKeys[facts.flavor].includes(key))
+    if (!known.includes(key))
       throw new Error(`The ${facts.flavor} supervisor has no \`${key}\`.`);
   Object.assign(facts, change);
 }
@@ -144,10 +155,6 @@ function publishedState(facts: FakeFacts): State {
       };
 }
 
-/** Lighting is not off (full), or frames should flow (slim). */
-const enabled = (facts: FakeFacts) =>
-  facts.flavor === 'full' ? facts.lighting !== 'off' : facts.enabled;
-
 export interface FakeSupervisorOptions {
   flavor: Flavor;
   preferences?: Preferences;
@@ -203,7 +210,10 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         (facts.enabled && !!facts.preferences.instance));
     facts.worker = { phase: wanted ? 'running' : 'stopped' };
     facts.capturing =
-      wanted && enabled(facts) && facts.video === 'available' && !facts.failure;
+      wanted &&
+      isEnabled(state()) &&
+      facts.video === 'available' &&
+      !facts.failure;
     facts.fps = facts.capturing ? 30 : null;
   }
 

@@ -349,7 +349,9 @@ pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
 
 /// Take over stdio, run `body` with the parsed `options` (see [`args`]) on a
 /// current-thread runtime until it returns, and exit with the code for how it
-/// ended. On failure a final [`Event::Failed`] carries the cause.
+/// ended. An error from `body`, or a runtime that cannot start, is sent as a
+/// final [`Event::Failed`] first; a stop reason alone (protocol misuse, a lost
+/// link) is not, and nothing is sent before the link exists.
 pub fn main<A, F, Fut>(name: &'static str, options: A, body: F) -> ExitCode
 where
     F: FnOnce(A, Link) -> Fut,
@@ -373,7 +375,9 @@ where
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("{name}: cannot start the async runtime: {error}");
+            let cause = format!("cannot start the async runtime: {error}");
+            eprintln!("{name}: {cause}");
+            events.send(&Event::Failed { cause });
             return ExitCode::from(exit::FAILED);
         }
     };

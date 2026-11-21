@@ -126,7 +126,7 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Event {
     Status(WorkerStatus),                // every change and every HEARTBEAT (5 s)
-    Failed { cause: String },            // exit FAILED follows; also before any status
+    Failed { cause: String },            // an Err of the run: exit FAILED (FAULTED for a fault) follows; not before every FAILED exit
     Faulted { cause: String },           // exit FAULTED follows
 }
 #[serde(tag = "flavor", rename_all = "snake_case", deny_unknown_fields)]
@@ -152,8 +152,9 @@ Worker side ([worker.rs](../../crates/engine/webos-link/src/worker.rs)):
 `worker::main(name, usage, parse, body)` parses argv (exit `USAGE`), guards the
 parent, takes over stdio, installs SIGTERM/SIGINT, runs `body(args, Link)` on a
 current-thread runtime and maps the outcome: a `Faulted` stop reason or
-`Err(Error::Faulted)` → 3; a `Failed` stop reason or other `Err` → 1 after a
-final `Failed { cause }`; else 0.
+`Err(Error::Faulted)` → 3; a `Failed` stop reason or other `Err` → 1; else 0.
+Every `Err` (a fault too) is sent first as `Failed { cause }`; a stop reason
+alone is not.
 
 - [`EngineLink`](../../crates/hosts/webos/src/link.rs) (`Surface<EngineHandle>`):
   applies the initial target; `Video`/`ResetVideo` → `VideoSignal`, `Lighting`

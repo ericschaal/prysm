@@ -370,7 +370,7 @@ interface Demo {
     state(): {
       preferences: { autostart?: boolean; instance?: string | null };
     } & (
-      | { flavor: 'full'; lighting: string }
+      | { flavor: 'full'; lighting: 'off' | 'processed' | 'device_native' }
       | { flavor: 'slim'; enabled: boolean }
     );
     /** Facts of the supervisor's own package only (testkit/luna.ts). */

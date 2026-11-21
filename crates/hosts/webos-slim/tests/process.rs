@@ -1,6 +1,6 @@
 //! The built `prysm-webos-slim` binary on the development host, where the LG
 //! backend refuses to start: argv, the wait for Prysm and the failure exit
-//! code with a final status.
+//! code after a final `failed` event.
 use prysm_capture_remote::StreamRequest;
 use prysm_capture_remote::testkit::Portal;
 use std::io::{BufRead, BufReader};

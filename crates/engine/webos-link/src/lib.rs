@@ -66,9 +66,13 @@ pub enum Video {
 pub enum Event {
     /// Sent on every change and at least every [`HEARTBEAT`].
     Status(WorkerStatus),
-    /// The worker failed (at startup or while running) and exits
-    /// [`exit::FAILED`] next. Not a status: a worker can fail before it
-    /// has anything of its package to report.
+    /// Why the worker's run ended with an error (at startup or while
+    /// running); it exits next, [`exit::FAILED`], or [`exit::FAULTED`] when
+    /// the error or the stop reason is a fault. Not a status: a worker can fail before it has
+    /// anything of its package to report. Not every failed exit is preceded
+    /// by one: a protocol misuse or lost link (a stop reason, not an error)
+    /// exits [`exit::FAILED`] without it, as does a failure before the link
+    /// exists.
     Failed { cause: String },
     /// A native resource is unconfirmed; the worker exits [`exit::FAULTED`] next.
     Faulted { cause: String },

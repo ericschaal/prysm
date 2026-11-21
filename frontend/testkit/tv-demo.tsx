@@ -16,7 +16,7 @@
 import type { ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApplicationError } from '@prysm/application-client';
-import { lunaTvService, type Flavor } from '@prysm/webos-platform';
+import { isEnabled, lunaTvService, type Flavor } from '@prysm/webos-platform';
 import type { PortalOptions, TvAppProps } from '@prysm/tv-ui';
 import { fakeApplicationPort } from './application';
 import { fakeTvSupervisor, type FakeChange } from './luna';
@@ -103,10 +103,10 @@ export function runDemo(
   let lighting = lightingOf();
   setInterval(() => {
     const facts = supervisor.facts();
-    const enabled =
-      facts.flavor === 'full' ? facts.lighting !== 'off' : facts.enabled;
     const capturing =
-      enabled && facts.worker.phase === 'running' && !facts.failure;
+      isEnabled(supervisor.state()) &&
+      facts.worker.phase === 'running' &&
+      !facts.failure;
     if (facts.capturing !== capturing)
       supervisor.publish({ capturing, fps: capturing ? 30 : null });
     if (facts.flavor !== 'full') return;

@@ -84,9 +84,9 @@ pub enum Package {
     },
 }
 
+#[cfg(test)]
 impl Package {
-    #[must_use]
-    pub fn flavor(&self) -> Flavor {
+    pub(crate) fn flavor(&self) -> Flavor {
         match self {
             Self::Full { .. } => Flavor::Full,
             Self::Slim { .. } => Flavor::Slim,

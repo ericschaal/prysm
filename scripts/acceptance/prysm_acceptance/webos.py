@@ -51,10 +51,7 @@ BACKED_UP: dict[Flavour, tuple[str, ...]] = {
 
 def backed_up(state: LunaReply) -> web.JsonObject:
     """What a backup keeps of `state`: the fields of its package in `BACKED_UP`."""
-    flavour = state.get('flavor')
-    if flavour is None:
-        raise RuntimeError('getState names no package (flavor)')
-    return {key: cast('web.Json', state.get(key)) for key in BACKED_UP[flavour]}
+    return {key: cast('web.Json', state.get(key)) for key in BACKED_UP[state['flavor']]}
 
 
 class Foreground(TypedDict, total=False):

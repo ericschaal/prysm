@@ -43,8 +43,9 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   a hang. Stop sends TERM, then KILL 8 s later.
 - Each status names its package (`"flavor": "full"` or `"slim"`) and has only
   that package's fields; a status of the other package breaks the link. A
-  worker that fails says why (`failed`, also before its first status), then
-  exits.
+  worker whose run ends with an error says why (`failed`, also before its
+  first status), then exits (failed, or faulted when the error is a fault).
+  A protocol misuse or a lost link exits failed without it.
 - The worker stops when its supervisor dies: it gets SIGTERM (parent-death
   signal) and its stdin closes, and it stops as usual, releasing the capture
   tap. Nothing SIGKILLs it then: a worker killed inside a native capture call
