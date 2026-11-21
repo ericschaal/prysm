@@ -151,10 +151,16 @@ impl ColorStrip {
         }
     }
 
-    /// Transform samples in place, copying only when another observer shares them.
+    /// Transform samples in place; samples another observer shares are
+    /// mapped into new storage instead, without copying them first.
     pub fn map_colors(&mut self, mut map: impl FnMut(LinearColor) -> LinearColor) {
-        for color in Arc::make_mut(&mut self.samples) {
-            *color = map(*color);
+        match Arc::get_mut(&mut self.samples) {
+            Some(samples) => {
+                for color in samples {
+                    *color = map(*color);
+                }
+            }
+            None => self.samples = Arc::new(self.samples.iter().map(|&color| map(color)).collect()),
         }
     }
 }
