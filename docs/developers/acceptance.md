@@ -784,8 +784,9 @@ The tests use fakes and contact no device; the host and TV cells are tested
 through the runner's command line (the dry run contacts, sends and starts
 nothing, the skip-or-fail rule, `--tv-is-free`), and the TV's commands,
 the wake, the backup and restore against recorded transcripts. A real run of the Mac file cell against
-prysm-headless and the fake WLED on loopback is opt-in locally, as it needs a built
-binary and UDP port 4048 (CI runs it in `rust (macos-26)`): `cargo build -p prysm-headless`, then
+prysm-headless and the fake WLED on loopback is opt-in, as it needs a built
+binary and UDP port 4048, and CI does not run it (it measures real-time pace, which GitHub's hosted macOS
+runner cannot keep): `cargo build -p prysm-headless`, then
 `PRYSM_ACCEPTANCE_BINARY=target/debug/prysm-headless` with the `pytest`
 line above (from `scripts/acceptance`, give the path from there). `test_acceptance_contract.py`
 checks the fields and requests the runner relies on against Prysm's generated

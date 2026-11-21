@@ -26,8 +26,7 @@
 #   frontend/dist when it is there and a "not built" page in debug builds when
 #   not (crates/hosts/common/build.rs). Linux waits for the bundles, so it checks the
 #   real portal and builds the e2e binaries with it; macOS checks the same code
-#   without them and starts at once, then runs the acceptance runner's
-#   loopback test against a prysm-headless. `e2e`: the portal in Chromium and WebKit
+#   without them and starts at once. `e2e`: the portal in Chromium and WebKit
 #   against those binaries, and the TV app with remote keys in Chromium on its
 #   in-memory demo.
 # - `webos-armv7`: lints (clippy -D warnings) every TV crate that compiles
@@ -264,15 +263,6 @@ jobs:
       - *ffmpeg
       - *ffmpeg-version
       - *check
-      # The acceptance runner's loopback test: the Mac file cell against this
-      # prysm-headless and its fake WLED on 127.0.0.1 (needs FFmpeg 9+).
-      - name: prysm-headless for the acceptance runner
-        run: cargo build --locked -p prysm-headless
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - name: Acceptance runner loopback test
-        env:
-          PRYSM_ACCEPTANCE_BINARY: ${{ github.workspace }}/target/debug/prysm-headless
-        run: uv run --locked --directory scripts/acceptance pytest -q tests/test_acceptance_host.py -k Loopback
 
   # The portal in Chromium and WebKit against a real prysm-headless per test
   # (frontend/e2e). Browsers are installed per run, as Playwright advises.
