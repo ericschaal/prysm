@@ -861,8 +861,7 @@
   ],
   "luna/Preferences": [
     {
-      "autostart": false,
-      "instance": null
+      "autostart": false
     },
     {
       "autostart": true,
@@ -876,7 +875,6 @@
   ],
   "luna/State": [
     {
-      "failure": null,
       "flavor": "full",
       "lighting": "processed",
       "log": [
@@ -884,8 +882,7 @@
       ],
       "power": "active",
       "preferences": {
-        "autostart": false,
-        "instance": null
+        "autostart": false
       },
       "video": "available",
       "worker": {
@@ -896,7 +893,6 @@
       }
     },
     {
-      "failure": null,
       "flavor": "full",
       "lighting": "off",
       "log": [
@@ -904,8 +900,7 @@
       ],
       "power": "active",
       "preferences": {
-        "autostart": false,
-        "instance": null
+        "autostart": false
       },
       "video": "available",
       "worker": {
@@ -913,7 +908,6 @@
       }
     },
     {
-      "failure": null,
       "flavor": "full",
       "lighting": "device_native",
       "log": [
@@ -921,8 +915,7 @@
       ],
       "power": "active",
       "preferences": {
-        "autostart": false,
-        "instance": null
+        "autostart": false
       },
       "video": "available",
       "worker": {
@@ -931,7 +924,6 @@
       }
     },
     {
-      "failure": null,
       "flavor": "full",
       "lighting": "processed",
       "log": [
@@ -939,8 +931,7 @@
       ],
       "power": "active",
       "preferences": {
-        "autostart": false,
-        "instance": null
+        "autostart": false
       },
       "video": "available",
       "worker": {
@@ -969,7 +960,6 @@
     },
     {
       "enabled": true,
-      "failure": null,
       "flavor": "slim",
       "log": [],
       "power": "screen_saver",
@@ -981,14 +971,12 @@
       "worker": {
         "capturing": false,
         "encoding": "h264_hardware",
-        "fps": null,
         "paused": true,
         "phase": "running"
       }
     },
     {
       "enabled": false,
-      "failure": null,
       "flavor": "slim",
       "log": [],
       "power": "screen_saver",
@@ -1003,7 +991,6 @@
     },
     {
       "enabled": false,
-      "failure": null,
       "flavor": "slim",
       "log": [],
       "power": "screen_saver",
@@ -1019,7 +1006,6 @@
   ],
   "luna/StateReply": [
     {
-      "failure": null,
       "flavor": "full",
       "lighting": "processed",
       "log": [
@@ -1027,8 +1013,7 @@
       ],
       "power": "active",
       "preferences": {
-        "autostart": false,
-        "instance": null
+        "autostart": false
       },
       "returnValue": true,
       "subscribed": true,

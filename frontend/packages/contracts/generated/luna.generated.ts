@@ -37,16 +37,16 @@ export interface components {
              * @description Frames per second over about the last second, rounded, while
              *     lighting runs; 0 while it waits for frames.
              */
-            fps?: number | null;
+            fps?: number;
             /** @enum {string} */
             phase: "running";
             /** @description The portal's LAN address once the worker reported it. */
-            portal?: string | null;
+            portal?: string;
         } | {
             /** @enum {string} */
             phase: "stopping";
             /** @description The portal's LAN address the worker last reported. */
-            portal?: string | null;
+            portal?: string;
         } | {
             /** @enum {string} */
             phase: "retrying";
@@ -69,7 +69,7 @@ export interface components {
          */
         LightingTarget: "off" | "processed" | "device_native";
         /**
-         * @description The installed package (both install as `io.prysm.tv`), what the user asked
+         * @description The installed package (both install as the same app), what the user asked
          *     of it and its worker process, as `{ "flavor": … }`.
          */
         Package: {
@@ -92,7 +92,7 @@ export interface components {
         Power: "unknown" | "active" | "screen_saver" | "asleep";
         /**
          * @description `tv.json` and the `setPreferences` request (complete, every field
-         *     optional). Fields marked "Slim only" must stay unset (`null` or absent)
+         *     optional, an unset one absent). Fields marked "Slim only" must stay unset
          *     in the full package.
          */
         Preferences: {
@@ -111,7 +111,7 @@ export interface components {
              * @default null
              * @example http://192.168.1.20:8787
              */
-            instance?: string | null;
+            instance?: string;
         };
         /** @description `setEnabled` request. */
         SetEnabledRequest: {
@@ -135,13 +135,18 @@ export interface components {
         } | {
             /** @description Frames were sent in the last second. */
             capturing: boolean;
-            encoding?: components["schemas"]["SlimEncoding"] | null;
+            /**
+             * @description The encoding of the frames being sent while connected to the
+             *     receiver; always the one the receiver requested (set in the
+             *     desktop portal's remote capture settings).
+             */
+            encoding?: components["schemas"]["SlimEncoding"];
             /**
              * Format: int32
              * @description Frames sent per second over about the last second, rounded, while
              *     connected and sending; 0 while it waits for frames.
              */
-            fps?: number | null;
+            fps?: number;
             /**
              * @description The receiver paused the stream because its lighting is off; the
              *     TV capture is stopped until the receiver asks again. Not a
@@ -170,7 +175,11 @@ export interface components {
          *     ([`Package`], tagged by `flavor`).
          */
         State: components["schemas"]["Package"] & {
-            failure?: components["schemas"]["WorkerFailure"] | null;
+            /**
+             * @description The current failure (or, slim, the receiver wait): what it is and
+             *     its message with the causes.
+             */
+            failure?: components["schemas"]["WorkerFailure"];
             /** @description The latest worker stderr lines, oldest first (at most 20). */
             log: string[];
             power: components["schemas"]["Power"];

@@ -72,10 +72,7 @@
                 "description": "Frames per second over about the last second, rounded, while\nlighting runs; 0 while it waits for frames.",
                 "format": "int32",
                 "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
+                "type": "integer"
               },
               "phase": {
                 "enum": [
@@ -85,10 +82,7 @@
               },
               "portal": {
                 "description": "The portal's LAN address once the worker reported it.",
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
             },
             "required": [
@@ -108,10 +102,7 @@
               },
               "portal": {
                 "description": "The portal's LAN address the worker last reported.",
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
             },
             "required": [
@@ -164,7 +155,7 @@
         "type": "string"
       },
       "Package": {
-        "description": "The installed package (both install as `io.prysm.tv`), what the user asked\nof it and its worker process, as `{ \"flavor\": … }`.",
+        "description": "The installed package (both install as the same app), what the user asked\nof it and its worker process, as `{ \"flavor\": … }`.",
         "oneOf": [
           {
             "description": "`prysm-webos`: capture, processing, WLED and the portal on the TV.",
@@ -228,7 +219,7 @@
       },
       "Preferences": {
         "additionalProperties": false,
-        "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional). Fields marked \"Slim only\" must stay unset (`null` or absent)\nin the full package.",
+        "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional, an unset one absent). Fields marked \"Slim only\" must stay unset\nin the full package.",
         "properties": {
           "autostart": {
             "default": false,
@@ -240,10 +231,7 @@
             "description": "Slim only: the headless Prysm's address, such as\n`http://192.168.1.20:8787` or `https://prysm.example.com` (through a\nreverse proxy). The TV streams its picture there, and the TV app\nlinks to its portal. Only the syntax is checked when saved; the TV\nresolves a host name at every connection attempt, and one that does\nnot resolve is reported as the receiver wait.",
             "example": "http://192.168.1.20:8787",
             "maxLength": 256,
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           }
         },
         "type": "object"
@@ -295,24 +283,14 @@
                 "type": "boolean"
               },
               "encoding": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/SlimEncoding",
-                    "description": "The encoding of the frames being sent while connected to the\nreceiver; always the one the receiver requested (set in the\ndesktop portal's remote capture settings)."
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+                "$ref": "#/components/schemas/SlimEncoding",
+                "description": "The encoding of the frames being sent while connected to the\nreceiver; always the one the receiver requested (set in the\ndesktop portal's remote capture settings)."
               },
               "fps": {
                 "description": "Frames sent per second over about the last second, rounded, while\nconnected and sending; 0 while it waits for frames.",
                 "format": "int32",
                 "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
+                "type": "integer"
               },
               "paused": {
                 "description": "The receiver paused the stream because its lighting is off; the\nTV capture is stopped until the receiver asks again. Not a\nfailure.",
@@ -378,15 +356,8 @@
           {
             "properties": {
               "failure": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/WorkerFailure",
-                    "description": "The current failure (or, slim, the receiver wait): what it is and\nits message with the causes."
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+                "$ref": "#/components/schemas/WorkerFailure",
+                "description": "The current failure (or, slim, the receiver wait): what it is and\nits message with the causes."
               },
               "log": {
                 "description": "The latest worker stderr lines, oldest first (at most 20).",
@@ -482,7 +453,7 @@
       "identifier": "Apache-2.0",
       "name": "Apache-2.0"
     },
-    "title": "Prysm TV service (luna://io.prysm.tv.service)",
+    "title": "Prysm TV service (luna://io.github.ericschaal.prysm.service)",
     "version": "2"
   },
   "openapi": "3.1.0",
