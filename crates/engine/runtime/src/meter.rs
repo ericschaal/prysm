@@ -1,7 +1,7 @@
 //! The running session's once-a-second input measurement: frame rates, the
 //! mean frame spans and whether Prysm keeps up, from the totals [`Stats`]
 //! keeps.
-use crate::stats::{Counters, Stats, Timing};
+use crate::stats::{Stats, Totals};
 use prysm_ports::{Behind, Input, Latency};
 use std::time::Duration;
 use tokio::time::{Instant, Interval, MissedTickBehavior};
@@ -13,8 +13,8 @@ const MEASURE: Duration = Duration::from_secs(1);
 /// its time for the window's frames working on them (received to written)
 /// rather than waiting for them: newer frames replace older ones before they
 /// are taken, so frames are being dropped. Both sums cover the same frames
-/// ([`Stats::cycles`]), so a frame in progress at the window's edge counts in
-/// neither and never as waiting.
+/// ([`Totals::cycles`], copied with them), so a frame in progress at the
+/// window's edge counts in neither and never as waiting.
 const SATURATED: f64 = 0.85;
 
 /// Consecutive windows that set [`Behind`] (saturated) or clear it (not), so
@@ -72,9 +72,7 @@ fn verdict(busy: Duration, processing: Duration, cycles: Duration) -> Behind {
 pub(crate) struct Meter {
     interval: Interval,
     /// The totals at the last sample.
-    last: Counters,
-    last_captured: Timing,
-    last_cycles: Timing,
+    last: Totals,
     at: Instant,
     pace: Pace,
 }
@@ -91,9 +89,7 @@ impl Meter {
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         Self {
             interval,
-            last: stats.read(),
-            last_captured: stats.captured(),
-            last_cycles: stats.cycles(),
+            last: stats.totals(),
             at: Instant::now(),
             pace: Pace::default(),
         }
@@ -108,37 +104,31 @@ impl Meter {
         reason = "per-second frame counts and spans are far below f64 precision and f32 range"
     )]
     pub(crate) fn sample(&mut self, stats: &Stats) -> Input {
-        let (counters, captured, cycles) = (stats.read(), stats.captured(), stats.cycles());
+        let totals = stats.totals();
+        let (counters, captured, cycles) = (totals.counters, totals.captured, totals.cycles);
+        let last = self.last.counters;
         let now = Instant::now();
         let window = now.duration_since(self.at);
         let elapsed = window.as_secs_f64();
         let received = counters
             .frames_received
-            .saturating_sub(self.last.frames_received);
-        let sent = counters.frames_sent.saturating_sub(self.last.frames_sent);
-        let flushed = counters
-            .flushed
-            .count
-            .saturating_sub(self.last.flushed.count);
+            .saturating_sub(last.frames_received);
+        let sent = counters.frames_sent.saturating_sub(last.frames_sent);
+        let flushed = counters.flushed.count.saturating_sub(last.flushed.count);
         // Received to written, for every flushed frame.
-        let output = counters
-            .flushed
-            .total
-            .saturating_sub(self.last.flushed.total);
+        let output = counters.flushed.total.saturating_sub(last.flushed.total);
         // No slack, and which step took it.
         let processing = counters
             .processing
             .total
-            .saturating_sub(self.last.processing.total);
-        let spent = cycles.total.saturating_sub(self.last_cycles.total);
+            .saturating_sub(last.processing.total);
+        let spent = cycles.total.saturating_sub(self.last.cycles.total);
         let behind = self.pace.window(verdict(output, processing, spent));
         // Capture to received, only when every flushed frame had a capture time.
-        let stamped = captured.count.saturating_sub(self.last_captured.count);
+        let stamped = captured.count.saturating_sub(self.last.captured.count);
         let capture = (flushed > 0 && stamped == flushed)
-            .then(|| captured.total.saturating_sub(self.last_captured.total));
-        self.last = counters;
-        self.last_captured = captured;
-        self.last_cycles = cycles;
+            .then(|| captured.total.saturating_sub(self.last.captured.total));
+        self.last = totals;
         self.at = now;
         let tenth = |value: f64| ((value * 10.0).round() / 10.0) as f32;
         let rate = |counted: u64| {

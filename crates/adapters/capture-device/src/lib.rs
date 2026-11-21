@@ -31,10 +31,15 @@ impl SourceFactory for DeviceSource {
 
     /// Checks the size and rate against [`Self::modes`] (when the device
     /// answers), then blocks until the device is capturing, or fails within a
-    /// bounded wait.
+    /// bounded wait that covers both.
     fn open(&self, settings: &DeviceSettings) -> Result<Box<dyn FrameSource>> {
-        self.modes(settings)
-            .check(settings.width, settings.height, settings.fps)?;
+        let check: source::Check = Box::new({
+            let (factory, settings) = (*self, settings.clone());
+            move || {
+                let modes = factory.modes(&settings);
+                Ok(modes.check(settings.width, settings.height, settings.fps)?)
+            }
+        });
         let fps = NonZeroU32::new(settings.fps)
             .ok_or_else(|| ValidationError::new("fps", "must be a positive frame rate"))?;
         let (path, width, height) = (settings.path.clone(), settings.width, settings.height);
@@ -42,6 +47,7 @@ impl SourceFactory for DeviceSource {
             prysm_capture_device_sys::capture(Some(&path), width, height, fps, sink)
         });
         Ok(Box::new(source::DeviceFrames::start(
+            check,
             capture,
             source::Deadlines::DEVICE,
         )?))

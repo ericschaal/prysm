@@ -29,6 +29,10 @@ use std::time::Duration;
 pub const HEARTBEAT: Duration = Duration::from_secs(5);
 /// Silence after which the supervisor treats the worker as hung.
 pub const SILENCE: Duration = Duration::from_secs(15);
+/// How long the supervisor waits between a worker's SIGTERM and its
+/// SIGKILL. Each worker's whole stop must fit inside it; each worker checks
+/// that at compile time.
+pub const KILL_AFTER: Duration = Duration::from_secs(8);
 
 /// Supervisor → worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
