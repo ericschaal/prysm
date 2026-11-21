@@ -5,7 +5,7 @@ also serves the browser portal. The capture-only TV composition has no local
 engine, output or portal.
 
 On the TV, Luna belongs to the supervisor (`prysm-webos-service`, Luna
-`io.prysm.tv.service`, both packages), not to the workers: it owns power and
+`io.github.ericschaal.prysm.service`, both packages), not to the workers: it owns power and
 video, the TV preferences and the worker process, and the TV UI calls it for
 state, preferences and enable/disable ([Luna API](../plans/prysm-v1-webos-supervisor.md#6-luna-api),
 generated types `@prysm/contracts/luna`). The workers talk only to the

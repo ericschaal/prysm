@@ -100,13 +100,16 @@ pub struct FullStatus {
     pub capturing: bool,
     /// Frames per second over about the last second, rounded, while a
     /// lighting session runs; `Some(0)` while it waits for frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fps: Option<u16>,
     /// The engine's target, including changes made in the portal.
     pub target: LightingTarget,
-    /// The portal's LAN address, such as `http://192.168.1.5:8787/`; `None`
+    /// The portal's LAN address, such as `http://192.168.1.5:8787/`; absent
     /// while the TV has no LAN address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portal: Option<String>,
     /// The last session or portal failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<WorkerFailure>,
 }
 
@@ -119,15 +122,18 @@ pub struct SlimStatus {
     pub capturing: bool,
     /// Frames sent per second over about the last second, rounded, while
     /// connected and sending; `Some(0)` while it waits for frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fps: Option<u16>,
     /// The encoding of the frames being sent, while connected to the
     /// receiver (always the one it requested).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoding: Option<SlimEncoding>,
     /// The receiver paused the stream (its lighting is off), and the TV
     /// capture is stopped until it asks for frames again. Not a failure:
     /// `failure` is unset meanwhile.
     pub paused: bool,
     /// The receiver wait, or the encoder or version failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<WorkerFailure>,
 }
 

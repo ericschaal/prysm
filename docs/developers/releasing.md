@@ -88,7 +88,7 @@ its tag.
      multi-arch `:<version>`, checks that each image is from the tag's commit,
      attaches the packages under the names users download,
      `prysm-headless_<version>_{amd64,arm64}.deb`,
-     `io.prysm.tv-full_<x.y.z>_all.ipk` and `io.prysm.tv-slim_<x.y.z>_all.ipk`,
+     `io.github.ericschaal.prysm-full_<x.y.z>_all.ipk` and `io.github.ericschaal.prysm-slim_<x.y.z>_all.ipk`,
      with `docker-image.txt` (the index digest) and `SHA256SUMS`, and
      publishes the release.
 

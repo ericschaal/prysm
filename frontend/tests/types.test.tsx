@@ -118,7 +118,6 @@ const tvState: TvState = {
     encoding: 'raw',
     paused: false,
   },
-  failure: null,
   log: [],
 };
 const fullState: TvState = {
@@ -128,7 +127,6 @@ const fullState: TvState = {
   power: 'active',
   video: 'available',
   worker: { phase: 'stopping', portal: 'http://192.168.1.5:8787/' },
-  failure: null,
   log: [],
 };
 const fullOnly: TvState = {
@@ -138,8 +136,7 @@ const fullOnly: TvState = {
   power: 'active',
   video: 'available',
   // @ts-expect-error The slim worker has no portal.
-  worker: { phase: 'running', capturing: true, paused: false, portal: null },
-  failure: null,
+  worker: { phase: 'running', capturing: true, paused: false, portal: 'x' },
   log: [],
 };
 const slimOnly: TvState = {
@@ -151,8 +148,12 @@ const slimOnly: TvState = {
   power: 'active',
   video: 'available',
   worker: { phase: 'stopped' },
-  failure: null,
   log: [],
+};
+const nullFailure: TvState = {
+  ...fullState,
+  // @ts-expect-error An absent failure is omitted, never `null`.
+  failure: null,
 };
 // @ts-expect-error A restart says when.
 const retrying: TvState['worker'] = { phase: 'retrying' };
@@ -160,4 +161,13 @@ const retrying: TvState['worker'] = { phase: 'retrying' };
 const otherFlavor: TvState['flavor'] = 'lite';
 // @ts-expect-error Preferences are strict.
 const extra: TvPreferences = { mode: 'slim' };
-void [tvState, fullState, fullOnly, slimOnly, retrying, otherFlavor, extra];
+void [
+  tvState,
+  fullState,
+  fullOnly,
+  slimOnly,
+  nullFailure,
+  retrying,
+  otherFlavor,
+  extra,
+];

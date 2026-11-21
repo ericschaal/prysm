@@ -1,6 +1,7 @@
 //! The driver against a fake bus, fake workers, memory preferences and a
 //! fake installer: requests, subscriptions, worker I/O and uninstall.
 use super::*;
+use crate::identity::APP_ID;
 use crate::install::InstallError;
 use crate::launcher::Output;
 use crate::machine::Exit;
@@ -99,7 +100,7 @@ impl Bus for FakeBus {
 pub(crate) fn config() -> Config {
     Config {
         flavor: Flavor::Full,
-        app_id: "io.prysm.tv".into(),
+        app_id: APP_ID.into(),
         program: "/svc/prysm-webos-worker".into(),
         spec: Spec::Full {
             settings: "/state/settings.json".into(),
@@ -111,7 +112,7 @@ pub(crate) fn config() -> Config {
 fn slim_config() -> Config {
     Config {
         flavor: Flavor::Slim,
-        app_id: "io.prysm.tv".into(),
+        app_id: APP_ID.into(),
         program: "/svc/prysm-webos-worker".into(),
         spec: Spec::Slim,
     }
@@ -213,10 +214,10 @@ fn only_the_app_may_change_anything() {
             reply["errorText"]
                 .as_str()
                 .unwrap()
-                .contains("only io.prysm.tv")
+                .contains(&format!("only {APP_ID}"))
         );
     }
-    assert_eq!(h.call("reboot", "io.prysm.tv", "{}")["returnValue"], false);
+    assert_eq!(h.call("reboot", APP_ID, "{}")["returnValue"], false);
     let oversized = format!(r#"{{"enabled":true,"x":"{}"}}"#, "y".repeat(MAX_PAYLOAD));
     assert!(
         h.app("setEnabled", &oversized)["errorText"]
@@ -475,13 +476,7 @@ fn a_restart_within_one_boot_resumes_the_last_intent() {
     assert_eq!(service.machine().intent(), LightingTarget::Processed);
 
     // Turning it off is remembered too.
-    service.request(
-        &mut bus,
-        "setEnabled",
-        "io.prysm.tv",
-        r#"{"enabled":false}"#,
-        t0,
-    );
+    service.request(&mut bus, "setEnabled", APP_ID, r#"{"enabled":false}"#, t0);
     assert_eq!(service.store.1, Some(LightingTarget::Off));
 }
 
@@ -512,7 +507,7 @@ fn packaged_api_permissions_list_every_method() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../packaging/webos/service/supervisor.api.json");
     let api: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-    let service = format!("{}.service", crate::identity::APP_ID);
+    let service = format!("{APP_ID}.service");
     let expected: Vec<String> = Method::ALL
         .iter()
         .map(|method| format!("{service}/{}", method.name()))

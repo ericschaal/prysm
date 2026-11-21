@@ -53,20 +53,22 @@ from typing import TypeVar
 # The repository: scripts/acceptance/prysm_acceptance/commands.py, three levels up.
 ROOT = Path(__file__).resolve().parents[3]
 
-APP = 'io.prysm.tv'
-SERVICE = 'io.prysm.tv.service'
+APP = 'io.github.ericschaal.prysm'
+SERVICE = f'{APP}.service'
+# The earlier capturer, which must be removed before a run.
+CAPTURE_APP = 'io.prysm.capture'
 APP_MANAGER = 'com.webos.service.applicationManager'
 HOME_APP = 'com.webos.app.home'
-APP_DIR = '/media/developer/apps/usr/palm/applications/io.prysm.tv'
-SERVICE_DIR = '/media/developer/apps/usr/palm/services/io.prysm.tv.service'
+APP_DIR = f'/media/developer/apps/usr/palm/applications/{APP}'
+SERVICE_DIR = f'/media/developer/apps/usr/palm/services/{SERVICE}'
 MANIFESTS = (
-    '/var/luna-service2/manifests.d/io.prysm.tv.supervisor.json',
-    '/var/luna-service2/manifests.d/io.prysm.tv.worker.json',
+    f'/var/luna-service2/manifests.d/{APP}.supervisor.json',
+    f'/var/luna-service2/manifests.d/{APP}.worker.json',
 )
-HOOK = '/var/lib/webosbrew/init.d/io.prysm.tv'
-DATA_DIR = '/var/lib/io.prysm.tv'
+HOOK = f'/var/lib/webosbrew/init.d/{APP}'
+DATA_DIR = f'/var/lib/{APP}'
 STAGING_DIR = '/media/developer/temp'
-STAGING = STAGING_DIR + '/io.prysm.tv.ipk'
+STAGING = f'{STAGING_DIR}/{APP}.ipk'
 SETUP = SERVICE_DIR + '/setup.sh'
 SUPERVISOR = SERVICE_DIR + '/prysm-webos-service'
 WORKER = SERVICE_DIR + '/prysm-webos-worker'
@@ -246,10 +248,10 @@ def tv_paths(host: str) -> Command:
 
 
 def tv_processes(host: str) -> Command:
-    """Processes whose executable lies under a Prysm app or service path."""
+    """Processes whose executable lies under a path of Prysm's app or service, or of the earlier capturer."""
     remote = (
         'for e in /proc/[0-9]*/exe; do l=$(readlink "$e" 2>/dev/null) || continue; '
-        'case "$l" in */io.prysm.*) p=${e#/proc/}; echo "${p%/exe} $l";; esac; done'
+        f'case "$l" in */{APP}.*|*/{CAPTURE_APP}.*) p=${{e#/proc/}}; echo "${{p%/exe}} $l";; esac; done'
     )
     return _ssh('tv.processes', host, remote, 15)
 

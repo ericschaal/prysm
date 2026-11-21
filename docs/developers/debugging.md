@@ -87,8 +87,8 @@ packages) and asks for the rest.
   plan first:
 
   ```sh
-  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour full root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
-  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour slim --prysm http://HOST:8787 root@TV path/to/io.prysm.tv-slim_VERSION_all.ipk
+  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour full root@TV path/to/io.github.ericschaal.prysm-full_VERSION_all.ipk
+  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour slim --prysm http://HOST:8787 root@TV path/to/io.github.ericschaal.prysm-slim_VERSION_all.ipk
   ```
 
 Compare release builds with the same content, size, rate and encoding.

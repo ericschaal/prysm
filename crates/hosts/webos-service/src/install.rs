@@ -98,7 +98,7 @@ pub trait Installer {
 /// tests point every path into a temporary directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
-    /// Manifest id prefix, the app id such as `io.prysm.tv`.
+    /// Manifest id prefix, the app id (`identity::APP_ID` on a TV).
     pub id: String,
     /// `/var/luna-service2/manifests.d`.
     pub manifests: PathBuf,

@@ -65,7 +65,7 @@ def confined(test: unittest.TestCase, command: commands.Command) -> None:
             test.assertRegex(written, r'^(/dev/null|"\$\w+")$')
     test.assertNotIn(
         commands.DATA_DIR + '/',
-        re.sub(r'cat /var/lib/io\.prysm\.tv/\w+\.json|-f /var/lib/io\.prysm\.tv/\w+\.json', '', remote),
+        re.sub(rf'(cat|-f) {re.escape(commands.DATA_DIR)}/\w+\.json', '', remote),
     )
 
 
@@ -116,7 +116,7 @@ class AllowList(unittest.TestCase):
             for uri in re.findall(r'luna://\S+', command.remote or ''):
                 self.assertRegex(
                     uri,
-                    r'^luna://(io\.prysm\.tv\.service/(getState|setPreferences|setEnabled|uninstall)|'
+                    rf'^luna://({re.escape(commands.SERVICE)}/(getState|setPreferences|setEnabled|uninstall)|'
                     r'com\.webos\.appInstallService/dev/(install|remove)|'
                     r'com\.webos\.service\.applicationManager/(getForegroundAppInfo|launch|closeByAppId))$',
                 )
@@ -134,9 +134,9 @@ class AllowList(unittest.TestCase):
             },
             {
                 'tv.foreground': f"timeout 12 luna-send -n 1 {manager}/getForegroundAppInfo '{{}}'",
-                'tv.launch-app': f'timeout 12 luna-send -n 1 {manager}/launch \'{{"id":"io.prysm.tv"}}\'',
+                'tv.launch-app': f'timeout 12 luna-send -n 1 {manager}/launch \'{{"id":"{commands.APP}"}}\'',
                 'tv.launch-home': f'timeout 12 luna-send -n 1 {manager}/launch \'{{"id":"com.webos.app.home"}}\'',
-                'tv.close-app': f'timeout 12 luna-send -n 1 {manager}/closeByAppId \'{{"id":"io.prysm.tv"}}\'',
+                'tv.close-app': f'timeout 12 luna-send -n 1 {manager}/closeByAppId \'{{"id":"{commands.APP}"}}\'',
             },
         )
 

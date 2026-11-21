@@ -1,5 +1,5 @@
 //! The `luna` OpenAPI document: the values the TV app exchanges with
-//! `luna://io.prysm.tv.service` (feature `schema`, for the contract exporter).
+//! the TV service `luna://<APP_ID>.service` (feature `schema`, for the contract exporter).
 //!
 //! One document for both packages: `State` carries the installed package's
 //! own fields in `Package`, tagged by `flavor`. Types from `prysm-webos-link` and `prysm-ports` are
@@ -13,6 +13,7 @@
 //! | `uninstall` | [`UninstallRequest`] | [`DoneReply`] |
 //!
 //! Any method can fail with [`ErrorReply`].
+use crate::identity::APP_ID;
 use crate::preferences::Preferences;
 use crate::service::{GetStateRequest, SetEnabledRequest, UninstallRequest};
 use crate::state::{FullWorker, Package, Power, SlimWorker, State};
@@ -162,7 +163,7 @@ struct Roots;
 #[must_use]
 pub fn document() -> OpenApi {
     let mut document = Roots::openapi();
-    document.info.title = "Prysm TV service (luna://io.prysm.tv.service)".into();
+    document.info.title = format!("Prysm TV service (luna://{APP_ID}.service)");
     document.info.version = API_VERSION.into();
     document
 }

@@ -1,6 +1,6 @@
 # LG TV
 
-The Prysm app (`io.prysm.tv`) captures the picture of a rooted LG webOS TV.
+The Prysm app (`io.github.ericschaal.prysm`) captures the picture of a rooted LG webOS TV.
 It comes in two packages; installing one replaces the other.
 
 | Package | The TV… | You also need |
@@ -36,14 +36,14 @@ it. Stop PicCap or any other capture app too.
 
 ## 1. Install
 
-Download `io.prysm.tv-full_VERSION_all.ipk` or `io.prysm.tv-slim_VERSION_all.ipk`
+Download `io.github.ericschaal.prysm-full_VERSION_all.ipk` or `io.github.ericschaal.prysm-slim_VERSION_all.ipk`
 from a `v1.*` [release](https://github.com/ericschaal/prysm/releases), or
 [build it](../developers/packaging.md#webos). From the repository root,
 install it over SSH (replace `TV` with the TV's address; `--dry-run` only
 prints the steps):
 
 ```sh
-packaging/webos/install-ipk.sh root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
+packaging/webos/install-ipk.sh root@TV path/to/io.github.ericschaal.prysm-full_VERSION_all.ipk
 ```
 
 The helper copies the package to the TV, stops a running Prysm gracefully,
@@ -136,5 +136,5 @@ For problems, see [troubleshooting](troubleshooting.md#lg-tv).
    Capture stops and the service registration and autostart are removed.
 2. Then uninstall the app.
 
-Settings in `/var/lib/io.prysm.tv` on the TV stay. Removing the app first can
+Settings in `/var/lib/io.github.ericschaal.prysm` on the TV stay. Removing the app first can
 leave the service registered, because the package has no removal script.

@@ -2,7 +2,7 @@
 
 Date: 2026-11-12
 
-The TV ships as two packages of one app, `io.prysm.tv`, under one supervisor
+The TV ships as two packages of one app, `io.github.ericschaal.prysm`, under one supervisor
 name: **full** (the TV processes, drives WLED and serves the portal) and
 **slim** (the TV only captures and streams to a desktop Prysm). Installing one
 replaces the other; there is no processing-location switch in the app. The

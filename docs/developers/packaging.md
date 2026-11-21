@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | Docker image `prysm-headless` (amd64, arm64) | [Dockerfile](../../packaging/docker/Dockerfile) | Local image, or `prysm-headless-linux-<arch>.tar` in `dist/`, released as `ghcr.io/<owner>/prysm-headless:<version>` |
 | Debian package `prysm-headless` | Same Dockerfile, `artifacts` target | `prysm-headless-linux-<arch>.deb`, released as `prysm-headless_<version>_<arch>.deb` |
-| TV packages, full and slim | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | `prysm-tv-full.ipk`, `prysm-tv-slim.ipk` in `dist/`, released as `io.prysm.tv-full_<version>_all.ipk`, `io.prysm.tv-slim_<version>_all.ipk` |
+| TV packages, full and slim | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | `prysm-tv-full.ipk`, `prysm-tv-slim.ipk` in `dist/`, released as `io.github.ericschaal.prysm-full_<version>_all.ipk`, `io.github.ericschaal.prysm-slim_<version>_all.ipk` |
 
 Reference: [packaging](../../packaging/README.md). Builds never install
 or deploy. Release builds: [releasing](releasing.md).
@@ -120,11 +120,11 @@ cargo xtask dist tv-full tv-slim
 ```
 
 This bundles the frontend and runs `build-ipk.sh` for each package, which
-writes `io.prysm.tv-full_<version>_all.ipk` and
-`io.prysm.tv-slim_<version>_all.ipk`, the names the release attaches; xtask
+writes `io.github.ericschaal.prysm-full_<version>_all.ipk` and
+`io.github.ericschaal.prysm-slim_<version>_all.ipk`, the names the release attaches; xtask
 copies them to `dist/prysm-tv-full.ipk` and `dist/prysm-tv-slim.ipk`. Run
 directly (after `npm --prefix frontend run bundle`),
-`packaging/webos/build-ipk.sh full` writes to `target/webos-ipk/full/`. Both install as the same app (`io.prysm.tv`); the binaries
+`packaging/webos/build-ipk.sh full` writes to `target/webos-ipk/full/`. Both install as the same app (`io.github.ericschaal.prysm`); the binaries
 are ARMv7 despite `_all`.
 
 | Package | Supervisor | Worker | TV app |

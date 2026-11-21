@@ -16,7 +16,11 @@ import type {
   TvService,
 } from '@prysm/webos-platform';
 import { same } from '@prysm/application-client';
-import { completePreferences, type SavedPreferences } from './model';
+import {
+  completePreferences,
+  sentPreferences,
+  type SavedPreferences,
+} from './model';
 
 type Saved = SavedPreferences;
 type Edits = Partial<Saved>;
@@ -219,7 +223,7 @@ export function useTvService(service: TvService, active: boolean) {
 
   async function sendPreferences(patch: Edits) {
     const sent = { ...draft, ...patch };
-    await service.setPreferences(sent);
+    await service.setPreferences(sentPreferences(sent));
     if (mounted.current) dispatch({ type: 'saved', sent });
   }
 

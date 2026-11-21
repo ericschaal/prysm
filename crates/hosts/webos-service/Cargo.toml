@@ -8,7 +8,7 @@ description = "The TV supervisor: Luna service, power and video gating, worker l
 
 # One library, two thin binaries, one per flavor. Both packages install the
 # supervisor as `prysm-webos-service` and the worker as `prysm-webos-worker`
-# under `io.prysm.tv` (see `identity`), so installing one replaces the other.
+# under one app id (see `identity`), so installing one replaces the other.
 [[bin]]
 name = "prysm-webos-service"
 path = "src/bin/prysm-webos-service.rs"

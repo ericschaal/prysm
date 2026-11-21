@@ -2,7 +2,7 @@
 # TV acceptance for one Prysm package, run by hand against a rooted TV:
 #
 #   tv-acceptance.sh [--dry-run] --flavour full|slim [--prysm http://HOST:8787]
-#                    [--build-dir DIR] root@TV path/to/io.prysm.tv-FLAVOUR_VERSION_all.ipk
+#                    [--build-dir DIR] root@TV path/to/APP-FLAVOUR_VERSION_all.ipk
 #
 # 1. native-smoke.py: basic, --supervisor, --capture (slim streams to --prysm,
 #    a running Prysm with the remote source and lighting on). Each runs the
@@ -17,6 +17,7 @@
 # writes no record and touches no TV. Builds and CI never call this.
 set -euo pipefail
 
+APP=io.github.ericschaal.prysm
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 
@@ -49,8 +50,8 @@ case $flavour in
     *) echo "$0: --flavour is full or slim" >&2; exit 2 ;;
 esac
 case $(basename "$ipk") in
-    io.prysm.tv-"$flavour"_*_all.ipk) ;;
-    *) echo "$0: $ipk is not a $flavour package (io.prysm.tv-${flavour}_VERSION_all.ipk)" >&2; exit 2 ;;
+    "$APP-$flavour"_*_all.ipk) ;;
+    *) echo "$0: $ipk is not a $flavour package ($APP-${flavour}_VERSION_all.ipk)" >&2; exit 2 ;;
 esac
 
 # What only a person can check, per flavour.

@@ -1,8 +1,8 @@
 {
   "public": [
-    "io.prysm.tv.service/getState",
-    "io.prysm.tv.service/setPreferences",
-    "io.prysm.tv.service/setEnabled",
-    "io.prysm.tv.service/uninstall"
+    "io.github.ericschaal.prysm.service/getState",
+    "io.github.ericschaal.prysm.service/setPreferences",
+    "io.github.ericschaal.prysm.service/setEnabled",
+    "io.github.ericschaal.prysm.service/uninstall"
   ]
 }

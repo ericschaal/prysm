@@ -1,5 +1,5 @@
 /**
- * The TV supervisor's Luna API (`luna://io.prysm.tv.service`, both packages)
+ * The TV supervisor's Luna API (`luna://<APP_ID>.service`, both packages)
  * over the webOS service bridge. Values are the generated `luna` contract;
  * replies are checked before use because the bridge hands over plain text.
  * See docs/plans/prysm-v1-webos-supervisor.md §6.
@@ -75,10 +75,11 @@ export function isPaused(state: State): boolean {
   return worker.phase === 'running' && worker.paused;
 }
 
-export const SERVICE_URI = 'luna://io.prysm.tv.service';
+/** The TV app of both packages; its service is `<APP_ID>.service`. */
+export const APP_ID = 'io.github.ericschaal.prysm';
+export const SERVICE_URI = `luna://${APP_ID}.service`;
 /** Installed by the IPK; run as root through the Homebrew Channel. */
-export const SETUP_SCRIPT =
-  '/media/developer/apps/usr/palm/services/io.prysm.tv.service/setup.sh';
+export const SETUP_SCRIPT = `/media/developer/apps/usr/palm/services/${APP_ID}.service/setup.sh`;
 export const HOMEBREW_EXEC = 'luna://org.webosbrew.hbchannel.service/exec';
 /** A call or the first subscription reply that takes longer has failed. */
 export const CALL_TIMEOUT_MS = 30_000;
@@ -173,12 +174,13 @@ const targets: Record<LightingTarget, true> = {
 };
 const oneOf = (values: object, value: unknown) =>
   typeof value === 'string' && Object.keys(values).indexOf(value) >= 0;
+// An absent value is omitted, never `null`.
 const optionalText = (value: unknown) =>
-  value === undefined || value === null || typeof value === 'string';
+  value === undefined || typeof value === 'string';
 const optionalNumber = (value: unknown) =>
-  value === undefined || value === null || typeof value === 'number';
+  value === undefined || typeof value === 'number';
 const optionalEncoding = (value: unknown) =>
-  value === undefined || value === null || oneOf(encodings, value);
+  value === undefined || oneOf(encodings, value);
 
 type Fields = Partial<Record<string, unknown>>;
 const isObject = (value: unknown): value is Fields =>
@@ -235,13 +237,12 @@ function isPackage(state: Fields): boolean {
   }
 }
 
-function isFailure(value: unknown): value is WorkerFailure | null | undefined {
-  if (value === undefined || value === null) return true;
-  const failure = value as Partial<Record<keyof WorkerFailure, unknown>>;
+function isFailure(value: unknown): value is WorkerFailure | undefined {
+  if (value === undefined) return true;
   return (
-    typeof failure === 'object' &&
-    oneOf(failureKinds, failure.kind) &&
-    typeof failure.message === 'string'
+    isObject(value) &&
+    oneOf(failureKinds, value.kind) &&
+    typeof value.message === 'string'
   );
 }
 

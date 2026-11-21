@@ -875,10 +875,9 @@ fn published_state_reflects_the_worker() {
                 "fps": 30,
                 "portal": "http://10.0.0.2:8787/",
             },
-            "preferences": { "autostart": false, "instance": null },
+            "preferences": { "autostart": false },
             "power": "active",
             "video": "unknown",
-            "failure": null,
             "log": [],
         })
     );
@@ -925,7 +924,6 @@ fn published_slim_state_has_only_its_own_fields() {
         fields,
         [
             "enabled",
-            "failure",
             "flavor",
             "log",
             "power",
