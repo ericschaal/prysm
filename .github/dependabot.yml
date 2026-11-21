@@ -7,6 +7,38 @@ updates:
     groups:
       github-actions:
         patterns: ['*']
+  # The Cargo workspace (Cargo.lock).
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ['*']
+  # The npm workspace (frontend/package-lock.json).
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      frontend:
+        patterns: ['*']
+  # The base images of packaging/docker/Dockerfile.
+  - package-ecosystem: docker
+    directory: /packaging/docker
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ['*']
+    ignore:
+      # The rust: tag carries the version rust-toolchain.toml pins (an xtask
+      # test checks it); it changes with that file, by hand.
+      - dependency-name: rust
+        update-types: ['version-update:semver-major', 'version-update:semver-minor', 'version-update:semver-patch']
+      # node:24: frontend/package.json's engines and CI's setup-node.
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
   # The acceptance runner's locked environment (scripts/acceptance/uv.lock).
   - package-ecosystem: uv
     directory: /scripts/acceptance

@@ -116,6 +116,8 @@ class MetadataTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 ipk.app_version(bad)
 
+    # `cargo xtask check scripts` (CI's `quality`) has no node_modules and skips this; CI's `frontend`
+    # job runs it after its npm ci and fails on a skip.
     @unittest.skipUnless(shutil.which('node') and (FRONTEND / 'node_modules/react/LICENSE').is_file(),
                          'needs node and frontend/node_modules')
     def test_javascript_notices_include_react(self):

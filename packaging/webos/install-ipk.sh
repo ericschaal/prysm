@@ -23,6 +23,7 @@
 #
 # luna-send waits for replies only while its stdin is open, so every call
 # keeps it open with `(sleep N) | ssh ...` and bounds it with `timeout`.
+# A connection to the TV is given up after 8 s (`tv` in the printed commands).
 # --dry-run prints the commands and touches nothing. Builds never call this.
 set -eu
 
@@ -97,6 +98,12 @@ cat \"\$out\"
 rm -f \"\$out\"
 exit \$result"
 
+# Every connection to the TV, with a bounded connect. No BatchMode: a TV
+# reached with a password still installs.
+tv() {
+    ssh -o ConnectTimeout=8 "$host" "$@"
+}
+
 run() {
     echo "+ $*" >&2
     if [ "$dry_run" = false ]; then
@@ -105,18 +112,16 @@ run() {
 }
 
 copy() {
-    echo "+ ssh $host 'mkdir -p $TEMP && cat > $remote' < $ipk" >&2
+    echo "+ tv 'mkdir -p $TEMP && cat > $remote' < $ipk" >&2
     if [ "$dry_run" = false ]; then
-        # The paths are chosen here, so they expand here.
-        # shellcheck disable=SC2029
-        ssh "$host" "mkdir -p $TEMP && cat > $remote" < "$ipk"
+        tv "mkdir -p $TEMP && cat > $remote" < "$ipk"
     fi
 }
 
 held() {
     seconds=$1
     shift
-    echo "+ (sleep $((seconds + 2))) | ssh $host \"$*\"" >&2
+    echo "+ (sleep $((seconds + 2))) | tv \"$*\"" >&2
     if [ "$dry_run" = false ]; then
         # A named pipe instead of a pipeline, so the call returns when ssh
         # does and not when the sleep ends.
@@ -125,9 +130,7 @@ held() {
         sleep $((seconds + 2)) > "$pipe" &
         holder=$!
         result=0
-        # The command is built here and sent whole.
-        # shellcheck disable=SC2029
-        ssh "$host" "$*" < "$pipe" || result=$?
+        tv "$*" < "$pipe" || result=$?
         kill "$holder" 2>/dev/null
         # Killed: 143, which `set -e` would take for a failure.
         wait "$holder" 2>/dev/null || true
@@ -138,16 +141,16 @@ held() {
 
 copy
 if ! held $((12 + STOP_SECONDS)) "$stop"; then
-    run ssh "$host" "rm -f $remote"
+    run tv "rm -f $remote"
     echo "$0: Prysm still runs $STOP_SECONDS s after its uninstall (the processes above), so nothing was installed: the install would end it abruptly" >&2
     exit 1
 fi
 status=0
 held "$INSTALL_TIMEOUT" "$install" || status=$?
-run ssh "$host" "rm -f $remote"
+run tv "rm -f $remote"
 if [ "$status" -ne 0 ]; then
     echo "$0: installation failed (see the replies above)" >&2
     exit 1
 fi
-run ssh "$host" "$SETUP"
+run tv "$SETUP"
 held 12 "timeout 12 luna-send -n 1 luna://$APP.service/getState '{}'"

@@ -134,7 +134,7 @@ the old `io.prysm.capture` app: remove it (and its service setup) first.
 
 Picture settings (size, rate, menus, encoding) live in a web portal in both
 flavours, never in the TV's Luna preferences (`tv.json` holds only
-`autostart`, and for slim `instance` and `receiver`). Full: the `webos`
+`autostart`, and for slim `instance`). Full: the `webos`
 capture section of the worker's `settings.json`, edited in the TV's own
 portal (default 640x360 at 30 fps). Slim: the `remote` capture section of the
 desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
@@ -142,8 +142,9 @@ desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
 TV on every connection ([wire protocol](../crates/adapters/capture-remote/README.md));
 the TV captures and encodes as asked. Saving other capture settings restarts
 lighting, the TV reconnects within a second and follows the new request.
-`receiver` is `host:port`, the host an IP address or a name such as
-`prysm.local` (checked for syntax only when saved); the slim worker resolves
+`instance` is the desktop Prysm's address, an `http://` or `https://` URL
+with an IP address or a name such as `http://prysm.local:8787` (checked for
+syntax only when saved); the slim worker resolves
 it at every connection attempt, waiting at most 0.5 s per attempt (a slower
 answer is used by the next one), so an address change is picked up on
 reconnect and a name that does not resolve shows as waiting for the receiver.
@@ -201,7 +202,7 @@ app, service and package directories, or unknown service files. Despite
 
 The version has one source: [`VERSION`](../VERSION) (see
 [releasing](../docs/developers/releasing.md#the-version-is-one-file)). The binaries report it in full
-(`prysm-webos-service --version` prints `1.0.0-alpha.0`). The app's
+(`prysm-webos-service --version` prints, for example, `1.0.0-rc.1`). The app's
 `appinfo.json`, and with it the IPK's file name and control file, carry only
 its `major.minor.patch` (`1.0.0`), because `ares-package` accepts nothing but
 three numbers there. The `appinfo.json` in this repository has no version;
@@ -213,7 +214,7 @@ The slim worker encodes its stream with H.264 by default
 [`h264-rvenc-sys`](../crates/adapters/h264-rvenc-sys/src/lib.rs)) or OpenH264 compiled
 in, as the desktop's `remote` capture `encoding` requests (`h264_hardware`,
 the default, `h264_software` or `raw`). If that encoder fails the TV reports
-`failure_kind: encoder` and refuses the request, so lighting on the desktop
+a failure of kind `encoder` and refuses the request, so lighting on the desktop
 stops with the TV's reason, until another encoding is saved there; nothing
 falls back on its own. It therefore links the sysroot's
 GStreamer 1.0 and GLib, which [`env.sh`](webos/env.sh) finds with the SDK's
@@ -262,7 +263,7 @@ The generator needs libclang; without `--check` it rewrites
 prints its files and touches nothing). It runs the cargo binaries from the
 build directory under a probe identity (`io.prysm.tv.probe`, `run --sandbox`
 in a private `/tmp/prysm-supervisor.*`, bounded `--run-for`) and removes its
-probe manifest only if unchanged. It has not been run on a TV yet.
+probe manifest only if unchanged. No run on a TV is recorded yet.
 
 ### Installing on a TV
 

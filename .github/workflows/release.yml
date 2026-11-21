@@ -99,11 +99,9 @@ jobs:
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
       # The publish script as of this workflow run, so a fixed script on main
-      # can recover an older tag.
+      # can recover an older tag; the product comes from the CI artifacts of
+      # the tag's commit, not from a checkout.
       - name: Check out publication tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

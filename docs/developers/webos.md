@@ -5,10 +5,12 @@ Installation for users: [LG TV](../users/webos.md). Building packages:
 [webOS supervisor plan](../plans/prysm-v1-webos-supervisor.md).
 
 > **Not yet verified on hardware.** The supervisor, both workers and setup are
-> tested on the development host and, for the TV crates, under qemu. TV
-> acceptance (install, capture, standby and wake, cold boot, hung capture,
-> removal) is still open for both packages, and the on-TV smoke test has not
-> run yet.
+> tested on the development host and, for the TV crates, under qemu. The only
+> recorded run on a TV is the processor's benchmark
+> ([sampler speed](../../research/processing/2026-11-15-sampler-speed/README.md)).
+> No TV acceptance (install, capture, standby and wake, cold boot, hung
+> capture, removal) or on-TV smoke test is recorded for either package
+> ([records](../../research/tv-acceptance/README.md)).
 
 > **Safety.** Work only with Prysm's own files: the app and service
 > directories, its Luna manifests, its boot hook and `/var/lib/io.prysm.tv`.
@@ -74,7 +76,7 @@ and seeds `settings.json` with `capture.kind = "webos"` when missing.
 Slim worker: connects to the receiver at most once a second, resolving a host
 name at each attempt; follows the receiver's stream request (size, rate,
 menus, encoding); closes capture while the receiver has paused the stream. An
-encoder failure is reported as `failure_kind: encoder` and refused until the
+encoder failure is reported as a failure of kind `encoder` and refused until the
 desktop asks for another encoding; nothing falls back on its own. Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
