@@ -320,8 +320,8 @@ class Artifacts(unittest.TestCase):
         self.binary.write_bytes(b'prysm')
         self.sha = hashlib.sha256(b'prysm').hexdigest()
 
-    def manifest(self, sha256: str) -> None:
-        entry = {'version': '1.0.0-alpha.0', 'commit': 'abc123', 'dirty': False, 'sha256': sha256, 'built_at': 'x'}
+    def manifest(self, sha256: str, commit: str = 'abc123', dirty: bool = False) -> None:
+        entry = {'version': '1.0.0-alpha.0', 'commit': commit, 'dirty': dirty, 'sha256': sha256, 'built_at': 'x'}
         (self.dist / 'manifest.json').write_text(json.dumps({'artifacts': {self.binary.name: entry}}))
 
     def test_hash_and_age_without_a_manifest(self) -> None:
@@ -338,18 +338,39 @@ class Artifacts(unittest.TestCase):
         self.manifest('0' * 64)
         self.assertIsNone(artifact.inspect(self.binary).entry)
 
-    def test_older_than_the_last_commit_warns(self) -> None:
+    @staticmethod
+    def git(commit: str, time: datetime.datetime) -> transport.Transcript:
+        return transport.Transcript([('local.git-last-commit', Result(0, f'{commit} {time.isoformat()}\n'))])
+
+    def test_without_a_manifest_older_than_the_last_commit_warns(self) -> None:
         found = artifact.inspect(self.binary)
-        later = (found.modified + datetime.timedelta(hours=1)).isoformat()
-        earlier = (found.modified - datetime.timedelta(hours=1)).isoformat()
-        warning = artifact.older_than_checkout(
-            found, transport.Transcript([('local.git-last-commit-time', Result(0, later))])
-        )
-        self.assertIn('older than the last commit', str(warning))
-        record = transport.Transcript([('local.git-last-commit-time', Result(0, earlier))])
-        self.assertIsNone(artifact.older_than_checkout(found, record))
-        no_git = transport.Transcript([('local.git-last-commit-time', Result(128, '', 'not a repository'))])
-        self.assertIsNone(artifact.older_than_checkout(found, no_git))
+        later = found.modified + datetime.timedelta(hours=1)
+        earlier = found.modified - datetime.timedelta(hours=1)
+        self.assertIn('older than the last commit', str(artifact.stale(found, self.git('abc123', later))))
+        self.assertIsNone(artifact.stale(found, self.git('abc123', earlier)))
+        no_git = transport.Transcript([('local.git-last-commit', Result(128, '', 'not a repository'))])
+        self.assertIsNone(artifact.stale(found, no_git))
+
+    def test_a_matching_manifest_judges_by_commit_not_file_time(self) -> None:
+        self.manifest(self.sha)
+        found = artifact.inspect(self.binary)  # a cached layer's file time, older than the commit
+        later = found.modified + datetime.timedelta(hours=1)
+        self.assertIsNone(artifact.stale(found, self.git('abc123', later)))
+        warning = artifact.stale(found, self.git('def456', found.modified - datetime.timedelta(hours=1)))
+        self.assertIn('built from abc123, not HEAD def456', str(warning))
+        nothing = transport.Transcript([('local.git-last-commit', Result(0, ''))])
+        self.assertIsNone(artifact.stale(found, nothing))
+
+    def test_a_build_from_a_dirty_tree_warns(self) -> None:
+        self.manifest(self.sha, dirty=True)
+        found = artifact.inspect(self.binary)
+        self.assertIn('uncommitted changes', str(artifact.stale(found, self.git('abc123', found.modified))))
+
+    def test_a_manifest_of_another_build_falls_back_to_the_file_time(self) -> None:
+        self.manifest('0' * 64)
+        found = artifact.inspect(self.binary)
+        later = found.modified + datetime.timedelta(hours=1)
+        self.assertIn('older than the last commit', str(artifact.stale(found, self.git('abc123', later))))
 
 
 class TheBench(unittest.TestCase):

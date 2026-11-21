@@ -165,8 +165,9 @@ runs a caller's string over SSH.
   present and readable.
 - **Artifacts:** the report records each one's hash and age. When the build
   system's `manifest.json` is next to the artifact and its hash matches, the
-  report also records the version and commit from it. The runner warns when an
-  artifact is older than the checkout's last commit. After the start the
+  report also records the version and commit from it. The runner warns when that
+  entry's commit is not the checkout's HEAD or it was built from a dirty tree,
+  or, without a matching entry, when the file is older than the last commit. After the start the
   running version (`prysm_build_info` in `/metrics`) is compared with the
   artifact's. Prysm reports the product version there (`1.0.0-alpha.0`; the
   package's own file name writes it the Debian way, `1.0.0~alpha.0-1`) and not
