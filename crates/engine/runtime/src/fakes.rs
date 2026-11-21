@@ -79,6 +79,8 @@ pub struct FakeSourceSettings {
     /// Report [`Pull::Ended`] after this many frames, like a file at its end.
     pub end_after: Option<u32>,
     pub fail_open: bool,
+    /// Block in `open` this long, like a device that does not answer.
+    pub open_delay_ms: u64,
     /// Rejected by `validate`.
     pub invalid: bool,
     /// Block in `close` this long, to exceed a stop deadline.
@@ -123,6 +125,10 @@ impl SourceFactory for FakeSources {
     }
 
     fn open(&self, settings: &FakeSourceSettings) -> Result<Box<dyn FrameSource>> {
+        if settings.open_delay_ms > 0 {
+            self.0.record(format!("source.opening:{}", settings.name));
+            thread::sleep(Duration::from_millis(settings.open_delay_ms));
+        }
         if settings.fail_open {
             self.0
                 .record(format!("source.open_failed:{}", settings.name));

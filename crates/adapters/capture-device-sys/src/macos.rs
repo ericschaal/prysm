@@ -1,12 +1,15 @@
 use std::mem::ManuallyDrop;
 use std::num::NonZeroU32;
 use std::slice;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use av_foundation::capture_device::{
-    AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification, AVFrameRateRange,
+    AVAuthorizationStatus, AVAuthorizationStatusDenied, AVAuthorizationStatusNotDetermined,
+    AVAuthorizationStatusRestricted, AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification,
+    AVFrameRateRange,
 };
 use av_foundation::capture_input::AVCaptureDeviceInput;
 use av_foundation::capture_output_base::AVCaptureOutput;
@@ -43,7 +46,8 @@ use objc2_foundation::{
 use prysm_ports::Span;
 
 use crate::{
-    CaptureError, CaptureSink, Frame, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
+    CameraAccess, CaptureError, CaptureSink, Frame, FramePool, PixelFormat, Result, YuvRange,
+    YuvStandardMatrix,
 };
 
 /// How often the capture thread checks for a failure notification while it
@@ -404,6 +408,75 @@ fn frame_duration(range: &AVFrameRateRange, fps: NonZeroU32) -> Option<CMTime> {
     }
 }
 
+/// Where macOS's camera access request stands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Request {
+    NotMade,
+    Answered,
+    TimedOut,
+}
+
+/// What an authorization status means for opening: `Ok(true)` to open,
+/// `Ok(false)` to ask first. A status still undecided after the request means
+/// macOS answered without asking, or nobody answered. A status this crate
+/// does not know is left to AVFoundation.
+#[allow(non_upper_case_globals)] // Names come from AVFoundation.
+fn access(
+    status: AVAuthorizationStatus,
+    request: Request,
+) -> std::result::Result<bool, CameraAccess> {
+    match (status, request) {
+        (AVAuthorizationStatusNotDetermined, Request::NotMade) => Ok(false),
+        (AVAuthorizationStatusNotDetermined, Request::Answered) => Err(CameraAccess::NotAsked),
+        (AVAuthorizationStatusNotDetermined, Request::TimedOut) => Err(CameraAccess::Unanswered),
+        (AVAuthorizationStatusDenied, _) => Err(CameraAccess::Denied),
+        (AVAuthorizationStatusRestricted, _) => Err(CameraAccess::Restricted),
+        _ => Ok(true),
+    }
+}
+
+/// Whether the process may capture video, asking macOS when it has not
+/// decided; `Ok(false)` when `sink` stops while waiting for the answer.
+fn camera_access(sink: &Arc<dyn CaptureSink>) -> Result<bool> {
+    // SAFETY: a constant NSString AVFoundation defines for the process's life.
+    let video = unsafe { AVMediaTypeVideo };
+    let status = || AVCaptureDevice::authorization_status_for_media_type(video);
+    if access(status(), Request::NotMade).map_err(CaptureError::NoCameraAccess)? {
+        return Ok(true);
+    }
+    tracing::info!("Asking macOS for camera access");
+    let answered = Arc::new(AtomicBool::new(false));
+    AVCaptureDevice::request_access_for_media_type(video, {
+        let answered = answered.clone();
+        move |_| answered.store(true, Ordering::Release)
+    });
+    let Some(request) = wait_for_answer(&answered, sink.as_ref(), crate::CAMERA_ACCESS_WAIT) else {
+        return Ok(false);
+    };
+    access(status(), request).map_err(CaptureError::NoCameraAccess)
+}
+
+/// Waits up to `limit` for `answered`: `Answered` or `TimedOut`, or `None`
+/// when `sink` stops first.
+fn wait_for_answer(
+    answered: &AtomicBool,
+    sink: &dyn CaptureSink,
+    limit: Duration,
+) -> Option<Request> {
+    let asked = Instant::now();
+    loop {
+        if answered.load(Ordering::Acquire) {
+            return Some(Request::Answered);
+        }
+        if asked.elapsed() >= limit {
+            return Some(Request::TimedOut);
+        }
+        if sink.should_stop(FAILURE_POLL) {
+            return None;
+        }
+    }
+}
+
 fn start_session(
     device_uid: Option<&str>,
     sink: &Arc<dyn CaptureSink>,
@@ -425,6 +498,10 @@ fn start_session(
     })?;
 
     tracing::info!("Opening video device: {}", device.localized_name());
+    // After the lookup, so a missing device never asks for access.
+    if !camera_access(sink)? {
+        return Ok(None);
+    }
 
     let session = AVCaptureSession::new();
     let input =
@@ -572,6 +649,7 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use av_foundation::capture_device::AVAuthorizationStatusAuthorized;
 
     #[test]
     fn runtime_notification_preserves_native_error() {
@@ -643,6 +721,74 @@ mod tests {
                 "the delegate released the sink"
             );
         }
+    }
+
+    #[test]
+    fn camera_access_opens_asks_once_or_refuses() {
+        use AVAuthorizationStatusNotDetermined as NotDetermined;
+        assert_eq!(
+            access(NotDetermined, Request::NotMade),
+            Ok(false),
+            "ask first"
+        );
+        assert_eq!(
+            access(NotDetermined, Request::Answered),
+            Err(CameraAccess::NotAsked)
+        );
+        assert_eq!(
+            access(NotDetermined, Request::TimedOut),
+            Err(CameraAccess::Unanswered)
+        );
+        for request in [Request::NotMade, Request::Answered, Request::TimedOut] {
+            assert_eq!(
+                access(AVAuthorizationStatusDenied, request),
+                Err(CameraAccess::Denied)
+            );
+            assert_eq!(
+                access(AVAuthorizationStatusRestricted, request),
+                Err(CameraAccess::Restricted)
+            );
+            assert_eq!(access(AVAuthorizationStatusAuthorized, request), Ok(true));
+            assert_eq!(
+                access(42, request),
+                Ok(true),
+                "unknown: AVFoundation decides"
+            );
+        }
+    }
+
+    /// A sink asked to stop.
+    struct Stopped;
+
+    impl CaptureSink for Stopped {
+        fn ready(&self) {}
+        fn frame(&self, _: Frame) {}
+        fn should_stop(&self, _: Duration) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn waiting_for_access_ends_answered_timed_out_or_stopped() {
+        let limit = FAILURE_POLL * 2;
+        let answered = AtomicBool::new(true);
+        assert_eq!(
+            wait_for_answer(&answered, &crate::device::Discard, limit),
+            Some(Request::Answered)
+        );
+
+        let unanswered = AtomicBool::new(false);
+        let waiting = Instant::now();
+        assert_eq!(
+            wait_for_answer(&unanswered, &crate::device::Discard, limit),
+            Some(Request::TimedOut)
+        );
+        assert!(waiting.elapsed() >= limit, "waits for the whole limit");
+
+        assert_eq!(
+            wait_for_answer(&unanswered, &Stopped, crate::CAMERA_ACCESS_WAIT),
+            None
+        );
     }
 
     #[test]

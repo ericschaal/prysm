@@ -1,5 +1,5 @@
 use super::*;
-use crate::source::{Capture, CaptureResult, Deadlines, DeviceFrames};
+use crate::source::{Capture, CaptureResult, Check, Deadlines, DeviceFrames};
 use prysm_capture_device_sys::{CaptureError, CaptureSink};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
@@ -101,10 +101,23 @@ fn disconnected() -> CaptureError {
     }
 }
 
+/// A format check the settings pass.
+fn admitted() -> Check {
+    Box::new(|| Ok(()))
+}
+
 fn start(capture: Capture, deadlines: Deadlines) -> mpsc::Receiver<Result<DeviceFrames>> {
+    start_checked(admitted(), capture, deadlines)
+}
+
+fn start_checked(
+    check: Check,
+    capture: Capture,
+    deadlines: Deadlines,
+) -> mpsc::Receiver<Result<DeviceFrames>> {
     let (done, started) = mpsc::channel();
     thread::spawn(move || {
-        let _ = done.send(DeviceFrames::start(capture, deadlines));
+        let _ = done.send(DeviceFrames::start(check, capture, deadlines));
     });
     started
 }
@@ -158,6 +171,25 @@ fn open_failure_reports_the_native_cause_after_release() {
     );
 }
 
+/// A refused camera permission fails open as an adapter failure saying what to do.
+#[test]
+fn refused_camera_access_fails_open_with_guidance() {
+    let (capture, native) = native();
+    let opening = start(capture, TEST);
+    native.exit(Err(CaptureError::NoCameraAccess(
+        prysm_capture_device_sys::CameraAccess::Denied,
+    )));
+    let Err(error @ Error::Adapter { .. }) = opening.recv_timeout(LIMIT).unwrap() else {
+        panic!("open must fail as an adapter failure");
+    };
+    assert_eq!(
+        chain(&error),
+        "video device capture failed: camera access is not granted: allow the app that \
+         starts Prysm (such as Terminal) under System Settings > Privacy & Security > \
+         Camera, then restart that app"
+    );
+}
+
 #[test]
 fn open_timeout_stops_and_releases() {
     let (capture, native) = native();
@@ -182,13 +214,46 @@ fn open_timeout_reports_unconfirmed_release() {
         ready: SHORT,
         release: SHORT,
     };
-    let Err(error) = within(move || DeviceFrames::start(capture, deadlines)) else {
+    let Err(error) = within(move || DeviceFrames::start(admitted(), capture, deadlines)) else {
         panic!("open must time out");
     };
     assert!(native.stop_requested());
     let text = chain(&error);
     assert!(text.contains("not ready within"), "{text}");
     assert!(text.contains("release is unconfirmed"), "{text}");
+}
+
+#[test]
+fn a_refused_format_check_fails_open_before_capture_starts() {
+    let (capture, native) = native();
+    let check: Check = Box::new(|| Err(ValidationError::new("width", "not delivered").into()));
+    let opening = start_checked(check, capture, TEST);
+    let Err(Error::Invalid(refused)) = opening.recv_timeout(LIMIT).unwrap() else {
+        panic!("open must refuse the settings");
+    };
+    assert_eq!(refused.field, "width");
+    assert!(native.sink.lock().unwrap().is_none(), "capture started");
+}
+
+#[test]
+fn a_format_check_that_never_returns_is_bounded_by_the_ready_wait() {
+    let (capture, native) = native();
+    let (_answer, never) = mpsc::channel::<()>();
+    let check: Check = Box::new(move || {
+        let _ = never.recv();
+        Ok(())
+    });
+    let deadlines = Deadlines {
+        ready: SHORT,
+        release: SHORT,
+    };
+    let Err(error) = within(move || DeviceFrames::start(check, capture, deadlines)) else {
+        panic!("open must time out");
+    };
+    let text = chain(&error);
+    assert!(text.contains("not ready within"), "{text}");
+    assert!(text.contains("native format query has run"), "{text}");
+    assert!(native.sink.lock().unwrap().is_none(), "capture started");
 }
 
 #[test]

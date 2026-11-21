@@ -90,19 +90,23 @@ impl Drop for StopOnDrop {
 }
 
 pub(crate) struct Worker<T> {
+    /// What the thread is in errors, such as "session thread".
+    what: &'static str,
     flags: StopOnDrop,
     done: oneshot::Receiver<T>,
     thread: JoinHandle<()>,
 }
 
 impl<T: Send + 'static> Worker<T> {
-    /// Run `body(state, flags)` on a new thread named `name`.
+    /// Run `body(state, flags)` on a new thread named `name`, called `what`
+    /// in errors.
     ///
     /// # Errors
     /// The thread could not be spawned; `state` comes back with the error, so
     /// the caller can still release what it holds.
     pub(crate) fn spawn<S: Send + 'static>(
         name: &str,
+        what: &'static str,
         state: S,
         body: impl FnOnce(S, &Flags) -> T + Send + 'static,
     ) -> Result<Self, (Error, S)> {
@@ -125,14 +129,15 @@ impl<T: Send + 'static> Worker<T> {
         let thread = match spawned {
             Ok(thread) => thread,
             Err(error) => {
-                return Err((Error::adapter("cannot start session thread", error), state));
+                return Err((Error::adapter(format!("cannot start {what}"), error), state));
             }
         };
         // The thread waits in `recv`, so this fails only if it panicked first.
         if let Err(mpsc::SendError(state)) = hand_over.send(state) {
-            return Err((Error::Panicked("session thread"), state));
+            return Err((Error::Panicked(what), state));
         }
         Ok(Self {
+            what,
             flags: StopOnDrop(flags),
             done,
             thread,
@@ -151,9 +156,8 @@ impl<T: Send + 'static> Worker<T> {
     /// Wait for the thread to finish on its own. Cancel-safe. `Err` means the
     /// thread panicked outside the guarded loop.
     pub(crate) async fn finished(&mut self) -> Result<T> {
-        (&mut self.done)
-            .await
-            .map_err(|_| Error::Panicked("session thread"))
+        let what = self.what;
+        (&mut self.done).await.map_err(|_| Error::Panicked(what))
     }
 
     /// Request stop and join within `deadline`. On timeout the thread is left
@@ -183,7 +187,7 @@ mod tests {
     #[test]
     fn dropping_a_worker_asks_its_thread_to_stop() {
         let (stopped, seen) = mpsc::channel();
-        let worker = Worker::spawn("prysm-test", (), move |(), flags| {
+        let worker = Worker::spawn("prysm-test", "test thread", (), move |(), flags| {
             while !flags.stop.load(Ordering::Acquire) {
                 std::thread::sleep(Duration::from_millis(1));
             }
@@ -193,5 +197,19 @@ mod tests {
         .unwrap();
         drop(worker);
         assert!(seen.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_thread_that_panics_is_named_in_the_error() {
+        let mut worker = Worker::<()>::spawn("prysm-test", "test thread", (), |(), _| {
+            panic!("on purpose")
+        })
+        .map_err(|(error, ())| error)
+        .unwrap();
+        assert!(matches!(
+            worker.finished().await,
+            Err(Error::Panicked("test thread"))
+        ));
+        worker.join().await;
     }
 }

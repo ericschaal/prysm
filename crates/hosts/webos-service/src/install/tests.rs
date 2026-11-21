@@ -7,9 +7,25 @@ struct Sandbox {
     installer: FsInstaller,
 }
 
+/// Write an executable script from a child process. A write descriptor in
+/// this multithreaded process would be copied into any child another test
+/// forks meanwhile and stay open until that child execs, so executing the
+/// script then could fail with ETXTBSY ("Text file busy").
 fn script(path: &Path, body: &str) {
-    fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    let status = Command::new("/bin/sh")
+        .args(["-c", "printf '#!/bin/sh\\n%s\\n' \"$1\" > \"$0\""])
+        .arg(path)
+        .arg(body)
+        .status()
+        .unwrap();
+    assert!(status.success(), "{status}");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `result` is an error that `expected` accepts; a failure shows the result.
+#[track_caller]
+fn assert_fails(result: Result<()>, expected: impl Fn(&InstallError) -> bool) {
+    assert!(matches!(&result, Err(e) if expected(e)), "got {result:?}");
 }
 
 fn sandbox() -> Sandbox {
@@ -123,20 +139,10 @@ fn unrelated_files_are_never_replaced_or_removed() {
     let mut s = sandbox();
     let manifest = s.path("manifests.d/io.prysm.tv.worker.json");
     fs::write(&manifest, r#"{"id":"someone.else"}"#).unwrap();
-    assert!(
-        s.installer
-            .install()
-            .unwrap_err()
-            .to_string()
-            .contains("unrelated Luna manifest")
-    );
-    assert!(
-        s.installer
-            .uninstall()
-            .unwrap_err()
-            .to_string()
-            .contains("unrelated Luna manifest")
-    );
+    let unrelated =
+        |e: &InstallError| matches!(e, InstallError::UnrelatedManifest(p) if *p == manifest);
+    assert_fails(s.installer.install(), unrelated);
+    assert_fails(s.installer.uninstall(), unrelated);
     assert_eq!(
         fs::read_to_string(&manifest).unwrap(),
         r#"{"id":"someone.else"}"#
@@ -145,51 +151,34 @@ fn unrelated_files_are_never_replaced_or_removed() {
 
     fs::create_dir_all(s.path("init.d")).unwrap();
     fs::write(s.path("init.d/io.prysm.tv"), "#!/bin/sh\nother\n").unwrap();
-    assert!(
-        s.installer
-            .install()
-            .unwrap_err()
-            .to_string()
-            .contains("unrelated boot hook")
-    );
-    assert!(
-        s.installer
-            .uninstall()
-            .unwrap_err()
-            .to_string()
-            .contains("unrelated boot hook")
-    );
+    let hook = s.path("init.d/io.prysm.tv");
+    let unrelated = |e: &InstallError| matches!(e, InstallError::UnrelatedHook(p) if *p == hook);
+    assert_fails(s.installer.install(), unrelated);
+    assert_fails(s.installer.uninstall(), unrelated);
     assert_eq!(s.read("init.d/io.prysm.tv"), "#!/bin/sh\nother\n");
 
     fs::remove_file(s.path("init.d/io.prysm.tv")).unwrap();
     nix::unistd::mkfifo(&s.path("init.d/io.prysm.tv"), nix::sys::stat::Mode::S_IRUSR).unwrap();
-    assert!(
-        s.installer.install().is_err(),
-        "a FIFO is refused without blocking"
-    );
+    // A FIFO is refused without blocking.
+    assert_fails(s.installer.install(), |e| {
+        matches!(e, InstallError::Hook { .. })
+    });
 }
 
 #[test]
 fn rescan_failures_and_hangs_are_errors() {
     let mut s = sandbox();
     script(&s.path("ls-control"), "exit 4");
-    assert!(
-        s.installer
-            .install()
-            .unwrap_err()
-            .to_string()
-            .contains("rescan failed")
+    assert_fails(
+        s.installer.install(),
+        |e| matches!(e, InstallError::Rescan(status) if status.code() == Some(4)),
     );
     script(&s.path("ls-control"), "sleep 5");
     s.installer.timeout = Duration::from_millis(200);
     let started = Instant::now();
-    assert!(
-        s.installer
-            .install()
-            .unwrap_err()
-            .to_string()
-            .contains("did not finish")
-    );
+    assert_fails(s.installer.install(), |e| {
+        matches!(e, InstallError::Timeout { .. })
+    });
     assert!(started.elapsed() < Duration::from_secs(3));
 }
 
@@ -205,27 +194,33 @@ fn activation_asks_for_state_and_checks_the_reply() {
         &s.path("luna-send"),
         "echo '{\"returnValue\":false,\"errorText\":\"denied\"}'",
     );
-    assert!(
-        s.installer
-            .activate("x")
-            .unwrap_err()
-            .to_string()
-            .contains("denied")
+    assert_fails(
+        s.installer.activate("x"),
+        |e| matches!(e, InstallError::ActivationRefused(reply) if reply["errorText"] == "denied"),
     );
     script(&s.path("luna-send"), "exit 1");
-    assert!(s.installer.activate("x").is_err());
+    assert_fails(
+        s.installer.activate("x"),
+        |e| matches!(e, InstallError::Activation(status) if status.code() == Some(1)),
+    );
 }
 
 #[test]
 fn activation_requires_an_explicit_success_reply() {
     assert!(activation_reply(br#"{"returnValue":true}"#).is_ok());
+    assert_fails(activation_reply(b""), |e| {
+        matches!(e, InstallError::InvalidReply(_))
+    });
     for value in [
-        b"".as_slice(),
-        b"null",
+        b"null".as_slice(),
         b"{}",
         br#"{"returnValue":false,"errorText":"denied"}"#,
     ] {
-        assert!(activation_reply(value).is_err());
+        assert_fails(activation_reply(value), |e| {
+            matches!(e, InstallError::ActivationRefused(_))
+        });
     }
-    assert!(activation_reply(&vec![b' '; MAX_REPLY + 1]).is_err());
+    assert_fails(activation_reply(&vec![b' '; MAX_REPLY + 1]), |e| {
+        matches!(e, InstallError::OversizedReply)
+    });
 }

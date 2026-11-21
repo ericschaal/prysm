@@ -54,6 +54,7 @@ impl Forwarder {
         } = self;
         let spawned = Worker::spawn(
             "prysm-forwarder",
+            "forwarder thread",
             (source, sink),
             |(mut source, mut sink), flags| {
                 // A source that ends finishes forwarding without a failure.
