@@ -31,15 +31,27 @@ class Preferences(TypedDict, total=False):
 
 
 class LunaReply(tv.State, total=False):
-    """A Luna reply; `getState`'s fields (the service's state) as the checks read them."""
+    """A Luna reply; `getState`'s fields (the service's state) as the checks read them. The package's intent is
+    `lighting` in the full package and `enabled` in the slim one; each has only its own."""
 
     returnValue: bool  # noqa: N815 -- Luna's field name (Ruff exempts it only on a direct TypedDict)
     errorText: str  # noqa: N815 -- Luna's field name
     flavor: Flavour
     preferences: Preferences
+    lighting: Target
     enabled: bool
-    lighting: Target | None
-    portal: str | None
+
+
+# What a backup keeps of `getState`, per package: its flavour, preferences and intent.
+BACKED_UP: dict[Flavour, tuple[str, ...]] = {
+    Flavour.FULL: ('flavor', 'preferences', 'lighting'),
+    Flavour.SLIM: ('flavor', 'preferences', 'enabled'),
+}
+
+
+def backed_up(state: LunaReply) -> web.JsonObject:
+    """What a backup keeps of `state`: the fields of its package in `BACKED_UP`."""
+    return {key: cast('web.Json', state.get(key)) for key in BACKED_UP[state['flavor']]}
 
 
 class Foreground(TypedDict, total=False):
@@ -157,7 +169,7 @@ class WebosTv:
 
     def portal(self) -> prysm_api.Prysm:
         """The full package's portal, at the address `getState` reports once the worker runs."""
-        url = (self.get_state() or LunaReply()).get('portal')
+        url = tv.portal(self.get_state() or LunaReply())
         if not url:
             raise Failed('getState reports no portal address: is the full worker running?')
         return prysm_api.Prysm(url)
@@ -173,7 +185,7 @@ class WebosTv:
                 time.sleep(1)
             else:
                 return prysm
-        raise Failed(f'the TV portal (getState portal) did not answer within {seconds} s')
+        raise Failed(f'the TV portal (getState worker.portal) did not answer within {seconds} s')
 
     # ---- files and processes ---------------------------------------------------
 
@@ -303,8 +315,9 @@ class WebosTv:
         ]
 
     def backup(self, found: list[str]) -> Backup:
-        """getState (flavour, preferences, enabled, lighting), the full portal's settings and target, and the
-        data files as they are. An installed Prysm whose service or portal does not answer cannot be backed up."""
+        """getState (flavour, preferences, and the intent: full `lighting`, slim `enabled`), the full portal's
+        settings and target, and the data files as they are. An installed Prysm whose service or portal does not
+        answer cannot be backed up."""
         files = {name: self.read_data(name) for name in commands.DATA_FILES}
         state = self.get_state()
         data_only = all(item.startswith(commands.DATA_DIR + '/') for item in found)
@@ -315,11 +328,7 @@ class WebosTv:
             prysm = self.wait_portal()
             answered = prysm.state()
             portal = {'url': prysm.base, 'settings': answered['settings'], 'target': answered['target']}
-        luna = (
-            None
-            if state is None
-            else {key: cast('web.Json', state.get(key)) for key in ('flavor', 'preferences', 'enabled', 'lighting')}
-        )
+        luna = None if state is None else backed_up(state)
         return {
             'target': self.name,
             'host': self.target,

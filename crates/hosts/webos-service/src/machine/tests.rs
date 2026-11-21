@@ -1,8 +1,7 @@
 //! Every machine rule, as scripted inputs at explicit times.
 use super::*;
-use crate::state::Phase as P;
 use prysm_webos_link::{FailureKind, PrysmAddress, SlimEncoding, WorkerFailure};
-use serde_json::Value;
+use serde_json::json;
 
 fn full() -> Machine {
     full_with(Preferences::default())
@@ -79,11 +78,59 @@ fn kind(state: &State) -> Option<FailureKind> {
     state.failure.as_ref().map(|failure| failure.kind)
 }
 
-fn status(target: Option<LightingTarget>) -> Input {
-    Input::Worker(Event::Status(WorkerStatus {
+/// A full worker's report of `target`: no frames, no portal, no failure.
+fn full_report(target: LightingTarget) -> FullStatus {
+    FullStatus {
+        capturing: false,
+        fps: None,
         target,
-        ..WorkerStatus::default()
-    }))
+        portal: None,
+        failure: None,
+    }
+}
+
+fn reported(status: WorkerStatus) -> Input {
+    Input::Worker(Event::Status(status))
+}
+
+/// A full worker reports `target` and nothing else.
+fn status(target: LightingTarget) -> Input {
+    full_status(full_report(target))
+}
+
+fn full_status(status: FullStatus) -> Input {
+    reported(WorkerStatus::Full(status))
+}
+
+fn slim_status(status: SlimStatus) -> Input {
+    reported(WorkerStatus::Slim(status))
+}
+
+/// The published full package: its lighting and worker.
+fn full_state(state: &State) -> (LightingTarget, &FullWorker) {
+    match &state.package {
+        state::Package::Full { lighting, worker } => (*lighting, worker),
+        state::Package::Slim { .. } => panic!("a slim state: {state:?}"),
+    }
+}
+
+/// The published slim package: whether enabled, and its worker.
+fn slim_state(state: &State) -> (bool, &SlimWorker) {
+    match &state.package {
+        state::Package::Slim { enabled, worker } => (*enabled, worker),
+        state::Package::Full { .. } => panic!("a full state: {state:?}"),
+    }
+}
+
+/// The published full worker is running with frames arriving.
+fn full_capturing(state: &State) -> bool {
+    matches!(
+        full_state(state).1,
+        FullWorker::Running {
+            capturing: true,
+            ..
+        }
+    )
 }
 
 /// Feed `(milliseconds, input, expected effects without Publish)` in order.
@@ -134,7 +181,10 @@ fn full_runs_while_awake_and_gates_video_on_active() {
             ),
         ],
     );
-    assert_eq!(m.state(t).worker, P::Running);
+    assert!(matches!(
+        full_state(&m.state(t)).1,
+        FullWorker::Running { .. }
+    ));
 }
 
 #[test]
@@ -144,7 +194,7 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
         ..Preferences::default()
     });
     let t = Instant::now();
-    assert!(m.state(t).enabled);
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::Processed);
     script(
         &mut m,
         t,
@@ -156,22 +206,20 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
             ),
             (10, Enabled(false), vec![lighting(LightingTarget::Off)]),
             // An older report within the echo window does not undo it.
-            (20, status(Some(LightingTarget::Processed)), vec![]),
+            (20, status(LightingTarget::Processed), vec![]),
         ],
     );
-    assert!(!m.state(t).enabled);
-    assert_eq!(m.state(t).lighting, Some(LightingTarget::Off));
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::Off);
     script(
         &mut m,
         t,
         vec![
-            (30, status(Some(LightingTarget::Off)), vec![]),
+            (30, status(LightingTarget::Off), vec![]),
             // The portal turned device-native lighting on.
-            (40, status(Some(LightingTarget::DeviceNative)), vec![]),
+            (40, status(LightingTarget::DeviceNative), vec![]),
         ],
     );
-    assert!(m.state(t).enabled);
-    assert_eq!(m.state(t).lighting, Some(LightingTarget::DeviceNative));
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::DeviceNative);
     script(
         &mut m,
         t,
@@ -183,17 +231,17 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
                 vec![lighting(LightingTarget::DeviceNative)],
             ),
             (60, Enabled(false), vec![lighting(LightingTarget::Off)]),
-            (2059, status(Some(LightingTarget::Processed)), vec![]),
+            (2059, status(LightingTarget::Processed), vec![]),
         ],
     );
-    assert_eq!(m.state(t).lighting, Some(LightingTarget::Off));
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::Off);
     // After the echo window the worker's report wins again.
     script(
         &mut m,
         t,
-        vec![(2060, status(Some(LightingTarget::Processed)), vec![])],
+        vec![(2060, status(LightingTarget::Processed), vec![])],
     );
-    assert_eq!(m.state(t).lighting, Some(LightingTarget::Processed));
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::Processed);
 }
 
 #[test]
@@ -209,7 +257,7 @@ fn full_remembers_the_target_for_the_next_worker() {
                 Pw(Active),
                 vec![spawn_full(LightingTarget::Processed), video(Video::Unknown)],
             ),
-            (5, status(Some(LightingTarget::DeviceNative)), vec![]),
+            (5, status(LightingTarget::DeviceNative), vec![]),
             (
                 6,
                 Pw(Asleep),
@@ -246,8 +294,7 @@ fn slim_needs_a_receiver_and_enable() {
             (4, Exited(Exit::Code(0)), vec![]),
         ],
     );
-    assert_eq!(m.state(t).worker, P::Stopped);
-    assert_eq!(m.state(t).lighting, None);
+    assert_eq!(slim_state(&m.state(t)), (false, &SlimWorker::Stopped));
     // Lighting is never sent to a slim worker.
     let mut m = slim(Preferences {
         autostart: true,
@@ -363,14 +410,18 @@ fn retrying_publishes_the_seconds_until_the_next_start() {
     // The third failure waits 4 s; the state carries what is left, rounded up.
     let effects = m.handle(Exited(Exit::Code(1)), t0 + Duration::from_millis(3_000));
     assert!(effects.contains(&Effect::Publish));
-    let at = |ms| m.state(t0 + Duration::from_millis(ms)).worker;
-    assert_eq!(at(3_000), P::Retrying { seconds: 4 });
-    assert_eq!(at(3_001), P::Retrying { seconds: 4 });
-    assert_eq!(at(4_000), P::Retrying { seconds: 3 });
-    assert_eq!(at(6_999), P::Retrying { seconds: 1 });
+    let at = |ms| {
+        full_state(&m.state(t0 + Duration::from_millis(ms)))
+            .1
+            .clone()
+    };
+    assert_eq!(at(3_000), FullWorker::Retrying { seconds: 4 });
+    assert_eq!(at(3_001), FullWorker::Retrying { seconds: 4 });
+    assert_eq!(at(4_000), FullWorker::Retrying { seconds: 3 });
+    assert_eq!(at(6_999), FullWorker::Retrying { seconds: 1 });
     assert_eq!(
         serde_json::to_value(m.state(t0 + Duration::from_millis(3_500))).unwrap()["worker"],
-        serde_json::json!({ "phase": "retrying", "seconds": 4 })
+        json!({ "phase": "retrying", "seconds": 4 })
     );
     // Time alone does not publish: the app counts down by itself.
     let effects = m.handle(Tick, t0 + Duration::from_millis(5_000));
@@ -405,7 +456,7 @@ fn a_healthy_minute_resets_backoff_and_clears_the_failure() {
     );
     assert!(m.state(t0).failure.is_some());
     for at in (14_000..=64_000).step_by(10_000) {
-        script(&mut m, t0, vec![(at, status(None), vec![])]);
+        script(&mut m, t0, vec![(at, status(LightingTarget::Off), vec![])]);
         script(&mut m, t0, vec![(at, Tick, vec![])]);
     }
     assert_eq!(m.state(t0).failure, None);
@@ -435,11 +486,11 @@ fn silence_is_a_hang_then_term_then_one_kill() {
                 Pw(Active),
                 vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
             ),
-            (10_000, status(None), vec![]),
+            (10_000, status(LightingTarget::Off), vec![]),
             (24_999, Tick, vec![]),
             (25_000, Tick, vec![Effect::Terminate]),
             // A late line from the stopping worker changes nothing.
-            (26_000, status(None), vec![]),
+            (26_000, status(LightingTarget::Off), vec![]),
             (32_999, Tick, vec![]),
             (33_000, Tick, vec![Effect::Kill]),
             (40_000, Tick, vec![]),
@@ -447,7 +498,7 @@ fn silence_is_a_hang_then_term_then_one_kill() {
         ],
     );
     let state = m.state(t0);
-    assert!(matches!(state.worker, P::Retrying { .. }));
+    assert!(matches!(full_state(&state).1, FullWorker::Retrying { .. }));
     assert_eq!(message(&state), Some("worker sent nothing for 15 s"));
     script(
         &mut m,
@@ -508,7 +559,7 @@ fn faults_broken_links_and_spawn_failures_retry() {
         ],
     );
     let state = m.state(t0);
-    assert!(matches!(state.worker, P::Retrying { .. }));
+    assert!(matches!(full_state(&state).1, FullWorker::Retrying { .. }));
     assert_eq!(
         message(&state),
         Some("cannot start the worker: no such file")
@@ -529,10 +580,10 @@ fn an_exit_keeps_the_workers_last_failure() {
             ),
             (
                 1,
-                Input::Worker(Event::Status(WorkerStatus {
-                    failure: Some(WorkerFailure::other("cannot listen on 0.0.0.0:8787")),
-                    ..WorkerStatus::default()
-                })),
+                full_status(FullStatus {
+                    failure: Some(WorkerFailure::other("output: refused")),
+                    ..full_report(LightingTarget::Processed)
+                }),
                 vec![],
             ),
             (2, Exited(Exit::Code(1)), vec![]),
@@ -540,8 +591,137 @@ fn an_exit_keeps_the_workers_last_failure() {
     );
     assert_eq!(
         message(&m.state(t0)),
+        Some("worker failed: output: refused")
+    );
+}
+
+/// A worker that fails says why before it exits, also before its first
+/// status; the cause wins over its last report, and the target it last
+/// reported stays the intent.
+#[test]
+fn an_exit_names_why_the_worker_failed() {
+    let (mut m, t0) = (full(), Instant::now());
+    let failed = |cause: &str| {
+        Input::Worker(Event::Failed {
+            cause: cause.into(),
+        })
+    };
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (1, failed("cannot listen on 0.0.0.0:8787"), vec![]),
+        ],
+    );
+    assert_eq!(message(&m.state(t0)), Some("cannot listen on 0.0.0.0:8787"));
+    script(&mut m, t0, vec![(2, Exited(Exit::Code(1)), vec![])]);
+    let state = m.state(t0);
+    assert_eq!(
+        message(&state),
         Some("worker failed: cannot listen on 0.0.0.0:8787")
     );
+    assert_eq!(kind(&state), Some(FailureKind::Other));
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                1_002,
+                Tick,
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (
+                1_003,
+                full_status(FullStatus {
+                    failure: Some(WorkerFailure::other("output: refused")),
+                    ..full_report(LightingTarget::DeviceNative)
+                }),
+                vec![],
+            ),
+            (1_004, failed("engine stopped"), vec![]),
+            (1_005, Exited(Exit::Code(1)), vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert_eq!(message(&state), Some("worker failed: engine stopped"));
+    assert_eq!(full_state(&state).0, LightingTarget::DeviceNative);
+    // The next worker starts without the old cause.
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                3_005,
+                Tick,
+                vec![
+                    spawn_full(LightingTarget::DeviceNative),
+                    video(Video::Unknown),
+                ],
+            ),
+            (3_006, Exited(Exit::Code(1)), vec![]),
+        ],
+    );
+    assert_eq!(message(&m.state(t0)), Some("worker failed"));
+}
+
+/// A status of the other package is a broken link, never guessed at: the
+/// worker is stopped as failed and nothing of the report is kept.
+#[test]
+fn the_other_packages_status_breaks_the_link() {
+    let (mut m, t0) = (full(), Instant::now());
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (
+                1,
+                slim_status(SlimStatus {
+                    capturing: true,
+                    ..SlimStatus::default()
+                }),
+                vec![Effect::Terminate],
+            ),
+            (2, Exited(Exit::Code(0)), vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert!(matches!(full_state(&state).1, FullWorker::Retrying { .. }));
+    assert!(
+        message(&state).is_some_and(|text| text.contains("other package")),
+        "{state:?}"
+    );
+
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (
+                1,
+                status(LightingTarget::Processed),
+                vec![Effect::Terminate],
+            ),
+        ],
+    );
+    assert_eq!(slim_state(&m.state(t0)), (true, &SlimWorker::Stopping));
 }
 
 #[test]
@@ -631,35 +811,88 @@ fn published_state_reflects_the_worker() {
     let (mut m, t0) = (full(), Instant::now());
     m.handle(Pw(Active), t0);
     m.handle(
-        Input::Worker(Event::Status(WorkerStatus {
+        full_status(FullStatus {
             capturing: true,
             fps: Some(30),
-            target: Some(LightingTarget::Processed),
+            target: LightingTarget::Processed,
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
-            encoding: None,
-            paused: false,
-        })),
+        }),
         t0,
     );
     let state = m.state(t0);
-    assert_eq!(state.flavor, crate::state::Flavor::Full);
-    assert!(state.capturing && state.enabled);
-    assert_eq!(state.portal.as_deref(), Some("http://10.0.0.2:8787/"));
+    assert_eq!(state.package.flavor(), crate::state::Flavor::Full);
     let json = serde_json::to_value(&state).unwrap();
-    assert_eq!(json["worker"], serde_json::json!({ "phase": "running" }));
-    assert_eq!(json["power"], "active");
-    assert_eq!(json["lighting"], "processed");
-    assert_eq!(json["failure"], Value::Null);
-    assert_eq!(json["fps"], 30);
+    assert_eq!(
+        json,
+        json!({
+            "flavor": "full",
+            "lighting": "processed",
+            "worker": {
+                "phase": "running",
+                "capturing": true,
+                "fps": 30,
+                "portal": "http://10.0.0.2:8787/",
+            },
+            "preferences": { "autostart": false, "instance": null },
+            "power": "active",
+            "video": "unknown",
+            "failure": null,
+            "log": [],
+        })
+    );
     m.handle(Exited(Exit::Code(1)), t0);
     let state = m.state(t0);
-    assert!(!state.capturing);
-    assert_eq!((state.portal, state.fps), (None, None));
+    assert!(matches!(full_state(&state).1, FullWorker::Retrying { .. }));
+    assert_eq!(full_state(&state).0, LightingTarget::Processed);
 }
 
-fn reported(status: WorkerStatus) -> Input {
-    Input::Worker(Event::Status(status))
+#[test]
+fn published_slim_state_has_only_its_own_fields() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    m.handle(Pw(Active), t0);
+    m.handle(
+        slim_status(SlimStatus {
+            capturing: true,
+            fps: Some(25),
+            encoding: Some(SlimEncoding::Raw),
+            paused: false,
+            failure: None,
+        }),
+        t0,
+    );
+    let json = serde_json::to_value(m.state(t0)).unwrap();
+    assert_eq!(json["flavor"], "slim");
+    assert_eq!(json["enabled"], true);
+    assert_eq!(
+        json["worker"],
+        json!({
+            "phase": "running",
+            "capturing": true,
+            "fps": 25,
+            "encoding": "raw",
+            "paused": false,
+        })
+    );
+    let mut fields: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        [
+            "enabled",
+            "failure",
+            "flavor",
+            "log",
+            "power",
+            "preferences",
+            "video",
+            "worker"
+        ]
+    );
 }
 
 #[test]
@@ -671,11 +904,11 @@ fn only_a_running_worker_is_capturing() {
         }),
         Instant::now(),
     );
-    let capturing = WorkerStatus {
+    let capturing = full_status(FullStatus {
         capturing: true,
-        target: Some(LightingTarget::Processed),
-        ..WorkerStatus::default()
-    };
+        portal: Some("http://10.0.0.2:8787/".into()),
+        ..full_report(LightingTarget::Processed)
+    });
     script(
         &mut m,
         t0,
@@ -685,28 +918,21 @@ fn only_a_running_worker_is_capturing() {
                 Pw(Active),
                 vec![spawn_full(LightingTarget::Processed), video(Video::Unknown)],
             ),
-            (1, reported(capturing.clone()), vec![]),
+            (1, capturing.clone(), vec![]),
         ],
     );
-    assert!(m.state(t0).capturing);
+    assert!(full_capturing(&m.state(t0)));
     script(
         &mut m,
         t0,
         vec![
             (2, Enabled(false), vec![lighting(LightingTarget::Off)]),
-            (
-                3,
-                reported(WorkerStatus {
-                    capturing: false,
-                    target: Some(LightingTarget::Off),
-                    ..WorkerStatus::default()
-                }),
-                vec![],
-            ),
+            (3, status(LightingTarget::Off), vec![]),
         ],
     );
     let state = m.state(t0);
-    assert!(!state.capturing && !state.enabled);
+    assert!(!full_capturing(&state));
+    assert_eq!(full_state(&state).0, LightingTarget::Off);
 
     // A worker being stopped, or a late line from it, never shows capturing.
     script(
@@ -714,8 +940,8 @@ fn only_a_running_worker_is_capturing() {
         t0,
         vec![(4, Enabled(true), vec![lighting(LightingTarget::Processed)])],
     );
-    script(&mut m, t0, vec![(5, reported(capturing.clone()), vec![])]);
-    assert!(m.state(t0).capturing);
+    script(&mut m, t0, vec![(5, capturing.clone(), vec![])]);
+    assert!(full_capturing(&m.state(t0)));
     script(
         &mut m,
         t0,
@@ -725,12 +951,16 @@ fn only_a_running_worker_is_capturing() {
                 Pw(Asleep),
                 vec![video(Video::Unavailable), Effect::Terminate],
             ),
-            (7, reported(capturing), vec![]),
+            (7, capturing, vec![]),
         ],
     );
-    let state = m.state(t0);
-    assert_eq!(state.worker, P::Stopping);
-    assert!(!state.capturing);
+    // The portal still answers until the worker exits.
+    assert_eq!(
+        full_state(&m.state(t0)).1,
+        &FullWorker::Stopping {
+            portal: Some("http://10.0.0.2:8787/".into())
+        }
+    );
 }
 
 #[test]
@@ -751,12 +981,12 @@ fn failures_carry_their_kind() {
             ),
             (
                 1,
-                reported(WorkerStatus {
+                slim_status(SlimStatus {
                     failure: Some(WorkerFailure::new(
                         FailureKind::Receiver,
                         "waiting for the receiver: refused",
                     )),
-                    ..WorkerStatus::default()
+                    ..SlimStatus::default()
                 }),
                 vec![],
             ),
@@ -775,12 +1005,12 @@ fn failures_carry_their_kind() {
         t0,
         vec![(
             1,
-            reported(WorkerStatus {
+            slim_status(SlimStatus {
                 failure: Some(WorkerFailure::new(
                     FailureKind::Version,
                     "waiting for the receiver: the capture stream versions differ",
                 )),
-                ..WorkerStatus::default()
+                ..SlimStatus::default()
             }),
             vec![],
         )],
@@ -792,19 +1022,19 @@ fn failures_carry_their_kind() {
         "version"
     );
 
-    // The worker's final status names the encoder; the exit keeps the kind.
+    // The worker's last status names the encoder; the exit keeps the kind.
     script(
         &mut m,
         t0,
         vec![
             (
                 2,
-                reported(WorkerStatus {
+                slim_status(SlimStatus {
                     failure: Some(WorkerFailure::new(
                         FailureKind::Encoder,
                         "hardware H.264 cannot start",
                     )),
-                    ..WorkerStatus::default()
+                    ..SlimStatus::default()
                 }),
                 vec![],
             ),
@@ -836,9 +1066,9 @@ fn failures_carry_their_kind() {
     let mut full = full();
     full.handle(Pw(Active), t0);
     full.handle(
-        reported(WorkerStatus {
+        full_status(FullStatus {
             failure: Some(WorkerFailure::other("x")),
-            ..WorkerStatus::default()
+            ..full_report(LightingTarget::Off)
         }),
         t0,
     );
@@ -872,18 +1102,30 @@ fn a_paused_receiver_is_published_without_a_failure() {
             ),
             (
                 1_002,
-                reported(WorkerStatus {
+                slim_status(SlimStatus {
                     paused: true,
-                    ..WorkerStatus::default()
+                    encoding: Some(SlimEncoding::H264Hardware),
+                    ..SlimStatus::default()
                 }),
                 vec![],
             ),
         ],
     );
     let state = m.state(t0);
-    assert!(state.paused && !state.capturing);
+    assert_eq!(
+        slim_state(&state).1,
+        &SlimWorker::Running {
+            capturing: false,
+            fps: None,
+            encoding: Some(SlimEncoding::H264Hardware),
+            paused: true,
+        }
+    );
     assert_eq!(state.failure, None);
-    assert_eq!(serde_json::to_value(m.state(t0)).unwrap()["paused"], true);
+    assert_eq!(
+        serde_json::to_value(m.state(t0)).unwrap()["worker"]["paused"],
+        true
+    );
     script(
         &mut m,
         t0,
@@ -893,7 +1135,11 @@ fn a_paused_receiver_is_published_without_a_failure() {
             vec![video(Video::Unavailable), Effect::Terminate],
         )],
     );
-    assert!(!m.state(t0).paused, "a worker being stopped is not paused");
+    assert_eq!(
+        slim_state(&m.state(t0)).1,
+        &SlimWorker::Stopping,
+        "a worker being stopped is not paused"
+    );
 }
 
 #[test]
@@ -919,7 +1165,7 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
                 vec![spawn_slim(&receiver()), video(Video::Unknown)],
             ),
             // Started but not yet streaming: the failure stays.
-            (1_002, reported(WorkerStatus::default()), vec![]),
+            (1_002, slim_status(SlimStatus::default()), vec![]),
         ],
     );
     assert_eq!(message(&m.state(t0)), Some("worker failed"));
@@ -928,10 +1174,10 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
         t0,
         vec![(
             2_000,
-            reported(WorkerStatus {
+            slim_status(SlimStatus {
                 capturing: true,
                 encoding: Some(SlimEncoding::H264Hardware),
-                ..WorkerStatus::default()
+                ..SlimStatus::default()
             }),
             vec![],
         )],
@@ -976,7 +1222,7 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
     script(
         &mut full,
         t0,
-        vec![(1_100, status(Some(LightingTarget::Off)), vec![])],
+        vec![(1_100, status(LightingTarget::Off), vec![])],
     );
     assert_eq!(full.state(t0).failure, None);
 }
@@ -1007,7 +1253,10 @@ fn a_preferences_change_during_backoff_retries_at_once_with_a_fresh_delay() {
     }
     steps.push((now + 1, Exited(Exit::Code(1)), vec![]));
     script(&mut m, t0, steps);
-    assert!(matches!(m.state(t0).worker, P::Retrying { .. }));
+    assert!(matches!(
+        slim_state(&m.state(t0)).1,
+        SlimWorker::Retrying { .. }
+    ));
 
     // The new settings start now, not after the 16 s backoff.
     script(

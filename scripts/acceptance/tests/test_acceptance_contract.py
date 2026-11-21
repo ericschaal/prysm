@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator
 from enum import StrEnum
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 import unittest
 from unittest import mock
 
@@ -88,12 +88,15 @@ class Fields(unittest.TestCase):
         self.assertLessEqual(read(webos.LunaReply), reply)
         self.assertLessEqual(read(webos.Preferences), set(names(LUNA, LUNA['Preferences'])))
         self.assertLessEqual(read(tv.TvFailure), set(names(LUNA, LUNA['WorkerFailure'])))
+        workers = set(names(LUNA, LUNA['FullWorker'])) | set(names(LUNA, LUNA['SlimWorker']))
+        for kind in (tv.StoppedWorker, tv.RunningWorker, tv.StoppingWorker, tv.RetryingWorker):
+            with self.subTest(kind.__name__):
+                self.assertLessEqual(read(kind), workers)
 
     def test_the_closed_sets(self) -> None:
         sets: tuple[tuple[type[StrEnum], Any, str], ...] = (
             (Target, APPLICATION, 'LightingTarget'),
             (Target, LUNA, 'LightingTarget'),
-            (Flavour, LUNA, 'Flavor'),
             (Encoding, LUNA, 'SlimEncoding'),
             (Power, LUNA, 'Power'),
             (Video, LUNA, 'Video'),
@@ -102,6 +105,10 @@ class Fields(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual({member.value for member in kind}, values(schemas, name))
         self.assertEqual({member.value for member in SessionState}, tags(APPLICATION, 'Session', 'state'))
+        self.assertEqual({member.value for member in Flavour}, tags(LUNA, 'Package', 'flavor'))
+        phases = {get_args(kind.__annotations__['phase'])[0] for kind in get_args(tv.Worker)}
+        self.assertEqual(phases, tags(LUNA, 'FullWorker', 'phase'))
+        self.assertEqual(phases, tags(LUNA, 'SlimWorker', 'phase'))
 
     def test_the_calibration_patterns_eyes_shows(self) -> None:
         self.assertLessEqual(set(stage_eyes.PATTERNS), values(APPLICATION, 'Pattern'))
@@ -131,11 +138,27 @@ class Examples(unittest.TestCase):
             self.assertIsInstance(candidate['label'], str)
 
     def test_luna_replies(self) -> None:
-        for state in FIXTURES['luna/StateReply']:
+        # The replies, and every state: each package in each worker phase.
+        for state in [*FIXTURES['luna/StateReply'], *FIXTURES['luna/State']]:
             reply = webos.luna_reply(Result(0, 'garbage\n' + json.dumps(state) + '\n'))
             self.assertIn(reply['flavor'], tuple(Flavour))
-            self.assertIsInstance(reply['worker']['phase'], str)
-            self.assertIn(reply.get('lighting'), (None, *Target))
+            self.assertIn(reply['worker']['phase'], ('stopped', 'running', 'stopping', 'retrying'))
+            # Each package's intent: full its lighting target, slim whether enabled.
+            if reply['flavor'] == Flavour.FULL:
+                self.assertIn(reply.get('lighting'), tuple(Target))
+                self.assertNotIn('enabled', reply)
+            else:
+                self.assertIsInstance(reply.get('enabled'), bool)
+                self.assertNotIn('lighting', reply)
+            # The report is read through the accessors, whatever the phase.
+            self.assertIsInstance(tv.capturing(reply), bool)
+            if reply['worker']['phase'] != 'running':
+                self.assertEqual((tv.capturing(reply), tv.fps(reply)), (False, None))
+            # Full reports its portal while running or stopping; the slim example runs paused.
+            shown = (reply['flavor'], reply['worker']['phase'])
+            portal = 'http://192.168.1.5:8787/' if shown in {('full', 'running'), ('full', 'stopping')} else None
+            self.assertEqual(tv.portal(reply), portal, shown)
+            self.assertEqual(tv.paused(reply), shown == ('slim', 'running'), shown)
 
 
 def sent(call: Callable[[prysm_api.Prysm], object]) -> Any:

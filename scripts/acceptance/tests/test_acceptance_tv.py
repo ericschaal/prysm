@@ -45,12 +45,17 @@ from prysm_acceptance.web import JsonObject
 
 HOST = 'root@tv.example'
 STATE = (
-    '{"returnValue":true,"flavor":"full","preferences":{"autostart":false,"instance":null},"enabled":true,'
-    '"lighting":"processed","power":"active","video":"available","worker":{"phase":"running"},'
-    '"capturing":true,"fps":30,"portal":"http://192.0.2.50:8787","failure":null,"encoding":null,'
-    '"paused":false,"log":["prysm-webos: portal on 0.0.0.0:8787"]}'
+    '{"returnValue":true,"flavor":"full","preferences":{"autostart":false,"instance":null},'
+    '"lighting":"processed","power":"active","video":"available",'
+    '"worker":{"phase":"running","capturing":true,"fps":30,"portal":"http://192.0.2.50:8787"},'
+    '"failure":null,"log":["prysm-webos: portal on 0.0.0.0:8787"]}'
 )
-SLIM = STATE.replace('"flavor":"full"', '"flavor":"slim"').replace('"portal":"http://192.0.2.50:8787"', '"portal":null')
+SLIM = (
+    '{"returnValue":true,"flavor":"slim","preferences":{"autostart":false,"instance":null},'
+    '"enabled":true,"power":"active","video":"available",'
+    '"worker":{"phase":"running","capturing":true,"fps":30,"encoding":null,"paused":false},'
+    '"failure":null,"log":[]}'
+)
 SLIM_PREFERENCES: JsonObject = {'autostart': True, 'instance': 'http://192.0.2.20:8787'}
 NO_SERVICE = Result(1, '', 'Service does not exist: io.prysm.tv.service')
 ABSENT = ''.join(f'absent {path}\n' for path in (*commands.INSTALLED_PATHS, commands.DATA_DIR, commands.STAGING))
@@ -201,6 +206,25 @@ class TheTv(unittest.TestCase):
         self.assertEqual(recorded(('tv.get-state', ok(STATE))).portal().base, 'http://192.0.2.50:8787')
         with self.assertRaisesRegex(Failed, 'no portal address'):
             recorded(('tv.get-state', ok(SLIM))).portal()
+        retrying = STATE.replace(
+            '"worker":{"phase":"running","capturing":true,"fps":30,"portal":"http://192.0.2.50:8787"}',
+            '"worker":{"phase":"retrying","seconds":4}',
+        )
+        with self.assertRaisesRegex(Failed, 'no portal address'):
+            recorded(('tv.get-state', ok(retrying))).portal()
+
+    def test_the_state_is_read_in_its_packages_terms(self) -> None:
+        full = webos.luna_reply(ok(STATE))
+        slim = webos.luna_reply(ok(SLIM))
+        self.assertEqual((tv.capturing(full), tv.fps(full), tv.portal(full)), (True, 30, 'http://192.0.2.50:8787'))
+        self.assertEqual((tv.paused(full), tv.encoding(full)), (False, None))
+        paused = webos.luna_reply(
+            ok(SLIM.replace('"capturing":true', '"capturing":false').replace('"paused":false', '"paused":true'))
+        )
+        self.assertEqual((tv.capturing(paused), tv.paused(paused), tv.portal(slim)), (False, True, None))
+        running = '{"phase":"running","capturing":true,"fps":30,"encoding":null,"paused":false}'
+        stopping = webos.luna_reply(ok(SLIM.replace(running, '{"phase":"stopping"}')))
+        self.assertEqual((tv.capturing(stopping), tv.fps(stopping), tv.running(stopping)), (False, None, None))
 
     def test_worker_load_from_proc(self) -> None:
         reading = (
@@ -452,7 +476,7 @@ def a_backup(**values: Any) -> Backup:
         'taken': '2026-11-17T10:00:00+00:00',
         'found': ['x'],
         'portal': None,
-        'luna': {'flavor': 'slim', 'preferences': SLIM_PREFERENCES, 'enabled': True, 'lighting': None},
+        'luna': {'flavor': 'slim', 'preferences': SLIM_PREFERENCES, 'enabled': True},
         'files': {'tv.json': json.dumps(SLIM_PREFERENCES)},
     }
     return {**backup, **values}  # pyright: ignore[reportReturnType]
@@ -571,6 +595,11 @@ class Replace(unittest.TestCase):
             (backup['portal'], untyped(backup['luna'])['preferences'], backup['files']['resume.json']),
             (None, {'autostart': False, 'instance': None}, '{"boot":"b","intent":"processed"}'),
         )
+        # The slim package's intent is `enabled`; it has no lighting of its own.
+        self.assertEqual(
+            backup['luna'],
+            {'flavor': 'slim', 'preferences': {'autostart': False, 'instance': None}, 'enabled': True},
+        )
 
 
 class Lighting(Existing):
@@ -584,7 +613,7 @@ class Lighting(Existing):
         self.lights.ddp_from, self.lights.ddp_at = sender, sys.float_info.max
 
     def get_state(self) -> JsonObject:
-        return {'portal': self.portal}
+        return {'worker': {'phase': 'running', 'capturing': True, 'fps': 30, 'portal': self.portal}}
 
     def backup(self, found: list[str]) -> Backup:
         self.done.append(f'backup, WLED live {untyped(self.lights.si())["info"]["live"]}')
@@ -645,14 +674,14 @@ class Restore(unittest.TestCase):
 
     def test_a_slim_backup_not_enabled_leaves_it(self) -> None:
         found = recorded(('tv.get-state', ok(SLIM)), ('tv.set-preferences', ok('{"returnValue":true}')))
-        luna = {'flavor': 'slim', 'preferences': SLIM_PREFERENCES, 'enabled': False, 'lighting': None}
+        luna = {'flavor': 'slim', 'preferences': SLIM_PREFERENCES, 'enabled': False}
         self.assertEqual(found.restore(a_backup(luna=luna))[-1], 'lighting: not enabled, left as it is')
         self.assertNotIn('tv.set-enabled', calls(found))
 
     def test_a_full_backup_puts_the_lighting_target_back_only_when_it_was_on(self) -> None:
         prysm = FakePrysm()
         self.addCleanup(prysm.close)
-        luna = {'flavor': 'full', 'preferences': {'autostart': False, 'instance': None}, 'enabled': True}
+        luna = {'flavor': 'full', 'preferences': {'autostart': False, 'instance': None}, 'lighting': 'processed'}
         for target, sent, said in (
             (prysm_api.Target.PROCESSED, ['processed'], 'lighting processed, as backed up'),
             (prysm_api.Target.OFF, [], 'lighting was off: left as it is'),

@@ -34,7 +34,7 @@ fn exit_within(worker: &mut ProcessWorker, limit: Duration) -> Option<Exit> {
 #[test]
 fn events_logs_commands_and_exit_code() {
     let mut worker = sh(
-        r#"echo '{"type":"status","capturing":true,"target":"off","portal":null,"failure":null,"paused":false}'
+        r#"echo '{"type":"status","flavor":"full","capturing":true,"fps":null,"target":"off","portal":null,"failure":null}'
 echo started >&2
 read command
 echo "got $command" >&2
@@ -43,11 +43,11 @@ exit 3"#,
     worker.send(&Command::ResetVideo {}).unwrap();
     let seen = collect(&mut worker, |seen| seen.len() >= 3);
     // stdout and stderr are read on separate threads: no order between them.
-    assert!(
-        seen.iter().any(
-            |output| matches!(output, Output::Event(Event::Status(status)) if status.capturing)
-        )
-    );
+    assert!(seen.iter().any(|output| matches!(
+        output,
+        Output::Event(Event::Status(prysm_webos_link::WorkerStatus::Full(status)))
+            if status.capturing
+    )));
     assert!(seen.contains(&Output::Log("started".into())));
     assert!(seen.contains(&Output::Log(r#"got {"type":"reset_video"}"#.into())));
     assert_eq!(

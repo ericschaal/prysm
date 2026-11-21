@@ -17,12 +17,12 @@ use prysm_protocol::{
     SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_runtime::{NullOutput, NullSettings};
-use prysm_webos_link::{FailureKind, Video, WorkerFailure};
+use prysm_webos_link::{FailureKind, SlimEncoding, Video, WorkerFailure};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
     GetStateRequest, SetEnabledRequest, UninstallRequest, state_reply,
 };
-use prysm_webos_service::state::{Flavor, Phase, Power, State as TvState};
+use prysm_webos_service::state::{FullWorker, Package, Power, SlimWorker, State as TvState};
 use serde_json::{Value, json};
 
 /// A fixture key `module/Name` names a schema of one document; a plain
@@ -38,51 +38,82 @@ pub fn serialized() -> Value {
     Value::Object(fixtures)
 }
 
-/// The TV supervisor's Luna values, one representative state per flavor.
+/// The TV supervisor's Luna values: a state for each package in each worker
+/// phase.
 fn luna() -> Value {
     let slim_preferences = Preferences {
         autostart: true,
         instance: Some("http://192.168.1.20:8787".parse().expect("a Prysm address")),
     };
-    let full = TvState {
-        flavor: Flavor::Full,
+    let portal = || Some("http://192.168.1.5:8787/".to_owned());
+    let full = |lighting, worker| Package::Full { lighting, worker };
+    let slim = |enabled, worker| Package::Slim { enabled, worker };
+    let running = full(
+        LightingTarget::Processed,
+        FullWorker::Running {
+            capturing: true,
+            fps: Some(30),
+            portal: portal(),
+        },
+    );
+    let full_states = [
+        running.clone(),
+        full(LightingTarget::Off, FullWorker::Stopped),
+        full(
+            LightingTarget::DeviceNative,
+            FullWorker::Stopping { portal: portal() },
+        ),
+        full(
+            LightingTarget::Processed,
+            FullWorker::Retrying { seconds: 2 },
+        ),
+    ]
+    .map(|package| TvState {
+        package,
         preferences: Preferences::default(),
-        enabled: true,
-        lighting: Some(LightingTarget::Processed),
         power: Power::Active,
         video: Video::Available,
-        worker: Phase::Running,
-        capturing: true,
-        fps: Some(30),
-        portal: Some("http://192.168.1.5:8787/".into()),
         failure: None,
-        encoding: None,
-        paused: false,
         log: vec!["prysm-webos: portal on 0.0.0.0:8787".into()],
-    };
-    let slim = TvState {
-        flavor: Flavor::Slim,
+    });
+    let encoder = WorkerFailure::new(
+        FailureKind::Encoder,
+        "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable",
+    );
+    let slim_states = [
+        (
+            slim(true, SlimWorker::Retrying { seconds: 4 }),
+            Some(encoder),
+        ),
+        (
+            slim(
+                true,
+                SlimWorker::Running {
+                    capturing: false,
+                    fps: None,
+                    encoding: Some(SlimEncoding::H264Hardware),
+                    paused: true,
+                },
+            ),
+            None,
+        ),
+        (slim(false, SlimWorker::Stopped), None),
+        (slim(false, SlimWorker::Stopping), None),
+    ]
+    .map(|(package, failure)| TvState {
+        package,
         preferences: slim_preferences.clone(),
-        enabled: true,
-        lighting: None,
         power: Power::ScreenSaver,
         video: Video::Unknown,
-        worker: Phase::Retrying { seconds: 4 },
-        capturing: false,
-        fps: None,
-        portal: None,
-        failure: Some(WorkerFailure::new(
-            FailureKind::Encoder,
-            "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable",
-        )),
-        encoding: None,
-        paused: false,
+        failure,
         log: Vec::new(),
-    };
+    });
+    let (full, slim) = (&full_states[0], &slim_states[0]);
+    let states: Vec<&TvState> = full_states.iter().chain(&slim_states).collect();
     json!({
-        "luna/State": [&full, &slim],
+        "luna/State": states,
         "luna/Preferences": [Preferences::default(), slim_preferences],
-        "luna/StateReply": [state_reply(&full, Some(true)), state_reply(&slim, None)],
+        "luna/StateReply": [state_reply(full, Some(true)), state_reply(slim, None)],
         "luna/GetStateRequest": [GetStateRequest { subscribe: true }],
         "luna/SetEnabledRequest": [SetEnabledRequest { enabled: false }],
         "luna/UninstallRequest": [UninstallRequest {}],

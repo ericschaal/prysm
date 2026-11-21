@@ -48,6 +48,7 @@ fn reports_status_and_stops_on_stdin_eof() {
     events.read_line(&mut line).unwrap();
     let event: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(event["type"], "status", "{line}");
+    assert_eq!(event["flavor"], "full", "{line}");
     assert_eq!(event["target"], "off");
     assert_eq!(event["capturing"], false);
     let portal = event["portal"].as_str().unwrap();

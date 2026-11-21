@@ -9,7 +9,7 @@ use prysm_ports::{Error, FrameSink, Result, chain};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{
-    Command, Event, FailureKind, HEARTBEAT, SlimEncoding, WorkerFailure, WorkerStatus,
+    Command, Event, FailureKind, HEARTBEAT, SlimEncoding, SlimStatus, WorkerFailure, WorkerStatus,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -96,7 +96,7 @@ impl Flow {
 
     /// The status fields the uplink owns, with `fps` frames sent per second
     /// reported while sending. A paused stream is not a failure.
-    fn status(&self, fps: u16) -> WorkerStatus {
+    fn status(&self, fps: u16) -> SlimStatus {
         let (fps, encoding, paused, failure) = match &self.lock().uplink {
             UplinkState::Starting => (None, None, false, None),
             UplinkState::Sending(encoding) => (Some(fps), Some(*encoding), false, None),
@@ -120,12 +120,12 @@ impl Flow {
                 Some(WorkerFailure::new(FailureKind::Encoder, why.clone())),
             ),
         };
-        WorkerStatus {
+        SlimStatus {
             fps,
             failure,
             encoding,
             paused,
-            ..WorkerStatus::default()
+            ..SlimStatus::default()
         }
     }
 
@@ -388,8 +388,8 @@ impl ForwarderLink {
             stop,
         } = self.link;
         let mut counted = self.flow.sent();
-        let mut status = WorkerStatus::default();
-        events.send(&Event::Status(status.clone()));
+        let mut status = SlimStatus::default();
+        events.send(&report(&status));
         let mut beat = TokioInstant::now() + self.heartbeat;
         let mut sample = TokioInstant::now() + self.sample;
         loop {
@@ -407,24 +407,28 @@ impl ForwarderLink {
                 () = sleep_until(sample) => {
                     sample = TokioInstant::now() + self.sample;
                     let now = self.flow.sent();
-                    let next = WorkerStatus {
+                    let next = SlimStatus {
                         capturing: now != counted,
                         ..self.flow.status(rate(now - counted, self.sample))
                     };
                     counted = now;
                     if next != status {
                         status = next;
-                        events.send(&Event::Status(status.clone()));
+                        events.send(&report(&status));
                         beat = TokioInstant::now() + self.heartbeat;
                     }
                 }
                 () = sleep_until(beat) => {
-                    events.send(&Event::Status(status.clone()));
+                    events.send(&report(&status));
                     beat = TokioInstant::now() + self.heartbeat;
                 }
             }
         }
     }
+}
+
+fn report(status: &SlimStatus) -> Event {
+    Event::Status(WorkerStatus::Slim(status.clone()))
 }
 
 /// `frames` over `window`, in whole frames per second.

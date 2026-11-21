@@ -385,10 +385,10 @@ def test_fps(cell: TvCell, config: Config, screen: Screen, prysm: Prysm, record:
 def test_capturing(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> None:
     """In the video state, the TV says it captures: getState capturing with a frame rate."""
     reached = in_state(screen, Shown.VIDEO, prysm, video_section(cell))
-    state = tv.wait_state(screen.tv.get_state, lambda s: s['capturing'] and (s.get('fps') or 0) > 0, 10)
+    state = tv.wait_state(screen.tv.get_state, lambda s: tv.capturing(s) and (tv.fps(s) or 0) > 0, 10)
     if state is None:
         raise Failed('getState does not say capturing', {'state': reached, 'tv': screen.tv.get_state()})
-    record(f'capturing at {state.get("fps")} fps; {described(reached)}', {'state': reached, 'tv': state})
+    record(f'capturing at {tv.fps(state)} fps; {described(reached)}', {'state': reached, 'tv': state})
 
 
 @only(Flavour.FULL)
@@ -472,7 +472,7 @@ def test_encodings(cell: TvCell, config: Config, screen: Screen, prysm: Prysm, r
         measured = rates(prysm.sample(config.checks.seconds))
         measured['tv_cpu'] = tv.cpu_percent(first, screen.tv.sample_worker())
         state = screen.tv.get_state() or tv.State()
-        measured['tv_encoding'] = state.get('encoding')
+        measured['tv_encoding'] = tv.encoding(state)
         measured['tv_power'], measured['tv_video'] = state.get('power'), state.get('video')
         measured['source'] = prysm.source_size()
         results[encoding] = measured
@@ -500,11 +500,11 @@ def test_pause_resume(cell: TvCell, screen: Screen, prysm: Prysm, record: Record
     reached = in_state(screen, Shown.VIDEO, prysm, video_section(cell))
     prysm.set_target(Target.OFF)
     start = time.monotonic()
-    paused = tv.wait_state(screen.tv.get_state, lambda s: s['paused'] and not s['capturing'], 15)
+    paused = tv.wait_state(screen.tv.get_state, lambda s: tv.paused(s) and not tv.capturing(s), 15)
     paused_after = round(time.monotonic() - start, 1)
     prysm.set_target(Target.PROCESSED)
     start = time.monotonic()
-    resumed = tv.wait_state(screen.tv.get_state, lambda s: s['capturing'] and not s['paused'], 20)
+    resumed = tv.wait_state(screen.tv.get_state, lambda s: tv.capturing(s) and not tv.paused(s), 20)
     evidence: dict[str, object] = {
         'state': reached,
         'paused': paused,
@@ -593,7 +593,7 @@ def _quiet(prysm: Prysm, found: Tv, seconds: float) -> dict[str, object]:
                 'input': state.get('input'),
                 'failure': state.get('failure'),
                 'tv_failure': tv_state.get('failure'),
-                'tv_capturing': tv_state.get('capturing'),
+                'tv_capturing': tv.capturing(tv_state),
             }
         )
         time.sleep(1)
@@ -675,7 +675,7 @@ def test_standby(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> 
     tell_person('waiting until the worker runs and captures again (up to 90 s)')
     awake = tv.wait_state(
         screen.tv.get_state,
-        lambda s: s['power'] == Power.ACTIVE and s['worker']['phase'] == 'running' and s['capturing'],
+        lambda s: s['power'] == Power.ACTIVE and tv.capturing(s),
         90,
         every=3,
     )

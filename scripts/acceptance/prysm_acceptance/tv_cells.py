@@ -300,7 +300,7 @@ def clear(found: WebosTv, prysm: list[str], lights: Wled, path: Path, warn: Call
     every cell."""
     sender = lights.si()['info']
     if sender.get('live'):
-        portal = (found.get_state() or LunaReply()).get('portal')
+        portal = tv.portal(found.get_state() or LunaReply())
         if not portal or urlsplit(portal).hostname != sender.get('lip'):
             raise Failed(host_cells.driven(sender.get('lip')))
     done = installed.replace(found, prysm, path, warn)

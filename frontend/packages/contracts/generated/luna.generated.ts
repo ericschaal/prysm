@@ -25,31 +25,28 @@ export interface components {
          * @enum {string}
          */
         FailureKind: "encoder" | "receiver" | "version" | "other";
-        /**
-         * @description Which package this supervisor belongs to.
-         * @enum {string}
-         */
-        Flavor: "full" | "slim";
-        /** @description `getState` request. */
-        GetStateRequest: {
-            /** @description Keep sending the state on every change. */
-            subscribe?: boolean;
-        };
-        /**
-         * @description What the user wants the LEDs to do.
-         * @enum {string}
-         */
-        LightingTarget: "off" | "processed" | "device_native";
-        /** @description The worker process, as `{ "phase": … }`. */
-        Phase: {
+        /** @description The full package's worker process, as `{ "phase": … }`. */
+        FullWorker: {
             /** @enum {string} */
             phase: "stopped";
         } | {
+            /** @description Lighting runs and frames arrive (false while it waits for video). */
+            capturing: boolean;
+            /**
+             * Format: int32
+             * @description Frames per second over about the last second, rounded, while
+             *     lighting runs; 0 while it waits for frames.
+             */
+            fps?: number | null;
             /** @enum {string} */
             phase: "running";
+            /** @description The portal's LAN address once the worker reported it. */
+            portal?: string | null;
         } | {
             /** @enum {string} */
             phase: "stopping";
+            /** @description The portal's LAN address the worker last reported. */
+            portal?: string | null;
         } | {
             /** @enum {string} */
             phase: "retrying";
@@ -60,6 +57,33 @@ export interface components {
              *     it; no clock is shared.
              */
             seconds: number;
+        };
+        /** @description `getState` request. */
+        GetStateRequest: {
+            /** @description Keep sending the state on every change. */
+            subscribe?: boolean;
+        };
+        /**
+         * @description What the user wants the LEDs to do.
+         * @enum {string}
+         */
+        LightingTarget: "off" | "processed" | "device_native";
+        /**
+         * @description The installed package (both install as `io.prysm.tv`), what the user asked
+         *     of it and its worker process, as `{ "flavor": … }`.
+         */
+        Package: {
+            /** @enum {string} */
+            flavor: "full";
+            /** @description The engine's target, including changes made in the portal. */
+            lighting: components["schemas"]["LightingTarget"];
+            worker: components["schemas"]["FullWorker"];
+        } | {
+            /** @description Frames should flow to the receiver. */
+            enabled: boolean;
+            /** @enum {string} */
+            flavor: "slim";
+            worker: components["schemas"]["SlimWorker"];
         };
         /**
          * @description TV power as `com.webos.service.tvpower` reports it.
@@ -104,46 +128,54 @@ export interface components {
          * @enum {string}
          */
         SlimEncoding: "h264_hardware" | "h264_software" | "raw";
-        /**
-         * @description The `getState` reply and subscription payload (plus LS2's `returnValue`).
-         *     Fields marked "Full only" are `null` in the slim package.
-         */
-        State: {
-            /**
-             * @description Frames are flowing. Full: lighting runs and frames arrive (false
-             *     while it waits for video). Slim: frames were sent in the last second.
-             *     Always false unless `worker` is `running`.
-             */
+        /** @description The slim package's worker process, as `{ "phase": … }`. */
+        SlimWorker: {
+            /** @enum {string} */
+            phase: "stopped";
+        } | {
+            /** @description Frames were sent in the last second. */
             capturing: boolean;
-            /** @description Slim: frames should flow. Full: lighting is not off. */
-            enabled: boolean;
             encoding?: components["schemas"]["SlimEncoding"] | null;
-            failure?: components["schemas"]["WorkerFailure"] | null;
-            /** @description The installed package; both install as `io.prysm.tv`. */
-            flavor: components["schemas"]["Flavor"];
             /**
              * Format: int32
-             * @description Frames per second over about the last second, rounded, while the
-             *     worker measures them (full: lighting runs; slim: connected and
-             *     sending); 0 while it waits for frames. Always null unless `worker` is
-             *     `running`.
+             * @description Frames sent per second over about the last second, rounded, while
+             *     connected and sending; 0 while it waits for frames.
              */
             fps?: number | null;
-            lighting?: components["schemas"]["LightingTarget"] | null;
-            /** @description The latest worker stderr lines, oldest first (at most 20). */
-            log: string[];
             /**
-             * @description Slim only: the receiver paused the stream because its lighting is
-             *     off; the TV capture is stopped until the receiver asks again. Not a
-             *     failure. Always false unless `worker` is `running`.
+             * @description The receiver paused the stream because its lighting is off; the
+             *     TV capture is stopped until the receiver asks again. Not a
+             *     failure.
              */
             paused: boolean;
-            /** @description Full only: the portal's LAN address once the worker reported it. */
-            portal?: string | null;
+            /** @enum {string} */
+            phase: "running";
+        } | {
+            /** @enum {string} */
+            phase: "stopping";
+        } | {
+            /** @enum {string} */
+            phase: "retrying";
+            /**
+             * Format: int32
+             * @description Whole seconds until the next start, rounded up, when this state
+             *     was sent (at least 1). The app counts down from when it received
+             *     it; no clock is shared.
+             */
+            seconds: number;
+        };
+        /**
+         * @description The `getState` reply and subscription payload (plus LS2's `returnValue`):
+         *     the fields both packages have, and the installed package's own
+         *     ([`Package`], tagged by `flavor`).
+         */
+        State: components["schemas"]["Package"] & {
+            failure?: components["schemas"]["WorkerFailure"] | null;
+            /** @description The latest worker stderr lines, oldest first (at most 20). */
+            log: string[];
             power: components["schemas"]["Power"];
             preferences: components["schemas"]["Preferences"];
             video: components["schemas"]["Video"];
-            worker: components["schemas"]["Phase"];
         };
         /** @description A successful state reply: [`State`] with LS2's `returnValue`. */
         StateReply: components["schemas"]["State"] & {
@@ -175,14 +207,15 @@ export interface components {
 export type DoneReply = components['schemas']['DoneReply'];
 export type ErrorReply = components['schemas']['ErrorReply'];
 export type FailureKind = components['schemas']['FailureKind'];
-export type Flavor = components['schemas']['Flavor'];
+export type FullWorker = components['schemas']['FullWorker'];
 export type GetStateRequest = components['schemas']['GetStateRequest'];
 export type LightingTarget = components['schemas']['LightingTarget'];
-export type Phase = components['schemas']['Phase'];
+export type Package = components['schemas']['Package'];
 export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];
 export type SetEnabledRequest = components['schemas']['SetEnabledRequest'];
 export type SlimEncoding = components['schemas']['SlimEncoding'];
+export type SlimWorker = components['schemas']['SlimWorker'];
 export type State = components['schemas']['State'];
 export type StateReply = components['schemas']['StateReply'];
 export type UninstallRequest = components['schemas']['UninstallRequest'];

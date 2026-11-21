@@ -220,7 +220,14 @@ function manualBridge() {
   };
   return { factory, channels };
 }
+/** The full package's state as Rust serializes it (lighting on, capturing). */
 const state = (change = {}) => ({ ...fixtures['luna/State'][0], ...change });
+/**
+ * A state of `flavor` as the supervisor publishes it, from its facts (see
+ * testkit/luna.ts): only that package's keys are accepted.
+ */
+const tvState = (flavor, facts = {}, preferences) =>
+  fakeTvSupervisor({ flavor, preferences, state: facts }).state();
 
 test('generated Rust states are accepted; contract violations are not', () => {
   for (const value of fixtures['luna/State'])
@@ -235,9 +242,39 @@ test('generated Rust states are accepted; contract violations are not', () => {
   assert(!isState({ ...state(), failure: 'x' }), 'a failure has a kind');
   assert(isState({ ...state(), failure: { kind: 'receiver', message: 'x' } }));
   assert(!isState({ ...state(), failure: { kind: 'later', message: 'x' } }));
-  assert(!isState({ ...state(), fps: '30' }));
+  assert(!isState({ ...state(), worker: { ...state().worker, fps: '30' } }));
   assert(!isState({ ...state(), log: [1] }));
   assert(!isState(null));
+  // Each package has its own fields: full its lighting, slim `enabled` and
+  // a worker that reports its stream.
+  assert(!isState({ ...state(), lighting: null }), 'full has a lighting');
+  assert(!isState({ ...state(), flavor: 'slim' }), 'slim says if enabled');
+  const slim = fixtures['luna/State'].find((value) => value.flavor === 'slim');
+  assert(!isState({ ...slim, flavor: 'full' }), 'full has no `enabled`');
+  assert(
+    !isState({
+      ...slim,
+      worker: { phase: 'running', capturing: true, fps: 30 },
+    }),
+    'a running slim worker says if it is paused',
+  );
+  assert(
+    !isState({
+      ...slim,
+      worker: {
+        phase: 'running',
+        capturing: true,
+        paused: false,
+        encoding: 'h265',
+      },
+    }),
+    'an encoding is one of the slim encodings',
+  );
+  assert(
+    isState(tvState('slim', { worker: { phase: 'running' } })) &&
+      isState(tvState('full', { worker: { phase: 'stopping' } })),
+    'the fake supervisor publishes valid states',
+  );
 });
 
 test('the state subscription retries after unsubscribed, malformed and refused replies', (t) => {
@@ -271,12 +308,15 @@ test('the state subscription retries after unsubscribed, malformed and refused r
   bridge.channels[3].reply({
     returnValue: true,
     subscribed: true,
-    ...state({ enabled: false }),
+    ...state({ lighting: 'off' }),
   });
-  bridge.channels[3].reply({ returnValue: true, ...state({ enabled: true }) });
+  bridge.channels[3].reply({
+    returnValue: true,
+    ...state({ lighting: 'processed' }),
+  });
   assert.deepEqual(
-    events.slice(-2).map((event) => event.online && event.state.enabled),
-    [false, true],
+    events.slice(-2).map((event) => event.online && event.state.lighting),
+    ['off', 'processed'],
   );
   assert.equal('returnValue' in events.at(-1).state, false);
   bridge.channels[3].reply({
@@ -318,8 +358,8 @@ test('a silent service times out after 30 s; late replies are ignored', async (t
   const again = service.setEnabled(true);
   bridge.channels
     .at(-1)
-    .reply({ returnValue: true, ...state({ enabled: true }) });
-  assert.equal((await again).enabled, true);
+    .reply({ returnValue: true, ...state({ lighting: 'processed' }) });
+  assert.equal((await again).lighting, 'processed');
 });
 
 test('commands carry the contract payloads and fail with typed errors', async () => {
@@ -430,20 +470,12 @@ test('status card covers the supervisor states for both packages', () => {
   const slim = (
     change = {},
     prefs = { instance: 'http://192.168.1.20:8787' },
-  ) => ({
-    ...state(),
-    flavor: 'slim',
-    lighting: null,
-    portal: null,
-    preferences: prefs,
-    enabled: true,
-    worker: { phase: 'running' },
-    power: 'active',
-    video: 'available',
-    capturing: false,
-    failure: null,
-    ...change,
-  });
+  ) =>
+    tvState(
+      'slim',
+      { enabled: true, worker: { phase: 'running' }, ...change },
+      prefs,
+    );
   const draft = (value = {}) =>
     completePreferences({ instance: 'http://192.168.1.20:8787', ...value });
   const title = (online, value, d = draft()) =>
@@ -525,38 +557,24 @@ test('status card covers the supervisor states for both packages', () => {
   );
   assert.equal(tvStatus(true, slim(), draft()).label, 'Stop capture');
   assert.equal(title(true, slim({ enabled: false })), 'Capture off');
-  const full = (change) => ({
-    ...state(),
-    flavor: 'full',
-    worker: { phase: 'running' },
-    power: 'active',
-    video: 'available',
-    failure: null,
-    ...change,
-  });
+  const full = (change = {}) =>
+    tvState('full', {
+      lighting: 'processed',
+      worker: { phase: 'running' },
+      ...change,
+    });
+  const lightsOff = tvStatus(true, full({ lighting: 'off' }), draft());
   assert.deepEqual(
-    [tvStatus(true, full({ enabled: false, lighting: 'off' }), draft())].map(
-      (s) => [s.title, s.label, s.action],
-    ),
-    [['Lights off', '', 'none']],
+    [lightsOff.title, lightsOff.label, lightsOff.action],
+    ['Lights off', '', 'none'],
     'the lighting modes start screen sync; no second button',
   );
+  assert.equal(title(true, full({ capturing: true })), 'Screen sync on');
   assert.equal(
-    title(
-      true,
-      full({ enabled: true, lighting: 'processed', capturing: true }),
-    ),
-    'Screen sync on',
-  );
-  assert.equal(
-    title(true, full({ enabled: true, lighting: 'device_native' })),
+    title(true, full({ lighting: 'device_native' })),
     'WLED effects on',
   );
-  const noFrames = tvStatus(
-    true,
-    full({ enabled: true, lighting: 'processed', capturing: false }),
-    draft(),
-  );
+  const noFrames = tvStatus(true, full({ capturing: false }), draft());
   assert.equal(
     noFrames.title,
     'Waiting for video',
@@ -568,20 +586,11 @@ test('status card covers the supervisor states for both packages', () => {
   );
   assert.equal(noFrames.attention, false);
   assert.equal(
-    title(
-      true,
-      full({
-        enabled: true,
-        lighting: 'processed',
-        capturing: false,
-        portal: null,
-      }),
-    ),
+    title(true, full({ capturing: false, portal: null })),
     'Starting screen sync…',
   );
   assert.equal(
-    tvStatus(true, full({ enabled: true, video: 'unavailable' }), draft())
-      .description,
+    tvStatus(true, full({ video: 'unavailable' }), draft()).description,
     'Choose an input or play something on the TV.',
   );
   // Every headline and detail fits its one line (about 52 characters).
@@ -599,9 +608,9 @@ test('status card covers the supervisor states for both packages', () => {
       slim({ failure: { kind: 'encoder', message: 'x' } }),
       slim({ failure: { kind: 'version', message: 'x' } }),
       slim({ failure: { kind: 'other', message: 'x' } }),
-      full({ enabled: false }),
-      full({ enabled: true, capturing: true, lighting: 'processed' }),
-      full({ enabled: true, lighting: 'device_native' }),
+      full({ lighting: 'off' }),
+      full({ capturing: true }),
+      full({ lighting: 'device_native' }),
       full({ failure: { kind: 'other', message: 'x' } }),
     ].map((value) => tvStatus(true, value, draft())),
     tvStatus(true, full({}), draft(), { lights: false, address: null }),
@@ -611,10 +620,10 @@ test('status card covers the supervisor states for both packages', () => {
     assert(description.length <= 52, description);
     assert.doesNotMatch(`${heading} ${description}`, /https?:|\d+ s\b/);
   }
-  assert.equal(tvStatus(true, full({ enabled: true }), draft()).action, 'none');
+  assert.equal(tvStatus(true, full(), draft()).action, 'none');
   const failedFull = tvStatus(
     true,
-    full({ enabled: true, failure: { kind: 'other', message: 'x' } }),
+    full({ failure: { kind: 'other', message: 'x' } }),
     draft(),
   );
   assert.deepEqual(
@@ -625,21 +634,12 @@ test('status card covers the supervisor states for both packages', () => {
 });
 
 test('slim encoder failures point to the portal; waits, other failures and the full package do not', () => {
-  const slim = (change = {}) => ({
-    ...state(),
-    flavor: 'slim',
-    lighting: null,
-    portal: null,
-    preferences: { instance: 'http://192.168.1.20:8787' },
-    enabled: true,
-    worker: { phase: 'running' },
-    power: 'active',
-    video: 'available',
-    capturing: false,
-    failure: null,
-    encoding: null,
-    ...change,
-  });
+  const slim = (change = {}) =>
+    tvState(
+      'slim',
+      { enabled: true, worker: { phase: 'running' }, ...change },
+      { instance: 'http://192.168.1.20:8787' },
+    );
   const draft = completePreferences({ instance: 'http://192.168.1.20:8787' });
   const status = (value) => tvStatus(true, value, draft);
   const hint = 'Choose another encoding in Prysm’s web portal.';
@@ -753,14 +753,10 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     'Capture stopped',
     'the text prefix no longer decides',
   );
-  const full = {
-    ...state(),
-    flavor: 'full',
+  const full = tvState('full', {
     worker: { phase: 'retrying', seconds: 4 },
-    power: 'active',
-    video: 'available',
     failure: { kind: 'encoder', message: 'worker exited 1' },
-  };
+  });
   assert.doesNotMatch(status(full).description, /encoding/);
   assert.match(
     diagnostics(slim({ encoding: 'raw' })),
@@ -770,12 +766,12 @@ test('slim encoder failures point to the portal; waits, other failures and the f
 });
 
 test('a pending restart counts down from the published seconds', () => {
-  const phase = { phase: 'retrying', seconds: 4 };
+  const worker = { phase: 'retrying', seconds: 4 };
   assert.deepEqual(
-    [0, 999, 1000, 3500, 4000, 9000].map((ms) => retrySeconds(phase, ms)),
+    [0, 999, 1000, 3500, 4000, 9000].map((ms) => retrySeconds(worker, ms)),
     [4, 4, 3, 1, 0, 0],
   );
-  assert.equal(retrySeconds({ phase: 'running' }, 0), null);
+  assert.equal(retrySeconds(tvState('full').worker, 0), null);
 });
 
 test('the TV counts a restart down by itself', async (t) => {
@@ -841,14 +837,17 @@ test('the restart bar runs on through later states of the same wait', async (t) 
 });
 
 test('the capture rate is shown while the worker measures it', async (t) => {
-  assert.equal(captureRate(state({ fps: 30 })), '30 frames per second');
-  assert.equal(captureRate(state({ fps: 0 })), 'No frames yet');
-  assert.equal(captureRate(state({ fps: null })), null);
-  assert.match(
-    diagnostics(state({ fps: 30 })),
-    /Capture rate: 30 frames per second/,
+  const measured = (fps) => tvState('full', { capturing: true, fps });
+  assert.equal(captureRate(measured(30)), '30 frames per second');
+  assert.equal(captureRate(measured(0)), 'No frames yet');
+  assert.equal(captureRate(measured(null)), null);
+  assert.equal(
+    captureRate(tvState('full', { worker: { phase: 'stopping' }, fps: 30 })),
+    null,
+    'only a running worker measures',
   );
-  assert.match(diagnostics(state({ fps: null })), /Capture rate: not measured/);
+  assert.match(diagnostics(measured(30)), /Capture rate: 30 frames per second/);
+  assert.match(diagnostics(measured(null)), /Capture rate: not measured/);
   const tv = await mountTv(t, {
     supervisor: {
       preferences: { instance: 'http://192.168.1.20:8787' },
@@ -898,16 +897,21 @@ test('every state keeps the same slots, plain words and focus on a control', asy
       flavor,
       supervisor: flavor === 'slim' ? { preferences: linked } : {},
     });
-    const running = { worker: { phase: 'running' }, enabled: true };
+    // Lighting (full) or capture (slim), in the package's own terms.
+    const [on, off] =
+      flavor === 'full'
+        ? [{ lighting: 'processed' }, { lighting: 'off' }]
+        : [{ enabled: true }, { enabled: false }];
+    const running = { worker: { phase: 'running' }, ...on };
     const states = [
       [
         'off',
         {
-          enabled: false,
+          ...off,
           worker: { phase: flavor === 'full' ? 'running' : 'stopped' },
         },
       ],
-      ['on', { ...running, capturing: true, fps: 30, lighting: 'processed' }],
+      ['on', { ...running, capturing: true, fps: 30 }],
       [
         'waiting for video',
         { ...running, capturing: false, fps: null, video: 'unavailable' },
@@ -1745,7 +1749,6 @@ test('full: the TV portal is used over loopback and its address is shown', async
   // After a failure the supervisor does not retry, the button restarts it.
   await act(async () =>
     tv.supervisor.publish({
-      enabled: true,
       lighting: 'processed',
       failure: { kind: 'other', message: 'capture failed' },
     }),
@@ -1878,72 +1881,48 @@ test('lights without a setup are named plainly with the portal address, in both 
 });
 
 test('the lights setup hint gives way to failures and to a missing receiver', () => {
-  const base = {
-    ...state(),
-    worker: { phase: 'running' },
-    power: 'active',
-    video: 'available',
-    capturing: false,
-    failure: null,
-  };
+  const running = { worker: { phase: 'running' } };
+  const linkedPrefs = { instance: 'http://192.168.1.20:8787' };
+  const fullOff = tvState('full', { ...running, lighting: 'off' });
   const noLights = { lights: false, address: 'http://192.168.1.20:8787' };
   const draft = completePreferences({});
   const status = (value) => tvStatus(true, value, draft, noLights);
+  assert.equal(status(fullOff).title, 'Set up your lights');
+  assert.equal(status(fullOff).action, 'none', 'screen sync needs lights');
+  const slimOff = tvState('slim', { ...running, enabled: false }, linkedPrefs);
   assert.equal(
-    status({ ...base, flavor: 'full', enabled: false }).title,
-    'Set up your lights',
-  );
-  assert.equal(
-    status({ ...base, flavor: 'full', enabled: false }).action,
-    'none',
-    'screen sync needs lights',
-  );
-  const slimOff = {
-    ...base,
-    flavor: 'slim',
-    enabled: false,
-    preferences: { instance: 'http://192.168.1.20:8787' },
-  };
-  assert.equal(
-    tvStatus(true, slimOff, completePreferences(slimOff.preferences), noLights)
-      .action,
+    tvStatus(true, slimOff, completePreferences(linkedPrefs), noLights).action,
     'enable',
     'capture does not',
   );
   assert.equal(
-    status({
-      ...base,
-      flavor: 'full',
-      failure: { kind: 'other', message: 'worker exited 1' },
-    }).title,
+    status(
+      tvState('full', {
+        ...running,
+        failure: { kind: 'other', message: 'worker exited 1' },
+      }),
+    ).title,
     'Screen sync stopped',
   );
   assert.equal(
-    status({
-      ...base,
-      flavor: 'full',
-      worker: { phase: 'retrying', seconds: 4 },
-      failure: { kind: 'other', message: 'x' },
-    }).title,
+    status(
+      tvState('full', {
+        worker: { phase: 'retrying', seconds: 4 },
+        failure: { kind: 'other', message: 'x' },
+      }),
+    ).title,
     'Screen sync stopped',
   );
   assert.equal(
-    status({ ...base, flavor: 'slim', preferences: {} }).title,
+    status(tvState('slim', { ...running, enabled: true })).title,
     'Set up this TV',
   );
   assert.equal(
-    status({
-      ...base,
-      flavor: 'slim',
-      preferences: { instance: 'http://192.168.1.20:8787' },
-    }).title,
+    status(tvState('slim', { ...running, enabled: true }, linkedPrefs)).title,
     'Set up your lights',
   );
   assert.equal(
-    tvStatus(true, { ...base, flavor: 'full', enabled: false }, draft, {
-      lights: true,
-      address: null,
-    }).title,
+    tvStatus(true, fullOff, draft, { lights: true, address: null }).title,
     'Lights off',
   );
 });
@@ -2086,7 +2065,6 @@ test('full: no encoding setting, encoding in use or encoding switch', async (t) 
       state: {
         worker: { phase: 'retrying', seconds: 4 },
         failure: { kind: 'encoder', message: 'worker exited 1' },
-        encoding: 'h264_hardware',
       },
     },
   });

@@ -662,7 +662,7 @@ and none after it.
   directory: the settings and lighting target from its portal (the full
   package's at the address `getState` reports; the Linux package's at
   `HOST:8787`), and on the TV `getState`'s flavour, preferences (`autostart`,
-  `instance`), `enabled` and lighting, and the data files `tv.json`,
+  `instance`) and intent (full `lighting`, slim `enabled`), and the data files `tv.json`,
   `settings.json` and `resume.json` as they are. It reads the file back and
   compares it. When the backup cannot be taken (an installed Prysm that does
   not answer) or does not compare, the cell stops and nothing is removed.

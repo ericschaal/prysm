@@ -70,35 +70,65 @@ pub enum Video {
 pub enum Event {
     /// Sent on every change and at least every [`HEARTBEAT`].
     Status(WorkerStatus),
+    /// Why the worker's run ended with an error (at startup or while
+    /// running); it exits next, [`exit::FAILED`], or [`exit::FAULTED`] when
+    /// the error or the stop reason is a fault. Not a status: a worker can fail before it has
+    /// anything of its package to report. Not every failed exit is preceded
+    /// by one: a protocol misuse or lost link (a stop reason, not an error)
+    /// exits [`exit::FAILED`] without it, as does a failure before the link
+    /// exists.
+    Failed { cause: String },
     /// A native resource is unconfirmed; the worker exits [`exit::FAULTED`] next.
     Faulted { cause: String },
 }
 
-/// What a worker is doing.
+/// What a worker is doing, in its package's terms (`"flavor": "full"` or
+/// `"slim"`), so the supervisor never has to guess which fields apply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "flavor", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkerStatus {
+    Full(FullStatus),
+    Slim(SlimStatus),
+}
+
+/// The full worker (`prysm-webos`): engine, WLED and portal on the TV.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FullStatus {
+    /// A lighting session is running and frames arrived in the last second
+    /// (false while it waits for video).
+    pub capturing: bool,
+    /// Frames per second over about the last second, rounded, while a
+    /// lighting session runs; `Some(0)` while it waits for frames.
+    pub fps: Option<u16>,
+    /// The engine's target, including changes made in the portal.
+    pub target: LightingTarget,
+    /// The portal's LAN address, such as `http://192.168.1.5:8787/`; `None`
+    /// while the TV has no LAN address.
+    pub portal: Option<String>,
+    /// The last session or portal failure.
+    pub failure: Option<WorkerFailure>,
+}
+
+/// The slim worker (`prysm-webos-slim`): capture streamed to a desktop Prysm.
+/// The default is a worker that has not tried to connect yet.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkerStatus {
-    /// Frames are flowing. Full: a lighting session is running and frames
-    /// arrived in the last second (false while it waits for video). Slim:
-    /// frames were sent in the last second.
+pub struct SlimStatus {
+    /// Frames were sent in the last second.
     pub capturing: bool,
-    /// Frames per second over about the last second, rounded, while the
-    /// worker measures them (full: a lighting session runs; slim: connected
-    /// and sending); `Some(0)` while it waits for frames.
+    /// Frames sent per second over about the last second, rounded, while
+    /// connected and sending; `Some(0)` while it waits for frames.
     pub fps: Option<u16>,
-    /// Full only: the engine's target, including changes made in the portal.
-    pub target: Option<LightingTarget>,
-    /// Full only: the portal's LAN address, such as `http://192.168.1.5:8787/`.
-    pub portal: Option<String>,
-    /// The last failure.
-    pub failure: Option<WorkerFailure>,
-    /// Slim only: the encoding of the frames being sent, while connected to
-    /// the receiver (always the one it requested).
+    /// The encoding of the frames being sent, while connected to the
+    /// receiver (always the one it requested).
     pub encoding: Option<SlimEncoding>,
-    /// Slim only: the receiver paused the stream (its lighting is off), and
-    /// the TV capture is stopped until it asks for frames again. Not a
-    /// failure: `failure` is unset meanwhile.
+    /// The receiver paused the stream (its lighting is off), and the TV
+    /// capture is stopped until it asks for frames again. Not a failure:
+    /// `failure` is unset meanwhile.
     pub paused: bool,
+    /// The receiver wait, or the encoder or version failure.
+    pub failure: Option<WorkerFailure>,
 }
 
 /// A failure a worker or the supervisor reports.

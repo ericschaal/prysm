@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -267,8 +268,13 @@ class SmokeProbeTests(unittest.TestCase):
         version = ipk.app_version(ipk.product_version(ROOT / 'VERSION'))
         self.assertEqual(json.loads(manifest)['version'], version)
         self.assertIn('run --sandbox ' + directory + ' --run-for 60', files['probe.service'])
-        status = json.loads(smoke.STATUS)
-        self.assertEqual(set(status), {'type', 'capturing', 'target', 'portal', 'failure', 'paused'})
+        # The fake worker speaks its flavour's status (webos-link WorkerStatus).
+        common = {'type', 'flavor', 'capturing', 'fps', 'failure'}
+        for flavour, own in (('full', {'target', 'portal'}), ('slim', {'encoding', 'paused'})):
+            status = json.loads(smoke.STATUS[flavour])
+            self.assertEqual((status['type'], status['flavor']), ('status', flavour))
+            self.assertEqual(set(status), common | own)
+            self.assertIn(shlex.quote(smoke.STATUS[flavour]), smoke.fake_worker(flavour, False))
 
 
 if __name__ == '__main__':

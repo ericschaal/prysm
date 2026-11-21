@@ -1,10 +1,16 @@
 /** Pure rules of the TV UI: addresses, drafts and the status card. */
-import type {
-  LightingTarget,
-  Phase,
-  Preferences,
-  SlimEncoding,
-  State,
+import {
+  captureFps,
+  fullPortal,
+  isCapturing,
+  isEnabled,
+  isPaused,
+  slimEncoding,
+  type LightingTarget,
+  type Preferences,
+  type SlimEncoding,
+  type State,
+  type Worker,
 } from '@prysm/webos-platform';
 import type { PatternPlayer } from './patterns';
 import type { PortalView } from './portal-connection';
@@ -117,18 +123,19 @@ export interface PortalFacts {
 
 /**
  * Whole seconds until the supervisor restarts the worker, `elapsedMs` after
- * `phase` arrived (it counts from then: no clock is shared), or `null` when
+ * `worker` arrived (it counts from then: no clock is shared), or `null` when
  * no restart is pending. 0 once it is due.
  */
-export function retrySeconds(phase: Phase, elapsedMs: number): number | null {
-  if (phase.phase !== 'retrying') return null;
-  return Math.max(0, Math.ceil(phase.seconds - elapsedMs / 1000));
+export function retrySeconds(worker: Worker, elapsedMs: number): number | null {
+  if (worker.phase !== 'retrying') return null;
+  return Math.max(0, Math.ceil(worker.seconds - elapsedMs / 1000));
 }
 
 /** The capture rate the TV reports, for the status card; `null` when none. */
 export function captureRate(state: State | null): string | null {
-  if (!state || state.fps === null || state.fps === undefined) return null;
-  return state.fps > 0 ? `${state.fps} frames per second` : 'No frames yet';
+  const fps = state && captureFps(state);
+  if (fps === null) return null;
+  return fps > 0 ? `${fps} frames per second` : 'No frames yet';
 }
 
 /**
@@ -165,7 +172,8 @@ export function tvStatus(
       setupLights: false,
     };
   const full = state.flavor === 'full';
-  const { enabled } = state;
+  const enabled = isEnabled(state);
+  const capturing = isCapturing(state);
   const kind = state.failure?.kind ?? null;
   const phase = state.worker.phase;
   // Slim: Prysm is not receiving; the worker keeps trying, not a failure.
@@ -205,13 +213,10 @@ export function tvStatus(
   } else if (enabled && state.video === 'unavailable') {
     title = 'Waiting for video';
     description = 'Choose an input or play something on the TV.';
-  } else if (full) {
+  } else if (state.flavor === 'full') {
     // The supervisor hears of a change made in the portal a moment later.
-    let target: LightingTarget = 'processed';
-    if (portal?.lighting) target = portal.lighting.target;
-    else if (!enabled) target = 'off';
-    else if (state.lighting === 'device_native') target = 'device_native';
-    const flowing = portal?.lighting?.receiving ?? state.capturing;
+    const target: LightingTarget = portal?.lighting?.target ?? state.lighting;
+    const flowing = portal?.lighting?.receiving ?? capturing;
     if (target === 'off') {
       title = 'Lights off';
       description = 'Choose Screen sync: the lights follow the picture.';
@@ -221,7 +226,7 @@ export function tvStatus(
     } else if (flowing) {
       title = 'Screen sync on';
       description = 'Your lights follow the picture.';
-    } else if (state.portal && phase === 'running') {
+    } else if (fullPortal(state) && phase === 'running') {
       // Lighting is on but no frames arrive: the lights are released to WLED.
       title = 'Waiting for video';
       description = 'Screen sync starts when a picture arrives.';
@@ -235,14 +240,14 @@ export function tvStatus(
   } else if (!enabled) {
     title = 'Capture off';
     description = 'Start capture to send the picture to Prysm.';
-  } else if (state.paused) {
+  } else if (isPaused(state)) {
     // Not a failure: lighting is off on the computer, so the TV stops capturing.
     title = 'Paused by Prysm';
     description = 'It continues when Prysm turns the lights on.';
   } else if (waiting) {
     title = 'Waiting for Prysm';
     description = 'Check that Prysm is running on your computer.';
-  } else if (state.capturing) {
+  } else if (capturing) {
     title = 'Sending the picture';
     description = 'Prysm on your computer lights up with it.';
   } else {
@@ -287,9 +292,7 @@ export function tvStatus(
     action,
     attention,
     ready:
-      state.capturing &&
-      state.power === 'active' &&
-      state.video !== 'unavailable',
+      capturing && state.power === 'active' && state.video !== 'unavailable',
     setupLights,
   };
 }
@@ -308,8 +311,9 @@ const phaseNames = {
 } as const;
 
 function capturingText(state: State) {
-  if (state.capturing) return 'yes';
-  if (state.paused) return 'no, paused by Prysm (lights off on the computer)';
+  if (isCapturing(state)) return 'yes';
+  if (isPaused(state))
+    return 'no, paused by Prysm (lights off on the computer)';
   return 'no';
 }
 
@@ -324,17 +328,18 @@ export function diagnostics(state: State | null, problem = ''): string {
     `Package: ${state.flavor === 'full' ? 'Prysm (lights from this TV)' : 'Prysm capture (lights from a computer)'}`,
     `TV power: ${powerNames[state.power]}`,
     `Video: ${state.video}`,
-    `Enabled: ${state.enabled ? 'yes' : 'no'}`,
+    `Enabled: ${isEnabled(state) ? 'yes' : 'no'}`,
     `Background process: ${phaseNames[state.worker.phase]}`,
     `Capturing: ${capturingText(state)}`,
     `Capture rate: ${captureRate(state) ?? 'not measured'}`,
   ];
-  if (state.flavor === 'slim')
+  if (state.flavor === 'slim') {
+    const encoding = slimEncoding(state);
     lines.push(
       `Prysm address: ${state.preferences.instance ?? 'not set'}`,
-      `Stream encoding: ${state.encoding ? `${encodingName(state.encoding)} in use` : 'none in use'}`,
+      `Stream encoding: ${encoding ? `${encodingName(encoding)} in use` : 'none in use'}`,
     );
-  else lines.push(`Web portal: ${state.portal ?? 'not open'}`);
+  } else lines.push(`Web portal: ${fullPortal(state) ?? 'not open'}`);
   lines.push('', state.failure?.message ?? 'No errors reported.');
   if (problem) lines.push('', `Last command failed: ${problem}`);
   if (state.log.length) lines.push('', 'Recent messages:', ...state.log);
@@ -364,7 +369,7 @@ export function calibrationBlocker(
   // Before the service answers, the address is not known yet.
   if (!tv) return 'Waiting for Prysm';
   if (flavor === 'slim' && !instance) return 'Add the address first';
-  if (flavor === 'slim' && !tv.enabled) return 'Start capture first';
+  if (flavor === 'slim' && !isEnabled(tv)) return 'Start capture first';
   const { snapshot } = portal;
   if (!snapshot) return 'Waiting for Prysm';
   if (!snapshot.settings.capture || !snapshot.settings.output)
