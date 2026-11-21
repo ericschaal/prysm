@@ -23,8 +23,7 @@
 #
 # luna-send waits for replies only while its stdin is open, so every call
 # keeps it open with `(sleep N) | ssh ...` and bounds it with `timeout`.
-# A connection to the TV is given up after 8 s (`tv` in the printed commands).
-# --dry-run prints the commands and touches nothing. Builds never call this.
+# A connection to the TV is given up after 8 s. --dry-run prints the commands and touches nothing. Builds never call this.
 set -eu
 
 APP=io.prysm.tv
@@ -103,16 +102,18 @@ exit \$result"
 tv() {
     ssh -o ConnectTimeout=8 "$host" "$@"
 }
+# `tv` as printed.
+tv="ssh -o ConnectTimeout=8 $host"
 
 run() {
-    echo "+ $*" >&2
+    echo "+ $tv \"$*\"" >&2
     if [ "$dry_run" = false ]; then
-        "$@"
+        tv "$@"
     fi
 }
 
 copy() {
-    echo "+ tv 'mkdir -p $TEMP && cat > $remote' < $ipk" >&2
+    echo "+ $tv 'mkdir -p $TEMP && cat > $remote' < $ipk" >&2
     if [ "$dry_run" = false ]; then
         tv "mkdir -p $TEMP && cat > $remote" < "$ipk"
     fi
@@ -121,7 +122,7 @@ copy() {
 held() {
     seconds=$1
     shift
-    echo "+ (sleep $((seconds + 2))) | tv \"$*\"" >&2
+    echo "+ (sleep $((seconds + 2))) | $tv \"$*\"" >&2
     if [ "$dry_run" = false ]; then
         # A named pipe instead of a pipeline, so the call returns when ssh
         # does and not when the sleep ends.
@@ -141,16 +142,16 @@ held() {
 
 copy
 if ! held $((12 + STOP_SECONDS)) "$stop"; then
-    run tv "rm -f $remote"
+    run "rm -f $remote"
     echo "$0: Prysm still runs $STOP_SECONDS s after its uninstall (the processes above), so nothing was installed: the install would end it abruptly" >&2
     exit 1
 fi
 status=0
 held "$INSTALL_TIMEOUT" "$install" || status=$?
-run tv "rm -f $remote"
+run "rm -f $remote"
 if [ "$status" -ne 0 ]; then
     echo "$0: installation failed (see the replies above)" >&2
     exit 1
 fi
-run tv "$SETUP"
+run "$SETUP"
 held 12 "timeout 12 luna-send -n 1 luna://$APP.service/getState '{}'"

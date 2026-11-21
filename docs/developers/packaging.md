@@ -147,7 +147,7 @@ What the script enforces:
 
 **Version.** The only source is [`VERSION`](../../VERSION) (see
 [releasing](releasing.md#the-version-is-one-file)). Binaries report it in full
-(for example `1.0.0-alpha.0`); `appinfo.json`, the IPK file name and its
+(for example `1.0.0-rc.1`); `appinfo.json`, the IPK file name and its
 control file carry only `major.minor.patch`, because `ares-package` accepts
 nothing else.
 

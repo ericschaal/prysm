@@ -33,7 +33,8 @@ updates:
         patterns: ['*']
     ignore:
       # The rust: tag carries the version rust-toolchain.toml pins (an xtask
-      # test checks it); it changes with that file, by hand.
+      # test checks it); the version changes with that file, by hand. Digest
+      # refreshes of the same tag still come.
       - dependency-name: rust
         update-types: ['version-update:semver-major', 'version-update:semver-minor', 'version-update:semver-patch']
       # node:24: frontend/package.json's engines and CI's setup-node.

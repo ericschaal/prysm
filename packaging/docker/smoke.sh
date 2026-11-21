@@ -54,8 +54,9 @@ docker volume create "$volume" >/dev/null
 # by a save in the portal.
 start
 curl -fsS "http://127.0.0.1:$port/api/v1/state" >/dev/null || fail "GET /api/v1/state failed without settings"
-stop
+# Checked before the stop removes the container, so a failure shows its logs.
 in_volume 'test ! -e /data/settings.json' || fail "settings.json was written without a save"
+stop
 
 # Settings seeded the way an operator's file would be.
 in_volume 'printf "{\n  \"output\": { \"kind\": \"null\" }\n}\n" > /data/settings.json'
