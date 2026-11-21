@@ -414,16 +414,29 @@ fn frame_duration(range: &AVFrameRateRange, fps: NonZeroU32) -> Option<CMTime> {
 /// read the request and answer it.
 const ACCESS_WAIT: Duration = Duration::from_secs(7);
 
+/// Where macOS's camera access request stands.
+#[derive(Clone, Copy)]
+enum Request {
+    NotMade,
+    Answered,
+    TimedOut,
+}
+
 /// What an authorization status means for opening: `Ok(true)` to open,
-/// `Ok(false)` to ask first (only before `asked`). A status this crate does
-/// not know is left to AVFoundation.
+/// `Ok(false)` to ask first. A status still undecided after the request means
+/// macOS answered without asking, or nobody answered. A status this crate
+/// does not know is left to AVFoundation.
 #[allow(non_upper_case_globals)] // Names come from AVFoundation.
-fn access(status: AVAuthorizationStatus, asked: bool) -> std::result::Result<bool, CameraAccess> {
-    match status {
-        AVAuthorizationStatusNotDetermined if asked => Err(CameraAccess::Unanswered),
-        AVAuthorizationStatusNotDetermined => Ok(false),
-        AVAuthorizationStatusDenied => Err(CameraAccess::Denied),
-        AVAuthorizationStatusRestricted => Err(CameraAccess::Restricted),
+fn access(
+    status: AVAuthorizationStatus,
+    request: Request,
+) -> std::result::Result<bool, CameraAccess> {
+    match (status, request) {
+        (AVAuthorizationStatusNotDetermined, Request::NotMade) => Ok(false),
+        (AVAuthorizationStatusNotDetermined, Request::Answered) => Err(CameraAccess::NotAsked),
+        (AVAuthorizationStatusNotDetermined, Request::TimedOut) => Err(CameraAccess::Unanswered),
+        (AVAuthorizationStatusDenied, _) => Err(CameraAccess::Denied),
+        (AVAuthorizationStatusRestricted, _) => Err(CameraAccess::Restricted),
         _ => Ok(true),
     }
 }
@@ -434,7 +447,7 @@ fn camera_access(sink: &Arc<dyn CaptureSink>) -> Result<bool> {
     // SAFETY: a constant NSString AVFoundation defines for the process's life.
     let video = unsafe { AVMediaTypeVideo };
     let status = || AVCaptureDevice::authorization_status_for_media_type(video);
-    if access(status(), false).map_err(CaptureError::NoCameraAccess)? {
+    if access(status(), Request::NotMade).map_err(CaptureError::NoCameraAccess)? {
         return Ok(true);
     }
     tracing::info!("Asking macOS for camera access");
@@ -444,12 +457,18 @@ fn camera_access(sink: &Arc<dyn CaptureSink>) -> Result<bool> {
         move |_| answered.store(true, Ordering::Release)
     });
     let asked = Instant::now();
-    while !answered.load(Ordering::Acquire) && asked.elapsed() < ACCESS_WAIT {
+    let request = loop {
+        if answered.load(Ordering::Acquire) {
+            break Request::Answered;
+        }
+        if asked.elapsed() >= ACCESS_WAIT {
+            break Request::TimedOut;
+        }
         if sink.should_stop(FAILURE_POLL) {
             return Ok(false);
         }
-    }
-    access(status(), true).map_err(CaptureError::NoCameraAccess)
+    };
+    access(status(), request).map_err(CaptureError::NoCameraAccess)
 }
 
 fn start_session(
@@ -701,19 +720,34 @@ mod tests {
     #[test]
     fn camera_access_opens_asks_once_or_refuses() {
         use AVAuthorizationStatusNotDetermined as NotDetermined;
-        assert_eq!(access(NotDetermined, false), Ok(false), "ask first");
-        assert_eq!(access(NotDetermined, true), Err(CameraAccess::Unanswered));
-        for asked in [false, true] {
+        assert_eq!(
+            access(NotDetermined, Request::NotMade),
+            Ok(false),
+            "ask first"
+        );
+        assert_eq!(
+            access(NotDetermined, Request::Answered),
+            Err(CameraAccess::NotAsked)
+        );
+        assert_eq!(
+            access(NotDetermined, Request::TimedOut),
+            Err(CameraAccess::Unanswered)
+        );
+        for request in [Request::NotMade, Request::Answered, Request::TimedOut] {
             assert_eq!(
-                access(AVAuthorizationStatusDenied, asked),
+                access(AVAuthorizationStatusDenied, request),
                 Err(CameraAccess::Denied)
             );
             assert_eq!(
-                access(AVAuthorizationStatusRestricted, asked),
+                access(AVAuthorizationStatusRestricted, request),
                 Err(CameraAccess::Restricted)
             );
-            assert_eq!(access(AVAuthorizationStatusAuthorized, asked), Ok(true));
-            assert_eq!(access(42, asked), Ok(true), "unknown: AVFoundation decides");
+            assert_eq!(access(AVAuthorizationStatusAuthorized, request), Ok(true));
+            assert_eq!(
+                access(42, request),
+                Ok(true),
+                "unknown: AVFoundation decides"
+            );
         }
     }
 

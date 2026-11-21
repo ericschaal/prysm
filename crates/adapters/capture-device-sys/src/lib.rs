@@ -50,13 +50,13 @@ pub enum CameraAccess {
     Denied,
     #[error("this Mac's administrator restricts camera access")]
     Restricted,
-    /// No answer: nobody answered macOS's request in time, or macOS could not
-    /// ask (the app that started Prysm cannot show the request). Nothing
-    /// retries by itself, so the message says to start the lights again.
-    #[error(
-        "macOS got no answer in time; if it asked, allow access and start the lights \
-         again; if it did not ask, start Prysm from an app that can (such as Terminal)"
-    )]
+    /// macOS answered the request without asking: the app that started Prysm
+    /// cannot show it.
+    #[error("macOS did not ask; start Prysm from an app that can ask (such as Terminal)")]
+    NotAsked,
+    /// Nobody answered macOS's request in time. Nothing retries by itself, so
+    /// the message says to start the lights again.
+    #[error("macOS got no answer to its request in time; allow access and start the lights again")]
     Unanswered,
 }
 
