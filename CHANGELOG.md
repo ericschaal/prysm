@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.0-rc.2](https://github.com/ericschaal/prysm/compare/v1.0.0-rc.1...v1.0.0-rc.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* a release names its .deb by the product version, so SHA256SUMS matches ([#18](https://github.com/ericschaal/prysm/issues/18)) ([f8631c3](https://github.com/ericschaal/prysm/commit/f8631c3e62b605da1b91e4f3abe26674c1aa1a0a))
+* **portal:** a capture device that offers nothing says why, and a limit names its axis ([#31](https://github.com/ericschaal/prysm/issues/31)) ([11f7272](https://github.com/ericschaal/prysm/commit/11f727275c9367f4e468938ae3afe845f09442cb))
+
+
+### Performance Improvements
+
+* **processor:** the sampler reuses its sample buffer and shared edge colours are mapped without a copy first ([#25](https://github.com/ericschaal/prysm/issues/25)) ([45e4658](https://github.com/ericschaal/prysm/commit/45e46581a6d36c2493ab26a2cf7116568f60f9a3))
+
+
+### Documentation
+
+* how to choose a release's version, and that every release candidate needs it ([446ca57](https://github.com/ericschaal/prysm/commit/446ca579d7b69773c8567277f8596bc8323eff1e))
+
 ## [1.0.0-rc.1](https://github.com/ericschaal/prysm/compare/v0.2.0...v1.0.0-rc.1) (2026-11-19)
 
 
