@@ -29,10 +29,62 @@ pub enum CaptureError {
         #[source]
         source: Option<std::io::Error>,
     },
+    /// macOS has not granted the process camera access, which capture cards
+    /// need too; the device is not opened.
+    #[error("camera access is not granted")]
+    NoCameraAccess(#[source] CameraAccess),
+    /// The device kept delivering buffers without a gap, none of them
+    /// usable, for several seconds; `source` is why the last one was not.
+    #[error("capture device delivered {rejected} unusable buffers in a row")]
+    Unusable {
+        rejected: u32,
+        #[source]
+        source: BufferRejection,
+    },
     #[error("native capture cleanup failed: {0}")]
     Cleanup(#[source] anyhow::Error),
     #[error(transparent)]
     Backend(#[from] anyhow::Error),
+}
+
+/// Why macOS refuses camera access, each with what the user can do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CameraAccess {
+    #[error(
+        "allow the app that starts Prysm (such as Terminal) under System Settings > \
+         Privacy & Security > Camera, then restart that app"
+    )]
+    Denied,
+    #[error("this Mac's administrator restricts camera access")]
+    Restricted,
+    /// macOS answered the request without asking: the app that started Prysm
+    /// cannot show it.
+    #[error("macOS did not ask; start Prysm from an app that can ask (such as Terminal)")]
+    NotAsked,
+    /// Nobody answered macOS's request in time. Nothing retries by itself, so
+    /// the message says to start the lights again.
+    #[error("macOS got no answer to its request in time; allow access and start the lights again")]
+    Unanswered,
+}
+
+/// How long opening on macOS waits for an answer to the camera access
+/// request: long enough to read the request and answer it. It is shorter
+/// than the device adapter's readiness deadline (the adapter asserts this),
+/// so no answer is reported as [`CameraAccess::Unanswered`] rather than a
+/// timeout. After a late answer, session start gets the time that remains.
+pub const CAMERA_ACCESS_WAIT: std::time::Duration = std::time::Duration::from_secs(7);
+
+/// Why a buffer the device delivered could not be used as a frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum BufferRejection {
+    #[error("driver flagged the buffer as corrupted")]
+    Corrupted,
+    #[error("buffer held {bytes} of the {frame} bytes of a frame")]
+    Short { bytes: usize, frame: usize },
+    #[error("buffer could not be converted to a frame")]
+    Unreadable,
 }
 
 type Result<T> = std::result::Result<T, CaptureError>;
@@ -129,6 +181,25 @@ mod tests {
                 .kind(),
             std::io::ErrorKind::PermissionDenied
         );
+        let unusable = CaptureError::Unusable {
+            rejected: 90,
+            source: BufferRejection::Corrupted,
+        };
+        let unusable = anyhow::Error::new(unusable).context("starting camera");
+        assert_eq!(
+            unusable
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<BufferRejection>()),
+            Some(&BufferRejection::Corrupted)
+        );
+        let refused = CaptureError::NoCameraAccess(CameraAccess::Denied);
+        let refused = anyhow::Error::new(refused).context("starting camera");
+        assert_eq!(
+            refused
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<CameraAccess>()),
+            Some(&CameraAccess::Denied)
+        );
     }
 }
 
@@ -136,6 +207,8 @@ mod tests {
 mod capture_time;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(any(target_os = "linux", test))]
+mod rejections;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod trace_stats;
 

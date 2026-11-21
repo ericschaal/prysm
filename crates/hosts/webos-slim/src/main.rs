@@ -13,8 +13,8 @@ use prysm_capture_webos::{VideoSignal, WebosCapture};
 use prysm_ports::{FrameSource, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::logging::{self, Logs};
-use prysm_webos_link::SlimArgs;
 use prysm_webos_link::worker::{self, Link};
+use prysm_webos_link::{KILL_AFTER, SlimArgs};
 use resolve::Resolver;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -47,8 +47,13 @@ enum Check {
 }
 
 /// Above the capture adapter's 4 s release limit, below the supervisor's 8 s
-/// TERM-to-KILL window.
+/// TERM-to-KILL window. The forwarder has no engine, so no blocking call
+/// waits before the stop and no shutdown grace adds to it.
 const STOP_DEADLINE: Duration = Duration::from_secs(6);
+const _: () = assert!(
+    STOP_DEADLINE.as_millis() < KILL_AFTER.as_millis(),
+    "the stop must end before the supervisor's SIGKILL"
+);
 
 fn main() -> ExitCode {
     // stdout carries the supervisor protocol; log lines go to stderr only.

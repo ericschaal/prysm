@@ -35,7 +35,8 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 ## Supervisor and worker
 
 - The worker gets arguments only (no shell): the full worker its settings
-  path, listen address and lighting target; the slim worker its receiver.
+  path, listen address and lighting target; the slim worker its Prysm address
+  (`--prysm`).
 - Commands go to the worker's stdin; events come back on its original stdout,
   one JSON object per line (at most 4 KiB, unknown fields rejected). Vendor
   output is redirected to stderr, which carries logs.
@@ -66,7 +67,7 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 - The supervisor reaps a worker before starting another. Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.
 - A worker runs while the TV is on (active or screen saver) and, for slim,
-  while capture is enabled and a receiver is set. Video is reported
+  while capture is enabled and `instance` is set. Video is reported
   unavailable unless the TV is active.
 - The intent (full: lighting target; slim: enabled) is kept with the boot ID
   in `resume.json`: a service restart in the same boot resumes it, a reboot
@@ -79,7 +80,7 @@ and seeds `settings.json` with `capture.kind = "webos"` when missing.
 Slim worker: connects to the receiver at most once a second, resolving a host
 name at each attempt; follows the receiver's stream request (size, rate,
 menus, encoding); closes capture while the receiver has paused the stream. An
-encoder failure is reported as a failure of kind `encoder` and refused until the
+encoder failure is reported with `failure.kind` `encoder` and refused until the
 desktop asks for another encoding; nothing falls back on its own. Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
@@ -93,7 +94,7 @@ by `flavor`: full `lighting` and a `worker` that reports `capturing`, `fps`
 and `portal` while it runs (`portal` also while it stops); slim `enabled` and
 a `worker` that reports `capturing`, `fps`, `encoding` and `paused` while it
 runs. API version 2 (the document's `info.version`). Preferences hold only `autostart` and, for slim, `instance`
-(the desktop portal) and `receiver` (`host:port`). Picture settings live in a
+(the desktop Prysm's portal address, where frames go). Picture settings live in a
 portal, never in Luna. Types: generated `@prysm/contracts/luna` from
 [schema.rs](../../crates/hosts/webos-service/src/schema.rs).
 

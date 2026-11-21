@@ -16,6 +16,7 @@ impl Prysm {
             registry: Registry::default(),
             surfaces: Vec::new(),
             stop_deadline: STOP_DEADLINE,
+            shutdown_grace: None,
         }
     }
 }
@@ -25,6 +26,7 @@ pub struct Builder {
     registry: Registry,
     surfaces: Vec<Box<dyn Surface>>,
     stop_deadline: Duration,
+    shutdown_grace: Option<Duration>,
 }
 
 impl Builder {
@@ -53,6 +55,15 @@ impl Builder {
         self
     }
 
+    /// How long shutdown waits for blocking adapter or settings calls before
+    /// abandoning them (see [`Engine::shutdown_grace`]); the stop deadline
+    /// unless set.
+    #[must_use]
+    pub fn shutdown_grace(mut self, grace: Duration) -> Self {
+        self.shutdown_grace = Some(grace);
+        self
+    }
+
     /// Load the settings and validate them against the registered adapters,
     /// without starting the engine, a surface or any device.
     ///
@@ -74,6 +85,7 @@ impl Builder {
     pub async fn run(self, shutdown: impl Future<Output = ()>) -> Result<()> {
         let (engine, owner): (EngineHandle, Engine) =
             Engine::start(self.registry, self.store, self.stop_deadline).await?;
+        let owner = owner.shutdown_grace(self.shutdown_grace.unwrap_or(self.stop_deadline));
         let mut surfaces = Surfaces::spawn(self.surfaces, &engine);
         tokio::pin!(shutdown);
         loop {

@@ -1181,6 +1181,11 @@ test('the video source editor saves the exact section once; Cancel drops the dra
     assert.equal(window.location.hash, '#/settings');
     await openEditor('Video source');
     assert.equal(radio('Custom').checked, true, 'the draft was dropped');
+    // A field edited back to its saved value leaves nothing to save.
+    await edit(field('capture.path'), '/dev/video1');
+    assert.equal(primary()?.disabled, false);
+    await edit(field('capture.path'), '/dev/video0');
+    assert(!primary(), 'the bar goes once the draft matches');
 
     await click(radio('Smooth'));
     assert.equal(saves(fixture), 0);
@@ -1708,6 +1713,8 @@ test('an unconfigured section starts from its first kind and saves only when val
     await openEditor('Video source');
     assert.equal(kindOf('capture.kind'), 'device');
     assert.equal(errorOf(field('capture.path')), undefined);
+    // An unconfigured section offers its save before any edit.
+    assert(button('Use this video source', form('Video source')));
     await submit(form('Video source'));
     assert.equal(
       errorOf(field('capture.path')),

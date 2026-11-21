@@ -262,6 +262,7 @@ impl Session {
         };
         let worker = Worker::spawn(
             "prysm-session",
+            "session thread",
             (source, session),
             |(mut source, mut session), flags| {
                 let pumped = flags.pump(&mut *source, |frame| match frame {

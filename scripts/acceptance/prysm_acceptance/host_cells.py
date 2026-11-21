@@ -126,7 +126,7 @@ def _seam(cell: Cell, config: Config, run: transport.Transport, out_dir: Path) -
     does=lambda cell, config: [
         f'[{cell.platform}] {cell.delivery}: {_machine(cell, config).artifact(cell.delivery) or "(not set)"}; its '
         'SHA-256 and age, and the version and commit from manifest.json next to it when the hash matches',
-        f'$ {commands.git_last_commit_time().display()}   (warns when the artifact is older)',
+        f'$ {commands.git_last_commit().display()}   (warns when the artifact is stale)',
         *(['FFmpeg on PATH for the clip'] if cell.source == Source.FILE or _feed(cell, config) else []),
         *([f'[{cell.platform}] device set'] if cell.source == Source.DEVICE else []),
     ]
@@ -152,7 +152,7 @@ def artifact(cell: Cell, config: Config, bench: Bench, request: pytest.FixtureRe
     tools(request, cell, controlled, clip=cell.source == Source.FILE or controlled is not None)
     found = artifacts.inspect(path)
     facts = found.facts()
-    warning = artifacts.older_than_checkout(found, bench.transport)
+    warning = artifacts.stale(found, bench.transport)
     if warning:
         facts['warning'] = warning
         warnings.warn(warning, stacklevel=1)

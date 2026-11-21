@@ -98,8 +98,10 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
 
 - **artifact**: the configured binary exists; its SHA-256 and age are
   recorded, and the version and commit from `manifest.json` next to it when
-  its hash matches; a warning when it is older than the checkout's last
-  commit (one `git log` template);
+  its hash matches; a warning when that manifest entry's commit is not the
+  checkout's HEAD or it was built from a dirty tree (uncommitted changes or
+  untracked files), or, without a matching entry,
+  when the file is older than the last commit (one `git log` template);
 - **target**: the host seam (`host.py`) for the cell, and whether the target
   can run it (below); a target that cannot skips the cell, or fails it when
   named;
