@@ -5,7 +5,7 @@ from collections.abc import Callable, Sequence
 from enum import StrEnum
 from itertools import pairwise
 import time
-from typing import NotRequired, Protocol, TypedDict, TypeVar
+from typing import Literal, NotRequired, Protocol, TypedDict, TypeVar
 
 from prysm_acceptance import prysm_api
 from prysm_acceptance.commands import Command
@@ -38,8 +38,35 @@ class Video(StrEnum):
     AVAILABLE = 'available'
 
 
-class Worker(TypedDict):
-    phase: str
+class StoppedWorker(TypedDict):
+    phase: Literal['stopped']
+
+
+class RunningWorker(TypedDict):
+    """A running worker and its report. Both packages: frames flow (`capturing`) at `fps`. Full only: `portal`.
+    Slim only: `encoding` and `paused` (the receiver paused the stream)."""
+
+    phase: Literal['running']
+    capturing: bool
+    fps: NotRequired[int | None]
+    portal: NotRequired[str | None]
+    encoding: NotRequired[str | None]
+    paused: NotRequired[bool]
+
+
+class StoppingWorker(TypedDict):
+    """A worker being stopped; the full one's portal may still answer."""
+
+    phase: Literal['stopping']
+    portal: NotRequired[str | None]
+
+
+class RetryingWorker(TypedDict):
+    phase: Literal['retrying']
+    seconds: int
+
+
+Worker = StoppedWorker | RunningWorker | StoppingWorker | RetryingWorker
 
 
 class TvFailure(TypedDict, total=False):
@@ -48,17 +75,56 @@ class TvFailure(TypedDict, total=False):
 
 
 class State(TypedDict, total=False):
-    """The TV's state as the shared checks read it: its power and video, and Prysm's worker on it."""
+    """The TV's state as the shared checks read it: its power and video, and Prysm's worker on it (its report is
+    read through `running`, `capturing`, `fps`, `paused`, `encoding` and `portal`)."""
 
     power: Power
     video: Video
     worker: Worker
-    capturing: bool
-    paused: bool
-    fps: float | None
     failure: TvFailure | None
-    encoding: str | None
     log: list[str]
+
+
+def running(state: State) -> RunningWorker | None:
+    """The worker and its report while it runs; `None` otherwise."""
+    worker = state.get('worker')
+    if worker is None or worker['phase'] != 'running':
+        return None
+    return worker
+
+
+def capturing(state: State) -> bool:
+    """Frames flow from a running worker."""
+    report = running(state)
+    return report is not None and report['capturing']
+
+
+def fps(state: State) -> int | None:
+    """The running worker's frame rate; `None` while none is measured."""
+    report = running(state)
+    return None if report is None else report.get('fps')
+
+
+def paused(state: State) -> bool:
+    """Slim: the receiver paused the running worker's stream (its lighting is off)."""
+    report = running(state)
+    return report is not None and report.get('paused', False)
+
+
+def encoding(state: State) -> str | None:
+    """Slim: the encoding the running worker sends in."""
+    report = running(state)
+    return None if report is None else report.get('encoding')
+
+
+def portal(state: State) -> str | None:
+    """Full: the portal's LAN address while the worker runs or stops."""
+    worker = state.get('worker')
+    if worker is None:
+        return None
+    if worker['phase'] == 'running' or worker['phase'] == 'stopping':
+        return worker.get('portal')
+    return None
 
 
 class Reading(TypedDict):

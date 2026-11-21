@@ -1,6 +1,6 @@
 //! The built `prysm-webos-slim` binary on the development host, where the LG
 //! backend refuses to start: argv, the wait for Prysm and the failure exit
-//! code with a final status.
+//! code after a final `failed` event.
 use prysm_capture_remote::StreamRequest;
 use prysm_capture_remote::testkit::Portal;
 use std::io::{BufRead, BufReader};
@@ -40,15 +40,18 @@ fn spawn(address: &str) -> Child {
         .unwrap()
 }
 
-/// Status lines until `until` matches one; the process is killed after 20 s.
-fn statuses(child: &mut Child, until: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+/// Event lines until `until` matches one; the process is killed after 20 s.
+/// Every status is a slim one.
+fn events(child: &mut Child, until: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
     loop {
-        assert!(Instant::now() < deadline, "no matching status");
-        let line = lines.next().expect("a status line").unwrap();
+        assert!(Instant::now() < deadline, "no matching event");
+        let line = lines.next().expect("an event line").unwrap();
         let event: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(event["type"], "status", "{line}");
+        if event["type"] == "status" {
+            assert_eq!(event["flavor"], "slim", "{line}");
+        }
         if until(&event) {
             return event;
         }
@@ -80,7 +83,9 @@ fn an_unreachable_receiver_is_a_reported_wait() {
         .unwrap()
         .port();
     let mut child = spawn(&format!("http://127.0.0.1:{port}"));
-    let status = statuses(&mut child, |event| !event["failure"].is_null());
+    let status = events(&mut child, |event| {
+        event["type"] == "status" && !event["failure"].is_null()
+    });
     assert_eq!(status["failure"]["kind"], "receiver", "{status}");
     assert!(
         status["failure"]["message"]
@@ -101,13 +106,10 @@ fn capture_off_the_tv_fails_with_its_cause() {
     let receiver = portal.source(StreamRequest::default());
     let mut child = spawn(&format!("http://{}", portal.addr));
     let stdin = child.stdin.take();
-    let status = statuses(&mut child, |event| event["failure"]["kind"] == "other");
+    let failed = events(&mut child, |event| event["type"] == "failed");
     assert!(
-        status["failure"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("webOS"),
-        "{status}"
+        failed["cause"].as_str().unwrap().contains("webOS"),
+        "{failed}"
     );
     assert_eq!(wait(&mut child), Some(1));
     drop(stdin);

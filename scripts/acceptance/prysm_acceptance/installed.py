@@ -46,7 +46,7 @@ class Backup(TypedDict):
     taken: str
     found: list[str]
     portal: Portal | None  # the full TV package's portal, or the Linux package's
-    luna: JsonObject | None  # the TV service's getState: flavor, preferences, enabled, lighting
+    luna: JsonObject | None  # the TV service's getState: flavor, preferences, and full lighting or slim enabled
     files: dict[str, str | None]  # the TV's data files as they were (None: absent), raw
 
 

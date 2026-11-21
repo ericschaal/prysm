@@ -366,10 +366,14 @@ export function layoutBoxes(
 /** `window.demo`: the demo's in-memory supervisor and portal (testkit/tv-demo.tsx). */
 interface Demo {
   supervisor: {
+    /** The published state, as far as these tests read it. */
     state(): {
-      enabled: boolean;
       preferences: { autostart?: boolean; instance?: string | null };
-    };
+    } & (
+      | { flavor: 'full'; lighting: 'off' | 'processed' | 'device_native' }
+      | { flavor: 'slim'; enabled: boolean }
+    );
+    /** Facts of the supervisor's own package only (testkit/luna.ts). */
     publish(change: Record<string, unknown>): void;
     /** Hold every call until `release()`. */
     hold(): void;
@@ -387,7 +391,7 @@ declare global {
   }
 }
 
-/** What the supervisor holds: enabled, the saved preferences. */
+/** What the supervisor holds: its package's intent, the saved preferences. */
 export const supervisorState = (page: Page) =>
   page.evaluate(() => window.demo.supervisor.state());
 /** What the lights do, as the portal says. */

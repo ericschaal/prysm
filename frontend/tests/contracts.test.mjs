@@ -104,13 +104,36 @@ test('webOS capture settings keep the ranges the adapter validates', () => {
 
 test('the Luna document covers both flavors with one State', () => {
   const states = fixtures['luna/State'];
+  // Each package in each worker phase.
   assert.deepEqual(
-    states.map((state) => state.flavor),
-    ['full', 'slim'],
+    states.map((state) => `${state.flavor} ${state.worker.phase}`).sort(),
+    [
+      'full retrying',
+      'full running',
+      'full stopped',
+      'full stopping',
+      'slim retrying',
+      'slim running',
+      'slim stopped',
+      'slim stopping',
+    ],
   );
+  const [full] = states;
+  const slim = states.find((state) => state.flavor === 'slim');
   const state = validate('luna/State');
-  assert.equal(state({ ...states[0], flavor: 'other' }), false);
-  assert.equal(state({ ...states[0], power: 'on' }), false);
+  assert.equal(state({ ...full, flavor: 'other' }), false);
+  assert.equal(state({ ...full, power: 'on' }), false);
+  // A package's own fields are required, and the other flavor's do not fit.
+  const { lighting, ...withoutLighting } = full;
+  assert.equal(lighting, 'processed');
+  assert.equal(state(withoutLighting), false);
+  assert.equal(state({ ...full, flavor: 'slim' }), false);
+  assert.equal(state({ ...slim, flavor: 'full' }), false);
+  assert.equal(
+    state({ ...full, worker: { phase: 'running', capturing: 'yes' } }),
+    false,
+  );
+  assert.equal(state({ ...full, worker: { phase: 'retrying' } }), false);
   const preferences = validate('luna/Preferences');
   assert(preferences({}));
   assert.equal(preferences({ mode: 'slim' }), false);

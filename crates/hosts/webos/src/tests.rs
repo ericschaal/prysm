@@ -6,7 +6,7 @@ use prysm_runtime::fakes::{
     self, CallLog, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
 use prysm_webos_link::worker::{Link, Peer, Stop};
-use prysm_webos_link::{Command, Event, Video, WorkerStatus};
+use prysm_webos_link::{Command, Event, FullStatus, Video, WorkerStatus};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -63,10 +63,12 @@ fn start_with_portal(
     (peer, feed, log, task)
 }
 
-fn status(event: &Event) -> Option<&WorkerStatus> {
+/// A status event's report; the full worker sends only full ones.
+fn status(event: &Event) -> Option<&FullStatus> {
     match event {
-        Event::Status(status) => Some(status),
-        Event::Faulted { .. } => None,
+        Event::Status(WorkerStatus::Full(status)) => Some(status),
+        Event::Status(WorkerStatus::Slim(status)) => panic!("a slim status: {status:?}"),
+        Event::Failed { .. } | Event::Faulted { .. } => None,
     }
 }
 
@@ -76,14 +78,12 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
     let first = peer.event().await.unwrap();
     assert_eq!(
         status(&first).unwrap(),
-        &WorkerStatus {
+        &FullStatus {
             capturing: false,
             fps: None,
-            target: Some(LightingTarget::Off),
+            target: LightingTarget::Off,
             portal: Some(PORTAL.into()),
             failure: None,
-            encoding: None,
-            paused: false,
         }
     );
 
@@ -98,10 +98,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         .wait_for(|e| status(e).is_some_and(|s| s.capturing))
         .await
         .unwrap();
-    assert_eq!(
-        status(&running).unwrap().target,
-        Some(LightingTarget::Processed)
-    );
+    assert_eq!(status(&running).unwrap().target, LightingTarget::Processed);
     assert_eq!(
         feed.current(),
         Readiness {
@@ -136,7 +133,7 @@ async fn initial_target_applies_and_status_repeats_as_heartbeat() {
     let running = status(&running).unwrap().clone();
     assert!(running.fps.is_some_and(|fps| fps > 0), "{running:?}");
     // Unchanged status keeps arriving (the rate may have been measured anew).
-    let same = |status: &WorkerStatus| WorkerStatus {
+    let same = |status: &FullStatus| FullStatus {
         fps: None,
         ..status.clone()
     };
@@ -174,7 +171,7 @@ async fn a_failed_session_is_retried_until_lighting_is_turned_off() {
     peer.send(Command::Lighting {
         target: LightingTarget::Off,
     });
-    peer.wait_for(|e| status(e).is_some_and(|s| s.target == Some(LightingTarget::Off)))
+    peer.wait_for(|e| status(e).is_some_and(|s| s.target == LightingTarget::Off))
         .await
         .unwrap();
     let opened = log.count("source.open:");
@@ -307,7 +304,7 @@ async fn a_session_waiting_for_video_is_not_capturing() {
     let waiting = peer
         .wait_for(|e| {
             status(e).is_some_and(|s| {
-                s.target == Some(LightingTarget::Processed) && !s.capturing && s.fps == Some(0)
+                s.target == LightingTarget::Processed && !s.capturing && s.fps == Some(0)
             })
         })
         .await
@@ -319,7 +316,7 @@ async fn a_session_waiting_for_video_is_not_capturing() {
     peer.send(Command::Lighting {
         target: LightingTarget::Off,
     });
-    peer.wait_for(|e| status(e).is_some_and(|s| s.target == Some(LightingTarget::Off)))
+    peer.wait_for(|e| status(e).is_some_and(|s| s.target == LightingTarget::Off))
         .await
         .unwrap();
     peer.close();

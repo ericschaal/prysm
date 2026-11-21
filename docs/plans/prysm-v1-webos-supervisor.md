@@ -126,16 +126,24 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Event {
     Status(WorkerStatus),                // every change and every HEARTBEAT (5 s)
+    Failed { cause: String },            // an Err of the run: exit FAILED (FAULTED for a fault) follows; not before every FAILED exit
     Faulted { cause: String },           // exit FAULTED follows
 }
-pub struct WorkerStatus {
-    pub capturing: bool,                 // full: session Running and frames arriving; slim: frames in the last second
-    pub fps: Option<u16>,                // frames/s over about a second while measured (full: session; slim: sending); 0 = waiting
-    pub target: Option<LightingTarget>,  // full: the engine target, portal changes included
-    pub portal: Option<String>,          // full: "http://192.168.1.5:8787/", looked up again at every heartbeat
-    pub failure: Option<WorkerFailure>,  // { kind: encoder | receiver | other, message }; message cut to 1 KiB
-    pub encoding: Option<SlimEncoding>,  // slim: the encoding sent while connected
-    pub paused: bool,                    // slim: the receiver paused the stream; capture closed, not a failure
+#[serde(tag = "flavor", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkerStatus { Full(FullStatus), Slim(SlimStatus) } // the other package's status breaks the link
+pub struct FullStatus {
+    pub capturing: bool,                 // session Running and frames arriving
+    pub fps: Option<u16>,                // frames/s over about a second while a session runs; 0 = waiting
+    pub target: LightingTarget,          // the engine target, portal changes included
+    pub portal: Option<String>,          // "http://192.168.1.5:8787/", looked up again at every heartbeat
+    pub failure: Option<WorkerFailure>,  // { kind, message }; message cut to 1 KiB
+}
+pub struct SlimStatus {
+    pub capturing: bool,                 // frames sent in the last second
+    pub fps: Option<u16>,                // frames/s sent while connected and sending; 0 = waiting
+    pub encoding: Option<SlimEncoding>,  // the encoding sent while connected
+    pub paused: bool,                    // the receiver paused the stream; capture closed, not a failure
+    pub failure: Option<WorkerFailure>,  // { kind: encoder | receiver | version | other, message }
 }
 pub mod exit { STOPPED = 0 /* TERM, EOF */, FAILED = 1, USAGE = 2, FAULTED = 3 }
 ```
@@ -144,8 +152,9 @@ Worker side ([worker.rs](../../crates/engine/webos-link/src/worker.rs)):
 `worker::main(name, usage, parse, body)` parses argv (exit `USAGE`), guards the
 parent, takes over stdio, installs SIGTERM/SIGINT, runs `body(args, Link)` on a
 current-thread runtime and maps the outcome: a `Faulted` stop reason or
-`Err(Error::Faulted)` → 3; a `Failed` stop reason or other `Err` → 1 after a
-final `Status { failure }`; else 0.
+`Err(Error::Faulted)` → 3; a `Failed` stop reason or other `Err` → 1; else 0.
+Every `Err` (a fault too) is sent first as `Failed { cause }`; a stop reason
+alone is not.
 
 - [`EngineLink`](../../crates/hosts/webos/src/link.rs) (`Surface<EngineHandle>`):
   applies the initial target; `Video`/`ResetVideo` → `VideoSignal`, `Lighting`
@@ -178,11 +187,12 @@ lighting ≠ Off`; `setEnabled(true)` keeps a non-Off target, else Processed.
 | Running | effective video changes | Running | `Send(Video)` (also just before a stop) |
 | Running | `VideoContextChanged` | Running | `Send(ResetVideo)` |
 | Running | full `Enabled` | Running | `Send(Lighting)`; worker reports older than 2 s are ignored |
-| Running | `Status` | Running | heard; full adopts `target` |
+| Running | `Status` | Running | heard; full adopts `target`; the other package's status fails the link |
+| Running | `Failed` | Running | its cause names the coming exit |
 | Running | `wanted` false | Stopping (requested) | `Terminate` |
 | Running | slim `Preferences` changing receiver or capture | Stopping (requested) | `Terminate` |
 | Running | `Faulted`, `WorkerBroken`, 15 s silence | Stopping (failed) | `Terminate` |
-| Running | `WorkerExited` | Retrying | failure = exit text + last status failure |
+| Running | `WorkerExited` | Retrying | failure = exit text + the `Failed` cause or the last status failure |
 | Running | `SpawnFailed` | Retrying | — |
 | Stopping | `Tick` ≥ 8 s after TERM | Stopping | `Kill` once |
 | Stopping | `WorkerExited` | Idle (requested) or Retrying (failed) | then reconcile |
@@ -195,7 +205,8 @@ lighting ≠ Off`; `setEnabled(true)` keeps a non-Off target, else Processed.
   a failure; slim: frames flowing). Requested restarts have no backoff and no
   failure; a slim receiver or capture change restarts at once (also from
   backoff, or after a failed worker is reaped) with the delay reset.
-- `capturing` and `fps` are published only while the worker is Running.
+- A worker's report is published only while it is Running (full: its portal
+  also while Stopping): the published worker types have no place for it otherwise.
 - `Retrying { seconds }` is the time left until the restart, rounded up to
   whole seconds and computed when the state is sent (a reply or a publish;
   time alone publishes nothing). The TV app counts down from when it received
@@ -227,8 +238,8 @@ Both packages: service `io.prysm.tv.service`, app `io.prysm.tv`. Replies carry L
 `returnValue`/`errorText`; payloads are objects of at most 4 KiB. The values
 are exported as the `luna` OpenAPI document
 ([schema.rs](../../crates/hosts/webos-service/src/schema.rs), generated
-`@prysm/contracts/luna`): one document for both flavors, with flavor-specific
-fields marked "Full only" or "Slim only".
+`@prysm/contracts/luna`, API version 2): one document for both flavors; `State`
+carries the installed package's own fields in `Package`, tagged by `flavor`.
 
 | Method | Request | Reply | Caller |
 | --- | --- | --- | --- |
@@ -244,21 +255,23 @@ pub struct Preferences {            // tv.json; unknown fields rejected
     pub receiver: Option<ReceiverAddress>, // slim: frame receiver, host:port (IP or name, resolved per connect); full rejects both
 }                                   // picture settings: the portals' (prysm-3jx.63)
 pub struct State {
-    pub flavor: Flavor,             // full | slim
+    #[serde(flatten)]
+    pub package: Package,           // the package's own fields, tagged by `flavor`
     pub preferences: Preferences,
-    pub enabled: bool,
-    pub lighting: Option<LightingTarget>, // full only
     pub power: Power,               // unknown | active | screen_saver | asleep
     pub video: Video,
-    pub worker: Phase,              // { phase: stopped | running | stopping } or { phase: retrying, seconds }
-    pub capturing: bool,
-    pub fps: Option<u16>,           // the worker's frames/s while running and measured
-    pub portal: Option<String>,
-    pub failure: Option<WorkerFailure>, // { kind: encoder | receiver | other, message }
-    pub encoding: Option<SlimEncoding>, // slim only
-    pub paused: bool,               // slim only: the receiver paused the stream (lighting off)
+    pub failure: Option<WorkerFailure>, // { kind: encoder | receiver | version | other, message }
     pub log: Vec<String>,           // last 20 worker stderr lines
 }
+#[serde(tag = "flavor")]
+pub enum Package {
+    Full { lighting: LightingTarget, worker: FullWorker },
+    Slim { enabled: bool, worker: SlimWorker },
+}
+#[serde(tag = "phase")]             // the worker's report only while it runs
+pub enum FullWorker { Stopped, Running { capturing, fps, portal }, Stopping { portal }, Retrying { seconds } }
+#[serde(tag = "phase")]
+pub enum SlimWorker { Stopped, Running { capturing, fps, encoding, paused }, Stopping, Retrying { seconds } }
 ```
 
 The sender check uses LS2's application id, never the payload, before parsing.
@@ -267,7 +280,7 @@ Setup stays a Homebrew Channel `exec` of `setup.sh` (the service does not exist 
 **Room for calibration.** Today's TV UI presents patterns itself (a `<video>`
 in the app) and talks to the portal through the hidden
 `calibration-tv.html` relay. v1 keeps that split: the full TV UI uses its own
-portal (`State.portal`), the slim one `preferences.instance`. Neither the Luna
+portal (the full worker's `portal`), the slim one `preferences.instance`. Neither the Luna
 API nor the worker protocol is involved; anything calibration later needs from
 capture is a portal setting (full: the TV's portal; slim: the desktop's
 `remote` capture, sent to the TV as the stream request). Both enums

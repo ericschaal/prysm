@@ -52,15 +52,21 @@ BINARIES = {
     'full': ('prysm-webos-service', 'prysm-webos'),
     'slim': ('prysm-webos-slim-service', 'prysm-webos-slim'),
 }
-STATUS = json.dumps({'type': 'status', 'capturing': False, 'target': None, 'portal': None, 'failure': None,
-                     'paused': False})
+# What a fake worker of each flavour reports (webos-link WorkerStatus): nothing
+# captured; the full one's engine stays off.
+STATUS = {
+    'full': json.dumps({'type': 'status', 'flavor': 'full', 'capturing': False, 'fps': None,
+                        'target': 'off', 'portal': None, 'failure': None}),
+    'slim': json.dumps({'type': 'status', 'flavor': 'slim', 'capturing': False, 'fps': None,
+                        'encoding': None, 'paused': False, 'failure': None}),
+}
 
 
-def fake_worker(ignore_term):
-    """Speaks the worker protocol (a status line every second); one that ignores
-    SIGTERM makes the supervisor escalate to SIGKILL."""
+def fake_worker(flavour, ignore_term):
+    """Speaks the worker protocol of `flavour` (a status line every second); one
+    that ignores SIGTERM makes the supervisor escalate to SIGKILL."""
     trap = "trap '' TERM\n" if ignore_term else ''
-    return f"#!/bin/sh\n{trap}while :; do printf '%s\\n' {shlex.quote(STATUS)}; sleep 1; done\n"
+    return f"#!/bin/sh\n{trap}while :; do printf '%s\\n' {shlex.quote(STATUS[flavour])}; sleep 1; done\n"
 
 
 DIRECTORY = re.compile(r'^/tmp/prysm-supervisor\.[A-Za-z0-9]{6,}$')
@@ -189,7 +195,7 @@ def smoke(args, remote):
             remote.write(worker, (artifacts / worker_name).read_bytes(), '700')
         else:
             # Without --supervisor the fake honours SIGTERM, so shutdown stays quick.
-            remote.write(worker, fake_worker(ignore_term=args.supervisor), '700')
+            remote.write(worker, fake_worker(flavour, ignore_term=args.supervisor), '700')
         for name, content in files.items():
             remote.write(f'{directory}/{name}', content)
         if args.supervisor:
@@ -263,18 +269,22 @@ def exercise_worker(args, remote, state, directory, worker):
         remote.run(f'test -f {directory}/state/tv.json')
     value = remote.luna('setEnabled', {'enabled': True}, **app)
     assert value['returnValue'] is True, value
-    value = eventually(state, lambda v: v['worker'] == {'phase': 'running'}, 'worker running (is the TV on?)', 15)
+    def running(value):
+        return value['worker']['phase'] == 'running'
+
+    value = eventually(state, running, 'worker running (is the TV on?)', 15)
     assert remote.pids(worker), 'no worker process'
     passed('worker spawned: ' + json.dumps(value))
     if not args.capture:
         return
     if args.flavour == 'full':
-        value = eventually(state, lambda v: v['portal'], 'portal address', 15)
-        passed('full worker serves the portal at ' + value['portal'])
+        # A running full worker reports its portal; a slim one its stream.
+        value = eventually(state, lambda v: running(v) and v['worker']['portal'], 'portal address', 15)
+        passed('full worker serves the portal at ' + value['worker']['portal'])
         time.sleep(5)
         print('Full worker state after enabling:', json.dumps(state()), flush=True)
     else:
-        value = eventually(state, lambda v: v['capturing'], 'frames to ' + args.prysm, 20)
+        value = eventually(state, lambda v: running(v) and v['worker']['capturing'], 'frames to ' + args.prysm, 20)
         passed('slim worker streams to ' + args.prysm)
 
 
@@ -312,7 +322,7 @@ def dry_run(args):
     for name, content in files.items():
         print(f'--- {directory}/{name}\n{content}' + ('' if content.endswith('\n') else '\n'), end='')
     if not args.capture:
-        print(f'--- {directory}/{worker} (fake)\n{fake_worker(args.supervisor)}', end='')
+        print(f'--- {directory}/{worker} (fake)\n{fake_worker(args.flavour, args.supervisor)}', end='')
     print('Dry run: nothing was sent to a TV.')
 
 

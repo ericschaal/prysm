@@ -57,7 +57,7 @@ def _portal(ctx: Ctx) -> prysm_api.Prysm | None:
     url = ctx.config.eyes_portal
     found = _tv(ctx)
     if not url and found:
-        url = (found.get_state() or webos.LunaReply()).get('portal') or ''
+        url = tv.portal(found.get_state() or webos.LunaReply()) or ''
     if not url:
         return None
     try:
@@ -145,7 +145,7 @@ def cold_boot(ctx: Ctx) -> tuple[str, object]:
     evidence: dict[str, object] = {'answer': answer, 'note': note}
     found = _tv(ctx)
     if answer == Answer.YES and found:
-        state = tv.wait_state(found.get_state, lambda s: s['capturing'], 120, every=5)
+        state = tv.wait_state(found.get_state, tv.capturing, 120, every=5)
         evidence['getState'] = state
     return note or answer, evidence
 

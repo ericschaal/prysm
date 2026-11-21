@@ -44,6 +44,11 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   output is redirected to stderr, which carries logs.
 - The worker reports status on every change and every 5 s; 15 s of silence is
   a hang. Stop sends TERM, then KILL 8 s later.
+- Each status names its package (`"flavor": "full"` or `"slim"`) and has only
+  that package's fields; a status of the other package breaks the link. A
+  worker whose run ends with an error says why (`failed`, also before its
+  first status), then exits (failed, or faulted when the error is a fault).
+  A protocol misuse or a lost link exits failed without it.
 - The worker stops when its supervisor dies: it gets SIGTERM (parent-death
   signal) and its stdin closes, and it stops as usual, releasing the capture
   tap. Nothing SIGKILLs it then: a worker killed inside a native capture call
@@ -85,7 +90,12 @@ protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
 Service `io.prysm.tv.service`: `getState` (any caller, subscribable),
 `setPreferences`, `setEnabled` and `uninstall` (the app only, checked by LS2
-application ID). Preferences hold only `autostart` and, for slim, `instance`
+application ID). The state has the fields both packages share (`preferences`,
+`power`, `video`, `failure`, `log`) and the installed package's own, tagged
+by `flavor`: full `lighting` and a `worker` that reports `capturing`, `fps`
+and `portal` while it runs (`portal` also while it stops); slim `enabled` and
+a `worker` that reports `capturing`, `fps`, `encoding` and `paused` while it
+runs. API version 2 (the document's `info.version`). Preferences hold only `autostart` and, for slim, `instance`
 (the desktop Prysm's portal address, where frames go). Picture settings live in a
 portal, never in Luna. Types: generated `@prysm/contracts/luna` from
 [schema.rs](../../crates/hosts/webos-service/src/schema.rs).
