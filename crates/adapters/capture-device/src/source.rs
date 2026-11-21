@@ -105,7 +105,10 @@ impl DeviceFrames {
         match thread.wait_ready(deadlines.ready) {
             Ok(true) => Ok(Self { thread }),
             Ok(false) => {
-                let late = format!("video device was not ready within {:?}", deadlines.ready);
+                let late = format!(
+                    "video device was not ready within {}s",
+                    deadlines.ready.as_secs_f32()
+                );
                 Err(match thread.close() {
                     Ok(()) => Error::other(late),
                     Err(unreleased) => Error::adapter(late, unreleased),

@@ -1,8 +1,8 @@
 //! One blocking `POST /json/state` (or, for discovery, `GET /json/info`) per
-//! call: no retries, no keep-alive, no proxy. [`parse`] also reads the state
-//! checks' replies.
+//! call: no retries, no keep-alive, no proxy. [`get`] and [`read_response`]
+//! also serve the state checks, which read without blocking.
 use serde_json::Value;
-use std::io::{self, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 /// so a slow release and a slow WLED together can exceed it (on the TV
 /// 4 s + 3 s > 6 s) and the session ends `Faulted`.
 pub const TIMEOUT: Duration = Duration::from_millis(1500);
-/// `/json/info` is about 1.5 KiB, more with usermods.
-const MAX_BODY: usize = 16 * 1024;
+/// The most a response may hold, head included: `/json/info` is about
+/// 1.5 KiB, more with usermods.
 const MAX_RESPONSE: usize = 20 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +27,9 @@ pub enum RequestError {
     Io(#[from] io::Error),
     #[error("malformed HTTP response: {0}")]
     Malformed(&'static str),
+    /// The response held more than this many bytes.
+    #[error("response exceeds {} KiB", .0 / 1024)]
+    TooLarge(usize),
     #[error("device answered HTTP {0}")]
     Status(u16),
     #[error("response is not JSON")]
@@ -35,7 +38,7 @@ pub enum RequestError {
     Rejected(String),
     #[error("device did not acknowledge the request")]
     Unacknowledged,
-    #[error("no complete response within {0:?}")]
+    #[error("no complete response within {}s", .0.as_secs_f32())]
     TimedOut(Duration),
 }
 
@@ -84,12 +87,16 @@ pub fn post_state(device: SocketAddr, host: &str, state: &Value) -> Result<(), R
 /// `GET path` from `device` and its JSON reply, waiting at most `timeout`
 /// for the whole exchange.
 pub fn get_json(device: SocketAddr, path: &str, timeout: Duration) -> Result<Value, RequestError> {
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {device}\r\nAccept: application/json\r\n\
-         Connection: close\r\n\r\n"
-    );
-    let body = exchange(device, &request, timeout)?.success()?;
+    let body = exchange(device, &get(path, &device.to_string()), timeout)?.success()?;
     Ok(serde_json::from_slice(&body)?)
+}
+
+/// The request text of `GET path` from `host`, asking for JSON.
+pub fn get(path: &str, host: &str) -> String {
+    format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n\
+         Connection: close\r\n\r\n"
+    )
 }
 
 /// Connect to `device`, send `request` and read the whole response, all
@@ -101,10 +108,13 @@ fn exchange(device: SocketAddr, request: &str, limit: Duration) -> Result<Respon
     let response = stream
         .write_all(request.as_bytes())
         .map_err(RequestError::from)
-        .and_then(|()| read_response(&mut stream));
+        .and_then(|()| read_response(&mut stream, &mut Vec::new(), MAX_RESPONSE));
     match response {
+        Ok(Some(response)) => Ok(response),
+        // A blocking read that would block has timed out.
+        Ok(None) => Err(RequestError::TimedOut(limit)),
         Err(RequestError::Io(error)) if expired(&error) => Err(RequestError::TimedOut(limit)),
-        response => response,
+        Err(error) => Err(error),
     }
 }
 
@@ -121,7 +131,7 @@ impl Bounded {
     fn left(&self) -> io::Result<Option<Duration>> {
         let left = self.deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return Err(io::ErrorKind::TimedOut.into());
+            return Err(ErrorKind::TimedOut.into());
         }
         Ok(Some(left))
     }
@@ -147,36 +157,41 @@ impl Write for Bounded {
 
 /// Whether `error` is a socket timeout: with [`Bounded`], the deadline passed.
 fn expired(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-    )
+    matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
 }
 
-fn read_response(stream: &mut impl Read) -> Result<Response, RequestError> {
-    let mut data = Vec::new();
-    let mut chunk = [0; 1024];
+/// Reads what `stream` has into `data`, which holds what earlier calls read:
+/// the response once complete, `None` when a read would block first (more
+/// may come). More than `limit` bytes fail.
+pub fn read_response(
+    stream: &mut impl Read,
+    data: &mut Vec<u8>,
+    limit: usize,
+) -> Result<Option<Response>, RequestError> {
+    let mut chunk = [0; 4096];
     loop {
-        let count = stream.read(&mut chunk)?;
+        let count = match stream.read(&mut chunk) {
+            Ok(count) => count,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
         data.extend_from_slice(&chunk[..count]);
-        if let Some(response) = parse(&data, count == 0)? {
-            if response.body.len() > MAX_BODY {
-                return Err(RequestError::Malformed("body exceeds 16 KiB"));
-            }
-            return Ok(response);
+        if data.len() > limit {
+            return Err(RequestError::TooLarge(limit));
+        }
+        if let Some(response) = parse(data, count == 0)? {
+            return Ok(Some(response));
         }
         if count == 0 {
             return Err(RequestError::Malformed("connection closed mid-response"));
-        }
-        if data.len() > MAX_RESPONSE {
-            return Err(RequestError::Malformed("response exceeds 20 KiB"));
         }
     }
 }
 
 /// The response in `data`, or `None` while it is incomplete; `eof`: no more
 /// data follows.
-pub fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
+fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
     let Some(end) = find(data, b"\r\n\r\n") else {
         return Ok(None);
     };
@@ -271,7 +286,20 @@ mod tests {
         let started = Instant::now();
         let error = get_json(device, "/json/info", LIMIT).unwrap_err();
         assert!(matches!(error, RequestError::TimedOut(LIMIT)), "{error:?}");
+        assert_eq!(error.to_string(), "no complete response within 0.2s");
         assert!(started.elapsed() < LIMIT * 3, "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn a_response_over_the_limit_fails_naming_it() {
+        let response = format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(MAX_RESPONSE));
+        let error =
+            read_response(&mut response.as_bytes(), &mut Vec::new(), MAX_RESPONSE).unwrap_err();
+        assert!(
+            matches!(error, RequestError::TooLarge(MAX_RESPONSE)),
+            "{error:?}"
+        );
+        assert_eq!(error.to_string(), "response exceeds 20 KiB");
     }
 
     #[test]

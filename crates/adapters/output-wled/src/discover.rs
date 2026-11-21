@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 /// How long answers are collected.
 pub const WINDOW: Duration = Duration::from_millis(1200);
-/// Bounds the connect and each read of one `/json/info`.
+/// Bounds one whole `/json/info` exchange.
 pub const INFO: Duration = Duration::from_millis(350);
 const SERVICE: [&str; 3] = ["_wled", "_tcp", "local"];
 /// `_wled._tcp.local`, type PTR, class IN.

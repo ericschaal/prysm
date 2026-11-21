@@ -31,7 +31,7 @@ use crate::ddp::{Gamma, Transfer};
 use crate::http::{self, RequestError};
 use prysm_ports::{DeviceBrightness, OutputIssue, chain};
 use serde::Deserialize;
-use std::io::{self, ErrorKind, Read, Write};
+use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -236,11 +236,7 @@ impl Observer {
             Ask::State => "/json/si",
             Ask::Config => "/json/cfg",
         };
-        let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\n\
-             Connection: close\r\n\r\n",
-            self.host
-        );
+        let request = http::get(path, &self.host);
         let mut stream =
             TcpStream::connect_timeout(&self.device, CONNECT).map_err(RequestError::Connect)?;
         stream.set_write_timeout(Some(CONNECT))?;
@@ -294,7 +290,7 @@ impl Observer {
         if !status.info.live || status.info.lm.as_deref() == Some("") {
             return Some(OutputIssue::NotLive);
         }
-        let lip = status.info.lip.as_deref().and_then(|ip| ip.parse().ok())?;
+        let lip = status.info.lip?;
         if lip == local || self.ours.is_none() {
             self.ours = Some(lip);
         }
@@ -305,30 +301,9 @@ impl Observer {
 impl Pending {
     /// The body once the whole reply arrived; `None` while more is to come.
     fn read(&mut self) -> Result<Option<Vec<u8>>, RequestError> {
-        let mut chunk = [0; 4096];
-        loop {
-            match self.stream.read(&mut chunk) {
-                Ok(0) => {
-                    return match http::parse(&self.reply, true)? {
-                        Some(response) => response.success().map(Some),
-                        None => Err(RequestError::Malformed("connection closed mid-response")),
-                    };
-                }
-                Ok(count) => {
-                    self.reply.extend_from_slice(&chunk[..count]);
-                    if self.reply.len() > MAX_REPLY {
-                        return Err(RequestError::Malformed("state exceeds 64 KiB"));
-                    }
-                }
-                Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    return http::parse(&self.reply, false)?
-                        .map(http::Response::success)
-                        .transpose();
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
+        http::read_response(&mut self.stream, &mut self.reply, MAX_REPLY)?
+            .map(http::Response::success)
+            .transpose()
     }
 }
 
@@ -357,11 +332,20 @@ struct Info {
     /// Realtime protocol, such as `"DDP"`; empty for the JSON API's `live`.
     #[serde(default)]
     lm: Option<String>,
-    /// Address of the last realtime sender; empty when none.
-    #[serde(default)]
-    lip: Option<String>,
+    /// Address of the last realtime sender; WLED sends it empty when none.
+    #[serde(default, deserialize_with = "sender")]
+    lip: Option<IpAddr>,
     #[serde(default)]
     leds: Option<Leds>,
+}
+
+/// An empty `lip` is no sender; any other that is not an address fails the
+/// reply.
+fn sender<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<IpAddr>, D::Error> {
+    match Option::<String>::deserialize(deserializer)?.as_deref() {
+        None | Some("") => Ok(None),
+        Some(address) => address.parse().map(Some).map_err(serde::de::Error::custom),
+    }
 }
 
 #[derive(Deserialize, Clone, Copy)]
