@@ -18,7 +18,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-ROOT=$(cd "$HERE/../../../.." && pwd)
+ROOT=$(cd "$HERE/../../.." && pwd)
 
 dry_run=false
 flavour=

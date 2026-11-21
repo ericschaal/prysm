@@ -52,8 +52,11 @@ For rates and timing over time, enable [metrics](monitoring.md).
 
 ## Hardware checks
 
-None of these have been run against Prysm 1.x yet; results belong in
-[research](../../research/README.md). The
+No run of these against Prysm 1.x is recorded yet (the only recorded 1.x
+measurement on a TV is the processor's benchmark,
+[sampler speed](../../research/processing/2026-11-15-sampler-speed/README.md));
+results belong in [research](../../research/README.md), TV acceptance in its
+[records](../../research/tv-acceptance/README.md). The
 [acceptance runner](acceptance.md) automates most of them (desktop, both TV
 packages) and asks for the rest.
 

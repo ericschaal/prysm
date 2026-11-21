@@ -17,7 +17,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 package=prysm-headless
 
-# The product version (VERSION), e.g. 1.0.0-alpha.0 -> 1.0.0~alpha.0-1
+# The product version (VERSION), e.g. 1.0.0-rc.1 -> 1.0.0~rc.1-1
 # (sorts before 1.0.0; "-1" is the packaging revision).
 version=$(tr -d '[:space:]' <"$repo/VERSION")
 [ -n "$version" ] || { echo "no version in $repo/VERSION" >&2; exit 1; }

@@ -202,7 +202,7 @@ app, service and package directories, or unknown service files. Despite
 
 The version has one source: [`VERSION`](../VERSION) (see
 [releasing](../docs/developers/releasing.md#the-version-is-one-file)). The binaries report it in full
-(`prysm-webos-service --version` prints `1.0.0-alpha.0`). The app's
+(`prysm-webos-service --version` prints, for example, `1.0.0-rc.1`). The app's
 `appinfo.json`, and with it the IPK's file name and control file, carry only
 its `major.minor.patch` (`1.0.0`), because `ares-package` accepts nothing but
 three numbers there. The `appinfo.json` in this repository has no version;
@@ -263,7 +263,7 @@ The generator needs libclang; without `--check` it rewrites
 prints its files and touches nothing). It runs the cargo binaries from the
 build directory under a probe identity (`io.prysm.tv.probe`, `run --sandbox`
 in a private `/tmp/prysm-supervisor.*`, bounded `--run-for`) and removes its
-probe manifest only if unchanged. It has not been run on a TV yet.
+probe manifest only if unchanged. No run on a TV is recorded yet.
 
 ### Installing on a TV
 

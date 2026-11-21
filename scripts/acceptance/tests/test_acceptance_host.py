@@ -4,7 +4,9 @@ real run of the Mac file cell against a prysm-headless and the fake WLED on loop
 The loopback run needs a built prysm-headless, which `cargo xtask check scripts` does not build: give its
 path in PRYSM_ACCEPTANCE_BINARY (`cargo build -p prysm-headless`, then
 PRYSM_ACCEPTANCE_BINARY=target/debug/prysm-headless). It also needs FFmpeg 9+ and UDP port 4048 on
-127.0.0.1 free (Prysm always sends DDP there), so it is not run in parallel with another bench.
+127.0.0.1 free (Prysm always sends DDP there), so it is not run in parallel with another bench. CI does
+not run it: it measures real-time pace, and GitHub's hosted macOS runner decodes the clip at about 8 fps
+of its 30 (tried 2026-11-21).
 """
 
 import os
