@@ -1,8 +1,8 @@
 //! The `luna` OpenAPI document: the values the TV app exchanges with
 //! `luna://io.prysm.tv.service` (feature `schema`, for the contract exporter).
 //!
-//! One document for both packages; fields that only one flavor uses say so
-//! in their description. Types from `prysm-webos-link` and `prysm-ports` are
+//! One document for both packages: `State` carries the installed package's
+//! own fields in `Package`, tagged by `flavor`. Types from `prysm-webos-link` and `prysm-ports` are
 //! described by schema-only mirrors, kept equal to their serde shape by tests.
 //!
 //! | Method | Request | Reply |
@@ -15,7 +15,7 @@
 //! Any method can fail with [`ErrorReply`].
 use crate::preferences::Preferences;
 use crate::service::{GetStateRequest, SetEnabledRequest, UninstallRequest};
-use crate::state::{Flavor, Phase, Power, State};
+use crate::state::{FullWorker, Package, Power, SlimWorker, State};
 use serde::{Deserialize, Serialize};
 pub use utoipa::openapi::OpenApi;
 use utoipa::openapi::schema::{ObjectBuilder, Type};
@@ -23,7 +23,7 @@ use utoipa::{OpenApi as _, ToSchema};
 
 /// The Luna API's own version, in the document's `info.version`; not the
 /// product version, which only `VERSION` carries.
-pub const API_VERSION: &str = "1";
+pub const API_VERSION: &str = "2";
 
 // Mirrors `prysm_webos_link::Video`.
 /// The TV's main video output.
@@ -139,9 +139,10 @@ pub struct ErrorReply {
 #[derive(utoipa::OpenApi)]
 #[openapi(components(schemas(
     State,
-    Flavor,
+    Package,
+    FullWorker,
+    SlimWorker,
     Power,
-    Phase,
     Preferences,
     SlimEncodingSchema,
     FailureKindSchema,
@@ -217,14 +218,70 @@ mod tests {
         }
     }
 
+    /// The schema of `name`'s variant whose `tag` property is `value`.
+    fn variant<'a>(schemas: &'a Value, name: &str, tag: &str, value: &str) -> &'a Value {
+        schemas[name]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|variant| variant["properties"][tag]["enum"] == json!([value]))
+            .unwrap_or_else(|| panic!("{name} has no {tag} {value}"))
+    }
+
+    /// The properties `variant` requires, sorted.
+    fn required(variant: &Value) -> Vec<&str> {
+        let mut names: Vec<&str> = variant["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|name| name.as_str().unwrap())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
     #[test]
     fn document_describes_both_flavors_in_one_set_of_schemas() {
         let document = serde_json::to_value(document()).unwrap();
+        assert_eq!(document["info"]["version"], json!("2"));
         let schemas = &document["components"]["schemas"];
-        assert_eq!(schemas["Flavor"]["enum"], json!(["full", "slim"]));
+        // The common fields, and the package's own tagged by `flavor`.
+        let parts = schemas["State"]["allOf"].as_array().unwrap();
+        assert_eq!(parts[0]["$ref"], json!("#/components/schemas/Package"));
         assert_eq!(
-            schemas["State"]["properties"]["video"]["$ref"],
+            parts[1]["properties"]["video"]["$ref"],
             json!("#/components/schemas/Video")
+        );
+        assert_eq!(
+            required(&parts[1]),
+            ["log", "power", "preferences", "video"]
+        );
+        let full = variant(schemas, "Package", "flavor", "full");
+        assert_eq!(required(full), ["flavor", "lighting", "worker"]);
+        assert_eq!(
+            full["properties"]["worker"]["$ref"],
+            json!("#/components/schemas/FullWorker")
+        );
+        let slim = variant(schemas, "Package", "flavor", "slim");
+        assert_eq!(required(slim), ["enabled", "flavor", "worker"]);
+        assert_eq!(
+            slim["properties"]["worker"]["$ref"],
+            json!("#/components/schemas/SlimWorker")
+        );
+        // Each package's running worker has only the fields it reports.
+        let running = variant(schemas, "FullWorker", "phase", "running");
+        assert_eq!(required(running), ["capturing", "phase"]);
+        let mut fields: Vec<_> = running["properties"].as_object().unwrap().keys().collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["capturing", "fps", "phase", "portal"]);
+        let running = variant(schemas, "SlimWorker", "phase", "running");
+        assert_eq!(required(running), ["capturing", "paused", "phase"]);
+        let mut fields: Vec<_> = running["properties"].as_object().unwrap().keys().collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["capturing", "encoding", "fps", "paused", "phase"]);
+        assert_eq!(
+            required(variant(schemas, "SlimWorker", "phase", "stopping")),
+            ["phase"]
         );
         let preferences = &schemas["Preferences"];
         assert_eq!(preferences["additionalProperties"], json!(false));

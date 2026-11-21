@@ -15,7 +15,13 @@ import {
   type ReactNode,
   type Ref,
 } from 'react';
-import type { Flavor, TvService } from '@prysm/webos-platform';
+import {
+  fullPortal,
+  isCapturing,
+  slimEncoding,
+  type Flavor,
+  type TvService,
+} from '@prysm/webos-platform';
 import { failureOf, plainFailure } from '@prysm/application-client';
 import { CalibrationScreen, QrCode } from './calibration';
 import {
@@ -150,7 +156,9 @@ export function TvApp({
   const slim = flavor === 'slim';
   const { state, draft, online } = tv;
   const mismatch = !!state && state.flavor !== flavor;
-  const baseUrl = slim ? draft.instance : localPortal(state?.portal);
+  // The full package's portal on this TV, as its worker reports it.
+  const ownPortal = state && fullPortal(state);
+  const baseUrl = slim ? draft.instance : localPortal(ownPortal);
   // Its own connection: a lost TV service subscription does not end it.
   const portal = usePortal(baseUrl, portalOptions, visible);
   const { snapshot } = portal;
@@ -167,7 +175,7 @@ export function TvApp({
   });
   // Capture, lights and the slim stream encoding are set up only in this
   // portal, never in this UI.
-  const portalAddress = slim ? draft.instance : (state?.portal ?? null);
+  const portalAddress = slim ? draft.instance : ownPortal;
   const elapsed = useElapsed(tv.countdown ? tv.stateAt : null);
   const status = tvStatus(
     online,
@@ -182,7 +190,7 @@ export function TvApp({
             // Without the portal's measure yet, the TV's own word.
             receiving:
               snapshot.session.state === 'running' &&
-              (snapshot.input?.receiving ?? !!state?.capturing),
+              (snapshot.input?.receiving ?? (!!state && isCapturing(state))),
           },
         }
       : null,
@@ -196,9 +204,9 @@ export function TvApp({
   if (retry) {
     const left = retrySeconds(retry, elapsed);
     meta = left ? `Trying again in ${left} s` : 'Trying again now…';
-  } else if (state?.capturing && !mismatch) {
-    const rate = captureRate(state);
-    meta = [rate, slim && state.encoding ? encodingName(state.encoding) : null]
+  } else if (state && isCapturing(state) && !mismatch) {
+    const encoding = slimEncoding(state);
+    meta = [captureRate(state), encoding ? encodingName(encoding) : null]
       .filter(Boolean)
       .join(' · ');
   }

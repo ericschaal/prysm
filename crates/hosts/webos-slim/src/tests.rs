@@ -10,7 +10,7 @@ use prysm_ports::{Error, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use prysm_webos_link::worker::{Link, Peer, Stop};
-use prysm_webos_link::{Command, Event, LightingTarget, Video, WorkerStatus};
+use prysm_webos_link::{Command, Event, LightingTarget, SlimStatus, Video, WorkerStatus};
 use prysm_webos_link::{FailureKind, SlimEncoding};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -124,10 +124,12 @@ fn start_fake(fake: FakeSourceSettings) -> (Peer, VideoSignal, Running) {
     })
 }
 
-fn status(event: &Event) -> Option<&WorkerStatus> {
+/// A status event's report; the slim worker sends only slim ones.
+fn status(event: &Event) -> Option<&SlimStatus> {
     match event {
-        Event::Status(status) => Some(status),
-        Event::Faulted { .. } => None,
+        Event::Status(WorkerStatus::Slim(status)) => Some(status),
+        Event::Status(WorkerStatus::Full(status)) => panic!("a full status: {status:?}"),
+        Event::Failed { .. } | Event::Faulted { .. } => None,
     }
 }
 
@@ -411,7 +413,7 @@ async fn reports_frame_flow_and_forwards_video_commands() {
     });
     assert_eq!(
         peer.event().await.unwrap(),
-        Event::Status(WorkerStatus::default())
+        Event::Status(WorkerStatus::Slim(SlimStatus::default()))
     );
     peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
     // The fake goes quiet after 40 frames.

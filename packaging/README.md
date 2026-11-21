@@ -213,7 +213,7 @@ The slim worker encodes its stream with H.264 by default
 [`h264-rvenc-sys`](../crates/adapters/h264-rvenc-sys/src/lib.rs)) or OpenH264 compiled
 in, as the desktop's `remote` capture `encoding` requests (`h264_hardware`,
 the default, `h264_software` or `raw`). If that encoder fails the TV reports
-`failure_kind: encoder` and refuses the request, so lighting on the desktop
+a failure of kind `encoder` and refuses the request, so lighting on the desktop
 stops with the TV's reason, until another encoding is saved there; nothing
 falls back on its own. It therefore links the sysroot's
 GStreamer 1.0 and GLib, which [`env.sh`](webos/env.sh) finds with the SDK's

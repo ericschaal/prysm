@@ -866,18 +866,12 @@
   ],
   "luna/State": [
     {
-      "capturing": true,
-      "enabled": true,
-      "encoding": null,
       "failure": null,
       "flavor": "full",
-      "fps": 30,
       "lighting": "processed",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
-      "paused": false,
-      "portal": "http://192.168.1.5:8787/",
       "power": "active",
       "preferences": {
         "autostart": false,
@@ -885,23 +879,73 @@
       },
       "video": "available",
       "worker": {
-        "phase": "running"
+        "capturing": true,
+        "fps": 30,
+        "phase": "running",
+        "portal": "http://192.168.1.5:8787/"
       }
     },
     {
-      "capturing": false,
+      "failure": null,
+      "flavor": "full",
+      "lighting": "off",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false,
+        "instance": null
+      },
+      "video": "available",
+      "worker": {
+        "phase": "stopped"
+      }
+    },
+    {
+      "failure": null,
+      "flavor": "full",
+      "lighting": "device_native",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false,
+        "instance": null
+      },
+      "video": "available",
+      "worker": {
+        "phase": "stopping",
+        "portal": "http://192.168.1.5:8787/"
+      }
+    },
+    {
+      "failure": null,
+      "flavor": "full",
+      "lighting": "processed",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false,
+        "instance": null
+      },
+      "video": "available",
+      "worker": {
+        "phase": "retrying",
+        "seconds": 2
+      }
+    },
+    {
       "enabled": true,
-      "encoding": null,
       "failure": {
         "kind": "encoder",
         "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
       },
       "flavor": "slim",
-      "fps": null,
-      "lighting": null,
       "log": [],
-      "paused": false,
-      "portal": null,
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
@@ -912,22 +956,65 @@
         "phase": "retrying",
         "seconds": 4
       }
+    },
+    {
+      "enabled": true,
+      "failure": null,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "instance": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "encoding": "h264_hardware",
+        "fps": null,
+        "paused": true,
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": false,
+      "failure": null,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "instance": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "phase": "stopped"
+      }
+    },
+    {
+      "enabled": false,
+      "failure": null,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "instance": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "phase": "stopping"
+      }
     }
   ],
   "luna/StateReply": [
     {
-      "capturing": true,
-      "enabled": true,
-      "encoding": null,
       "failure": null,
       "flavor": "full",
-      "fps": 30,
       "lighting": "processed",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
-      "paused": false,
-      "portal": "http://192.168.1.5:8787/",
       "power": "active",
       "preferences": {
         "autostart": false,
@@ -937,23 +1024,20 @@
       "subscribed": true,
       "video": "available",
       "worker": {
-        "phase": "running"
+        "capturing": true,
+        "fps": 30,
+        "phase": "running",
+        "portal": "http://192.168.1.5:8787/"
       }
     },
     {
-      "capturing": false,
       "enabled": true,
-      "encoding": null,
       "failure": {
         "kind": "encoder",
         "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
       },
       "flavor": "slim",
-      "fps": null,
-      "lighting": null,
       "log": [],
-      "paused": false,
-      "portal": null,
       "power": "screen_saver",
       "preferences": {
         "autostart": true,

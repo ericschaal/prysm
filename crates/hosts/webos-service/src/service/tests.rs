@@ -5,7 +5,7 @@ use crate::install::InstallError;
 use crate::launcher::Output;
 use crate::machine::Exit;
 use crate::preferences::MemoryStore;
-use prysm_webos_link::{Command, Event, WorkerStatus};
+use prysm_webos_link::{Command, Event, FullStatus, WorkerStatus};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
@@ -300,7 +300,10 @@ fn power_and_video_drive_the_worker_and_its_commands() {
     let now = h.at(2);
     h.service.video(&mut h.bus, &changed, now);
     assert_eq!(h.log(), [r#"send {"type":"reset_video"}"#]);
-    assert_eq!(h.app("setEnabled", r#"{"enabled":true}"#)["enabled"], true);
+    assert_eq!(
+        h.app("setEnabled", r#"{"enabled":true}"#)["lighting"],
+        "processed"
+    );
     assert_eq!(
         h.log(),
         [r#"send {"type":"lighting","target":"processed"}"#]
@@ -318,15 +321,17 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
     h.log();
     h.world.borrow_mut().outputs.extend([
         Output::Log("prysm-webos: portal http://10.0.0.2:8787/".into()),
-        Output::Event(Event::Status(WorkerStatus {
+        Output::Event(Event::Status(WorkerStatus::Full(FullStatus {
+            capturing: false,
+            fps: None,
+            target: LightingTarget::Off,
             portal: Some("http://10.0.0.2:8787/".into()),
-            target: Some(prysm_webos_link::LightingTarget::Off),
-            ..WorkerStatus::default()
-        })),
+            failure: None,
+        }))),
     ]);
     assert!(h.tick(100));
     let published = h.bus.published.last().unwrap().clone();
-    assert_eq!(published["portal"], "http://10.0.0.2:8787/");
+    assert_eq!(published["worker"]["portal"], "http://10.0.0.2:8787/");
     assert_eq!(
         published["log"][0],
         "prysm-webos: portal http://10.0.0.2:8787/"
@@ -467,7 +472,7 @@ fn a_restart_within_one_boot_resumes_the_last_intent() {
         world.borrow().log[0],
         "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --lighting processed"
     );
-    assert!(service.machine().state(t0).enabled);
+    assert_eq!(service.machine().intent(), LightingTarget::Processed);
 
     // Turning it off is remembered too.
     service.request(

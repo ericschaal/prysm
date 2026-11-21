@@ -4,7 +4,9 @@ use prysm_capture_webos::VideoSignal;
 use prysm_ports::{Error, LightingTarget, Result, SessionPhase, SessionState, Snapshot, chain};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
-use prysm_webos_link::{Backoff, Command, Event, HEARTBEAT, WorkerFailure, WorkerStatus};
+use prysm_webos_link::{
+    Backoff, Command, Event, FullStatus, HEARTBEAT, WorkerFailure, WorkerStatus,
+};
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until};
 
@@ -147,17 +149,15 @@ fn status(snapshot: &Snapshot, portal: Option<&str>) -> WorkerStatus {
         .failure
         .as_ref()
         .or(snapshot.surface_failures.last());
-    WorkerStatus {
+    WorkerStatus::Full(FullStatus {
         // Running and frames arriving: false while waiting for video.
         capturing: snapshot.session == SessionState::Running
             && snapshot.input.is_some_and(|input| input.receiving),
         fps: snapshot.input.map(|input| whole_fps(input.fps)),
-        target: Some(snapshot.target),
+        target: snapshot.target,
         portal: portal.map(str::to_owned),
         failure: failure.map(|failure| WorkerFailure::other(chain(failure))),
-        encoding: None,
-        paused: false,
-    }
+    })
 }
 
 /// A measured frame rate, rounded to whole frames per second.

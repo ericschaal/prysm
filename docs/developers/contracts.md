@@ -72,10 +72,13 @@ webOS hosts import from `host-webos`.
 
 `luna` describes `luna://io.prysm.tv.service`, the TV supervisor both
 packages install under one name. It is one document for both flavors: `State`
-carries `flavor`, and fields only one flavor uses say so in their description
-("Full only", "Slim only"). Request bodies and `Preferences` reject unknown
-fields. The fixtures hold a full and a slim `State` serialized by Rust, under
-`luna/<Name>` keys because `State` also names an `application` root.
+carries the installed package's own fields in `Package`, tagged by `flavor`
+(full: `lighting`, `FullWorker`; slim: `enabled`, `SlimWorker`), and each
+worker type, tagged by `phase`, carries a report only in the phases that have
+one. The frontend narrows on `flavor` and `phase`. Request bodies and
+`Preferences` reject unknown fields. The fixtures hold a `State` of each
+package in each worker phase, serialized by Rust, under `luna/<Name>` keys
+because `State` also names an `application` root.
 
 ## Generation
 

@@ -103,19 +103,54 @@ device.commands.configureProcessing(0, {
   remove_black_bars: true,
 });
 
-// The supervisor's state is one type for both packages.
+// The supervisor's state is one type for both packages, tagged by flavor:
+// each package has only its own fields.
 const tvState: TvState = {
   flavor: 'slim',
   preferences: { instance: 'http://192.168.1.20:8787' },
   enabled: true,
-  lighting: null,
   power: 'active',
   video: 'available',
-  worker: { phase: 'running' },
-  capturing: true,
-  fps: 30,
-  paused: false,
-  portal: null,
+  worker: {
+    phase: 'running',
+    capturing: true,
+    fps: 30,
+    encoding: 'raw',
+    paused: false,
+  },
+  failure: null,
+  log: [],
+};
+const fullState: TvState = {
+  flavor: 'full',
+  preferences: {},
+  lighting: 'processed',
+  power: 'active',
+  video: 'available',
+  worker: { phase: 'stopping', portal: 'http://192.168.1.5:8787/' },
+  failure: null,
+  log: [],
+};
+const fullOnly: TvState = {
+  flavor: 'slim',
+  preferences: {},
+  enabled: true,
+  power: 'active',
+  video: 'available',
+  // @ts-expect-error The slim worker has no portal.
+  worker: { phase: 'running', capturing: true, paused: false, portal: null },
+  failure: null,
+  log: [],
+};
+const slimOnly: TvState = {
+  flavor: 'full',
+  preferences: {},
+  // @ts-expect-error The full package's intent is its lighting, not `enabled`.
+  enabled: true,
+  lighting: 'off',
+  power: 'active',
+  video: 'available',
+  worker: { phase: 'stopped' },
   failure: null,
   log: [],
 };
@@ -125,4 +160,4 @@ const retrying: TvState['worker'] = { phase: 'retrying' };
 const otherFlavor: TvState['flavor'] = 'lite';
 // @ts-expect-error Preferences are strict.
 const extra: TvPreferences = { mode: 'slim' };
-void [tvState, retrying, otherFlavor, extra];
+void [tvState, fullState, fullOnly, slimOnly, retrying, otherFlavor, extra];

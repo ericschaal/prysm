@@ -6,12 +6,12 @@
  */
 import type {
   FailureKind,
-  Flavor,
+  FullWorker,
   LightingTarget,
-  Phase,
   Power,
   Preferences,
   SlimEncoding,
+  SlimWorker,
   State,
   Video,
   WorkerFailure,
@@ -19,16 +19,61 @@ import type {
 
 export type {
   FailureKind,
-  Flavor,
+  FullWorker,
   LightingTarget,
-  Phase,
   Power,
   Preferences,
   SlimEncoding,
+  SlimWorker,
   State,
   Video,
   WorkerFailure,
 };
+
+/** The installed package, the tag of {@link State}. */
+export type Flavor = State['flavor'];
+/** Either package's worker process, tagged by `phase`. */
+export type Worker = State['worker'];
+
+/** Lighting is not off (full), or frames should flow (slim). */
+export function isEnabled(state: State): boolean {
+  return state.flavor === 'full' ? state.lighting !== 'off' : state.enabled;
+}
+
+/** Frames flow from a running worker (both packages report it). */
+export function isCapturing(state: State): boolean {
+  const worker = state.worker;
+  return worker.phase === 'running' && worker.capturing;
+}
+
+/** The running worker's frame rate, 0 while it waits for frames; `null` while none is measured. */
+export function captureFps(state: State): number | null {
+  const worker = state.worker;
+  return worker.phase === 'running' ? (worker.fps ?? null) : null;
+}
+
+/** Full: the portal's LAN address while the worker runs or stops; else `null`. */
+export function fullPortal(state: State): string | null {
+  if (state.flavor !== 'full') return null;
+  const worker = state.worker;
+  return worker.phase === 'running' || worker.phase === 'stopping'
+    ? (worker.portal ?? null)
+    : null;
+}
+
+/** Slim: the encoding the running worker sends in; else `null`. */
+export function slimEncoding(state: State): SlimEncoding | null {
+  if (state.flavor !== 'slim') return null;
+  const worker = state.worker;
+  return worker.phase === 'running' ? (worker.encoding ?? null) : null;
+}
+
+/** Slim: the receiver paused the running worker's stream (its lights are off). */
+export function isPaused(state: State): boolean {
+  if (state.flavor !== 'slim') return false;
+  const worker = state.worker;
+  return worker.phase === 'running' && worker.paused;
+}
 
 export const SERVICE_URI = 'luna://io.prysm.tv.service';
 /** Installed by the IPK; run as root through the Homebrew Channel. */
@@ -99,7 +144,6 @@ export interface TvService {
 }
 
 /** Keyed by every value of the generated union, so the compiler keeps them in step. */
-const flavors: Record<Flavor, true> = { full: true, slim: true };
 const powers: Record<Power, true> = {
   unknown: true,
   active: true,
@@ -111,11 +155,10 @@ const videos: Record<Video, true> = {
   unavailable: true,
   available: true,
 };
-const phases: Record<Phase['phase'], true> = {
-  stopped: true,
-  running: true,
-  stopping: true,
-  retrying: true,
+const encodings: Record<SlimEncoding, true> = {
+  h264_hardware: true,
+  h264_software: true,
+  raw: true,
 };
 const failureKinds: Record<FailureKind, true> = {
   encoder: true,
@@ -134,15 +177,62 @@ const optionalText = (value: unknown) =>
   value === undefined || value === null || typeof value === 'string';
 const optionalNumber = (value: unknown) =>
   value === undefined || value === null || typeof value === 'number';
+const optionalEncoding = (value: unknown) =>
+  value === undefined || value === null || oneOf(encodings, value);
 
-function isPhase(value: unknown): value is Phase {
-  const phase = value as Partial<Record<string, unknown>> | null;
-  return (
-    !!phase &&
-    typeof phase === 'object' &&
-    oneOf(phases, phase.phase) &&
-    (phase.phase !== 'retrying' || typeof phase.seconds === 'number')
-  );
+type Fields = Partial<Record<string, unknown>>;
+const isObject = (value: unknown): value is Fields =>
+  !!value && typeof value === 'object';
+
+/** The phases both packages share: stopped, and retrying with its seconds. */
+function isCommonPhase(worker: Fields): boolean {
+  if (worker.phase === 'stopped') return true;
+  return worker.phase === 'retrying' && typeof worker.seconds === 'number';
+}
+
+function isFullWorker(value: unknown): value is FullWorker {
+  if (!isObject(value)) return false;
+  switch (value.phase) {
+    case 'running':
+      return (
+        typeof value.capturing === 'boolean' &&
+        optionalNumber(value.fps) &&
+        optionalText(value.portal)
+      );
+    case 'stopping':
+      return optionalText(value.portal);
+    default:
+      return isCommonPhase(value);
+  }
+}
+
+function isSlimWorker(value: unknown): value is SlimWorker {
+  if (!isObject(value)) return false;
+  switch (value.phase) {
+    case 'running':
+      return (
+        typeof value.capturing === 'boolean' &&
+        optionalNumber(value.fps) &&
+        optionalEncoding(value.encoding) &&
+        typeof value.paused === 'boolean'
+      );
+    case 'stopping':
+      return true;
+    default:
+      return isCommonPhase(value);
+  }
+}
+
+/** The package's own fields, by its `flavor`. */
+function isPackage(state: Fields): boolean {
+  switch (state.flavor) {
+    case 'full':
+      return oneOf(targets, state.lighting) && isFullWorker(state.worker);
+    case 'slim':
+      return typeof state.enabled === 'boolean' && isSlimWorker(state.worker);
+    default:
+      return false;
+  }
 }
 
 function isFailure(value: unknown): value is WorkerFailure | null | undefined {
@@ -156,26 +246,15 @@ function isFailure(value: unknown): value is WorkerFailure | null | undefined {
 }
 
 export function isState(value: unknown): value is State {
-  const state = value as Partial<Record<keyof State, unknown>> | null;
   return (
-    !!state &&
-    typeof state === 'object' &&
-    oneOf(flavors, state.flavor) &&
-    oneOf(powers, state.power) &&
-    oneOf(videos, state.video) &&
-    isPhase(state.worker) &&
-    typeof state.enabled === 'boolean' &&
-    typeof state.capturing === 'boolean' &&
-    optionalNumber(state.fps) &&
-    !!state.preferences &&
-    typeof state.preferences === 'object' &&
-    Array.isArray(state.log) &&
-    (state.log as unknown[]).every((line) => typeof line === 'string') &&
-    isFailure(state.failure) &&
-    optionalText(state.portal) &&
-    (state.lighting === undefined ||
-      state.lighting === null ||
-      oneOf(targets, state.lighting))
+    isObject(value) &&
+    isPackage(value) &&
+    oneOf(powers, value.power) &&
+    oneOf(videos, value.video) &&
+    isObject(value.preferences) &&
+    Array.isArray(value.log) &&
+    (value.log as unknown[]).every((line) => typeof line === 'string') &&
+    isFailure(value.failure)
   );
 }
 

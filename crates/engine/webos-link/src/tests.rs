@@ -30,40 +30,56 @@ fn commands_have_a_stable_wire_form() {
 
 #[test]
 fn events_round_trip() {
-    let status = Event::Status(WorkerStatus {
+    let full = Event::Status(WorkerStatus::Full(FullStatus {
         capturing: true,
         fps: Some(30),
-        target: Some(LightingTarget::Processed),
+        target: LightingTarget::Processed,
         portal: Some("http://192.168.1.5:8787/".into()),
-        failure: Some(WorkerFailure::new(
-            FailureKind::Receiver,
-            "waiting for the receiver: refused",
-        )),
-        encoding: None,
-        paused: false,
-    });
-    let text = encode(&status).unwrap();
-    assert!(
-        String::from_utf8_lossy(&text).contains(
-            r#""failure":{"kind":"receiver","message":"waiting for the receiver: refused"}"#
-        ),
-        "{}",
-        String::from_utf8_lossy(&text)
-    );
-    assert!(text.starts_with(br#"{"type":"status","capturing":true,"fps":30"#));
-    assert_eq!(decode::<Event>(&text).unwrap(), status);
+        failure: Some(WorkerFailure::other("output: refused")),
+    }));
+    let text = encode(&full).unwrap();
     assert_eq!(
-        String::from_utf8(encode(&Event::Status(WorkerStatus::default())).unwrap()).unwrap(),
-        "{\"type\":\"status\",\"capturing\":false,\"fps\":null,\"target\":null,\
-         \"portal\":null,\"failure\":null,\"encoding\":null,\"paused\":false}\n"
+        String::from_utf8(text.clone()).unwrap(),
+        "{\"type\":\"status\",\"flavor\":\"full\",\"capturing\":true,\"fps\":30,\
+         \"target\":\"processed\",\"portal\":\"http://192.168.1.5:8787/\",\
+         \"failure\":{\"kind\":\"other\",\"message\":\"output: refused\"}}\n"
     );
-    let paused = Event::Status(WorkerStatus {
+    assert_eq!(decode::<Event>(&text).unwrap(), full);
+    assert_eq!(
+        String::from_utf8(
+            encode(&Event::Status(WorkerStatus::Slim(SlimStatus::default()))).unwrap()
+        )
+        .unwrap(),
+        "{\"type\":\"status\",\"flavor\":\"slim\",\"capturing\":false,\"fps\":null,\
+         \"encoding\":null,\"paused\":false,\"failure\":null}\n"
+    );
+    let paused = Event::Status(WorkerStatus::Slim(SlimStatus {
         paused: true,
-        ..WorkerStatus::default()
-    });
+        encoding: Some(SlimEncoding::Raw),
+        ..SlimStatus::default()
+    }));
     let text = encode(&paused).unwrap();
     assert!(String::from_utf8_lossy(&text).contains(r#""paused":true"#));
     assert_eq!(decode::<Event>(&text).unwrap(), paused);
+    let waiting = Event::Status(WorkerStatus::Slim(SlimStatus {
+        failure: Some(WorkerFailure::new(FailureKind::Receiver, "refused")),
+        ..SlimStatus::default()
+    }));
+    let text = encode(&waiting).unwrap();
+    assert!(
+        String::from_utf8_lossy(&text)
+            .contains(r#""failure":{"kind":"receiver","message":"refused"}"#)
+    );
+    assert_eq!(decode::<Event>(&text).unwrap(), waiting);
+    let failed = Event::Failed {
+        cause: "cannot bind 0.0.0.0:8787".into(),
+    };
+    let text = encode(&failed).unwrap();
+    assert_eq!(
+        text,
+        line(r#"{"type":"failed","cause":"cannot bind 0.0.0.0:8787"}"#)
+    );
+    assert_eq!(decode::<Event>(&text).unwrap(), failed);
     let fault = Event::Faulted {
         cause: "release unconfirmed".into(),
     };
@@ -89,13 +105,35 @@ fn unknown_types_and_fields_are_rejected() {
             "{text}"
         );
     }
+    const SLIM: &str = r#""capturing":false,"fps":null,"encoding":null,"paused":false"#;
+    const FULL: &str =
+        r#""capturing":false,"fps":null,"target":"off","portal":null,"failure":null"#;
+    // Both base lines are valid, so each rejection below is for its change.
+    for valid in [
+        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"failure":null}}"#),
+        format!(r#"{{"type":"status","flavor":"full",{FULL}}}"#),
+    ] {
+        assert!(decode::<Event>(valid.as_bytes()).is_ok(), "{valid}");
+    }
     for text in [
-        r#"{"type":"status","capturing":true,"paused":false,"pid":1}"#,
-        r#"{"type":"faulted","cause":"x","code":3}"#,
+        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"failure":null,"pid":1}}"#),
+        format!(r#"{{"type":"status","flavor":"full",{FULL},"pid":1}}"#),
+        r#"{"type":"faulted","cause":"x","code":3}"#.to_owned(),
+        // No flavour, an unknown one, or the other flavour's fields.
+        format!(r#"{{"type":"status",{SLIM},"failure":null}}"#),
+        format!(r#"{{"type":"status","flavor":"tv",{SLIM},"failure":null}}"#),
+        format!(r#"{{"type":"status","flavor":"full",{SLIM},"failure":null}}"#),
+        format!(r#"{{"type":"status","flavor":"slim",{FULL}}}"#),
+        format!(r#"{{"type":"status","flavor":"full",{FULL},"paused":false}}"#),
+        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"failure":null,"portal":null}}"#),
         // The failure as two fields, or a failure without its kind.
-        r#"{"type":"status","capturing":false,"paused":false,"failure":"x","failure_kind":"other"}"#,
-        r#"{"type":"status","capturing":false,"paused":false,"failure":{"message":"x"}}"#,
-        r#"{"type":"status","capturing":false,"paused":false,"failure":{"kind":"other","message":"x","at":1}}"#,
+        format!(
+            r#"{{"type":"status","flavor":"slim",{SLIM},"failure":"x","failure_kind":"other"}}"#
+        ),
+        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"failure":{{"message":"x"}}}}"#),
+        format!(
+            r#"{{"type":"status","flavor":"slim",{SLIM},"failure":{{"kind":"other","message":"x","at":1}}}}"#
+        ),
     ] {
         assert!(decode::<Event>(text.as_bytes()).is_err(), "{text}");
     }

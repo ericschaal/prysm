@@ -7,15 +7,151 @@
 import type {
   BridgeFactory,
   Flavor,
+  FullWorker,
+  LightingTarget,
+  Power,
   Preferences,
   ServiceBridge,
+  SlimEncoding,
+  SlimWorker,
   State,
+  Video,
+  WorkerFailure,
 } from '@prysm/webos-platform';
+
+/** Where the worker process is, as the supervisor tracks it. */
+export type FakeProcess =
+  | { phase: 'stopped' }
+  | { phase: 'running' }
+  | { phase: 'stopping' }
+  | { phase: 'retrying'; seconds: number };
+
+/**
+ * What the fake supervisor knows, as the real one does: the TV, the worker
+ * process and the worker's last report. The published state is built from
+ * it per package: a report shows only while the worker runs (the full
+ * portal also while it stops).
+ */
+interface CommonFacts {
+  preferences: Preferences;
+  power: Power;
+  video: Video;
+  failure: WorkerFailure | null;
+  log: string[];
+  worker: FakeProcess;
+  capturing: boolean;
+  fps: number | null;
+}
+export interface FullFacts extends CommonFacts {
+  flavor: 'full';
+  lighting: LightingTarget;
+  portal: string | null;
+}
+export interface SlimFacts extends CommonFacts {
+  flavor: 'slim';
+  enabled: boolean;
+  encoding: SlimEncoding | null;
+  paused: boolean;
+}
+export type FakeFacts = FullFacts | SlimFacts;
+/**
+ * A change to the facts. Only the package's own keys are accepted (checked
+ * when applied, for the untyped tests too): a slim supervisor has no
+ * `lighting` or `portal`, a full one no `enabled`, `encoding` or `paused`.
+ */
+export type FakeChange =
+  Partial<Omit<FullFacts, 'flavor'>> | Partial<Omit<SlimFacts, 'flavor'>>;
+
+const commonKeys = [
+  'preferences',
+  'power',
+  'video',
+  'failure',
+  'log',
+  'worker',
+  'capturing',
+  'fps',
+];
+const ownKeys: Record<Flavor, string[]> = {
+  full: ['lighting', 'portal'],
+  slim: ['enabled', 'encoding', 'paused'],
+};
+
+/** `change` applied to `facts`; a key of the other package throws. */
+function apply(facts: FakeFacts, change: FakeChange) {
+  for (const key of Object.keys(change))
+    if (!commonKeys.includes(key) && !ownKeys[facts.flavor].includes(key))
+      throw new Error(`The ${facts.flavor} supervisor has no \`${key}\`.`);
+  Object.assign(facts, change);
+}
+
+function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
+  const common: CommonFacts = {
+    preferences: { autostart: false, instance: null, ...preferences },
+    power: 'active',
+    video: 'available',
+    failure: null,
+    log: [],
+    worker: { phase: flavor === 'full' ? 'running' : 'stopped' },
+    capturing: false,
+    fps: null,
+  };
+  return flavor === 'full'
+    ? {
+        ...common,
+        flavor,
+        lighting: 'off',
+        portal: 'http://192.168.1.5:8787/',
+      }
+    : { ...common, flavor, enabled: false, encoding: null, paused: false };
+}
+
+function fullWorker(facts: FullFacts): FullWorker {
+  const { worker, capturing, fps, portal } = facts;
+  switch (worker.phase) {
+    case 'running':
+      return { phase: 'running', capturing, fps, portal };
+    case 'stopping':
+      return { phase: 'stopping', portal };
+    default:
+      return worker;
+  }
+}
+
+function slimWorker(facts: SlimFacts): SlimWorker {
+  const { worker, capturing, fps, encoding, paused } = facts;
+  return worker.phase === 'running'
+    ? { phase: 'running', capturing, fps, encoding, paused }
+    : worker;
+}
+
+/** The `getState` payload the facts make, as the supervisor publishes it. */
+function publishedState(facts: FakeFacts): State {
+  const { preferences, power, video, failure, log } = facts;
+  const common = { preferences, power, video, failure, log };
+  return facts.flavor === 'full'
+    ? {
+        ...common,
+        flavor: 'full',
+        lighting: facts.lighting,
+        worker: fullWorker(facts),
+      }
+    : {
+        ...common,
+        flavor: 'slim',
+        enabled: facts.enabled,
+        worker: slimWorker(facts),
+      };
+}
+
+/** Lighting is not off (full), or frames should flow (slim). */
+const enabled = (facts: FakeFacts) =>
+  facts.flavor === 'full' ? facts.lighting !== 'off' : facts.enabled;
 
 export interface FakeSupervisorOptions {
   flavor: Flavor;
   preferences?: Preferences;
-  state?: Partial<State>;
+  state?: FakeChange;
   /** The service is not registered: every call fails like LS2 does. */
   offline?: boolean;
   /** Reply after this many milliseconds (default: next microtask). */
@@ -29,28 +165,9 @@ export interface LunaCall {
 }
 
 export function fakeTvSupervisor(options: FakeSupervisorOptions) {
-  const full = options.flavor === 'full';
   let offline = !!options.offline;
-  let state: State = {
-    flavor: options.flavor,
-    preferences: {
-      autostart: false,
-      instance: null,
-      ...options.preferences,
-    },
-    enabled: false,
-    lighting: full ? 'off' : null,
-    power: 'active',
-    video: 'available',
-    worker: { phase: full ? 'running' : 'stopped' },
-    capturing: false,
-    fps: null,
-    paused: false,
-    portal: full ? 'http://192.168.1.5:8787/' : null,
-    failure: null,
-    log: [],
-    ...options.state,
-  };
+  const facts = initialFacts(options.flavor, options.preferences);
+  if (options.state) apply(facts, options.state);
   const calls: LunaCall[] = [];
   const subscribers = new Set<FakeBridge>();
   /** Calls held until `release()`, when `hold` is set. */
@@ -68,25 +185,32 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     JSON.stringify({ returnValue: true, ...value });
   const error = (errorText: string) =>
     JSON.stringify({ returnValue: false, errorText });
+  const state = () => publishedState(facts);
+
+  /** `setEnabled`, in the package's terms, as the machine does. */
+  function setEnabled(value: boolean) {
+    if (facts.flavor === 'slim') facts.enabled = value;
+    else if (!value) facts.lighting = 'off';
+    else if (facts.lighting === 'off') facts.lighting = 'processed';
+  }
 
   /** Settle what follows from the intent, as the machine would. */
   function reconcile() {
+    const awake = facts.power === 'active' || facts.power === 'screen_saver';
     const wanted =
-      state.power === 'active' || state.power === 'screen_saver'
-        ? full || (state.enabled && !!state.preferences.instance)
-        : false;
-    state.worker = { phase: wanted ? 'running' : 'stopped' };
-    if (full && !state.enabled) state.lighting = 'off';
-    else if (full && state.lighting === 'off') state.lighting = 'processed';
-    state.capturing =
-      wanted && state.enabled && state.video === 'available' && !state.failure;
-    state.fps = state.capturing ? 30 : null;
+      awake &&
+      (facts.flavor === 'full' ||
+        (facts.enabled && !!facts.preferences.instance));
+    facts.worker = { phase: wanted ? 'running' : 'stopped' };
+    facts.capturing =
+      wanted && enabled(facts) && facts.video === 'available' && !facts.failure;
+    facts.fps = facts.capturing ? 30 : null;
   }
 
-  function publish(change: Partial<State> = {}) {
-    state = { ...state, ...change };
+  function publish(change: FakeChange = {}) {
+    apply(facts, change);
     for (const bridge of Array.from(subscribers))
-      bridge.deliver(reply({ ...state, subscribed: true }));
+      bridge.deliver(reply({ ...state(), subscribed: true }));
   }
 
   function handle(
@@ -124,11 +248,11 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     switch (method) {
       case 'getState':
         if (payload.subscribe === true) subscribers.add(bridge);
-        respond(reply({ ...state, subscribed: payload.subscribe === true }));
+        respond(reply({ ...state(), subscribed: payload.subscribe === true }));
         return;
       case 'setPreferences': {
         const preferences = payload as Preferences;
-        if (full && preferences.instance) {
+        if (facts.flavor === 'full' && preferences.instance) {
           respond(error('instance: only the slim package forwards frames'));
           return;
         }
@@ -144,23 +268,20 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           );
           return;
         }
-        state = {
-          ...state,
-          preferences: {
-            autostart: false,
-            instance: null,
-            ...preferences,
-          },
+        facts.preferences = {
+          autostart: false,
+          instance: null,
+          ...preferences,
         };
         reconcile();
-        respond(reply(state));
+        respond(reply(state()));
         later(() => publish());
         return;
       }
       case 'setEnabled':
-        state = { ...state, enabled: payload.enabled === true };
+        setEnabled(payload.enabled === true);
         reconcile();
-        respond(reply(state));
+        respond(reply(state()));
         later(() => publish());
         return;
       case 'uninstall':
@@ -198,7 +319,10 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
   return {
     bridge,
     calls,
-    state: () => state,
+    /** The state as `getState` publishes it now. */
+    state,
+    /** What the supervisor knows now, the state's source. */
+    facts: (): Readonly<FakeFacts> => facts,
     /** Change what the supervisor reports, as a worker or power change would. */
     publish,
     subscribers: () => subscribers.size,

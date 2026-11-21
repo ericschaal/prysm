@@ -1,10 +1,10 @@
 //! The supervisor's decisions as a pure state machine: inputs and the current
 //! time in, effects out. No I/O, no clock; every rule is table-tested.
 use crate::preferences::Preferences;
-use crate::state::{Flavor, Phase as PublishedPhase, Power, State};
+use crate::state::{self, FullWorker, Power, Process, SlimWorker, State};
 use prysm_webos_link::{
-    Backoff, Command, Event, FullArgs, LightingTarget, SILENCE, SlimArgs, Video, WorkerFailure,
-    WorkerStatus, exit,
+    Backoff, Command, Event, FullArgs, FullStatus, LightingTarget, SILENCE, SlimArgs, SlimStatus,
+    Video, WorkerFailure, WorkerStatus, exit,
 };
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -83,7 +83,8 @@ enum Phase {
     },
 }
 
-/// The package's worker and what the user asked of it, in its terms.
+/// The package's worker, what the user asked of it and what the current
+/// worker last reported, in its terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Package {
     Full {
@@ -91,11 +92,57 @@ enum Package {
         listen: SocketAddr,
         /// The engine target, reported by the worker and used at spawn.
         lighting: LightingTarget,
+        report: Option<FullStatus>,
     },
     Slim {
         /// Whether frames should flow.
         enabled: bool,
+        report: Option<SlimStatus>,
     },
+}
+
+impl Package {
+    /// Keep `status` as the current worker's report; `false` (and nothing
+    /// kept) when it is the other package's.
+    fn keep(&mut self, status: WorkerStatus) -> bool {
+        match (self, status) {
+            (Self::Full { report, .. }, WorkerStatus::Full(status)) => *report = Some(status),
+            (Self::Slim { report, .. }, WorkerStatus::Slim(status)) => *report = Some(status),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Forget the report of a worker that is gone; its failure, if any.
+    fn forget(&mut self) -> Option<WorkerFailure> {
+        match self {
+            Self::Full { report, .. } => report.take().and_then(|report| report.failure),
+            Self::Slim { report, .. } => report.take().and_then(|report| report.failure),
+        }
+    }
+
+    fn reported_failure(&self) -> Option<&WorkerFailure> {
+        match self {
+            Self::Full { report, .. } => report.as_ref()?.failure.as_ref(),
+            Self::Slim { report, .. } => report.as_ref()?.failure.as_ref(),
+        }
+    }
+
+    /// What the TV app sees of the package while the worker is at `process`.
+    fn published(&self, process: Process) -> state::Package {
+        match self {
+            Self::Full {
+                lighting, report, ..
+            } => state::Package::Full {
+                lighting: *lighting,
+                worker: FullWorker::new(process, report.as_ref()),
+            },
+            Self::Slim { enabled, report } => state::Package::Slim {
+                enabled: *enabled,
+                worker: SlimWorker::new(process, report.as_ref()),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +156,8 @@ pub struct Machine {
     /// Restart delays: a worker that ran [`Backoff::HEALTHY`] resets them. (A
     /// failure is cleared earlier, as soon as the worker reports it is up again.)
     backoff: Backoff,
-    status: Option<WorkerStatus>,
+    /// Why the current worker says it fails ([`Event::Failed`]), until it exits.
+    failed: Option<String>,
     /// The supervisor's own failure: why the last worker ended or could not start.
     failure: Option<WorkerFailure>,
     log: VecDeque<String>,
@@ -138,9 +186,11 @@ impl Machine {
                     settings,
                     listen,
                     lighting: intent,
+                    report: None,
                 },
                 Spec::Slim => Package::Slim {
                     enabled: intent != LightingTarget::Off,
+                    report: None,
                 },
             },
             preferences,
@@ -149,7 +199,7 @@ impl Machine {
             video: Video::Unknown,
             phase: Phase::Idle,
             backoff: Backoff::default(),
-            status: None,
+            failed: None,
             failure: None,
             log: VecDeque::new(),
             shutdown: false,
@@ -167,8 +217,8 @@ impl Machine {
     pub fn intent(&self) -> LightingTarget {
         match self.package {
             Package::Full { lighting, .. } => lighting,
-            Package::Slim { enabled: true } => LightingTarget::Processed,
-            Package::Slim { enabled: false } => LightingTarget::Off,
+            Package::Slim { enabled: true, .. } => LightingTarget::Processed,
+            Package::Slim { enabled: false, .. } => LightingTarget::Off,
         }
     }
 
@@ -176,7 +226,7 @@ impl Machine {
     fn enabled(&self) -> bool {
         match self.package {
             Package::Full { lighting, .. } => lighting != LightingTarget::Off,
-            Package::Slim { enabled } => enabled,
+            Package::Slim { enabled, .. } => enabled,
         }
     }
 
@@ -236,38 +286,35 @@ impl Machine {
     /// The state the TV app sees at `now`.
     #[must_use]
     pub fn state(&self, now: Instant) -> State {
-        let status = self.status.clone().unwrap_or_default();
-        // The worker's own report wins over why the last one ended.
-        let failure = status.failure.or_else(|| self.failure.clone());
-        let (flavor, lighting) = match self.package {
-            Package::Full { lighting, .. } => (Flavor::Full, Some(lighting)),
-            Package::Slim { .. } => (Flavor::Slim, None),
-        };
         State {
-            flavor,
+            package: self.package.published(self.process(now)),
             preferences: self.preferences.clone(),
-            enabled: self.enabled(),
-            lighting,
             power: self.power,
             video: self.video,
-            worker: match self.phase {
-                Phase::Idle => PublishedPhase::Stopped,
-                Phase::Running { .. } => PublishedPhase::Running,
-                Phase::Stopping { .. } => PublishedPhase::Stopping,
-                Phase::Retrying { at } => PublishedPhase::Retrying {
-                    seconds: whole_seconds(at.saturating_duration_since(now)),
-                },
-            },
-            // Only a running worker's report counts: one being stopped (or
-            // stuck exiting) is not capturing for the app.
-            capturing: self.running() && status.capturing,
-            fps: status.fps.filter(|_| self.running()),
-            portal: status.portal,
-            failure,
-            encoding: status.encoding,
-            paused: self.running() && status.paused,
+            failure: self.current_failure(),
             log: self.log.iter().cloned().collect(),
         }
+    }
+
+    fn process(&self, now: Instant) -> Process {
+        match self.phase {
+            Phase::Idle => Process::Stopped,
+            Phase::Running { .. } => Process::Running,
+            Phase::Stopping { .. } => Process::Stopping,
+            Phase::Retrying { at } => Process::Retrying {
+                seconds: whole_seconds(at.saturating_duration_since(now)),
+            },
+        }
+    }
+
+    /// The worker's own word wins over why the last one ended: first why it
+    /// is failing now, then its report.
+    fn current_failure(&self) -> Option<WorkerFailure> {
+        self.failed
+            .clone()
+            .map(WorkerFailure::other)
+            .or_else(|| self.package.reported_failure().cloned())
+            .or_else(|| self.failure.clone())
     }
 
     fn running(&self) -> bool {
@@ -289,7 +336,7 @@ impl Machine {
         match self.package {
             // The portal stays up while awake, whatever the lighting.
             Package::Full { .. } => true,
-            Package::Slim { enabled } => enabled && self.preferences.instance.is_some(),
+            Package::Slim { enabled, .. } => enabled && self.preferences.instance.is_some(),
         }
     }
 
@@ -299,6 +346,7 @@ impl Machine {
                 settings,
                 listen,
                 lighting,
+                ..
             } => Some(
                 FullArgs {
                     settings: settings.clone(),
@@ -364,7 +412,8 @@ impl Machine {
     }
 
     fn retry(&mut self, now: Instant) {
-        self.status = None;
+        self.package.forget();
+        self.failed = None;
         self.phase = Phase::Retrying {
             at: now + self.backoff.delay(),
         };
@@ -405,7 +454,9 @@ impl Machine {
     fn set_enabled(&mut self, enabled: bool, now: Instant, effects: &mut Vec<Effect>) {
         let running = self.running();
         match &mut self.package {
-            Package::Slim { enabled: current } => *current = enabled,
+            Package::Slim {
+                enabled: current, ..
+            } => *current = enabled,
             Package::Full { lighting, .. } => {
                 *lighting = match (enabled, *lighting) {
                     (false, _) => LightingTarget::Off,
@@ -422,35 +473,58 @@ impl Machine {
 
     fn worker_event(&mut self, event: Event, now: Instant, effects: &mut Vec<Effect>) {
         let Phase::Running { since, .. } = self.phase else {
-            // A late line from a worker already being stopped.
-            if let (Phase::Stopping { .. }, Event::Status(status)) = (self.phase, event) {
-                self.status = Some(status);
+            // A late line from a worker already being stopped: its report
+            // and why it fails still explain how it ends.
+            if let Phase::Stopping { .. } = self.phase {
+                match event {
+                    Event::Status(status) => {
+                        self.package.keep(status);
+                    }
+                    Event::Failed { cause } => self.failed = Some(cause),
+                    Event::Faulted { .. } => {}
+                }
             }
             return;
         };
         self.phase = Phase::Running { since, heard: now };
         match event {
-            Event::Status(status) => {
-                // Up again (full: reporting without a failure; slim: frames
-                // flowing, or paused by a receiver it reached): the last
-                // worker's failure is no longer current.
-                let full = matches!(self.package, Package::Full { .. });
-                let up = status.capturing || status.paused || (full && status.failure.is_none());
-                if up {
-                    self.failure = None;
-                }
-                if let (Some(target), Package::Full { lighting, .. }) =
-                    (status.target, &mut self.package)
-                {
-                    let echoed = self.echo_until.is_none_or(|until| now >= until);
-                    if echoed || target == *lighting {
-                        *lighting = target;
-                        self.echo_until = None;
-                    }
-                }
-                self.status = Some(status);
-            }
+            Event::Status(status) => self.report(status, now, effects),
+            Event::Failed { cause } => self.failed = Some(cause),
             Event::Faulted { cause } => self.fail(format!("worker faulted: {cause}"), now, effects),
+        }
+    }
+
+    /// A running worker's report.
+    fn report(&mut self, status: WorkerStatus, now: Instant, effects: &mut Vec<Effect>) {
+        // Up again (full: reporting without a failure; slim: frames flowing,
+        // or paused by a receiver it reached): the last worker's failure is
+        // no longer current.
+        let (up, target) = match &status {
+            WorkerStatus::Full(full) => (full.failure.is_none(), Some(full.target)),
+            WorkerStatus::Slim(slim) => (slim.capturing || slim.paused, None),
+        };
+        if !self.package.keep(status) {
+            let why = "worker link broke: the worker reported the other package's status";
+            self.fail(why.into(), now, effects);
+            return;
+        }
+        if up {
+            self.failure = None;
+        }
+        if let Some(target) = target {
+            self.follow(target, now);
+        }
+    }
+
+    /// Full: take the worker's target (also changed in the portal), unless a
+    /// target sent within [`ECHO`] is still on its way to the worker.
+    fn follow(&mut self, target: LightingTarget, now: Instant) {
+        if let Package::Full { lighting, .. } = &mut self.package {
+            let echoed = self.echo_until.is_none_or(|until| now >= until);
+            if echoed || target == *lighting {
+                *lighting = target;
+                self.echo_until = None;
+            }
         }
     }
 
@@ -459,7 +533,8 @@ impl Machine {
             Exit::Code(code) => exit::describe(code),
             Exit::Signal(signal) => format!("worker killed by signal {signal}"),
         };
-        let last = self.status.take().and_then(|status| status.failure);
+        let reported = self.package.forget();
+        let last = self.failed.take().map(WorkerFailure::other).or(reported);
         match self.phase {
             Phase::Running { .. } => {
                 // The worker stops on its own only when something failed.

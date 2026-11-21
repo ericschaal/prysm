@@ -16,10 +16,10 @@
 import type { ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApplicationError } from '@prysm/application-client';
-import { lunaTvService, type Flavor, type State } from '@prysm/webos-platform';
+import { lunaTvService, type Flavor } from '@prysm/webos-platform';
 import type { PortalOptions, TvAppProps } from '@prysm/tv-ui';
 import { fakeApplicationPort } from './application';
-import { fakeTvSupervisor } from './luna';
+import { fakeTvSupervisor, type FakeChange } from './luna';
 import {
   msePatternPlayer,
   patternNames,
@@ -96,25 +96,30 @@ export function runDemo(
   };
   // A worker that starts capturing a moment after it is enabled; the full
   // worker's engine follows the supervisor's target and reports portal changes.
-  let lighting = supervisor.state().lighting;
+  const lightingOf = () => {
+    const facts = supervisor.facts();
+    return facts.flavor === 'full' ? facts.lighting : null;
+  };
+  let lighting = lightingOf();
   setInterval(() => {
-    const state = supervisor.state();
+    const facts = supervisor.facts();
+    const enabled =
+      facts.flavor === 'full' ? facts.lighting !== 'off' : facts.enabled;
     const capturing =
-      state.enabled && state.worker.phase === 'running' && !state.failure;
-    if (state.capturing !== capturing)
+      enabled && facts.worker.phase === 'running' && !facts.failure;
+    if (facts.capturing !== capturing)
       supervisor.publish({ capturing, fps: capturing ? 30 : null });
-    if (flavor !== 'full') return;
+    if (facts.flavor !== 'full') return;
     const target = application.snapshot().target;
-    if (state.lighting !== lighting && state.lighting)
-      void application.client.setTarget(state.lighting);
-    else if (target !== state.lighting)
+    if (facts.lighting !== lighting)
+      void application.client.setTarget(facts.lighting);
+    else if (target !== facts.lighting)
       supervisor.publish({
         lighting: target,
-        enabled: target !== 'off',
         capturing: target === 'processed',
         fps: target === 'processed' ? 30 : null,
       });
-    lighting = supervisor.state().lighting;
+    lighting = lightingOf();
   }, 500);
   Object.assign(window, { demo: { supervisor, application, addLights } });
   const root = document.getElementById('root');
@@ -136,7 +141,10 @@ export function runDemo(
   };
   document.body.append(phone);
   // The supervisor's states the UI distinguishes, to look at each one.
-  const states: Record<string, Partial<State>> = {
+  // Lighting (full) or capture (slim) on, in the package's own terms.
+  const on: FakeChange =
+    flavor === 'full' ? { lighting: 'processed' } : { enabled: true };
+  const states: Record<string, FakeChange> = {
     'TV: as it is': {},
     'TV: failure, retry countdown': {
       worker: { phase: 'retrying', seconds: 30 },
@@ -150,12 +158,12 @@ export function runDemo(
       fps: null,
     },
     'TV: waiting for video': {
-      enabled: true,
+      ...on,
       video: 'unavailable',
       capturing: false,
       fps: null,
     },
-    'TV: asleep': { enabled: true, power: 'asleep', capturing: false },
+    'TV: asleep': { ...on, power: 'asleep', capturing: false },
     'TV: stopping': { worker: { phase: 'stopping' } },
     ...(flavor === 'slim'
       ? {
@@ -201,20 +209,16 @@ export function runDemo(
   for (const name of Object.keys(states)) tvState.add(new Option(name, name));
   tvState.onchange = () => {
     const change = states[tvState.value];
-    const { enabled } = supervisor.state();
-    supervisor.publish(
-      change && Object.keys(change).length
-        ? change
-        : {
-            failure: null,
-            paused: false,
-            power: 'active',
-            video: 'available',
-            worker: {
-              phase: flavor === 'full' || enabled ? 'running' : 'stopped',
-            },
-          },
-    );
+    const facts = supervisor.facts();
+    const running = facts.flavor === 'full' || facts.enabled;
+    const back: FakeChange = {
+      failure: null,
+      power: 'active',
+      video: 'available',
+      worker: { phase: running ? 'running' : 'stopped' },
+      ...(facts.flavor === 'slim' ? { paused: false } : {}),
+    };
+    supervisor.publish(change && Object.keys(change).length ? change : back);
   };
   document.body.append(tvState);
   createRoot(root).render(

@@ -5,7 +5,9 @@
 //! [`Event`]s and points fd 1 at stderr, so vendor libraries that print
 //! cannot corrupt the stream. A reader thread decodes [`Command`]s from stdin;
 //! stdin EOF or a bad line stops the worker.
-use crate::{Command, Event, LineReader, WorkerFailure, WorkerStatus, encode, exit};
+use crate::{
+    Command, Event, FullStatus, LineReader, SlimStatus, WorkerFailure, WorkerStatus, encode, exit,
+};
 use prysm_ports::{Error, chain};
 use std::future::Future;
 use std::io::{self, Write};
@@ -92,26 +94,44 @@ impl Events {
 
 const MAX_TEXT: usize = 1024;
 
+/// `text`, cut to [`MAX_TEXT`] bytes at a character boundary.
+fn short(text: String) -> String {
+    if text.len() <= MAX_TEXT {
+        return text;
+    }
+    let mut end = MAX_TEXT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
+}
+
+fn short_failure(failure: WorkerFailure) -> WorkerFailure {
+    WorkerFailure {
+        message: short(failure.message),
+        ..failure
+    }
+}
+
+/// `event` with every free text shortened, so it fits one line.
 fn fit(event: Event) -> Event {
-    let short = |text: String| {
-        if text.len() <= MAX_TEXT {
-            return text;
-        }
-        let mut end = MAX_TEXT;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}…", &text[..end])
-    };
     match event {
-        Event::Status(status) => Event::Status(WorkerStatus {
-            portal: status.portal.map(short),
-            failure: status.failure.map(|failure| WorkerFailure {
-                message: short(failure.message),
-                ..failure
-            }),
-            ..status
-        }),
+        Event::Status(WorkerStatus::Full(status)) => {
+            Event::Status(WorkerStatus::Full(FullStatus {
+                portal: status.portal.map(short),
+                failure: status.failure.map(short_failure),
+                ..status
+            }))
+        }
+        Event::Status(WorkerStatus::Slim(status)) => {
+            Event::Status(WorkerStatus::Slim(SlimStatus {
+                failure: status.failure.map(short_failure),
+                ..status
+            }))
+        }
+        Event::Failed { cause } => Event::Failed {
+            cause: short(cause),
+        },
         Event::Faulted { cause } => Event::Faulted {
             cause: short(cause),
         },
@@ -329,7 +349,7 @@ pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
 
 /// Take over stdio, run `body` with the parsed `options` (see [`args`]) on a
 /// current-thread runtime until it returns, and exit with the code for how it
-/// ended. On failure a final status carries the cause.
+/// ended. On failure a final [`Event::Failed`] carries the cause.
 pub fn main<A, F, Fut>(name: &'static str, options: A, body: F) -> ExitCode
 where
     F: FnOnce(A, Link) -> Fut,
@@ -365,10 +385,7 @@ where
     if let Err(error) = &result {
         let failure = chain(error);
         eprintln!("{name}: {failure}");
-        events.send(&Event::Status(WorkerStatus {
-            failure: Some(WorkerFailure::other(failure)),
-            ..WorkerStatus::default()
-        }));
+        events.send(&Event::Failed { cause: failure });
     }
     match stop.reason() {
         Some(Stop::Requested(why)) => eprintln!("{name}: {why}; exit {code}"),
@@ -459,6 +476,36 @@ mod tests {
             panic!("expected a fault");
         };
         assert!(cause.len() < 2000, "long causes are shortened");
+        let long = || Some(WorkerFailure::other("y".repeat(10_000)));
+        link.events
+            .send(&Event::Status(WorkerStatus::Full(FullStatus {
+                capturing: false,
+                fps: None,
+                target: prysm_ports::LightingTarget::Off,
+                portal: Some("z".repeat(10_000)),
+                failure: long(),
+            })));
+        let Some(Event::Status(WorkerStatus::Full(full))) = peer.event().await else {
+            panic!("expected a full status");
+        };
+        assert!(full.portal.unwrap().len() < 2000);
+        assert!(full.failure.unwrap().message.len() < 2000);
+        link.events
+            .send(&Event::Status(WorkerStatus::Slim(SlimStatus {
+                failure: long(),
+                ..SlimStatus::default()
+            })));
+        let Some(Event::Status(WorkerStatus::Slim(slim))) = peer.event().await else {
+            panic!("expected a slim status");
+        };
+        assert!(slim.failure.unwrap().message.len() < 2000);
+        link.events.send(&Event::Failed {
+            cause: "w".repeat(10_000),
+        });
+        let Some(Event::Failed { cause }) = peer.event().await else {
+            panic!("expected a failure");
+        };
+        assert!(cause.len() < 2000);
         peer.close();
         assert_eq!(link.commands.next().await, None);
         link.stop.stopped().await;
@@ -469,7 +516,8 @@ mod tests {
     async fn a_closed_event_stream_requests_stop() {
         let (link, peer) = Link::memory();
         drop(peer);
-        link.events.send(&Event::Status(WorkerStatus::default()));
+        link.events
+            .send(&Event::Status(WorkerStatus::Slim(SlimStatus::default())));
         assert!(matches!(link.stop.reason(), Some(Stop::Requested(_))));
     }
 }

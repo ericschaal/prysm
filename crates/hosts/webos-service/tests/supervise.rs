@@ -41,7 +41,7 @@ impl Installer for NoInstaller {
 const WORKER: &str = r#"#!/bin/sh
 trap 'echo "TERM" >&2; exit 0' TERM
 echo "args: $*" >&2
-echo '{"type":"status","capturing":false,"target":"off","portal":"http://10.0.0.2:8787/","failure":null,"paused":false}'
+echo '{"type":"status","flavor":"full","capturing":false,"fps":null,"target":"off","portal":"http://10.0.0.2:8787/","failure":null}'
 exec 3<&0
 while read -r line <&3; do echo "command: $line" >&2; done &
 while :; do sleep 0.05; done
@@ -94,7 +94,7 @@ fn supervises_a_real_child_process() {
     until(&mut service, &mut bus, |bus, _| {
         bus.0
             .last()
-            .is_some_and(|state| state["portal"] == "http://10.0.0.2:8787/")
+            .is_some_and(|state| state["worker"]["portal"] == "http://10.0.0.2:8787/")
     });
     let reply = service.request(
         &mut bus,
@@ -103,7 +103,7 @@ fn supervises_a_real_child_process() {
         r#"{"enabled":true}"#,
         Instant::now(),
     );
-    assert!(reply.payload.contains(r#""enabled":true"#));
+    assert!(reply.payload.contains(r#""lighting":"processed""#));
     until(&mut service, &mut bus, |bus, _| {
         bus.0.last().is_some_and(|state| {
             state["log"]

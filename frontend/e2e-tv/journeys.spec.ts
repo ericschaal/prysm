@@ -173,7 +173,10 @@ test('full first run: set up the service, then the lights from the phone', async
   await expect(page.locator('#primary')).toHaveCount(0);
   await expectFocus(page);
   expect(await lightingTarget(page), 'nothing started').toBe('off');
-  expect((await supervisorState(page)).enabled).toBe(false);
+  expect(await supervisorState(page)).toMatchObject({
+    flavor: 'full',
+    lighting: 'off',
+  });
 });
 
 test('slim first run: add the address, then the lights from the phone', async ({
@@ -204,5 +207,8 @@ test('slim first run: add the address, then the lights from the phone', async ({
   await expect(page.locator('#mode-off')).toBeVisible();
   await expect(page.locator('#primary')).toHaveText('Start capture');
   await expectFocus(page);
-  expect((await supervisorState(page)).enabled, 'nothing started').toBe(false);
+  expect(await supervisorState(page), 'nothing started').toMatchObject({
+    flavor: 'slim',
+    enabled: false,
+  });
 });
