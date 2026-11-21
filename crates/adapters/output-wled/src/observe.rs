@@ -339,13 +339,12 @@ struct Info {
     leds: Option<Leds>,
 }
 
-/// An empty `lip` is no sender; any other that is not an address fails the
-/// reply.
+/// An empty `lip` is no sender. Neither is one that is not an address (some
+/// firmware may print a form `IpAddr` does not read): the rest of the reply
+/// still counts.
 fn sender<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<IpAddr>, D::Error> {
-    match Option::<String>::deserialize(deserializer)?.as_deref() {
-        None | Some("") => Ok(None),
-        Some(address) => address.parse().map(Some).map_err(serde::de::Error::custom),
-    }
+    let lip = Option::<String>::deserialize(deserializer)?;
+    Ok(lip.and_then(|address| address.parse().ok()))
 }
 
 #[derive(Deserialize, Clone, Copy)]

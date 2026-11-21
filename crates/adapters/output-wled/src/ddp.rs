@@ -228,9 +228,11 @@ impl WledRenderer {
         ]
         .into_iter()
         .flat_map(|(strip, count, reverse)| {
-            // Every index is below `count`, so each has a colour.
-            (0..count)
-                .filter_map(move |i| strip.color_at(if reverse { count - 1 - i } else { i }, count))
+            (0..count).map(move |i| {
+                strip
+                    .color_at(if reverse { count - 1 - i } else { i }, count)
+                    .expect("an index below the count has a colour")
+            })
         });
         for (led, color) in (0..).zip(colors) {
             self.rgb.push(encoding.encode(color, led));

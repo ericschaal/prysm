@@ -769,8 +769,8 @@ fn each_takeover_cause_is_reported_and_clears_when_wled_shows_prysm_again() {
             Reply::Json(r#"{"state":{}}"#),
             Some(OutputIssue::Unreachable),
         ),
-        // A garbled sender address is a garbled reply.
-        (sender("not an address"), Some(OutputIssue::Unreachable)),
+        // A sender address that cannot be read names no other sender.
+        (sender("not an address"), None),
         // Firmware without `lor`, `lm` or `lip` reports what it can.
         (si(json!({"on": true}), json!({"live": true})), None),
     ];

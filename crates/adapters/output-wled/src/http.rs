@@ -38,7 +38,7 @@ pub enum RequestError {
     Rejected(String),
     #[error("device did not acknowledge the request")]
     Unacknowledged,
-    #[error("no complete response within {}s", .0.as_secs_f32())]
+    #[error("no complete response within {0:?}")]
     TimedOut(Duration),
 }
 
@@ -286,7 +286,7 @@ mod tests {
         let started = Instant::now();
         let error = get_json(device, "/json/info", LIMIT).unwrap_err();
         assert!(matches!(error, RequestError::TimedOut(LIMIT)), "{error:?}");
-        assert_eq!(error.to_string(), "no complete response within 0.2s");
+        assert_eq!(error.to_string(), "no complete response within 200ms");
         assert!(started.elapsed() < LIMIT * 3, "{:?}", started.elapsed());
     }
 
