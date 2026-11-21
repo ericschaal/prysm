@@ -109,7 +109,7 @@ excludes the request is closed without a request (the sender fails with
 field the offer excludes (`capture.width`, `capture.height`, `capture.fps`,
 or `capture.encoding` for an encoding not offered) and the reason `the
 sender cannot stream 640x360 at 60 fps with menus as raw: at 640x360 this
-source delivers 1 to 30`. An unparseable or missing offer leaves the request
+source delivers a frame rate of 1 to 30`. An unparseable or missing offer leaves the request
 unchecked.
 
 **Text messages** carry JSON, unknown fields refused:
