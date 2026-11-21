@@ -152,8 +152,8 @@ impl EngineHandle {
         self.feeds.colors.watch()
     }
 
-    /// Totals of frames, timings and opens since the process started; a few
-    /// atomic loads, without waking the engine.
+    /// Totals of frames, timings and opens since the process started, copied
+    /// under a short lock without waking the engine.
     #[must_use]
     pub fn stats(&self) -> Counters {
         self.stats.read()
@@ -190,6 +190,8 @@ impl EngineHandle {
 pub struct Engine {
     commands: mpsc::Sender<Command>,
     task: JoinHandle<()>,
+    /// Set by [`Self::shutdown`]; see [`Core::run_blocking`].
+    shutting_down: watch::Sender<bool>,
 }
 
 impl Engine {
@@ -220,6 +222,7 @@ impl Engine {
         let feeds = Feeds::default();
         let stats = Arc::new(Stats::default());
         let (commands, inbox) = mpsc::channel(16);
+        let (shutting_down, shutdown_requested) = watch::channel(false);
         let core = Core {
             registry: registry.clone(),
             store,
@@ -229,6 +232,8 @@ impl Engine {
             feeds: feeds.clone(),
             stats: stats.clone(),
             stop_deadline,
+            shutdown_requested,
+            abandoned: None,
             state,
         };
         let task = tokio::spawn(core.run(inbox));
@@ -239,14 +244,23 @@ impl Engine {
             stats,
             registry,
         };
-        Ok((handle, Self { commands, task }))
+        let engine = Self {
+            commands,
+            task,
+            shutting_down,
+        };
+        Ok((handle, engine))
     }
 
-    /// Stop the session (output idles `Off`), join it and end the task.
+    /// Stop the session (output idles `Off`), join it and end the task. A
+    /// blocking adapter or settings call the engine is waiting in gets one
+    /// stop deadline more, then is abandoned and left running on its thread.
     ///
     /// # Errors
-    /// The engine is faulted, or stopping the session failed.
+    /// The engine is faulted, stopping the session failed, or a blocking
+    /// call was abandoned.
     pub async fn shutdown(self) -> Result<()> {
+        self.shutting_down.send_replace(true);
         let (reply, result) = oneshot::channel();
         let sent = self.commands.send(Command::Shutdown(reply)).await;
         let result = match sent {
@@ -327,10 +341,48 @@ struct Core {
     feeds: Feeds,
     stats: Arc<Stats>,
     stop_deadline: Duration,
+    /// Becomes true when [`Engine::shutdown`] is called.
+    shutdown_requested: watch::Receiver<bool>,
+    /// The first blocking call abandoned at shutdown; shutdown reports it.
+    abandoned: Option<Error>,
     state: watch::Sender<Snapshot>,
 }
 
 impl Core {
+    /// Run blocking adapter or store code off the async runtime. Once
+    /// shutdown is requested, a call gets one stop deadline more and is then
+    /// abandoned, left running on its thread: a call that never returns
+    /// cannot keep the engine from the session's ordered stop.
+    ///
+    /// # Errors
+    /// The call panicked, or was abandoned.
+    async fn run_blocking<T: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T> {
+        let mut requested = self.shutdown_requested.clone();
+        let grace = self.stop_deadline;
+        let abandon = async move {
+            if requested.wait_for(|requested| *requested).await.is_ok() {
+                tokio::time::sleep(grace).await;
+            } else {
+                // The engine was dropped without a shutdown: nothing waits.
+                std::future::pending::<()>().await;
+            }
+        };
+        tokio::select! {
+            done = blocking(work) => done,
+            () = abandon => {
+                let error = Error::other(format!(
+                    "an adapter or settings call did not return within {grace:?} \
+                     during shutdown, so it was abandoned"
+                ));
+                self.abandoned.get_or_insert_with(|| error.clone());
+                Err(error)
+            }
+        }
+    }
+
     async fn run(mut self, mut inbox: mpsc::Receiver<Command>) {
         loop {
             let command = tokio::select! {
@@ -477,7 +529,8 @@ impl Core {
         self.registry.validate(&settings)?;
         let store = self.store.clone();
         let saved = settings.clone();
-        blocking(move || lock(&store).save(&saved)).await??;
+        self.run_blocking(move || lock(&store).save(&saved))
+            .await??;
 
         let (output_changed, capture_changed) = {
             let snapshot = self.state.borrow();
@@ -558,7 +611,8 @@ impl Core {
         // Outside the borrow above: `config` borrows the state itself.
         let config = self.config();
         let registry = self.registry.clone();
-        let source = blocking(move || registry.open_source(&capture))
+        let source = self
+            .run_blocking(move || registry.open_source(&capture))
             .await?
             .map_err(|error| error.in_section(Section::Capture))?;
         self.stats.source_opened();
@@ -574,7 +628,8 @@ impl Core {
             Ok(session) => session,
             Err((error, source)) => {
                 // The session never ran: release the source here instead.
-                let released = blocking(move || source.close())
+                let released = self
+                    .run_blocking(move || source.close())
                     .await
                     .and_then(|closed| closed);
                 if released.is_err() {
@@ -629,7 +684,8 @@ impl Core {
         );
         let registry = self.registry.clone();
         let result = match output {
-            Ok(output) => blocking(move || registry.open_output(&output)?.idle(mode))
+            Ok(output) => self
+                .run_blocking(move || registry.open_output(&output)?.idle(mode))
                 .await?
                 .map_err(|error| error.in_section(Section::Output)),
             Err(error) => Err(error),
@@ -718,7 +774,8 @@ impl Core {
         // snapshot shows no pattern that nothing is showing any more.
         self.calibrate(None);
         self.faulted()?;
-        let result = self.stop(IdleMode::Off).await;
+        let stopped = self.stop(IdleMode::Off).await;
+        let result = stopped.and(self.abandoned.take().map_or(Ok(()), Err));
         self.record(&result);
         result
     }

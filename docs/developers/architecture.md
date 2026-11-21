@@ -115,6 +115,15 @@ does not finish puts the engine in a single `Faulted` state that names the
 outstanding step and accepts only shutdown. Native watchdogs stay inside the
 capture adapters. Host shutdown stops the session with the output idled off.
 
+Commands have no deadline of their own; each adapter bounds its blocking
+calls instead. One WLED request (connect, send, whole reply) gets 1.5 s
+however slowly the device answers, and opening a video device waits at most
+10 s for its format query and activation together. As a backstop, once
+shutdown is requested a blocking adapter or settings call gets one stop
+deadline more; then it is abandoned on its thread, the session stops in the
+order above, shutdown reports the abandoned call and the process exits
+without waiting for it.
+
 ## Hosts and their adapters
 
 | Host | Sources | Outputs | Surfaces |

@@ -1,6 +1,7 @@
 use prysm_ports::{
     AdapterSettings, Behind, DeviceBrightness, Error, Latency, LightingTarget, OutputIssue,
-    Processing, Registry, Revision, Section, SessionPhase, SessionState, Settings, Snapshot,
+    Processing, Registry, Revision, Section, SessionPhase, SessionState, Settings, SettingsStore,
+    Snapshot,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -389,6 +390,101 @@ async fn missed_stop_deadline_faults_and_only_shutdown_is_accepted() {
             .await
             .expect("shutdown returns while faulted");
         assert!(matches!(shutdown, Err(Error::Faulted(_))));
+    })
+    .await;
+}
+
+/// Far longer than [`STUCK_DEADLINE`]: a call that, for the test, never returns.
+const STUCK: Duration = Duration::from_secs(1);
+const STUCK_DEADLINE: Duration = Duration::from_millis(100);
+
+/// Saves block for [`STUCK`], like a disk that does not answer.
+struct SlowStore {
+    saved: MemoryStore,
+    log: CallLog,
+}
+
+impl SettingsStore for SlowStore {
+    fn load(&mut self) -> prysm_ports::Result<Option<Settings>> {
+        self.saved.load()
+    }
+
+    fn save(&mut self, settings: &Settings) -> prysm_ports::Result<()> {
+        self.log.record("store.saving");
+        std::thread::sleep(STUCK);
+        self.saved.save(settings)
+    }
+}
+
+/// Shutdown, required to finish well before a stuck call returns.
+async fn shutdown_before_stuck_call_returns(engine: Engine) -> prysm_ports::Result<()> {
+    tokio::time::timeout(STUCK - STUCK_DEADLINE * 2, engine.shutdown())
+        .await
+        .expect("shutdown is bounded")
+}
+
+#[tokio::test]
+async fn shutdown_abandons_a_command_stuck_in_an_adapter() {
+    within(async {
+        let log = CallLog::new();
+        let stuck = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                open_delay_ms: u64::try_from(STUCK.as_millis()).unwrap(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, stuck, STUCK_DEADLINE).await;
+        let starting = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.set_target(LightingTarget::Processed).await }
+        });
+        assert!(log.wait_for("source.opening:a", 1).await);
+
+        let shutdown = shutdown_before_stuck_call_returns(engine).await;
+        assert!(
+            matches!(shutdown, Err(Error::Adapter { .. })),
+            "{shutdown:?}"
+        );
+        let started = starting.await.unwrap();
+        assert!(matches!(started, Err(Error::Adapter { .. })), "{started:?}");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn shutdown_abandons_a_stuck_save_and_still_stops_the_session_in_order() {
+    within(async {
+        let log = CallLog::new();
+        let store = SlowStore {
+            saved: MemoryStore::with(named("a", "a")),
+            log: log.clone(),
+        };
+        let (handle, engine) = Engine::start(registry(&log), Box::new(store), STUCK_DEADLINE)
+            .await
+            .unwrap();
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.write:a", 1).await);
+        let saving = tokio::spawn({
+            let handle = handle.clone();
+            let revision = revision(&handle);
+            async move { handle.replace_settings(revision, named("a", "a")).await }
+        });
+        assert!(log.wait_for("store.saving", 1).await);
+
+        let shutdown = shutdown_before_stuck_call_returns(engine).await;
+        assert!(
+            matches!(shutdown, Err(Error::Adapter { .. })),
+            "{shutdown:?}"
+        );
+        let saved = saving.await.unwrap();
+        assert!(matches!(saved, Err(Error::Adapter { .. })), "{saved:?}");
+        assert!(before(&log, "source.close:a", "output.idle:a:Off"));
+        assert_eq!(log.count("output.idle:a:Off"), 1);
     })
     .await;
 }

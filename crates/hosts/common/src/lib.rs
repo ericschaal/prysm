@@ -107,7 +107,10 @@ where
         options,
         quiet,
     };
-    exit_code(name, runtime.block_on(host(process, prysm)), "stopped")
+    let result = runtime.block_on(host(process, prysm));
+    // Dropping the runtime would wait for an abandoned blocking adapter call.
+    runtime.shutdown_background();
+    exit_code(name, result, "stopped")
 }
 
 /// Print how `result` ended (`done` when it succeeded) and its exit code.
