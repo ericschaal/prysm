@@ -10,12 +10,20 @@ use prysm_webos_link::PrysmAddress;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-/// Largest accepted mean absolute NV12 difference per picture.
+/// Side of the flat squares of [`picture`]: one macroblock.
+const BLOCK: usize = 16;
+/// Pictures until [`picture`] repeats, more than the five each check tells
+/// apart.
+const PERIOD: u32 = 8;
+/// Largest accepted mean absolute difference of a decoded block from its own
+/// colour: far above OpenH264's 0.3 on these flat blocks, far below the 28
+/// levels between neighbouring pictures, and catches a shifted range.
 const TOLERANCE: f64 = 8.0;
 
 const AFTER_HELP: &str = "\
 Encodes synthetic NV12 pictures with exactly that encoder, decodes each one and
-compares it with its input, restarts the session half way (as on resume), and
+checks that every 16x16 block shows its own picture, not one up to two before
+or after, restarts the session half way (as on resume), and
 prints timings and sizes. With --prysm, then streams the same pictures to that
 Prysm for --frames more frames, at the default bitrate; its remote capture must
 request this encoding, size and rate. Exit 0 when every check passed.";
@@ -81,33 +89,96 @@ pub fn main(options: Options) -> ExitCode {
     }
 }
 
-/// A moving luma ramp with chroma quadrants that change colour every 15
-/// pictures: limited-range BT.709 NV12, as the TV capture delivers.
+/// Limited-range BT.709 NV12, as the TV capture delivers, of flat 16x16
+/// blocks whose colour changes by 28 levels per picture (and per block, left
+/// to right), so a block decoded from a neighbouring picture, or a picture torn
+/// between two, cannot pass as this one (a moving gradient would: neighbours
+/// differ too little on average).
 pub fn picture(width: u32, height: u32, index: u32) -> Frame {
     let (w, h) = (width as usize, height as usize);
-    let shift = index as usize * 7;
+    let blocks = w.div_ceil(BLOCK);
+    let block = |row: usize, col: usize| row / BLOCK * blocks + col / BLOCK;
     let mut data: Vec<u8> = (0..w * h)
-        .map(|i| 16 + ((i % w + shift) * 200 / w % 200) as u8)
+        .map(|i| colour(index, block(i / w, i % w))[0])
         .collect();
-    let palette = [(90, 240), (54, 34), (240, 110), (128, 128), (200, 60)];
-    let phase = (index / 15) as usize;
-    for row in 0..h / 2 {
-        for col in 0..w / 2 {
-            let quadrant = (row * 2 / (h / 2)) * 2 + col * 2 / (w / 2);
-            let (u, v) = palette[(quadrant + phase) % palette.len()];
+    for row in (0..h).step_by(2) {
+        for col in (0..w).step_by(2) {
+            let [_, u, v] = colour(index, block(row, col));
             data.extend([u, v]);
         }
     }
     Frame::new(data, width, height, FORMAT).expect("valid NV12 geometry")
 }
 
-fn mean_error(a: &[u8], b: &[u8]) -> f64 {
-    let sum: u64 = a
-        .iter()
-        .zip(b)
-        .map(|(a, b)| u64::from(a.abs_diff(*b)))
-        .sum();
-    sum as f64 / a.len() as f64
+/// The flat Y, U, V of `block` in picture `index`: one of [`PERIOD`] levels
+/// each, offset so the three planes do not move in step.
+fn colour(index: u32, block: usize) -> [u8; 3] {
+    let level = |step: usize| 16 + 28 * (step % PERIOD as usize) as u8;
+    let step = index as usize + block;
+    [level(step), level(step + 3), level(step + 5)]
+}
+
+/// Checks every block of a decoded `picture(width, height, index)`: it must
+/// be within [`TOLERANCE`] of its colour and nearer to it than to the same
+/// block two pictures before to two after. Returns the worst block's error.
+fn compare(decoded: &[u8], width: u32, height: u32, index: u32) -> Result<f64, String> {
+    let (w, h) = (width as usize, height as usize);
+    let blocks = w.div_ceil(BLOCK);
+    let mut worst = 0.0_f64;
+    for block in 0..blocks * h.div_ceil(BLOCK) {
+        // Picture `index + PERIOD` looks like `index`, so the pictures
+        // before the first need no negative index.
+        let at = (block % blocks * BLOCK, block / blocks * BLOCK);
+        let error = |offset: i32| {
+            let other = (index + PERIOD).wrapping_add_signed(offset);
+            block_error(decoded, w, h, at, colour(other, block))
+        };
+        let own = error(0);
+        if let Some(offset) = [-2, -1, 1, 2]
+            .into_iter()
+            .find(|&offset| error(offset) <= own)
+        {
+            return Err(format!(
+                "the block at {at:?} shows picture {offset:+} instead"
+            ));
+        }
+        if own > TOLERANCE {
+            return Err(format!(
+                "the block at {at:?} decodes {own:.1} away from its colour"
+            ));
+        }
+        worst = worst.max(own);
+    }
+    Ok(worst)
+}
+
+/// The mean absolute difference of the block at `(left, top)` (luma and
+/// chroma) of an NV12 picture from a flat colour.
+fn block_error(
+    pixels: &[u8],
+    w: usize,
+    h: usize,
+    (left, top): (usize, usize),
+    [y, u, v]: [u8; 3],
+) -> f64 {
+    let (rows, cols) = (top..h.min(top + BLOCK), left..w.min(left + BLOCK));
+    let (luma, chroma) = pixels.split_at(w * h);
+    let (mut sum, mut count) = (0_u64, 0_u64);
+    for row in rows.clone() {
+        for col in cols.clone() {
+            sum += u64::from(luma[row * w + col].abs_diff(y));
+            count += 1;
+        }
+    }
+    // Blocks start on even rows and columns: one U, V pair per 2x2 pixels.
+    for row in rows.step_by(2) {
+        for col in cols.clone().step_by(2) {
+            let pair = row / 2 * w + col;
+            sum += u64::from(chroma[pair].abs_diff(u)) + u64::from(chroma[pair + 1].abs_diff(v));
+            count += 2;
+        }
+    }
+    sum as f64 / count as f64
 }
 
 /// User plus system CPU ticks of this process (Linux), at 100 per second.
@@ -183,14 +254,9 @@ fn run(options: Options) -> Result<(), String> {
         decoder
             .decode(picture.data, width, height, &mut decoded)
             .map_err(|error| format!("frame {index} does not decode: {}", chain(&error)))?;
-        let error = mean_error(&decoded, input.as_slice());
+        let error = compare(&decoded, width, height, index)
+            .map_err(|error| format!("frame {index}: {error} (keyframe: {})", picture.keyframe))?;
         worst = worst.max(error);
-        if error > TOLERANCE {
-            return Err(format!(
-                "frame {index} decodes {error:.1} away from its input (keyframe: {})",
-                picture.keyframe
-            ));
-        }
         if index < 3 || picture.keyframe {
             println!(
                 "check-encoder: frame={index} keyframe={} bytes={} encode_us={} error={error:.2}",
@@ -308,6 +374,32 @@ mod tests {
         ] {
             assert!(parse(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn only_the_own_picture_passes_the_comparison() {
+        // Partial blocks at the right and bottom edges, and wraparound below 2.
+        let (width, height) = (40, 24);
+        let pixels = |index| picture(width, height, index).as_slice().to_vec();
+        for index in [0, 1, 5, 9] {
+            assert_eq!(compare(&pixels(index), width, height, index), Ok(0.0));
+        }
+        for wrong in [8, 9, 11, 12] {
+            let error = compare(&pixels(wrong), width, height, 10).unwrap_err();
+            assert!(error.contains("shows picture"), "{wrong}: {error}");
+        }
+        // Torn: the bottom block row and its chroma come from picture 11.
+        let (mut torn, next) = (pixels(10), pixels(11));
+        let w = width as usize;
+        let luma = w * height as usize;
+        torn[w * 16..luma].copy_from_slice(&next[w * 16..luma]);
+        torn[luma + w * 8..].copy_from_slice(&next[luma + w * 8..]);
+        let error = compare(&torn, width, height, 10).unwrap_err();
+        assert!(error.contains("(0, 16)"), "{error}");
+        // Every level off by more than the tolerance, nearest still its own.
+        let shifted: Vec<u8> = pixels(10).iter().map(|&value| value + 9).collect();
+        let error = compare(&shifted, width, height, 10).unwrap_err();
+        assert!(error.contains("away from its colour"), "{error}");
     }
 
     #[test]
