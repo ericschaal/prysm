@@ -221,7 +221,7 @@ test('a saved size and rate the device cannot deliver moves to Balanced, and the
     ]);
     assert.equal(
       line(),
-      'This device can’t do 640 × 360 at 60 fps, so it is set to Balanced.',
+      'This device doesn’t offer 640 × 360 at 60 fps. Balanced is chosen.',
     );
     assert.equal($('.picture-choice > .field-note').dataset.said, 'true');
     // An unsaved change, saved the usual way.
@@ -315,7 +315,7 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
   }
 });
 
-test('nothing found shows the typed field as it is; a device that delivers nothing says so under the devices, without sizes', async () => {
+test('nothing found shows the typed field as it is; a device that delivers nothing says why under the devices, without sizes', async () => {
   for (const [found, answer, said, sizes] of [
     [
       [],
@@ -326,7 +326,13 @@ test('nothing found shows the typed field as it is; a device that delivers nothi
     [
       [{ label: 'Old grabber', detail: path, fields: { path } }],
       known(),
-      /^Prysm can’t capture from this device\.$/,
+      /^This device offers no picture Prysm can use\.$/,
+      false,
+    ],
+    [
+      [{ label: 'PAL card', detail: path, fields: { path } }],
+      known(fixedMode(720, 576, 25), fixedMode(720, 576, 50)),
+      /^This device doesn’t offer 30 or 60\sfps at a size Prysm can use\.$/,
       false,
     ],
   ]) {
@@ -543,7 +549,7 @@ test('a capture-only TV that has not connected locks the rows on the saved choic
     );
     assert.equal(
       line(),
-      'This TV can’t do 640 × 360 at 60 fps, so it is set to Balanced.',
+      'This TV doesn’t offer 640 × 360 at 60 fps. Balanced is chosen.',
     );
     assert.deepEqual(encodings(), ['h264_hardware', 'h264_software']);
     assert(field('capture.encoding').closest('[hidden]'), 'under Advanced');
