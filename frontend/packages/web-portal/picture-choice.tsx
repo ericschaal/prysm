@@ -79,7 +79,7 @@ export function PictureChoice<V extends Picture>({
   // Said whenever what was set cannot be delivered; following a preset to
   // a deliverable size is not.
   if (known && move && !delivers(known, current)) {
-    const line = `${source} can’t do ${describePicture(current.width, current.height, current.fps)}, so it is set to ${picturePresets[move.preset].label}.`;
+    const line = `${source} doesn’t offer ${describePicture(current.width, current.height, current.fps)}. ${picturePresets[move.preset].label} is chosen.`;
     if (moved !== line) setMoved(line);
   }
   useEffect(() => {
