@@ -96,10 +96,7 @@ export interface components {
          *     in the full package.
          */
         Preferences: {
-            /**
-             * @description Start enabled (full: processed lighting) when the service starts.
-             * @default false
-             */
+            /** @description Start enabled (full: processed lighting) when the service starts. */
             autostart?: boolean;
             /**
              * @description Slim only: the headless Prysm's address, such as
@@ -108,7 +105,6 @@ export interface components {
              *     links to its portal. Only the syntax is checked when saved; the TV
              *     resolves a host name at every connection attempt, and one that does
              *     not resolve is reported as the receiver wait.
-             * @default null
              * @example http://192.168.1.20:8787
              */
             instance?: string;

@@ -55,7 +55,7 @@ After every install or update the service must be set up again; the helper
 does this. If you installed another way, open **Prysm** on the TV and choose
 **Set up service**.
 
-**Updating from a version before 1.0:** those versions installed as the app
+**Updating from a 1.0.0 release candidate:** those installed as the app
 `io.prysm.tv`; 1.0 is a different app, `io.github.ericschaal.prysm`, so
 installing it does not replace the old one. Remove the old one first:
 

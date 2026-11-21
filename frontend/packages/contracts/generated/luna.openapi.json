@@ -222,12 +222,10 @@
         "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional, an unset one absent). Fields marked \"Slim only\" must stay unset\nin the full package.",
         "properties": {
           "autostart": {
-            "default": false,
             "description": "Start enabled (full: processed lighting) when the service starts.",
             "type": "boolean"
           },
           "instance": {
-            "default": null,
             "description": "Slim only: the headless Prysm's address, such as\n`http://192.168.1.20:8787` or `https://prysm.example.com` (through a\nreverse proxy). The TV streams its picture there, and the TV app\nlinks to its portal. Only the syntax is checked when saved; the TV\nresolves a host name at every connection attempt, and one that does\nnot resolve is reported as the receiver wait.",
             "example": "http://192.168.1.20:8787",
             "maxLength": 256,

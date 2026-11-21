@@ -246,13 +246,21 @@ function isFailure(value: unknown): value is WorkerFailure | undefined {
   );
 }
 
+function isPreferences(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    (value.autostart === undefined || typeof value.autostart === 'boolean') &&
+    optionalText(value.instance)
+  );
+}
+
 export function isState(value: unknown): value is State {
   return (
     isObject(value) &&
     isPackage(value) &&
     oneOf(powers, value.power) &&
     oneOf(videos, value.video) &&
-    isObject(value.preferences) &&
+    isPreferences(value.preferences) &&
     Array.isArray(value.log) &&
     (value.log as unknown[]).every((line) => typeof line === 'string') &&
     isFailure(value.failure)
