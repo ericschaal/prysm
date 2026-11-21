@@ -6,6 +6,7 @@ use crate::ffi::{
 };
 use libloading::Library;
 use std::ffi::{CStr, c_char, c_void};
+use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
 use std::sync::{Mutex, PoisonError};
 
@@ -151,8 +152,9 @@ pub(crate) fn load_once<A>(
 fn open(names: &[&str]) -> Result<Library, Error> {
     let mut last = None;
     for name in names {
-        // SAFETY: only known LG system libraries are loaded. Their constructors
-        // require root and run on the thread that also captures and releases.
+        // SAFETY: only known LG system libraries are loaded; their
+        // constructors require root. Each is loaded once per process, on the
+        // thread of the first tap; later taps may live on other threads.
         match unsafe { Library::new(*name) } {
             Ok(library) => return Ok(library),
             Err(error) => last = Some(error),
@@ -194,23 +196,37 @@ macro_rules! vt_call {
     }};
 }
 
-/// Borrow a driver plane for copying.
+/// A driver plane: `length` readable bytes at `pointer`, borrowed for `'a`.
+/// The driver may still write them (its buffers are reused), so they are only
+/// ever read through the pointer, never as a Rust slice.
+#[derive(Debug, Clone, Copy)]
+struct Plane<'a> {
+    pointer: NonNull<u8>,
+    length: usize,
+    borrow: PhantomData<&'a [u8]>,
+}
+
+/// A driver plane borrowed for as long as `owner`.
 ///
 /// # Safety
-/// The driver must provide a readable allocation of `length` bytes that remains
-/// valid and stable until the returned borrow has been copied, before release.
-unsafe fn driver_plane<T>(_: &T, pointer: *const u8, length: i32) -> Result<&[u8], Error> {
+/// `pointer` must be readable for `length` bytes for as long as `owner` is
+/// borrowed.
+unsafe fn driver_plane<T>(_owner: &T, pointer: *mut u8, length: i32) -> Result<Plane<'_>, Error> {
     let length = usize::try_from(length).map_err(|_| Error::Invalid("negative plane length"))?;
-    if pointer.is_null() || length == 0 || length > 64 * 1024 * 1024 {
+    let pointer = NonNull::new(pointer).ok_or(Error::Invalid("driver plane"))?;
+    if length == 0 || length > 64 * 1024 * 1024 {
         return Err(Error::Invalid("driver plane"));
     }
-    // SAFETY: caller owns the live native frame; size and nullness checked above.
-    Ok(unsafe { std::slice::from_raw_parts(pointer, length) })
+    Ok(Plane {
+        pointer,
+        length,
+        borrow: PhantomData,
+    })
 }
 
 /// Copy active rows without padding into `output`, exactly `rows * row_bytes` long.
 fn copy_plane(
-    source: &[u8],
+    source: Plane<'_>,
     stride: usize,
     row_bytes: usize,
     rows: usize,
@@ -219,15 +235,24 @@ fn copy_plane(
     if rows == 0 || rows > 1080 || row_bytes == 0 || stride < row_bytes || stride > 32768 {
         return Err(Error::Invalid("plane geometry"));
     }
-    if source.len() < stride * (rows - 1) + row_bytes {
+    if source.length < stride * (rows - 1) + row_bytes {
         return Err(Error::Invalid("short plane"));
     }
     if output.len() != row_bytes * rows {
         return Err(Error::Invalid("NV12 output size"));
     }
-    let sources = source.chunks(stride);
-    for (target, row) in output.chunks_exact_mut(row_bytes).zip(sources) {
-        target.copy_from_slice(&row[..row_bytes]);
+    for (row, target) in output.chunks_exact_mut(row_bytes).enumerate() {
+        // SAFETY: `row * stride + row_bytes <= length` (checked above), so the
+        // read stays inside the plane, which is readable while borrowed;
+        // `target` is Rust memory, apart from the driver's. A driver write
+        // meanwhile can only mix two frames into the copy.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                source.pointer.as_ptr().add(row * stride),
+                target.as_mut_ptr(),
+                row_bytes,
+            );
+        }
     }
     Ok(())
 }
@@ -240,8 +265,8 @@ pub struct VideoFrame<'a> {
     pub width: u32,
     pub height: u32,
     stride: usize,
-    y: &'a [u8],
-    uv: &'a [u8],
+    y: Plane<'a>,
+    uv: Plane<'a>,
 }
 
 impl VideoFrame<'_> {
@@ -273,10 +298,12 @@ enum Stage {
 pub struct VtCapture {
     api: &'static VtApi,
     driver: NonNull<c_void>,
-    client: [c_char; 128],
+    /// Boxed, like `properties`: the library gets their addresses and may
+    /// keep them, so they must not move with the tap.
+    client: Box<[c_char; 128]>,
     stage: Stage,
     plane: PlaneInfo,
-    properties: Properties,
+    properties: Box<Properties>,
     released: bool,
 }
 
@@ -325,10 +352,10 @@ impl VtCapture {
         let mut this = Self {
             api,
             driver,
-            client: [0; 128],
+            client: Box::new([0; 128]),
             stage: Stage::Created,
             plane: PlaneInfo::default(),
-            properties,
+            properties: Box::new(properties),
             released: false,
         };
         // `c_char` is `u8` on ARM (the TV) and `i8` on x86: convert portably.
@@ -361,7 +388,7 @@ impl VtCapture {
             prysm_vt_preprocess,
             self.api.preprocess,
             self.client.as_mut_ptr(),
-            &raw mut self.properties
+            &raw mut *self.properties
         )?;
         if code == 1 {
             // LG finalizes the session on status 1; preprocessing alone cannot reopen it.
@@ -424,9 +451,10 @@ impl VtCapture {
         status(code, "vtCapture_currentCaptureBuffInfo")?;
         let [_, _, width, height] = self.plane.region;
         let stride = usize::try_from(self.plane.stride).map_err(|_| Error::Invalid("stride"))?;
-        // SAFETY: successful acquisition supplies driver-owned allocations;
-        // they borrow `self`, so no further driver call or release occurs
-        // before the frame is dropped.
+        // SAFETY: assumed, as nothing documents it: a successful acquisition
+        // supplies driver buffers that stay readable until the next driver
+        // call. The planes borrow `self`, so no driver call or release
+        // happens before they are dropped.
         let (y, uv) = unsafe {
             (
                 driver_plane(self, buffer.y, buffer.y_len)?,
@@ -624,14 +652,14 @@ mod tests {
             VtCapture {
                 api: &FAKE_API,
                 driver: self.0.cast(),
-                client: [0; 128],
+                client: Box::new([0; 128]),
                 stage,
                 plane: PlaneInfo {
                     stride: 4,
                     region: [0, 0, 2, 2],
                     active: [0; 4],
                 },
-                properties: Properties::default(),
+                properties: Box::default(),
                 released: false,
             }
         }
@@ -703,6 +731,27 @@ mod tests {
         ));
         drop(capture);
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
+    }
+
+    /// Pure Rust, so Miri checks the raw reads: only active rows, never past
+    /// the plane.
+    #[test]
+    fn planes_are_copied_through_their_pointer_within_bounds() {
+        let mut source = [1_u8, 2, 99, 99, 3, 4];
+        let pointer = source.as_mut_ptr();
+        let owner = ();
+        // SAFETY: `source` outlives the plane and is not otherwise used meanwhile.
+        let plane = unsafe { driver_plane(&owner, pointer, 6) }.unwrap();
+        let mut output = [0; 4];
+        copy_plane(plane, 4, 2, 2, &mut output).unwrap();
+        assert_eq!(output, [1, 2, 3, 4]);
+        assert!(matches!(
+            copy_plane(plane, 4, 3, 2, &mut [0; 6]),
+            Err(Error::Invalid("short plane"))
+        ));
+        // SAFETY: a null pointer is rejected before any use.
+        let null = unsafe { driver_plane(&owner, ptr::null_mut(), 6) };
+        assert!(matches!(null, Err(Error::Invalid("driver plane"))));
     }
 
     #[test]

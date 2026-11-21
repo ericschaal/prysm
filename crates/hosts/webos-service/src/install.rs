@@ -1,11 +1,10 @@
 //! Registration with the TV: Luna manifests for the supervisor and worker
 //! roles, the webosbrew boot hook, a bounded `ls-control` rescan and a
 //! bounded activation. Never replaces files it did not write.
-use crate::preferences::read_private;
+use crate::preferences::{read_private, write_atomic};
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{self, Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -195,15 +194,7 @@ impl FsInstaller {
                     .parent()
                     .ok_or_else(|| failed(io::Error::other("no directory")))?;
                 fs::create_dir_all(parent).map_err(failed)?;
-                let mut file = tempfile::NamedTempFile::new_in(parent).map_err(failed)?;
-                file.write_all(script.as_bytes()).map_err(failed)?;
-                file.as_file()
-                    .set_permissions(fs::Permissions::from_mode(0o755))
-                    .map_err(failed)?;
-                file.as_file().sync_all().map_err(failed)?;
-                file.persist_noclobber(path)
-                    .map_err(|error| failed(error.error))?;
-                sync_directory(parent).map_err(failed)
+                write_atomic(path, script.as_bytes(), 0o755, false).map_err(failed)
             }
             (false, true) => {
                 fs::remove_file(path).map_err(failed)?;
@@ -250,39 +241,38 @@ impl Installer for FsInstaller {
     }
 }
 
-/// Install (create if missing) or remove (if ours) one manifest.
+/// Install (create, or replace ours if it differs) or remove (if ours) one
+/// manifest.
+///
+/// Ours is a manifest with our `id` (the app id's role) and our `roleFiles`
+/// (in our installed service directory). Its version and other lists may be
+/// another release's: an update that did not run `setup` leaves the old
+/// release's manifest behind.
 fn manifest(path: &Path, value: &Value, install: bool) -> Result<()> {
     let failed = |source: io::Error| InstallError::Manifest {
         path: path.to_owned(),
         source,
     };
-    match read_private(path, MAX_REPLY).map_err(failed)? {
-        Some(bytes) => {
-            if serde_json::from_slice::<Value>(&bytes).ok().as_ref() != Some(value) {
-                return Err(InstallError::UnrelatedManifest(path.to_owned()));
-            }
-            if !install {
-                fs::remove_file(path).map_err(failed)?;
-            }
-        }
-        None if install => {
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o644)
-                .open(path)
-                .map_err(failed)?;
+    let existing = read_private(path, MAX_REPLY)
+        .map_err(failed)?
+        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null));
+    if let Some(existing) = &existing
+        && (existing["id"] != value["id"] || existing["roleFiles"] != value["roleFiles"])
+    {
+        return Err(InstallError::UnrelatedManifest(path.to_owned()));
+    }
+    match (install, existing) {
+        (true, Some(existing)) if existing == *value => Ok(()),
+        (true, existing) => {
             let mut bytes = serde_json::to_vec(value)
                 .map_err(io::Error::from)
                 .map_err(failed)?;
             bytes.push(b'\n');
-            file.write_all(&bytes)
-                .and_then(|()| file.sync_all())
-                .map_err(failed)?;
+            write_atomic(path, &bytes, 0o644, existing.is_some()).map_err(failed)
         }
-        None => {}
+        (false, Some(_)) => fs::remove_file(path).map_err(failed),
+        (false, None) => Ok(()),
     }
-    Ok(())
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {

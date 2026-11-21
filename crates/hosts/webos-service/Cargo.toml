@@ -41,3 +41,5 @@ workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# The process's peak memory (tests/log_memory.rs).
+nix = { workspace = true, features = ["resource"] }

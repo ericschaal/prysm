@@ -61,6 +61,40 @@ exit 3"#,
     assert_eq!(worker.try_exit().unwrap(), None, "reaped once");
 }
 
+/// An event still in the pipe when the worker is reaped (here written by a
+/// process it left behind) is drained before the exit is handed over.
+#[test]
+fn the_last_events_come_before_the_exit() {
+    let mut worker = sh(r#"(sleep 0.2; echo '{"type":"failed","cause":"late"}') &
+exit 1"#);
+    assert_eq!(
+        exit_within(&mut worker, Duration::from_secs(5)),
+        Some(Exit::Code(1))
+    );
+    let seen = worker.drain();
+    assert!(
+        seen.contains(&Output::Event(Event::Failed {
+            cause: "late".into()
+        })),
+        "{seen:?}"
+    );
+}
+
+/// A process the worker left behind that keeps its pipes open delays the
+/// exit by at most [`LAST_WORDS`].
+#[test]
+fn a_left_behind_process_holding_the_pipes_delays_the_exit_boundedly() {
+    let mut worker = sh("sleep 3 & exit 4");
+    let started = Instant::now();
+    assert_eq!(
+        exit_within(&mut worker, Duration::from_secs(5)),
+        Some(Exit::Code(4))
+    );
+    let waited = started.elapsed();
+    assert!(waited >= LAST_WORDS, "{waited:?}");
+    assert!(waited < LAST_WORDS + Duration::from_secs(1), "{waited:?}");
+}
+
 #[test]
 fn a_worker_ignoring_term_is_killed() {
     let mut worker = sh("trap '' TERM; echo ready >&2; while :; do sleep 0.05; done");

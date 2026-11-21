@@ -116,7 +116,8 @@ The TV app sets the service up through the Homebrew Channel's `exec` of
 | `/var/lib/io.prysm.tv/settings.json` | Full only: portal settings (worker's engine) |
 
 `prysm-webos-service setup` writes the manifests and boot hook (refusing
-unrelated content), rescans Luna and activates the service, all with bounded
+unrelated content; a manifest with Prysm's id and role files is Prysm's, of
+any version, and is replaced atomically), rescans Luna and activates the service, all with bounded
 waits. It must run after every install or update: IPKs carry no install
 scripts. The Luna method `uninstall` (only the app may call it) replies at
 once, stops the worker gracefully (TERM, KILL 8 s later), then removes the

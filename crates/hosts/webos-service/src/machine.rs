@@ -530,18 +530,17 @@ impl Machine {
             Exit::Code(code) => exit::describe(code),
             Exit::Signal(signal) => format!("worker killed by signal {signal}"),
         };
-        let reported = self.package.forget();
-        let last = self.failed.take().map(WorkerFailure::other).or(reported);
+        let reported = self.package.forget().map(|failure| failure.message);
+        let last = self.failed.take().or(reported);
         match self.phase {
             Phase::Running { .. } => {
-                // The worker stops on its own only when something failed.
-                self.failure = Some(match last {
-                    Some(last) => WorkerFailure {
-                        message: format!("{described}: {}", last.message),
-                        ..last
-                    },
-                    None => WorkerFailure::other(described),
-                });
+                // The worker stops on its own only when something failed: a
+                // failure of its own (`other`), whatever its last report's
+                // kind (a receiver wait is no reason to exit).
+                self.failure = Some(WorkerFailure::other(match last {
+                    Some(last) => format!("{described}: {last}"),
+                    None => described,
+                }));
                 self.retry(now);
             }
             Phase::Stopping { failed: true, .. } => self.retry(now),

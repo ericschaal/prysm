@@ -595,6 +595,46 @@ fn an_exit_keeps_the_workers_last_failure() {
     );
 }
 
+/// A slim worker that waits for the receiver and then dies without saying
+/// why has failed: its exit is shown as a failure, not as the wait.
+#[test]
+fn an_exit_during_a_receiver_wait_is_a_failure() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (
+                1,
+                slim_status(SlimStatus {
+                    failure: Some(WorkerFailure::new(
+                        FailureKind::Receiver,
+                        "waiting for the receiver: refused",
+                    )),
+                    ..SlimStatus::default()
+                }),
+                vec![],
+            ),
+            (2, Exited(Exit::Signal(11)), vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert_eq!(kind(&state), Some(FailureKind::Other));
+    assert_eq!(
+        message(&state),
+        Some("worker killed by signal 11: waiting for the receiver: refused")
+    );
+}
+
 /// A worker that fails says why before it exits, also before its first
 /// status; the cause wins over its last report, and the target it last
 /// reported stays the intent.
@@ -1022,7 +1062,8 @@ fn failures_carry_their_kind() {
         "version"
     );
 
-    // The worker's last status names the encoder; the exit keeps the kind.
+    // The worker's last status names the encoder; its exit is a failure of
+    // its own (`other`), with the report as context.
     script(
         &mut m,
         t0,
@@ -1046,7 +1087,7 @@ fn failures_carry_their_kind() {
         message(&state),
         Some("worker failed: hardware H.264 cannot start")
     );
-    assert_eq!(kind(&state), Some(FailureKind::Encoder));
+    assert_eq!(kind(&state), Some(FailureKind::Other));
 
     // The supervisor's own failures are `other`; a worker's keep their kind.
     // (A report without a kind is `other` already on the wire.)
