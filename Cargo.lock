@@ -2145,7 +2145,6 @@ dependencies = [
  "prysm-core",
  "prysm-ports",
  "prysm-runtime",
- "prysm-settings-file",
  "ratatui",
  "serde_json",
  "tempfile",

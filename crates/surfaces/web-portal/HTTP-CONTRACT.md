@@ -72,7 +72,7 @@ into `@prysm/contracts/application`.
 `version` is the Prysm product version (`1.0.0`, `1.0.0-rc.1`); `revision` only counts settings replacements.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
-`settings` is the settings file without its `format` number: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
+`settings` is the settings file without its `format` number, which belongs to the file alone: a `settings` body carrying `format` is refused as an unknown field (`400`). Shape: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
 `processing.style.kind` is `natural`, `calm`, `vivid`, `game` or `custom`; a built-in style is stored by name only, and `custom` applies `processing.custom_style` (all seven knobs, required with `custom`, kept while another style is chosen). The built-in styles' values are not sent: the portal is built with them (`@prysm/contracts/constants`), and the [settings file](../../adapters/settings-file/README.md) describes the fields.
 A calibration's `correction` is `{ warmth, tint, midtones, red, green, blue }`, each primary `{ hue, strength }`, every control -100 to 100 and 0 when omitted ([settings file](../../adapters/settings-file/README.md)).
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
@@ -83,9 +83,12 @@ only in `failure`. While no frames arrive, `input.receiving` is `false`
 (waiting for video) and after a few seconds the output is returned to its own
 state until frames return.
 
-`device` is what the lights say about themselves while the session runs,
+`device` is what the lights say about themselves,
 `{ "issue"?: …, "brightness_percent"?: …, "led_count"?: … }`, each part absent
-while the output cannot tell, and `{}` while no session runs. `issue` (absent
+while the output cannot tell. It is `{}` while no session holds the output:
+no session, a session before its first frame, or one that returned the output
+after 3 s without video. Read `session.state` and `input.receiving` for which;
+`{}` alone does not mean lighting stopped. `issue` (absent
 when all is well) says why the lights are not showing its colours: `off`
 (switched off on the device), `overridden` (WLED's live override), `not_live`
 (the device is not taking realtime colours), `other_sender` or `unreachable`.

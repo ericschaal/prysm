@@ -84,7 +84,9 @@ export interface components {
         /**
          * @description What the lights say about themselves, from the output's own checks. Each
          *     part is absent while the output cannot tell, and all are while no session
-         *     runs. Prysm reports them and changes none.
+         *     holds the output (no session, no frame yet, or released after 3 s without
+         *     video; see `session.state` and `input.receiving`). Prysm reports them and
+         *     changes none.
          */
         DeviceReport: {
             /**
@@ -427,8 +429,10 @@ export interface components {
              */
             calibration?: components["schemas"]["CalibrationPattern"];
             /**
-             * @description What the lights say about themselves while lighting runs, from the
-             *     output's own checks (about once a second); empty while no session runs.
+             * @description What the lights say about themselves, from the output's own checks
+             *     (about once a second). Empty while no session holds the output: no
+             *     session, or one that has no frame yet or released the output after 3 s
+             *     without video; `session.state` and `input.receiving` say which.
              */
             device: components["schemas"]["DeviceReport"];
             /**

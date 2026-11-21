@@ -25,11 +25,16 @@ defaults. Unknown fields fail `load` with the field name, line and file path.
 Adapter fields under `kind` are decoded by the adapter's factory, not here.
 
 `format` is the file format, the constant `FORMAT` (now `1`), written by every
-save. `load` reads it first and refuses, with a typed `FormatError` as the
-cause, a file without it (written by hand or before Prysm 1.0; add
-`"format": 1` once its fields match), a higher number (written by a newer
-Prysm, so it may hold fields this one does not know) and any other number.
+save. `load` reads it first, before the fields, and refuses with a typed
+`FormatError` as the cause: a file without it (written by hand or before
+Prysm 1.0; add `"format": 1` once its fields match), a value that is not a
+whole number (`null`, `"1"`, `2.0`), any whole number above `FORMAT` however
+large (written by a newer Prysm; both numbers are named), and a lower one.
 There is no migration: a Prysm reads its own format only.
+
+`FORMAT` is raised only when Prysm can no longer read files with the previous
+number: a field renamed or removed, or its meaning changed. Additions keep
+the number: an older Prysm refuses a newer file by the unknown field's name.
 
 ```json
 {

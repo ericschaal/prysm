@@ -335,7 +335,9 @@ pub enum OutputIssueSchema {
 // Mirrors `prysm_ports::DeviceReport`.
 /// What the lights say about themselves, from the output's own checks. Each
 /// part is absent while the output cannot tell, and all are while no session
-/// runs. Prysm reports them and changes none.
+/// holds the output (no session, no frame yet, or released after 3 s without
+/// video; see `session.state` and `input.receiving`). Prysm reports them and
+/// changes none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = DeviceReport)]
 pub struct DeviceReportSchema {

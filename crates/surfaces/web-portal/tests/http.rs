@@ -923,6 +923,21 @@ async fn settings_replace_succeeds_conflicts_and_validates() {
         );
         assert_eq!(portal.state().await["revision"], next);
 
+        // The format number is the file's, not the settings document's.
+        let mut with_format = settings.clone();
+        with_format["format"] = json!(1);
+        let (status, body) = replace(next, with_format).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["kind"], "bad_request");
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("unknown field `format`"),
+            "{body}"
+        );
+        assert_eq!(portal.state().await["revision"], next);
+
         let plain = portal
             .request(Method::PUT, "/api/v1/settings")
             .body("{}")

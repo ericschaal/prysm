@@ -4,6 +4,7 @@ use serde::{
     Deserialize, Deserializer, Serialize,
     de::{DeserializeSeed, IgnoredAny, IntoDeserializer, MapAccess, Visitor, value},
 };
+use serde_json::{Number, Value};
 use std::{
     fmt, fs, io,
     io::{Read, Write},
@@ -11,10 +12,11 @@ use std::{
 };
 
 /// The file format this Prysm writes and reads, saved as the file's `format`
-/// field. Raise it when a file this Prysm saves would fail to load, or mean
-/// something else, in a Prysm with the previous number; files with the
-/// previous number are then refused unless this Prysm is taught to read them
-/// (see docs/developers/releasing.md).
+/// field. Raise it only when this Prysm can no longer read files with the
+/// previous number: a field renamed or removed, or its meaning changed.
+/// Additions keep it: an older Prysm refuses a newer file by the unknown
+/// field's name. A file with another number is refused; there is no
+/// migration (see docs/developers/releasing.md).
 pub const FORMAT: u32 = 1;
 
 const FORMAT_FIELD: &str = "format";
@@ -24,14 +26,17 @@ const FORMAT_FIELD: &str = "format";
 const MAX_BYTES: u64 = 1024 * 1024;
 
 /// A settings file whose `format` this Prysm does not read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatError {
     /// No `format` field: written by hand or by a Prysm before 1.0.
     Missing,
-    /// Written by a newer Prysm.
-    Newer { found: u32 },
+    /// `format` is not a whole number of zero or more (`null`, `"1"`, `2.0`,
+    /// `-1`); `found` is its JSON.
+    NotANumber { found: String },
+    /// Written by a newer Prysm: a whole number above [`FORMAT`], of any size.
+    Newer { found: Number },
     /// A format this Prysm does not read: 0, or one it replaced.
-    Older { found: u32 },
+    Older { found: Number },
 }
 
 impl fmt::Display for FormatError {
@@ -41,6 +46,11 @@ impl fmt::Display for FormatError {
                 f,
                 "it has no `{FORMAT_FIELD}` field: add `\"{FORMAT_FIELD}\": {FORMAT}` \
                  once its fields match this Prysm's settings"
+            ),
+            Self::NotANumber { found } => write!(
+                f,
+                "its `{FORMAT_FIELD}` is {found}, not a format number; \
+                 this Prysm reads format {FORMAT}"
             ),
             Self::Newer { found } => write!(
                 f,
@@ -55,23 +65,46 @@ impl fmt::Display for FormatError {
 
 impl std::error::Error for FormatError {}
 
-/// What a file says about itself, read before its settings so that a newer
-/// file is refused for its format rather than for a field it adds.
-#[derive(Deserialize)]
-struct Header {
-    format: Option<u32>,
-}
-
-impl Header {
-    fn check(self) -> std::result::Result<(), FormatError> {
-        match self.format {
-            None => Err(FormatError::Missing),
-            Some(FORMAT) => Ok(()),
-            Some(found) if found > FORMAT => Err(FormatError::Newer { found }),
-            Some(found) => Err(FormatError::Older { found }),
+/// Checks the `format` of a file's object before its settings are read, so
+/// that a newer file is refused for its format rather than for a field it
+/// adds. Anything but an object is left to the settings' own parse.
+fn check_format(file: &Value) -> std::result::Result<(), FormatError> {
+    let Some(object) = file.as_object() else {
+        return Ok(());
+    };
+    let Some(format) = object.get(FORMAT_FIELD) else {
+        return Err(FormatError::Missing);
+    };
+    let not_a_number = || FormatError::NotANumber {
+        found: format.to_string(),
+    };
+    let Value::Number(found) = format else {
+        return Err(not_a_number());
+    };
+    let current = u64::from(FORMAT);
+    match found.as_u64() {
+        Some(number) if number == current => Ok(()),
+        Some(number) if number > current => Err(FormatError::Newer {
+            found: found.clone(),
+        }),
+        Some(_) => Err(FormatError::Older {
+            found: found.clone(),
+        }),
+        // Whole numbers beyond u64 arrive as floats; `2.0` was written as one.
+        None if found
+            .as_f64()
+            .is_some_and(|number| number.fract() == 0.0 && number >= TWO_TO_THE_64) =>
+        {
+            Err(FormatError::Newer {
+                found: found.clone(),
+            })
         }
+        None => Err(not_a_number()),
     }
 }
+
+/// The least whole number a `u64` cannot hold.
+const TWO_TO_THE_64: f64 = 18_446_744_073_709_551_616.0;
 
 /// The file as saved: `format` first, then the settings' fields.
 #[derive(Serialize)]
@@ -186,10 +219,9 @@ impl SettingsStore for SettingsFile {
                 io::Error::new(io::ErrorKind::FileTooLarge, "it is larger than 1 MiB"),
             ));
         }
-        serde_json::from_slice::<Header>(&bytes)
-            .map_err(|error| self.failed("parse", error))?
-            .check()
-            .map_err(|error| self.failed("load", error))?;
+        let file: Value =
+            serde_json::from_slice(&bytes).map_err(|error| self.failed("parse", error))?;
+        check_format(&file).map_err(|error| self.failed("load", error))?;
         settings(&bytes)
             .map(Some)
             .map_err(|error| self.failed("parse", error))

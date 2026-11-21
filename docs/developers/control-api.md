@@ -47,6 +47,9 @@ origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
   a stale revision is `409` and is never retried automatically. The browser
   copies the latest settings and replaces one section, so it keeps fields it
   does not show ([saving settings](../../frontend/README.md#saving-settings)).
+- The file's `format` number belongs to the file alone: the portal's
+  `settings` never carry it, and a `PUT /api/v1/settings` body with it is
+  `400` (unknown field).
 
 See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md).
 

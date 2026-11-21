@@ -53,28 +53,36 @@ Covered:
 - the portal HTTP API under `/api/v1` and its values, `State` included
   ([contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md)): routes,
   fields, closed value sets, status codes and failure kinds. A new field is a
-  minor change: clients ignore fields they do not know;
+  minor change; clients must ignore fields they do not know. A new value in a
+  closed set (target, session state or phase, `device.issue`, failure kind,
+  calibration pattern) is a major change today: the portal client refuses a
+  state with an unknown target or session state, and its tables for the
+  others are exhaustive;
 - the settings file and its `format` number
   ([settings-file](../../crates/adapters/settings-file/README.md)). A Prysm
-  reads files of its own format only and names both numbers for any other,
-  so raising the number is a major change unless that release also reads the
-  previous format. A field added without raising it is refused by an older
-  Prysm by the field's name;
+  reads files of its own format only and refuses any other number, naming
+  both. The number is raised only when Prysm can no longer read files with
+  the previous one (a field renamed or removed, or its meaning changed),
+  which is a major change. Additions keep the number and are minor: an older
+  Prysm refuses a newer file by the unknown field's name;
 - the TV parts one installed version uses of another: the Luna service
   `io.prysm.tv.service` with `getState` and `uninstall` (an update calls the
   installed service's), and the supervisor's `setup` command, which an older
   boot hook runs;
 - the capture stream between a slim TV and a desktop Prysm, by its protocol
   version (`prysm-capture.v5`, `CAPTURE_VERSION`);
-- the hosts' command-line flags;
+- the hosts' command-line flags and the exit codes
+  [hosts](workspace.md#hosts) documents: 0 after a clean stop, 1 on failure,
+  2 for bad arguments; `--check-settings` 0 when valid, else 1;
 - package and image names: the Debian package `prysm-headless`, the image
   `ghcr.io/<owner>/prysm-headless`, the IPKs `io.prysm.tv-full` and
   `io.prysm.tv-slim`.
 
 Not covered: the Rust crates (`0.0.0`, never published) and their APIs, the
 Luna methods only the same package's TV app calls (`setPreferences`,
-`setEnabled`), log and message wording, the `research/` and acceptance
-tooling, and behaviour that is not in a contract (timings, colours produced).
+`setEnabled`), `/metrics` names, the terminal UI, log and message wording,
+the `research/` and acceptance tooling, and behaviour that is not in a
+contract (timings, colours produced).
 
 ## Cut a release
 

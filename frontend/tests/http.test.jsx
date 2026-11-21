@@ -79,6 +79,27 @@ test('invalid events end the stream as unavailable', async () => {
   );
 });
 
+test('a state without its device or version ends the stream as unavailable', async () => {
+  for (const invalid of [
+    state({ device: undefined }),
+    state({ device: null }),
+    state({ version: undefined }),
+  ]) {
+    const client = httpApplicationClient({
+      fetch: async () =>
+        new Response(encode(`data: ${JSON.stringify(invalid)}\n\n`), {
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+    });
+    await assert.rejects(
+      client.observe(new AbortController().signal),
+      (error) =>
+        error instanceof ApplicationError &&
+        error.failure.kind === 'unavailable',
+    );
+  }
+});
+
 test('commands use PUT with JSON bodies and return the runtime result', async () => {
   const requests = [];
   const client = httpApplicationClient({

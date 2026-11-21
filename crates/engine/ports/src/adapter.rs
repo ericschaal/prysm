@@ -131,8 +131,9 @@ impl TryFrom<u8> for DeviceBrightness {
     type Error = ValidationError;
 
     fn try_from(percent: u8) -> Result<Self, ValidationError> {
-        Self::from_percent(percent)
-            .ok_or_else(|| ValidationError::new("brightness_percent", "must be at most 100"))
+        Self::from_percent(percent).ok_or_else(|| {
+            ValidationError::new("device brightness", "must be a percent, at most 100")
+        })
     }
 }
 

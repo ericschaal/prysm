@@ -228,6 +228,12 @@ format number: Prysm refuses a file without it, and a file saved by a newer
 Prysm, with a message naming both numbers. The format is described in the
 [settings-file reference](../../crates/adapters/settings-file/README.md).
 
+**Upgrading from a version before 1.0:** the existing file has no format
+number, so Prysm refuses to start until you add it. Stop Prysm, add
+`"format": 1,` after the file's first `{`, check it with `--check-settings`
+(below) and start Prysm again. On the TV's full package, see
+[LG TV](webos.md#1-install).
+
 To check a file without starting the lights (the Debian package's file is
 readable only by root):
 

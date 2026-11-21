@@ -37,8 +37,10 @@ pub struct State {
         schema(value_type = Option<schema::InputSchema>, nullable = false)
     )]
     pub input: Option<Input>,
-    /// What the lights say about themselves while lighting runs, from the
-    /// output's own checks (about once a second); empty while no session runs.
+    /// What the lights say about themselves, from the output's own checks
+    /// (about once a second). Empty while no session holds the output: no
+    /// session, or one that has no frame yet or released the output after 3 s
+    /// without video; `session.state` and `input.receiving` say which.
     #[cfg_attr(feature = "schema", schema(value_type = schema::DeviceReportSchema))]
     pub device: DeviceReport,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;

@@ -55,6 +55,13 @@ After every install or update the service must be set up again; the helper
 does this. If you installed another way, open **Prysm** on the TV and choose
 **Set up service**.
 
+**Updating the full package from a version before 1.0:** its settings file,
+`/var/lib/io.prysm.tv/settings.json`, has no format number, and Prysm 1.0
+refuses it, so the TV's Prysm does not start. Over SSH as `root`, either add
+`"format": 1,` after the file's first `{`, or delete the file: Prysm then
+writes a new one with webOS capture and you set the lights up again in the
+portal.
+
 <a id="processing-on-this-tv-experimental"></a>
 
 ## 2a. Full package: the TV drives the lights
