@@ -21,8 +21,18 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Majors come one by one: a group is judged as a whole, and one major
+      # that cannot install hides every other update behind its failure.
       frontend:
         patterns: ['*']
+        update-types: ['minor', 'patch']
+    ignore:
+      # TypeScript 7: openapi-typescript and typescript-eslint still require 5.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+      # Node 24, as frontend/package.json's engines and CI's setup-node.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
   # The base images of packaging/docker/Dockerfile.
   - package-ecosystem: docker
     directory: /packaging/docker
