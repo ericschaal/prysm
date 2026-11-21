@@ -3,7 +3,7 @@
 //! through a [`CaptureSink`]; the capture's result becomes the terminal
 //! failure and the release result. The session thread only waits with a
 //! deadline.
-use prysm_capture_device_sys::{CaptureError, CaptureSink};
+use prysm_capture_device_sys::{CAMERA_ACCESS_WAIT, CaptureError, CaptureSink};
 use prysm_core::Frame;
 use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result, Worker};
 use std::sync::Arc;
@@ -31,6 +31,17 @@ impl Deadlines {
         release: Duration::from_secs(3),
     };
 }
+
+/// What session start gets of the readiness deadline after macOS's camera
+/// access request is answered at the last moment.
+const START_AFTER_ACCESS: Duration = Duration::from_secs(3);
+const _: () = assert!(
+    CAMERA_ACCESS_WAIT
+        .saturating_add(START_AFTER_ACCESS)
+        .as_millis()
+        <= Deadlines::DEVICE.ready.as_millis(),
+    "the camera access wait leaves session start too little of the readiness deadline"
+);
 
 /// The owner thread as the native capture sees it.
 struct Sink(Worker);
