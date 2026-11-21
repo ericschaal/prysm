@@ -54,6 +54,7 @@ export {
   customPicture,
   picturePresets,
   presetOrder,
+  presetRates,
   type PicturePreset,
 } from './picture-presets';
 export { PreviewPanel } from './preview';

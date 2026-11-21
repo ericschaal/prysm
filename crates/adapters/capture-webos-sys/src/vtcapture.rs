@@ -108,21 +108,47 @@ api!(VtApi {
 
 /// Load `libvtcapture` on first use and keep it for the life of the process.
 fn vt() -> Result<&'static VtApi, Error> {
-    static VT: Mutex<Option<&'static VtApi>> = Mutex::new(None);
-    let mut slot = VT.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(api) = *slot {
-        return Ok(api);
-    }
+    static VT: Mutex<Loaded<VtApi>> = Mutex::new(Loaded::Nothing);
     let names = ["libvtcapture.so.1", "libvtcapture.so"];
     // Never unloaded: the vendor code can leave threads running and global
     // pointers set, after a failed create or even after a release.
-    let library = &*Box::leak(Box::new(library(&names)?));
-    let api: &'static VtApi = Box::leak(Box::new(VtApi::load(library, &names)?));
-    *slot = Some(api);
+    load_once(&VT, &names, |library| VtApi::load(library, &names))
+}
+
+/// How far loading a library and its entry points `A` has come.
+pub(crate) enum Loaded<A: 'static> {
+    Nothing,
+    /// The library loaded but an entry point was missing.
+    Library(&'static Library),
+    Api(&'static A),
+}
+
+/// The entry points `symbols` reads from the first of `names` that loads.
+/// Library and entry points are kept in `slot` and never unloaded; a retry
+/// after a missing symbol reuses the library instead of loading, and
+/// leaking, another handle.
+pub(crate) fn load_once<A>(
+    slot: &Mutex<Loaded<A>>,
+    names: &[&str],
+    symbols: impl FnOnce(&'static Library) -> Result<A, Error>,
+) -> Result<&'static A, Error> {
+    let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+    let library = match *slot {
+        Loaded::Api(api) => return Ok(api),
+        Loaded::Library(library) => library,
+        Loaded::Nothing => {
+            let library: &'static Library = Box::leak(Box::new(open(names)?));
+            *slot = Loaded::Library(library);
+            library
+        }
+    };
+    let api: &'static A = Box::leak(Box::new(symbols(library)?));
+    *slot = Loaded::Api(api);
     Ok(api)
 }
 
-pub(crate) fn library(names: &[&str]) -> Result<Library, Error> {
+/// The first of `names` that loads.
+fn open(names: &[&str]) -> Result<Library, Error> {
     let mut last = None;
     for name in names {
         // SAFETY: only known LG system libraries are loaded. Their constructors
