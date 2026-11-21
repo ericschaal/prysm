@@ -29,7 +29,7 @@ from prysm_acceptance import commands, web
 from prysm_acceptance.commands import Command, RunFile, Signal
 from prysm_acceptance.config import Config
 from prysm_acceptance.options import Source
-from prysm_acceptance.prysm_api import Settings, State
+from prysm_acceptance.prysm_api import SETTINGS_FORMAT, Settings, State
 from prysm_acceptance.transport import Process, Result, Transport
 from prysm_acceptance.web import Json, JsonObject
 
@@ -159,7 +159,8 @@ def listen_url(host: str, listen: str) -> str:
 
 
 def write_settings(path: Path, document: Settings) -> None:
-    path.write_text(json.dumps(document, indent=2) + '\n')
+    """`document` as a settings file: its format number, then its fields."""
+    path.write_text(json.dumps({'format': SETTINGS_FORMAT, **document}, indent=2) + '\n')
 
 
 def shown(*found: Command) -> list[str]:

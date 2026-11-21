@@ -14,7 +14,7 @@ import bundled from './pattern-fragments.json';
 /** The fragments' codec: constrained baseline H.264, level 3.0. */
 export const PATTERN_TYPE = 'video/mp4; codecs="avc1.42c01e"';
 /** Plays while no pattern is chosen, so the video pipeline is already running. */
-export const WAITING_PATTERN: Pattern = 'gray-192';
+export const WAITING_PATTERN: Pattern = 'gray_192';
 /** No playback progress for this long ends the stream as failed. */
 export const STALL_MS = 8000;
 

@@ -222,9 +222,9 @@ pub struct CalibrationPatternSchema {
 /// A calibration pattern, by its TV clip name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = Pattern)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "snake_case")]
 pub enum PatternSchema {
-    #[serde(rename = "gray-192")]
+    #[serde(rename = "gray_192")]
     Gray192,
     Red,
     Yellow,
@@ -332,16 +332,33 @@ pub enum OutputIssueSchema {
     Unreachable,
 }
 
-// Mirrors `prysm_ports::DeviceBrightness`.
-/// The lights' own brightness while it scales Prysm's colours (WLED: its
-/// master brightness and brightness factor). Prysm reports it and never
-/// changes it.
+// Mirrors `prysm_ports::DeviceReport`.
+/// What the lights say about themselves, from the output's own checks. Each
+/// part is absent while the output cannot tell, and all are while no session
+/// holds the output (no session, no frame yet, or released after 3 s without
+/// video; see `session.state` and `input.receiving`). Prysm reports them and
+/// changes none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = DeviceBrightness)]
-pub struct DeviceBrightnessSchema {
-    /// The share of Prysm's brightness the lights show.
-    #[schema(minimum = 0, maximum = 100, example = 40)]
-    percent: u8,
+#[schema(as = DeviceReport)]
+pub struct DeviceReportSchema {
+    /// Why the lights are not showing Prysm's colours; absent while they
+    /// show them.
+    #[schema(nullable = false)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    issue: Option<OutputIssueSchema>,
+    /// The lights' own brightness while it scales Prysm's colours (WLED: its
+    /// master brightness and brightness factor): the share of Prysm's
+    /// brightness they show. Absent while it does not (WLED: "Force max
+    /// brightness" on).
+    #[schema(nullable = false, minimum = 0, maximum = 100, example = 40)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    brightness_percent: Option<u8>,
+    /// How many LEDs the lights say they have (WLED: its LED count). Prysm
+    /// sends the configured `settings.output.leds` either way: a different
+    /// count leaves LEDs dark or colours unshown.
+    #[schema(nullable = false, example = 120)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    led_count: Option<u32>,
 }
 
 // Mirrors `prysm_ports::Candidate`.
@@ -473,7 +490,7 @@ impl ToSchema for OutputSettings {}
     LatencySchema,
     BehindSchema,
     OutputIssueSchema,
-    DeviceBrightnessSchema,
+    DeviceReportSchema,
     Session,
     PhaseSchema,
     Failure,
@@ -647,9 +664,9 @@ mod tests {
     use super::*;
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
-        DeviceBrightness, FrameSource, Input, Latency, LightingTarget, Mode, Modes, OutputIssue,
-        Pattern, PrimaryControls, Processing, Result, SessionPhase, Settings, Span, Style,
-        StyleValues, ValidationError,
+        DeviceBrightness, DeviceReport, FrameSource, Input, Latency, LightingTarget, Mode, Modes,
+        OutputIssue, Pattern, PrimaryControls, Processing, Result, SessionPhase, Settings, Span,
+        Style, StyleValues, ValidationError,
     };
     use serde_json::json;
 
@@ -770,9 +787,12 @@ mod tests {
         ] {
             same_shape::<OutputIssue, OutputIssueSchema>(&issue);
         }
-        same_shape::<DeviceBrightness, DeviceBrightnessSchema>(
-            &DeviceBrightness::from_percent(40).unwrap(),
-        );
+        same_shape::<DeviceReport, DeviceReportSchema>(&DeviceReport::default());
+        same_shape::<DeviceReport, DeviceReportSchema>(&DeviceReport {
+            issue: Some(OutputIssue::OtherSender),
+            brightness: DeviceBrightness::from_percent(40),
+            led_count: Some(120),
+        });
         for phase in [
             SessionPhase::Running,
             SessionPhase::ClosingSource,

@@ -77,7 +77,7 @@ export function describeLighting({
 }: {
   target: LightingTarget;
   session: Session;
-  failure: Failure | null;
+  failure?: Failure | null;
   effects: string;
 }): string {
   switch (session.state) {

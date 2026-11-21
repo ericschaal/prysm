@@ -1,12 +1,13 @@
 //! JSON values Prysm surfaces exchange with their clients.
 //!
-//! Settings, targets, revisions, inputs, output issues and session phases are
-//! `prysm_ports` types and serialize as ports does. This crate adds only what
-//! ports cannot carry: a tagged session state, a failure body, and the
-//! request/response bodies. It has no HTTP or runtime dependencies.
+//! Settings, targets, revisions, inputs, device reports and session phases
+//! are `prysm_ports` types and serialize as ports does. This crate adds only
+//! what ports cannot carry: the product version, a tagged session state, a
+//! failure body, and the request/response bodies. It has no HTTP or runtime
+//! dependencies.
 use prysm_ports::{
-    CalibrationPattern, DeviceBrightness, Error, Input, LightingTarget, OutputIssue, Revision,
-    Section, SessionPhase, SessionState, Settings, Snapshot,
+    CalibrationPattern, DeviceReport, Error, Input, LightingTarget, Revision, Section,
+    SessionPhase, SessionState, Settings, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,9 @@ pub use preview::{PreviewEvent, PreviewFrame, PreviewViewport};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct State {
+    /// The Prysm product version, such as `1.0.0` or `1.0.0-rc.1`.
+    #[cfg_attr(feature = "schema", schema(example = "1.0.0"))]
+    pub version: String,
     #[cfg_attr(feature = "schema", schema(value_type = schema::LightingTargetSchema))]
     pub target: LightingTarget,
     pub session: Session,
@@ -33,32 +37,12 @@ pub struct State {
         schema(value_type = Option<schema::InputSchema>, nullable = false)
     )]
     pub input: Option<Input>,
-    /// Why the lights are not showing Prysm's colours while lighting runs,
-    /// from the output's own checks (about once a second); absent while they
-    /// show them, while the output cannot tell, and while no session runs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schema(value_type = Option<schema::OutputIssueSchema>, nullable = false)
-    )]
-    pub output_issue: Option<OutputIssue>,
-    /// The lights' own brightness while it scales Prysm's colours, from the
-    /// same checks; absent while it does not (WLED: "Force max brightness"
-    /// on), while the output cannot tell, and while no session runs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schema(value_type = Option<schema::DeviceBrightnessSchema>, nullable = false)
-    )]
-    pub output_brightness: Option<DeviceBrightness>,
-    /// How many LEDs the lights themselves say they have (WLED: its LED
-    /// count), from the same checks; absent while the output cannot tell and
-    /// while no session runs. Prysm sends the configured
-    /// `settings.output.leds` either way: a different count leaves LEDs dark
-    /// or colours unshown.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schema(nullable = false, example = 120))]
-    pub device_led_count: Option<u32>,
+    /// What the lights say about themselves, from the output's own checks
+    /// (about once a second). Empty while no session holds the output: no
+    /// session, or one that has no frame yet or released the output after 3 s
+    /// without video; `session.state` and `input.receiving` say which.
+    #[cfg_attr(feature = "schema", schema(value_type = schema::DeviceReportSchema))]
+    pub device: DeviceReport,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
     /// absent while not calibrating. Never saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,10 +56,11 @@ pub struct State {
     /// Pass back as `expected` when replacing settings.
     #[cfg_attr(feature = "schema", schema(value_type = u64))]
     pub revision: Revision,
-    /// The last lighting failure. Every target change, settings apply,
-    /// shutdown and session end replaces it, so the next one that succeeds
-    /// clears it.
-    #[cfg_attr(feature = "schema", schema(required = true))]
+    /// The last lighting failure; absent while there is none. Every target
+    /// change, settings apply, shutdown and session end replaces it, so the
+    /// next one that succeeds clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schema(nullable = false))]
     pub failure: Option<Failure>,
     /// Surfaces that stopped. Lighting continues without them.
     pub surface_failures: Vec<Failure>,
@@ -84,12 +69,11 @@ pub struct State {
 impl From<&Snapshot> for State {
     fn from(snapshot: &Snapshot) -> Self {
         Self {
+            version: prysm_version::VERSION.to_owned(),
             target: snapshot.target,
             session: snapshot.session.into(),
             input: snapshot.input,
-            output_issue: snapshot.output_issue,
-            output_brightness: snapshot.output_brightness,
-            device_led_count: snapshot.device_led_count,
+            device: snapshot.device,
             calibration: snapshot.calibration,
             settings: snapshot.settings.clone(),
             revision: snapshot.revision,
@@ -272,7 +256,7 @@ pub struct SettingsReplaced {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_ports::ValidationError;
+    use prysm_ports::{DeviceBrightness, OutputIssue, ValidationError};
     use serde_json::json;
 
     #[test]
@@ -284,6 +268,7 @@ mod tests {
             ..Snapshot::default()
         };
         let value = serde_json::to_value(State::from(&snapshot)).unwrap();
+        assert_eq!(value["version"], prysm_version::VERSION);
         assert_eq!(value["target"], "off");
         assert_eq!(value["revision"], 3);
         assert_eq!(
@@ -299,21 +284,15 @@ mod tests {
             serde_json::to_value(&snapshot.settings).unwrap()
         );
         assert!(value.get("input").is_none(), "absent while stopped");
-        assert!(value.get("output_issue").is_none(), "absent while stopped");
-        assert!(
-            value.get("output_brightness").is_none(),
-            "absent while stopped"
-        );
-        assert!(
-            value.get("device_led_count").is_none(),
-            "absent while stopped"
-        );
+        assert_eq!(value["device"], json!({}), "empty while stopped");
         assert!(
             value.get("calibration").is_none(),
             "absent while not calibrating"
         );
         let back: State = serde_json::from_value(value).unwrap();
         assert_eq!(back.session, snapshot.session.into());
+        let idle = serde_json::to_value(State::from(&Snapshot::default())).unwrap();
+        assert!(idle.get("failure").is_none(), "absent without one");
 
         let running = Snapshot {
             session: SessionState::Running,
@@ -322,9 +301,11 @@ mod tests {
                 receiving: true,
                 ..Input::default()
             }),
-            output_issue: Some(OutputIssue::OtherSender),
-            output_brightness: DeviceBrightness::from_percent(40),
-            device_led_count: Some(120),
+            device: DeviceReport {
+                issue: Some(OutputIssue::OtherSender),
+                brightness: DeviceBrightness::from_percent(40),
+                led_count: Some(120),
+            },
             ..Snapshot::default()
         };
         let running = Snapshot {
@@ -337,18 +318,16 @@ mod tests {
         let value = serde_json::to_value(State::from(&running)).unwrap();
         assert_eq!(
             value["calibration"],
-            json!({ "pattern": "blue-pair", "uncorrected": true })
+            json!({ "pattern": "blue_pair", "uncorrected": true })
         );
-        assert_eq!(
-            serde_json::from_value::<State>(value.clone())
-                .unwrap()
-                .calibration,
-            running.calibration
-        );
+        let back = serde_json::from_value::<State>(value.clone()).unwrap();
+        assert_eq!(back.calibration, running.calibration);
+        assert_eq!(back.device, running.device);
         assert_eq!(value["input"]["receiving"], true);
-        assert_eq!(value["output_issue"], "other_sender");
-        assert_eq!(value["output_brightness"], json!({ "percent": 40 }));
-        assert_eq!(value["device_led_count"], 120);
+        assert_eq!(
+            value["device"],
+            json!({ "issue": "other_sender", "brightness_percent": 40, "led_count": 120 })
+        );
         assert!((value["input"]["fps"].as_f64().unwrap() - 29.9).abs() < 1e-4);
     }
 

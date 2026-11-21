@@ -93,8 +93,9 @@ pub trait LedOutput: Send {
 /// The device's own brightness while it scales Prysm's colours: the LEDs
 /// show them at [`percent`](Self::percent) of the brightness Prysm asks for.
 /// Prysm reports it and never changes it; the device's owner sets it there.
+/// Serialized as the percent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "UncheckedBrightness")]
+#[serde(try_from = "u8", into = "u8")]
 pub struct DeviceBrightness {
     percent: u8,
 }
@@ -126,18 +127,19 @@ impl DeviceBrightness {
     }
 }
 
-/// A [`DeviceBrightness`] as it arrives, before its range is checked.
-#[derive(Deserialize)]
-struct UncheckedBrightness {
-    percent: u8,
-}
-
-impl TryFrom<UncheckedBrightness> for DeviceBrightness {
+impl TryFrom<u8> for DeviceBrightness {
     type Error = ValidationError;
 
-    fn try_from(unchecked: UncheckedBrightness) -> Result<Self, ValidationError> {
-        Self::from_percent(unchecked.percent)
-            .ok_or_else(|| ValidationError::new("percent", "must be at most 100"))
+    fn try_from(percent: u8) -> Result<Self, ValidationError> {
+        Self::from_percent(percent).ok_or_else(|| {
+            ValidationError::new("device brightness", "must be a percent, at most 100")
+        })
+    }
+}
+
+impl From<DeviceBrightness> for u8 {
+    fn from(brightness: DeviceBrightness) -> Self {
+        brightness.percent
     }
 }
 
@@ -234,13 +236,10 @@ mod tests {
             Some(100)
         );
         assert_eq!(DeviceBrightness::from_percent(101), None);
-        let decoded: DeviceBrightness = serde_json::from_str(r#"{"percent":40}"#).unwrap();
+        let decoded: DeviceBrightness = serde_json::from_str("40").unwrap();
         assert_eq!(decoded.percent(), 40);
-        assert_eq!(
-            serde_json::to_string(&decoded).unwrap(),
-            r#"{"percent":40}"#
-        );
-        let error = serde_json::from_str::<DeviceBrightness>(r#"{"percent":101}"#).unwrap_err();
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), "40");
+        let error = serde_json::from_str::<DeviceBrightness>("101").unwrap_err();
         assert!(error.to_string().contains("at most 100"), "{error}");
     }
 }

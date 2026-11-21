@@ -6,8 +6,7 @@ use crate::stats::{FrameTimes, Stats};
 use crate::worker::{Flags, Pumped, Worker, guarded};
 use prysm_core::{Config, EdgeColors, Frame};
 use prysm_ports::{
-    DeviceBrightness, Error, FrameSource, IdleMode, LatestSlot, OutputIssue, Result, Section,
-    SessionPhase,
+    DeviceReport, Error, FrameSource, IdleMode, LatestSlot, Result, Section, SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,17 +64,7 @@ struct Control {
     idle: Mutex<IdleMode>,
     /// What the held output last learned about its device; read by the
     /// engine about once a second.
-    observed: Mutex<Observed>,
-}
-
-/// The held output's latest [`LedOutput::observe`](prysm_ports::LedOutput::observe),
-/// [`LedOutput::brightness`](prysm_ports::LedOutput::brightness) and
-/// [`LedOutput::device_led_count`](prysm_ports::LedOutput::device_led_count).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Observed {
-    pub issue: Option<OutputIssue>,
-    pub brightness: Option<DeviceBrightness>,
-    pub device_led_count: Option<u32>,
+    observed: Mutex<DeviceReport>,
 }
 
 impl Control {
@@ -122,14 +111,14 @@ struct SessionLoop {
     open_output: OpenOutput,
     control: Arc<Control>,
     /// What [`Control::observed`] holds, so it is written only on a change.
-    reported: Observed,
+    reported: DeviceReport,
     feeds: Feeds,
     stats: Arc<Stats>,
 }
 
 impl SessionLoop {
     /// Publish what the output knows about its device, if that changed.
-    fn report(&mut self, observed: Observed) {
+    fn report(&mut self, observed: DeviceReport) {
         if observed != self.reported {
             self.reported = observed;
             *self
@@ -177,7 +166,7 @@ impl SessionLoop {
         let now = Instant::now();
         if now - self.last_frame >= VIDEO_GRACE {
             self.last = None;
-            self.report(Observed::default());
+            self.report(DeviceReport::default());
             // The device shows its own state now, not these colors.
             self.feeds.clear_colors();
             return self.leds.release(RELEASE).map_err(lights);
@@ -198,7 +187,7 @@ impl SessionLoop {
     fn finish(mut self, pumped: Pumped, source: Box<dyn FrameSource>, flags: &Flags) -> SessionEnd {
         let ended = matches!(pumped, Pumped::Ended);
         let failure = pumped.failure();
-        self.report(Observed::default());
+        self.report(DeviceReport::default());
         self.feeds.clear();
         flags.set_phase(SessionPhase::ClosingSource);
         // A panic in either is reported as that step's failure, and the
@@ -256,7 +245,7 @@ impl Session {
             previous_done: None,
             open_output,
             control: control.clone(),
-            reported: Observed::default(),
+            reported: DeviceReport::default(),
             feeds,
             stats,
         };
@@ -284,7 +273,7 @@ impl Session {
     /// What the held output last learned about its device: why its LEDs are
     /// not showing the session's colours, and its own brightness.
     #[must_use]
-    pub fn observed(&self) -> Observed {
+    pub fn observed(&self) -> DeviceReport {
         *self
             .control
             .observed

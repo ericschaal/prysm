@@ -132,7 +132,7 @@ The checks, in order, through the
 - the running version (`prysm_build_info` in `/metrics`) is the artifact's
   from `manifest.json` (a skip without a matching manifest);
 - Screen sync starts: running with frames; WLED reports live DDP from the
-  sender the seam expects; no `output_issue`;
+  sender the seam expects; no `device.issue`;
 - the frame rate is within the tolerance of the source's, sent alike,
   nothing falls behind;
 - the colours follow the test clip (a card without a feed: not black);
@@ -571,7 +571,7 @@ The checks, in order (`@only` marks a package's own):
   every step. Both checks judge against the clip's known colours, so the clip
   keeps playing and nothing is compared with a capture of another moment;
 - WLED live and the frame rate (video state), the host cells' own: Screen
-  sync lights WLED with live DDP from the expected sender, no `output_issue`;
+  sync lights WLED with live DDP from the expected sender, no `device.issue`;
   the frame rate within the tolerance, sent alike, never behind;
 - capturing (video state): `getState` says capturing with a frame rate;
 - full (video state): the TV's capture modes are known

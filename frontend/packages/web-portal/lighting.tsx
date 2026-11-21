@@ -13,11 +13,10 @@ import {
   same,
   type Failure,
   type LightingTarget,
-  type OutputIssue,
   type Session,
   plainFailure,
 } from '@prysm/application-client';
-import type { DeviceBrightness, Input } from '@prysm/contracts/application';
+import type { DeviceReport, Input } from '@prysm/contracts/application';
 import { ledCountsDiffer, type OutputLighting } from './adapters';
 
 /** What the lights show while on: screen sync or the output's own effects. */
@@ -27,12 +26,11 @@ export interface LightingProps {
   target: LightingTarget;
   session: Session;
   failure: Failure | null;
-  /** Why the lights are not showing screen sync while it runs. */
-  outputIssue?: OutputIssue;
-  /** The lights' own brightness while it scales screen sync's colours. */
-  outputBrightness?: DeviceBrightness;
-  /** How many LEDs the lights themselves say they have. */
-  deviceLedCount?: number;
+  /**
+   * What the lights say about themselves while screen sync runs: why they
+   * do not show it, their own brightness, how many LEDs they have.
+   */
+  device: DeviceReport;
   /** How many LEDs Prysm sends: the configured edges' total. */
   sentLedCount?: number;
   /** Whether frames arrive, while screen sync runs. */
@@ -278,9 +276,7 @@ export function LightCard({
   target,
   session,
   failure,
-  outputIssue,
-  outputBrightness,
-  deviceLedCount,
+  device,
   sentLedCount,
   input,
   hasCapture,
@@ -390,7 +386,8 @@ export function LightCard({
     target === 'processed' &&
     session.state === 'running' &&
     !!input?.receiving;
-  const countsDiffer = ledCountsDiffer(deviceLedCount, sentLedCount);
+  const countsDiffer = ledCountsDiffer(device.led_count, sentLedCount);
+  const deviceBrightness = device.brightness_percent;
   let info: Info | null = null;
   if (problem)
     info = {
@@ -400,8 +397,8 @@ export function LightCard({
       retry: !!failure && on,
     };
   else if (faulted) info = { tone: 'problem', text: status, retry: false };
-  else if (outputIssue && session.state === 'running')
-    info = { tone: 'warning', text: describeOutputIssue(outputIssue) };
+  else if (device.issue && session.state === 'running')
+    info = { tone: 'warning', text: describeOutputIssue(device.issue) };
   // While screen sync shows: LED counts that differ leave some LEDs dark or
   // some colours unshown, so they come first; then the lights' own
   // brightness, as a low one is named in place of "Following the screen.",
@@ -411,12 +408,12 @@ export function LightCard({
     info = { tone: 'warning', text: countsDiffer };
   else if (
     showing &&
-    outputBrightness &&
-    outputBrightness.percent < deviceBrightnessNoteBelow
+    deviceBrightness !== undefined &&
+    deviceBrightness < deviceBrightnessNoteBelow
   )
     info = {
       tone: 'note',
-      text: `${output?.effects?.replace(/ effects$/, '') ?? 'The lights'} limits brightness to ${outputBrightness.percent}%.`,
+      text: `${output?.effects?.replace(/ effects$/, '') ?? 'The lights'} limits brightness to ${deviceBrightness}%.`,
     };
 
   const calm = calmLine({

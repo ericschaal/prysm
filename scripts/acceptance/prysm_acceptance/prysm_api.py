@@ -29,6 +29,10 @@ class Target(StrEnum):
 # and send the rest back as they found it, so Prysm may add or change any other.
 Settings: TypeAlias = JsonObject
 
+# The settings file's `format` (crates/adapters/settings-file/README.md): a file
+# Prysm reads starts with it; the portal's settings never carry it.
+SETTINGS_FORMAT = 1
+
 
 class Span(TypedDict):
     min: int
@@ -81,21 +85,25 @@ class Failure(TypedDict, total=False):
     field: str
 
 
-class OutputBrightness(TypedDict, total=False):
-    percent: int
+class Device(TypedDict, total=False):
+    """`State.device`: what the lights report about themselves."""
+
+    issue: str
+    brightness_percent: int
+    led_count: int
 
 
 class State(TypedDict, total=False):
     """`GET /api/v1/state`."""
 
+    version: str
     target: Target
     settings: Settings
     revision: int
     session: Session
     input: Input | None
-    output_issue: object
-    output_brightness: OutputBrightness | None
-    failure: Failure | None
+    device: Device
+    failure: Failure
 
 
 class Candidate(TypedDict):

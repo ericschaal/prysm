@@ -133,7 +133,7 @@ test('the lighting card says why the lights are not showing screen sync', async 
       fixture.publish({
         target: 'processed',
         session: { state: 'running' },
-        output_issue: 'overridden',
+        device: { issue: 'overridden' },
       }),
     );
     assert.equal(
@@ -144,10 +144,10 @@ test('the lighting card says why the lights are not showing screen sync', async 
     assert.equal($('.light-info').dataset.tone, 'warning');
     assert(!$('.light-card [role="alert"]'), 'not a failure');
 
-    await act(async () => fixture.publish({ output_issue: 'off' }));
+    await act(async () => fixture.publish({ device: { issue: 'off' } }));
     assert.match(info(), /switched off on the device/);
 
-    await act(async () => fixture.publish({ output_issue: undefined }));
+    await act(async () => fixture.publish({ device: {} }));
     assert.equal(info(), null, 'cleared once the lights follow');
     // It folds away with its last words, out of the tab order.
     assert.equal($('.light-info > div').hasAttribute('inert'), true);
@@ -214,7 +214,7 @@ test('the lighting card names a low WLED brightness while screen sync shows', as
       input: { fps: 30, receiving: true },
     };
     await act(async () =>
-      fixture.publish({ ...running, output_brightness: { percent: 40 } }),
+      fixture.publish({ ...running, device: { brightness_percent: 40 } }),
     );
     // In place of the calm line, calm itself: a note, not a warning.
     assert.equal(info(), 'WLED limits brightness to 40%.');
@@ -223,7 +223,7 @@ test('the lighting card names a low WLED brightness while screen sync shows', as
 
     // High enough to hardly see: nothing to say.
     await act(async () =>
-      fixture.publish({ output_brightness: { percent: 80 } }),
+      fixture.publish({ device: { brightness_percent: 80 } }),
     );
     assert.equal(info(), null);
     assert.equal($('.light-calm').dataset.shown, 'true');
@@ -231,8 +231,7 @@ test('the lighting card names a low WLED brightness while screen sync shows', as
     // A device that does not show the colours says that instead.
     await act(async () =>
       fixture.publish({
-        output_brightness: { percent: 40 },
-        output_issue: 'overridden',
+        device: { issue: 'overridden', brightness_percent: 40 },
       }),
     );
     assert.match(info(), /^Live override is on/);
@@ -243,7 +242,7 @@ test('the lighting card names a low WLED brightness while screen sync shows', as
         target: 'device_native',
         session: { state: 'native' },
         input: undefined,
-        output_issue: undefined,
+        device: { brightness_percent: 40 },
       }),
     );
     assert.equal(info(), null);
@@ -262,40 +261,37 @@ test('LED counts that differ are said on Home and on the Lights page', async () 
       target: 'processed',
       session: { state: 'running' },
       input: { fps: 30, receiving: true },
-      device_led_count: 120,
+      device: { led_count: 120 },
     });
     assert.equal(info(), differ);
     assert.equal($('.light-info').dataset.tone, 'warning');
     // Before the lights' own brightness: LEDs dark matter more than dim.
-    await publish({ output_brightness: { percent: 40 } });
+    await publish({ device: { led_count: 120, brightness_percent: 40 } });
     assert.equal(info(), differ);
-    await publish({ device_led_count: 14 });
+    await publish({ device: { led_count: 14, brightness_percent: 40 } });
     assert.equal(info(), 'WLED limits brightness to 40%.');
-    await publish({
-      device_led_count: undefined,
-      output_brightness: undefined,
-    });
+    await publish({ device: {} });
     assert.equal(info(), null, 'unknown: nothing to say');
 
-    await publish({ device_led_count: 120 });
+    await publish({ device: { led_count: 120 } });
     await openSettings();
     await openEditor('Lights');
     assert.equal(now(), `LED counts differ — ${differ}`);
     assert.equal($('.section-status').dataset.tone, 'warning');
     const showing = 'Showing screen sync — WLED at 192.0.2.1 · 14\u00a0LEDs';
-    await publish({ device_led_count: 14 });
+    await publish({ device: { led_count: 14 } });
     assert.equal(now(), showing);
-    await publish({ device_led_count: undefined });
+    await publish({ device: {} });
     assert.equal(now(), showing);
 
     // What keeps the lights from showing screen sync at all comes first.
-    await publish({ device_led_count: 120, output_issue: 'unreachable' });
+    await publish({ device: { led_count: 120, issue: 'unreachable' } });
     assert.match(now(), /^Can’t reach the lights — /);
-    await publish({ output_issue: 'off' });
+    await publish({ device: { led_count: 120, issue: 'off' } });
     assert.match(now(), /^Not showing screen sync — /);
     await publish({
       session: { state: 'stopped' },
-      output_issue: undefined,
+      device: { led_count: 120 },
       failure: { kind: 'adapter', section: 'output', message: 'no answer' },
     });
     assert.match(now(), /^Lights not responding — /);
@@ -342,6 +338,7 @@ test('Home says when video is awaited; the capture rate is in the technical deta
     );
     await openPage('About this Prysm');
     assert.equal(valueOf('Frames per second'), '30');
+    assert.equal(valueOf('Prysm version'), '1.0.0');
     await click(button('Settings'));
     await click(button('Home'));
 
@@ -479,7 +476,7 @@ test('the power button and the mode tiles set the target and show what the sessi
     await act(async () =>
       fixture.publish({
         session: { state: 'faulted', phase: 'closing_source' },
-        failure: null,
+        failure: undefined,
       }),
     );
     assert.equal(
@@ -610,7 +607,7 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
       fixture.publish({
         target: 'off',
         session: { state: 'stopped' },
-        failure: null,
+        failure: undefined,
       }),
     );
     assert.equal(word(), 'Off');
@@ -658,7 +655,7 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
     assert(!text().includes('are on'), 'no session sentence');
 
     // Starting from effects that takes a while says what is starting.
-    await act(async () => fixture.publish({ failure: null }));
+    await act(async () => fixture.publish({ failure: undefined }));
     assert.equal($('.light-card').dataset.mood, 'starting');
     await act(async () => sleep(slowStartMs + 100));
     assert.equal(note(), 'Starting…');
@@ -1409,7 +1406,7 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     await act(async () =>
       fixture.publish({
         session: { state: 'running' },
-        failure: null,
+        failure: undefined,
         input: { fps: 30, receiving: true },
       }),
     );
@@ -2718,7 +2715,7 @@ test('the step that keeps Prysm behind shows in orange; a failure stays red', as
       fixture.publish({
         target: 'processed',
         session: { state: 'running' },
-        failure: null,
+        failure: undefined,
         input: {
           fps: 24.3,
           receiving: true,

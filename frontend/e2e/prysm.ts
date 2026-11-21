@@ -209,6 +209,11 @@ export async function checkBundle(): Promise<void> {
   for (const devices of [null, []]) await checkHost(devices);
 }
 
+/** `settings` as a settings file: its format number, then its fields. */
+function settingsFile(settings: Settings): string {
+  return JSON.stringify({ format: 1, ...settings });
+}
+
 async function checkHost(devices: FakeDevice[] | null): Promise<void> {
   // No bundle here when the binary was built elsewhere (CI hands it to this
   // job): it must still serve one, but there is nothing to compare it with.
@@ -218,7 +223,7 @@ async function checkHost(devices: FakeDevice[] | null): Promise<void> {
   const built = assets === null ? null : entryScript.exec(assets)?.[0];
   const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
   const file = path.join(dir, 'settings.json');
-  await writeFile(file, JSON.stringify({ output: { kind: 'null' } }));
+  await writeFile(file, settingsFile({ output: { kind: 'null' } }));
   const checked = host(devices, [file, '--listen', '127.0.0.1:0']);
   const bin = devices === null ? headlessBin : fakeDevicesBin;
   try {
@@ -279,7 +284,7 @@ export const test = base.extend<{
   prysm: async ({ settings, devices }, provide, testInfo) => {
     const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
     const file = path.join(dir, 'settings.json');
-    await writeFile(file, JSON.stringify(settings));
+    await writeFile(file, settingsFile(settings));
     let running = host(devices, [file, '--listen', '127.0.0.1:0']);
     const logs: string[] = [];
     let code: number | null;

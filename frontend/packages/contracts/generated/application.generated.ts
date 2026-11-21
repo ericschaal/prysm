@@ -86,17 +86,35 @@ export interface components {
             warmth: number;
         };
         /**
-         * @description The lights' own brightness while it scales Prysm's colours (WLED: its
-         *     master brightness and brightness factor). Prysm reports it and never
-         *     changes it.
+         * @description What the lights say about themselves, from the output's own checks. Each
+         *     part is absent while the output cannot tell, and all are while no session
+         *     holds the output (no session, no frame yet, or released after 3 s without
+         *     video; see `session.state` and `input.receiving`). Prysm reports them and
+         *     changes none.
          */
-        DeviceBrightness: {
+        DeviceReport: {
             /**
              * Format: int32
-             * @description The share of Prysm's brightness the lights show.
+             * @description The lights' own brightness while it scales Prysm's colours (WLED: its
+             *     master brightness and brightness factor): the share of Prysm's
+             *     brightness they show. Absent while it does not (WLED: "Force max
+             *     brightness" on).
              * @example 40
              */
-            percent: number;
+            brightness_percent?: number;
+            /**
+             * @description Why the lights are not showing Prysm's colours; absent while they
+             *     show them.
+             */
+            issue?: components["schemas"]["OutputIssue"];
+            /**
+             * Format: int32
+             * @description How many LEDs the lights say they have (WLED: its LED count). Prysm
+             *     sends the configured `settings.output.leds` either way: a different
+             *     count leaves LEDs dark or colours unshown.
+             * @example 120
+             */
+            led_count?: number;
         };
         /**
          * @description A stable failure body: the message a user can act on. An adapter failure
@@ -239,7 +257,7 @@ export interface components {
          * @description A calibration pattern, by its TV clip name.
          * @enum {string}
          */
-        Pattern: "gray-192" | "red" | "yellow" | "green" | "cyan" | "blue" | "magenta" | "blue-pair" | "red-pair" | "green-pair" | "coast" | "garden" | "dusk" | "review-grid";
+        Pattern: "gray_192" | "red" | "yellow" | "green" | "cyan" | "blue" | "magenta" | "blue_pair" | "red_pair" | "green_pair" | "coast" | "garden" | "dusk" | "review_grid";
         /**
          * @description Where a faulted session stopped making progress.
          * @enum {string}
@@ -393,33 +411,23 @@ export interface components {
              */
             calibration?: components["schemas"]["CalibrationPattern"];
             /**
-             * Format: int32
-             * @description How many LEDs the lights themselves say they have (WLED: its LED
-             *     count), from the same checks; absent while the output cannot tell and
-             *     while no session runs. Prysm sends the configured
-             *     `settings.output.leds` either way: a different count leaves LEDs dark
-             *     or colours unshown.
-             * @example 120
+             * @description What the lights say about themselves, from the output's own checks
+             *     (about once a second). Empty while no session holds the output: no
+             *     session, or one that has no frame yet or released the output after 3 s
+             *     without video; `session.state` and `input.receiving` say which.
              */
-            device_led_count?: number;
-            failure: components["schemas"]["Failure"] | null;
+            device: components["schemas"]["DeviceReport"];
+            /**
+             * @description The last lighting failure; absent while there is none. Every target
+             *     change, settings apply, shutdown and session end replaces it, so the
+             *     next one that succeeds clears it.
+             */
+            failure?: components["schemas"]["Failure"];
             /**
              * @description Frames arriving from the source, measured about once a second; absent
              *     while no session runs.
              */
             input?: components["schemas"]["Input"];
-            /**
-             * @description The lights' own brightness while it scales Prysm's colours, from the
-             *     same checks; absent while it does not (WLED: "Force max brightness"
-             *     on), while the output cannot tell, and while no session runs.
-             */
-            output_brightness?: components["schemas"]["DeviceBrightness"];
-            /**
-             * @description Why the lights are not showing Prysm's colours while lighting runs,
-             *     from the output's own checks (about once a second); absent while they
-             *     show them, while the output cannot tell, and while no session runs.
-             */
-            output_issue?: components["schemas"]["OutputIssue"];
             /**
              * Format: int64
              * @description Pass back as `expected` when replacing settings.
@@ -430,6 +438,11 @@ export interface components {
             /** @description Surfaces that stopped. Lighting continues without them. */
             surface_failures: components["schemas"]["Failure"][];
             target: components["schemas"]["LightingTarget"];
+            /**
+             * @description The Prysm product version, such as `1.0.0` or `1.0.0-rc.1`.
+             * @example 1.0.0
+             */
+            version: string;
         };
         /**
          * @description A style by name: a built-in set of the picture-taste knobs, or `custom`,
@@ -498,7 +511,7 @@ export type CaptureSettings = components['schemas']['CaptureSettings'];
 export type ChosenStyle = components['schemas']['ChosenStyle'];
 export type ColorsEvent = components['schemas']['ColorsEvent'];
 export type CorrectionControls = components['schemas']['CorrectionControls'];
-export type DeviceBrightness = components['schemas']['DeviceBrightness'];
+export type DeviceReport = components['schemas']['DeviceReport'];
 export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];
 export type FailureSection = components['schemas']['FailureSection'];

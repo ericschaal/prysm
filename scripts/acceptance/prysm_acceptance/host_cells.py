@@ -496,9 +496,9 @@ def live_from_host(prysm: Prysm, lights: Wled, seam: Sender) -> wled_api.Si:
         raise Failed('WLED did not report live DDP within 10 s', lights.si()['info'])
     if si['info'].get('lip') != expected:
         raise Failed(f'WLED shows another sender: {si["info"].get("lip")} (expected {expected})', si['info'])
-    issue = prysm.state().get('output_issue')
+    issue = prysm.state().get('device', {}).get('issue')
     if issue:
-        raise Failed(f'Prysm reports output_issue {issue}')
+        raise Failed(f'Prysm reports device.issue {issue}')
     return si
 
 
@@ -536,7 +536,7 @@ def test_wled_live(prysm: Prysm, wled: Wled, running: Sender, record: Record) ->
     """Screen sync starts and WLED shows Prysm.
 
     Target processed is 204, the session runs with frames within 15 s; WLED reports live DDP from the sender
-    the seam expects (a TV cell: the TV, or the slim package's receiver); no output_issue."""
+    the seam expects (a TV cell: the TV, or the slim package's receiver); no device.issue."""
     state = processed(prysm)
     si = live_from_host(prysm, wled, running)
     record(f'running at {(state["input"] or {}).get("fps")} fps; live DDP from {si["info"]["lip"]}', si['info'])
@@ -643,7 +643,7 @@ def test_targets(prysm: Prysm, wled: Wled, running: Host, record: Record) -> Non
 def test_brightness(prysm: Prysm, wled: Wled, record: Record) -> None:
     """WLED's brightness reaches Prysm (WLED 16.0.1, prysm-3jx.74).
 
-    bri 102: output_brightness 40 % within 5 s; Force max brightness on: back to 100 % within 35 s with
+    bri 102: device.brightness_percent 40 % within 5 s; Force max brightness on: back to 100 % within 35 s with
     state.bri unchanged; /json/cfg under 64 KiB."""
     raw = wled.cfg_raw()
     found = wled_api.cfg(raw)
@@ -661,13 +661,13 @@ def test_brightness(prysm: Prysm, wled: Wled, record: Record) -> None:
     try:
         wled.post_state({'bri': 102})
         start = time.monotonic()
-        state = prysm.wait(lambda s: abs((s.get('output_brightness') or {}).get('percent', -99) - 40) <= 2, 5)
+        state = prysm.wait(lambda s: abs(s.get('device', {}).get('brightness_percent', -99) - 40) <= 2, 5)
         evidence['note_40_seconds'] = round(time.monotonic() - start, 1) if state else None
         if state is None:
-            raise Failed('output_brightness did not report 40 % within 5 s', evidence)
+            raise Failed('device.brightness_percent did not report 40 % within 5 s', evidence)
         wled.post_cfg({'if': {'live': {'maxbri': True}}})
         start = time.monotonic()
-        state = prysm.wait(lambda s: (s.get('output_brightness') or {'percent': 100}).get('percent') == 100, 35)
+        state = prysm.wait(lambda s: s.get('device', {}).get('brightness_percent', 100) == 100, 35)
         evidence['force_max_seconds'] = round(time.monotonic() - start, 1) if state else None
         evidence['bri_with_force_max'] = wled.si()['state'].get('bri')
         if state is None:

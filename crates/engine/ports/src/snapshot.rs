@@ -83,20 +83,10 @@ pub struct Snapshot {
     pub revision: Revision,
     /// Frames arriving from the source; `None` while no session runs.
     pub input: Option<Input>,
-    /// Why the LEDs are not showing the session's colours, from the output's
-    /// own checks; republished with `input`. `None` while they show them,
-    /// while the output cannot tell, and while no session holds the output.
-    pub output_issue: Option<OutputIssue>,
-    /// The device's own brightness while it scales the session's colours,
-    /// from the same checks and republished with them. `None` while it does
-    /// not, while the output cannot tell, and while no session holds the
+    /// What the output's device says about itself, from the output's own
+    /// checks; republished with `input`. Empty while no session holds the
     /// output.
-    pub output_brightness: Option<DeviceBrightness>,
-    /// How many LEDs the device itself says it drives, from the same checks
-    /// and republished with them; the configured edges may say otherwise.
-    /// `None` while the output cannot tell and while no session holds the
-    /// output.
-    pub device_led_count: Option<u32>,
+    pub device: DeviceReport,
     /// The calibration pattern shown, while the target is `Processed`. Not
     /// persisted; while set, processing runs without smoothing (and without
     /// correction when `uncorrected`), leaving `settings` untouched.
@@ -108,6 +98,30 @@ pub struct Snapshot {
     pub failure: Option<Error>,
     /// Surfaces that failed. Lighting continues without them.
     pub surface_failures: Vec<Error>,
+}
+
+/// What a held output's device last said about itself
+/// ([`LedOutput::observe`](crate::LedOutput::observe),
+/// [`brightness`](crate::LedOutput::brightness) and
+/// [`device_led_count`](crate::LedOutput::device_led_count)). Each part is
+/// `None` while the output cannot tell; Prysm reports them and changes none.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceReport {
+    /// Why the LEDs are not showing the session's colours; `None` while they
+    /// show them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<OutputIssue>,
+    /// The device's own brightness while it scales the session's colours;
+    /// `None` while it does not.
+    #[serde(
+        default,
+        rename = "brightness_percent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub brightness: Option<DeviceBrightness>,
+    /// How many LEDs the device drives; the configured edges may say otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub led_count: Option<u32>,
 }
 
 /// Frames arriving from the running session's source, measured over about one

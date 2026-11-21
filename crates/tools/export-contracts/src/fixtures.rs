@@ -6,10 +6,10 @@ use prysm_capture_remote::{RemoteReceiver, StreamEncoding, StreamRequest};
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
-    AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls, Error,
-    Input, Latency, LightingTarget, Mode, Modes, OutputIssue, Pattern, PrimaryControls, Processing,
-    Revision, Section, SessionPhase, SessionState, Settings, Snapshot, Span, Style, StyleValues,
-    ValidationError,
+    AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
+    DeviceBrightness, DeviceReport, Error, Input, Latency, LightingTarget, Mode, Modes,
+    OutputIssue, Pattern, PrimaryControls, Processing, Revision, Section, SessionPhase,
+    SessionState, Settings, Snapshot, Span, Style, StyleValues, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
@@ -208,8 +208,11 @@ fn states() -> Vec<State> {
                 }),
                 behind: Behind::Output,
             }),
-            output_issue: Some(OutputIssue::Overridden),
-            device_led_count: Some(120),
+            device: DeviceReport {
+                issue: Some(OutputIssue::Overridden),
+                brightness: DeviceBrightness::from_percent(40),
+                led_count: Some(120),
+            },
             surface_failures: vec![Error::other("portal listener failed")],
             ..Snapshot::default()
         },
@@ -244,7 +247,14 @@ fn states() -> Vec<State> {
             ..Snapshot::default()
         },
     ];
-    snapshots.iter().map(State::from).collect()
+    snapshots
+        .iter()
+        .map(|snapshot| State {
+            // Fixed, so a release (a new `VERSION`) leaves the fixtures as they are.
+            version: "1.0.0".into(),
+            ..State::from(snapshot)
+        })
+        .collect()
 }
 
 fn failures() -> Vec<Failure> {
