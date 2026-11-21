@@ -377,9 +377,9 @@ def verify_ipk(ipk: str) -> Command:
     )
 
 
-def git_last_commit_time() -> Command:
-    """When the checkout's last commit was made (ISO 8601), to warn about an older artifact."""
-    return Command('local.git-last-commit-time', ('git', '-C', str(ROOT), 'log', '-1', '--format=%cI'), 10)
+def git_last_commit() -> Command:
+    """The checkout's last commit and when it was made (ISO 8601), to warn about a stale artifact."""
+    return Command('local.git-last-commit', ('git', '-C', str(ROOT), 'log', '-1', '--format=%H %cI'), 10)
 
 
 def headless(binary: str, settings: str, listen: str) -> Command:
@@ -955,7 +955,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'image.remove': lambda: image_remove('pi@pi.example'),
     'local.wake-on-lan': lambda: wake_on_lan('00:00:5E:00:53:01', '192.0.2.10'),
     'local.verify-ipk': lambda: verify_ipk('dist/prysm-tv-full.ipk'),
-    'local.git-last-commit-time': git_last_commit_time,
+    'local.git-last-commit': git_last_commit,
     'local.xtask-dist': lambda: xtask_dist(['linux-arm64', 'deb-arm64']),
     'local.headless': lambda: headless('dist/prysm-headless-macos-arm64', 'settings.json', '127.0.0.1:8787'),
     'local.ffmpeg-clip': lambda: ffmpeg_edges_clip(
