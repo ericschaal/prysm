@@ -12,15 +12,15 @@
 //! never retries: a frame the socket refuses (`WouldBlock` on a full buffer,
 //! no route while ARP re-resolves) is dropped, and the send error is returned
 //! only once sends have kept failing for [`SEND_GRACE`]. Empty frames send
-//! nothing, shorter frames leave the trailing LEDs unchanged, and frames over
-//! 65535 LEDs are rejected.
+//! nothing and shorter frames leave the trailing LEDs unchanged. The LED
+//! counts are validated settings ([`crate::MAX_LEDS`]).
 
+use crate::LedCounts;
 use crate::dither::Encoding;
 use ddp_rs::connection::DDPConnection;
 use ddp_rs::error::DDPError;
 use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
 use prysm_core::{Color, EdgeColors, LinearColor};
-use std::io;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -188,11 +188,10 @@ impl WledRenderer {
     /// Send 8-bit RGB colors in physical LED order, starting at LED zero.
     ///
     /// Empty input sends nothing. Use a fixed frame length: a shorter frame leaves
-    /// trailing LEDs at their previous colors. WLED uses 16-bit LED indices, so
-    /// frames with more than 65535 colors are rejected before sending.
+    /// trailing LEDs at their previous colors.
     #[cfg(test)]
     pub(crate) fn render(&mut self, colors: &[Color]) -> Result<(), DDPError> {
-        if !self.prepare(colors.len())? {
+        if !self.prepare(colors.len()) {
             return Ok(());
         }
         for &color in colors {
@@ -213,17 +212,14 @@ impl WledRenderer {
     pub(crate) fn render_edges(
         &mut self,
         edges: &EdgeColors,
-        led_counts: [usize; 4],
+        leds: LedCounts,
         encoding: &Encoding,
         now: Instant,
     ) -> Result<(), DDPError> {
-        let total = led_counts
-            .into_iter()
-            .try_fold(0usize, usize::checked_add)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "LED count overflow"))?;
-        if !self.prepare(total)? {
+        if !self.prepare(leds.total() as usize) {
             return Ok(());
         }
+        let led_counts = leds.edges();
         let colors = [
             (&edges.left, led_counts[3], true),
             (&edges.top, led_counts[0], false),
@@ -232,35 +228,27 @@ impl WledRenderer {
         ]
         .into_iter()
         .flat_map(|(strip, count, reverse)| {
-            (0..count).map(move |i| strip.color_at(if reverse { count - 1 - i } else { i }, count))
+            (0..count).map(move |i| {
+                strip
+                    .color_at(if reverse { count - 1 - i } else { i }, count)
+                    .expect("an index below the count has a colour")
+            })
         });
-        // At most 65535 LEDs (`prepare`), so the place fits.
         for (led, color) in (0..).zip(colors) {
-            let color = color.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "LED sample index out of bounds",
-                )
-            })?;
             self.rgb.push(encoding.encode(color, led));
         }
         let sent = self.connection.write(&self.rgb.0).map(drop);
         self.failed.tolerate(sent, now)
     }
 
-    fn prepare(&mut self, count: usize) -> Result<bool, DDPError> {
-        if count > usize::from(u16::MAX) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "WLED frames must contain at most 65535 LEDs",
-            )
-            .into());
-        }
+    /// Clears the payload for `count` LEDs; `false` for none, which sends
+    /// nothing.
+    fn prepare(&mut self, count: usize) -> bool {
         if count == 0 {
-            return Ok(false);
+            return false;
         }
         self.rgb.clear_reserve(count);
-        Ok(true)
+        true
     }
 }
 
@@ -270,7 +258,18 @@ mod tests {
     use ddp_rs::packet::PacketRef;
     use ddp_rs::protocol::DataType;
     use prysm_core::{ColorStrip, LinearColor};
+    use std::io;
     use std::time::Duration;
+
+    /// Top, right, bottom, left.
+    fn leds([top, right, bottom, left]: [u16; 4]) -> LedCounts {
+        LedCounts {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
 
     /// Undithered sRGB: the layout tests check where colours go, not how
     /// they are encoded.
@@ -358,7 +357,7 @@ mod tests {
             ColorStrip::new(vec![LinearColor::black(), LinearColor::new(0.0, 0.0, 1.0)]).unwrap(),
         );
         renderer
-            .render_edges(&edges, [3, 1, 2, 2], &NEAREST, Instant::now())
+            .render_edges(&edges, leds([3, 1, 2, 2]), &NEAREST, Instant::now())
             .unwrap();
         let bytes = receive(&socket);
         let packet = PacketRef::from_bytes(&bytes).unwrap();
@@ -382,7 +381,7 @@ mod tests {
             ..EdgeColors::default()
         };
         renderer
-            .render_edges(&edges, [0, 0, 1, 0], &NEAREST, Instant::now())
+            .render_edges(&edges, leds([0, 0, 1, 0]), &NEAREST, Instant::now())
             .unwrap();
         let bytes = receive(&socket);
         assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [188, 188, 188]);
@@ -393,7 +392,12 @@ mod tests {
         let (mut renderer, socket) = receiver();
         renderer.render(&[]).unwrap();
         renderer
-            .render_edges(&EdgeColors::default(), [0; 4], &NEAREST, Instant::now())
+            .render_edges(
+                &EdgeColors::default(),
+                leds([0; 4]),
+                &NEAREST,
+                Instant::now(),
+            )
             .unwrap();
         assert_no_packet(&socket);
     }
@@ -409,25 +413,16 @@ mod tests {
                 [color.r, color.g, color.b]
             );
             renderer
-                .render_edges(&EdgeColors::default(), [1; 4], &NEAREST, Instant::now())
+                .render_edges(
+                    &EdgeColors::default(),
+                    leds([1; 4]),
+                    &NEAREST,
+                    Instant::now(),
+                )
                 .unwrap();
             let bytes = receive(&socket);
             assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0; 12]);
         }
-        assert_no_packet(&socket);
-    }
-
-    #[test]
-    fn rejects_oversized_and_overflowing_layouts_before_sending() {
-        let (mut renderer, socket) = receiver();
-        let edges = EdgeColors::default();
-        for counts in [[65536, 0, 0, 0], [usize::MAX, 1, 0, 0]] {
-            assert!(matches!(
-                renderer.render_edges(&edges, counts, &NEAREST, Instant::now()),
-                Err(DDPError::Disconnect(e)) if e.kind() == io::ErrorKind::InvalidInput
-            ));
-        }
-        assert!(renderer.render(&vec![Color::black(); 65536]).is_err());
         assert_no_packet(&socket);
     }
 
@@ -456,7 +451,7 @@ mod tests {
         let mut renderer = WledRenderer::new("127.0.0.1:0").unwrap();
         let edges = EdgeColors::default();
         let start = Instant::now();
-        let mut send = |at| renderer.render_edges(&edges, [1, 0, 0, 0], &NEAREST, start + at);
+        let mut send = |at| renderer.render_edges(&edges, leds([1, 0, 0, 0]), &NEAREST, start + at);
         assert!(send(Duration::ZERO).is_ok());
         assert!(send(SEND_GRACE - Duration::from_millis(1)).is_ok());
         let error = send(SEND_GRACE).unwrap_err();
@@ -563,7 +558,7 @@ mod tests {
             renderer
                 .render_edges(
                     &edges,
-                    [0, 0, 1, 0],
+                    leds([0, 0, 1, 0]),
                     &Encoding::Nearest(transfer),
                     Instant::now(),
                 )

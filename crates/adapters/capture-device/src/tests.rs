@@ -171,6 +171,24 @@ fn open_failure_reports_the_native_cause_after_release() {
     );
 }
 
+#[test]
+fn a_missing_device_fails_open_naming_it() {
+    let (capture, native) = native();
+    let opening = start(capture, TEST);
+    native.exit(Err(CaptureError::DeviceNotFound {
+        device: Some("/dev/video0".into()),
+        source: Some(std::io::Error::from_raw_os_error(2)),
+    }));
+    let Err(error) = opening.recv_timeout(LIMIT).unwrap() else {
+        panic!("open must fail");
+    };
+    assert_eq!(
+        chain(&error),
+        "video device capture failed: no video capture device at /dev/video0: \
+         No such file or directory (os error 2)"
+    );
+}
+
 /// A refused camera permission fails open as an adapter failure saying what to do.
 #[test]
 fn refused_camera_access_fails_open_with_guidance() {
