@@ -6,7 +6,8 @@
 //! cannot corrupt the stream. A reader thread decodes [`Command`]s from stdin;
 //! stdin EOF or a bad line stops the worker.
 use crate::{
-    Command, Event, FullStatus, LineReader, SlimStatus, WorkerFailure, WorkerStatus, encode, exit,
+    Command, Event, FullStatus, LineReader, LinkError, SlimStatus, WorkerFailure, WorkerStatus,
+    encode, exit,
 };
 use prysm_ports::{Error, chain};
 use std::future::Future;
@@ -78,13 +79,21 @@ impl std::fmt::Debug for Events {
 }
 
 impl Events {
-    /// Send one event. Long texts are shortened to fit a line. A supervisor
-    /// that stopped reading means stop.
+    /// Send one event. Long texts are shortened until the encoded line fits
+    /// (escaping can make a text up to six times longer). A supervisor that
+    /// stopped reading means stop.
     pub fn send(&self, event: &Event) {
-        let line = encode(&fit(event.clone())).unwrap_or_else(|_| {
-            // Unreachable after `fit`; never send a partial line.
-            b"{\"type\":\"faulted\",\"cause\":\"event too large\"}\n".to_vec()
-        });
+        let mut limit = MAX_TEXT;
+        let line = loop {
+            match encode(&fit(event.clone(), limit)) {
+                Ok(line) => break line,
+                Err(LinkError::Oversized) if limit > 0 => limit /= 2,
+                // Unreachable: with no text left every event fits.
+                Err(error) => {
+                    return eprintln!("cannot send an event: {}", chain(&error));
+                }
+            }
+        };
         if (self.sink)(&line).is_err() {
             self.stop
                 .request(Stop::Requested("the supervisor closed the event stream"));
@@ -94,27 +103,25 @@ impl Events {
 
 const MAX_TEXT: usize = 1024;
 
-/// `text`, cut to [`MAX_TEXT`] bytes at a character boundary.
-fn short(text: String) -> String {
-    if text.len() <= MAX_TEXT {
+/// `text`, cut to `limit` bytes at a character boundary.
+fn short(text: String, limit: usize) -> String {
+    if text.len() <= limit {
         return text;
     }
-    let mut end = MAX_TEXT;
+    let mut end = limit;
     while !text.is_char_boundary(end) {
         end -= 1;
     }
     format!("{}…", &text[..end])
 }
 
-fn short_failure(failure: WorkerFailure) -> WorkerFailure {
-    WorkerFailure {
+/// `event` with every free text cut to `limit` bytes.
+fn fit(event: Event, limit: usize) -> Event {
+    let short = |text| short(text, limit);
+    let short_failure = |failure: WorkerFailure| WorkerFailure {
         message: short(failure.message),
         ..failure
-    }
-}
-
-/// `event` with every free text shortened, so it fits one line.
-fn fit(event: Event) -> Event {
+    };
     match event {
         Event::Status(WorkerStatus::Full(status)) => {
             Event::Status(WorkerStatus::Full(FullStatus {
@@ -517,6 +524,60 @@ mod tests {
         assert_eq!(link.commands.next().await, None);
         link.stop.stopped().await;
         assert_eq!(link.stop.reason(), Some(Stop::Requested("stdin closed")));
+    }
+
+    /// Escaping can make a text six times longer (`\u0001`); every event
+    /// shape still goes out as one whole line within the bound, never a
+    /// stand-in event.
+    #[test]
+    fn every_event_fits_one_line_whatever_its_texts_escape_to() {
+        use crate::{FailureKind, MAX_LINE, SlimEncoding, decode};
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let sent = Arc::clone(&lines);
+        let events = Events {
+            sink: Arc::new(move |line: &[u8]| {
+                sent.lock().unwrap().push(line.to_vec());
+                Ok(())
+            }),
+            stop: StopHandle::default(),
+        };
+        for unit in ["\"", "\\", "\u{1}", "\n", "é", "😀", "x"] {
+            for length in [MAX_TEXT - 1, MAX_TEXT, MAX_TEXT + 1, 10_000] {
+                let text = unit.repeat(length.div_ceil(unit.len()));
+                let failure = || Some(WorkerFailure::new(FailureKind::Encoder, text.clone()));
+                for event in [
+                    Event::Status(WorkerStatus::Full(FullStatus {
+                        capturing: true,
+                        fps: Some(u16::MAX),
+                        target: prysm_ports::LightingTarget::DeviceNative,
+                        portal: Some(text.clone()),
+                        failure: failure(),
+                    })),
+                    Event::Status(WorkerStatus::Slim(SlimStatus {
+                        capturing: true,
+                        fps: Some(u16::MAX),
+                        encoding: Some(SlimEncoding::H264Software),
+                        paused: true,
+                        failure: failure(),
+                    })),
+                    Event::Failed {
+                        cause: text.clone(),
+                    },
+                    Event::Faulted {
+                        cause: text.clone(),
+                    },
+                ] {
+                    events.send(&event);
+                    let line = lines.lock().unwrap().pop().expect("a line");
+                    assert!(line.len() <= MAX_LINE, "{} bytes", line.len());
+                    let back: Event = decode(&line).unwrap();
+                    assert_eq!(
+                        std::mem::discriminant(&back),
+                        std::mem::discriminant(&event)
+                    );
+                }
+            }
+        }
     }
 
     #[tokio::test]
