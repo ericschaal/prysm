@@ -116,13 +116,18 @@ outstanding step and accepts only shutdown. Native watchdogs stay inside the
 capture adapters. Host shutdown stops the session with the output idled off.
 
 Commands have no deadline of their own; each adapter bounds its blocking
-calls instead. One WLED request (connect, send, whole reply) gets 1.5 s
-however slowly the device answers, and opening a video device waits at most
-10 s for its format query and activation together. As a backstop, once
-shutdown is requested a blocking adapter or settings call gets one stop
-deadline more; then it is abandoned on its thread, the session stops in the
-order above, shutdown reports the abandoned call and the process exits
-without waiting for it.
+calls instead. Resolving a WLED host name takes at most 1.5 s, and so does
+one WLED request (connect, send, whole reply) however slowly the device
+answers. Opening a video device waits up to 10 s for its format query and
+activation together, then, if that ran out, up to 3 s for the release.
+
+As a backstop, shutdown gives the engine's blocking adapter and settings
+calls one shared grace (the stop deadline unless the host sets one; 1 s in
+the full TV worker). A call still running then is abandoned on its thread,
+and later calls fail without starting. The session still stops in the order
+above. Shutdown fails with the abandoned call unless the stop failed itself
+or the engine was already faulted, and the process exits without waiting
+for the call.
 
 ## Hosts and their adapters
 

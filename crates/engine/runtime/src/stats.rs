@@ -169,6 +169,7 @@ mod tests {
         assert_eq!(totals.counters.processing.count, 1);
         assert_eq!(totals.counters.flushed.count, 1);
         assert_eq!(totals.cycles.count, 1);
+        assert_eq!(totals.captured.count, 1);
         assert_eq!(totals.counters.flushed.total, 2 * SPAN);
         assert_eq!(stats.read(), totals.counters);
     }
@@ -202,21 +203,24 @@ mod tests {
                 }
             }
         });
-        loop {
+        // Checked before copying, so the last copy holds every frame added.
+        let mut finished = false;
+        while !finished {
+            finished = writer.is_finished();
             let totals = stats.totals();
             let received = totals.counters.frames_received;
             assert_eq!(totals.counters.frames_sent, received);
             assert_eq!(totals.counters.processing.count, received);
             assert_eq!(totals.counters.flushed.count, received);
             assert_eq!(totals.cycles.count, received);
+            assert_eq!(totals.captured.count, received);
             assert_eq!(
                 totals.counters.flushed.total,
                 2 * SPAN * u32::try_from(received).unwrap()
             );
-            if received == frames {
-                break;
-            }
         }
+        // A writer that panicked fails the test here instead of hanging it.
         writer.join().unwrap();
+        assert_eq!(stats.read().frames_received, frames);
     }
 }

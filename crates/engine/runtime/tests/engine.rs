@@ -457,6 +457,60 @@ async fn shutdown_abandons_a_command_stuck_in_an_adapter() {
 }
 
 #[tokio::test]
+async fn stuck_calls_in_sequence_share_one_shutdown_grace() {
+    within(async {
+        const GRACE: Duration = Duration::from_millis(300);
+        let log = CallLog::new();
+        let opens_stuck = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                open_delay_ms: u64::try_from(STUCK.as_millis()).unwrap(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+        );
+        let store = SlowStore {
+            saved: MemoryStore::with(opens_stuck.clone()),
+            log: log.clone(),
+        };
+        let (handle, engine) = Engine::start(registry(&log), Box::new(store), STUCK_DEADLINE)
+            .await
+            .unwrap();
+        let engine = engine.shutdown_grace(GRACE);
+        let saving = tokio::spawn({
+            let handle = handle.clone();
+            let revision = revision(&handle);
+            async move { handle.replace_settings(revision, opens_stuck).await }
+        });
+        assert!(log.wait_for("store.saving", 1).await);
+        // Queued behind the stuck save; its open would block too.
+        let starting = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.set_target(LightingTarget::Processed).await }
+        });
+        tokio::task::yield_now().await;
+
+        let asked = tokio::time::Instant::now();
+        let shutdown = shutdown_before_stuck_call_returns(engine).await;
+        assert!(asked.elapsed() < GRACE * 3 / 2, "{:?}", asked.elapsed());
+        assert!(
+            matches!(shutdown, Err(Error::Adapter { .. })),
+            "{shutdown:?}"
+        );
+        assert!(matches!(saving.await.unwrap(), Err(Error::Adapter { .. })));
+        assert!(matches!(
+            starting.await.unwrap(),
+            Err(Error::Adapter { .. })
+        ));
+        assert_eq!(log.count("source.opening:a"), 0, "the open started");
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn shutdown_abandons_a_stuck_save_and_still_stops_the_session_in_order() {
     within(async {
         let log = CallLog::new();

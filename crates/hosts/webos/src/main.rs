@@ -11,8 +11,8 @@ use prysm_runtime::Prysm;
 use prysm_runtime::logging::{self, Logs};
 use prysm_settings_file::SettingsFile;
 use prysm_web_portal::{Access, WebPortal, lan_url};
-use prysm_webos_link::FullArgs;
 use prysm_webos_link::worker::{self, Link};
+use prysm_webos_link::{FullArgs, KILL_AFTER};
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::ExitCode;
@@ -23,9 +23,16 @@ const NAME: &str = "prysm-webos";
 const ABOUT: &str = "The full TV worker. Started by prysm-webos-service: commands on stdin,
 events on stdout, logs on stderr.";
 
-/// Above the capture adapter's 4 s release limit, below the supervisor's 8 s
-/// TERM-to-KILL window, so WLED idle compensation normally runs.
+/// Above the capture adapter's 4 s release limit, so WLED idle compensation
+/// normally runs.
 const STOP_DEADLINE: Duration = Duration::from_secs(6);
+/// How long shutdown waits for an engine call stuck in an adapter before
+/// abandoning it: short, so grace and stop (1 + 6 s) end before SIGKILL (8 s).
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
+const _: () = assert!(
+    SHUTDOWN_GRACE.as_millis() + STOP_DEADLINE.as_millis() < KILL_AFTER.as_millis(),
+    "shutdown must end before the supervisor's SIGKILL"
+);
 
 fn main() -> ExitCode {
     // stdout carries the supervisor protocol; log lines go to stderr only.
@@ -64,6 +71,7 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
             Access::AnyOrigin,
         )?)
         .stop_deadline(STOP_DEADLINE)
+        .shutdown_grace(SHUTDOWN_GRACE)
         .run(stopped)
         .await
 }

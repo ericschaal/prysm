@@ -190,8 +190,9 @@ impl EngineHandle {
 pub struct Engine {
     commands: mpsc::Sender<Command>,
     task: JoinHandle<()>,
-    /// Set by [`Self::shutdown`]; see [`Core::run_blocking`].
-    shutting_down: watch::Sender<bool>,
+    /// When blocking calls are abandoned; set by [`Self::shutdown`].
+    abandon_at: watch::Sender<Option<Instant>>,
+    shutdown_grace: Duration,
 }
 
 impl Engine {
@@ -222,7 +223,7 @@ impl Engine {
         let feeds = Feeds::default();
         let stats = Arc::new(Stats::default());
         let (commands, inbox) = mpsc::channel(16);
-        let (shutting_down, shutdown_requested) = watch::channel(false);
+        let (abandon_at, abandon_when) = watch::channel(None);
         let core = Core {
             registry: registry.clone(),
             store,
@@ -232,7 +233,7 @@ impl Engine {
             feeds: feeds.clone(),
             stats: stats.clone(),
             stop_deadline,
-            shutdown_requested,
+            abandon_at: abandon_when,
             abandoned: None,
             state,
         };
@@ -247,20 +248,31 @@ impl Engine {
         let engine = Self {
             commands,
             task,
-            shutting_down,
+            abandon_at,
+            shutdown_grace: stop_deadline,
         };
         Ok((handle, engine))
     }
 
-    /// Stop the session (output idles `Off`), join it and end the task. A
-    /// blocking adapter or settings call the engine is waiting in gets one
-    /// stop deadline more, then is abandoned and left running on its thread.
+    /// How long [`Self::shutdown`] waits for blocking adapter or settings
+    /// calls before abandoning them; the stop deadline unless set.
+    #[must_use]
+    pub fn shutdown_grace(mut self, grace: Duration) -> Self {
+        self.shutdown_grace = grace;
+        self
+    }
+
+    /// Stop the session (output idles `Off`), join it and end the task.
+    /// Blocking adapter or settings calls still running when the shutdown
+    /// grace has passed since this call are abandoned and left running on
+    /// their threads; later ones fail at once.
     ///
     /// # Errors
     /// The engine is faulted, stopping the session failed, or a blocking
     /// call was abandoned.
     pub async fn shutdown(self) -> Result<()> {
-        self.shutting_down.send_replace(true);
+        self.abandon_at
+            .send_replace(Some(Instant::now() + self.shutdown_grace));
         let (reply, result) = oneshot::channel();
         let sent = self.commands.send(Command::Shutdown(reply)).await;
         let result = match sent {
@@ -341,43 +353,50 @@ struct Core {
     feeds: Feeds,
     stats: Arc<Stats>,
     stop_deadline: Duration,
-    /// Becomes true when [`Engine::shutdown`] is called.
-    shutdown_requested: watch::Receiver<bool>,
+    /// When blocking calls are abandoned: `None` until [`Engine::shutdown`].
+    abandon_at: watch::Receiver<Option<Instant>>,
     /// The first blocking call abandoned at shutdown; shutdown reports it.
     abandoned: Option<Error>,
     state: watch::Sender<Snapshot>,
 }
 
 impl Core {
-    /// Run blocking adapter or store code off the async runtime. Once
-    /// shutdown is requested, a call gets one stop deadline more and is then
-    /// abandoned, left running on its thread: a call that never returns
-    /// cannot keep the engine from the session's ordered stop.
+    /// Run blocking adapter or store code off the async runtime. A call still
+    /// running at the shutdown's one deadline is abandoned, left running on
+    /// its thread; once one was, later calls fail without starting. So calls
+    /// that never return cannot keep the engine from the session's ordered
+    /// stop.
     ///
     /// # Errors
-    /// The call panicked, or was abandoned.
+    /// The call panicked, or was abandoned or not started.
     async fn run_blocking<T: Send + 'static>(
         &mut self,
         work: impl FnOnce() -> T + Send + 'static,
     ) -> Result<T> {
-        let mut requested = self.shutdown_requested.clone();
-        let grace = self.stop_deadline;
+        if let Some(abandoned) = &self.abandoned {
+            return Err(abandoned.clone());
+        }
+        let mut abandon_at = self.abandon_at.clone();
         let abandon = async move {
-            if requested.wait_for(|requested| *requested).await.is_ok() {
-                tokio::time::sleep(grace).await;
-            } else {
+            let at = abandon_at
+                .wait_for(Option::is_some)
+                .await
+                .ok()
+                .and_then(|at| *at);
+            match at {
+                Some(at) => tokio::time::sleep_until(at).await,
                 // The engine was dropped without a shutdown: nothing waits.
-                std::future::pending::<()>().await;
+                None => std::future::pending::<()>().await,
             }
         };
         tokio::select! {
             done = blocking(work) => done,
             () = abandon => {
-                let error = Error::other(format!(
-                    "an adapter or settings call did not return within {grace:?} \
-                     during shutdown, so it was abandoned"
-                ));
-                self.abandoned.get_or_insert_with(|| error.clone());
+                let error = Error::other(
+                    "an adapter or settings call did not return within the shutdown \
+                     grace, so it was abandoned",
+                );
+                self.abandoned = Some(error.clone());
                 Err(error)
             }
         }

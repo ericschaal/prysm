@@ -7,8 +7,12 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 /// Bounds name resolution, and one whole exchange (connect, request and
-/// response) however slowly the device answers. Idling sends two requests,
-/// so it ends within 3 s, inside the runtime stop deadline (6 s on the TV).
+/// response) however slowly the device answers. Each mode change is two
+/// exchanges, so idling a held output takes at most 3 s; an output the stop
+/// must open first adds resolution and the open's own mode changes. All of
+/// it counts against the session stop deadline after the source's release,
+/// so a slow release and a slow WLED together can exceed it (on the TV
+/// 4 s + 3 s > 6 s) and the session ends `Faulted`.
 pub const TIMEOUT: Duration = Duration::from_millis(1500);
 /// `/json/info` is about 1.5 KiB, more with usermods.
 const MAX_BODY: usize = 16 * 1024;

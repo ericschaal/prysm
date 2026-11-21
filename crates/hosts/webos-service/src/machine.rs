@@ -3,17 +3,14 @@
 use crate::preferences::Preferences;
 use crate::state::{Flavor, Phase as PublishedPhase, Power, State};
 use prysm_webos_link::{
-    Backoff, Command, Event, FullArgs, LightingTarget, SILENCE, SlimArgs, Video, WorkerFailure,
-    WorkerStatus, exit,
+    Backoff, Command, Event, FullArgs, KILL_AFTER, LightingTarget, SILENCE, SlimArgs, Video,
+    WorkerFailure, WorkerStatus, exit,
 };
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-/// TERM to KILL. Above the worker's 6 s stop deadline, which is above the
-/// capture adapter's 4 s release limit.
-pub const KILL_AFTER: Duration = Duration::from_secs(8);
 /// How long a sent `Lighting` target wins over older worker reports.
 pub const ECHO: Duration = Duration::from_secs(2);
 pub const LOG_LINES: usize = 20;

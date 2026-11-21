@@ -285,10 +285,10 @@ pub fn exit_code(stop: Option<&Stop>, result: &prysm_ports::Result<()>) -> u8 {
 ///
 /// What bounds a worker that outlives its supervisor (its stop hangs):
 /// nothing SIGKILLs it any more. Its own stop deadline (the host's
-/// `stop_deadline`) ends the session as `Faulted`, and bounds how long
-/// shutdown waits for an engine command stuck in an adapter call before
-/// abandoning it; the runtime is shut down without waiting for such a call,
-/// so `main` returns and the process exits. Until it has exited it holds the capture
+/// `stop_deadline`) ends the session as `Faulted`, and the full worker's
+/// shutdown grace bounds how long it waits for an engine call stuck in an
+/// adapter before abandoning it; the runtime is shut down without waiting
+/// for such a call, so `main` returns and the process exits. Until it has exited it holds the capture
 /// adapter's cross-process lock (and the full worker its portal port), so a
 /// new worker cannot open a tap meanwhile: it fails and its supervisor backs
 /// off. A thread stuck in the kernel keeps the process, and so the lock,
