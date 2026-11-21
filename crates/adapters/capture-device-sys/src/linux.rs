@@ -406,6 +406,7 @@ pub(crate) fn run(
         sink.ready();
         let mut pool = FramePool::default();
         let mut stats = crate::trace_stats::TraceStats::new("v4l_capture");
+        let mut rejections = crate::rejections::Rejections::new(rate);
         loop {
             if stopped() {
                 return Ok(());
@@ -413,22 +414,28 @@ pub(crate) fn run(
             let started = stats.start();
             match stream.frame(|data, buffer| {
                 let captured = captured_at(buffer);
+                let corrupted = buffer.flags & v4l::v4l_sys::V4L2_BUF_FLAG_ERROR != 0;
                 pool.copy_from_strided(
                     data,
                     format.width,
                     format.height,
                     pixel_format,
                     format.stride as usize,
-                    buffer.flags & v4l::v4l_sys::V4L2_BUF_FLAG_ERROR != 0,
+                    corrupted,
                 )
                 .map(|frame| frame.with_captured(captured))
+                .ok_or_else(|| {
+                    crate::rejections::rejection(corrupted, data.len(), format.size as usize)
+                })
             }) {
-                Ok(Some(frame)) => {
+                Ok(Ok(frame)) => {
+                    rejections.accepted();
                     stats.record(started, frame.len(), Some(pool.stats()));
                     sink.frame(frame);
                 }
-                Ok(None) => {
+                Ok(Err(reason)) => {
                     stats.failure();
+                    rejections.rejected(reason, Instant::now())?;
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
                     stats.failure();

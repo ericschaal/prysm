@@ -75,7 +75,10 @@ pub fn list_formats(device: &str) -> Option<Vec<prysm_ports::Mode>> {
 /// [`CaptureError::Cleanup`]: release could not be certified; do not reopen
 /// the device. Any other error: capture failed and the device was released.
 /// A device unplugged while capturing is [`CaptureError::Disconnected`]; it
-/// is released, since a device that is gone holds nothing.
+/// is released, since a device that is gone holds nothing. On Linux, a device
+/// whose buffers are all unusable for several seconds (corrupted or short)
+/// is [`CaptureError::Unusable`], with the last buffer's
+/// [`crate::BufferRejection`]; a single unusable buffer is dropped.
 pub fn capture(
     device: Option<&str>,
     width: u32,
