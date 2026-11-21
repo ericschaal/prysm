@@ -55,12 +55,19 @@ After every install or update the service must be set up again; the helper
 does this. If you installed another way, open **Prysm** on the TV and choose
 **Set up service**.
 
-**Updating the full package from a version before 1.0:** its settings file,
-`/var/lib/io.prysm.tv/settings.json`, has no format number, and Prysm 1.0
-refuses it, so the TV's Prysm does not start. Over SSH as `root`, either add
-`"format": 1,` after the file's first `{`, or delete the file: Prysm then
-writes a new one with webOS capture and you set the lights up again in the
-portal.
+**Updating from a version before 1.0:** those versions installed as the app
+`io.prysm.tv`; 1.0 is a different app, `io.github.ericschaal.prysm`, so
+installing it does not replace the old one. Remove the old one first:
+
+1. In the old app, choose **Service options → Remove service setup… →
+   Remove setup**.
+2. Uninstall the old app from the TV.
+3. Install 1.0 as above.
+
+1.0 starts without the old preferences and settings: enter the computer's
+address (slim package) or set the lights up again in the portal (full
+package). The old files stay in `/var/lib/io.prysm.tv/` until you delete
+that directory over SSH.
 
 <a id="processing-on-this-tv-experimental"></a>
 
