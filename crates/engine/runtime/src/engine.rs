@@ -547,14 +547,16 @@ impl Core {
     /// but opened by the session at its first frame, so a source without
     /// frames never takes the device over.
     async fn start(&mut self) -> Result<()> {
-        let (capture, output, config) = {
+        let (capture, output) = {
             let snapshot = self.state.borrow();
             let settings = &snapshot.settings;
             let capture = configured(settings.capture.as_ref(), Section::Capture)?;
             let output = configured(settings.output.as_ref(), Section::Output)?;
             self.registry.validate(settings)?;
-            (capture, output, self.config())
+            (capture, output)
         };
+        // Outside the borrow above: `config` borrows the state itself.
+        let config = self.config();
         let registry = self.registry.clone();
         let source = blocking(move || registry.open_source(&capture))
             .await?

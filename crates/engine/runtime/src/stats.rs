@@ -1,13 +1,17 @@
 //! Totals of what the engine's sessions did since the process started, for
 //! the portal's opt-in `/metrics`. The session thread only adds to atomics
 //! (no locks, no allocation); readers copy them out as [`Counters`].
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering, fence};
 use std::time::{Duration, Instant};
 
 /// Shared by the engine and its sessions; never reset, so every total only
 /// grows and Prometheus can take rates and averages across sessions.
 #[derive(Debug, Default)]
 pub(crate) struct Stats {
+    /// Odd while [`Self::frame`] adds a frame's totals, and changed by each
+    /// frame, so a reader can tell a copy that split a frame (a sequence lock
+    /// whose writer never waits).
+    frame_writes: AtomicU64,
     frames_received: AtomicU64,
     frames_sent: AtomicU64,
     processing: Timer,
@@ -92,11 +96,63 @@ pub(crate) struct FrameTimes {
     pub(crate) written: Option<Instant>,
 }
 
+/// The totals the engine measures a window from, copied at one moment: no
+/// frame is in some of them and not in others.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Totals {
+    pub(crate) counters: Counters,
+    /// For flushed frames with a capture time, the span from that time to
+    /// Prysm receiving the frame. Not a metric: the engine reports it as the
+    /// capture part of the latency when every frame of a window had one.
+    pub(crate) captured: Timing,
+    /// For flushed frames, the loop's time for each, waiting for it included.
+    /// Not a metric: against it the engine judges whether the loop has slack.
+    pub(crate) cycles: Timing,
+}
+
+/// Copies a reader tries before taking a split one: a frame's adds take
+/// nanoseconds, frames come at most every few milliseconds.
+const COPY_ATTEMPTS: usize = 64;
+
 impl Stats {
     #[must_use]
     pub(crate) fn read(&self) -> Counters {
+        self.totals().counters
+    }
+
+    /// The totals with every frame in all of them or in none.
+    #[must_use]
+    pub(crate) fn totals(&self) -> Totals {
+        let mut copy = Totals::default();
+        for _ in 0..COPY_ATTEMPTS {
+            let whole;
+            (copy, whole) = self.try_totals();
+            if whole {
+                break;
+            }
+            std::hint::spin_loop();
+        }
+        // Still split only behind a writer that stopped mid-frame: what
+        // readers had before.
+        copy
+    }
+
+    /// One copy, and whether no frame was being added meanwhile.
+    fn try_totals(&self) -> (Totals, bool) {
+        // Acquire pairs with the release ending each frame: every frame
+        // counted before `before` is in the copy.
+        let before = self.frame_writes.load(Ordering::Acquire);
+        let copy = self.copy();
+        // Pairs with the fence starting each frame: a copy that saw any of
+        // a frame's adds sees its start in `after`.
+        fence(Ordering::Acquire);
+        let after = self.frame_writes.load(Ordering::Relaxed);
+        (copy, before == after && before.is_multiple_of(2))
+    }
+
+    fn copy(&self) -> Totals {
         let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
-        Counters {
+        let counters = Counters {
             frames_received: load(&self.frames_received),
             frames_sent: load(&self.frames_sent),
             processing: self.processing.read(),
@@ -105,6 +161,11 @@ impl Stats {
             output_write_failures: load(&self.output_write_failures),
             source_opens: load(&self.source_opens),
             output_opens: load(&self.output_opens),
+        };
+        Totals {
+            counters,
+            captured: self.captured.read(),
+            cycles: self.cycles.read(),
         }
     }
 
@@ -112,6 +173,7 @@ impl Stats {
     /// if its colors reached the output, also counted as sent and its spans
     /// from receipt (and from capture, if known) to the write returning.
     pub(crate) fn frame(&self, times: FrameTimes) {
+        self.begin_frame();
         self.frames_received.fetch_add(1, Ordering::Relaxed);
         self.processing.add(times.processed - times.received);
         if let Some(written) = times.written {
@@ -126,6 +188,17 @@ impl Stats {
                     .add(times.received.saturating_duration_since(captured));
             }
         }
+        self.end_frame();
+    }
+
+    /// Mark a frame's adds as under way; see [`Self::try_totals`].
+    fn begin_frame(&self) {
+        self.frame_writes.fetch_add(1, Ordering::Relaxed);
+        fence(Ordering::Release);
+    }
+
+    fn end_frame(&self) {
+        self.frame_writes.fetch_add(1, Ordering::Release);
     }
 
     /// One output write, a frame's or a keep-alive rewrite, that took `span`.
@@ -143,17 +216,47 @@ impl Stats {
     pub(crate) fn output_opened(&self) {
         self.output_opens.fetch_add(1, Ordering::Relaxed);
     }
+}
 
-    /// For flushed frames with a capture time, the span from that time to
-    /// Prysm receiving the frame. Not a metric: the engine reports it as the
-    /// capture part of the latency when every frame of a window had one.
-    pub(crate) fn captured(&self) -> Timing {
-        self.captured.read()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flushed_frame(stats: &Stats, at: Instant) {
+        let span = Duration::from_millis(5);
+        stats.frame(FrameTimes {
+            previous_done: None,
+            received: at,
+            captured: Some(at.checked_sub(span).unwrap_or(at)),
+            processed: at + span,
+            written: Some(at + 2 * span),
+        });
     }
 
-    /// For flushed frames, the loop's time for each, waiting for it included.
-    /// Not a metric: against it the engine judges whether the loop has slack.
-    pub(crate) fn cycles(&self) -> Timing {
-        self.cycles.read()
+    #[test]
+    fn a_frame_is_in_every_total_or_in_none() {
+        let stats = Stats::default();
+        flushed_frame(&stats, Instant::now());
+        let (totals, whole) = stats.try_totals();
+        assert!(whole);
+        assert_eq!(totals.counters.frames_received, 1);
+        assert_eq!(totals.counters.flushed.count, 1);
+        assert_eq!(totals.captured.count, 1);
+        assert_eq!(totals.cycles.count, 1);
+        assert_eq!(stats.totals(), totals);
+    }
+
+    /// A copy taken while a frame's adds are under way is refused: the
+    /// frame may be in some totals and not yet in others.
+    #[test]
+    fn a_copy_during_a_frame_is_refused() {
+        let stats = Stats::default();
+        stats.begin_frame();
+        stats.frames_received.fetch_add(1, Ordering::Relaxed);
+        assert!(!stats.try_totals().1);
+        stats.end_frame();
+        let (totals, whole) = stats.try_totals();
+        assert!(whole);
+        assert_eq!(totals.counters.frames_received, 1);
     }
 }
