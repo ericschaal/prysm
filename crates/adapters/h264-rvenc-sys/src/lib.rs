@@ -10,10 +10,10 @@
 //!
 //! - Two persistent DMA-BUFs, each mapped for its slot's lifetime, with a
 //!   192-byte pitch (per-frame allocation corrupted pictures on the TV).
-//!   Each upload is bracketed by `DMA_BUF_IOCTL_SYNC` start/end. Nothing
-//!   observes when `rvenc` lets go of an input (GStreamer reports the memory
-//!   writable while `rvenc` still holds the buffer), so only the order
-//!   protects a slot: [`Pipeline::encode`] waits for picture N's access unit
+//!   Each upload is bracketed by `DMA_BUF_IOCTL_SYNC` start/end. The memory's
+//!   writability does not show when `rvenc` lets go of an input (GStreamer
+//!   reports it writable while `rvenc` still holds the buffer), and nothing
+//!   else watches for it, so only the order protects a slot: [`Pipeline::encode`] waits for picture N's access unit
 //!   before it uploads N+1, so slot N is rewritten only for N+2, after `rvenc`
 //!   emitted N+1's access unit. That assumes `rvenc` never reads input N
 //!   after emitting a later access unit (not verified on the TV). Any error

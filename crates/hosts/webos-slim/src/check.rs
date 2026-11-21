@@ -90,8 +90,8 @@ pub fn main(options: Options) -> ExitCode {
 }
 
 /// Limited-range BT.709 NV12, as the TV capture delivers, of flat 16x16
-/// blocks whose colour changes by 28 levels per picture (and per block, left
-/// to right), so a block decoded from a neighbouring picture, or a picture torn
+/// blocks whose colour steps through 8 levels, 28 apart, per picture (and per
+/// block, left to right), so a block decoded from a neighbouring picture, or a picture torn
 /// between two, cannot pass as this one (a moving gradient would: neighbours
 /// differ too little on average).
 pub fn picture(width: u32, height: u32, index: u32) -> Frame {
