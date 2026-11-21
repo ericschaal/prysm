@@ -51,6 +51,9 @@ pub struct Handoff(Arc<Mutex<Slot>>);
 #[derive(Debug, Default)]
 struct Slot {
     receiving: bool,
+    /// Which [`Receiving`] is current: each [`Handoff::receive`] starts a
+    /// new one, so an end it replaced neither takes nor ends its offers.
+    generation: u64,
     waiting: Option<Accepted>,
     announced: Option<String>,
 }
@@ -97,13 +100,18 @@ impl Handoff {
     }
 
     /// Accept offers until the returned end is dropped. One source receives
-    /// at a time.
+    /// at a time: a later call replaces an end still held, which then takes
+    /// nothing and leaves offers open when it drops.
     #[must_use]
     pub fn receive(&self) -> Receiving {
         let mut slot = self.lock();
         slot.receiving = true;
         slot.waiting = None;
-        Receiving(self.clone())
+        slot.generation = slot.generation.wrapping_add(1);
+        Receiving {
+            handoff: self.clone(),
+            generation: slot.generation,
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, Slot> {
@@ -111,29 +119,41 @@ impl Handoff {
     }
 }
 
-/// A source's end of a [`Handoff`]; offers are refused again once it drops.
+/// A source's end of a [`Handoff`]; offers are refused again once the
+/// current end drops.
 #[derive(Debug)]
-pub struct Receiving(Handoff);
+pub struct Receiving {
+    handoff: Handoff,
+    generation: u64,
+}
 
 impl Receiving {
-    /// The newest connection offered and not yet taken.
+    /// The newest connection offered and not yet taken; `None` once a later
+    /// [`Handoff::receive`] replaced this end.
     #[must_use]
     pub fn take(&self) -> Option<Accepted> {
-        self.0.lock().waiting.take()
+        let mut slot = self.handoff.lock();
+        if slot.generation == self.generation {
+            slot.waiting.take()
+        } else {
+            None
+        }
     }
 
     /// As [`Handoff::announcement`].
     #[must_use]
     pub fn announcement(&self) -> Option<String> {
-        self.0.announcement()
+        self.handoff.announcement()
     }
 }
 
 impl Drop for Receiving {
     fn drop(&mut self) {
-        let mut slot = self.0.lock();
-        slot.receiving = false;
-        slot.waiting = None;
+        let mut slot = self.handoff.lock();
+        if slot.generation == self.generation {
+            slot.receiving = false;
+            slot.waiting = None;
+        }
     }
 }
 
@@ -180,6 +200,28 @@ mod tests {
 
         drop(receiving);
         let (late, _) = connection(2);
+        assert!(handoff.offer(late).is_err());
+    }
+
+    /// A source that received before the current one, dropped late, neither
+    /// takes the current one's connection nor ends its receiving.
+    #[test]
+    fn a_replaced_end_leaves_the_current_one_alone() {
+        let handoff = Handoff::new();
+        let replaced = handoff.receive();
+        let current = handoff.receive();
+        let (first, _) = connection(1);
+        handoff.offer(first).unwrap();
+        assert!(replaced.take().is_none());
+        drop(replaced);
+        assert!(handoff.is_receiving());
+        assert_eq!(current.take().unwrap().buffered, [1]);
+
+        let (second, _) = connection(2);
+        handoff.offer(second).unwrap();
+        drop(current);
+        assert!(!handoff.is_receiving());
+        let (late, _) = connection(3);
         assert!(handoff.offer(late).is_err());
     }
 

@@ -152,8 +152,8 @@ impl EngineHandle {
         self.feeds.colors.watch()
     }
 
-    /// Totals of frames, timings and opens since the process started; a few
-    /// atomic loads, without waking the engine.
+    /// Totals of frames, timings and opens since the process started, copied
+    /// under a short lock without waking the engine.
     #[must_use]
     pub fn stats(&self) -> Counters {
         self.stats.read()
@@ -190,6 +190,9 @@ impl EngineHandle {
 pub struct Engine {
     commands: mpsc::Sender<Command>,
     task: JoinHandle<()>,
+    /// When blocking calls are abandoned; set by [`Self::shutdown`].
+    abandon_at: watch::Sender<Option<Instant>>,
+    shutdown_grace: Duration,
 }
 
 impl Engine {
@@ -220,6 +223,7 @@ impl Engine {
         let feeds = Feeds::default();
         let stats = Arc::new(Stats::default());
         let (commands, inbox) = mpsc::channel(16);
+        let (abandon_at, abandon_when) = watch::channel(None);
         let core = Core {
             registry: registry.clone(),
             store,
@@ -229,6 +233,8 @@ impl Engine {
             feeds: feeds.clone(),
             stats: stats.clone(),
             stop_deadline,
+            abandon_at: abandon_when,
+            abandoned: None,
             state,
         };
         let task = tokio::spawn(core.run(inbox));
@@ -239,14 +245,34 @@ impl Engine {
             stats,
             registry,
         };
-        Ok((handle, Self { commands, task }))
+        let engine = Self {
+            commands,
+            task,
+            abandon_at,
+            shutdown_grace: stop_deadline,
+        };
+        Ok((handle, engine))
+    }
+
+    /// How long [`Self::shutdown`] waits for blocking adapter or settings
+    /// calls before abandoning them; the stop deadline unless set.
+    #[must_use]
+    pub fn shutdown_grace(mut self, grace: Duration) -> Self {
+        self.shutdown_grace = grace;
+        self
     }
 
     /// Stop the session (output idles `Off`), join it and end the task.
+    /// Blocking adapter or settings calls still running when the shutdown
+    /// grace has passed since this call are abandoned and left running on
+    /// their threads; later ones fail at once.
     ///
     /// # Errors
-    /// The engine is faulted, or stopping the session failed.
+    /// The engine is faulted, stopping the session failed, or a blocking
+    /// call was abandoned.
     pub async fn shutdown(self) -> Result<()> {
+        self.abandon_at
+            .send_replace(Some(Instant::now() + self.shutdown_grace));
         let (reply, result) = oneshot::channel();
         let sent = self.commands.send(Command::Shutdown(reply)).await;
         let result = match sent {
@@ -327,10 +353,55 @@ struct Core {
     feeds: Feeds,
     stats: Arc<Stats>,
     stop_deadline: Duration,
+    /// When blocking calls are abandoned: `None` until [`Engine::shutdown`].
+    abandon_at: watch::Receiver<Option<Instant>>,
+    /// The first blocking call abandoned at shutdown; shutdown reports it.
+    abandoned: Option<Error>,
     state: watch::Sender<Snapshot>,
 }
 
 impl Core {
+    /// Run blocking adapter or store code off the async runtime. A call still
+    /// running at the shutdown's one deadline is abandoned, left running on
+    /// its thread; once one was, later calls fail without starting. So calls
+    /// that never return cannot keep the engine from the session's ordered
+    /// stop.
+    ///
+    /// # Errors
+    /// The call panicked, or was abandoned or not started.
+    async fn run_blocking<T: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T> {
+        if let Some(abandoned) = &self.abandoned {
+            return Err(abandoned.clone());
+        }
+        let mut abandon_at = self.abandon_at.clone();
+        let abandon = async move {
+            let at = abandon_at
+                .wait_for(Option::is_some)
+                .await
+                .ok()
+                .and_then(|at| *at);
+            match at {
+                Some(at) => tokio::time::sleep_until(at).await,
+                // The engine was dropped without a shutdown: nothing waits.
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::select! {
+            done = blocking(work) => done,
+            () = abandon => {
+                let error = Error::other(
+                    "an adapter or settings call did not return within the shutdown \
+                     grace, so it was abandoned",
+                );
+                self.abandoned = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
     async fn run(mut self, mut inbox: mpsc::Receiver<Command>) {
         loop {
             let command = tokio::select! {
@@ -477,7 +548,8 @@ impl Core {
         self.registry.validate(&settings)?;
         let store = self.store.clone();
         let saved = settings.clone();
-        blocking(move || lock(&store).save(&saved)).await??;
+        self.run_blocking(move || lock(&store).save(&saved))
+            .await??;
 
         let (output_changed, capture_changed) = {
             let snapshot = self.state.borrow();
@@ -547,16 +619,19 @@ impl Core {
     /// but opened by the session at its first frame, so a source without
     /// frames never takes the device over.
     async fn start(&mut self) -> Result<()> {
-        let (capture, output, config) = {
+        let (capture, output) = {
             let snapshot = self.state.borrow();
             let settings = &snapshot.settings;
             let capture = configured(settings.capture.as_ref(), Section::Capture)?;
             let output = configured(settings.output.as_ref(), Section::Output)?;
             self.registry.validate(settings)?;
-            (capture, output, self.config())
+            (capture, output)
         };
+        // Outside the borrow above: `config` borrows the state itself.
+        let config = self.config();
         let registry = self.registry.clone();
-        let source = blocking(move || registry.open_source(&capture))
+        let source = self
+            .run_blocking(move || registry.open_source(&capture))
             .await?
             .map_err(|error| error.in_section(Section::Capture))?;
         self.stats.source_opened();
@@ -572,7 +647,8 @@ impl Core {
             Ok(session) => session,
             Err((error, source)) => {
                 // The session never ran: release the source here instead.
-                let released = blocking(move || source.close())
+                let released = self
+                    .run_blocking(move || source.close())
                     .await
                     .and_then(|closed| closed);
                 if released.is_err() {
@@ -627,7 +703,8 @@ impl Core {
         );
         let registry = self.registry.clone();
         let result = match output {
-            Ok(output) => blocking(move || registry.open_output(&output)?.idle(mode))
+            Ok(output) => self
+                .run_blocking(move || registry.open_output(&output)?.idle(mode))
                 .await?
                 .map_err(|error| error.in_section(Section::Output)),
             Err(error) => Err(error),
@@ -716,7 +793,8 @@ impl Core {
         // snapshot shows no pattern that nothing is showing any more.
         self.calibrate(None);
         self.faulted()?;
-        let result = self.stop(IdleMode::Off).await;
+        let stopped = self.stop(IdleMode::Off).await;
+        let result = stopped.and(self.abandoned.take().map_or(Ok(()), Err));
         self.record(&result);
         result
     }
