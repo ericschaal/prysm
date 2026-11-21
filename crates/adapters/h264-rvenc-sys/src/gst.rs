@@ -163,9 +163,6 @@ impl Pipeline {
                 .push(allocate_dma(&self.heap, &self.allocator, size)?);
         }
         let dma = &mut self.buffers[self.slot];
-        if !dma.memory.is_writable() {
-            return Err(Error::Busy);
-        }
         dma_sync(&dma.fd, SYNC_START)?;
         let copied = if input_stride == self.stride {
             dma.mapping.copy_from_slice(pixels);
