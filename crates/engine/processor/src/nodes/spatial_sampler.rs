@@ -43,6 +43,8 @@ pub struct SpatialSampler {
     // One row of normalized cell weights per output sample, in strip order.
     sample_weights: [Vec<f32>; 4],
     focus: ColorFocus,
+    // Every edge's output samples in strip order, reused from frame to frame.
+    samples: Vec<LinearColor>,
 }
 
 /// The sampler's geometry, as the colour focus pass reads it.
@@ -203,6 +205,7 @@ impl SpatialSampler {
             sample_points: std::array::from_fn(|_| Vec::new()),
             sample_weights: std::array::from_fn(|_| Vec::new()),
             focus: ColorFocus::default(),
+            samples: Vec::new(),
         }
     }
 
@@ -333,8 +336,10 @@ impl SpatialSampler {
         let (colors, weights) = (&self.cell_colors, &self.sample_weights);
         let cell_count = colors.len();
         let counts = weights.each_ref().map(|w| w.len() / cell_count);
-        let mut samples = vec![LinearColor::black(); counts.iter().sum()];
-        workers.for_each_chunk(&mut samples, PROJECTION_CHUNK, |offset, chunk| {
+        let samples = &mut self.samples;
+        samples.clear();
+        samples.resize(counts.iter().sum(), LinearColor::black());
+        workers.for_each_chunk(samples, PROJECTION_CHUNK, |offset, chunk| {
             for (edge, rows, out) in edge_parts(counts, offset, chunk.len()) {
                 let rows = &weights[edge][rows.start * cell_count..rows.end * cell_count];
                 let groups = chunk[out]
@@ -358,7 +363,7 @@ impl SpatialSampler {
             };
             self.focus.prepare_frame(&geometry, &self.cell_colors);
             let focus_pass = &self.focus;
-            workers.for_each_chunk(&mut samples, FOCUS_CHUNK, |offset, chunk| {
+            workers.for_each_chunk(samples, FOCUS_CHUNK, |offset, chunk| {
                 for (edge, rows, out) in edge_parts(counts, offset, chunk.len()) {
                     focus_pass.refine(edge, rows.start, focus, &mut chunk[out]);
                 }
@@ -366,7 +371,7 @@ impl SpatialSampler {
             mark(Stage::ColorFocus);
         }
 
-        let mut rest = samples.into_iter();
+        let mut rest = samples.iter().copied();
         let [top, right, bottom, left] = counts.map(|count| {
             ColorStrip::new(rest.by_ref().take(count).collect()).expect("sample count is nonzero")
         });
