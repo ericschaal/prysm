@@ -1,11 +1,10 @@
 //! Registration with the TV: Luna manifests for the supervisor and worker
 //! roles, the webosbrew boot hook, a bounded `ls-control` rescan and a
 //! bounded activation. Never replaces files it did not write.
-use crate::preferences::read_private;
+use crate::preferences::{read_private, write_atomic};
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{self, Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -38,6 +37,15 @@ pub enum InstallError {
     },
     #[error("refusing to change an unrelated Luna manifest: {}", .0.display())]
     UnrelatedManifest(PathBuf),
+    #[error(
+        "{} is not a Luna manifest (empty, cut short or not JSON): delete it, then run setup again",
+        path.display()
+    )]
+    InvalidManifest {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("cannot run {program}")]
     Spawn {
         program: String,
@@ -67,7 +75,8 @@ pub enum InstallError {
 type Result<T> = std::result::Result<T, InstallError>;
 
 pub trait Installer {
-    /// Write both manifests and the boot hook, then rescan. Idempotent.
+    /// Write both manifests and the boot hook, then rescan, also after a
+    /// failed step (whatever was changed takes effect). Idempotent.
     ///
     /// # Errors
     /// An unrelated file is in the way, a write failed, or the rescan failed.
@@ -77,7 +86,8 @@ pub trait Installer {
     /// # Errors
     /// No successful reply within the bound.
     fn activate(&mut self, service: &str) -> Result<()>;
-    /// Remove the hook and both manifests, then rescan. Settings stay.
+    /// Remove the hook and both manifests, then rescan, also after a failed
+    /// step. Settings stay.
     ///
     /// # Errors
     /// An unrelated file is in the way, a removal failed, or the rescan failed.
@@ -133,10 +143,16 @@ impl Layout {
         )
     }
 
+    /// The start of the boot hook's comment line, which marks a hook as
+    /// ours whatever release wrote the rest.
+    fn hook_marker(&self) -> String {
+        format!("# Prysm ({}):", self.id)
+    }
+
     fn hook_script(&self) -> String {
         format!(
-            "#!/bin/sh\n# Prysm ({}): restore Luna registration at boot.\n{} setup > {} 2>&1 &\n",
-            self.id,
+            "#!/bin/sh\n{} restore Luna registration at boot.\n{} setup > {} 2>&1 &\n",
+            self.hook_marker(),
             quote(&self.supervisor),
             quote(&self.hook_log),
         )
@@ -183,46 +199,50 @@ impl FsInstaller {
             source,
         };
         let existing = read_private(path, MAX_REPLY).map_err(failed)?;
-        if existing
-            .as_deref()
-            .is_some_and(|bytes| bytes != script.as_bytes())
+        let marker = self.layout.hook_marker();
+        if let Some(bytes) = &existing
+            && !bytes
+                .split(|byte| *byte == b'\n')
+                .any(|line| line.starts_with(marker.as_bytes()))
         {
             return Err(InstallError::UnrelatedHook(path.clone()));
         }
-        match (install, existing.is_some()) {
-            (true, false) => {
+        match (install, existing) {
+            (true, Some(bytes)) if bytes == script.as_bytes() => Ok(()),
+            (true, existing) => {
                 let parent = path
                     .parent()
                     .ok_or_else(|| failed(io::Error::other("no directory")))?;
                 fs::create_dir_all(parent).map_err(failed)?;
-                let mut file = tempfile::NamedTempFile::new_in(parent).map_err(failed)?;
-                file.write_all(script.as_bytes()).map_err(failed)?;
-                file.as_file()
-                    .set_permissions(fs::Permissions::from_mode(0o755))
-                    .map_err(failed)?;
-                file.as_file().sync_all().map_err(failed)?;
-                file.persist_noclobber(path)
-                    .map_err(|error| failed(error.error))?;
-                sync_directory(parent).map_err(failed)
+                write_atomic(path, script.as_bytes(), 0o755, existing.is_some()).map_err(failed)
             }
-            (false, true) => {
-                fs::remove_file(path).map_err(failed)?;
-                path.parent()
-                    .map_or(Ok(()), |parent| sync_directory(parent).map_err(failed))
-            }
-            _ => Ok(()),
+            (false, Some(_)) => remove(path).map_err(failed),
+            (false, None) => Ok(()),
         }
+    }
+
+    fn register(&self) -> Result<()> {
+        let (path, value) = self.layout.supervisor_manifest();
+        manifest(&path, &value, true)?;
+        let (path, value) = self.layout.worker_manifest();
+        manifest(&path, &value, true)?;
+        self.hook(true)
+    }
+
+    fn deregister(&self) -> Result<()> {
+        self.hook(false)?;
+        let (path, value) = self.layout.worker_manifest();
+        manifest(&path, &value, false)?;
+        let (path, value) = self.layout.supervisor_manifest();
+        manifest(&path, &value, false)
     }
 }
 
 impl Installer for FsInstaller {
     fn install(&mut self) -> Result<()> {
-        let (path, value) = self.layout.supervisor_manifest();
-        manifest(&path, &value, true)?;
-        let (path, value) = self.layout.worker_manifest();
-        manifest(&path, &value, true)?;
-        self.hook(true)?;
-        self.rescan()
+        let registered = self.register();
+        let rescanned = self.rescan();
+        registered.and(rescanned)
     }
 
     fn activate(&mut self, service: &str) -> Result<()> {
@@ -241,52 +261,56 @@ impl Installer for FsInstaller {
     }
 
     fn uninstall(&mut self) -> Result<()> {
-        self.hook(false)?;
-        let (path, value) = self.layout.worker_manifest();
-        manifest(&path, &value, false)?;
-        let (path, value) = self.layout.supervisor_manifest();
-        manifest(&path, &value, false)?;
-        self.rescan()
+        let deregistered = self.deregister();
+        let rescanned = self.rescan();
+        deregistered.and(rescanned)
     }
 }
 
-/// Install (create if missing) or remove (if ours) one manifest.
+/// Install (create, or replace ours if it differs) or remove (if ours) one
+/// manifest.
+///
+/// Ours is a manifest with our `id` (the app id's role) and our `roleFiles`
+/// (in our installed service directory). Its version and other lists may be
+/// another release's: an update that did not run `setup` leaves the old
+/// release's manifest behind.
 fn manifest(path: &Path, value: &Value, install: bool) -> Result<()> {
     let failed = |source: io::Error| InstallError::Manifest {
         path: path.to_owned(),
         source,
     };
-    match read_private(path, MAX_REPLY).map_err(failed)? {
-        Some(bytes) => {
-            if serde_json::from_slice::<Value>(&bytes).ok().as_ref() != Some(value) {
-                return Err(InstallError::UnrelatedManifest(path.to_owned()));
-            }
-            if !install {
-                fs::remove_file(path).map_err(failed)?;
-            }
-        }
-        None if install => {
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o644)
-                .open(path)
-                .map_err(failed)?;
+    let existing = read_private(path, MAX_REPLY)
+        .map_err(failed)?
+        .map(|bytes| serde_json::from_slice::<Value>(&bytes))
+        .transpose()
+        .map_err(|source| InstallError::InvalidManifest {
+            path: path.to_owned(),
+            source,
+        })?;
+    if let Some(existing) = &existing
+        && (existing["id"] != value["id"] || existing["roleFiles"] != value["roleFiles"])
+    {
+        return Err(InstallError::UnrelatedManifest(path.to_owned()));
+    }
+    match (install, existing) {
+        (true, Some(existing)) if existing == *value => Ok(()),
+        (true, existing) => {
             let mut bytes = serde_json::to_vec(value)
                 .map_err(io::Error::from)
                 .map_err(failed)?;
             bytes.push(b'\n');
-            file.write_all(&bytes)
-                .and_then(|()| file.sync_all())
-                .map_err(failed)?;
+            write_atomic(path, &bytes, 0o644, existing.is_some()).map_err(failed)
         }
-        None => {}
+        (false, Some(_)) => remove(path).map_err(failed),
+        (false, None) => Ok(()),
     }
-    Ok(())
 }
 
-fn sync_directory(path: &Path) -> io::Result<()> {
-    fs::File::open(path)?.sync_all()
+/// Remove `path` and sync its directory.
+fn remove(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)?;
+    let directory = path.parent().unwrap_or(Path::new("."));
+    fs::File::open(directory)?.sync_all()
 }
 
 /// How a bounded child ended.

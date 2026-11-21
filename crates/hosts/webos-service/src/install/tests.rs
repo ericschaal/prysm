@@ -1,6 +1,7 @@
 //! The installer in a temporary root, with shell scripts for `ls-control`
 //! and `luna-send`.
 use super::*;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 struct Sandbox {
     dir: tempfile::TempDir,
@@ -163,6 +164,137 @@ fn unrelated_files_are_never_replaced_or_removed() {
     assert_fails(s.installer.install(), |e| {
         matches!(e, InstallError::Hook { .. })
     });
+}
+
+/// Ours is our id and role files, whatever the version: a manifest of
+/// another release (an update that skipped `setup`) is replaced, by rename,
+/// so an interrupted write leaves the old file.
+#[test]
+fn our_manifest_of_another_version_is_replaced_atomically() {
+    let mut s = sandbox();
+    s.installer.install().unwrap();
+    let path = s.path("manifests.d/io.prysm.tv.supervisor.json");
+    let current = fs::read(&path).unwrap();
+    let mut old: Value = serde_json::from_slice(&current).unwrap();
+    old["version"] = "0.9.0".into();
+    old["apiPermissionFiles"] = json!([]);
+    let old = serde_json::to_vec(&old).unwrap();
+    fs::write(&path, &old).unwrap();
+    // A second name for the old file: an in-place write would change it too.
+    let link = s.path("old-supervisor.json");
+    fs::hard_link(&path, &link).unwrap();
+
+    s.installer.install().unwrap();
+    assert_eq!(fs::read(&path).unwrap(), current);
+    assert_eq!(
+        fs::read(&link).unwrap(),
+        old,
+        "written beside, then renamed"
+    );
+    let metadata = fs::metadata(&path).unwrap();
+    assert_ne!(metadata.ino(), fs::metadata(&link).unwrap().ino());
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o644);
+    let names: Vec<_> = fs::read_dir(s.path("manifests.d"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 2, "no temporary file left: {names:?}");
+
+    // The same version is left alone.
+    fs::remove_file(&link).unwrap();
+    s.installer.install().unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().ino(), metadata.ino());
+
+    // Uninstall removes ours of any version.
+    let worker = s.path("manifests.d/io.prysm.tv.worker.json");
+    let mut old: Value = serde_json::from_slice(&fs::read(&worker).unwrap()).unwrap();
+    old["version"] = "2.0.0".into();
+    fs::write(&worker, serde_json::to_vec(&old).unwrap()).unwrap();
+    s.installer.uninstall().unwrap();
+    assert!(!worker.exists());
+    assert!(!path.exists());
+}
+
+/// Somebody else's manifest under our file name is never ours: our id with
+/// role files elsewhere is refused like another id.
+#[test]
+fn a_manifest_with_our_id_but_other_role_files_is_refused() {
+    let mut s = sandbox();
+    let path = s.path("manifests.d/io.prysm.tv.worker.json");
+    let foreign = r#"{"id":"io.prysm.tv.worker","version":"1.0.0","roleFiles":["/elsewhere/worker.role.json"]}"#;
+    fs::write(&path, foreign).unwrap();
+    let unrelated =
+        |e: &InstallError| matches!(e, InstallError::UnrelatedManifest(p) if *p == path);
+    assert_fails(s.installer.install(), unrelated);
+    assert_fails(s.installer.uninstall(), unrelated);
+    assert_eq!(fs::read_to_string(&path).unwrap(), foreign);
+}
+
+/// Ours is the hook with our marker line, whatever release wrote the rest:
+/// it is replaced by rename. Uninstall removes it.
+#[test]
+fn our_hook_of_another_release_is_replaced() {
+    let mut s = sandbox();
+    let hook = s.path("init.d/io.prysm.tv");
+    fs::create_dir_all(s.path("init.d")).unwrap();
+    let old = "#!/bin/sh\n# Prysm (io.prysm.tv): older text.\n/old/path setup &\n";
+    fs::write(&hook, old).unwrap();
+    let link = s.path("old-hook");
+    fs::hard_link(&hook, &link).unwrap();
+    s.installer.install().unwrap();
+    assert_eq!(
+        s.read("init.d/io.prysm.tv"),
+        s.installer.layout.hook_script()
+    );
+    assert_eq!(
+        fs::read_to_string(&link).unwrap(),
+        old,
+        "replaced by rename"
+    );
+    assert_eq!(
+        fs::metadata(&hook).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    fs::write(&hook, old).unwrap();
+    s.installer.uninstall().unwrap();
+    assert!(!hook.exists());
+}
+
+/// A failed step still rescans: the manifests it replaced take effect.
+#[test]
+fn a_hook_failure_still_rescans() {
+    let mut s = sandbox();
+    fs::create_dir_all(s.path("init.d")).unwrap();
+    fs::write(s.path("init.d/io.prysm.tv"), "#!/bin/sh\nother\n").unwrap();
+    assert_fails(s.installer.install(), |e| {
+        matches!(e, InstallError::UnrelatedHook(_))
+    });
+    assert!(s.path("manifests.d/io.prysm.tv.worker.json").exists());
+    assert_eq!(s.read("scans"), "scan-services\n");
+    assert_fails(s.installer.uninstall(), |e| {
+        matches!(e, InstallError::UnrelatedHook(_))
+    });
+    assert_eq!(s.read("scans"), "scan-services\nscan-services\n");
+}
+
+/// A manifest that is not JSON stays refused, with the remedy in the error.
+#[test]
+fn a_broken_manifest_is_refused_with_the_remedy() {
+    let mut s = sandbox();
+    let path = s.path("manifests.d/io.prysm.tv.supervisor.json");
+    fs::write(&path, "{\"id\":").unwrap();
+    let result = s.installer.install();
+    assert_fails(
+        result,
+        |e| matches!(e, InstallError::InvalidManifest { path: p, .. } if *p == path),
+    );
+    let message = s.installer.install().unwrap_err().to_string();
+    assert!(message.contains("io.prysm.tv.supervisor.json"), "{message}");
+    assert!(
+        message.contains("delete it, then run setup again"),
+        "{message}"
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{\"id\":");
 }
 
 #[test]
