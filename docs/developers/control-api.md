@@ -63,12 +63,11 @@ There is no confirmation window and no rollback to the previous mode after a
 failed start. A failure leaves the target as requested. Without frames for 3 s
 the output returns to the device's own state until frames return; WLED
 problems while running (switched off, live override, another sender, no
-answer) show as `output_issue`, and Prysm does not switch WLED back.
-`output_brightness` (`{"percent": 40}`) is WLED's own brightness while it
-scales Prysm's colours; Prysm reports it and never changes it.
-`device_led_count` (`120`) is how many LEDs WLED itself says it has; Prysm
-keeps sending the configured edges' total, and the portal warns while the two
-differ.
+answer) show as `device.issue`, and Prysm does not switch WLED back.
+`device.brightness_percent` (`40`) is WLED's own brightness while it scales
+Prysm's colours; Prysm reports it and never changes it. `device.led_count`
+(`120`) is how many LEDs WLED itself says it has; Prysm keeps sending the
+configured edges' total, and the portal warns while the two differ.
 
 On SIGINT or SIGTERM the host stops the session (output idled off), lets open
 requests finish for up to 5 s, and exits non-zero if shutdown failed.

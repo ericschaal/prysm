@@ -98,7 +98,8 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
     }
     let snapshot = view.snapshot;
     let issue = snapshot
-        .output_issue
+        .device
+        .issue
         .map_or_else(String::new, |issue| format!(" · Lights: {issue}"));
     frame.render_widget(
         Paragraph::new(vec![
@@ -161,7 +162,7 @@ pub(crate) fn status_lines(view: &View<'_>) -> Vec<Line<'static>> {
     if let Some(input) = input_label(snapshot) {
         lines.push(field("Input", input));
     }
-    if let Some(issue) = snapshot.output_issue {
+    if let Some(issue) = snapshot.device.issue {
         lines.push(Line::from(vec![
             Span::styled(format!("{:<10}", "Lights"), Style::default().fg(MUTED)),
             Span::styled(issue.to_string(), Style::default().fg(WARNING)),
@@ -682,7 +683,7 @@ mod tests {
     #[test]
     fn status_says_why_the_lights_do_not_show_prysm() {
         let mut snapshot = running();
-        snapshot.output_issue = Some(prysm_ports::OutputIssue::Overridden);
+        snapshot.device.issue = Some(prysm_ports::OutputIssue::Overridden);
         let ui = Ui::default();
         let view = View {
             snapshot: &snapshot,

@@ -18,8 +18,9 @@ Everything else derives from it:
 
 - The binaries compile it in through
   [`prysm-version`](../../crates/engine/version/src/lib.rs) (`include_str!`, so Cargo
-  rebuilds when it changes): `--version`, `prysm_build_info` in `/metrics`, and
-  the Luna manifests (`major.minor.patch`).
+  rebuilds when it changes): `--version`, the portal's `State.version`,
+  `prysm_build_info` in `/metrics`, and the Luna manifests
+  (`major.minor.patch`).
 - The packages read it: [build-deb.sh](../../packaging/debian/build-deb.sh)
   (`-` becomes `~`: `1.0.0-rc.1` → `1.0.0~rc.1-1`, which sorts before
   `1.0.0`) and [ipk.py](../../packaging/webos/ipk.py) (`appinfo.json` and the
@@ -29,7 +30,8 @@ Everything else derives from it:
 Nothing else carries it. The crates are `0.0.0` (`[workspace.package]`;
 they are never published), so `Cargo.toml` and `Cargo.lock` never change for a
 release. The OpenAPI documents' `info.version` is their API's own version
-(`1`), so generated contracts never change either.
+(`1`), and the exported `State` fixtures carry a fixed `version`, so generated
+contracts never change either.
 [scripts/check-release.py](../../scripts/check-release.py) checks this: VERSION
 is a semantic version, the crates are `0.0.0`, no Rust source uses
 `CARGO_PKG_VERSION`, and the TrueNAS pin equals VERSION; given a tag, also that
@@ -39,6 +41,40 @@ the tag is `v` plus VERSION and the manifest has it. Its tests run in CI.
 release. Between releases, VERSION and the manifest both hold the last
 released version (since `1.0.0-rc.1`), and Release Please counts commits from
 its tag.
+
+## What the version promises
+
+From 1.0.0 the version follows [semantic versioning](https://semver.org/) for
+these surfaces. A change that breaks a user or client of the previous release
+is a major release (`!`); an addition is a minor one; a fix is a patch.
+
+Covered:
+
+- the portal HTTP API under `/api/v1` and its values, `State` included
+  ([contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md)): routes,
+  fields, closed value sets, status codes and failure kinds. A new field is a
+  minor change: clients ignore fields they do not know;
+- the settings file and its `format` number
+  ([settings-file](../../crates/adapters/settings-file/README.md)). A Prysm
+  reads files of its own format only and names both numbers for any other,
+  so raising the number is a major change unless that release also reads the
+  previous format. A field added without raising it is refused by an older
+  Prysm by the field's name;
+- the TV parts one installed version uses of another: the Luna service
+  `io.prysm.tv.service` with `getState` and `uninstall` (an update calls the
+  installed service's), and the supervisor's `setup` command, which an older
+  boot hook runs;
+- the capture stream between a slim TV and a desktop Prysm, by its protocol
+  version (`prysm-capture.v5`, `CAPTURE_VERSION`);
+- the hosts' command-line flags;
+- package and image names: the Debian package `prysm-headless`, the image
+  `ghcr.io/<owner>/prysm-headless`, the IPKs `io.prysm.tv-full` and
+  `io.prysm.tv-slim`.
+
+Not covered: the Rust crates (`0.0.0`, never published) and their APIs, the
+Luna methods only the same package's TV app calls (`setPreferences`,
+`setEnabled`), log and message wording, the `research/` and acceptance
+tooling, and behaviour that is not in a contract (timings, colours produced).
 
 ## Cut a release
 

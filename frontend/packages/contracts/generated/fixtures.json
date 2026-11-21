@@ -1,7 +1,7 @@
 {
   "CalibrationPattern": [
     {
-      "pattern": "gray-192",
+      "pattern": "gray_192",
       "uncorrected": false
     },
     {
@@ -29,15 +29,15 @@
       "uncorrected": false
     },
     {
-      "pattern": "blue-pair",
+      "pattern": "blue_pair",
       "uncorrected": true
     },
     {
-      "pattern": "red-pair",
+      "pattern": "red_pair",
       "uncorrected": false
     },
     {
-      "pattern": "green-pair",
+      "pattern": "green_pair",
       "uncorrected": true
     },
     {
@@ -53,7 +53,7 @@
       "uncorrected": false
     },
     {
-      "pattern": "review-grid",
+      "pattern": "review_grid",
       "uncorrected": true
     }
   ],
@@ -560,7 +560,7 @@
   ],
   "State": [
     {
-      "failure": null,
+      "device": {},
       "revision": 0,
       "session": {
         "state": "stopped"
@@ -576,11 +576,15 @@
         }
       },
       "surface_failures": [],
-      "target": "off"
+      "target": "off",
+      "version": "1.0.0"
     },
     {
-      "device_led_count": 120,
-      "failure": null,
+      "device": {
+        "brightness_percent": 40,
+        "issue": "overridden",
+        "led_count": 120
+      },
       "input": {
         "behind": "output",
         "fps": 29.899999618530273,
@@ -591,7 +595,6 @@
         "receiving": true,
         "sent_fps": 29.899999618530273
       },
-      "output_issue": "overridden",
       "revision": 7,
       "session": {
         "state": "running"
@@ -624,14 +627,15 @@
           "message": "portal listener failed"
         }
       ],
-      "target": "processed"
+      "target": "processed",
+      "version": "1.0.0"
     },
     {
       "calibration": {
-        "pattern": "gray-192",
+        "pattern": "gray_192",
         "uncorrected": false
       },
-      "failure": null,
+      "device": {},
       "revision": 0,
       "session": {
         "state": "running"
@@ -692,10 +696,11 @@
         }
       },
       "surface_failures": [],
-      "target": "processed"
+      "target": "processed",
+      "version": "1.0.0"
     },
     {
-      "failure": null,
+      "device": {},
       "revision": 0,
       "session": {
         "state": "native"
@@ -711,9 +716,11 @@
         }
       },
       "surface_failures": [],
-      "target": "device_native"
+      "target": "device_native",
+      "version": "1.0.0"
     },
     {
+      "device": {},
       "failure": {
         "kind": "adapter",
         "message": "video device capture failed",
@@ -746,9 +753,11 @@
         }
       },
       "surface_failures": [],
-      "target": "processed"
+      "target": "processed",
+      "version": "1.0.0"
     },
     {
+      "device": {},
       "failure": {
         "kind": "faulted",
         "message": "runtime is faulted: session did not finish idling the output"
@@ -769,7 +778,8 @@
         }
       },
       "surface_failures": [],
-      "target": "off"
+      "target": "off",
+      "version": "1.0.0"
     }
   ],
   "Style": [

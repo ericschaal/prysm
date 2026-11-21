@@ -2104,6 +2104,7 @@ name = "prysm-protocol"
 version = "0.0.0"
 dependencies = [
  "prysm-ports",
+ "prysm-version",
  "serde",
  "serde_json",
  "utoipa",
@@ -2130,6 +2131,7 @@ name = "prysm-settings-file"
 version = "0.0.0"
 dependencies = [
  "prysm-ports",
+ "serde",
  "serde_json",
  "tempfile",
 ]
@@ -2143,6 +2145,7 @@ dependencies = [
  "prysm-core",
  "prysm-ports",
  "prysm-runtime",
+ "prysm-settings-file",
  "ratatui",
  "serde_json",
  "tempfile",

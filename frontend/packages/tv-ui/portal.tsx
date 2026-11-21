@@ -87,8 +87,8 @@ export function LightingCard({
         effects ?? 'Device effects',
       );
       attention = true;
-    } else if (snapshot.output_issue && session.state === 'running') {
-      message = describeOutputIssue(snapshot.output_issue);
+    } else if (snapshot.device.issue && session.state === 'running') {
+      message = describeOutputIssue(snapshot.device.issue);
       attention = true;
     } else if (!full && kind !== 'remote') {
       message =

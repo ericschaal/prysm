@@ -12,6 +12,7 @@ schema = ["dep:utoipa"]
 
 [dependencies]
 prysm-ports.workspace = true
+prysm-version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 utoipa = { workspace = true, optional = true }

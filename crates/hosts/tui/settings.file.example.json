@@ -1,4 +1,5 @@
 {
+  "format": 1,
   "capture": {
     "kind": "file",
     "path": "/path/to/clip.mkv",

@@ -285,9 +285,9 @@ fn seed_writes_webos_capture_once() {
     crate::seed(&path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains(r#""kind": "webos""#), "{text}");
-    std::fs::write(&path, "{}").unwrap();
+    std::fs::write(&path, r#"{"format":1}"#).unwrap();
     crate::seed(&path).unwrap();
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"format":1}"#);
 }
 
 #[tokio::test]

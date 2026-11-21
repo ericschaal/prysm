@@ -138,9 +138,9 @@ test('a new calibration is made step by step and finished under its name', async
       correction: zero,
     });
     assert.equal(processing(fixture).active_calibration, draft.id);
-    assert.deepEqual(patterns(fixture), ['calibration:gray-192']);
+    assert.deepEqual(patterns(fixture), ['calibration:gray_192']);
     assert.deepEqual(fixture.snapshot().calibration, {
-      pattern: 'gray-192',
+      pattern: 'gray_192',
       uncorrected: false,
     });
     assert.equal(heading(), questions.white);
@@ -197,8 +197,8 @@ test('a new calibration is made step by step and finished under its name', async
     await press(compare);
     assert.equal(compare.getAttribute('aria-pressed'), 'false');
     assert.deepEqual(patterns(fixture).slice(1), [
-      'calibration:gray-192:uncorrected',
-      'calibration:gray-192',
+      'calibration:gray_192:uncorrected',
+      'calibration:gray_192',
     ]);
 
     // Each primary: two sliders named by their ends, on its pair.
@@ -300,22 +300,22 @@ test('a new calibration is made step by step and finished under its name', async
     );
     await press(button('Looks right'));
     assert.deepEqual(patterns(fixture), [
-      'calibration:red-pair',
-      'calibration:green-pair',
-      'calibration:blue-pair',
+      'calibration:red_pair',
+      'calibration:green_pair',
+      'calibration:blue_pair',
       'calibration:yellow',
-      'calibration:green-pair',
+      'calibration:green_pair',
       'calibration:yellow',
       'calibration:cyan',
       'calibration:magenta',
       'calibration:coast',
-      'calibration:gray-192',
+      'calibration:gray_192',
       'calibration:coast',
       'calibration:garden',
       'calibration:dusk',
-      'calibration:review-grid',
+      'calibration:review_grid',
       'calibration:dusk',
-      'calibration:review-grid',
+      'calibration:review_grid',
     ]);
 
     const name = field('calibration.name');
@@ -439,7 +439,7 @@ test('starting from a saved calibration works on a copy; Cancel deletes it and r
       correction: ps5.correction,
     });
     assert.equal(processing(fixture).active_calibration, copy.id);
-    assert.deepEqual(patterns(fixture), ['calibration:gray-192']);
+    assert.deepEqual(patterns(fixture), ['calibration:gray_192']);
 
     await press(button('Looks right'));
     // Nothing adjusted: nothing to lose, so no question.
@@ -479,7 +479,7 @@ test('Cancel asks before discarding changes, in its own line', async () => {
     assert.equal(question.getAttribute('role'), 'group');
     assert.equal(document.activeElement, button('Keep'), 'the safe answer');
     assert.equal(heading(), questions.white, 'nothing else changed');
-    assert.deepEqual(patterns(fixture), ['calibration:gray-192']);
+    assert.deepEqual(patterns(fixture), ['calibration:gray_192']);
 
     // Keep: back as it was, focus on Cancel; Escape keeps too.
     await press(button('Keep'));
@@ -520,10 +520,10 @@ test('a tap moves on at once; the TV pattern follows, and a refusal goes back', 
     await act(async () => sleep(5));
     assert.equal(line().hasAttribute('aria-busy'), false, 'the TV shows it');
     assert.deepEqual(patterns(fixture), [
-      'calibration:red-pair',
-      'calibration:green-pair',
+      'calibration:red_pair',
+      'calibration:green_pair',
     ]);
-    assert.equal(fixture.snapshot().calibration.pattern, 'green-pair');
+    assert.equal(fixture.snapshot().calibration.pattern, 'green_pair');
 
     // The comparison is shown as on at once.
     release = fixture.holdPatterns();
@@ -638,7 +638,7 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
     assert(text().includes('Your changes so far are kept in “Calibrated”.'));
     fixture.calls.length = 0;
     await press(button('Resume'));
-    assert.deepEqual(patterns(fixture), ['calibration:red-pair']);
+    assert.deepEqual(patterns(fixture), ['calibration:red_pair']);
     assert.equal(heading(), questions.red);
 
     // Lights turned off: calibration ends and the TV is needed again.
@@ -775,17 +775,17 @@ test('the wizard moves at once, the TV follows, a refusal goes back, and it ends
   assert.deepEqual(
     screens.map(({ section, pattern }) => `${section}:${pattern}`),
     [
-      'white:gray-192',
-      'red:red-pair',
-      'green:green-pair',
-      'blue:blue-pair',
+      'white:gray_192',
+      'red:red_pair',
+      'green:green_pair',
+      'blue:blue_pair',
       'checks:yellow',
       'checks:cyan',
       'checks:magenta',
       'checks:coast',
       'checks:garden',
       'checks:dusk',
-      'review:review-grid',
+      'review:review_grid',
     ],
   );
   assert.deepEqual(

@@ -192,7 +192,7 @@ export function SettingsPage<
         />
         <RowLink
           label="About this Prysm"
-          value="Status, settings version and developer options"
+          value="Status, version and developer options"
           onClick={() => open('about')}
         />
         <RowLink
@@ -246,7 +246,8 @@ export function AboutPage({
               : 'No picture'
           }
         />
-        <RowFact label="Settings version" value={String(snapshot.revision)} />
+        <RowFact label="Prysm version" value={snapshot.version} />
+        <RowFact label="Settings revision" value={String(snapshot.revision)} />
       </Group>
       <Group title="This browser">
         <RowSwitch>

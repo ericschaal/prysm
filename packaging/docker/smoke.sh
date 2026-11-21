@@ -59,7 +59,7 @@ in_volume 'test ! -e /data/settings.json' || fail "settings.json was written wit
 stop
 
 # Settings seeded the way an operator's file would be.
-in_volume 'printf "{\n  \"output\": { \"kind\": \"null\" }\n}\n" > /data/settings.json'
+in_volume 'printf "{\n  \"format\": 1,\n  \"output\": { \"kind\": \"null\" }\n}\n" > /data/settings.json'
 start
 state=$(curl -fsS "http://127.0.0.1:$port/api/v1/state") || fail "GET /api/v1/state failed"
 echo "$state" | grep -q '"null"' || fail "state does not show the null output: $state"

@@ -17,15 +17,23 @@ naming the path.
 
 ## Format
 
-Pretty-printed JSON (two-space indent, trailing newline) of `prysm_ports::Settings`.
-Saving the same settings produces the same bytes, so the file can be hand-edited
-and kept under version control. Omitted `capture`/`output` mean unconfigured;
-omitted `processing` fields take their defaults. Unknown fields fail `load` with
-the field name, line and file path. Adapter fields under `kind` are decoded by
-the adapter's factory, not here.
+Pretty-printed JSON (two-space indent, trailing newline) of `prysm_ports::Settings`
+after the file's `format`. Saving the same settings produces the same bytes, so
+the file can be hand-edited and kept under version control. Omitted
+`capture`/`output` mean unconfigured; omitted `processing` fields take their
+defaults. Unknown fields fail `load` with the field name, line and file path.
+Adapter fields under `kind` are decoded by the adapter's factory, not here.
+
+`format` is the file format, the constant `FORMAT` (now `1`), written by every
+save. `load` reads it first and refuses, with a typed `FormatError` as the
+cause, a file without it (written by hand or before Prysm 1.0; add
+`"format": 1` once its fields match), a higher number (written by a newer
+Prysm, so it may hold fields this one does not know) and any other number.
+There is no migration: a Prysm reads its own format only.
 
 ```json
 {
+  "format": 1,
   "capture": {
     "kind": "device",
     "path": "/dev/video0"
@@ -97,6 +105,7 @@ With a custom style:
 
 ```json
 {
+  "format": 1,
   "processing": {
     "style": { "kind": "custom" },
     "custom_style": {
@@ -125,7 +134,9 @@ refused control names its path, such as
 applied calibration; without it no correction is applied. Both are omitted when empty.
 
 `load` returns `None` only when the file does not exist; an empty or malformed
-file is an error, never silently treated as unconfigured.
+file is an error, never silently treated as unconfigured. A file larger than
+1 MiB is refused before parsing, so a wrong path (a device, a log) is not read
+whole.
 
 ## Atomicity
 

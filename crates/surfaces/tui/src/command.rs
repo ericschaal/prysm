@@ -1,12 +1,9 @@
 //! Commands typed in the terminal, executed against the engine.
 use crate::input::Notice;
-use prysm_ports::{Error, LightingTarget, Result, Settings, chain};
+use prysm_ports::{Error, LightingTarget, Result, Settings, SettingsStore, chain};
 use prysm_runtime::EngineHandle;
-use std::io::Read;
+use prysm_settings_file::SettingsFile;
 use std::path::{Path, PathBuf};
-
-/// Settings files larger than this are rejected before parsing.
-const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -40,16 +37,11 @@ async fn load(engine: &EngineHandle, path: PathBuf) -> Result<prysm_ports::Revis
     engine.replace_settings(expected, settings).await
 }
 
+/// A settings file, read as the host reads its own.
 fn read_settings(path: &Path) -> Result<Settings> {
-    let file = std::fs::File::open(path).map_err(|e| Error::adapter("cannot open file", e))?;
-    let mut bytes = Vec::new();
-    file.take(MAX_SETTINGS_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| Error::adapter("cannot read file", e))?;
-    if bytes.len() as u64 > MAX_SETTINGS_BYTES {
-        return Err(Error::other("settings file exceeds 1 MiB"));
-    }
-    serde_json::from_slice(&bytes).map_err(|e| Error::adapter("invalid settings file", e))
+    SettingsFile::new(path)
+        .load()?
+        .ok_or_else(|| Error::other("no such file"))
 }
 
 #[cfg(test)]
@@ -114,7 +106,7 @@ mod tests {
             let path = dir.path().join("settings.json");
             std::fs::write(
                 &path,
-                r#"{ "capture": { "kind": "fake" }, "output": { "kind": "fake" } }"#,
+                r#"{ "format": 1, "capture": { "kind": "fake" }, "output": { "kind": "fake" } }"#,
             )
             .unwrap();
             let next = handle.snapshot().borrow().revision.next();
@@ -128,7 +120,7 @@ mod tests {
             assert_eq!(handle.snapshot().borrow().revision, next);
             assert_eq!(store.saved().unwrap().output.unwrap().kind, "fake");
 
-            std::fs::write(&path, r#"{ "output": { "kind": "laser" } }"#).unwrap();
+            std::fs::write(&path, r#"{ "format": 1, "output": { "kind": "laser" } }"#).unwrap();
             let rejected = execute(handle.clone(), Command::Load(path.clone())).await;
             assert_eq!(rejected.severity, Severity::Error);
             assert!(
@@ -138,32 +130,27 @@ mod tests {
             );
 
             std::fs::write(&path, "{ not json").unwrap();
-            let invalid = execute(handle.clone(), Command::Load(path)).await;
+            let invalid = execute(handle.clone(), Command::Load(path.clone())).await;
             assert!(
-                invalid.text.contains("invalid settings file"),
+                invalid.text.contains("cannot parse settings file"),
                 "{}",
                 invalid.text
             );
 
-            let missing = execute(handle.clone(), Command::Load(dir.path().join("none"))).await;
+            // A file in another format, as the host's own store refuses it.
+            std::fs::write(&path, r#"{ "output": { "kind": "fake" } }"#).unwrap();
+            let unversioned = execute(handle.clone(), Command::Load(path)).await;
             assert!(
-                missing.text.contains("cannot open file"),
+                unversioned.text.contains("no `format` field"),
                 "{}",
-                missing.text
+                unversioned.text
             );
+
+            let missing = execute(handle.clone(), Command::Load(dir.path().join("none"))).await;
+            assert!(missing.text.ends_with("no such file"), "{}", missing.text);
             assert_eq!(handle.snapshot().borrow().revision, next);
             engine.shutdown().await.unwrap();
         })
         .await;
-    }
-
-    #[test]
-    fn oversized_settings_files_are_rejected() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("big.json");
-        let size = usize::try_from(MAX_SETTINGS_BYTES).unwrap() + 1;
-        std::fs::write(&path, vec![b' '; size]).unwrap();
-        let error = read_settings(&path).unwrap_err();
-        assert!(error.to_string().contains("exceeds"));
     }
 }

@@ -68,28 +68,32 @@ into `@prysm/contracts/application`.
 | `GET /metrics` (only when enabled) | — | `200` Prometheus text; see [Metrics](#metrics). Disabled: `404` like any unknown path |
 | `GET /api/v1/capture/stream` (only with a capture handoff) | WebSocket upgrade, subprotocol `prysm-capture.v5` | `101`: a capture-only TV's frame stream; see [Capture stream](#capture-stream) |
 
-`State` is `{ target, session, input?, output_issue?, output_brightness?, device_led_count?, calibration?, settings, revision, failure, surface_failures }`.
+`State` is `{ version, target, session, input?, device, calibration?, settings, revision, failure?, surface_failures }`.
+`version` is the Prysm product version (`1.0.0`, `1.0.0-rc.1`); `revision` only counts settings replacements.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
-`settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
+`settings` is the settings file without its `format` number: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
 `processing.style.kind` is `natural`, `calm`, `vivid`, `game` or `custom`; a built-in style is stored by name only, and `custom` applies `processing.custom_style` (all seven knobs, required with `custom`, kept while another style is chosen). The built-in styles' values are not sent: the portal is built with them (`@prysm/contracts/constants`), and the [settings file](../../adapters/settings-file/README.md) describes the fields.
 A calibration's `correction` is `{ warmth, tint, midtones, red, green, blue }`, each primary `{ hue, strength }`, every control -100 to 100 and 0 when omitted ([settings file](../../adapters/settings-file/README.md)).
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
-`failure` is the last lighting failure or `null`. Setting the target to
+`failure` is the last lighting failure, absent while there is none. Setting the target to
 `processed` opens the capture (a failure is the reply); the output is opened
 at the first frame, so an output that cannot open ends the session and appears
 only in `failure`. While no frames arrive, `input.receiving` is `false`
 (waiting for video) and after a few seconds the output is returned to its own
-state until frames return. While the session runs, `output_issue` (absent when
-all is well) says why the lights are not showing its colours: `off` (switched
-off on the device), `overridden` (WLED's live override), `not_live` (the device
-is not taking realtime colours), `other_sender` or `unreachable`. It is not a
-failure: lighting keeps sending, nothing is switched back, and the field
-clears once the device shows the colours again. `output_brightness` is the
-device's own brightness while it scales the colours, and `device_led_count`
-how many LEDs the device itself says it has (WLED's LED count); Prysm keeps
-sending `settings.output.leds` either way. Both are absent while the output
-cannot tell and while no session runs.
+state until frames return.
+
+`device` is what the lights say about themselves while the session runs,
+`{ "issue"?: …, "brightness_percent"?: …, "led_count"?: … }`, each part absent
+while the output cannot tell, and `{}` while no session runs. `issue` (absent
+when all is well) says why the lights are not showing its colours: `off`
+(switched off on the device), `overridden` (WLED's live override), `not_live`
+(the device is not taking realtime colours), `other_sender` or `unreachable`.
+It is not a failure: lighting keeps sending, nothing is switched back, and the
+field clears once the device shows the colours again. `brightness_percent`
+(0-100) is the device's own brightness while it scales the colours, and
+`led_count` how many LEDs the device itself says it has (WLED's LED count);
+Prysm keeps sending `settings.output.leds` either way and changes none of them.
 
 `input`, while a session runs, is measured about once a second: `fps`
 (frames from the source per second), `receiving`, `sent_fps` (frames whose
@@ -144,7 +148,7 @@ edited as usual through `PUT /api/v1/settings` (`processing.calibrations`,
 TV shows, so the TV app and the portal follow the same `State.calibration`
 on the state stream.
 
-- `PUT /api/v1/calibration` with `{ "pattern": "gray-192", "uncorrected": false }`
+- `PUT /api/v1/calibration` with `{ "pattern": "gray_192", "uncorrected": false }`
   shows or switches the pattern. Both fields are required; unknown fields and
   patterns are `400`. It needs `target` `processed` and does not start
   lighting: otherwise `409 not_processed`.
@@ -159,11 +163,11 @@ on the state stream.
 
 | `pattern` | TV shows |
 | --- | --- |
-| `gray-192` | Light gray |
+| `gray_192` | Light gray |
 | `red`, `yellow`, `green`, `cyan`, `blue`, `magenta` | That color, full screen |
-| `blue-pair`, `red-pair`, `green-pair` | Moderate (left) and vivid (right) blue, red, green |
+| `blue_pair`, `red_pair`, `green_pair` | Moderate (left) and vivid (right) blue, red, green |
 | `coast`, `garden`, `dusk` | Peach/teal, rose/sage, amber/violet |
-| `review-grid` | A grid of colors |
+| `review_grid` | A grid of colors |
 
 ## Candidates
 
@@ -324,7 +328,7 @@ metrics and no histograms.
 
 | Name | Type | Meaning |
 | --- | --- | --- |
-| `prysm_build_info{version}` | gauge | Always 1; `version` is the crate version |
+| `prysm_build_info{version}` | gauge | Always 1; `version` is the product version, as `State.version` |
 | `prysm_target{target}` | gauge | 1 for the current target (`off`, `processed`, `device_native`), 0 for the others |
 | `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `running`, `native`, `faulted`), 0 for the others |
 | `prysm_settings_revision` | gauge | `State.revision` (random start per process) |
@@ -332,6 +336,7 @@ metrics and no histograms.
 | `prysm_frames_received_total` | counter | Frames taken from the capture source (frames from a remote TV included) |
 | `prysm_frames_sent_total` | counter | Frames whose colors were written to the output |
 | `prysm_processing_seconds_sum`, `_count` | summary | Time turning frames into colors, and how many frames |
+| `prysm_frame_flush_seconds_sum`, `_count` | summary | Per frame, from Prysm receiving it from the source to its output write returning, and how many frames |
 | `prysm_output_write_seconds_sum`, `_count` | summary | Time in output writes, and how many: frames and keep-alive rewrites, failed ones included |
 | `prysm_output_write_failures_total` | counter | Output writes that failed; each ends lighting with a failure |
 | `prysm_source_opens_total` | counter | Capture sources opened by starting lighting (also each restart after a capture or output change) |

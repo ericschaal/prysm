@@ -3,9 +3,8 @@ import {
   plainFailure,
   type Failure,
   type LightingTarget,
-  type OutputIssue,
 } from '@prysm/application-client';
-import type { DeviceBrightness, Input } from '@prysm/contracts/application';
+import type { DeviceReport, Input } from '@prysm/contracts/application';
 import { ledCountsDiffer } from './adapters';
 import { deviceBrightnessNoteBelow } from './lighting';
 import type { PathState } from './setup-card';
@@ -17,10 +16,8 @@ export interface LiveState {
   path: PathState;
   failure: Failure | null;
   input?: Input;
-  outputIssue?: OutputIssue;
-  outputBrightness?: DeviceBrightness;
-  /** How many LEDs the lights themselves say they have. */
-  deviceLedCount?: number;
+  /** What the lights say about themselves. */
+  device: DeviceReport;
 }
 
 /** What the saved lights are, beyond their identity. */
@@ -58,7 +55,8 @@ export function sectionStatus(
 ): Status {
   const capture = section === 'capture';
   const effects = lights.effects ?? 'Device effects';
-  const { path, failure, target, outputIssue } = live;
+  const { path, failure, target } = live;
+  const outputIssue = live.device.issue;
   if (identity === null)
     return {
       tone: 'idle',
@@ -129,10 +127,10 @@ export function sectionStatus(
         detail: `${Math.round(path.fps)} fps`,
         picture: true,
       };
-    const differ = ledCountsDiffer(live.deviceLedCount, lights.leds);
+    const differ = ledCountsDiffer(live.device.led_count, lights.leds);
     if (differ)
       return { tone: 'warning', title: 'LED counts differ', detail: differ };
-    const brightness = live.outputBrightness?.percent;
+    const brightness = live.device.brightness_percent;
     return {
       tone: 'ok',
       title: 'Showing screen sync',

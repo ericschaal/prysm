@@ -505,7 +505,7 @@ async fn state_read_and_set_target() {
         assert_eq!(state["session"], json!({ "state": "stopped" }));
         assert!(state["revision"].is_u64());
         assert_eq!(state["settings"]["capture"]["kind"], "fake");
-        assert_eq!(state["failure"], Value::Null);
+        assert!(state.get("failure").is_none(), "{state}");
 
         let (status, _) = portal.target("processed").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -646,7 +646,7 @@ async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
     bounded(async {
         let portal = start(fakes::settings(), Duration::from_secs(5)).await;
         let put = |body: Value| portal.json(Method::PUT, "/api/v1/calibration", body);
-        let gray = json!({ "pattern": "gray-192", "uncorrected": false });
+        let gray = json!({ "pattern": "gray_192", "uncorrected": false });
 
         // Lighting must be on first.
         let (status, body) = put(gray.clone()).await;
@@ -664,13 +664,14 @@ async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
         assert_eq!(state["revision"], before["revision"]);
         assert_eq!(state["settings"], before["settings"]);
 
-        let grid = json!({ "pattern": "review-grid", "uncorrected": true });
+        let grid = json!({ "pattern": "review_grid", "uncorrected": true });
         assert_eq!(put(grid.clone()).await.0, StatusCode::NO_CONTENT);
         assert_eq!(portal.state().await["calibration"], grid);
 
         // Closed pattern set, exact fields.
         for bad in [
             json!({ "pattern": "gray-64", "uncorrected": false }),
+            json!({ "pattern": "gray-192", "uncorrected": false }),
             json!({ "pattern": "response", "uncorrected": false }),
             json!({ "pattern": "red" }),
             json!({ "pattern": "red", "uncorrected": false, "token": "x" }),
