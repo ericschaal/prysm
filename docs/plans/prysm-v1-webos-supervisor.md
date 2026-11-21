@@ -133,7 +133,7 @@ pub struct WorkerStatus {
     pub fps: Option<u16>,                // frames/s over about a second while measured (full: session; slim: sending); 0 = waiting
     pub target: Option<LightingTarget>,  // full: the engine target, portal changes included
     pub portal: Option<String>,          // full: "http://192.168.1.5:8787/", looked up again at every heartbeat
-    pub failure: Option<WorkerFailure>,  // { kind: encoder | receiver | other, message }; message cut to 1 KiB
+    pub failure: Option<WorkerFailure>,  // { kind: encoder | receiver | version | other, message }; message cut to 1 KiB
     pub encoding: Option<SlimEncoding>,  // slim: the encoding sent while connected
     pub paused: bool,                    // slim: the receiver paused the stream; capture closed, not a failure
 }
@@ -240,8 +240,7 @@ fields marked "Full only" or "Slim only".
 ```rust,ignore
 pub struct Preferences {            // tv.json; unknown fields rejected
     pub autostart: bool,
-    pub instance: Option<String>,   // slim: remote portal origin for the TV UI, http(s)://host[:port]
-    pub receiver: Option<ReceiverAddress>, // slim: frame receiver, host:port (IP or name, resolved per connect); full rejects both
+    pub instance: Option<PrysmAddress>, // slim: the desktop Prysm, http(s)://host[:port]; frames go there and the TV UI links its portal (name resolved per connect); full rejects it
 }                                   // picture settings: the portals' (prysm-3jx.63)
 pub struct State {
     pub flavor: Flavor,             // full | slim
@@ -254,7 +253,7 @@ pub struct State {
     pub capturing: bool,
     pub fps: Option<u16>,           // the worker's frames/s while running and measured
     pub portal: Option<String>,
-    pub failure: Option<WorkerFailure>, // { kind: encoder | receiver | other, message }
+    pub failure: Option<WorkerFailure>, // { kind: encoder | receiver | version | other, message }
     pub encoding: Option<SlimEncoding>, // slim only
     pub paused: bool,               // slim only: the receiver paused the stream (lighting off)
     pub log: Vec<String>,           // last 20 worker stderr lines
