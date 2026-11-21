@@ -13,14 +13,14 @@
 # The bundle is plain JS/CSS, so it is built once on the build machine's own
 # platform. Generated contracts are checked in and CI checks them and the
 # types, so this stage only bundles and needs no Rust.
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS frontend
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS frontend
 WORKDIR /src/frontend
 COPY frontend/ ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --no-audit --no-fund \
     && npm run bundle
 
-FROM rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS build
+FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS build
 # prysm-capture-device-sys -> v4l2-sys-mit generates its bindings with bindgen.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang libclang-dev \
@@ -51,7 +51,7 @@ ARG TARGETARCH
 COPY --from=build /out/prysm-headless /prysm-headless-linux-${TARGETARCH}
 COPY --from=deb /deb/ /
 
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
 # No FFmpeg: the "file" source needs FFmpeg 9+, which Debian does not ship;
 # like the shipping image, this one offers the "device" and "remote" sources.
 # User 10001 is in "video" (GID 44 here) for --device /dev/videoN; add the

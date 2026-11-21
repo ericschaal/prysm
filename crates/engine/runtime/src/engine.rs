@@ -5,9 +5,9 @@ use crate::session::{Session, SessionEnd};
 use crate::stats::{Counters, Stats};
 use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, CalibrationPattern, Candidate, Error, IdleMode, Input, LightingTarget, Modes,
-    Processing, Registry, Result, Revision, Section, SessionPhase, SessionState, Settings,
-    SettingsStore, Snapshot, ValidationError,
+    AdapterSettings, CalibrationPattern, Candidate, DeviceReport, Error, IdleMode, Input,
+    LightingTarget, Modes, Processing, Registry, Result, Revision, Section, SessionPhase,
+    SessionState, Settings, SettingsStore, Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -484,16 +484,11 @@ impl Core {
             return;
         };
         let input = Some(running.meter.sample(&self.stats));
-        let observed = running.session.observed();
+        let device = running.session.observed();
         self.state.send_if_modified(|s| {
-            let changed = s.input != input
-                || s.output_issue != observed.issue
-                || s.output_brightness != observed.brightness
-                || s.device_led_count != observed.device_led_count;
+            let changed = s.input != input || s.device != device;
             s.input = input;
-            s.output_issue = observed.issue;
-            s.output_brightness = observed.brightness;
-            s.device_led_count = observed.device_led_count;
+            s.device = device;
             changed
         });
     }
@@ -511,9 +506,7 @@ impl Core {
         self.state.send_modify(|s| {
             s.session = session;
             s.input = None;
-            s.output_issue = None;
-            s.output_brightness = None;
-            s.device_led_count = None;
+            s.device = DeviceReport::default();
             s.failure = failure;
             if ended {
                 s.target = LightingTarget::Off;
@@ -683,9 +676,7 @@ impl Core {
         self.state.send_modify(|s| {
             s.session = state;
             s.input = None;
-            s.output_issue = None;
-            s.output_brightness = None;
-            s.device_led_count = None;
+            s.device = DeviceReport::default();
         });
         let result = end.and_then(SessionEnd::result);
         if missed {

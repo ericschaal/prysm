@@ -347,8 +347,8 @@ impl Seen {
             ));
             self.state = Some(state);
         }
-        if snapshot.output_issue != self.output_issue {
-            match snapshot.output_issue {
+        if snapshot.device.issue != self.output_issue {
+            match snapshot.device.issue {
                 Some(issue) => lines.push(format!(
                     "lights not showing Prysm, lighting continues: {issue}"
                 )),
@@ -357,7 +357,7 @@ impl Seen {
                 }
                 None => {}
             }
-            self.output_issue = snapshot.output_issue;
+            self.output_issue = snapshot.device.issue;
         }
         let failure = snapshot.failure.as_ref().map(|failure| chain(failure));
         if failure != self.failure {
@@ -404,12 +404,12 @@ mod tests {
         snapshot.session = SessionState::Running;
         snapshot.failure = None;
         let _ = seen.update(&snapshot);
-        snapshot.output_issue = Some(OutputIssue::Off);
+        snapshot.device.issue = Some(OutputIssue::Off);
         assert_eq!(
             seen.update(&snapshot),
             ["lights not showing Prysm, lighting continues: switched off on the device"]
         );
-        snapshot.output_issue = None;
+        snapshot.device.issue = None;
         assert_eq!(seen.update(&snapshot), ["lights showing Prysm again"]);
 
         snapshot.session = SessionState::Faulted(prysm_ports::SessionPhase::IdlingOutput);

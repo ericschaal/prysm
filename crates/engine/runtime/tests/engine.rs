@@ -1,7 +1,7 @@
 use prysm_ports::{
-    AdapterSettings, Behind, DeviceBrightness, Error, Latency, LightingTarget, OutputIssue,
-    Processing, Registry, Revision, Section, SessionPhase, SessionState, Settings, SettingsStore,
-    Snapshot,
+    AdapterSettings, Behind, DeviceBrightness, DeviceReport, Error, Latency, LightingTarget,
+    OutputIssue, Processing, Registry, Revision, Section, SessionPhase, SessionState, Settings,
+    SettingsStore, Snapshot,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -1022,15 +1022,15 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
         );
         let (handle, engine, _) = start(&log, overridden, DEADLINE).await;
         handle.set_target(LightingTarget::Processed).await.unwrap();
-        let reported = snapshot_until(&handle, |s| s.output_issue.is_some()).await;
-        assert_eq!(reported.output_issue, Some(OutputIssue::Overridden));
+        let reported = snapshot_until(&handle, |s| s.device.issue.is_some()).await;
+        assert_eq!(reported.device.issue, Some(OutputIssue::Overridden));
         assert_eq!(
-            reported.output_brightness,
+            reported.device.brightness,
             DeviceBrightness::from_percent(40),
             "the device's own brightness goes with the issue"
         );
         assert_eq!(
-            reported.device_led_count,
+            reported.device.led_count,
             Some(120),
             "and so does its own LED count"
         );
@@ -1043,9 +1043,7 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
         );
 
         handle.set_target(LightingTarget::Off).await.unwrap();
-        assert_eq!(handle.snapshot().borrow().output_issue, None);
-        assert_eq!(handle.snapshot().borrow().output_brightness, None);
-        assert_eq!(handle.snapshot().borrow().device_led_count, None);
+        assert_eq!(handle.snapshot().borrow().device, DeviceReport::default());
         engine.shutdown().await.unwrap();
     })
     .await;

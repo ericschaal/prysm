@@ -14,16 +14,17 @@
 //! | `:` | command bar: `on`, `off`, `native`, `load <path>`, `quit`; Enter runs, Esc cancels |
 //! | `q`, Esc, Ctrl-C, Ctrl-D | quit |
 //!
-//! `load <path>` replaces all settings with a JSON settings file at the
-//! revision on screen. In raw mode Ctrl-C is a key, not a signal: pass
-//! [`Tui::quit`] to the host's shutdown future so quitting stops the host.
+//! `load <path>` replaces all settings with a settings file at the revision
+//! on screen, read by the reader the host gives [`Tui::new`] (as it reads its
+//! own file). In raw mode Ctrl-C is a key, not a signal: pass [`Tui::quit`]
+//! to the host's shutdown future so quitting stops the host.
 //!
 //! ```no_run
 //! # async fn host(store: impl prysm_ports::SettingsStore + 'static) -> prysm_ports::Result<()> {
 //! use prysm_runtime::{NullOutput, Prysm};
 //! use prysm_surface_tui::Tui;
 //!
-//! let tui = Tui::new();
+//! let tui = Tui::new(|_path| Err(prysm_ports::Error::other("loading is not offered")));
 //! let quit = tui.quit();
 //! Prysm::builder(store)
 //!     .output(NullOutput)
@@ -41,34 +42,43 @@ mod view;
 use futures::FutureExt;
 use futures::future::{BoxFuture, Fuse, FusedFuture};
 use input::Notice;
-use prysm_ports::{Error, Result};
+use prysm_ports::{Error, Result, Settings};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use screen::{Exit, Feed, ScreenThread};
+use std::fmt;
 use std::io::{self, IsTerminal};
-use std::sync::mpsc as std_mpsc;
+use std::path::Path;
+use std::sync::{Arc, mpsc as std_mpsc};
 use tokio::sync::{mpsc, watch};
 
 /// Commands waiting while one runs; more are refused with a "busy" notice.
 const QUEUED_COMMANDS: usize = 4;
 
+/// Reads the settings file `load <path>` names. Blocking; run off the
+/// executor.
+pub(crate) type ReadSettings = Arc<dyn Fn(&Path) -> Result<Settings> + Send + Sync>;
+
 /// The terminal surface. Requires an interactive stdout; otherwise `run`
 /// fails at once without writing to it, and lighting continues.
-#[derive(Debug)]
 pub struct Tui {
     quit: watch::Sender<bool>,
+    read: ReadSettings,
 }
 
-impl Default for Tui {
-    fn default() -> Self {
-        Self::new()
+impl fmt::Debug for Tui {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tui").finish_non_exhaustive()
     }
 }
 
 impl Tui {
+    /// `read` reads the settings file `load <path>` names, as the host reads
+    /// its own; the surface knows no file format.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(read: impl Fn(&Path) -> Result<Settings> + Send + Sync + 'static) -> Self {
         Self {
             quit: watch::channel(false).0,
+            read: Arc::new(read),
         }
     }
 
@@ -99,7 +109,9 @@ impl Tui {
                 () = shutdown.requested() => break None,
                 ended = &mut screen.done => break Some(ended),
                 Some(command) = queued.recv(), if running.is_terminated() => {
-                    running = command::execute(engine.clone(), command).boxed().fuse();
+                    running = command::execute(engine.clone(), self.read.clone(), command)
+                        .boxed()
+                        .fuse();
                 }
                 notice = &mut running, if !running.is_terminated() => {
                     let _ = notify.send(notice);
@@ -156,13 +168,18 @@ mod tests {
     use prysm_runtime::{NullOutput, Prysm};
     use std::time::Duration;
 
+    /// A surface whose `load` is never used.
+    fn unread() -> Tui {
+        Tui::new(|_| Err(Error::other("not read in this test")))
+    }
+
     #[tokio::test]
     async fn without_a_terminal_the_surface_fails_and_lighting_continues() {
         if io::stdout().is_terminal() {
             return; // Only meaningful when tests run without a terminal.
         }
         let log = CallLog::new();
-        let tui = Tui::new();
+        let tui = unread();
         let quit = tui.quit();
         let mut settings = fakes::settings();
         settings.output = Some(prysm_ports::AdapterSettings::new(
@@ -202,7 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn quit_resolves_only_on_request() {
-        let tui = Tui::new();
+        let tui = unread();
         let pending = tui.quit();
         assert!(
             tokio::time::timeout(Duration::from_millis(20), pending.requested())
@@ -214,7 +231,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), quit.requested())
             .await
             .unwrap();
-        let dropped = Tui::new().quit();
+        let dropped = unread().quit();
         assert!(
             tokio::time::timeout(Duration::from_millis(20), dropped.requested())
                 .await

@@ -73,7 +73,7 @@ class Fields(unittest.TestCase):
             (prysm_api.Input, 'Input'),
             (prysm_api.Session, 'Session'),
             (prysm_api.Failure, 'Failure'),
-            (prysm_api.OutputBrightness, 'DeviceBrightness'),
+            (prysm_api.Device, 'DeviceReport'),
             (prysm_api.ModesAnswer, 'Modes'),
             (prysm_api.CaptureMode, 'Mode'),
             (prysm_api.Span, 'Span'),

@@ -14,7 +14,7 @@ pub const TIMEOUT: Duration = Duration::from_secs(10);
 /// A settings file in `dir` with only the null output: no capture, no LEDs.
 pub fn null_settings(dir: &Path) -> PathBuf {
     let path = dir.join("settings.json");
-    std::fs::write(&path, r#"{ "output": { "kind": "null" } }"#).unwrap();
+    std::fs::write(&path, r#"{ "format": 1, "output": { "kind": "null" } }"#).unwrap();
     path
 }
 
@@ -242,11 +242,11 @@ pub fn check_settings(binary: &str, name: &str) {
 
     for (settings, message) in [
         (
-            r#"{ "output": { "kind": "bogus" } }"#,
+            r#"{ "format": 1, "output": { "kind": "bogus" } }"#,
             "invalid output.kind: unknown kind `bogus`",
         ),
         (
-            r#"{ "output": { "kind": "null", "leds": 1 } }"#,
+            r#"{ "format": 1, "output": { "kind": "null", "leds": 1 } }"#,
             "cannot decode `null` settings: invalid type: integer `1`",
         ),
     ] {
@@ -256,6 +256,20 @@ pub fn check_settings(binary: &str, name: &str) {
         assert_eq!(code, Some(1), "{stderr}");
         assert!(stderr.contains(&format!("{name}: {message}")), "{stderr}");
     }
+
+    // A newer Prysm's file: its format is named, not a field it adds.
+    let newer = dir.path().join("newer.json");
+    std::fs::write(&newer, r#"{ "format": 2, "added": 1 }"#).unwrap();
+    let (code, stderr) = check(&newer);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "{name}: cannot load settings file {}: it is format 2, written by a newer Prysm; \
+             this Prysm reads format 1",
+            newer.display()
+        )),
+        "{stderr}"
+    );
 
     let missing = dir.path().join("missing.json");
     let (code, stderr) = check(&missing);

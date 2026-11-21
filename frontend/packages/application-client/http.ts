@@ -370,9 +370,12 @@ function validState(value: unknown): boolean {
   const state = value as Partial<ApplicationSnapshot<unknown, unknown>> | null;
   return (
     !!state &&
+    typeof state.version === 'string' &&
     typeof state.revision === 'number' &&
     oneOf(targets, state.target) &&
     oneOf(sessions, state.session?.state) &&
+    typeof state.device === 'object' &&
+    state.device !== null &&
     !!state.settings &&
     typeof state.settings.processing === 'object' &&
     Array.isArray(state.surface_failures)

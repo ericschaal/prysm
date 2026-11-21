@@ -178,9 +178,7 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
       path: portal.path,
       failure: snapshot.failure ?? null,
       input: snapshot.input,
-      outputIssue: snapshot.output_issue,
-      outputBrightness: snapshot.output_brightness,
-      deviceLedCount: snapshot.device_led_count,
+      device: snapshot.device,
     },
     leave: () => nav.back('settings'),
     showPreview: host.preview ? () => nav.go('preview') : undefined,
@@ -454,10 +452,8 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
       <LightCard
         target={snapshot.target}
         session={session}
-        failure={snapshot.failure}
-        outputIssue={snapshot.output_issue}
-        outputBrightness={snapshot.output_brightness}
-        deviceLedCount={snapshot.device_led_count}
+        failure={snapshot.failure ?? null}
+        device={snapshot.device}
         sentLedCount={edges ? ledCount(edges) : undefined}
         input={snapshot.input}
         hasCapture={!!capture}

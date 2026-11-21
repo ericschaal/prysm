@@ -44,7 +44,7 @@ FLICKER: list[tuple[str, str]] = [
     ('no-rerender', 'Nothing flickers or re-renders visibly while idle (the QR code stays still)'),
 ]
 
-PATTERNS = ['gray-192', 'red', 'green', 'blue', 'review-grid']
+PATTERNS = ['gray_192', 'red', 'green', 'blue', 'review_grid']
 CLEANUPS = ('dithering set back to its value before the dithering checks', 'a calibration pattern cleared')
 
 

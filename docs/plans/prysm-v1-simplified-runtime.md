@@ -171,7 +171,7 @@ pub struct EngineHandle { /* mpsc::Sender<Command>, watch::Receiver<Snapshot>, p
   arrived in that second) only when it changed.
 - Output issue: the session calls `LedOutput::observe` after every write and
   keeps its answer; the engine publishes it with the input as
-  `Snapshot::output_issue`. An adapter asks its device at its own low rate
+  `Snapshot::device.issue`. An adapter asks its device at its own low rate
   without waiting on the session thread (WLED: one connect, at most 200 ms).
 - A session that ends because its source returned `Pull::Ended` is completion:
   source released, output idled `Off`, `Stopped` with no failure, and the

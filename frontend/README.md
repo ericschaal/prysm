@@ -207,8 +207,8 @@ supervisor in each of its states and play the phone's calibration part). See the
     `#/calibrate` ("New calibration" in Calibrations, which it
     returns to; Home's chip while there are no calibrations; the TV's QR code
     points there, and leaving returns Home). Start creates a draft calibration (new, or a copy of
-    one) and makes it active; white (`gray-192`: warmth, tint), red, green
-    and blue (`red-pair`, `green-pair`, `blue-pair`: two sliders each, named
+    one) and makes it active; white (`gray_192`: warmth, tint), red, green
+    and blue (`red_pair`, `green_pair`, `blue_pair`: two sliders each, named
     by their ends), checks without sliders (`yellow`, `cyan`, `magenta`,
     `coast`, `garden`, `dusk`: "Looks right", or a link to a colour it is made
     of, which comes back to the check) and a review each show their pattern
