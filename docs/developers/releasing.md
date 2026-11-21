@@ -48,11 +48,27 @@ release, and its first release pull request sets both to `1.0.0`.
    titles. [release-please.yml](../../.github/workflows/release-please.yml)
    keeps a release pull request open with the next version and the changelog:
    `fix:` bumps the patch, `feat:` the minor, a breaking change (`!`) the major.
-   To choose the version yourself, put `Release-As: 1.2.3` in the body of a
-   commit on `main`. **The first 1.x release:** from the 0.2.0 manifest, a
-   breaking squash title such as `feat!: …` already gives 1.0.0; also put
-   `Release-As: 1.0.0` in the squash-merge body, so the version does not
-   depend on the title.
+   **To choose the version yourself**, put this block in the description of a
+   pull request before you squash-merge it (the description becomes the
+   commit body, and Release Please reads the block instead of it):
+
+   ```text
+   BEGIN_COMMIT_OVERRIDE
+   docs: what the pull request does
+
+   Release-As: 1.2.3
+   END_COMMIT_OVERRIDE
+   ```
+
+   A bare `Release-As:` line in a description is not reliable: after a
+   `BREAKING CHANGE:` note it is read as part of that note and ignored. The
+   block also works afterwards: add it to the merged pull request's
+   description and run the workflow again.
+
+   **Release candidates.** A version with a suffix (`1.0.0-rc.1`) is published
+   as a pre-release. After one, Release Please proposes the next patch
+   pre-release (`1.0.1-rc.1`), so every further candidate (`1.0.0-rc.2`) and
+   the final version (`1.0.0`) need the block.
 2. Review and merge the release pull request. Release Please then creates the
    tag `v<version>` and a draft GitHub release with the changelog.
 3. The tag starts [release.yml](../../.github/workflows/release.yml):
