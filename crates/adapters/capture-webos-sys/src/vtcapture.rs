@@ -108,37 +108,53 @@ api!(VtApi {
 
 /// Load `libvtcapture` on first use and keep it for the life of the process.
 fn vt() -> Result<&'static VtApi, Error> {
-    static VT: Mutex<(Option<&'static Library>, Option<&'static VtApi>)> = Mutex::new((None, None));
-    let mut slot = VT.lock().unwrap_or_else(PoisonError::into_inner);
-    let (library_slot, api_slot) = &mut *slot;
-    if let Some(api) = *api_slot {
-        return Ok(api);
-    }
+    static VT: Mutex<Loaded<VtApi>> = Mutex::new(Loaded::Nothing);
     let names = ["libvtcapture.so.1", "libvtcapture.so"];
     // Never unloaded: the vendor code can leave threads running and global
     // pointers set, after a failed create or even after a release.
-    let library = library(library_slot, &names)?;
-    let api: &'static VtApi = Box::leak(Box::new(VtApi::load(library, &names)?));
-    *api_slot = Some(api);
+    load_once(&VT, &names, |library| VtApi::load(library, &names))
+}
+
+/// How far loading a library and its entry points `A` has come.
+pub(crate) enum Loaded<A: 'static> {
+    Nothing,
+    /// The library loaded but an entry point was missing.
+    Library(&'static Library),
+    Api(&'static A),
+}
+
+/// The entry points `symbols` reads from the first of `names` that loads.
+/// Library and entry points are kept in `slot` and never unloaded; a retry
+/// after a missing symbol reuses the library instead of loading, and
+/// leaking, another handle.
+pub(crate) fn load_once<A>(
+    slot: &Mutex<Loaded<A>>,
+    names: &[&str],
+    symbols: impl FnOnce(&'static Library) -> Result<A, Error>,
+) -> Result<&'static A, Error> {
+    let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+    let library = match *slot {
+        Loaded::Api(api) => return Ok(api),
+        Loaded::Library(library) => library,
+        Loaded::Nothing => {
+            let library: &'static Library = Box::leak(Box::new(open(names)?));
+            *slot = Loaded::Library(library);
+            library
+        }
+    };
+    let api: &'static A = Box::leak(Box::new(symbols(library)?));
+    *slot = Loaded::Api(api);
     Ok(api)
 }
 
-/// The first of `names` that loads, kept in `slot` and never unloaded. A
-/// later attempt (after a missing symbol) reuses it instead of loading, and
-/// leaking, another handle.
-pub(crate) fn library(
-    slot: &mut Option<&'static Library>,
-    names: &[&str],
-) -> Result<&'static Library, Error> {
-    if let Some(library) = *slot {
-        return Ok(library);
-    }
+/// The first of `names` that loads.
+fn open(names: &[&str]) -> Result<Library, Error> {
     let mut last = None;
     for name in names {
         // SAFETY: only known LG system libraries are loaded. Their constructors
         // require root and run on the thread that also captures and releases.
         match unsafe { Library::new(*name) } {
-            Ok(library) => return Ok(slot.insert(Box::leak(Box::new(library)))),
+            Ok(library) => return Ok(library),
             Err(error) => last = Some(error),
         }
     }

@@ -22,15 +22,10 @@ fn script(path: &Path, body: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// `result` is an error whose message contains `expected`; a failure shows
-/// the error with its causes.
+/// `result` is an error that `expected` accepts; a failure shows the result.
 #[track_caller]
-fn assert_fails_with(result: Result<()>, expected: &str) {
-    let error = result.expect_err(expected);
-    assert!(
-        error.to_string().contains(expected),
-        "expected {expected:?}, got {error:?}"
-    );
+fn assert_fails(result: Result<()>, expected: impl Fn(&InstallError) -> bool) {
+    assert!(matches!(&result, Err(e) if expected(e)), "got {result:?}");
 }
 
 fn sandbox() -> Sandbox {
@@ -144,8 +139,10 @@ fn unrelated_files_are_never_replaced_or_removed() {
     let mut s = sandbox();
     let manifest = s.path("manifests.d/io.prysm.tv.worker.json");
     fs::write(&manifest, r#"{"id":"someone.else"}"#).unwrap();
-    assert_fails_with(s.installer.install(), "unrelated Luna manifest");
-    assert_fails_with(s.installer.uninstall(), "unrelated Luna manifest");
+    let unrelated =
+        |e: &InstallError| matches!(e, InstallError::UnrelatedManifest(p) if *p == manifest);
+    assert_fails(s.installer.install(), unrelated);
+    assert_fails(s.installer.uninstall(), unrelated);
     assert_eq!(
         fs::read_to_string(&manifest).unwrap(),
         r#"{"id":"someone.else"}"#
@@ -154,27 +151,34 @@ fn unrelated_files_are_never_replaced_or_removed() {
 
     fs::create_dir_all(s.path("init.d")).unwrap();
     fs::write(s.path("init.d/io.prysm.tv"), "#!/bin/sh\nother\n").unwrap();
-    assert_fails_with(s.installer.install(), "unrelated boot hook");
-    assert_fails_with(s.installer.uninstall(), "unrelated boot hook");
+    let hook = s.path("init.d/io.prysm.tv");
+    let unrelated = |e: &InstallError| matches!(e, InstallError::UnrelatedHook(p) if *p == hook);
+    assert_fails(s.installer.install(), unrelated);
+    assert_fails(s.installer.uninstall(), unrelated);
     assert_eq!(s.read("init.d/io.prysm.tv"), "#!/bin/sh\nother\n");
 
     fs::remove_file(s.path("init.d/io.prysm.tv")).unwrap();
     nix::unistd::mkfifo(&s.path("init.d/io.prysm.tv"), nix::sys::stat::Mode::S_IRUSR).unwrap();
-    assert!(
-        s.installer.install().is_err(),
-        "a FIFO is refused without blocking"
-    );
+    // A FIFO is refused without blocking.
+    assert_fails(s.installer.install(), |e| {
+        matches!(e, InstallError::Hook { .. })
+    });
 }
 
 #[test]
 fn rescan_failures_and_hangs_are_errors() {
     let mut s = sandbox();
     script(&s.path("ls-control"), "exit 4");
-    assert_fails_with(s.installer.install(), "rescan failed");
+    assert_fails(
+        s.installer.install(),
+        |e| matches!(e, InstallError::Rescan(status) if status.code() == Some(4)),
+    );
     script(&s.path("ls-control"), "sleep 5");
     s.installer.timeout = Duration::from_millis(200);
     let started = Instant::now();
-    assert_fails_with(s.installer.install(), "did not finish");
+    assert_fails(s.installer.install(), |e| {
+        matches!(e, InstallError::Timeout { .. })
+    });
     assert!(started.elapsed() < Duration::from_secs(3));
 }
 
@@ -190,21 +194,33 @@ fn activation_asks_for_state_and_checks_the_reply() {
         &s.path("luna-send"),
         "echo '{\"returnValue\":false,\"errorText\":\"denied\"}'",
     );
-    assert_fails_with(s.installer.activate("x"), "denied");
+    assert_fails(
+        s.installer.activate("x"),
+        |e| matches!(e, InstallError::ActivationRefused(reply) if reply["errorText"] == "denied"),
+    );
     script(&s.path("luna-send"), "exit 1");
-    assert!(s.installer.activate("x").is_err());
+    assert_fails(
+        s.installer.activate("x"),
+        |e| matches!(e, InstallError::Activation(status) if status.code() == Some(1)),
+    );
 }
 
 #[test]
 fn activation_requires_an_explicit_success_reply() {
     assert!(activation_reply(br#"{"returnValue":true}"#).is_ok());
+    assert_fails(activation_reply(b""), |e| {
+        matches!(e, InstallError::InvalidReply(_))
+    });
     for value in [
-        b"".as_slice(),
-        b"null",
+        b"null".as_slice(),
         b"{}",
         br#"{"returnValue":false,"errorText":"denied"}"#,
     ] {
-        assert!(activation_reply(value).is_err());
+        assert_fails(activation_reply(value), |e| {
+            matches!(e, InstallError::ActivationRefused(_))
+        });
     }
-    assert!(activation_reply(&vec![b' '; MAX_REPLY + 1]).is_err());
+    assert_fails(activation_reply(&vec![b' '; MAX_REPLY + 1]), |e| {
+        matches!(e, InstallError::OversizedReply)
+    });
 }

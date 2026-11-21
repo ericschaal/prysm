@@ -9,14 +9,13 @@
 //! capture and release must all run on one thread; [`UiCapture`] is not
 //! `Send`. The library is loaded once and never unloaded: unloading it leaks
 //! file descriptors.
-use crate::vtcapture::{Error, library};
-use libloading::Library;
+use crate::vtcapture::{Error, Loaded, load_once};
 use std::ffi::c_int;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 /// One HAL GAL surface (`HAL_GAL_SURFACE`).
 #[repr(C)]
@@ -70,40 +69,32 @@ pub(crate) struct HalApi {
 
 /// Load `libhalgal` on first use and keep it for the life of the process.
 fn hal() -> Result<&'static HalApi, Error> {
-    static HAL: Mutex<(Option<&'static Library>, Option<&'static HalApi>)> =
-        Mutex::new((None, None));
-    let mut slot = HAL.lock().unwrap_or_else(PoisonError::into_inner);
-    let (library_slot, api_slot) = &mut *slot;
-    if let Some(api) = *api_slot {
-        return Ok(api);
-    }
+    static HAL: Mutex<Loaded<HalApi>> = Mutex::new(Loaded::Nothing);
     let names = ["libhalgal.so.1", "libhalgal.so"];
     // Never unloaded, not even when a symbol is missing: unloading libhalgal
     // leaks file descriptors. A retry reuses the loaded library.
-    let library = library(library_slot, &names)?;
-    let symbol = |source| Error::Load {
-        library: names.join(" or "),
-        source,
-    };
-    // SAFETY: the signatures match halgal.h. The library is leaked, so the
-    // function pointers stay valid for the life of the process.
-    let api = unsafe {
-        HalApi {
-            init: *library.get::<HalInit>(b"HAL_GAL_Init\0").map_err(symbol)?,
-            create: *library
-                .get::<HalCreate>(b"HAL_GAL_CreateSurface\0")
-                .map_err(symbol)?,
-            destroy: *library
-                .get::<HalSurfaceCall>(b"HAL_GAL_DestroySurface\0")
-                .map_err(symbol)?,
-            capture: *library
-                .get::<HalSurfaceCall>(b"HAL_GAL_CaptureFrameBuffer\0")
-                .map_err(symbol)?,
+    load_once(&HAL, &names, |library| {
+        let symbol = |source| Error::Load {
+            library: names.join(" or "),
+            source,
+        };
+        // SAFETY: the signatures match halgal.h. The library is leaked, so the
+        // function pointers stay valid for the life of the process.
+        unsafe {
+            Ok(HalApi {
+                init: *library.get::<HalInit>(b"HAL_GAL_Init\0").map_err(symbol)?,
+                create: *library
+                    .get::<HalCreate>(b"HAL_GAL_CreateSurface\0")
+                    .map_err(symbol)?,
+                destroy: *library
+                    .get::<HalSurfaceCall>(b"HAL_GAL_DestroySurface\0")
+                    .map_err(symbol)?,
+                capture: *library
+                    .get::<HalSurfaceCall>(b"HAL_GAL_CaptureFrameBuffer\0")
+                    .map_err(symbol)?,
+            })
         }
-    };
-    let api: &'static HalApi = Box::leak(Box::new(api));
-    *api_slot = Some(api);
-    Ok(api)
+    })
 }
 
 fn status(code: c_int, operation: &'static str) -> Result<(), Error> {
