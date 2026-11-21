@@ -31,10 +31,10 @@ pub enum CaptureError {
     },
     /// macOS has not granted the process camera access, which capture cards
     /// need too; the device is not opened.
-    #[error("camera access is not granted: {0}")]
-    NoCameraAccess(CameraAccess),
-    /// The device kept delivering buffers, none of them usable, for
-    /// several seconds; `source` is why the last one was not.
+    #[error("camera access is not granted")]
+    NoCameraAccess(#[source] CameraAccess),
+    /// The device kept delivering buffers without a gap, none of them
+    /// usable, for several seconds; `source` is why the last one was not.
     #[error("capture device delivered {rejected} unusable buffers in a row")]
     Unusable {
         rejected: u32,
@@ -67,6 +67,13 @@ pub enum CameraAccess {
     #[error("macOS got no answer to its request in time; allow access and start the lights again")]
     Unanswered,
 }
+
+/// How long opening on macOS waits for an answer to the camera access
+/// request: long enough to read the request and answer it. It is shorter
+/// than the device adapter's readiness deadline (the adapter asserts this),
+/// so no answer is reported as [`CameraAccess::Unanswered`] rather than a
+/// timeout. After a late answer, session start gets the time that remains.
+pub const CAMERA_ACCESS_WAIT: std::time::Duration = std::time::Duration::from_secs(7);
 
 /// Why a buffer the device delivered could not be used as a frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -184,6 +191,14 @@ mod tests {
                 .chain()
                 .find_map(|cause| cause.downcast_ref::<BufferRejection>()),
             Some(&BufferRejection::Corrupted)
+        );
+        let refused = CaptureError::NoCameraAccess(CameraAccess::Denied);
+        let refused = anyhow::Error::new(refused).context("starting camera");
+        assert_eq!(
+            refused
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<CameraAccess>()),
+            Some(&CameraAccess::Denied)
         );
     }
 }

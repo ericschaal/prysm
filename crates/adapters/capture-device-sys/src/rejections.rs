@@ -1,18 +1,24 @@
-//! Consecutive buffers the device delivered but capture could not use. One
+//! Buffers the device delivered without a gap but capture could not use. One
 //! is dropped quietly; a run of them ends capture with
 //! [`CaptureError::Unusable`], so the stream does not look alive while
-//! delivering nothing.
+//! delivering nothing. A frame or a stall (no buffer within the dequeue
+//! timeout) ends the run, so a source that is off and yields a bad buffer
+//! now and then stays "waiting for video".
 use crate::{BufferRejection, CaptureError, Result};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
+
+/// [`UNUSABLE_FOR`] in whole seconds.
+const UNUSABLE_SECONDS: u32 = 3;
 
 /// How long a run of unusable buffers lasts before capture fails. Several
 /// seconds, so a signal resync (a few corrupted frames) passes, and a fast
 /// burst (such as error-flagged buffers a disappearing device may return
 /// before its node goes and DQBUF says ENODEV) does not fail early. The
-/// count bound (this long's worth of buffers) keeps a few buffers far apart,
-/// either side of stalls, from failing.
-pub(crate) const UNUSABLE_FOR: Duration = Duration::from_secs(3);
+/// count bound (this long's worth of buffers at the configured rate) keeps a
+/// device that delivers bad buffers well below its rate, without stalling,
+/// from failing after only a few of them.
+const UNUSABLE_FOR: Duration = Duration::from_secs(UNUSABLE_SECONDS as u64);
 
 pub(crate) struct Rejections {
     /// Buffers in [`UNUSABLE_FOR`] at the configured rate.
@@ -23,9 +29,8 @@ pub(crate) struct Rejections {
 
 impl Rejections {
     pub(crate) fn new(rate: NonZeroU32) -> Self {
-        let seconds = u32::try_from(UNUSABLE_FOR.as_secs()).expect("a few seconds");
         Self {
-            limit: rate.get().saturating_mul(seconds),
+            limit: rate.get().saturating_mul(UNUSABLE_SECONDS),
             rejected: 0,
             since: None,
         }
@@ -33,6 +38,16 @@ impl Rejections {
 
     /// A frame was delivered: the run is over.
     pub(crate) fn accepted(&mut self) {
+        self.end_run();
+    }
+
+    /// No buffer arrived within the dequeue timeout: buffers either side of
+    /// the gap are not in a row.
+    pub(crate) fn stalled(&mut self) {
+        self.end_run();
+    }
+
+    fn end_run(&mut self) {
         self.rejected = 0;
         self.since = None;
     }
@@ -72,30 +87,18 @@ mod tests {
     /// Buffers at `RATE` in [`UNUSABLE_FOR`].
     const LIMIT: u32 = 6;
 
-    #[test]
-    fn a_single_unusable_buffer_is_harmless() {
-        let mut rejections = Rejections::new(RATE);
+    /// Checks that `end` ends a run: neither its count nor its start carries
+    /// into the next one.
+    fn assert_ends_the_run(end: fn(&mut Rejections)) {
         let start = Instant::now();
-        rejections
-            .rejected(BufferRejection::Corrupted, start)
-            .unwrap();
-        // However long ago, one buffer is not a run.
-        rejections.accepted();
-        rejections
-            .rejected(BufferRejection::Corrupted, start + UNUSABLE_FOR * 10)
-            .unwrap();
-    }
-
-    #[test]
-    fn a_delivered_frame_ends_the_run() {
+        // The count: one short of it either side, far apart in time.
         let mut rejections = Rejections::new(RATE);
-        let start = Instant::now();
         for buffer in 0..LIMIT - 1 {
             rejections
                 .rejected(BufferRejection::Corrupted, start + UNUSABLE_FOR * buffer)
                 .unwrap();
         }
-        rejections.accepted();
+        end(&mut rejections);
         for buffer in 0..LIMIT - 1 {
             rejections
                 .rejected(
@@ -104,6 +107,27 @@ mod tests {
                 )
                 .unwrap();
         }
+        // The start: a single old buffer, then twice the count at one instant.
+        let mut rejections = Rejections::new(RATE);
+        rejections
+            .rejected(BufferRejection::Corrupted, start)
+            .unwrap();
+        end(&mut rejections);
+        for _ in 0..LIMIT * 2 {
+            rejections
+                .rejected(BufferRejection::Corrupted, start + UNUSABLE_FOR * 10)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn a_delivered_frame_ends_the_run() {
+        assert_ends_the_run(Rejections::accepted);
+    }
+
+    #[test]
+    fn a_stall_ends_the_run() {
+        assert_ends_the_run(Rejections::stalled);
     }
 
     #[test]
@@ -137,7 +161,7 @@ mod tests {
             }
         );
         assert_eq!(
-            chain(&error),
+            prysm_ports::chain(&error),
             "capture device delivered 7 unusable buffers in a row: \
              buffer held 10 of the 20 bytes of a frame"
         );
@@ -163,17 +187,19 @@ mod tests {
 
     #[test]
     fn a_slow_run_waits_for_its_count() {
-        // Buffers far apart, such as either side of stalls, need the count too.
+        // A bad buffer every second: below `RATE`, but closer together than
+        // the dequeue timeout, so no stall ends the run.
         let mut rejections = Rejections::new(RATE);
         let start = Instant::now();
+        let period = Duration::from_secs(1);
         for buffer in 0..LIMIT - 1 {
             rejections
-                .rejected(BufferRejection::Corrupted, start + UNUSABLE_FOR * buffer)
+                .rejected(BufferRejection::Corrupted, start + period * buffer)
                 .unwrap();
         }
         assert!(
             rejections
-                .rejected(BufferRejection::Corrupted, start + UNUSABLE_FOR * LIMIT)
+                .rejected(BufferRejection::Corrupted, start + period * (LIMIT - 1))
                 .is_err()
         );
     }
@@ -190,17 +216,5 @@ mod tests {
             }
         );
         assert_eq!(rejection(false, 20, 20), BufferRejection::Unreadable);
-    }
-
-    /// The error and its causes, joined as people read them.
-    fn chain(error: &CaptureError) -> String {
-        let mut text = error.to_string();
-        let mut cause = std::error::Error::source(error);
-        while let Some(next) = cause {
-            text.push_str(": ");
-            text.push_str(&next.to_string());
-            cause = next.source();
-        }
-        text
     }
 }

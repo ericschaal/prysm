@@ -408,14 +408,8 @@ fn frame_duration(range: &AVFrameRateRange, fps: NonZeroU32) -> Option<CMTime> {
     }
 }
 
-/// How long opening waits for an answer to macOS's camera access request:
-/// within the device adapter's 10 s readiness deadline, so the user sees
-/// [`CameraAccess::Unanswered`] rather than a timeout, and long enough to
-/// read the request and answer it.
-const ACCESS_WAIT: Duration = Duration::from_secs(7);
-
 /// Where macOS's camera access request stands.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Request {
     NotMade,
     Answered,
@@ -456,19 +450,31 @@ fn camera_access(sink: &Arc<dyn CaptureSink>) -> Result<bool> {
         let answered = answered.clone();
         move |_| answered.store(true, Ordering::Release)
     });
-    let asked = Instant::now();
-    let request = loop {
-        if answered.load(Ordering::Acquire) {
-            break Request::Answered;
-        }
-        if asked.elapsed() >= ACCESS_WAIT {
-            break Request::TimedOut;
-        }
-        if sink.should_stop(FAILURE_POLL) {
-            return Ok(false);
-        }
+    let Some(request) = wait_for_answer(&answered, sink.as_ref(), crate::CAMERA_ACCESS_WAIT) else {
+        return Ok(false);
     };
     access(status(), request).map_err(CaptureError::NoCameraAccess)
+}
+
+/// Waits up to `limit` for `answered`: `Answered` or `TimedOut`, or `None`
+/// when `sink` stops first.
+fn wait_for_answer(
+    answered: &AtomicBool,
+    sink: &dyn CaptureSink,
+    limit: Duration,
+) -> Option<Request> {
+    let asked = Instant::now();
+    loop {
+        if answered.load(Ordering::Acquire) {
+            return Some(Request::Answered);
+        }
+        if asked.elapsed() >= limit {
+            return Some(Request::TimedOut);
+        }
+        if sink.should_stop(FAILURE_POLL) {
+            return None;
+        }
+    }
 }
 
 fn start_session(
@@ -749,6 +755,40 @@ mod tests {
                 "unknown: AVFoundation decides"
             );
         }
+    }
+
+    /// A sink asked to stop.
+    struct Stopped;
+
+    impl CaptureSink for Stopped {
+        fn ready(&self) {}
+        fn frame(&self, _: Frame) {}
+        fn should_stop(&self, _: Duration) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn waiting_for_access_ends_answered_timed_out_or_stopped() {
+        let limit = FAILURE_POLL * 2;
+        let answered = AtomicBool::new(true);
+        assert_eq!(
+            wait_for_answer(&answered, &crate::device::Discard, limit),
+            Some(Request::Answered)
+        );
+
+        let unanswered = AtomicBool::new(false);
+        let waiting = Instant::now();
+        assert_eq!(
+            wait_for_answer(&unanswered, &crate::device::Discard, limit),
+            Some(Request::TimedOut)
+        );
+        assert!(waiting.elapsed() >= limit, "waits for the whole limit");
+
+        assert_eq!(
+            wait_for_answer(&unanswered, &Stopped, crate::CAMERA_ACCESS_WAIT),
+            None
+        );
     }
 
     #[test]

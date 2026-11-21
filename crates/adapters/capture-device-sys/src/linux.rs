@@ -439,6 +439,7 @@ pub(crate) fn run(
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
                     stats.failure();
+                    rejections.stalled();
                     stream.stop().map_err(|error| {
                         stream_failed(error, "failed to stop stalled capture stream")
                     })?;

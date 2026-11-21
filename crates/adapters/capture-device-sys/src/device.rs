@@ -76,8 +76,9 @@ pub fn list_formats(device: &str) -> Option<Vec<prysm_ports::Mode>> {
 /// the device. Any other error: capture failed and the device was released.
 /// A device unplugged while capturing is [`CaptureError::Disconnected`]; it
 /// is released, since a device that is gone holds nothing. On Linux, a device
-/// whose buffers are all unusable for several seconds (corrupted or short)
-/// is [`CaptureError::Unusable`], with the last buffer's
+/// that delivers only unusable buffers (corrupted, short or unreadable),
+/// without a stall, for 3 s and that long's worth of frames is
+/// [`CaptureError::Unusable`], with the last buffer's
 /// [`crate::BufferRejection`]; a single unusable buffer is dropped.
 pub fn capture(
     device: Option<&str>,
