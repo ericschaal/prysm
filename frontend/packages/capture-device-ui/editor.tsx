@@ -4,14 +4,27 @@ import {
   DeviceRows,
   nothingOffered,
   PictureChoice,
+  presetRates,
   TextField,
   useCaptureModes,
   type EditorProps,
+  type ModesState,
 } from '@prysm/web-portal';
 import { deviceDefaults } from './settings';
 
 /** How long typing pauses before the typed device is asked about. */
 export const typedDeviceMs = 400;
+
+/**
+ * Why the device leaves nothing to choose, if it does: it lists nothing
+ * Prysm captures, or nothing at a preset's rate and size.
+ */
+function problemOf(modes: ModesState) {
+  if (modes.state !== 'known' || !nothingOffered(modes)) return undefined;
+  return modes.modes.length === 0
+    ? 'This device offers no picture Prysm can use.'
+    : `This device doesn’t offer ${presetRates} at a size Prysm can use.`;
+}
 
 /**
  * The device as rows from discovery (typed under Advanced), then its sizes
@@ -38,11 +51,7 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
       legend="Device"
       value={path}
       missing={modes.state === 'unknown' ? 'Not plugged in' : undefined}
-      problem={
-        asked && nothingOffered(modes)
-          ? 'Prysm can’t capture from this device.'
-          : undefined
-      }
+      problem={asked ? problemOf(modes) : undefined}
       onPick={pick}
       byHand={
         <TextField

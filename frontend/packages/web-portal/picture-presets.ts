@@ -41,6 +41,14 @@ export const presetOrder: readonly PicturePreset[] = [
   'efficient',
 ];
 
+const rates = presetOrder
+  .map((preset) => picturePresets[preset].fps)
+  .filter((fps, at, all) => all.indexOf(fps) === at)
+  .sort((a, b) => a - b);
+
+/** The rates the presets aim for, in words: `30 or 60 fps`. */
+export const presetRates = `${rates.join(' or ')}\u00a0fps`;
+
 /** The row for a saved size and rate no preset sets: shown, not chosen. */
 export const customPicture = {
   label: 'Custom',

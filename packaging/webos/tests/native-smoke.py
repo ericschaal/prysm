@@ -52,7 +52,8 @@ BINARIES = {
     'full': ('prysm-webos-service', 'prysm-webos'),
     'slim': ('prysm-webos-slim-service', 'prysm-webos-slim'),
 }
-STATUS = json.dumps({'type': 'status', 'capturing': False, 'target': None, 'portal': None, 'failure': None})
+STATUS = json.dumps({'type': 'status', 'capturing': False, 'target': None, 'portal': None, 'failure': None,
+                     'paused': False})
 
 
 def fake_worker(ignore_term):
@@ -262,7 +263,7 @@ def exercise_worker(args, remote, state, directory, worker):
         remote.run(f'test -f {directory}/state/tv.json')
     value = remote.luna('setEnabled', {'enabled': True}, **app)
     assert value['returnValue'] is True, value
-    value = eventually(state, lambda v: v['worker'] == 'running', 'worker running (is the TV on?)', 15)
+    value = eventually(state, lambda v: v['worker'] == {'phase': 'running'}, 'worker running (is the TV on?)', 15)
     assert remote.pids(worker), 'no worker process'
     passed('worker spawned: ' + json.dumps(value))
     if not args.capture:

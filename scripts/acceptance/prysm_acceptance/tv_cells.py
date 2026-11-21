@@ -190,7 +190,7 @@ def artifact(cell: TvCell, config: Config, bench: Bench, request: pytest.Fixture
         pytest.fail(f'{ipk.name} is refused by ipk.py verify: {(verified.stderr or verified.stdout)[-500:]}')
     found = artifacts.inspect(ipk)
     facts = found.facts()
-    warning = artifacts.older_than_checkout(found, bench.transport)
+    warning = artifacts.stale(found, bench.transport)
     if warning:
         facts['warning'] = warning
         warnings.warn(warning, stacklevel=1)
