@@ -86,7 +86,9 @@ def stale(artifact: Artifact, transport: Transport) -> str | None:
         if artifact.entry['commit'] != head:
             return f'{artifact.path.name} was built from {artifact.entry["commit"]}, not HEAD {head}: rebuild it?'
         dirty = artifact.entry['dirty']
-        return f'{artifact.path.name} was built from a tree with uncommitted changes: rebuild it?' if dirty else None
+        # Untracked files count too, so a rebuild alone does not clear this.
+        changes = 'uncommitted changes or untracked files: commit or remove them, then rebuild'
+        return f'{artifact.path.name} was built from a tree with {changes}' if dirty else None
     try:
         committed = datetime.datetime.fromisoformat(time)
     except ValueError:
