@@ -409,9 +409,10 @@ fn frame_duration(range: &AVFrameRateRange, fps: NonZeroU32) -> Option<CMTime> {
 }
 
 /// How long opening waits for an answer to macOS's camera access request:
-/// well within the device adapter's 10 s readiness deadline, so the user sees
-/// [`CameraAccess::Unanswered`] rather than a timeout.
-const ACCESS_WAIT: Duration = Duration::from_secs(5);
+/// within the device adapter's 10 s readiness deadline, so the user sees
+/// [`CameraAccess::Unanswered`] rather than a timeout, and long enough to
+/// read the request and answer it.
+const ACCESS_WAIT: Duration = Duration::from_secs(7);
 
 /// What an authorization status means for opening: `Ok(true)` to open,
 /// `Ok(false)` to ask first (only before `asked`). A status this crate does
