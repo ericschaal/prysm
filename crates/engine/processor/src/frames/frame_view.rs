@@ -11,17 +11,19 @@ pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
     if x >= frame.width() || y >= frame.height() {
         return 0;
     }
+    // In `usize`, where a validated frame's index cannot overflow; checked
+    // because MJPEG dimensions are not validated.
+    let Some(pixel) = (y as usize)
+        .checked_mul(frame.width() as usize)
+        .and_then(|row| row.checked_add(x as usize))
+    else {
+        return 0;
+    };
     match frame.format() {
-        PixelFormat::YUYV { .. } => {
-            let idx = ((y * frame.width() + x) * 2) as usize;
-            frame.as_slice().get(idx).copied().unwrap_or(0)
-        }
-        PixelFormat::NV12 { .. } => {
-            let idx = y as usize * frame.width() as usize + x as usize;
-            frame.as_slice().get(idx).copied().unwrap_or(0)
-        }
+        PixelFormat::YUYV { .. } => frame.as_slice().get(pixel * 2).copied().unwrap_or(0),
+        PixelFormat::NV12 { .. } => frame.as_slice().get(pixel).copied().unwrap_or(0),
         PixelFormat::RGB24 | PixelFormat::BGR24 => {
-            let idx = ((y * frame.width() + x) * 3) as usize;
+            let idx = pixel * 3;
             match frame.as_slice().get(idx..idx + 3) {
                 Some(px) => px[0].max(px[1]).max(px[2]),
                 None => 0,

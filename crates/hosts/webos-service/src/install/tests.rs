@@ -7,9 +7,30 @@ struct Sandbox {
     installer: FsInstaller,
 }
 
+/// Write an executable script from a child process. A write descriptor in
+/// this multithreaded process would be copied into any child another test
+/// forks meanwhile and stay open until that child execs, so executing the
+/// script then could fail with ETXTBSY ("Text file busy").
 fn script(path: &Path, body: &str) {
-    fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    let status = Command::new("/bin/sh")
+        .args(["-c", "printf '#!/bin/sh\\n%s\\n' \"$1\" > \"$0\""])
+        .arg(path)
+        .arg(body)
+        .status()
+        .unwrap();
+    assert!(status.success(), "{status}");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `result` is an error whose message contains `expected`; a failure shows
+/// the error with its causes.
+#[track_caller]
+fn assert_fails_with(result: Result<()>, expected: &str) {
+    let error = result.expect_err(expected);
+    assert!(
+        error.to_string().contains(expected),
+        "expected {expected:?}, got {error:?}"
+    );
 }
 
 fn sandbox() -> Sandbox {
@@ -123,20 +144,8 @@ fn unrelated_files_are_never_replaced_or_removed() {
     let mut s = sandbox();
     let manifest = s.path("manifests.d/io.prysm.tv.worker.json");
     fs::write(&manifest, r#"{"id":"someone.else"}"#).unwrap();
-    assert!(
-        s.installer
-            .install()
-            .unwrap_err()
-            .to_string()
-            .contains("unrelated Luna manifest")
-    );
-    assert!(
-        s.installer
-            .uninstall()
-            .unwrap_err()
-            .to_string()
-            .contains("unrelated Luna manifest")
-    );
+    assert_fails_with(s.installer.install(), "unrelated Luna manifest");
+    assert_fails_with(s.installer.uninstall(), "unrelated Luna manifest");
     assert_eq!(
         fs::read_to_string(&manifest).unwrap(),
         r#"{"id":"someone.else"}"#
@@ -145,20 +154,8 @@ fn unrelated_files_are_never_replaced_or_removed() {
 
     fs::create_dir_all(s.path("init.d")).unwrap();
     fs::write(s.path("init.d/io.prysm.tv"), "#!/bin/sh\nother\n").unwrap();
-    assert!(
-        s.installer
-            .install()
-            .unwrap_err()
-            .to_string()
-            .contains("unrelated boot hook")
-    );
-    assert!(
-        s.installer
-            .uninstall()
-            .unwrap_err()
-            .to_string()
-            .contains("unrelated boot hook")
-    );
+    assert_fails_with(s.installer.install(), "unrelated boot hook");
+    assert_fails_with(s.installer.uninstall(), "unrelated boot hook");
     assert_eq!(s.read("init.d/io.prysm.tv"), "#!/bin/sh\nother\n");
 
     fs::remove_file(s.path("init.d/io.prysm.tv")).unwrap();
@@ -173,23 +170,11 @@ fn unrelated_files_are_never_replaced_or_removed() {
 fn rescan_failures_and_hangs_are_errors() {
     let mut s = sandbox();
     script(&s.path("ls-control"), "exit 4");
-    assert!(
-        s.installer
-            .install()
-            .unwrap_err()
-            .to_string()
-            .contains("rescan failed")
-    );
+    assert_fails_with(s.installer.install(), "rescan failed");
     script(&s.path("ls-control"), "sleep 5");
     s.installer.timeout = Duration::from_millis(200);
     let started = Instant::now();
-    assert!(
-        s.installer
-            .install()
-            .unwrap_err()
-            .to_string()
-            .contains("did not finish")
-    );
+    assert_fails_with(s.installer.install(), "did not finish");
     assert!(started.elapsed() < Duration::from_secs(3));
 }
 
@@ -205,13 +190,7 @@ fn activation_asks_for_state_and_checks_the_reply() {
         &s.path("luna-send"),
         "echo '{\"returnValue\":false,\"errorText\":\"denied\"}'",
     );
-    assert!(
-        s.installer
-            .activate("x")
-            .unwrap_err()
-            .to_string()
-            .contains("denied")
-    );
+    assert_fails_with(s.installer.activate("x"), "denied");
     script(&s.path("luna-send"), "exit 1");
     assert!(s.installer.activate("x").is_err());
 }

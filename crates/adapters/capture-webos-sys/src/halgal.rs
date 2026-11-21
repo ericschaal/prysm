@@ -10,6 +10,7 @@
 //! `Send`. The library is loaded once and never unloaded: unloading it leaks
 //! file descriptors.
 use crate::vtcapture::{Error, library};
+use libloading::Library;
 use std::ffi::c_int;
 use std::fs::File;
 use std::os::fd::AsRawFd;
@@ -69,15 +70,17 @@ pub(crate) struct HalApi {
 
 /// Load `libhalgal` on first use and keep it for the life of the process.
 fn hal() -> Result<&'static HalApi, Error> {
-    static HAL: Mutex<Option<&'static HalApi>> = Mutex::new(None);
+    static HAL: Mutex<(Option<&'static Library>, Option<&'static HalApi>)> =
+        Mutex::new((None, None));
     let mut slot = HAL.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(api) = *slot {
+    let (library_slot, api_slot) = &mut *slot;
+    if let Some(api) = *api_slot {
         return Ok(api);
     }
     let names = ["libhalgal.so.1", "libhalgal.so"];
     // Never unloaded, not even when a symbol is missing: unloading libhalgal
-    // leaks file descriptors.
-    let library = &*Box::leak(Box::new(library(&names)?));
+    // leaks file descriptors. A retry reuses the loaded library.
+    let library = library(library_slot, &names)?;
     let symbol = |source| Error::Load {
         library: names.join(" or "),
         source,
@@ -99,7 +102,7 @@ fn hal() -> Result<&'static HalApi, Error> {
         }
     };
     let api: &'static HalApi = Box::leak(Box::new(api));
-    *slot = Some(api);
+    *api_slot = Some(api);
     Ok(api)
 }
 
