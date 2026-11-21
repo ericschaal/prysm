@@ -142,21 +142,12 @@ desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
 TV on every connection ([wire protocol](../crates/adapters/capture-remote/README.md));
 the TV captures and encodes as asked. Saving other capture settings restarts
 lighting, the TV reconnects within a second and follows the new request.
-<<<<<<< ours
-`instance` is the desktop Prysm's address, an `http://` or `https://` URL
-with an IP address or a name such as `http://prysm.local:8787` (checked for
-syntax only when saved); the slim worker resolves
-it at every connection attempt, waiting at most 0.5 s per attempt (a slower
-answer is used by the next one), so an address change is picked up on
-reconnect and a name that does not resolve shows as waiting for the receiver.
-=======
 `instance` is the desktop Prysm's portal address (`http://` or `https://`),
 the host an IP address or a name such as `prysm.local` (checked for syntax
 only when saved); the slim worker resolves it at every connection attempt,
 waiting at most 0.5 s per attempt (a slower answer is used by the next one),
 so an address change is picked up on reconnect and a name that does not
 resolve shows as waiting for the receiver.
->>>>>>> theirs
 While the desktop's lighting is off its receiver has paused the stream: the
 TV closes its capture and reports `paused` (not a failure) until lighting
 starts again.
@@ -223,11 +214,7 @@ The slim worker encodes its stream with H.264 by default
 [`h264-rvenc-sys`](../crates/adapters/h264-rvenc-sys/src/lib.rs)) or OpenH264 compiled
 in, as the desktop's `remote` capture `encoding` requests (`h264_hardware`,
 the default, `h264_software` or `raw`). If that encoder fails the TV reports
-<<<<<<< ours
-a failure of kind `encoder` and refuses the request, so lighting on the desktop
-=======
 `failure.kind` `encoder` and refuses the request, so lighting on the desktop
->>>>>>> theirs
 stops with the TV's reason, until another encoding is saved there; nothing
 falls back on its own. It therefore links the sysroot's
 GStreamer 1.0 and GLib, which [`env.sh`](webos/env.sh) finds with the SDK's
