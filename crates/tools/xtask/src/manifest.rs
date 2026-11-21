@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, ErrorKind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The manifest: one entry per artifact, keyed and sorted by file name.
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,11 +67,19 @@ impl Manifest {
 
     /// Writes `path` through a temporary file, so a reader never sees half of it.
     pub fn write(&self, path: &Path) -> Result<()> {
-        let temporary = path.with_extension("json.tmp");
+        let temporary = temporary(path);
         fs::write(&temporary, self.to_json())
             .and_then(|()| fs::rename(&temporary, path))
             .with_context(|| format!("writing {}", path.display()))
     }
+}
+
+/// `path` with `.tmp` appended. Files are written there and then renamed, so
+/// no reader sees half a file under its real name.
+pub fn temporary(path: &Path) -> PathBuf {
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    temporary.into()
 }
 
 /// The file's lower-case hex SHA-256, read in pieces: an image archive is
