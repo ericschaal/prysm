@@ -30,7 +30,6 @@ WORKDIR /src
 # build-deb.sh.
 COPY Cargo.toml Cargo.lock VERSION ./
 COPY crates/ crates/
-COPY packaging/debian/ packaging/debian/
 COPY --from=frontend /src/frontend/dist/ frontend/dist/
 ARG TARGETARCH
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -41,6 +40,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 FROM build AS deb
 ARG TARGETARCH
+# Here, not in `build`: a packaging change does not rebuild the binary.
+COPY packaging/debian/ packaging/debian/
 RUN packaging/debian/build-deb.sh /out/prysm-headless /deb/prysm-headless-linux-${TARGETARCH}.deb
 
 # Named as in dist/ (crates/tools/xtask/src/dist.rs), with the architecture, so both

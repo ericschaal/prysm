@@ -64,9 +64,10 @@ packaging/docker/smoke.sh prysm-headless:local
 
 Add `--platform linux/arm64` for a Raspberry Pi. The image runs as user 10001
 (in group `video`), keeps settings in `/data`, exposes 8787 (the portal, which
-also receives a slim TV's picture), and has no FFmpeg. The smoke test starts the image with a
-`null` output, waits for the health check, reads the state and checks a clean
-SIGTERM exit; it needs no hardware. Examples:
+also receives a slim TV's picture), and has no FFmpeg. The smoke test starts the image
+without a settings file (healthy, and no file written), then with a `null`
+output, waits for the health check, reads the state and checks a clean
+SIGTERM exit each time; it needs no hardware. Examples:
 [compose.yaml](../../packaging/docker/compose.yaml),
 [compose.truenas.yaml](../../packaging/docker/compose.truenas.yaml).
 User guides: [Docker](../users/docker.md), [TrueNAS](../users/truenas.md).
@@ -146,7 +147,7 @@ What the script enforces:
 
 **Version.** The only source is [`VERSION`](../../VERSION) (see
 [releasing](releasing.md#the-version-is-one-file)). Binaries report it in full
-(for example `1.0.0-alpha.0`); `appinfo.json`, the IPK file name and its
+(for example `1.0.0-rc.1`); `appinfo.json`, the IPK file name and its
 control file carry only `major.minor.patch`, because `ares-package` accepts
 nothing else.
 

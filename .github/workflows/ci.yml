@@ -14,10 +14,13 @@
 # - `quality`: shell scripts and workflows, then `check scripts`: script and
 #   TV package tests, the acceptance runner's lint, types, layers and tests
 #   (scripts/acceptance) and Markdown links.
+# - `supply-chain`: `cargo deny check` (deny.toml): RustSec advisories,
+#   licences, banned crates and sources of Cargo.lock.
 # - `frontend`: `cargo xtask doctor` (this job has every tool `check` needs),
 #   then `check frontend`: lint, formatting, generated contracts, bundles and
 #   tests; uploads the bundles. `cargo xtask codegen --check` runs the Rust
 #   contract exporter, which is why this job also needs Rust and libclang.
+#   Then the TV package test that needs frontend/node_modules.
 # - `rust (ubuntu-24.04)`, `rust (macos-26)` (ids `rust-linux`, `rust-macos`):
 #   `check rust`: formatting, clippy, tests, doctests. The hosts embed
 #   frontend/dist when it is there and a "not built" page in debug builds when
@@ -92,14 +95,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck -x crates/adapters/capture-device-sys/video_test.sh \
-            packaging/debian/build-deb.sh packaging/debian/postinst \
-            packaging/debian/prerm packaging/debian/postrm \
-            packaging/docker/smoke.sh packaging/release/publish.sh \
-            packaging/webos/build-ipk.sh packaging/webos/env.sh \
-            packaging/webos/install-ipk.sh packaging/webos/linker.sh \
-            packaging/webos/service/setup.sh \
-            packaging/webos/tests/tv-acceptance.sh
+          # Every tracked script but research's, and the Debian maintainer
+          # scripts, which have no extension.
+          git ls-files -z -- '*.sh' ':!:research/' packaging/debian/postinst \
+            packaging/debian/prerm packaging/debian/postrm | xargs -0 shellcheck -x
       - name: Rust for cargo xtask
         run: rustup toolchain install --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -111,6 +110,24 @@ jobs:
         run: cargo xtask check scripts
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  supply-chain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      # deny.toml: licences, bans and sources of Cargo.lock.
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
+        with:
+          command: check bans licenses sources
+      # The advisory database changes after a tag is cut, and a tag's
+      # deny.toml cannot: an advisory is reported on a release, not refused.
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
+        continue-on-error: ${{ inputs.release || false }}
+        with:
+          command: check advisories
 
   frontend:
     runs-on: ubuntu-24.04
@@ -143,6 +160,16 @@ jobs:
       # typecheck, bundles and tests.
       - name: Frontend checks and bundles
         run: cargo xtask check frontend
+      # The one TV package test that needs node and frontend/node_modules,
+      # which `quality` lacks; a skip here fails the step.
+      - name: TV package JavaScript notices
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python3 -m unittest discover -v -s packaging/webos/tests \
+            -k test_javascript_notices_include_react 2>&1 | tee "$RUNNER_TEMP/notices.log"
+          if grep -q skipped "$RUNNER_TEMP/notices.log"; then exit 1; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-dist

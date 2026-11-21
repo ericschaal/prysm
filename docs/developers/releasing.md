@@ -21,7 +21,7 @@ Everything else derives from it:
   rebuilds when it changes): `--version`, `prysm_build_info` in `/metrics`, and
   the Luna manifests (`major.minor.patch`).
 - The packages read it: [build-deb.sh](../../packaging/debian/build-deb.sh)
-  (`-` becomes `~`: `1.0.0-alpha.0` → `1.0.0~alpha.0-1`, which sorts before
+  (`-` becomes `~`: `1.0.0-rc.1` → `1.0.0~rc.1-1`, which sorts before
   `1.0.0`) and [ipk.py](../../packaging/webos/ipk.py) (`appinfo.json` and the
   IPK file names take only `major.minor.patch`, because `ares-package` accepts
   nothing else).
@@ -36,11 +36,9 @@ is a semantic version, the crates are `0.0.0`, no Rust source uses
 the tag is `v` plus VERSION and the manifest has it. Its tests run in CI.
 
 `.release-please-manifest.json` is Release Please's record of the last
-release. After 1.0.0, VERSION and the manifest both hold the last released
-version between releases. Until then VERSION is `1.0.0-alpha.0`, the version
-being built, while the manifest stays at `0.2.0`, the last release of the
-earlier implementation (tag `v0.2.0`): Release Please counts commits from that
-release, and its first release pull request sets both to `1.0.0`.
+release. Between releases, VERSION and the manifest both hold the last
+released version (since `1.0.0-rc.1`), and Release Please counts commits from
+its tag.
 
 ## Cut a release
 
