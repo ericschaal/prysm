@@ -22,19 +22,17 @@ export function useDraft<T>({
   fresh: () => T;
 }) {
   const [base, setBase] = useState(saved);
-  const [pristine, setPristine] = useState(() => saved ?? fresh());
-  const [draft, setDraftValue] = useState(pristine);
+  const [draft, setDraftValue] = useState(() => saved ?? fresh());
   const [seen, setSeen] = useState(saved);
   const [awaiting, setAwaiting] = useState<number | null>(null);
   /** Changes when the draft is replaced from outside, to remount its inputs. */
   const [generation, setGeneration] = useState(0);
-  const dirty = !same(draft, pristine);
+  const dirty = !same(draft, base ?? fresh());
   const syncing = awaiting !== null && revision < awaiting;
 
   function load(value: T | null, remount = false) {
     const next = value ?? fresh();
     setBase(value);
-    setPristine(next);
     // Remounting inputs drops focus; only do it when what they show changes.
     if (remount || !same(next, draft)) {
       setDraftValue(next);
@@ -62,7 +60,6 @@ export function useDraft<T>({
     /** Start again from the saved section, with `next` as the edit on top. */
     rebase: (next: T) => {
       setBase(saved);
-      setPristine(saved ?? fresh());
       if (!same(next, draft)) {
         setDraftValue(next);
         setGeneration((count) => count + 1);
@@ -71,7 +68,6 @@ export function useDraft<T>({
     /** `value` was saved as `revision`. */
     saved: (value: T, savedRevision: number) => {
       setBase(value);
-      setPristine(value);
       setAwaiting(savedRevision);
     },
   };

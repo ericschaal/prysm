@@ -32,8 +32,9 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 
 | Problem | Fix |
 | --- | --- |
-| Capture card cannot open | Check the device path or ID and that no other app uses the card. Linux: Prysm's user needs the `video` group. macOS: allow camera access. Docker: map the device and its group. |
+| Capture card cannot open | Check the device path or ID and that no other app uses the card. Linux: Prysm's user needs the `video` group. macOS: the card needs camera access for the app that starts Prysm (such as Terminal). Allow it when macOS asks, or under **System Settings → Privacy & Security → Camera**, then restart that app; if macOS never asks, start Prysm from Terminal. Docker: map the device and its group. |
 | Unsupported mode | Choose a size and rate the card supports. On Linux it must offer YUYV, RGB3 or BGR3; MJPEG-only cards do not work. |
+| Capture device delivered unusable buffers in a row | The card sends a broken or incomplete picture. Check the cable and the source's signal, or choose another size and rate. |
 | Waiting for video | Prysm runs but no picture arrives. Check the source is playing. After about 3 seconds WLED returns to its own state until video comes back. |
 | No LEDs | Check the WLED address, that WLED allows DDP input, and the LED counts. Allow HTTP and UDP port 4048 from Prysm to WLED. In Docker, enter WLED by IP address. |
 | Light card says WLED is off, overridden or not live | Something else changed WLED (its power button, a live override, another app sending colours). Prysm keeps sending; fix it in WLED. |

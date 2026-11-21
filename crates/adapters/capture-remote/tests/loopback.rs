@@ -549,7 +549,7 @@ fn a_sender_that_does_not_offer_the_request_fails_the_source_unasked() {
     assert_eq!(
         invalid.reason,
         "the sender cannot stream 640x360 at 60 fps with menus as raw: \
-         at 640x360 this source delivers 1 to 30"
+         at 640x360 this source delivers a frame rate of 1 to 30"
     );
     Box::new(source).close().unwrap();
 }

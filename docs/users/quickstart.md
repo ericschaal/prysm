@@ -20,7 +20,7 @@ under **Advanced → Enter the device by hand**:
 | Computer | Device value |
 | --- | --- |
 | Linux | `/dev/video0`, or a stable `/dev/v4l/by-id/...` path. Prysm's user needs access to the device (the `video` group). |
-| macOS | The device's unique ID. Ticking the card fills it in. Allow camera access when macOS asks. |
+| macOS | The device's unique ID. Ticking the card fills it in. Allow camera access when macOS asks; without it the card does not open ([troubleshooting](troubleshooting.md#picture-and-lights)). |
 | Docker on Linux | The path mapped into the container, such as `/dev/video0`. See [Docker](docker.md#use-a-capture-card). |
 
 **Size and rate** appears once a card is ticked and offers only what the card
@@ -29,6 +29,8 @@ at 30 fps, or the card's nearest larger size) to start. **Smooth** (60 fps)
 shows only for a card that captures 60 fps; **Efficient** (320 × 180 at 30
 fps) is less work for the computer. While the card is unplugged its size and
 rate stay as saved and cannot be changed. On Linux the card must offer YUYV,
-RGB3 or BGR3; cards that only offer MJPEG do not work.
+RGB3 or BGR3; cards that only offer MJPEG do not work. A card with nothing
+Prysm can use, such as one that only captures at 25 or 50 fps, shows why
+under the cards instead of **Size and rate**.
 
 Continue with [setting up your lights](configuration.md).

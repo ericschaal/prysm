@@ -165,8 +165,9 @@ runs a caller's string over SSH.
   present and readable.
 - **Artifacts:** the report records each one's hash and age. When the build
   system's `manifest.json` is next to the artifact and its hash matches, the
-  report also records the version and commit from it. The runner warns when an
-  artifact is older than the checkout's last commit. After the start the
+  report also records the version and commit from it. The runner warns when that
+  entry's commit is not the checkout's HEAD or it was built from a dirty tree,
+  or, without a matching entry, when the file is older than the last commit. After the start the
   running version (`prysm_build_info` in `/metrics`) is compared with the
   artifact's. Prysm reports the product version there (`1.0.0-alpha.0`; the
   package's own file name writes it the Debian way, `1.0.0~alpha.0-1`) and not
@@ -346,7 +347,9 @@ Each phase lands with its tests and CI green before the next starts.
    - The Mac device cell passed its eight checks (the card at 1280 × 720 and
      30 fps through the Chromecast feed) when started from a terminal with
      camera permission. Started from an app without it, Prysm opens the
-     card, receives no frame and reports nothing, as FFmpeg does.
+     card, receives no frame and reports nothing, as FFmpeg does. (Since
+     2026-11-21 opening fails instead with `NoCameraAccess`, saying what to
+     do; not yet repeated on the Mac.)
 
    What remains unverified: the runner's own wake-on-LAN packet (the TV
    answered each time), `replace` on the Linux package cell, `target =

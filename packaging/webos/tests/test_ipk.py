@@ -268,7 +268,7 @@ class SmokeProbeTests(unittest.TestCase):
         self.assertEqual(json.loads(manifest)['version'], version)
         self.assertIn('run --sandbox ' + directory + ' --run-for 60', files['probe.service'])
         status = json.loads(smoke.STATUS)
-        self.assertEqual(set(status), {'type', 'capturing', 'target', 'portal', 'failure'})
+        self.assertEqual(set(status), {'type', 'capturing', 'target', 'portal', 'failure', 'paused'})
 
 
 if __name__ == '__main__':

@@ -134,7 +134,7 @@ the old `io.prysm.capture` app: remove it (and its service setup) first.
 
 Picture settings (size, rate, menus, encoding) live in a web portal in both
 flavours, never in the TV's Luna preferences (`tv.json` holds only
-`autostart`, and for slim `instance` and `receiver`). Full: the `webos`
+`autostart`, and for slim `instance`). Full: the `webos`
 capture section of the worker's `settings.json`, edited in the TV's own
 portal (default 640x360 at 30 fps). Slim: the `remote` capture section of the
 desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
@@ -142,11 +142,12 @@ desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
 TV on every connection ([wire protocol](../crates/adapters/capture-remote/README.md));
 the TV captures and encodes as asked. Saving other capture settings restarts
 lighting, the TV reconnects within a second and follows the new request.
-`receiver` is `host:port`, the host an IP address or a name such as
-`prysm.local` (checked for syntax only when saved); the slim worker resolves
-it at every connection attempt, waiting at most 0.5 s per attempt (a slower
-answer is used by the next one), so an address change is picked up on
-reconnect and a name that does not resolve shows as waiting for the receiver.
+`instance` is the desktop Prysm's portal address (`http://` or `https://`),
+the host an IP address or a name such as `prysm.local` (checked for syntax
+only when saved); the slim worker resolves it at every connection attempt,
+waiting at most 0.5 s per attempt (a slower answer is used by the next one),
+so an address change is picked up on reconnect and a name that does not
+resolve shows as waiting for the receiver.
 While the desktop's lighting is off its receiver has paused the stream: the
 TV closes its capture and reports `paused` (not a failure) until lighting
 starts again.
@@ -213,7 +214,7 @@ The slim worker encodes its stream with H.264 by default
 [`h264-rvenc-sys`](../crates/adapters/h264-rvenc-sys/src/lib.rs)) or OpenH264 compiled
 in, as the desktop's `remote` capture `encoding` requests (`h264_hardware`,
 the default, `h264_software` or `raw`). If that encoder fails the TV reports
-`failure_kind: encoder` and refuses the request, so lighting on the desktop
+`failure.kind` `encoder` and refuses the request, so lighting on the desktop
 stops with the TV's reason, until another encoding is saved there; nothing
 falls back on its own. It therefore links the sysroot's
 GStreamer 1.0 and GLib, which [`env.sh`](webos/env.sh) finds with the SDK's
@@ -316,9 +317,10 @@ timeout 60 $W check-encoder --encoding h264_software --width 640 --height 280 --
 ```
 
 It encodes changing synthetic NV12 pictures with exactly that encoder,
-decodes each with OpenH264 and compares it with its input (the first picture,
-and the first after a session restart half way, must be keyframes of the
-current picture), and prints `check-encoder: ok encoder=… bytes=… mbit_s=…
+decodes each with OpenH264 and checks that every 16x16 block shows its own
+picture, not one up to two pictures before or after (the first picture, and
+the first after a session restart half way, must be keyframes of the current
+picture), and prints `check-encoder: ok encoder=… bytes=… mbit_s=…
 encode_ms_mean=… encode_ms_max=… cpu_percent=…`, then how long releasing the
 encoder took. Exit 0 means every check passed; `check-encoder: FAILED: …`
 gives the cause chain. `--prysm http://HOST:8787` (or an `https://`
