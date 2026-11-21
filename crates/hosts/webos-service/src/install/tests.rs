@@ -230,6 +230,73 @@ fn a_manifest_with_our_id_but_other_role_files_is_refused() {
     assert_eq!(fs::read_to_string(&path).unwrap(), foreign);
 }
 
+/// Ours is the hook with our marker line, whatever release wrote the rest:
+/// it is replaced by rename. Uninstall removes it.
+#[test]
+fn our_hook_of_another_release_is_replaced() {
+    let mut s = sandbox();
+    let hook = s.path("init.d/io.prysm.tv");
+    fs::create_dir_all(s.path("init.d")).unwrap();
+    let old = "#!/bin/sh\n# Prysm (io.prysm.tv): older text.\n/old/path setup &\n";
+    fs::write(&hook, old).unwrap();
+    let link = s.path("old-hook");
+    fs::hard_link(&hook, &link).unwrap();
+    s.installer.install().unwrap();
+    assert_eq!(
+        s.read("init.d/io.prysm.tv"),
+        s.installer.layout.hook_script()
+    );
+    assert_eq!(
+        fs::read_to_string(&link).unwrap(),
+        old,
+        "replaced by rename"
+    );
+    assert_eq!(
+        fs::metadata(&hook).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    fs::write(&hook, old).unwrap();
+    s.installer.uninstall().unwrap();
+    assert!(!hook.exists());
+}
+
+/// A failed step still rescans: the manifests it replaced take effect.
+#[test]
+fn a_hook_failure_still_rescans() {
+    let mut s = sandbox();
+    fs::create_dir_all(s.path("init.d")).unwrap();
+    fs::write(s.path("init.d/io.prysm.tv"), "#!/bin/sh\nother\n").unwrap();
+    assert_fails(s.installer.install(), |e| {
+        matches!(e, InstallError::UnrelatedHook(_))
+    });
+    assert!(s.path("manifests.d/io.prysm.tv.worker.json").exists());
+    assert_eq!(s.read("scans"), "scan-services\n");
+    assert_fails(s.installer.uninstall(), |e| {
+        matches!(e, InstallError::UnrelatedHook(_))
+    });
+    assert_eq!(s.read("scans"), "scan-services\nscan-services\n");
+}
+
+/// A manifest that is not JSON stays refused, with the remedy in the error.
+#[test]
+fn a_broken_manifest_is_refused_with_the_remedy() {
+    let mut s = sandbox();
+    let path = s.path("manifests.d/io.prysm.tv.supervisor.json");
+    fs::write(&path, "{\"id\":").unwrap();
+    let result = s.installer.install();
+    assert_fails(
+        result,
+        |e| matches!(e, InstallError::InvalidManifest { path: p, .. } if *p == path),
+    );
+    let message = s.installer.install().unwrap_err().to_string();
+    assert!(message.contains("io.prysm.tv.supervisor.json"), "{message}");
+    assert!(
+        message.contains("delete it, then run setup again"),
+        "{message}"
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{\"id\":");
+}
+
 #[test]
 fn rescan_failures_and_hangs_are_errors() {
     let mut s = sandbox();

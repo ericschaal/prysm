@@ -3,8 +3,8 @@
 use crate::preferences::Preferences;
 use crate::state::{self, FullWorker, Power, Process, SlimWorker, State};
 use prysm_webos_link::{
-    Backoff, Command, Event, FullArgs, FullStatus, KILL_AFTER, LightingTarget, SILENCE, SlimArgs,
-    SlimStatus, Video, WorkerFailure, WorkerStatus, exit,
+    Backoff, Command, Event, FailureKind, FullArgs, FullStatus, KILL_AFTER, LightingTarget,
+    SILENCE, SlimArgs, SlimStatus, Video, WorkerFailure, WorkerStatus, exit,
 };
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -530,17 +530,23 @@ impl Machine {
             Exit::Code(code) => exit::describe(code),
             Exit::Signal(signal) => format!("worker killed by signal {signal}"),
         };
-        let reported = self.package.forget().map(|failure| failure.message);
-        let last = self.failed.take().or(reported);
+        let reported = self.package.forget();
+        let last = self.failed.take().map(WorkerFailure::other).or(reported);
         match self.phase {
             Phase::Running { .. } => {
-                // The worker stops on its own only when something failed: a
-                // failure of its own (`other`), whatever its last report's
-                // kind (a receiver wait is no reason to exit).
-                self.failure = Some(WorkerFailure::other(match last {
-                    Some(last) => format!("{described}: {last}"),
-                    None => described,
-                }));
+                // The worker stops on its own only when something failed. An
+                // encoder or version report keeps its kind (the TV app offers
+                // its fix); a receiver wait is no reason to exit, so `other`.
+                self.failure = Some(match last {
+                    Some(last) => WorkerFailure {
+                        kind: match last.kind {
+                            FailureKind::Receiver => FailureKind::Other,
+                            kind => kind,
+                        },
+                        message: format!("{described}: {}", last.message),
+                    },
+                    None => WorkerFailure::other(described),
+                });
                 self.retry(now);
             }
             Phase::Stopping { failed: true, .. } => self.retry(now),

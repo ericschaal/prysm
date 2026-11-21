@@ -174,7 +174,8 @@ fn replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
 /// is an error and stays as it is.
 ///
 /// # Errors
-/// Any step failed; the temporary file is removed.
+/// Any step failed. An error before the rename removes the temporary file;
+/// a crash can leave it behind (a dot-file next to `path`).
 pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32, replace: bool) -> io::Result<()> {
     let directory = path.parent().unwrap_or(Path::new("."));
     let mut file = tempfile::NamedTempFile::new_in(directory)?;

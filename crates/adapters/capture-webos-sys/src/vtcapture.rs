@@ -244,8 +244,9 @@ fn copy_plane(
     for (row, target) in output.chunks_exact_mut(row_bytes).enumerate() {
         // SAFETY: `row * stride + row_bytes <= length` (checked above), so the
         // read stays inside the plane, which is readable while borrowed;
-        // `target` is Rust memory, apart from the driver's. A driver write
-        // meanwhile can only mix two frames into the copy.
+        // `target` is Rust memory, apart from the driver's. Assumed: the
+        // only writer is the vendor/DMA side, and a write meanwhile may mix
+        // frames in the copy.
         unsafe {
             ptr::copy_nonoverlapping(
                 source.pointer.as_ptr().add(row * stride),
@@ -733,8 +734,7 @@ mod tests {
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }
 
-    /// Pure Rust, so Miri checks the raw reads: only active rows, never past
-    /// the plane.
+    /// Only active rows are read, never past the plane.
     #[test]
     fn planes_are_copied_through_their_pointer_within_bounds() {
         let mut source = [1_u8, 2, 99, 99, 3, 4];

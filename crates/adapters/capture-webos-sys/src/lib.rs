@@ -9,11 +9,11 @@
 //! when there is no video). Neither is `Send`, so each tap is opened, used and
 //! released on one thread (HAL GAL binds an EGL context to it). The libraries
 //! are loaded once per process, on the thread of the first tap; later taps
-//! may be opened on other threads. Each call is a single native operation; watchdogs, retries, pacing, tap
-//! selection and pixel conversion belong to the caller
-//! (`prysm-capture-webos`). C++ exceptions from VTCapture are caught in
-//! `native/vtcapture.cpp` and never cross into Rust. `libvtcapture` and
-//! `libhalgal` are each loaded once and stay loaded for the life of the process.
+//! may be opened on other threads. Each call is a single native operation;
+//! watchdogs, retries, pacing, tap selection and pixel conversion belong to
+//! the caller (`prysm-capture-webos`). C++ exceptions from VTCapture are
+//! caught in `native/vtcapture.cpp` and never cross into Rust. `libvtcapture`
+//! and `libhalgal` stay loaded for the life of the process.
 //!
 //! Requires root and the TV's `libvtcapture.so`, `libluna-service2.so`,
 //! `libhalgal.so.1` and `/dev/gfx`. On any other system both `open`s fail

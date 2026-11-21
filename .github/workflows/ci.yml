@@ -383,6 +383,13 @@ jobs:
           key: miri-${{ matrix.target }}
       - name: Interpret Luna ownership and callback tests
         run: cargo miri test --locked -p prysm-webos-luna-sys --target ${{ matrix.target }}
+      # Only this test: the crate's others call the C++ bridge, which Miri
+      # cannot run. The host target, as the bridge is built for it.
+      - name: Interpret the capture plane copy
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: >-
+          cargo miri test --locked -p prysm-capture-webos-sys --lib --
+          vtcapture::tests::planes_are_copied_through_their_pointer_within_bounds
 
   webos-ipk:
     # The SDK below is built for aarch64 hosts.

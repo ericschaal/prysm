@@ -149,6 +149,22 @@ fn long_log_lines_are_cut() {
     exit_within(&mut worker, Duration::from_secs(5)).unwrap();
 }
 
+/// A 64 MiB line without a newline: one bounded line is kept, the rest is
+/// skipped without growing the only buffer the reader uses.
+#[test]
+fn an_endless_log_line_is_skipped_in_bounded_memory() {
+    let line_bytes = 64 * 1024 * 1024;
+    let mut input = BufReader::new(io::repeat(b'y').take(line_bytes).chain(&b"\ndone\n"[..]));
+    let mut line = Vec::new();
+    assert!(read_line(&mut input, &mut line).unwrap());
+    assert_eq!(line.len(), MAX_LOG_LINE, "kept bytes");
+    assert!(line.iter().all(|byte| *byte == b'y'));
+    assert!(read_line(&mut input, &mut line).unwrap());
+    assert_eq!(line, b"done\n");
+    assert!(line.capacity() <= 4 * MAX_LOG_LINE, "{}", line.capacity());
+    assert!(!read_line(&mut input, &mut line).unwrap());
+}
+
 #[test]
 fn a_missing_program_fails_to_spawn() {
     assert!(

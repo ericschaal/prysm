@@ -10,7 +10,9 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Longest stderr line kept; the rest of the line is dropped.
+/// Longest stderr line kept, in bytes; the rest of the line is dropped. A
+/// cut inside a character becomes U+FFFD, so the text can be up to two bytes
+/// longer.
 const MAX_LOG_LINE: usize = 512;
 /// How long after its exit a worker's last lines are waited for. Only a
 /// process the worker left behind, holding its pipes, makes the wait last.
@@ -134,24 +136,31 @@ fn read_events(stdout: impl Read, outputs: &mpsc::Sender<Output>) {
 fn read_log(stderr: impl Read, outputs: &mpsc::Sender<Output>) {
     let mut reader = BufReader::new(stderr);
     let mut line = Vec::new();
-    loop {
-        line.clear();
-        match (&mut reader)
-            .take(MAX_LOG_LINE as u64)
-            .read_until(b'\n', &mut line)
-        {
-            Ok(0) | Err(_) => return,
-            Ok(_) => {}
-        }
-        // Skip the rest of an overlong line without keeping it.
-        if line.last() != Some(&b'\n') && reader.skip_until(b'\n').is_err() {
-            return;
-        }
+    while let Ok(true) = read_line(&mut reader, &mut line) {
         let text = String::from_utf8_lossy(&line).trim_end().to_owned();
         if outputs.send(Output::Log(text)).is_err() {
             return;
         }
     }
+}
+
+/// Read the next line into `line`, which is all the memory it uses: at most
+/// [`MAX_LOG_LINE`] bytes are kept, the rest of a longer line is skipped.
+/// `Ok(false)` at the end of the stream.
+fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<bool> {
+    line.clear();
+    if reader
+        .by_ref()
+        .take(MAX_LOG_LINE as u64)
+        .read_until(b'\n', line)?
+        == 0
+    {
+        return Ok(false);
+    }
+    if line.last() != Some(&b'\n') {
+        reader.skip_until(b'\n')?;
+    }
+    Ok(true)
 }
 
 #[derive(Debug)]

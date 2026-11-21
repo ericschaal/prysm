@@ -44,6 +44,11 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   output is redirected to stderr, which carries logs.
 - The worker reports status on every change and every 5 s; 15 s of silence is
   a hang. Stop sends TERM, then KILL 8 s later.
+- An exit is handled once the worker's last events are read, at most 1 s
+  after it is reaped (a process it left behind can hold the pipe).
+- An exit while running is published as a failure: the exit's description,
+  then the last cause or report; an `encoder` or `version` report keeps its
+  kind, anything else is `other`.
 - Each status names its package (`"flavor": "full"` or `"slim"`) and has only
   that package's fields; a status of the other package breaks the link. A
   worker whose run ends with an error says why (`failed`, also before its
@@ -115,10 +120,12 @@ The TV app sets the service up through the Homebrew Channel's `exec` of
 | `/var/lib/io.prysm.tv/resume.json` | Intent and boot ID (supervisor) |
 | `/var/lib/io.prysm.tv/settings.json` | Full only: portal settings (worker's engine) |
 
-`prysm-webos-service setup` writes the manifests and boot hook (refusing
-unrelated content; a manifest with Prysm's id and role files is Prysm's, of
-any version, and is replaced atomically), rescans Luna and activates the service, all with bounded
-waits. It must run after every install or update: IPKs carry no install
+`prysm-webos-service setup` writes the manifests and boot hook, rescans Luna
+(also after a failed step) and activates the service, all with bounded
+waits. A manifest with Prysm's id and role files, and a hook with its
+`# Prysm (<app id>):` line, are Prysm's from any release and are replaced
+atomically; anything else is refused, and a manifest that is not JSON must
+be deleted before setup runs again. It must run after every install or update: IPKs carry no install
 scripts. The Luna method `uninstall` (only the app may call it) replies at
 once, stops the worker gracefully (TERM, KILL 8 s later), then removes the
 hook and manifests, rescans and exits. The `uninstall` subcommand only
