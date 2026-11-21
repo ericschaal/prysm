@@ -347,7 +347,9 @@ Each phase lands with its tests and CI green before the next starts.
    - The Mac device cell passed its eight checks (the card at 1280 × 720 and
      30 fps through the Chromecast feed) when started from a terminal with
      camera permission. Started from an app without it, Prysm opens the
-     card, receives no frame and reports nothing, as FFmpeg does.
+     card, receives no frame and reports nothing, as FFmpeg does. (Since
+     2026-11-21 opening fails instead with `NoCameraAccess`, saying what to
+     do; not yet repeated on the Mac.)
 
    What remains unverified: the runner's own wake-on-LAN packet (the TV
    answered each time), `replace` on the Linux package cell, `target =
