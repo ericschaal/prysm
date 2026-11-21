@@ -7,9 +7,16 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
-/// Longest stderr line kept; the rest of the line is dropped.
+/// Longest stderr line kept, in bytes; the rest of the line is dropped. A
+/// cut inside a character becomes U+FFFD, so the text can be up to two bytes
+/// longer.
 const MAX_LOG_LINE: usize = 512;
+/// How long after its exit a worker's last lines are waited for. Only a
+/// process the worker left behind, holding its pipes, makes the wait last.
+pub const LAST_WORDS: Duration = Duration::from_secs(1);
 
 /// Something a worker said.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +52,9 @@ pub trait Worker {
     fn kill(&mut self) -> io::Result<()>;
     /// Everything said since the last call, without blocking.
     fn drain(&mut self) -> Vec<Output>;
-    /// Reap the process if it exited, without blocking.
+    /// Reap the process if it exited, without blocking. The exit comes once
+    /// every event the worker sent is ready for [`Worker::drain`], or at the
+    /// latest [`LAST_WORDS`] after the reap.
     ///
     /// # Errors
     /// `waitpid` failed.
@@ -79,14 +88,19 @@ impl Launcher for ProcessLauncher {
         let logger = std::thread::Builder::new()
             .name("prysm-worker-log".into())
             .spawn(move || read_log(stderr, &sender));
-        if let Err(error) = reader.and(logger) {
-            abandon(child);
-            return Err(error);
-        }
+        let reader = match (reader, logger) {
+            (Ok(reader), Ok(_)) => reader,
+            (Err(error), _) | (_, Err(error)) => {
+                abandon(child);
+                return Err(error);
+            }
+        };
         Ok(ProcessWorker {
             stdin: child.stdin.take(),
             child: Some(child),
             outputs,
+            reader: Some(reader),
+            exited: None,
         })
     }
 }
@@ -122,22 +136,7 @@ fn read_events(stdout: impl Read, outputs: &mpsc::Sender<Output>) {
 fn read_log(stderr: impl Read, outputs: &mpsc::Sender<Output>) {
     let mut reader = BufReader::new(stderr);
     let mut line = Vec::new();
-    loop {
-        line.clear();
-        match (&mut reader)
-            .take(MAX_LOG_LINE as u64)
-            .read_until(b'\n', &mut line)
-        {
-            Ok(0) | Err(_) => return,
-            Ok(_) => {}
-        }
-        if line.last() != Some(&b'\n') {
-            // Drop the rest of an overlong line.
-            let mut rest = Vec::new();
-            if reader.read_until(b'\n', &mut rest).is_err() {
-                return;
-            }
-        }
+    while let Ok(true) = read_line(&mut reader, &mut line) {
         let text = String::from_utf8_lossy(&line).trim_end().to_owned();
         if outputs.send(Output::Log(text)).is_err() {
             return;
@@ -145,11 +144,37 @@ fn read_log(stderr: impl Read, outputs: &mpsc::Sender<Output>) {
     }
 }
 
+/// Read the next line into `line`, which is all the memory it uses: at most
+/// [`MAX_LOG_LINE`] bytes are kept, the rest of a longer line is skipped.
+/// `Ok(false)` at the end of the stream.
+fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<bool> {
+    line.clear();
+    if reader
+        .by_ref()
+        .take(MAX_LOG_LINE as u64)
+        .read_until(b'\n', line)?
+        == 0
+    {
+        return Ok(false);
+    }
+    if line.last() != Some(&b'\n') {
+        reader.skip_until(b'\n')?;
+    }
+    Ok(true)
+}
+
 #[derive(Debug)]
 pub struct ProcessWorker {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     outputs: mpsc::Receiver<Output>,
+    /// The event reader, until joined; it ends at the event stream's EOF.
+    /// (The stderr reader is not waited for: logs are best effort, and
+    /// whatever the worker starts inherits its stderr.)
+    reader: Option<JoinHandle<()>>,
+    /// Reaped at that time, its exit held back until the event reader ends
+    /// or [`LAST_WORDS`] passed.
+    exited: Option<(Exit, Instant)>,
 }
 
 impl ProcessWorker {
@@ -185,19 +210,32 @@ impl Worker for ProcessWorker {
     }
 
     fn try_exit(&mut self) -> io::Result<Option<Exit>> {
-        let Some(child) = &mut self.child else {
+        if let Some(child) = &mut self.child {
+            let Some(status) = child.try_wait()? else {
+                return Ok(None);
+            };
+            self.child = None;
+            self.stdin = None;
+            let exit = match (status.code(), status.signal()) {
+                (Some(code), _) => Exit::Code(code),
+                (None, Some(signal)) => Exit::Signal(signal),
+                (None, None) => Exit::Code(-1),
+            };
+            self.exited = Some((exit, Instant::now()));
+        }
+        let Some((exit, reaped)) = self.exited else {
             return Ok(None);
         };
-        let Some(status) = child.try_wait()? else {
+        if self.reader.as_ref().is_none_or(JoinHandle::is_finished) {
+            // Joined, so every event it sent is visible to `drain`.
+            if let Some(reader) = self.reader.take() {
+                let _ = reader.join();
+            }
+        } else if reaped.elapsed() < LAST_WORDS {
             return Ok(None);
-        };
-        self.child = None;
-        self.stdin = None;
-        Ok(Some(match (status.code(), status.signal()) {
-            (Some(code), _) => Exit::Code(code),
-            (None, Some(signal)) => Exit::Signal(signal),
-            (None, None) => Exit::Code(-1),
-        }))
+        }
+        self.exited = None;
+        Ok(Some(exit))
     }
 }
 

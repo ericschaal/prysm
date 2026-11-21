@@ -3,8 +3,8 @@
 use crate::preferences::Preferences;
 use crate::state::{self, FullWorker, Power, Process, SlimWorker, State};
 use prysm_webos_link::{
-    Backoff, Command, Event, FullArgs, FullStatus, KILL_AFTER, LightingTarget, SILENCE, SlimArgs,
-    SlimStatus, Video, WorkerFailure, WorkerStatus, exit,
+    Backoff, Command, Event, FailureKind, FullArgs, FullStatus, KILL_AFTER, LightingTarget,
+    SILENCE, SlimArgs, SlimStatus, Video, WorkerFailure, WorkerStatus, exit,
 };
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -534,11 +534,16 @@ impl Machine {
         let last = self.failed.take().map(WorkerFailure::other).or(reported);
         match self.phase {
             Phase::Running { .. } => {
-                // The worker stops on its own only when something failed.
+                // The worker stops on its own only when something failed. An
+                // encoder or version report keeps its kind (the TV app offers
+                // its fix); a receiver wait is no reason to exit, so `other`.
                 self.failure = Some(match last {
                     Some(last) => WorkerFailure {
+                        kind: match last.kind {
+                            FailureKind::Receiver => FailureKind::Other,
+                            kind => kind,
+                        },
                         message: format!("{described}: {}", last.message),
-                        ..last
                     },
                     None => WorkerFailure::other(described),
                 });

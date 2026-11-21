@@ -61,6 +61,40 @@ exit 3"#,
     assert_eq!(worker.try_exit().unwrap(), None, "reaped once");
 }
 
+/// An event still in the pipe when the worker is reaped (here written by a
+/// process it left behind) is drained before the exit is handed over.
+#[test]
+fn the_last_events_come_before_the_exit() {
+    let mut worker = sh(r#"(sleep 0.2; echo '{"type":"failed","cause":"late"}') &
+exit 1"#);
+    assert_eq!(
+        exit_within(&mut worker, Duration::from_secs(5)),
+        Some(Exit::Code(1))
+    );
+    let seen = worker.drain();
+    assert!(
+        seen.contains(&Output::Event(Event::Failed {
+            cause: "late".into()
+        })),
+        "{seen:?}"
+    );
+}
+
+/// A process the worker left behind that keeps its pipes open delays the
+/// exit by at most [`LAST_WORDS`].
+#[test]
+fn a_left_behind_process_holding_the_pipes_delays_the_exit_boundedly() {
+    let mut worker = sh("sleep 3 & exit 4");
+    let started = Instant::now();
+    assert_eq!(
+        exit_within(&mut worker, Duration::from_secs(5)),
+        Some(Exit::Code(4))
+    );
+    let waited = started.elapsed();
+    assert!(waited >= LAST_WORDS, "{waited:?}");
+    assert!(waited < LAST_WORDS + Duration::from_secs(1), "{waited:?}");
+}
+
 #[test]
 fn a_worker_ignoring_term_is_killed() {
     let mut worker = sh("trap '' TERM; echo ready >&2; while :; do sleep 0.05; done");
@@ -113,6 +147,22 @@ fn long_log_lines_are_cut() {
     assert!(matches!(&seen[0], Output::Log(line) if line.len() == MAX_LOG_LINE));
     assert_eq!(seen[1], Output::Log("done".into()));
     exit_within(&mut worker, Duration::from_secs(5)).unwrap();
+}
+
+/// A 64 MiB line without a newline: one bounded line is kept, the rest is
+/// skipped without growing the only buffer the reader uses.
+#[test]
+fn an_endless_log_line_is_skipped_in_bounded_memory() {
+    let line_bytes = 64 * 1024 * 1024;
+    let mut input = BufReader::new(io::repeat(b'y').take(line_bytes).chain(&b"\ndone\n"[..]));
+    let mut line = Vec::new();
+    assert!(read_line(&mut input, &mut line).unwrap());
+    assert_eq!(line.len(), MAX_LOG_LINE, "kept bytes");
+    assert!(line.iter().all(|byte| *byte == b'y'));
+    assert!(read_line(&mut input, &mut line).unwrap());
+    assert_eq!(line, b"done\n");
+    assert!(line.capacity() <= 4 * MAX_LOG_LINE, "{}", line.capacity());
+    assert!(!read_line(&mut input, &mut line).unwrap());
 }
 
 #[test]
