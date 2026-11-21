@@ -2,6 +2,7 @@
 use crate::address::{DeviceAddress, Host};
 use crate::ddp::{Gamma, Transfer};
 use crate::observe::Observer;
+use crate::output::NotTurnedOff;
 use crate::{LedCounts, MAX_LEDS, Wled, WledSettings, http::RequestError};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{
@@ -221,7 +222,7 @@ fn fill(r: f32, g: f32, b: f32) -> ColorStrip {
     ColorStrip::fill(LinearColor::new(r, g, b), NonZeroUsize::MIN)
 }
 
-fn request_error(error: &Error) -> &RequestError {
+fn source(error: &Error) -> &(dyn std::error::Error + Send + Sync + 'static) {
     let Error::Adapter {
         source: Some(source),
         ..
@@ -229,7 +230,11 @@ fn request_error(error: &Error) -> &RequestError {
     else {
         panic!("expected an adapter error with a source: {error:?}");
     };
-    source.downcast_ref().expect("HTTP request error")
+    source.as_ref()
+}
+
+fn request_error(error: &Error) -> &RequestError {
+    source(error).downcast_ref().expect("HTTP request error")
 }
 
 #[test]
@@ -329,15 +334,46 @@ fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
 
 #[test]
 fn failed_compensation_is_reported_alongside_the_original_cause() {
+    // Both causes carry a source of their own, so the text shows each chain
+    // whole, in its own clause.
+    let device = Device::new(vec![
+        Reply::Json(OK),
+        Reply::Json("nope"),
+        Reply::Json(OK),
+        Reply::Json("["),
+    ]);
+    let error = device.open(one_each()).err().unwrap();
+    let both: &NotTurnedOff = source(&error).downcast_ref().expect("both causes");
+    assert!(matches!(both.live, RequestError::Json(_)), "{both:?}");
+    assert!(matches!(both.off, RequestError::Json(_)), "{both:?}");
+    assert_eq!(
+        prysm_ports::chain(&error),
+        format!(
+            "WLED at {} did not switch to live mode: response is not JSON: expected ident \
+             at line 1 column 2; turning it off also failed: response is not JSON: EOF \
+             while parsing a list at line 1 column 1",
+            device.address("127.0.0.1")
+        )
+    );
+}
+
+#[test]
+fn failed_live_mode_reads_as_one_sentence_with_its_cause() {
     let device = Device::new(vec![
         Reply::Json(OK),
         Reply::Json(r#"{"success":false}"#),
         Reply::Json(OK),
-        Reply::Raw("HTTP/1.1 503 Busy\r\nContent-Length: 0\r\n\r\n".into()),
+        Reply::Json(OK),
     ]);
     let error = device.open(one_each()).err().unwrap();
-    assert!(matches!(request_error(&error), RequestError::Rejected(_)));
-    assert!(error.to_string().contains("off also failed"), "{error}");
+    assert_eq!(
+        prysm_ports::chain(&error),
+        format!(
+            "WLED at {} did not switch to live mode: device rejected the request: \
+             success is false",
+            device.address("127.0.0.1")
+        )
+    );
 }
 
 #[test]
@@ -733,6 +769,8 @@ fn each_takeover_cause_is_reported_and_clears_when_wled_shows_prysm_again() {
             Reply::Json(r#"{"state":{}}"#),
             Some(OutputIssue::Unreachable),
         ),
+        // A sender address that cannot be read names no other sender.
+        (sender("not an address"), None),
         // Firmware without `lor`, `lm` or `lip` reports what it can.
         (si(json!({"on": true}), json!({"live": true})), None),
     ];
@@ -775,6 +813,49 @@ fn an_unreachable_state_endpoint_is_reported_at_once() {
     assert_eq!(observer.poll(), Some(OutputIssue::Unreachable));
     assert!(!observer.checking());
     assert!(started.elapsed() < Duration::from_millis(250));
+}
+
+/// State checks allow 64 KiB, more than the 20 KiB of other requests:
+/// segments and usermods make `/json/si` large.
+#[test]
+fn a_state_reply_may_hold_up_to_64_kib() {
+    let state = |pad: usize| {
+        si(
+            json!({"on": true, "lor": 0, "pad": "x".repeat(pad)}),
+            json!({"live": true, "lm": "DDP", "lip": "127.0.0.1"}),
+        )
+    };
+    let device = Device::new(vec![state(40 * 1024), state(64 * 1024)]);
+    let mut observer = device.observer();
+    assert_eq!(check(&mut observer), None);
+    assert_eq!(check(&mut observer), Some(OutputIssue::Unreachable));
+}
+
+/// A reply that arrives a byte at a time cannot keep a check open past its
+/// deadline.
+#[test]
+fn a_dripping_state_reply_is_abandoned_at_the_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let _ = socket.read(&mut [0; 1024]);
+        let head = b"HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n";
+        for byte in head.iter().chain(std::iter::repeat(&b' ')) {
+            if socket.write_all(&[*byte]).is_err() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let mut observer = Observer::new(address, "wled", Duration::ZERO);
+    let started = Instant::now();
+    assert_eq!(check(&mut observer), Some(OutputIssue::Unreachable));
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[test]
