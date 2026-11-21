@@ -29,10 +29,35 @@ pub enum CaptureError {
         #[source]
         source: Option<std::io::Error>,
     },
+    /// macOS has not granted the process camera access, which capture cards
+    /// need too; the device is not opened.
+    #[error("camera access is not granted: {0}")]
+    NoCameraAccess(CameraAccess),
     #[error("native capture cleanup failed: {0}")]
     Cleanup(#[source] anyhow::Error),
     #[error(transparent)]
     Backend(#[from] anyhow::Error),
+}
+
+/// Why macOS refuses camera access, each with what the user can do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CameraAccess {
+    #[error(
+        "allow the app that starts Prysm (such as Terminal) under System Settings > \
+         Privacy & Security > Camera, then restart that app"
+    )]
+    Denied,
+    #[error("this Mac's administrator restricts camera access")]
+    Restricted,
+    /// No answer: macOS could not ask (the app that started Prysm cannot show
+    /// the request), or nobody answered in time.
+    #[error(
+        "macOS did not get an answer; start Prysm from an app that can ask (such as \
+         Terminal) and allow access, or allow that app under System Settings > \
+         Privacy & Security > Camera"
+    )]
+    Unanswered,
 }
 
 type Result<T> = std::result::Result<T, CaptureError>;

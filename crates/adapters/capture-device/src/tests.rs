@@ -158,6 +158,25 @@ fn open_failure_reports_the_native_cause_after_release() {
     );
 }
 
+/// A refused camera permission fails open as an adapter failure saying what to do.
+#[test]
+fn refused_camera_access_fails_open_with_guidance() {
+    let (capture, native) = native();
+    let opening = start(capture, TEST);
+    native.exit(Err(CaptureError::NoCameraAccess(
+        prysm_capture_device_sys::CameraAccess::Denied,
+    )));
+    let Err(error @ Error::Adapter { .. }) = opening.recv_timeout(LIMIT).unwrap() else {
+        panic!("open must fail as an adapter failure");
+    };
+    assert_eq!(
+        chain(&error),
+        "video device capture failed: camera access is not granted: allow the app that \
+         starts Prysm (such as Terminal) under System Settings > Privacy & Security > \
+         Camera, then restart that app"
+    );
+}
+
 #[test]
 fn open_timeout_stops_and_releases() {
     let (capture, native) = native();

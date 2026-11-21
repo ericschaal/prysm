@@ -20,7 +20,7 @@ under **Advanced → Enter the device by hand**:
 | Computer | Device value |
 | --- | --- |
 | Linux | `/dev/video0`, or a stable `/dev/v4l/by-id/...` path. Prysm's user needs access to the device (the `video` group). |
-| macOS | The device's unique ID. Ticking the card fills it in. Allow camera access when macOS asks. |
+| macOS | The device's unique ID. Ticking the card fills it in. Allow camera access when macOS asks; without it the card does not open ([troubleshooting](troubleshooting.md#picture-and-lights)). |
 | Docker on Linux | The path mapped into the container, such as `/dev/video0`. See [Docker](docker.md#use-a-capture-card). |
 
 **Size and rate** appears once a card is ticked and offers only what the card

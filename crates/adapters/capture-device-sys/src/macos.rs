@@ -1,12 +1,15 @@
 use std::mem::ManuallyDrop;
 use std::num::NonZeroU32;
 use std::slice;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use av_foundation::capture_device::{
-    AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification, AVFrameRateRange,
+    AVAuthorizationStatus, AVAuthorizationStatusDenied, AVAuthorizationStatusNotDetermined,
+    AVAuthorizationStatusRestricted, AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification,
+    AVFrameRateRange,
 };
 use av_foundation::capture_input::AVCaptureDeviceInput;
 use av_foundation::capture_output_base::AVCaptureOutput;
@@ -43,7 +46,8 @@ use objc2_foundation::{
 use prysm_ports::Span;
 
 use crate::{
-    CaptureError, CaptureSink, Frame, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
+    CameraAccess, CaptureError, CaptureSink, Frame, FramePool, PixelFormat, Result, YuvRange,
+    YuvStandardMatrix,
 };
 
 /// How often the capture thread checks for a failure notification while it
@@ -404,6 +408,49 @@ fn frame_duration(range: &AVFrameRateRange, fps: NonZeroU32) -> Option<CMTime> {
     }
 }
 
+/// How long opening waits for an answer to macOS's camera access request:
+/// well within the device adapter's 10 s readiness deadline, so the user sees
+/// [`CameraAccess::Unanswered`] rather than a timeout.
+const ACCESS_WAIT: Duration = Duration::from_secs(5);
+
+/// What an authorization status means for opening: `Ok(true)` to open,
+/// `Ok(false)` to ask first (only before `asked`). A status this crate does
+/// not know is left to AVFoundation.
+#[allow(non_upper_case_globals)] // Names come from AVFoundation.
+fn access(status: AVAuthorizationStatus, asked: bool) -> std::result::Result<bool, CameraAccess> {
+    match status {
+        AVAuthorizationStatusNotDetermined if asked => Err(CameraAccess::Unanswered),
+        AVAuthorizationStatusNotDetermined => Ok(false),
+        AVAuthorizationStatusDenied => Err(CameraAccess::Denied),
+        AVAuthorizationStatusRestricted => Err(CameraAccess::Restricted),
+        _ => Ok(true),
+    }
+}
+
+/// Whether the process may capture video, asking macOS when it has not
+/// decided; `Ok(false)` when `sink` stops while waiting for the answer.
+fn camera_access(sink: &Arc<dyn CaptureSink>) -> Result<bool> {
+    // SAFETY: a constant NSString AVFoundation defines for the process's life.
+    let video = unsafe { AVMediaTypeVideo };
+    let status = || AVCaptureDevice::authorization_status_for_media_type(video);
+    if access(status(), false).map_err(CaptureError::NoCameraAccess)? {
+        return Ok(true);
+    }
+    tracing::info!("Asking macOS for camera access");
+    let answered = Arc::new(AtomicBool::new(false));
+    AVCaptureDevice::request_access_for_media_type(video, {
+        let answered = answered.clone();
+        move |_| answered.store(true, Ordering::Release)
+    });
+    let asked = Instant::now();
+    while !answered.load(Ordering::Acquire) && asked.elapsed() < ACCESS_WAIT {
+        if sink.should_stop(FAILURE_POLL) {
+            return Ok(false);
+        }
+    }
+    access(status(), true).map_err(CaptureError::NoCameraAccess)
+}
+
 fn start_session(
     device_uid: Option<&str>,
     sink: &Arc<dyn CaptureSink>,
@@ -425,6 +472,10 @@ fn start_session(
     })?;
 
     tracing::info!("Opening video device: {}", device.localized_name());
+    // After the lookup, so a missing device never asks for access.
+    if !camera_access(sink)? {
+        return Ok(None);
+    }
 
     let session = AVCaptureSession::new();
     let input =
@@ -572,6 +623,7 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use av_foundation::capture_device::AVAuthorizationStatusAuthorized;
 
     #[test]
     fn runtime_notification_preserves_native_error() {
@@ -642,6 +694,25 @@ mod tests {
                 1,
                 "the delegate released the sink"
             );
+        }
+    }
+
+    #[test]
+    fn camera_access_opens_asks_once_or_refuses() {
+        use AVAuthorizationStatusNotDetermined as NotDetermined;
+        assert_eq!(access(NotDetermined, false), Ok(false), "ask first");
+        assert_eq!(access(NotDetermined, true), Err(CameraAccess::Unanswered));
+        for asked in [false, true] {
+            assert_eq!(
+                access(AVAuthorizationStatusDenied, asked),
+                Err(CameraAccess::Denied)
+            );
+            assert_eq!(
+                access(AVAuthorizationStatusRestricted, asked),
+                Err(CameraAccess::Restricted)
+            );
+            assert_eq!(access(AVAuthorizationStatusAuthorized, asked), Ok(true));
+            assert_eq!(access(42, asked), Ok(true), "unknown: AVFoundation decides");
         }
     }
 
