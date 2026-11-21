@@ -110,7 +110,8 @@ define_class!(
     impl Delegate {
         #[unsafe(method(captureFailed:))]
         fn capture_failed(&self, notification: &NSNotification) {
-            let error = format!("Capture failed: {} ({:?})", notification.name(), notification.userInfo());
+            // The session's NSError, when there is one, is the source below.
+            let error = format!("capture failed: {}", notification.name());
             // SAFETY: This notification name is a process-lifetime Foundation string.
             let error = if &*notification.name() == unsafe { AVCaptureDeviceWasDisconnectedNotification } {
                 CaptureError::Disconnected { details: error, source: None }

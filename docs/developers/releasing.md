@@ -80,8 +80,9 @@ its tag.
      ([packaging](packaging.md#artifacts-in-dist));
    - `publish`: [publish.sh](../../packaging/release/publish.sh) checks every
      file against its manifest with `cargo xtask release-artifacts` (the
-     release's version and commit, a clean tree, the SHA-256, a file name in
-     one artifact only; [release.rs](../../crates/tools/xtask/src/release.rs)),
+     release's version and commit, a clean tree, the SHA-256, a plain file
+     name in one artifact only and not yet in the release directory;
+     [release.rs](../../crates/tools/xtask/src/release.rs)),
      built from the workflow's own checkout of the tools, pushes
      `ghcr.io/<owner>/prysm-headless:<version>-amd64` and `-arm64` and the
      multi-arch `:<version>`, checks that each image is from the tag's commit,

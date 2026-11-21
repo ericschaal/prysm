@@ -5,11 +5,15 @@ use crate::manifest::{Manifest, sha256};
 use anyhow::{Context, Result};
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Why a file cannot be released.
 #[derive(Debug, PartialEq, Eq)]
 enum Problem {
+    /// Not a plain file name: a path, `..` or empty.
+    NotAFileName,
+    /// `dir` already has a file of that name.
+    Exists,
     /// Another artifact has a file of the same name.
     InTwoArtifacts,
     /// Built as another version.
@@ -35,6 +39,8 @@ impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ", self.name)?;
         match &self.problem {
+            Problem::NotAFileName => f.write_str("is not a plain file name"),
+            Problem::Exists => f.write_str("is already in the release directory"),
             Problem::InTwoArtifacts => f.write_str("is in two artifacts"),
             Problem::Version(version) => write!(f, "is version {version}"),
             Problem::Commit(commit) => write!(f, "is from {commit}"),
@@ -49,9 +55,9 @@ impl std::error::Error for Refusal {}
 
 /// Checks every file that a `DIR/*/manifest.json` records (one directory per
 /// CI artifact, each a `cargo xtask dist` output) against its entry: this
-/// `version` and `commit`, a clean tree, the SHA-256, and a name no other
-/// artifact has. Only when all pass are the files moved up into `dir`, so a
-/// refusal leaves the directory as it was.
+/// `version` and `commit`, a clean tree, the SHA-256, and a plain file name
+/// that neither another artifact nor `dir` has. Only when all pass are the
+/// files moved up into `dir`, so a refusal leaves the directory as it was.
 pub fn run(dir: &Path, version: &str, commit: &str) -> Result<()> {
     for (from, name) in check(dir, version, commit)? {
         let to = dir.join(&name);
@@ -76,7 +82,11 @@ fn check(dir: &Path, version: &str, commit: &str) -> Result<Vec<(PathBuf, String
         let artifact = path.parent().expect("a manifest is in a directory");
         for (name, entry) in Manifest::read(&path)?.artifacts() {
             let file = artifact.join(name);
-            let problem = if files.iter().any(|(_, seen)| seen == name) {
+            let problem = if !is_file_name(name) {
+                Some(Problem::NotAFileName)
+            } else if fs::symlink_metadata(dir.join(name)).is_ok() {
+                Some(Problem::Exists)
+            } else if files.iter().any(|(_, seen)| seen == name) {
                 Some(Problem::InTwoArtifacts)
             } else if entry.version != version {
                 Some(Problem::Version(entry.version.clone()))
@@ -102,6 +112,16 @@ fn check(dir: &Path, version: &str, commit: &str) -> Result<Vec<(PathBuf, String
         }
     }
     Ok(files)
+}
+
+/// Whether `name` is one plain path component, so joining it stays in the
+/// directory.
+fn is_file_name(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(file)), None) if file == name
+    )
 }
 
 #[cfg(test)]
@@ -228,6 +248,38 @@ mod tests {
     fn a_changed_file_is_refused() {
         let edit = only("a.deb", |entry| entry.sha256 = "0".repeat(64));
         assert_eq!(refusal("changed", LAYOUT, edit).problem, Problem::Changed);
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_plain_file_name_is_refused() {
+        for name in ["../a.deb", "sub/a.deb", "/tmp/a.deb", "a.deb/", ".", ""] {
+            let dir = release("not-a-file-name", &[("one", &["b.deb"])], |_, _| {});
+            let manifest_path = dir.join("one/manifest.json");
+            let mut manifest = Manifest::read(&manifest_path).unwrap();
+            let entry = manifest.artifacts().next().unwrap().1.clone();
+            manifest.insert(name.to_owned(), entry);
+            manifest.write(&manifest_path).unwrap();
+            let error = run(&dir, "1.2.0", COMMIT).unwrap_err();
+            let refused = error.downcast::<Refusal>().unwrap();
+            assert_eq!(refused.problem, Problem::NotAFileName, "{name:?}");
+            assert!(!dir.join("b.deb").exists(), "a refusal moves nothing");
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_file_already_in_the_release_directory_is_refused() {
+        let dir = release("exists", LAYOUT, |_, _| {});
+        fs::write(dir.join("slim.ipk"), "earlier").unwrap();
+        let error = run(&dir, "1.2.0", COMMIT).unwrap_err();
+        let refused = error.downcast::<Refusal>().unwrap();
+        assert_eq!(
+            refused.to_string(),
+            "slim.ipk is already in the release directory"
+        );
+        assert!(!dir.join("a.deb").exists(), "a refusal moves nothing");
+        assert_eq!(fs::read_to_string(dir.join("slim.ipk")).unwrap(), "earlier");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

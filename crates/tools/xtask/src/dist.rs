@@ -2,14 +2,14 @@
 //! targets are built in [`docker`].
 mod docker;
 
-use crate::manifest::{Entry, Manifest, sha256};
+use crate::manifest::{Entry, Manifest, sha256, temporary};
 use crate::npm::{self, Script};
 use crate::process::{self, root, target_dir};
 use anyhow::{Context, Result, bail, ensure};
 use clap::ValueEnum;
 use docker::Docker;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::{Instant, SystemTime};
 
@@ -41,7 +41,8 @@ pub enum Target {
 /// What a target builds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
-    Mac,
+    /// For this Mac's architecture.
+    Mac(Arch),
     Binary(Arch),
     Deb(Arch),
     Image(Arch),
@@ -90,9 +91,11 @@ impl Flavour {
 }
 
 impl Target {
-    fn kind(self) -> Kind {
-        match self {
-            Self::Mac => Kind::Mac,
+    /// Fails only for the Mac target on an architecture without an artifact
+    /// name.
+    fn kind(self) -> Result<Kind> {
+        Ok(match self {
+            Self::Mac => Kind::Mac(Arch::host()?),
             Self::LinuxArm64 => Kind::Binary(Arch::Arm64),
             Self::LinuxAmd64 => Kind::Binary(Arch::Amd64),
             Self::DebArm64 => Kind::Deb(Arch::Arm64),
@@ -101,17 +104,16 @@ impl Target {
             Self::ImageAmd64 => Kind::Image(Arch::Amd64),
             Self::TvFull => Kind::Tv(Flavour::Full),
             Self::TvSlim => Kind::Tv(Flavour::Slim),
-        }
+        })
     }
 }
 
 impl Kind {
-    /// The artifact's name in `dist/`. `host` names the Mac binary. The
-    /// Dockerfile's `artifacts` stage exports the binary and the `.deb`
-    /// under these names too.
-    fn file_name(self, host: Arch) -> String {
+    /// The artifact's name in `dist/`. The Dockerfile's `artifacts` stage
+    /// exports the binary and the `.deb` under these names too.
+    fn file_name(self) -> String {
         match self {
-            Self::Mac => format!("prysm-headless-macos-{}", host.name()),
+            Self::Mac(arch) => format!("prysm-headless-macos-{}", arch.name()),
             Self::Binary(arch) => format!("prysm-headless-linux-{}", arch.name()),
             Self::Deb(arch) => format!("prysm-headless-linux-{}.deb", arch.name()),
             Self::Image(arch) => format!("prysm-headless-linux-{}.tar", arch.name()),
@@ -122,7 +124,7 @@ impl Kind {
     /// Fails when this machine cannot build `self`.
     fn check_prerequisites(self) -> Result<()> {
         match self {
-            Self::Mac => ensure!(
+            Self::Mac(_) => ensure!(
                 cfg!(target_os = "macos"),
                 "the mac target builds only on macOS"
             ),
@@ -141,7 +143,7 @@ impl Kind {
 pub fn run(targets: &[Target]) -> Result<()> {
     // Before any build, so a missing prerequisite fails in seconds.
     for target in targets {
-        target.kind().check_prerequisites()?;
+        target.kind()?.check_prerequisites()?;
     }
     let dist = root().join("dist");
     fs::create_dir_all(&dist).with_context(|| format!("creating {}", dist.display()))?;
@@ -150,7 +152,6 @@ pub fn run(targets: &[Target]) -> Result<()> {
     let mut manifest = Manifest::read(&manifest_path)?;
     manifest.retain(|file| dist.join(file).is_file());
     let mut builder = Builder {
-        host: Arch::host()?,
         source: Source::current()?,
         docker: Docker::from_env(),
         bundled: false,
@@ -162,8 +163,8 @@ pub fn run(targets: &[Target]) -> Result<()> {
             continue;
         }
         let target_started = Instant::now();
-        let kind = target.kind();
-        let name = kind.file_name(builder.host);
+        let kind = target.kind()?;
+        let name = kind.file_name();
         let out = dist.join(&name);
         builder
             .build(kind, &out)
@@ -189,7 +190,6 @@ pub fn run(targets: &[Target]) -> Result<()> {
 
 /// State shared by the targets of one `dist` run.
 struct Builder {
-    host: Arch,
     source: Source,
     docker: Docker,
     /// Whether this run has bundled the frontend.
@@ -200,13 +200,13 @@ impl Builder {
     /// Builds the artifact of `kind` at `out`.
     fn build(&mut self, kind: Kind, out: &Path) -> Result<()> {
         match kind {
-            Kind::Mac => {
+            Kind::Mac(_) => {
                 self.bundle()?;
                 mac(out)
             }
             Kind::Binary(arch) | Kind::Deb(arch) => {
                 let exported = self.docker.artifacts(arch)?;
-                copy(&exported.join(kind.file_name(self.host)), out)
+                copy(&exported.join(kind.file_name()), out)
             }
             Kind::Image(arch) => {
                 let partial = temporary(out);
@@ -288,14 +288,6 @@ impl Source {
     }
 }
 
-/// `path` with `.tmp` appended. Artifacts are written there and then
-/// renamed, so `dist/` never holds half a file under an artifact's name.
-fn temporary(path: &Path) -> PathBuf {
-    let mut temporary = path.as_os_str().to_owned();
-    temporary.push(".tmp");
-    temporary.into()
-}
-
 fn rename(from: &Path, to: &Path) -> Result<()> {
     fs::rename(from, to).with_context(|| format!("renaming {} to {}", from.display(), to.display()))
 }
@@ -329,12 +321,12 @@ mod tests {
     fn artifacts_have_fixed_names() {
         let names = Target::value_variants()
             .iter()
-            .map(|target| target.kind().file_name(Arch::Arm64))
+            .skip(1)
+            .map(|target| target.kind().unwrap().file_name())
             .collect::<Vec<_>>();
         assert_eq!(
             names,
             [
-                "prysm-headless-macos-arm64",
                 "prysm-headless-linux-arm64",
                 "prysm-headless-linux-amd64",
                 "prysm-headless-linux-arm64.deb",
@@ -345,10 +337,13 @@ mod tests {
                 "prysm-tv-slim.ipk",
             ]
         );
-        assert_eq!(
-            Kind::Mac.file_name(Arch::Amd64),
-            "prysm-headless-macos-amd64"
-        );
+        assert_eq!(Target::value_variants()[0], Target::Mac);
+        for (arch, name) in [
+            (Arch::Arm64, "prysm-headless-macos-arm64"),
+            (Arch::Amd64, "prysm-headless-macos-amd64"),
+        ] {
+            assert_eq!(Kind::Mac(arch).file_name(), name);
+        }
     }
 
     #[test]

@@ -2,11 +2,11 @@ use crate::address::{Host, Names};
 use crate::ddp::WledRenderer;
 use crate::dither::Encoding;
 use crate::observe::{self, Observer};
-use crate::{WledSettings, http};
+use crate::{LedCounts, WledSettings, http};
 use prysm_core::EdgeColors;
 use prysm_ports::{
     Candidate, DeviceBrightness, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result,
-    ValidationError, system_lookup,
+    ValidationError, chain, system_lookup,
 };
 use serde_json::{Value, json};
 use std::net::SocketAddr;
@@ -89,22 +89,33 @@ impl OutputFactory for Wled {
             host,
             label,
             renderer,
-            leds: settings.leds.edges(),
+            leds: settings.leds,
             encoding: Encoding::new(settings.dither),
         };
         match output.enter(Mode::Live) {
             Ok(()) => Ok(Box::new(output)),
-            Err(source) => {
-                let mut context = output.context(Mode::Live);
-                if !matches!(source, http::RequestError::Connect(_))
-                    && let Err(cleanup) = output.enter(Mode::Off)
-                {
-                    context = format!("{context}; turning it off also failed: {cleanup}");
+            Err(live) => {
+                let context = output.context(Mode::Live);
+                if matches!(live, http::RequestError::Connect(_)) {
+                    return Err(Error::adapter(context, live));
                 }
-                Err(Error::adapter(context, source))
+                Err(match output.enter(Mode::Off) {
+                    Ok(()) => Error::adapter(context, live),
+                    Err(off) => Error::adapter(context, NotTurnedOff { live, off }),
+                })
             }
         }
     }
+}
+
+/// Live mode failed, and turning the device off again failed too. Both
+/// causes are kept; neither is the other's source, so each is rendered in
+/// its own clause.
+#[derive(Debug, thiserror::Error)]
+#[error("{}; turning it off also failed: {}", chain(.live), chain(.off))]
+pub(crate) struct NotTurnedOff {
+    pub(crate) live: http::RequestError,
+    pub(crate) off: http::RequestError,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -132,7 +143,8 @@ struct WledOutput {
     /// The device in messages: the configured address, plus the IP for a name.
     label: String,
     renderer: WledRenderer,
-    leds: [usize; 4],
+    /// Validated at open.
+    leds: LedCounts,
     /// Follows WLED's gamma and brightness at every write.
     encoding: Encoding,
     observer: Observer,

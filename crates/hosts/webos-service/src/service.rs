@@ -371,7 +371,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             }
         };
         if exit.is_some() {
-            // Lines written just before exiting.
+            // Its last lines, all read by now (see `Worker::try_exit`).
             outputs.extend(worker.drain());
             self.worker = None;
         }

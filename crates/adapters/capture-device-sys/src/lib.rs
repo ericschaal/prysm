@@ -11,7 +11,9 @@ pub use device::{CaptureSink, DeviceInfo, capture, list_devices, list_formats};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CaptureError {
-    #[error("no video capture device found (requested: {device:?})")]
+    /// `device` names the one asked for: a path on Linux, a unique ID on
+    /// macOS; `None` asked for the default.
+    #[error("{}", missing_device(.device.as_deref()))]
     DeviceNotFound {
         device: Option<String>,
         #[source]
@@ -45,6 +47,13 @@ pub enum CaptureError {
     Cleanup(#[source] anyhow::Error),
     #[error(transparent)]
     Backend(#[from] anyhow::Error),
+}
+
+fn missing_device(device: Option<&str>) -> String {
+    device.map_or_else(
+        || "no video capture device found".to_owned(),
+        |device| format!("no video capture device at {device}"),
+    )
 }
 
 /// Why macOS refuses camera access, each with what the user can do.
@@ -114,6 +123,23 @@ fn check_format_rejection(error: std::io::Error) -> Result<std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_device_reads_naturally_with_and_without_a_request() {
+        let requested = CaptureError::DeviceNotFound {
+            device: Some("/dev/video0".into()),
+            source: Some(std::io::Error::from_raw_os_error(2)),
+        };
+        assert_eq!(
+            prysm_ports::chain(&requested),
+            "no video capture device at /dev/video0: No such file or directory (os error 2)"
+        );
+        let default = CaptureError::DeviceNotFound {
+            device: None,
+            source: None,
+        };
+        assert_eq!(default.to_string(), "no video capture device found");
+    }
 
     #[test]
     fn an_unnamed_matrix_is_bt709_from_720_lines() {
