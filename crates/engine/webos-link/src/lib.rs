@@ -257,6 +257,10 @@ pub enum FailureKind {
     /// decoder); Prysm shows why. The worker released the capture and keeps
     /// reconnecting, so the next lighting start on the computer gets through.
     ReceiverFailed,
+    /// The supervisor could not read the TV's preferences (`tv.json`): it
+    /// runs with the defaults and leaves the file as it is until the app
+    /// saves preferences. Never sent by a worker.
+    Preferences,
     /// Anything else.
     Other,
 }

@@ -11,8 +11,9 @@ import type { PortalOptions } from '@prysm/tv-ui';
 import { createRoot } from 'react-dom/client';
 import { WebosSlimTvApp } from './app';
 
-// The supervisor over Luna; the computer's Prysm (`preferences.instance`) over
-// HTTP, which must allow this app's origin (`file://` sends `Origin: null`).
+// The supervisor over Luna; the computer's Prysm
+// (`preferences.prysm_address`) over HTTP, which must allow this app's origin
+// (`file://` sends `Origin: null`).
 const portal: PortalOptions = {
   client: (baseUrl) =>
     httpApplicationClient<CaptureSettings, OutputSettings>({ baseUrl }),

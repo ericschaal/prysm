@@ -14,7 +14,7 @@ import {
 } from './remote';
 
 const start = { full: 'mode-off', slim: 'primary' } as const;
-const settingsTop = { full: 'autostart', slim: 'instance' } as const;
+const settingsTop = { full: 'autostart', slim: 'prysm-address' } as const;
 const slots = {
   full: [
     '.overview',
@@ -31,7 +31,7 @@ const slots = {
     '.lighting',
     '#portal-address',
     '.settings',
-    '#instance',
+    '#prysm-address',
     '#autostart',
     '#calibrate',
     '#service-options',

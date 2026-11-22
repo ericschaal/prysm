@@ -2,6 +2,7 @@
 use crate::state::Flavor;
 use prysm_webos_link::{LightingTarget, PrysmAddress};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -10,9 +11,10 @@ use std::path::{Path, PathBuf};
 /// Largest preferences file read back.
 pub const MAX_BYTES: usize = 65_536;
 
-/// `tv.json` and the `setPreferences` request (complete, every field
-/// optional, an unset one absent). Fields marked "Slim only" must stay unset
-/// in the full package.
+/// The installed package's preferences: the `setPreferences` request
+/// (complete, every field optional, an unset one absent) and the published
+/// `preferences`. Fields marked "Slim only" must stay unset in the full
+/// package. The file is [`PreferencesFile`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
@@ -32,18 +34,65 @@ pub struct Preferences {
         feature = "schema",
         schema(value_type = Option<String>, nullable = false, max_length = 256, example = "http://192.168.1.20:8787")
     )]
-    pub instance: Option<PrysmAddress>,
+    pub prysm_address: Option<PrysmAddress>,
 }
 
 impl Preferences {
     /// # Errors
     /// A slim-only field in the full package, as `field: reason`.
     pub fn validate(&self, flavor: Flavor) -> Result<(), String> {
-        // `instance` was checked when it was parsed.
-        if flavor == Flavor::Full && self.instance.is_some() {
-            return Err("instance: only the slim package forwards frames".into());
+        // `prysm_address` was checked when it was parsed.
+        if flavor == Flavor::Full && self.prysm_address.is_some() {
+            return Err("prysm_address: only the slim package forwards frames".into());
         }
         Ok(())
+    }
+}
+
+/// `tv.json` as read and written: both packages' preferences, and every
+/// field this version does not know, kept as read. Both packages install as
+/// the same app and share the file, so the full package keeps the slim
+/// package's address (as read, unchecked) for a switch back.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreferencesFile {
+    #[serde(default)]
+    autostart: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prysm_address: Option<Value>,
+    #[serde(flatten)]
+    other: Map<String, Value>,
+}
+
+impl PreferencesFile {
+    /// The fields `flavor` owns.
+    ///
+    /// # Errors
+    /// Slim: the saved address is not a Prysm address.
+    pub fn preferences(&self, flavor: Flavor) -> Result<Preferences, serde_json::Error> {
+        let prysm_address = match flavor {
+            Flavor::Full => None,
+            Flavor::Slim => self
+                .prysm_address
+                .clone()
+                .map(serde_json::from_value)
+                .transpose()?,
+        };
+        Ok(Preferences {
+            autostart: self.autostart,
+            prysm_address,
+        })
+    }
+
+    /// Replace the fields `flavor` owns with `preferences` (validated for
+    /// it); every other field stays as read.
+    pub fn replace(&mut self, preferences: &Preferences, flavor: Flavor) {
+        self.autostart = preferences.autostart;
+        if flavor == Flavor::Slim {
+            self.prysm_address = preferences
+                .prysm_address
+                .as_ref()
+                .map(|address| Value::String(address.to_string()));
+        }
     }
 }
 
@@ -76,10 +125,10 @@ pub trait PreferencesStore {
     ///
     /// # Errors
     /// Unreadable, oversized or invalid content.
-    fn load(&mut self) -> Result<Option<Preferences>, StoreError>;
+    fn load(&mut self) -> Result<Option<PreferencesFile>, StoreError>;
     /// # Errors
     /// The file could not be replaced.
-    fn save(&mut self, preferences: &Preferences) -> Result<(), StoreError>;
+    fn save(&mut self, file: &PreferencesFile) -> Result<(), StoreError>;
     /// The intent remembered earlier in this boot (`Machine::intent`), so a
     /// restart of the service (an update, a crash) resumes it; `None` after
     /// a reboot, where `autostart` decides.
@@ -91,18 +140,18 @@ pub trait PreferencesStore {
     fn remember(&mut self, intent: LightingTarget) -> Result<(), StoreError>;
 }
 
-/// In memory, for tests: preferences and the remembered intent.
+/// In memory, for tests: the preferences file and the remembered intent.
 #[cfg(any(test, feature = "testkit"))]
 #[derive(Debug, Clone, Default)]
-pub struct MemoryStore(pub Option<Preferences>, pub Option<LightingTarget>);
+pub struct MemoryStore(pub Option<PreferencesFile>, pub Option<LightingTarget>);
 
 #[cfg(any(test, feature = "testkit"))]
 impl PreferencesStore for MemoryStore {
-    fn load(&mut self) -> Result<Option<Preferences>, StoreError> {
+    fn load(&mut self) -> Result<Option<PreferencesFile>, StoreError> {
         Ok(self.0.clone())
     }
-    fn save(&mut self, preferences: &Preferences) -> Result<(), StoreError> {
-        self.0 = Some(preferences.clone());
+    fn save(&mut self, file: &PreferencesFile) -> Result<(), StoreError> {
+        self.0 = Some(file.clone());
         Ok(())
     }
     fn resume(&mut self) -> Option<LightingTarget> {
@@ -197,7 +246,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32, replace: bool) -> io::
 }
 
 impl PreferencesStore for FileStore {
-    fn load(&mut self) -> Result<Option<Preferences>, StoreError> {
+    fn load(&mut self) -> Result<Option<PreferencesFile>, StoreError> {
         let path = &self.path;
         let Some(bytes) = read_private(path, MAX_BYTES).map_err(|source| StoreError::Read {
             path: path.clone(),
@@ -214,12 +263,11 @@ impl PreferencesStore for FileStore {
             })
     }
 
-    fn save(&mut self, preferences: &Preferences) -> Result<(), StoreError> {
-        let mut bytes =
-            serde_json::to_vec_pretty(preferences).map_err(|error| StoreError::Save {
-                path: self.path.clone(),
-                source: error.into(),
-            })?;
+    fn save(&mut self, file: &PreferencesFile) -> Result<(), StoreError> {
+        let mut bytes = serde_json::to_vec_pretty(file).map_err(|error| StoreError::Save {
+            path: self.path.clone(),
+            source: error.into(),
+        })?;
         bytes.push(b'\n');
         replace(&self.path, &bytes)
     }
@@ -280,13 +328,13 @@ mod tests {
     fn full_rejects_slim_fields_and_slim_validates_them() {
         let slim = Preferences {
             autostart: true,
-            instance: Some("http://192.168.1.20:8787".parse().unwrap()),
+            prysm_address: Some("http://192.168.1.20:8787".parse().unwrap()),
         };
         slim.validate(Flavor::Slim).unwrap();
         assert!(
             slim.validate(Flavor::Full)
                 .unwrap_err()
-                .starts_with("instance")
+                .starts_with("prysm_address")
         );
         Preferences::default().validate(Flavor::Full).unwrap();
         Preferences::default().validate(Flavor::Slim).unwrap();
@@ -322,14 +370,14 @@ mod tests {
     #[test]
     fn the_address_is_checked_when_read() {
         let parsed: Preferences =
-            serde_json::from_str(r#"{"instance":"https://prysm.example.com/"}"#).unwrap();
+            serde_json::from_str(r#"{"prysm_address":"https://prysm.example.com/"}"#).unwrap();
         assert_eq!(
-            serde_json::to_value(&parsed).unwrap()["instance"],
+            serde_json::to_value(&parsed).unwrap()["prysm_address"],
             "https://prysm.example.com"
         );
         for bad in ["prysm.local:7380", "http://0.0.0.0:8787", "http://x/path"] {
             let error =
-                serde_json::from_value::<Preferences>(serde_json::json!({ "instance": bad }))
+                serde_json::from_value::<Preferences>(serde_json::json!({ "prysm_address": bad }))
                     .unwrap_err()
                     .to_string();
             assert!(
@@ -337,17 +385,61 @@ mod tests {
                 "{error}"
             );
         }
-        // The previous separate stream address is gone.
-        assert!(serde_json::from_str::<Preferences>(r#"{"receiver":"prysm.local:7380"}"#).is_err());
     }
 
     #[test]
-    fn unknown_fields_are_rejected() {
+    fn unknown_fields_are_rejected_in_a_request() {
         assert!(serde_json::from_str::<Preferences>(r#"{"mode":"slim"}"#).is_err());
         // Picture settings are the receiver's (slim) or the portal's (full).
         assert!(serde_json::from_str::<Preferences>(r#"{"capture":{"fps":30}}"#).is_err());
         let parsed: Preferences = serde_json::from_str(r#"{"autostart":true}"#).unwrap();
         assert!(parsed.autostart);
+    }
+
+    /// The file is shared by both packages and by other versions: each reads
+    /// its own fields and writes every other field back as it read it.
+    #[test]
+    fn the_file_keeps_what_the_package_does_not_own() {
+        let read = |json: Value| serde_json::from_value::<PreferencesFile>(json).unwrap();
+        let address: PrysmAddress = "http://192.168.1.20:8787".parse().unwrap();
+        let mut file = read(serde_json::json!({
+            "autostart": true,
+            "prysm_address": "http://192.168.1.20:8787",
+            "newer": { "x": 1 },
+        }));
+        // Full reads `autostart` and keeps the address it ignores.
+        assert_eq!(
+            file.preferences(Flavor::Full).unwrap(),
+            Preferences {
+                autostart: true,
+                prysm_address: None
+            }
+        );
+        file.replace(&Preferences::default(), Flavor::Full);
+        assert_eq!(
+            serde_json::to_value(&file).unwrap(),
+            serde_json::json!({
+                "autostart": false,
+                "prysm_address": "http://192.168.1.20:8787",
+                "newer": { "x": 1 },
+            })
+        );
+        // Slim reads and replaces both.
+        assert_eq!(
+            file.preferences(Flavor::Slim).unwrap().prysm_address,
+            Some(address)
+        );
+        file.replace(&Preferences::default(), Flavor::Slim);
+        assert_eq!(
+            serde_json::to_value(&file).unwrap(),
+            serde_json::json!({ "autostart": false, "newer": { "x": 1 } })
+        );
+        // An address full ignores is never checked there; slim refuses it.
+        let file = read(serde_json::json!({ "prysm_address": "http://x/path" }));
+        file.preferences(Flavor::Full).unwrap();
+        assert!(file.preferences(Flavor::Slim).is_err());
+        // A known field of the wrong type is unreadable in both.
+        assert!(serde_json::from_str::<PreferencesFile>(r#"{"autostart":1}"#).is_err());
     }
 
     #[test]
@@ -356,12 +448,16 @@ mod tests {
         let path = dir.path().join("tv.json");
         let mut store = FileStore::new(&path);
         assert_eq!(store.load().unwrap(), None);
-        let preferences = Preferences {
-            autostart: true,
-            ..Preferences::default()
-        };
-        store.save(&preferences).unwrap();
-        assert_eq!(store.load().unwrap(), Some(preferences));
+        let mut file = PreferencesFile::default();
+        file.replace(
+            &Preferences {
+                autostart: true,
+                ..Preferences::default()
+            },
+            Flavor::Full,
+        );
+        store.save(&file).unwrap();
+        assert_eq!(store.load().unwrap(), Some(file));
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600

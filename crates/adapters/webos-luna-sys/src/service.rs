@@ -68,6 +68,16 @@ pub trait Handler {
     fn tick(&mut self, bus: &mut Bus, now: Instant) -> bool;
 }
 
+/// Why the bus answers a call itself, in place of the handler's reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// The payload exceeds [`MAX_PAYLOAD`] bytes.
+    TooLarge,
+    /// The call could not be read, the handler was busy, or its reply could
+    /// not be sent.
+    Internal,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config<'a> {
     /// The service name to register, such as `io.github.ericschaal.prysm.service`.
@@ -77,6 +87,9 @@ pub struct Config<'a> {
     /// `(uri, payload)` calls kept open, normally `{"subscribe":true}`.
     pub calls: &'a [(&'a str, &'a str)],
     pub tick: Duration,
+    /// The error reply for a [`Refusal`] and its text, in the service's
+    /// own error shape.
+    pub refuse: fn(Refusal, &str) -> String,
 }
 
 /// Register, run the loop until the handler's `tick` returns `false`, then
@@ -127,6 +140,7 @@ struct Callbacks {
     context: NonNull<glib::GMainContext>,
     main_loop: NonNull<glib::GMainLoop>,
     handler: RefCell<Box<dyn Handler>>,
+    refuse: fn(Refusal, &str) -> String,
     calls: Box<[Call]>,
     closing: Cell<bool>,
 }
@@ -197,6 +211,7 @@ impl Service {
             context,
             main_loop,
             handler: RefCell::new(handler),
+            refuse: config.refuse,
             calls,
             closing: Cell::new(false),
         });
@@ -368,15 +383,18 @@ impl Callbacks {
             state: self,
             raw: NonNull::new(raw).ok_or(Error::Glib("missing Luna message"))?,
         };
+        let internal = |text: String| (Refusal::Internal, text);
         let handled = (|| {
-            let method = message.method().map_err(|error| error.to_string())?;
-            let sender = message.sender()?;
+            let method = message
+                .method()
+                .map_err(|error| internal(error.to_string()))?;
+            let sender = message.sender().map_err(internal)?;
             let payload = message.payload()?;
             let mut bus = Bus::default();
             let mut handler = self
                 .handler
                 .try_borrow_mut()
-                .map_err(|_| "the service is busy".to_owned())?;
+                .map_err(|_| internal("the service is busy".to_owned()))?;
             let response = handler.request(
                 &mut bus,
                 Request {
@@ -385,8 +403,9 @@ impl Callbacks {
                     payload: &payload,
                 },
             );
-            Ok::<_, String>((response, bus))
+            Ok::<_, (Refusal, String)>((response, bus))
         })();
+        let refuse = |refusal, text: &str| message.respond(&(self.refuse)(refusal, text));
         match handled {
             Ok((response, bus)) => {
                 let sent = (|| {
@@ -398,9 +417,9 @@ impl Callbacks {
                 // The handler has run: what it asked of the bus happens
                 // whether or not its reply went out.
                 self.apply(bus);
-                sent.or_else(|error| message.respond(&error_reply(&error.to_string())))
+                sent.or_else(|error| refuse(Refusal::Internal, &error.to_string()))
             }
-            Err(text) => message.respond(&error_reply(&text)),
+            Err((refusal, text)) => refuse(refusal, &text),
         }
     }
 
@@ -478,21 +497,24 @@ impl Message<'_> {
         unsafe { native_text(service) }.map_err(|error| error.to_string())
     }
 
-    fn payload(&self) -> Result<String, String> {
+    fn payload(&self) -> Result<String, (Refusal, String)> {
         // SAFETY: LS2's live message for this callback.
         let text = unsafe { self.state.luna.LSMessageGetPayload(self.raw.as_ptr()) };
         if text.is_null() {
-            return Err("missing payload".into());
+            return Err((Refusal::Internal, "missing payload".into()));
         }
         // SAFETY: LS2 owns this NUL-terminated buffer through the callback; only
         // an owned copy leaves this method.
         let text = unsafe { CStr::from_ptr(text) };
         if text.to_bytes().len() > MAX_PAYLOAD {
-            return Err(format!("payload exceeds {MAX_PAYLOAD} bytes"));
+            return Err((
+                Refusal::TooLarge,
+                format!("payload exceeds {MAX_PAYLOAD} bytes"),
+            ));
         }
         text.to_str()
             .map(str::to_owned)
-            .map_err(|_| "payload is not UTF-8".to_owned())
+            .map_err(|_| (Refusal::Internal, "payload is not UTF-8".to_owned()))
     }
 
     fn respond(&self, payload: &str) -> Result<(), Error> {
@@ -540,19 +562,6 @@ unsafe fn native_text(pointer: *const c_char) -> Result<String, Error> {
         .to_str()
         .map(str::to_owned)
         .map_err(|_| Error::Glib("Luna returned non-UTF-8 text"))
-}
-
-fn error_reply(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len() + 2);
-    for c in text.chars() {
-        match c {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            c if u32::from(c) < 0x20 => escaped.push_str(&format!("\\u{:04x}", u32::from(c))),
-            c => escaped.push(c),
-        }
-    }
-    format!(r#"{{"returnValue":false,"errorText":"{escaped}"}}"#)
 }
 
 impl Drop for Service {

@@ -17,7 +17,7 @@ import {
 } from './remote';
 
 const start = { full: 'mode-off', slim: 'primary' } as const;
-const settingsTop = { full: 'autostart', slim: 'instance' } as const;
+const settingsTop = { full: 'autostart', slim: 'prysm-address' } as const;
 const statusTitle = (page: Page) => page.locator('#status-title');
 
 for (const flavor of ['full', 'slim'] as const) {
@@ -97,21 +97,23 @@ test('full: a lighting mode applies with OK and the status follows', async ({
 
 test('slim: the Prysm address row saves a new address', async ({ page }) => {
   await openTv(page, 'slim', { focus: 'primary' });
-  await pressUntil(page, 'ArrowRight', 'instance');
+  await pressUntil(page, 'ArrowRight', 'prysm-address');
   await press(page, 'Enter');
-  const input = page.locator('#instance-input');
+  const input = page.locator('#prysm-address-input');
   await expect(input).toBeFocused();
   await expect(input).toHaveValue('192.168.1.20:8787');
   // Typing is the TV's on-screen keyboard; Playwright fills the field.
   await input.fill('192.168.1.30');
   await press(page, 'ArrowDown');
-  await expect(page.locator('#instance-input-apply')).toBeFocused();
+  await expect(page.locator('#prysm-address-input-apply')).toBeFocused();
   await press(page, 'Enter');
   await expect(page.locator('#modal')).toHaveCount(0);
-  await expect(page.locator('#instance-value')).toHaveText('192.168.1.30:8787');
-  await expect(page.locator('#instance')).toBeFocused();
+  await expect(page.locator('#prysm-address-value')).toHaveText(
+    '192.168.1.30:8787',
+  );
+  await expect(page.locator('#prysm-address')).toBeFocused();
   await expect
-    .poll(async () => (await supervisorState(page)).preferences.instance)
+    .poll(async () => (await supervisorState(page)).preferences.prysm_address)
     .toBe('http://192.168.1.30:8787');
 });
 
@@ -189,7 +191,7 @@ test('slim first run: add the address, then the lights from the phone', async ({
   await expect(statusTitle(page)).toHaveText('Set up this TV');
   await expect(page.locator('#primary')).toHaveText('Add Prysm address');
   await press(page, 'Enter');
-  const input = page.locator('#instance-input');
+  const input = page.locator('#prysm-address-input');
   await expect(input).toBeFocused();
   await input.fill('192.168.1.20');
   await press(page, 'ArrowDown');

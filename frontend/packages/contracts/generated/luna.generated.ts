@@ -8,8 +8,26 @@ export interface components {
             /** @enum {boolean} */
             returnValue: true;
         };
-        /** @description Any failed call. */
+        /**
+         * @description Why a call failed: the error reply's `errorKind`. `too_large`: the
+         *     payload exceeds 4096 bytes. `unknown_method`: no such method.
+         *     `forbidden`: only the TV app may change Prysm. `removing`: the service is
+         *     being removed. `invalid_request`: the payload is not the method's request.
+         *     `wrong_package`: the other package's method (`setTarget` on slim,
+         *     `setEnabled` on full). `invalid_preferences`: a preference the installed
+         *     package does not have. `save_failed`: the preferences could not be saved.
+         *     `internal`: the service could not read the call or send its reply. Open:
+         *     an app reads a kind it does not know as a refusal and shows `errorText`.
+         * @enum {string}
+         */
+        ErrorKind: "too_large" | "unknown_method" | "forbidden" | "removing" | "invalid_request" | "wrong_package" | "invalid_preferences" | "save_failed" | "internal";
+        /**
+         * @description Any failed call. LS2's own replies (for example for a method that is not
+         *     registered) carry no `errorKind`; an app reads that as an unknown kind.
+         */
         ErrorReply: {
+            errorKind: components["schemas"]["ErrorKind"];
+            /** @description What failed, for people. */
             errorText: string;
             /** @enum {boolean} */
             returnValue: false;
@@ -27,10 +45,13 @@ export interface components {
          *     Prysm address). `receiver_failed` (slim): Prysm's receiving source failed
          *     with this TV's stream (a refusal, a keyframe that does not decode, no
          *     decoder), and Prysm shows why; the worker released the capture and keeps
-         *     reconnecting. `other`: anything else.
+         *     reconnecting. `preferences`: the TV's saved preferences could not be
+         *     read; the service runs with the defaults and keeps the file until the app
+         *     saves preferences. `other`: anything else. Open: an app reads a kind it
+         *     does not know as `other`.
          * @enum {string}
          */
-        FailureKind: "encoder" | "receiver" | "version" | "replaced" | "receiver_failed" | "other";
+        FailureKind: "encoder" | "receiver" | "version" | "replaced" | "receiver_failed" | "preferences" | "other";
         /** @description The full package's worker process, as `{ "phase": … }`. */
         FullWorker: {
             /** @enum {string} */
@@ -97,9 +118,10 @@ export interface components {
          */
         Power: "unknown" | "active" | "screen_saver" | "asleep";
         /**
-         * @description `tv.json` and the `setPreferences` request (complete, every field
-         *     optional, an unset one absent). Fields marked "Slim only" must stay unset
-         *     in the full package.
+         * @description The installed package's preferences: the `setPreferences` request
+         *     (complete, every field optional, an unset one absent) and the published
+         *     `preferences`. Fields marked "Slim only" must stay unset in the full
+         *     package. The file is [`PreferencesFile`].
          */
         Preferences: {
             /**
@@ -116,7 +138,7 @@ export interface components {
              *     not resolve is reported as the receiver wait.
              * @example http://192.168.1.20:8787
              */
-            instance?: string;
+            prysm_address?: string;
         };
         /** @description `setEnabled` request (slim package). */
         SetEnabledRequest: {
@@ -248,6 +270,7 @@ export interface components {
     pathItems: never;
 }
 export type DoneReply = components['schemas']['DoneReply'];
+export type ErrorKind = components['schemas']['ErrorKind'];
 export type ErrorReply = components['schemas']['ErrorReply'];
 export type FailureKind = components['schemas']['FailureKind'];
 export type FullWorker = components['schemas']['FullWorker'];

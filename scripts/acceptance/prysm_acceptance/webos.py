@@ -27,7 +27,7 @@ STOP_SECONDS = 30
 
 class Preferences(TypedDict, total=False):
     autostart: bool
-    instance: str
+    prysm_address: str
 
 
 class LunaReply(tv.State, total=False):
@@ -161,7 +161,7 @@ class WebosTv:
     def preferences_command(self, preferences: Preferences) -> Command:
         """`setPreferences` with the whole of `preferences` (as the app)."""
         return commands.tv_set_preferences(
-            self.target, bool(preferences.get('autostart')), preferences.get('instance') or None
+            self.target, bool(preferences.get('autostart')), preferences.get('prysm_address') or None
         )
 
     def set_preferences(self, preferences: Preferences) -> None:
@@ -377,7 +377,7 @@ class WebosTv:
             # Slim lights through its receiver: `enabled` (streaming to it) is what the TV holds of the lighting.
             if luna.get('enabled'):
                 self.call(commands.tv_set_enabled(self.target, True))
-                done.append('lighting: enabled (streaming to its instance), as backed up')
+                done.append('lighting: enabled (streaming to its Prysm), as backed up')
             else:
                 done.append('lighting: not enabled, left as it is')
         return done

@@ -1,10 +1,10 @@
 /** The TV app's dialogs: the Prysm address, service options, diagnostics, removal and closing. */
 import { useState, type FormEvent, type ReactNode, type Ref } from 'react';
-import { diagnostics, instanceAddress, shown } from './model';
+import { diagnostics, prysmAddress, shown } from './model';
 import type { TvServiceView } from './service';
 
 export type DialogId =
-  'instance' | 'service' | 'diagnostics' | 'cleanup' | 'exit';
+  'prysm-address' | 'service' | 'diagnostics' | 'cleanup' | 'exit';
 
 /** One choice in a dialog's list: a name, an optional line of detail. */
 function Choice({
@@ -96,7 +96,7 @@ export function Dialogs({
   modal,
   tv,
   slim,
-  setInstance,
+  setPrysmAddress,
   openDialog,
   closeDialog,
   dismiss,
@@ -106,7 +106,7 @@ export function Dialogs({
   modal: Ref<HTMLDivElement>;
   tv: TvServiceView;
   slim: boolean;
-  setInstance: (instance: string | null) => void;
+  setPrysmAddress: (address: string | null) => void;
   openDialog: (dialog: DialogId) => void;
   closeDialog: () => void;
   dismiss: () => void;
@@ -127,22 +127,22 @@ export function Dialogs({
     </button>
   );
   switch (dialog) {
-    case 'instance':
+    case 'prysm-address':
       title = 'Prysm address';
       description =
         'The address you open Prysm’s web portal with on your computer, such as 192.168.1.20.';
       content = (
         <AddressForm
-          id="instance-input"
+          id="prysm-address-input"
           label="Address"
-          initial={tv.draft.instance ? shown(tv.draft.instance) : ''}
+          initial={tv.draft.prysm_address ? shown(tv.draft.prysm_address) : ''}
           placeholder="192.168.1.20"
           button="Use this address"
           cancel={closeDialog}
           apply={(text) => {
-            const result = instanceAddress(text);
+            const result = prysmAddress(text);
             if ('error' in result) return result.error;
-            setInstance(result.value);
+            setPrysmAddress(result.value);
             closeDialog();
             return null;
           }}
@@ -244,7 +244,7 @@ export function Dialogs({
     <div
       ref={modal}
       id="modal"
-      className={`modal${dialog === 'instance' ? ' top' : ''}`}
+      className={`modal${dialog === 'prysm-address' ? ' top' : ''}`}
     >
       <section
         className="dialog"

@@ -37,7 +37,7 @@ export function runDemo(
     delayMs: 150,
     preferences:
       flavor === 'slim' && !flags.has('noaddress')
-        ? { instance: 'http://192.168.1.20:8787' }
+        ? { prysm_address: 'http://192.168.1.20:8787' }
         : {},
   });
   if (flags.has('hold')) supervisor.hold();
