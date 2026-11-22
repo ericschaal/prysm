@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # Publishes one release from the artifacts of a CI run with `release: true`:
-# pushes ghcr.io/<owner>/prysm-headless:<version> for amd64 and arm64 and the
-# multi-arch index, checks that every image carries the release commit, then
-# attaches both .debs, both TV packages, docker-image.txt and SHA256SUMS to the
-# GitHub release and publishes it. Called by .github/workflows/release.yml.
+# pushes ghcr.io/<owner>/prysm-headless:<version> for amd64 and arm64 as the
+# multi-arch index, checks that every image carries the release commit, moves
+# `:<major>` and `:latest` to it when it is the newest stable release, attaches
+# both .debs, both TV packages, docker-image.txt and SHA256SUMS to the GitHub
+# release and publishes it. Called by .github/workflows/release.yml.
+#
+# The promised image tags are `:<version>` (never moved), `:<major>` (the newest
+# stable release of that major version) and `:latest` (the newest stable
+# release); a pre-release gets `:<version>` only. The per-architecture tags
+# `:<version>-amd64` and `-arm64` only stage the images for the index and are
+# not promised.
 #
 # Safe to run again for the same tag: images already pushed are checked, not
-# rebuilt, and a release already published only gets the checks. A stable
-# release becomes "Latest" (and `:latest`) only if it is the newest stable one.
+# rebuilt, and a release already published only gets the checks and the
+# floating tags.
 #
 # Environment: GITHUB_REPOSITORY (owner/name), RELEASE_TAG (v1.2.3),
 # RELEASE_VERSION (1.2.3), RELEASE_SHA (the tag's commit), RELEASE_DIRECTORY,
@@ -146,22 +153,39 @@ if [ "$release" != published ]; then
   gh release edit "$RELEASE_TAG" --draft=false --prerelease="$prerelease" --latest=false
 fi
 
-# Only the newest stable release is "Latest"; recovering an older one, or a
-# pre-release, leaves it and `:latest` where they are.
+# The image tags this release moves: `:X` if it is the newest stable release
+# of its major version X, and `:latest` (and the release's "Latest" marker) if
+# it is the newest stable release of all. A pre-release has its exact tag only,
+# and an older release (one recovered, or a patch of an older major) moves only
+# the tags it is the newest for.
 if [ "$prerelease" = false ]; then
   gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
     --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' > releases.txt
-  newest=$(python3 - <<'PY'
+  floating=$(python3 - "$version" <<'PY'
 import re
-tags = [t for t in open('releases.txt').read().split() if re.fullmatch(r'v\d+\.\d+\.\d+', t)]
-print(max(tags, key=lambda t: tuple(map(int, t[1:].split('.')))) if tags else '')
+import sys
+
+def key(version):
+    return tuple(map(int, version.split('.')))
+
+version = key(sys.argv[1])
+stable = [key(t[1:]) for t in open('releases.txt').read().split() if re.fullmatch(r'v\d+\.\d+\.\d+', t)]
+tags = []
+if version == max(v for v in stable + [version] if v[0] == version[0]):
+    tags.append(str(version[0]))
+if version == max(stable + [version]):
+    tags.append('latest')
+print(' '.join(tags))
 PY
 )
-  if [ "$newest" = "$RELEASE_TAG" ]; then
-    gh release edit "$RELEASE_TAG" --latest
-    # The floating `:latest` image tag (not yet decided): delete this line to
-    # publish only `:<version>`; its tests are the `latest` asserts in
-    # scripts/tests/test_release.py.
-    docker buildx imagetools create --tag "$image:latest" "$image@$digest"
+  arguments=()
+  for tag in $floating; do
+    arguments+=(--tag "$image:$tag")
+  done
+  if [ ${#arguments[@]} -gt 0 ]; then
+    docker buildx imagetools create "${arguments[@]}" "$image@$digest"
   fi
+  case " $floating " in
+  *" latest "*) gh release edit "$RELEASE_TAG" --latest ;;
+  esac
 fi

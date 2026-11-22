@@ -609,6 +609,9 @@ jobs:
           grep -qx 'DynamicUser=yes' unit
           grep -qx 'SupplementaryGroups=video' unit
           grep -qx 'StateDirectory=prysm' unit
+          # Options come from the package's one conffile.
+          grep -qx 'EnvironmentFile=-/etc/default/prysm-headless' unit
+          dpkg-deb --info "$deb" conffiles | grep -qx /etc/default/prysm-headless
           if grep -q -E '^(User|Group)=' unit; then exit 1; fi
           # No systemd in the container: checks dependencies and layout, and
           # that purge removes the state systemd would have created
@@ -618,11 +621,13 @@ jobs:
             apt-get install -y -qq /deb/prysm-headless-linux-*.deb >/dev/null
             test -z "$(getent passwd prysm prysm-headless)"
             /usr/bin/prysm-headless --help >/dev/null
+            grep -qx OPTIONS= /etc/default/prysm-headless
             mkdir -p /var/lib/private/prysm /var/lib/private/other
             echo {} >/var/lib/private/prysm/settings.json
             ln -s private/prysm /var/lib/prysm
             apt-get purge -y -qq prysm-headless >/dev/null
             test ! -e /usr/bin/prysm-headless
+            test ! -e /etc/default/prysm-headless
             test ! -e /var/lib/private/prysm
             test ! -L /var/lib/prysm
             test -d /var/lib/private/other'

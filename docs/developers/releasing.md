@@ -33,7 +33,8 @@ release. The OpenAPI documents' `info.version` is their API's own version
 (the HTTP documents' `1`, Luna's `3`), and the exported `State` fixtures
 carry a fixed `version`, so generated contracts never change for a release.
 [scripts/check-release.py](../../scripts/check-release.py) checks this: VERSION
-is a semantic version, the crates are `0.0.0`, no Rust source uses
+is a semantic version without build metadata (an image tag cannot hold
+`+`), the crates are `0.0.0`, no Rust source uses
 `CARGO_PKG_VERSION`, and the TrueNAS pin equals VERSION; given a tag, also that
 the tag is `v` plus VERSION and the manifest has it. Its tests run in CI.
 
@@ -88,9 +89,14 @@ Covered:
   2 for bad arguments, 101 if a panic ended the host, 130 when the host
   exited at once on a second SIGINT or SIGTERM; `--check-settings` 0 when
   valid, else 1;
-- package and image names: the Debian package `prysm-headless`, the image
+- package and image names: the Debian package `prysm-headless` and its
+  options file `/etc/default/prysm-headless` (`OPTIONS`), the image
   `ghcr.io/<owner>/prysm-headless`, the IPKs
-  `io.github.ericschaal.prysm-full` and `io.github.ericschaal.prysm-slim`.
+  `io.github.ericschaal.prysm-full` and `io.github.ericschaal.prysm-slim`;
+- the image tags: `:X.Y.Z` for every release, never moved; `:X`, the newest
+  stable release of major version X; `:latest`, the newest stable release.
+  A pre-release (`X.Y.Z-rc.N`) is tagged `:X.Y.Z-rc.N` only. Every promised
+  tag is the multi-arch index (amd64, arm64).
 
 Not covered: the Rust crates (`0.0.0`, never published) and their APIs, the
 Luna methods only the same package's TV app calls (`setPreferences`,
@@ -142,19 +148,22 @@ contract (timings, colours produced).
      name in one artifact only and not yet in the release directory;
      [release.rs](../../crates/tools/xtask/src/release.rs)),
      built from the workflow's own checkout of the tools, pushes
-     `ghcr.io/<owner>/prysm-headless:<version>-amd64` and `-arm64` and the
-     multi-arch `:<version>`, checks that each image is from the tag's commit,
+     `ghcr.io/<owner>/prysm-headless:<version>-amd64` and `-arm64` (staging
+     tags for the index, not promised) and the multi-arch `:<version>`,
+     checks that each image is from the tag's commit,
      attaches the packages under the names users download,
      `prysm-headless_<version>_{amd64,arm64}.deb`,
      `io.github.ericschaal.prysm-full_<x.y.z>_all.ipk` and `io.github.ericschaal.prysm-slim_<x.y.z>_all.ipk`,
      with `docker-image.txt` (the index digest) and `SHA256SUMS`, and
      publishes the release.
 
-A version with a suffix (`-rc.1`) is published as a pre-release. A stable
-release becomes "Latest", and the floating `:latest` image tag points at its
-image, only if it is the newest stable release; recovering an older one moves
-neither. Whether to keep `:latest` is not decided: it is one line in
-publish.sh, marked there.
+A version with a suffix (`-rc.1`) is published as a pre-release, with its
+exact image tag only. A stable release moves the image tag `:X` of its major
+version X if it is the newest stable release of that major, and becomes
+"Latest" with the image tag `:latest` if it is the newest stable release of
+all. So a patch of an older major (`1.4.1` after `2.0.0`) moves `:1` only, and
+recovering an older release moves neither. The tests in
+[test_release.py](../../scripts/tests/test_release.py) hold the table.
 
 Packages from one release form a supported desktop/TV pair: the slim TV and
 the desktop receiver speak one wire version.
@@ -164,7 +173,8 @@ the desktop receiver speak one wire version.
 Run **Release** (`workflow_dispatch`) with the existing tag. It rebuilds from
 the tag's commit if the release is not yet published; images already pushed
 are checked against the commit instead of pushed again. For a release that is
-already published it only checks the images and the "Latest" marker. The
+already published it only checks the images, and sets `:X`, `:latest` and
+the "Latest" marker by the rule above. The
 publish script comes from the workflow's own commit, so a fix on `main` can
 recover an older tag.
 
