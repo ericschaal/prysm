@@ -210,6 +210,9 @@ async fn browsers_from_other_sites_cannot_open_it_and_without_a_source_it_is_abs
             panic!("{refused:?}");
         };
         assert_eq!(response.status(), 426);
+        let body: serde_json::Value =
+            serde_json::from_slice(response.body().as_deref().unwrap()).unwrap();
+        assert_eq!(body["kind"], "upgrade_required");
         assert_eq!(
             response.headers()["sec-websocket-protocol"],
             prysm_ports::CAPTURE_PROTOCOL

@@ -1,14 +1,5 @@
 import type { StreamEncoding } from '@prysm/contracts/host-desktop';
 
-/** What Rust uses for an omitted field. */
-export const remoteDefaults = {
-  width: 320,
-  height: 180,
-  fps: 30,
-  include_ui: true,
-  encoding: 'h264_hardware',
-} as const;
-
 /** The stream encodings in the order offered, each with its trade-off. */
 export const encodingChoices: readonly {
   value: StreamEncoding;

@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { failureOf, same } from '@prysm/application-client';
 import type { Calibration, Processing } from '@prysm/contracts/application';
+import { processingMaxima } from '@prysm/contracts/constants';
 import { useDraft } from './draft';
 import type { SaveState } from './save-state';
 import {
@@ -35,40 +36,40 @@ export type ProcessingControls = Pick<
 
 /**
  * Limits from the generated `Processing` schema (`minimum`/`maximum`),
- * checked against it in tests/portal.test.jsx.
+ * checked against it in tests/portal.test.jsx; Rust's named maxima are
+ * generated (`processingMaxima`).
  */
 export const processingLimits = {
   brightness_percent: { min: 0, max: 100, step: 1 },
-  sample_density: { min: 1, max: 1024, step: 1 },
+  sample_density: {
+    min: 1,
+    max: processingMaxima.sample_density,
+    step: 1,
+  },
 } as const;
 
 /** The style knobs' limits, from the generated `StyleValues` schema likewise. */
 export const styleLimits = {
-  smoothing_seconds: { min: 0, step: 'any' },
+  smoothing_seconds: {
+    min: 0,
+    max: processingMaxima.smoothing_seconds,
+    step: 0.05,
+  },
   cut_response_percent: { min: 0, max: 100, step: 1 },
-  brightness_ramp_seconds: { min: 0, max: 2, step: 0.1 },
+  brightness_ramp_seconds: {
+    min: 0,
+    max: processingMaxima.brightness_ramp_seconds,
+    step: 0.1,
+  },
   spatial_reach_percent: { min: 1, max: 100, step: 1 },
   color_focus_percent: { min: 0, max: 100, step: 1 },
   saturation_boost_percent: { min: 0, max: 100, step: 1 },
-  dark_floor_percent: { min: 0, max: 20, step: 1 },
-} as const;
-
-/**
- * Smoothing and Detail as sliders: the range a person tunes in, widened to
- * any saved value beyond it (both settings allow more than is useful).
- */
-export const fineLimits = {
-  smoothing: (value: number) => ({
-    min: styleLimits.smoothing_seconds.min,
-    max: Math.max(2, value),
-    step: 0.05,
-  }),
-  detail: (value: number) => ({
-    min: processingLimits.sample_density.min,
-    max: Math.max(512, value),
+  dark_floor_percent: {
+    min: 0,
+    max: processingMaxima.dark_floor_percent,
     step: 1,
-  }),
-};
+  },
+} as const;
 
 /** Wait this long after the last change before applying it. */
 export const processingDelayMs = 400;

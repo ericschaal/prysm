@@ -1,3 +1,4 @@
+import { captureDefaults } from '@prysm/contracts/constants';
 import type { WebosSettings } from '@prysm/contracts/host-webos';
 import type { ReactNode } from 'react';
 import {
@@ -8,7 +9,7 @@ import {
   type EditorProps,
   type ModesState,
 } from '@prysm/web-portal';
-import { includeMenusHelp, webosDefaults, type TvPicture } from './settings';
+import { includeMenusHelp, type TvPicture } from './settings';
 
 /**
  * Size, rate and “include menus” of a TV's picture, shared by this TV's
@@ -71,7 +72,7 @@ export function WebosEditor(props: EditorProps<WebosSettings>) {
     <>
       <TvPictureFields
         {...props}
-        defaults={webosDefaults}
+        defaults={captureDefaults.webos}
         modes={modes}
         source="This TV"
         unreachable="This TV can’t say what it captures just now."

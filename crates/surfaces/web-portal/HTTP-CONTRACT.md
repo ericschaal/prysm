@@ -90,7 +90,7 @@ asked for) is logged, never published nor the reply. `LightingFailure` is
 tagged by `kind`: `invalid { message, field? }` (`field` absent when the
 settings as a whole are at fault), `adapter { message, section? }` or
 `internal { message }`.
-`settings` is the settings file without its `format` number, which belongs to the file alone: a `settings` body carrying `format` is refused as an unknown field (`400`). Shape: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
+`settings` is the settings file without its `format` number, which belongs to the file alone: a `settings` body carrying `format` is refused as an unknown setting (`422 invalid`, `field` `format`). Shape: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
 `processing.style.kind` is `natural`, `calm`, `vivid`, `game` or `custom`; a built-in style is stored by name only, and `custom` applies `processing.custom_style` (all seven knobs, required with `custom`, kept while another style is chosen). The built-in styles' values are not sent: the portal is built with them (`@prysm/contracts/constants`), and the [settings file](../../adapters/settings-file/README.md) describes the fields.
 A calibration's `correction` is `{ warmth, tint, midtones, red, green, blue }`, each primary `{ hue, strength }`, every control -100 to 100 and 0 when omitted ([settings file](../../adapters/settings-file/README.md)).
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
@@ -245,8 +245,9 @@ need not be valid. A form can ask before saving.
   combination of `min`, `min + step`, … `max`). No modes: nothing with
   these settings. A span where the hardware takes any value in it, fixed
   values where it offers fixed ones.
-- An unregistered kind is `422 invalid` (`capture.kind`); fields the kind
-  does not decode `422 invalid`; a body without `kind` or not JSON `400`;
+- An unregistered kind is `422 invalid` (`capture.kind`); a field the kind
+  does not decode `422 invalid` on that field (`capture.width`); a body
+  without `kind` or not JSON `400`;
   other methods `405`. The origin policy applies.
 - Like candidates it is a lookup, not state: off the async runtime, no
   revision, not through the command queue; the adapter keeps it brief. One
@@ -394,7 +395,7 @@ blocking socket, to the `remote` source:
   subprotocol and the `remote` source runs (lighting on with that capture).
   The newest connection replaces the one the source reads, which is closed
   with the *replaced* code.
-- `426 Upgrade Required` (`bad_request`), listing the versions the portal
+- `426 Upgrade Required` (`upgrade_required`), listing the versions the portal
   speaks in `Sec-WebSocket-Protocol` (`prysm-capture.v6`), when
   the sender offers none of them.
 - `503 unavailable` while no `remote` source runs: lighting is off or another
@@ -429,16 +430,17 @@ lighting failure, in `State.session.failure`.
 
 | Status | `kind` | When |
 | --- | --- | --- |
-| 400 | `bad_request` | Malformed JSON, unknown fields or wrong value types |
+| 400 | `bad_request` | A body that is not JSON (also a number JSON cannot hold, such as `1e999`, wherever it is), or a problem outside the settings it carries: a top-level field unknown, missing or of the wrong type (`expected`, `settings` itself, `target`, a calibration pattern's fields, a `processing` or capture body of the wrong type as a whole) |
 | 403 | `forbidden` | An `Origin` that is neither the portal's own nor allowed (`origin denied`) |
 | 404 | `not_found` | Unknown route or asset (and `/metrics` when disabled), a candidates path without `capture/<kind>` or `output/<kind>` |
 | 405 | `method_not_allowed` | Known API path (or enabled `/metrics`), wrong method |
-| 408 | `bad_request` | Body not received within 5 s |
+| 408 | `request_timeout` | Body not received within 5 s |
 | 409 | `stale_revision` | `expected` is not current; `current` is the revision to reload |
 | 409 | `needs_screen_sync` | A calibration pattern while the target is not `screen_sync` |
 | 413 | `payload_too_large` | Body over 1 MiB |
 | 415 | `unsupported_media_type` | `PUT`, or `POST /api/v1/capture/modes`, without `Content-Type: application/json` |
-| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.calibrations[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `screen_sync` without capture/output configured; also, with no `field`, a settings file that could not be loaded at start (its whole cause chain in `message`), in `State.session.failure` and for lighting asked before a save |
+| 426 | `upgrade_required` | A capture stream sender that offers none of the versions spoken here; see [Capture stream](#capture-stream) |
+| 422 | `invalid` | Every problem inside `settings`, a `processing` body or a capture section, with its `field` relative to the settings (e.g. `output.address`, `processing.calibrations[1].name`, `processing.style.kind`, `format`): a value refused by processing or adapter validation, an unknown, missing or mistyped field (a section as a whole, such as one without `kind`, is named by its section, `capture`), an unknown adapter `kind` (`capture.kind`, also for candidates), or `screen_sync` without capture/output configured; also, with no `field`, a settings file that could not be loaded at start (its whole cause chain in `message`), in `State.session.failure` and for lighting asked before a save |
 | 429 | `busy` | More than 8 open state streams, more than 4 preview streams, or more than 8 colors streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle; `section` (`capture` or `output`) says which side, when the engine knows |
@@ -593,7 +595,9 @@ returns; nothing is detached.
 with `prysm-runtime`'s fake adapters: construction validation, foreign origins
 refused before the engine runs (commands, stream, preflight), same-origin and
 origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, calibration (refused unless screen sync, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), processing trial (applied without saving or a revision change, validated, exact fields, origin policy), adapter failure (502),
-missing settings (422), settings replace success/stale/invalid/undecodable,
+missing settings (422), settings replace success/stale/invalid/undecodable
+(each problem inside `settings` `422` with its `field`, the envelope and
+bodies that are not JSON `400`),
 media type and size limits, stream delivery, the stream limit, a faulted engine
 (503), prompt listener shutdown, and the preview: `idle` while off and after the
 session ends, frames while running, no viewer registered without a stream, the
@@ -606,7 +610,7 @@ origin policy and `405`, and `/metrics`: `404` when disabled; content type, coun
 list, the default empty list, an unknown kind (422), malformed paths (404),
 `405`, the origin policy, and no revision change; capture modes: the fake
 source's answer for a section with an invalid size, an unknown kind (422),
-undecodable fields, a body without `kind` (400), `405`, the origin policy
+undecodable fields (422 on the field), a body without `kind` (400), `405`, the origin policy
 and no revision change. `tests/capture.rs` checks that a refused upgrade
 (lighting off) still delivers the sender's offer. Unit tests in `src/metrics.rs` check
 the exact text; unit tests in `src/preview.rs` decode the JPEG and check its size,

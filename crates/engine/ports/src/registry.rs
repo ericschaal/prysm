@@ -275,17 +275,34 @@ impl Registry {
     /// # Errors
     /// Unknown kind (field `capture.kind`) or undecodable settings.
     pub fn capture_modes(&self, settings: &AdapterSettings) -> Result<Modes> {
-        find(&self.sources, Section::Capture, &settings.kind)?.modes(settings)
+        let section = Section::Capture;
+        find(&self.sources, section, &settings.kind)?
+            .modes(settings)
+            .map_err(|error| within(section, error))
     }
 }
 
-/// A factory's invalid field, relative to its section, as a full path.
+/// A factory's invalid or undecodable field, relative to its section, as a
+/// full path; an undecodable section as a whole is the section's name.
 fn within(section: Section, error: Error) -> Error {
     match error {
         Error::Invalid(ValidationError { field, reason }) => Error::Invalid(ValidationError {
             field: format!("{section}.{field}"),
             reason,
         }),
+        Error::Decode {
+            kind,
+            field,
+            source,
+        } => Error::Decode {
+            kind,
+            field: if field.is_empty() {
+                section.to_string()
+            } else {
+                format!("{section}.{field}")
+            },
+            source,
+        },
         other => other,
     }
 }
@@ -319,10 +336,21 @@ trait ErasedOutput: Erased {
     fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()>;
 }
 
+/// The fields as the factory's type; a failure names the field relative to
+/// the section (empty for the section as a whole), for [`within`] to complete.
 fn decode<S: DeserializeOwned>(settings: &AdapterSettings) -> Result<S> {
-    serde_json::from_value(Value::Object(settings.fields.clone())).map_err(|source| Error::Decode {
-        kind: settings.kind.clone(),
-        source: Arc::new(source),
+    let fields = Value::Object(settings.fields.clone());
+    serde_path_to_error::deserialize(fields).map_err(|error| {
+        let path = error.path();
+        Error::Decode {
+            kind: settings.kind.clone(),
+            field: if path.iter().next().is_none() {
+                String::new()
+            } else {
+                path.to_string()
+            },
+            source: Arc::new(error.into_inner()),
+        }
     })
 }
 
@@ -374,5 +402,61 @@ impl<F: OutputFactory> ErasedOutput for Output<F> {
         let typed = decode(settings)?;
         self.0.validate(&typed)?;
         self.0.idle(&typed, mode)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    struct Strict;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct StrictSettings {
+        fps: u32,
+    }
+
+    impl SourceFactory for Strict {
+        const KIND: &'static str = "strict";
+        type Settings = StrictSettings;
+        fn validate(&self, _: &StrictSettings) -> Result<(), ValidationError> {
+            Ok(())
+        }
+        fn open(&self, _: &StrictSettings) -> Result<Box<dyn FrameSource>> {
+            Err(Error::other("never opened"))
+        }
+    }
+
+    /// Where decoding stopped, under the section: the section alone when
+    /// the section as a whole is at fault.
+    #[test]
+    fn undecodable_fields_are_named_under_their_section() {
+        let mut registry = Registry::default();
+        registry.add_source(Strict);
+        let field = |fields: Value| {
+            let Value::Object(fields) = fields else {
+                panic!("an object");
+            };
+            let capture = AdapterSettings {
+                kind: Strict::KIND.into(),
+                fields,
+            };
+            let settings = Settings {
+                capture: Some(capture.clone()),
+                ..Settings::default()
+            };
+            let validated = registry.validate(&settings).unwrap_err();
+            let modes = registry.capture_modes(&capture).unwrap_err();
+            let opened = registry.open_source(&capture).err().unwrap();
+            [validated, modes, opened].map(|error| match error {
+                Error::Decode { kind, field, .. } if kind == Strict::KIND => field,
+                other => panic!("not a decode error: {other:?}"),
+            })
+        };
+        assert_eq!(field(json!({ "fps": "fast" })), ["capture.fps"; 3]);
+        assert_eq!(field(json!({ "fps": 30, "size": 1 })), ["capture.size"; 3]);
+        assert_eq!(field(json!({})), ["capture"; 3]);
     }
 }

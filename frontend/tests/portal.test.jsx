@@ -36,10 +36,8 @@ import {
   normalizeWledAddress,
   wledUrl,
 } from '@prysm/output-wled-ui';
-import { deviceDefaults } from '@prysm/capture-device-ui';
-import { fileDefaults } from '@prysm/capture-file-ui';
-import { includeMenusHelp, webosDefaults } from '@prysm/capture-webos-ui';
-import { encodingChoices, remoteDefaults } from '@prysm/capture-remote-ui';
+import { includeMenusHelp } from '@prysm/capture-webos-ui';
+import { encodingChoices } from '@prysm/capture-remote-ui';
 import { defaultProcessing } from '../testkit/application';
 import { fakeDiscoveryClient } from '../testkit/discovery';
 import { fakePreviewClient } from '../testkit/preview';
@@ -1676,6 +1674,14 @@ test('a video file and no lights are developer options; a saved one still shows'
 test('kind rows swap panels without losing drafts', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
+  const remote = {
+    kind: 'remote',
+    width: 320,
+    height: 180,
+    fps: 30,
+    include_ui: true,
+    encoding: 'h264_hardware',
+  };
   try {
     // A video file and no lights are developer options.
     await act(async () => saveDeveloper(true));
@@ -1715,7 +1721,8 @@ test('kind rows swap panels without losing drafts', async () => {
     );
     await chooseKind('capture.kind', 'remote');
     await submit(form('Video source'));
-    assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'remote' });
+    // Written in full: a later default changes only new setups.
+    assert.deepEqual(fixture.snapshot().settings.capture, remote);
     assert.deepEqual(fixture.snapshot().settings.output, output);
 
     await leaveEditor();
@@ -1733,7 +1740,7 @@ test('kind rows swap panels without losing drafts', async () => {
     await chooseKind('output.kind', 'null');
     await submit(form('Your lights'));
     assert.deepEqual(fixture.snapshot().settings, {
-      capture: { kind: 'remote' },
+      capture: remote,
       output: { kind: 'null' },
       processing: defaultProcessing,
     });
@@ -1770,6 +1777,9 @@ test('an unconfigured section starts from its first kind and saves only when val
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'device',
       path: '/dev/video0',
+      width: 640,
+      height: 360,
+      fps: 30,
     });
     // Lights still missing: Home keeps offering setup.
     await leaveEditor();
@@ -2276,7 +2286,7 @@ test('the sender refusing the requested stream is shown in full with the lightin
   }
 });
 
-test('limits and defaults written in the panels match the generated schemas', async () => {
+test('limits written in the panels match the generated schemas', async () => {
   const schemas = async (name) =>
     JSON.parse(
       await readFile(
@@ -2293,17 +2303,13 @@ test('limits and defaults written in the panels match the generated schemas', as
   const edges = Object.fromEntries(
     ['top', 'right', 'bottom', 'left'].map((edge) => [edge, ledEdgeLimits]),
   );
-  for (const [schema, limits, defaults] of [
-    [application.Processing, processingLimits, {}],
-    [application.StyleValues, styleLimits, {}],
-    [application.CorrectionControls, correctionLimits, {}],
-    [application.PrimaryControls, primaryLimits, {}],
-    [desktop.DeviceSettings, {}, deviceDefaults],
-    [desktop.FileSettings, {}, fileDefaults],
-    [webos.WebosSettings, {}, webosDefaults],
-    [desktop.RemoteReceiverSettings, {}, remoteDefaults],
-    [desktop.LedCounts, edges, {}],
-    [webos.LedCounts, edges, {}],
+  for (const [schema, limits] of [
+    [application.Processing, processingLimits],
+    [application.StyleValues, styleLimits],
+    [application.CorrectionControls, correctionLimits],
+    [application.PrimaryControls, primaryLimits],
+    [desktop.LedCounts, edges],
+    [webos.LedCounts, edges],
   ]) {
     for (const [name, { min, max }] of Object.entries(limits)) {
       const property = schema.properties[name];
@@ -2312,8 +2318,6 @@ test('limits and defaults written in the panels match the generated schemas', as
       if (property.maximum !== undefined)
         assert.equal(max, property.maximum, name);
     }
-    for (const [name, value] of Object.entries(defaults))
-      assert.equal(value, schema.properties[name].default, name);
   }
   assert.equal(
     calibrationLimits.count,

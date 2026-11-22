@@ -228,6 +228,16 @@ format number: Prysm cannot use a file without it, nor one saved by a newer
 Prysm, and says so naming both numbers. The format is described in the
 [settings-file reference](../../crates/adapters/settings-file/README.md).
 
+Values in the file have the limits of the portal's controls: Smoothing
+(`smoothing_seconds`) 0 to 2, Detail (`sample_density`) 1 to 512, and the
+rate of a capture card or video file (`fps`) 1 to 120. Prysm refuses a value
+outside them and names its field.
+
+The portal writes every field of a video source it sets up. A section written
+by hand may leave out a field that has a default, such as `width`, `height`
+or `fps`: it then takes the default of the Prysm reading the file, which an
+update may change. Write the value to keep it.
+
 A file Prysm cannot use (no format number, a newer format, a typo that
 breaks the JSON, a wrong value type, a file it may not read) does not stop
 it: Prysm starts without settings, the light card shows why, and the file

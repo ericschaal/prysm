@@ -49,7 +49,7 @@ pub const MAX_LEDS: u16 = 16_384;
 /// LEDs per edge, as seen from the front of the screen. An omitted edge has
 /// none. Together 1..=[`MAX_LEDS`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(remote = "Self", default, deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct LedCounts {
     #[cfg_attr(feature = "schema", schema(minimum = 0, maximum = 16384))]
@@ -61,6 +61,8 @@ pub struct LedCounts {
     #[cfg_attr(feature = "schema", schema(minimum = 0, maximum = 16384))]
     pub left: u16,
 }
+
+prysm_ports::map_only!(LedCounts, "LED counts per edge as an object");
 
 impl LedCounts {
     #[must_use]

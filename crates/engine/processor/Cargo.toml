@@ -18,6 +18,8 @@ tracing.workspace = true
 [dev-dependencies]
 prysm-core = { workspace = true, features = ["testkit"] }
 prysm-processor = { path = ".", features = ["testkit"] }
+# The most detail a user may set, for the sampler's bound at it.
+prysm-ports.workspace = true
 
 # Not the workspace lints: examples/frame_recycling.rs counts allocations with
 # an unsafe GlobalAlloc, which `forbid` would reject.

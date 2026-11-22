@@ -1,8 +1,11 @@
 use prysm_ports::ValidationError;
 use prysm_ports::capture_size::{
-    default_fps, default_height, default_width, validate_capture_size,
+    MAX_FPS, default_fps, default_height, default_width, validate_capture_size,
 };
 use serde::{Deserialize, Serialize};
+
+// `schema(...)` takes literals only: the rate's maximum below is spelled out.
+const _: () = assert!(MAX_FPS == 120);
 
 /// `{ "kind": "device", "path": "/dev/video0", "width": 640, "height": 360, "fps": 30 }`
 ///
@@ -22,7 +25,7 @@ pub struct DeviceSettings {
     #[cfg_attr(feature = "schema", schema(minimum = 1, maximum = 2160, default = default_height))]
     pub height: u32,
     #[serde(default = "default_fps")]
-    #[cfg_attr(feature = "schema", schema(minimum = 1, default = default_fps))]
+    #[cfg_attr(feature = "schema", schema(minimum = 1, maximum = 120, default = default_fps))]
     pub fps: u32,
 }
 
@@ -49,10 +52,6 @@ impl DeviceSettings {
             ));
         }
         validate_capture_size(self.width, self.height, self.fps)?;
-        // AVFoundation expresses frame durations with an i32 timescale.
-        if cfg!(target_os = "macos") && i32::try_from(self.fps).is_err() {
-            return Err(ValidationError::new("fps", "must be a positive frame rate"));
-        }
         if !cfg!(any(target_os = "linux", target_os = "macos")) {
             return Err(ValidationError::new(
                 "kind",
@@ -74,5 +73,9 @@ mod schema_tests {
         assert_eq!(schema["required"], json!(["path"]));
         assert_eq!(schema["properties"]["width"]["default"], json!(640));
         assert_eq!(schema["properties"]["height"]["maximum"], json!(2160));
+        assert_eq!(
+            schema["properties"]["fps"]["maximum"],
+            json!(prysm_ports::capture_size::MAX_FPS)
+        );
     }
 }

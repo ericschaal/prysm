@@ -429,11 +429,30 @@
             "type": "object"
           },
           {
-            "description": "The request was malformed.",
+            "description": "The request was malformed: not JSON, or a field outside the settings\nunknown, missing or of the wrong type.",
             "properties": {
               "kind": {
                 "enum": [
                   "bad_request"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The request body did not arrive in time.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "request_timeout"
                 ],
                 "type": "string"
               },
@@ -470,6 +489,25 @@
               "kind": {
                 "enum": [
                   "unsupported_media_type"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A capture stream sender of another version.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "upgrade_required"
                 ],
                 "type": "string"
               },
@@ -1023,7 +1061,7 @@
           "sample_density": {
             "description": "Samples per 1000 px of edge, measured on the picture scaled down to\n640x360: the same value gives the same samples at any capture size.\nAt most one sample per sampling-grid cell along an edge (128 along the\nlonger side): density 200 reaches it for 16:9 pictures of 640x360 or\nmore, a higher one for squarer or smaller pictures.",
             "format": "int32",
-            "maximum": 1024,
+            "maximum": 512,
             "minimum": 1,
             "type": "integer"
           },
@@ -1304,8 +1342,9 @@
             "type": "integer"
           },
           "smoothing_seconds": {
-            "description": "Seconds; 0 disables smoothing.",
+            "description": "Seconds to complete most of a change; 0 disables smoothing.",
             "format": "float",
+            "maximum": 2,
             "minimum": 0,
             "type": "number"
           },

@@ -37,3 +37,37 @@ export const builtInStyles = {
     "spatial_reach_percent": 8
   }
 } as const;
+
+export const captureDefaults = {
+  "device": {
+    "fps": 30,
+    "height": 360,
+    "width": 640
+  },
+  "file": {
+    "fps": 30,
+    "height": 360,
+    "repeat": false,
+    "width": 640
+  },
+  "remote": {
+    "encoding": "h264_hardware",
+    "fps": 30,
+    "height": 180,
+    "include_ui": true,
+    "width": 320
+  },
+  "webos": {
+    "fps": 30,
+    "height": 360,
+    "include_ui": true,
+    "width": 640
+  }
+} as const;
+
+export const processingMaxima = {
+  "brightness_ramp_seconds": 2,
+  "dark_floor_percent": 20,
+  "sample_density": 512,
+  "smoothing_seconds": 2
+} as const;

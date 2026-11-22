@@ -61,7 +61,10 @@ ends (see [architecture](architecture.md#shutdown-ordering)).
   does not show ([saving settings](../../frontend/README.md#saving-settings)).
 - The file's `format` number belongs to the file alone: the portal's
   `settings` never carry it, and a `PUT /api/v1/settings` body with it is
-  `400` (unknown field).
+  `422 invalid` with `field` `format` (an unknown setting).
+- A problem inside `settings`, a `processing` body or a capture section is
+  `422 invalid` with its `field`; `400 bad_request` is only for a body that
+  is not JSON or a top-level field unknown, missing or of the wrong type.
 
 See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md).
 

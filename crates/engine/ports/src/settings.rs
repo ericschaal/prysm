@@ -28,7 +28,7 @@ use std::fmt;
 /// }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture: Option<AdapterSettings>,
@@ -37,6 +37,7 @@ pub struct Settings {
     #[serde(default)]
     pub processing: Processing,
 }
+crate::map_only!(Settings, "settings as an object");
 
 /// A top-level [`Settings`] section, named in validation field paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +96,7 @@ impl AdapterSettings {
 /// never learns about styles. Any change here, including to calibrations, is
 /// applied to a running session at the next frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(remote = "Self", default, deny_unknown_fields)]
 pub struct Processing {
     pub brightness_percent: u8,
     #[serde(with = "style::as_object")]
@@ -120,6 +121,8 @@ pub struct Processing {
     pub active_calibration: Option<String>,
 }
 
+crate::map_only!(Processing, "processing settings as an object");
+
 impl Default for Processing {
     fn default() -> Self {
         let config = Config::default();
@@ -136,10 +139,12 @@ impl Default for Processing {
 }
 
 impl Processing {
-    /// The most a user may set. The sampler gives an edge at most one sample
-    /// per grid cell, which density 128,000 / (the 640x360 copy's longer side)
-    /// reaches: 200 for 16:9, about 267 for a square, 400 for a 320x180 picture.
-    pub const MAX_SAMPLE_DENSITY: u16 = 1024;
+    /// The most a user may set, in the file as on the portal's slider: above
+    /// every density that still adds samples. The sampler gives an edge at
+    /// most one sample per grid cell, which density 128,000 / (the 640x360
+    /// copy's longer side) reaches: 200 for 16:9, about 267 for a square, 400
+    /// for a 320x180 picture.
+    pub const MAX_SAMPLE_DENSITY: u16 = 512;
 
     /// # Errors
     /// Rejects values the processor would silently clamp or ignore, and a
