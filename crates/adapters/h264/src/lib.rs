@@ -53,8 +53,9 @@ pub(crate) enum FrameKind {
 pub enum H264Error {
     #[error("H.264 needs limited-range BT.709 NV12 of a size its encoder takes, not {0}")]
     Input(String),
-    #[error("invalid H.264 settings: {0}")]
-    Settings(&'static str),
+    /// A target bitrate outside [`BITRATE`].
+    #[error("a bitrate of {0} bit/s is outside {min} to {max}", min = BITRATE.start(), max = BITRATE.end())]
+    Bitrate(u32),
     /// A rate outside the backend's limits.
     #[error("{} encodes {offered} fps, not {fps}", backend.name())]
     Rate {

@@ -5,7 +5,6 @@ use prysm_capture_remote::testkit::Portal;
 use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError, StreamEncoding};
 use prysm_capture_webos::{Readiness, VideoSignal, WebosSettings};
 use prysm_core::Frame;
-use prysm_h264::H264Error;
 use prysm_ports::{Error, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
@@ -208,7 +207,7 @@ impl Upstream for Fake {
             if self.encoder {
                 return Err(SendError::Refused(Error::adapter(
                     "cannot encode frame",
-                    H264Error::Settings("no encoder here"),
+                    std::io::Error::other("no encoder here"),
                 )));
             }
             return Err(Error::other("receiver closed the connection").into());

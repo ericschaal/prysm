@@ -42,7 +42,7 @@ struct Dma {
 }
 
 /// `appsrc ! rvenc ! appsink` for one geometry, rate and bitrate. `Send` and
-/// `Sync` like its GStreamer handles; [`Pipeline::encode`] takes `&mut self`,
+/// `Sync` like its fields; [`Pipeline::encode`] takes `&mut self`,
 /// so one caller encodes one picture at a time.
 pub struct Pipeline {
     graph: gst::Pipeline,

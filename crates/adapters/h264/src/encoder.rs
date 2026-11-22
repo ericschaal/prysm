@@ -173,9 +173,7 @@ impl Encoder {
             });
         }
         if !BITRATE.contains(&settings.bitrate) {
-            return Err(H264Error::Settings(
-                "bitrate must be 64 kbit/s to 100 Mbit/s",
-            ));
+            return Err(H264Error::Bitrate(settings.bitrate));
         }
         if settings.backend == Backend::Hardware && !cfg!(feature = "hardware") {
             return Err(H264Error::HardwareNotBuilt);
@@ -317,7 +315,7 @@ mod tests {
         for bitrate in [BITRATE.start() - 1, BITRATE.end() + 1] {
             assert!(matches!(
                 Encoder::new(EncoderSettings { bitrate, ..ok }),
-                Err(H264Error::Settings(_))
+                Err(H264Error::Bitrate(rejected)) if rejected == bitrate
             ));
         }
         let mut encoder = Encoder::new(ok).unwrap();
