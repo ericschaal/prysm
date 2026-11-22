@@ -10,6 +10,7 @@ import {
   APP_ID,
   isEnabled,
   type BridgeFactory,
+  type ErrorKind,
   type Flavor,
   type FullWorker,
   type LightingTarget,
@@ -211,8 +212,11 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
   /** Calls held until `release()`, when `hold` is set. */
   const held: (() => void)[] = [];
   let hold = false;
-  /** The next call to this method fails with this text. */
-  const failures = new Map<string, string>();
+  /** The next call to this method fails with this kind and text. */
+  const failures = new Map<
+    string,
+    { errorKind: ErrorKind; errorText: string }
+  >();
   let setupWorks = true;
 
   function later(work: () => void) {
@@ -221,8 +225,12 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
   }
   const reply = (value: object) =>
     JSON.stringify({ returnValue: true, ...value });
+  /** LS2's own error reply (no service, lost subscription): no `errorKind`. */
   const error = (errorText: string) =>
     JSON.stringify({ returnValue: false, errorText });
+  /** The service's error reply. */
+  const refuse = (errorKind: ErrorKind, errorText: string) =>
+    JSON.stringify({ returnValue: false, errorKind, errorText });
   const state = () => publishedState(facts);
 
   /** Settle what follows from the intent, as the machine would. */
@@ -231,7 +239,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     const wanted =
       awake &&
       (facts.flavor === 'full' ||
-        (facts.enabled && !!facts.preferences.instance));
+        (facts.enabled && !!facts.preferences.prysm_address));
     facts.worker = { phase: wanted ? 'running' : 'stopped' };
     facts.capturing =
       wanted &&
@@ -276,7 +284,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     const failure = failures.get(method);
     if (failure !== undefined) {
       failures.delete(method);
-      respond(error(failure));
+      respond(refuse(failure.errorKind, failure.errorText));
       return;
     }
     switch (method) {
@@ -286,18 +294,24 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         return;
       case 'setPreferences': {
         const preferences = payload as Preferences;
-        if (facts.flavor === 'full' && preferences.instance) {
-          respond(error('instance: only the slim package forwards frames'));
-          return;
-        }
         // http(s)://host[:port], nothing after it (the TV resolves a name).
         if (
-          preferences.instance &&
-          !/^https?:\/\/[^/?#\s@]+\/?$/.test(preferences.instance)
+          preferences.prysm_address &&
+          !/^https?:\/\/[^/?#\s@]+\/?$/.test(preferences.prysm_address)
         ) {
           respond(
-            error(
-              `invalid setPreferences request: Prysm address \`${preferences.instance}\`: needs only the address, without a path`,
+            refuse(
+              'invalid_request',
+              `invalid setPreferences request: Prysm address \`${preferences.prysm_address}\`: needs only the address, without a path`,
+            ),
+          );
+          return;
+        }
+        if (facts.flavor === 'full' && preferences.prysm_address) {
+          respond(
+            refuse(
+              'invalid_preferences',
+              'prysm_address: only the slim package forwards frames',
             ),
           );
           return;
@@ -310,7 +324,9 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       }
       case 'setTarget':
         if (facts.flavor !== 'full') {
-          respond(error('setTarget is only for the full package'));
+          respond(
+            refuse('wrong_package', 'setTarget is only for the full package'),
+          );
           return;
         }
         facts.target = payload.target as LightingTarget;
@@ -320,7 +336,9 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         return;
       case 'setEnabled':
         if (facts.flavor !== 'slim') {
-          respond(error('setEnabled is only for the slim package'));
+          respond(
+            refuse('wrong_package', 'setEnabled is only for the slim package'),
+          );
           return;
         }
         facts.enabled = payload.enabled === true;
@@ -338,7 +356,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         });
         return;
       default:
-        respond(error(`unknown method \`${method}\``));
+        respond(refuse('unknown_method', `unknown method \`${method}\``));
     }
   }
 
@@ -387,8 +405,12 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       if (failure?.message !== facts.failure?.message) publish({ failure });
     },
     subscribers: () => subscribers.size,
-    failNext(method: string, errorText: string) {
-      failures.set(method, errorText);
+    failNext(
+      method: string,
+      errorText: string,
+      errorKind: ErrorKind = 'internal',
+    ) {
+      failures.set(method, { errorKind, errorText });
     },
     /** End every subscription with an error, as a stopped service does. */
     drop(errorText: string) {

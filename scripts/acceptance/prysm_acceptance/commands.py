@@ -83,7 +83,7 @@ LUNA_TIMEOUT = 12
 
 
 _HOST = re.compile(r'(?:[A-Za-z0-9_][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*')
-_INSTANCE = re.compile(r'^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/?$')
+_PRYSM_ADDRESS = re.compile(r'^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?/?$')
 _LISTEN = re.compile(r'^[0-9.]+:[0-9]{1,5}$')
 _MAC_ADDRESS = re.compile(r'[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}')
 
@@ -330,11 +330,11 @@ def tv_set_enabled(host: str, enabled: bool) -> Command:
     return _prysm('tv.set-enabled', host, 'setEnabled', {'enabled': _flag(enabled, 'enabled')}, app=True)
 
 
-def tv_set_preferences(host: str, autostart: bool, instance: str | None = None) -> Command:
-    """Replace the preferences (the request is complete: autostart and, slim, instance)."""
+def tv_set_preferences(host: str, autostart: bool, prysm_address: str | None = None) -> Command:
+    """Replace the preferences (the request is complete: autostart and, slim, prysm_address)."""
     payload: dict[str, object] = {'autostart': _flag(autostart, 'autostart')}
-    if instance is not None:
-        payload['instance'] = _check(_INSTANCE, instance, 'instance')
+    if prysm_address is not None:
+        payload['prysm_address'] = _check(_PRYSM_ADDRESS, prysm_address, 'prysm_address')
     return _prysm('tv.set-preferences', host, 'setPreferences', payload, app=True)
 
 

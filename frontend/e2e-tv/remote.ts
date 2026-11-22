@@ -368,7 +368,7 @@ interface Demo {
   supervisor: {
     /** The published state, as far as these tests read it. */
     state(): {
-      preferences: { autostart?: boolean; instance?: string | null };
+      preferences: { autostart?: boolean; prysm_address?: string | null };
     } & (
       | { flavor: 'full'; target: 'off' | 'screen_sync' | 'effects' }
       | { flavor: 'slim'; enabled: boolean }

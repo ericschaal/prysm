@@ -37,18 +37,21 @@ export function encodingName(encoding: SlimEncoding): string {
 }
 
 /** Preferences with every field present (no address: `null`), as the app edits them. */
-export type SavedPreferences = { autostart: boolean; instance: string | null };
+export type SavedPreferences = {
+  autostart: boolean;
+  prysm_address: string | null;
+};
 export function completePreferences(value: Preferences): SavedPreferences {
   return {
     autostart: value.autostart ?? false,
-    instance: value.instance ?? null,
+    prysm_address: value.prysm_address ?? null,
   };
 }
 
 /** `saved` as the service takes it: no address is omitted. */
 export function sentPreferences(saved: SavedPreferences): Preferences {
-  const { autostart, instance } = saved;
-  return instance === null ? { autostart } : { autostart, instance };
+  const { autostart, prysm_address } = saved;
+  return prysm_address === null ? { autostart } : { autostart, prysm_address };
 }
 
 /**
@@ -56,7 +59,7 @@ export function sentPreferences(saved: SavedPreferences): Preferences {
  * `http://host:8787`; a full `http(s)://` origin is kept; a trailing `/` is
  * dropped. Returns an error text for anything that is not an origin.
  */
-export function instanceAddress(
+export function prysmAddress(
   input: string,
 ): { value: string | null } | { error: string } {
   const text = input.trim().replace(/\/+$/, '');
@@ -209,7 +212,10 @@ export function tvStatus(
   const phase = state.worker.phase;
   // Slim: Prysm is not receiving; the worker keeps trying, not a failure.
   const waiting = kind === 'receiver';
-  const failed = !!state.failure && !waiting;
+  // The saved preferences could not be read: the service runs with the
+  // defaults, and saving a setting replaces the file. Nothing stopped.
+  const unreadable = kind === 'preferences';
+  const failed = !!state.failure && !waiting && !unreadable;
   // Full: the worker reports its session's failure, so while the portal's
   // situation is known it says what the failure means (off with a switch
   // off that failed is still off). Before the portal answers, the failure
@@ -230,6 +236,10 @@ export function tvStatus(
   if (phase === 'stopping') {
     title = full ? 'Restarting Prysm…' : 'Stopping capture…';
     description = 'This takes a moment.';
+  } else if (unreadable) {
+    title = 'Couldn’t read settings';
+    description = 'Change a setting below to save new ones.';
+    attention = true;
   } else if (failed && !full && kind === 'encoder') {
     // The encoding is Prysm's setting, so the fix is in its portal.
     title = 'Encoding not supported';
@@ -321,7 +331,7 @@ export function tvStatus(
         description = 'This takes a few seconds.';
       }
     }
-  } else if (!state.preferences.instance) {
+  } else if (!state.preferences.prysm_address) {
     title = 'Set up this TV';
     description = 'Add the address of Prysm on your computer.';
   } else if (!enabled) {
@@ -342,7 +352,7 @@ export function tvStatus(
     description = 'Waiting for the first picture.';
   }
   // Lights are set up in the portal (its first-run setup), never here.
-  const linked = full || !!state.preferences.instance;
+  const linked = full || !!state.preferences.prysm_address;
   const noLights = !!portal && !portal.lights && linked;
   const setupLights = noLights && !workerFailed && phase !== 'stopping';
   if (setupLights) {
@@ -375,7 +385,7 @@ export function tvStatus(
   } else if (enabled) {
     label = 'Stop capture';
     action = 'disable';
-  } else if (!draft.instance) {
+  } else if (!draft.prysm_address) {
     label = 'Add Prysm address';
     action = 'address';
   } else {
@@ -517,7 +527,7 @@ export function diagnostics(state: State | null, problem = ''): string {
   if (state.flavor === 'slim') {
     const encoding = slimEncoding(state);
     lines.push(
-      `Prysm address: ${state.preferences.instance ?? 'not set'}`,
+      `Prysm address: ${state.preferences.prysm_address ?? 'not set'}`,
       `Stream encoding: ${encoding ? `${encodingName(encoding)} in use` : 'none in use'}`,
     );
   } else lines.push(`Web portal: ${fullPortal(state) ?? 'not open'}`);
@@ -537,19 +547,19 @@ export const calibrationUrl = (portal: string) =>
 
 /**
  * Why the lights cannot be calibrated from this TV's picture, or `null`.
- * `tv` is the supervisor's state; `instance` the slim package's Prysm address.
+ * `tv` is the supervisor's state; `address` the slim package's Prysm address.
  */
 export function calibrationBlocker(
   flavor: 'full' | 'slim',
   player: PatternPlayer,
   portal: PortalView,
   tv: State | null,
-  instance: string | null,
+  address: string | null,
 ): string | null {
   if (!player.supported || !portal.supported) return 'Needs a newer TV';
   // Before the service answers, the address is not known yet.
   if (!tv) return 'Waiting for Prysm';
-  if (flavor === 'slim' && !instance) return 'Add the address first';
+  if (flavor === 'slim' && !address) return 'Add the address first';
   if (flavor === 'slim' && !isEnabled(tv)) return 'Start capture first';
   const { snapshot } = portal;
   if (!snapshot) return 'Waiting for Prysm';

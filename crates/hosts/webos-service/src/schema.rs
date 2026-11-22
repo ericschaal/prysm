@@ -16,7 +16,9 @@
 //! Any method can fail with [`ErrorReply`].
 use crate::identity::APP_ID;
 use crate::preferences::Preferences;
-use crate::service::{GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest};
+use crate::service::{
+    ErrorKind, GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest,
+};
 use crate::state::{FullWorker, Package, Power, SlimWorker, State};
 use serde::{Deserialize, Serialize};
 pub use utoipa::openapi::OpenApi;
@@ -51,7 +53,10 @@ pub enum VideoSchema {
 /// Prysm address). `receiver_failed` (slim): Prysm's receiving source failed
 /// with this TV's stream (a refusal, a keyframe that does not decode, no
 /// decoder), and Prysm shows why; the worker released the capture and keeps
-/// reconnecting. `other`: anything else.
+/// reconnecting. `preferences`: the TV's saved preferences could not be
+/// read; the service runs with the defaults and keeps the file until the app
+/// saves preferences. `other`: anything else. Open: an app reads a kind it
+/// does not know as `other`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = FailureKind)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +66,7 @@ pub enum FailureKindSchema {
     Version,
     Replaced,
     ReceiverFailed,
+    Preferences,
     Other,
 }
 
@@ -165,12 +171,15 @@ pub struct DoneReply {
     returnValue: bool,
 }
 
-/// Any failed call.
+/// Any failed call. LS2's own replies (for example for a method that is not
+/// registered) carry no `errorKind`; an app reads that as an unknown kind.
 #[derive(ToSchema)]
 #[allow(dead_code, non_snake_case)]
 pub struct ErrorReply {
     #[schema(schema_with = always_false)]
     returnValue: bool,
+    errorKind: ErrorKind,
+    /// What failed, for people.
     errorText: String,
 }
 
@@ -194,6 +203,7 @@ pub struct ErrorReply {
     UninstallRequest,
     StateReply,
     DoneReply,
+    ErrorKind,
     ErrorReply,
 )))]
 struct Roots;
@@ -231,6 +241,7 @@ mod tests {
             FailureKind::Version,
             FailureKind::Replaced,
             FailureKind::ReceiverFailed,
+            FailureKind::Preferences,
             FailureKind::Other,
         ] {
             assert_mirror_round_trips::<FailureKind, FailureKindSchema>(&kind);
@@ -351,7 +362,7 @@ mod tests {
         // Picture settings are the receiver's or the portal's, not the TV's.
         assert_eq!(preferences["properties"].get("capture"), None);
         assert_eq!(schemas.get("SlimCapture"), None);
-        let described = &preferences["properties"]["instance"];
+        let described = &preferences["properties"]["prysm_address"];
         let text = described["description"]
             .as_str()
             .or_else(|| described["oneOf"][0]["description"].as_str())
@@ -374,6 +385,24 @@ mod tests {
                 "{name}"
             );
         }
+        assert_eq!(
+            schemas["ErrorKind"]["enum"],
+            json!([
+                "too_large",
+                "unknown_method",
+                "forbidden",
+                "removing",
+                "invalid_request",
+                "wrong_package",
+                "invalid_preferences",
+                "save_failed",
+                "internal"
+            ])
+        );
+        assert_eq!(
+            schemas["ErrorReply"]["properties"]["errorKind"]["$ref"],
+            json!("#/components/schemas/ErrorKind")
+        );
         let text = document.to_string();
         assert!(!text.contains(".slim"), "no per-flavor service names");
         assert_ne!(schemas["StateReply"], Value::Null);

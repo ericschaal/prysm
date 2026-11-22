@@ -23,7 +23,7 @@ fn receiver() -> PrysmAddress {
 
 fn slim_prefs() -> Preferences {
     Preferences {
-        instance: Some(receiver()),
+        prysm_address: Some(receiver()),
         ..Preferences::default()
     }
 }
@@ -360,7 +360,7 @@ fn slim_receiver_change_restarts_without_backoff_after_reaping() {
             (
                 1,
                 Input::Preferences(Preferences {
-                    instance: Some(fast.clone()),
+                    prysm_address: Some(fast.clone()),
                     ..slim_prefs()
                 }),
                 vec![Effect::Terminate],
@@ -378,7 +378,7 @@ fn slim_receiver_change_restarts_without_backoff_after_reaping() {
             (
                 6,
                 Input::Preferences(Preferences {
-                    instance: Some(fast.clone()),
+                    prysm_address: Some(fast.clone()),
                     autostart: false,
                 }),
                 vec![],
@@ -1313,7 +1313,7 @@ fn a_preferences_change_during_backoff_retries_at_once_with_a_fresh_delay() {
             now + 2,
             Input::Preferences(Preferences {
                 autostart: true,
-                instance: Some(raw.clone()),
+                prysm_address: Some(raw.clone()),
             }),
             vec![spawn_slim(&raw), video(Video::Unknown)],
         )],
@@ -1360,7 +1360,7 @@ fn a_preferences_change_while_a_failed_worker_stops_restarts_on_reaping() {
                 2,
                 Input::Preferences(Preferences {
                     autostart: true,
-                    instance: Some(raw.clone()),
+                    prysm_address: Some(raw.clone()),
                 }),
                 vec![],
             ),
@@ -1552,7 +1552,7 @@ fn a_requested_stop_clears_the_failure_in_every_phase() {
             2,
             Input::Preferences(Preferences {
                 autostart: true,
-                instance: Some(other.clone()),
+                prysm_address: Some(other.clone()),
             }),
             vec![spawn_slim(&other), video(Video::Unknown)],
         )],
@@ -1711,11 +1711,15 @@ struct From {
 }
 
 impl From {
-    fn build(&self, t0: Instant) -> Machine {
+    /// With `unreadable`, the saved preferences could not be read.
+    fn build(&self, t0: Instant, unreadable: bool) -> Machine {
         let mut m = slim(Preferences {
             autostart: self.enabled,
             ..slim_prefs()
         });
+        if unreadable {
+            m = m.with_unreadable_preferences(UNREADABLE);
+        }
         let start = if self.enabled {
             vec![spawn_slim(&receiver()), video(Video::Unknown)]
         } else {
@@ -1728,10 +1732,14 @@ impl From {
     }
 }
 
+const UNREADABLE: &str = "invalid tv.json";
+
 /// Every phase x every input: the effects, the next phase and the published
 /// failure. Each row is one input; its cells are the phases in the order of
 /// `froms`. The idle machine shows the failure of a worker that faulted as
-/// it stopped.
+/// it stopped. With unreadable preferences, every cell is the same, except
+/// that the unreadable file is the failure wherever no other one is, until
+/// preferences are saved.
 #[test]
 fn every_phase_takes_every_input() {
     use AfterExit::{Idle as ThenIdle, Retry};
@@ -1800,7 +1808,7 @@ fn every_phase_takes_every_input() {
                     500,
                     Input::Preferences(Preferences {
                         autostart: true,
-                        instance: Some(other.clone()),
+                        prysm_address: Some(other.clone()),
                     }),
                     vec![Effect::Terminate],
                 ),
@@ -1910,7 +1918,7 @@ fn every_phase_takes_every_input() {
         (
             Input::Preferences(Preferences {
                 autostart: false,
-                instance: Some(other.clone()),
+                prysm_address: Some(other.clone()),
             }),
             false,
             [
@@ -2006,20 +2014,60 @@ fn every_phase_takes_every_input() {
     ];
     let t0 = Instant::now();
     for (input, due, cells) in table {
+        let saves = |input: &Input| matches!(input, Input::Preferences(_));
         for (from, (effects, next, failure)) in froms.iter().zip(cells) {
-            let mut m = from.build(t0);
-            let at = if due { from.due } else { from.now };
-            let shown = format!("{} x {input:?} at {at} ms", from.name);
-            let done: Vec<_> = m
-                .handle(input.clone(), t0 + Duration::from_millis(at))
-                .into_iter()
-                .filter(|effect| *effect != Effect::Publish)
-                .collect();
-            assert_eq!(done, effects, "{shown}");
-            assert_eq!(is(m.phase), next, "{shown}");
-            assert_eq!(message(&m.state(t0)), failure, "{shown}");
+            let saved = saves(&input) || from.steps.iter().any(|(_, step, _)| saves(step));
+            for unreadable in [false, true] {
+                let mut m = from.build(t0, unreadable);
+                let at = if due { from.due } else { from.now };
+                let shown = format!("{} x {input:?} at {at} ms, {unreadable}", from.name);
+                let done: Vec<_> = m
+                    .handle(input.clone(), t0 + Duration::from_millis(at))
+                    .into_iter()
+                    .filter(|effect| *effect != Effect::Publish)
+                    .collect();
+                assert_eq!(done, effects, "{shown}");
+                assert_eq!(is(m.phase), next, "{shown}");
+                let state = m.state(t0);
+                let shows_unreadable = unreadable && !saved && failure.is_none();
+                if shows_unreadable {
+                    assert_eq!(message(&state), Some(UNREADABLE), "{shown}");
+                    assert_eq!(kind(&state), Some(FailureKind::Preferences), "{shown}");
+                } else {
+                    assert_eq!(message(&state), failure, "{shown}");
+                }
+            }
         }
     }
+}
+
+/// Unreadable preferences stay reported through standby, a healthy worker
+/// and its failures, and end only when preferences are saved (published).
+#[test]
+fn unreadable_preferences_are_reported_until_saved() {
+    let t0 = Instant::now();
+    let mut m = full().with_unreadable_preferences(UNREADABLE);
+    let unreadable = |m: &Machine| kind(&m.state(t0)) == Some(FailureKind::Preferences);
+    assert!(unreadable(&m));
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (1, Exited(Exit::Code(1)), vec![]),
+        ],
+    );
+    // The worker's failure comes first; standby dismisses it, not this.
+    assert_eq!(message(&m.state(t0)), Some("worker failed"));
+    script(&mut m, t0, vec![(2, Pw(Asleep), vec![])]);
+    assert!(unreadable(&m));
+    let effects = m.handle(Input::Preferences(Preferences::default()), t0);
+    assert_eq!(effects, [Effect::Publish]);
+    assert_eq!(m.state(t0).failure, None);
 }
 
 /// The full package's lighting inputs from each target, with the worker in

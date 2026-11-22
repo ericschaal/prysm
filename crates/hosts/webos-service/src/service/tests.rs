@@ -141,10 +141,12 @@ struct Harness {
 }
 
 impl Harness {
-    fn new(config: Config, saved: Option<Preferences>) -> Self {
+    /// `saved`: the content of `tv.json`, if any.
+    fn new(config: Config, saved: Option<Value>) -> Self {
         let launcher = FakeLauncher::default();
         let installer = FakeInstaller::default();
         let t0 = Instant::now();
+        let saved = saved.map(|json| serde_json::from_value(json).unwrap());
         Self {
             world: launcher.0.clone(),
             installer: installer.0.clone(),
@@ -152,6 +154,11 @@ impl Harness {
             bus: FakeBus::default(),
             t0,
         }
+    }
+
+    /// `tv.json` as last saved.
+    fn saved(&self) -> Value {
+        serde_json::to_value(self.service.store.0.as_ref().unwrap()).unwrap()
     }
 
     fn at(&self, ms: u64) -> Instant {
@@ -225,6 +232,7 @@ fn only_the_app_may_change_anything() {
     ] {
         let reply = h.call(method, "com.evil.app", payload);
         assert_eq!(reply["returnValue"], false);
+        assert_eq!(reply["errorKind"], "forbidden");
         assert!(
             reply["errorText"]
                 .as_str()
@@ -232,14 +240,13 @@ fn only_the_app_may_change_anything() {
                 .contains(&format!("only {APP_ID}"))
         );
     }
-    assert_eq!(h.call("reboot", APP_ID, "{}")["returnValue"], false);
+    let unknown = h.call("reboot", APP_ID, "{}");
+    assert_eq!(unknown["returnValue"], false);
+    assert_eq!(unknown["errorKind"], "unknown_method");
     let oversized = format!(r#"{{"target":"off","x":"{}"}}"#, "y".repeat(MAX_PAYLOAD));
-    assert!(
-        h.app("setTarget", &oversized)["errorText"]
-            .as_str()
-            .unwrap()
-            .contains("exceeds")
-    );
+    let oversized = h.app("setTarget", &oversized);
+    assert_eq!(oversized["errorKind"], "too_large");
+    assert!(oversized["errorText"].as_str().unwrap().contains("exceeds"));
     assert!(h.installer.borrow().is_empty());
     assert!(h.service.machine().preferences() == &Preferences::default());
 }
@@ -247,7 +254,11 @@ fn only_the_app_may_change_anything() {
 #[test]
 fn preferences_are_validated_persisted_and_applied() {
     let mut h = Harness::new(slim_config(), None);
-    let bad = h.app("setPreferences", r#"{"instance":"http://0.0.0.0:8787"}"#);
+    let bad = h.app(
+        "setPreferences",
+        r#"{"prysm_address":"http://0.0.0.0:8787"}"#,
+    );
+    assert_eq!(bad["errorKind"], "invalid_request");
     assert_eq!(
         bad["errorText"],
         "invalid setPreferences request: Prysm address `http://0.0.0.0:8787`: needs Prysm's address, not 0.0.0.0"
@@ -255,47 +266,133 @@ fn preferences_are_validated_persisted_and_applied() {
     // A host name is saved as typed; the TV resolves it when it connects.
     let named = h.app(
         "setPreferences",
-        r#"{"instance":"https://prysm.example.com"}"#,
+        r#"{"prysm_address":"https://prysm.example.com"}"#,
     );
     assert_eq!(
-        named["preferences"]["instance"],
+        named["preferences"]["prysm_address"],
         "https://prysm.example.com"
     );
-    assert_eq!(
-        h.service.store.0.as_ref().unwrap().instance,
-        Some("https://prysm.example.com".parse().unwrap())
-    );
-    assert_eq!(
-        h.app("setPreferences", r#"{"mode":"full"}"#)["returnValue"],
-        false
-    );
+    assert_eq!(h.saved()["prysm_address"], "https://prysm.example.com");
+    let unknown = h.app("setPreferences", r#"{"mode":"full"}"#);
+    assert_eq!(unknown["errorKind"], "invalid_request");
     let reply = h.app(
         "setPreferences",
-        r#"{"autostart":true,"instance":"http://192.168.1.20:8787"}"#,
+        r#"{"autostart":true,"prysm_address":"http://192.168.1.20:8787"}"#,
     );
     assert_eq!(reply["returnValue"], true);
-    assert_eq!(reply["preferences"]["instance"], "http://192.168.1.20:8787");
-    // The separate stream address is gone.
     assert_eq!(
-        h.app("setPreferences", r#"{"receiver":"192.168.1.20:7380"}"#)["returnValue"],
-        false
+        reply["preferences"]["prysm_address"],
+        "http://192.168.1.20:8787"
     );
     // Full rejects slim-only fields.
     let mut full = Harness::new(config(), None);
+    let refused = full.app(
+        "setPreferences",
+        r#"{"prysm_address":"http://10.0.0.1:8787"}"#,
+    );
+    assert_eq!(refused["returnValue"], false);
+    assert_eq!(refused["errorKind"], "invalid_preferences");
+}
+
+/// Both packages install as the same app and share `tv.json`: full keeps
+/// slim's address and fields it does not know, and saves them back.
+#[test]
+fn full_keeps_the_fields_it_does_not_own() {
+    let saved = serde_json::json!({
+        "autostart": true,
+        "prysm_address": "http://10.0.0.1:8787",
+        "newer": [1, 2],
+    });
+    let mut h = Harness::new(config(), Some(saved));
     assert_eq!(
-        full.app("setPreferences", r#"{"instance":"http://10.0.0.1:8787"}"#)["returnValue"],
-        false
+        h.service.machine().preferences(),
+        &Preferences {
+            autostart: true,
+            prysm_address: None
+        }
+    );
+    let state = h.call("getState", "x", "{}");
+    assert_eq!(
+        state["preferences"],
+        serde_json::json!({ "autostart": true })
+    );
+    assert_eq!(state.get("failure"), None);
+    h.app("setPreferences", r#"{"autostart":false}"#);
+    assert_eq!(
+        h.saved(),
+        serde_json::json!({
+            "autostart": false,
+            "prysm_address": "http://10.0.0.1:8787",
+            "newer": [1, 2],
+        })
+    );
+    // Back on slim, the address is there.
+    let mut slim = Harness::new(slim_config(), Some(h.saved()));
+    assert_eq!(
+        slim.call("getState", "x", "{}")["preferences"],
+        serde_json::json!({ "autostart": false, "prysm_address": "http://10.0.0.1:8787" })
     );
 }
 
+/// An unreadable `tv.json` is reported as the `preferences` failure, the
+/// defaults are used, and the file stays as it is until preferences are
+/// saved.
 #[test]
-fn invalid_saved_preferences_fall_back_to_defaults() {
-    let saved = Preferences {
-        instance: Some("http://10.0.0.1:8787".parse().unwrap()),
-        ..Preferences::default()
-    };
-    let h = Harness::new(config(), Some(saved));
-    assert_eq!(h.service.machine().preferences(), &Preferences::default());
+fn unreadable_preferences_are_reported_and_kept_until_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tv.json");
+    for (config, content) in [
+        (config(), r#"{"autostart":"yes"}"#),
+        (config(), "not json"),
+        (slim_config(), r#"{"prysm_address":"http://x/path"}"#),
+    ] {
+        std::fs::write(&path, content).unwrap();
+        let mut service = Service::new(
+            config,
+            FakeLauncher::default(),
+            crate::preferences::FileStore::new(&path).with_boot_id(dir.path().join("no-boot-id")),
+            FakeInstaller::default(),
+            Instant::now(),
+        );
+        let mut bus = FakeBus::default();
+        let mut call = |method: &str, payload: &str| -> Value {
+            let reply = service.request(&mut bus, method, APP_ID, payload, Instant::now());
+            serde_json::from_str(&reply.payload).unwrap()
+        };
+        let state = call("getState", r#"{"subscribe":true}"#);
+        assert_eq!(state["failure"]["kind"], "preferences", "{content}");
+        assert!(
+            state["failure"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid"),
+            "{state}"
+        );
+        assert_eq!(
+            state["preferences"],
+            serde_json::json!({ "autostart": false })
+        );
+        // Starting and stopping changes nothing on disk.
+        call("getState", "{}");
+        service.power(
+            &mut bus,
+            r#"{"returnValue":true,"state":"Active"}"#,
+            Instant::now(),
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        let mut call = |method: &str, payload: &str| -> Value {
+            let reply = service.request(&mut bus, method, APP_ID, payload, Instant::now());
+            serde_json::from_str(&reply.payload).unwrap()
+        };
+        let saved = call("setPreferences", r#"{"autostart":true}"#);
+        assert_eq!(saved.get("failure"), None, "{saved}");
+        assert_eq!(
+            serde_json::from_str::<Value>(&std::fs::read_to_string(&path).unwrap()).unwrap(),
+            serde_json::json!({ "autostart": true })
+        );
+        let published = bus.published.last().unwrap();
+        assert_eq!(published.get("failure"), None, "{published}");
+    }
 }
 
 #[test]
@@ -434,10 +531,9 @@ fn uninstall_stops_the_worker_then_removes_registration_and_exits() {
         serde_json::json!({"returnValue": true})
     );
     assert_eq!(h.log(), ["terminate"]);
-    assert_eq!(
-        h.app("setTarget", r#"{"target":"screen_sync"}"#)["returnValue"],
-        false
-    );
+    let refused = h.app("setTarget", r#"{"target":"screen_sync"}"#);
+    assert_eq!(refused["returnValue"], false);
+    assert_eq!(refused["errorKind"], "removing");
     assert!(h.tick(100), "still waiting for the worker");
     assert!(h.installer.borrow().is_empty());
     h.world.borrow_mut().exit = Some(Exit::Code(0));
@@ -527,9 +623,12 @@ fn neither_package_has_a_capture_preference() {
     let mut slim = Harness::new(slim_config(), None);
     let reply = slim.app(
         "setPreferences",
-        r#"{"instance":"http://192.168.1.20:8787"}"#,
+        r#"{"prysm_address":"http://192.168.1.20:8787"}"#,
     );
-    assert_eq!(reply["preferences"]["instance"], "http://192.168.1.20:8787");
+    assert_eq!(
+        reply["preferences"]["prysm_address"],
+        "http://192.168.1.20:8787"
+    );
 }
 
 #[test]
@@ -556,6 +655,7 @@ fn each_package_refuses_the_other_packages_lighting_method() {
     let mut full = Harness::new(config(), None);
     let refused = full.app("setEnabled", r#"{"enabled":true}"#);
     assert_eq!(refused["returnValue"], false);
+    assert_eq!(refused["errorKind"], "wrong_package");
     assert_eq!(
         refused["errorText"],
         "setEnabled is only for the slim package"
@@ -570,6 +670,7 @@ fn each_package_refuses_the_other_packages_lighting_method() {
     let mut slim = Harness::new(slim_config(), None);
     let refused = slim.app("setTarget", r#"{"target":"screen_sync"}"#);
     assert_eq!(refused["returnValue"], false);
+    assert_eq!(refused["errorKind"], "wrong_package");
     assert_eq!(
         refused["errorText"],
         "setTarget is only for the full package"

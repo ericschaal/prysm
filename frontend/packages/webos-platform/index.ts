@@ -5,6 +5,7 @@
  * See docs/developers/webos.md, "Luna API".
  */
 import type {
+  ErrorKind,
   FailureKind,
   FullWorker,
   LightingTarget,
@@ -18,6 +19,7 @@ import type {
 } from '@prysm/contracts/luna';
 
 export type {
+  ErrorKind,
   FailureKind,
   FullWorker,
   LightingTarget,
@@ -137,10 +139,18 @@ export const RESUBSCRIBE_MS = 3_000;
 export type LunaFailureKind =
   'unavailable' | 'timeout' | 'refused' | 'invalid_reply';
 
+/**
+ * Why the service refused a call (its `errorKind`), as this app reads it:
+ * `unknown` is a kind newer than this app, or a reply without one (LS2's
+ * own, or not a refusal at all). The message is the one to show.
+ */
+export type ErrorKindReading = ErrorKind | 'unknown';
+
 export class LunaError extends Error {
   constructor(
     readonly kind: LunaFailureKind,
     message: string,
+    readonly errorKind: ErrorKindReading = 'unknown',
   ) {
     super(message);
   }
@@ -207,7 +217,19 @@ const failureKinds: Record<FailureKind, true> = {
   version: true,
   replaced: true,
   receiver_failed: true,
+  preferences: true,
   other: true,
+};
+const errorKinds: Record<ErrorKind, true> = {
+  too_large: true,
+  unknown_method: true,
+  forbidden: true,
+  removing: true,
+  invalid_request: true,
+  wrong_package: true,
+  invalid_preferences: true,
+  save_failed: true,
+  internal: true,
 };
 const targets: Record<LightingTarget, true> = {
   off: true,
@@ -353,7 +375,7 @@ function isPreferences(value: unknown): value is Preferences {
   return (
     isObject(value) &&
     (value.autostart === undefined || typeof value.autostart === 'boolean') &&
-    optionalText(value.instance)
+    optionalText(value.prysm_address)
   );
 }
 
@@ -419,7 +441,11 @@ function decode(text: string): Reply {
       /not found|unknown service|no such service|service does not exist/i.test(
         text,
       );
-    throw new LunaError(missing ? 'unavailable' : 'refused', text);
+    const errorKind =
+      typeof reply.errorKind === 'string'
+        ? known(errorKinds, reply.errorKind, 'unknown')
+        : 'unknown';
+    throw new LunaError(missing ? 'unavailable' : 'refused', text, errorKind);
   }
   return reply;
 }

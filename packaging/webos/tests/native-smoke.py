@@ -261,8 +261,8 @@ def exercise_worker(args, remote, state, directory, worker):
     app = {'app': APP}
     if args.flavour == 'slim':
         prysm = args.prysm if args.capture else 'http://127.0.0.1:9'
-        value = remote.luna('setPreferences', {'autostart': False, 'instance': prysm}, **app)
-        assert value['returnValue'] is True and value['preferences']['instance'] == prysm, value
+        value = remote.luna('setPreferences', {'autostart': False, 'prysm_address': prysm}, **app)
+        assert value['returnValue'] is True and value['preferences']['prysm_address'] == prysm, value
         passed('setPreferences persisted')
         remote.run(f'test -f {directory}/state/tv.json')
     if args.flavour == 'slim':

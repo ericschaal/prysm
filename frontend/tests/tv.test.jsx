@@ -27,8 +27,8 @@ import {
   captureRate,
   diagnostics,
   encodingName,
-  instanceAddress,
   localPortal,
+  prysmAddress,
   retrySeconds,
   sentPreferences,
   shown,
@@ -424,18 +424,38 @@ test('commands carry the contract payloads and fail with typed errors', async ()
   assert.deepEqual(bridge.channels[0].payload, { autostart: true });
   bridge.channels[0].reply({
     returnValue: false,
+    errorKind: 'forbidden',
     errorText: `only ${APP_ID} may change Prysm`,
   });
   await assert.rejects(saving, {
     kind: 'refused',
+    errorKind: 'forbidden',
     message: `only ${APP_ID} may change Prysm`,
   });
+  // A kind newer than this app, and LS2's own reply without one: `unknown`,
+  // and the text is still the one to show.
+  for (const [errorKind, index] of [
+    ['newer_kind', 1],
+    [undefined, 2],
+  ]) {
+    const refused = service.setTarget('off');
+    bridge.channels[index].reply({
+      returnValue: false,
+      errorKind,
+      errorText: 'refused here',
+    });
+    await assert.rejects(refused, {
+      kind: 'refused',
+      errorKind: 'unknown',
+      message: 'refused here',
+    });
+  }
   const removing = service.uninstall();
-  assert.deepEqual(bridge.channels[1].payload, {});
-  bridge.channels[1].reply({ returnValue: true });
+  assert.deepEqual(bridge.channels[3].payload, {});
+  bridge.channels[3].reply({ returnValue: true });
   assert.equal(await removing, undefined);
   const enabling = service.setEnabled(false);
-  bridge.channels[2].reply({ returnValue: true, unexpected: true });
+  bridge.channels[4].reply({ returnValue: true, unexpected: true });
   await assert.rejects(enabling, { kind: 'invalid_reply' });
   const thrown = lunaTvService(() => ({
     onservicecallback: null,
@@ -493,24 +513,24 @@ test('setup runs setup.sh through the Homebrew Channel and reports its stderr', 
 /* ---- Rules ---- */
 
 test('addresses: Prysm addresses from what a user types', () => {
-  assert.deepEqual(instanceAddress('192.168.1.20'), {
+  assert.deepEqual(prysmAddress('192.168.1.20'), {
     value: 'http://192.168.1.20:8787',
   });
-  assert.deepEqual(instanceAddress(' prysm.local/ '), {
+  assert.deepEqual(prysmAddress(' prysm.local/ '), {
     value: 'http://prysm.local:8787',
   });
-  assert.deepEqual(instanceAddress('192.168.1.20:9000'), {
+  assert.deepEqual(prysmAddress('192.168.1.20:9000'), {
     value: 'http://192.168.1.20:9000',
   });
-  assert.deepEqual(instanceAddress('HTTPS://prysm.home'), {
+  assert.deepEqual(prysmAddress('HTTPS://prysm.home'), {
     value: 'https://prysm.home',
   });
-  assert.deepEqual(instanceAddress('[fd00::2]'), {
+  assert.deepEqual(prysmAddress('[fd00::2]'), {
     value: 'http://[fd00::2]:8787',
   });
-  assert.deepEqual(instanceAddress(''), { value: null });
-  assert('error' in instanceAddress('http://prysm.local/portal'));
-  assert('error' in instanceAddress('ftp://prysm'));
+  assert.deepEqual(prysmAddress(''), { value: null });
+  assert('error' in prysmAddress('http://prysm.local/portal'));
+  assert('error' in prysmAddress('ftp://prysm'));
   assert.equal(
     localPortal('http://192.168.1.5:8787/'),
     'http://127.0.0.1:8787',
@@ -521,7 +541,7 @@ test('addresses: Prysm addresses from what a user types', () => {
 test('status card covers the supervisor states for both packages', () => {
   const slim = (
     change = {},
-    prefs = { instance: 'http://192.168.1.20:8787' },
+    prefs = { prysm_address: 'http://192.168.1.20:8787' },
   ) =>
     tvState(
       'slim',
@@ -529,7 +549,10 @@ test('status card covers the supervisor states for both packages', () => {
       prefs,
     );
   const draft = (value = {}) =>
-    completePreferences({ instance: 'http://192.168.1.20:8787', ...value });
+    completePreferences({
+      prysm_address: 'http://192.168.1.20:8787',
+      ...value,
+    });
   const title = (online, value, d = draft()) =>
     tvStatus(online, value, d).title;
   assert.equal(title(null, null), 'Connecting…');
@@ -659,10 +682,12 @@ test('status card covers the supervisor states for both packages', () => {
       slim({ failure: { kind: 'replaced', message: 'x' } }),
       slim({ failure: { kind: 'receiver_failed', message: 'x' } }),
       slim({ failure: { kind: 'other', message: 'x' } }),
+      slim({ failure: { kind: 'preferences', message: 'x' } }),
       full({ target: 'off' }),
       full({ capturing: true }),
       full({ target: 'effects' }),
       full({ failure: { kind: 'other', message: 'x' } }),
+      full({ failure: { kind: 'preferences', message: 'x' } }),
     ].map((value) => tvStatus(true, value, draft())),
     tvStatus(true, full({}), draft(), { lights: false, address: null }),
   ];
@@ -670,6 +695,17 @@ test('status card covers the supervisor states for both packages', () => {
     assert(heading.length <= 24, heading);
     assert(description.length <= 52, description);
     assert.doesNotMatch(`${heading} ${description}`, /https?:|\d+ s\b/);
+  }
+  // Unreadable saved preferences: nothing stopped, so nothing to retry; a
+  // saved setting replaces them.
+  for (const value of [
+    full({ failure: { kind: 'preferences', message: 'x' } }),
+    slim({ failure: { kind: 'preferences', message: 'x' } }),
+  ]) {
+    const unreadable = tvStatus(true, value, draft());
+    assert.equal(unreadable.title, 'Couldn’t read settings');
+    assert.equal(unreadable.attention, true);
+    assert.notEqual(unreadable.action, 'retry');
   }
   assert.equal(tvStatus(true, full(), draft()).action, 'none');
   const failedFull = tvStatus(
@@ -689,9 +725,11 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     tvState(
       'slim',
       { enabled: true, worker: { phase: 'running' }, ...change },
-      { instance: 'http://192.168.1.20:8787' },
+      { prysm_address: 'http://192.168.1.20:8787' },
     );
-  const draft = completePreferences({ instance: 'http://192.168.1.20:8787' });
+  const draft = completePreferences({
+    prysm_address: 'http://192.168.1.20:8787',
+  });
   const status = (value) => tvStatus(true, value, draft);
   const hint = 'Choose another encoding in Prysm’s web portal.';
   assert.deepEqual(
@@ -873,7 +911,7 @@ test('the TV counts a restart down by itself', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 0 });
   const tv = await mountTv(t, {
     supervisor: {
-      preferences: { instance: 'http://192.168.1.20:8787' },
+      preferences: { prysm_address: 'http://192.168.1.20:8787' },
       state: {
         enabled: true,
         worker: { phase: 'retrying', seconds: 4 },
@@ -901,7 +939,7 @@ test('the restart bar runs on through later states of the same wait', async (t) 
   };
   const tv = await mountTv(t, {
     supervisor: {
-      preferences: { instance: 'http://192.168.1.20:8787' },
+      preferences: { prysm_address: 'http://192.168.1.20:8787' },
       state: waiting,
     },
   });
@@ -945,7 +983,7 @@ test('the capture rate is shown while the worker measures it', async (t) => {
   assert.match(diagnostics(measured(null)), /Capture rate: not measured/);
   const tv = await mountTv(t, {
     supervisor: {
-      preferences: { instance: 'http://192.168.1.20:8787' },
+      preferences: { prysm_address: 'http://192.168.1.20:8787' },
       state: {
         enabled: true,
         worker: { phase: 'running' },
@@ -966,10 +1004,10 @@ test('the capture rate is shown while the worker measures it', async (t) => {
 test('preferences are completed with their defaults', () => {
   assert.deepEqual(completePreferences({ autostart: true }), {
     autostart: true,
-    instance: null,
+    prysm_address: null,
   });
   // No address is omitted on the wire, never sent as `null`.
-  assert.deepEqual(sentPreferences({ autostart: true, instance: null }), {
+  assert.deepEqual(sentPreferences({ autostart: true, prysm_address: null }), {
     autostart: true,
   });
 });
@@ -1041,7 +1079,7 @@ test('the service link: each event in each link state', () => {
         assert.equal(next.problem, kind, 'its words go to Diagnostics');
     }
   // The rest leave the link as it is.
-  const saved = { autostart: true, instance: null };
+  const saved = { autostart: true, prysm_address: null };
   for (const state of Object.values(states))
     for (const [action, check] of [
       [{ type: 'saved', sent: saved }, (next) => next.pending !== undefined],
@@ -1069,9 +1107,11 @@ test('the main screen: one place says a package mismatch and what shows', () => 
       fps: 30,
       encoding: 'raw',
     },
-    { instance: 'http://192.168.1.20:8787' },
+    { prysm_address: 'http://192.168.1.20:8787' },
   );
-  const draft = completePreferences({ instance: 'http://192.168.1.20:8787' });
+  const draft = completePreferences({
+    prysm_address: 'http://192.168.1.20:8787',
+  });
   const screen = (change = {}) =>
     tvScreen({
       flavor: 'slim',
@@ -1298,7 +1338,7 @@ test('remote arrows move focus through rows and columns without changing setting
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -1315,7 +1355,7 @@ test('remote arrows move focus through rows and columns without changing setting
   await tv.key(RIGHT);
   assert.equal(
     tv.focus(),
-    'instance',
+    'prysm-address',
     'the row edge continues to the settings column',
   );
   await tv.key(DOWN);
@@ -1338,7 +1378,7 @@ test('remote arrows move focus through rows and columns without changing setting
   await tv.key(UP);
   await tv.key(UP);
   await tv.key(UP);
-  assert.equal(tv.focus(), 'instance');
+  assert.equal(tv.focus(), 'prysm-address');
   assert(!tv.methods().includes('setPreferences'), 'arrows change nothing');
 });
 
@@ -1354,7 +1394,7 @@ test('Start with TV is a switch: OK flips it and it applies at once', async (t) 
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -1371,7 +1411,11 @@ test('Start with TV is a switch: OK flips it and it applies at once', async (t) 
     (call) => call.method === 'setPreferences',
   ).payload;
   assert.equal(saved.autostart, true);
-  assert.equal(saved.instance, 'http://192.168.1.20:8787', 'the rest is kept');
+  assert.equal(
+    saved.prysm_address,
+    'http://192.168.1.20:8787',
+    'the rest is kept',
+  );
   assert.equal(tv.el('autostart').getAttribute('aria-checked'), 'true');
   assert.equal(tv.text('autostart-value'), 'On');
   assert.equal(
@@ -1388,39 +1432,43 @@ test('the Prysm address is explicit: invalid text is explained and Back keeps th
   assert.equal(tv.text('primary'), 'Add Prysm address');
   await tv.click('primary');
   assert.equal(tv.text('dialog-title'), 'Prysm address');
-  assert.equal(tv.focus(), 'instance-input');
+  assert.equal(tv.focus(), 'prysm-address-input');
   await tv.key(LEFT);
-  assert.equal(tv.focus(), 'instance-input', 'left and right move the caret');
-  await tv.type('instance-input', 'http://prysm.local/x');
-  await tv.submit('instance-input');
   assert.equal(
-    tv.text('instance-input-error'),
+    tv.focus(),
+    'prysm-address-input',
+    'left and right move the caret',
+  );
+  await tv.type('prysm-address-input', 'http://prysm.local/x');
+  await tv.submit('prysm-address-input');
+  assert.equal(
+    tv.text('prysm-address-input-error'),
     'That doesn’t look like an address. Try one like 192.168.1.20.',
   );
   assert.equal(
-    tv.el('instance-input').getAttribute('aria-describedby'),
-    'instance-input-error',
+    tv.el('prysm-address-input').getAttribute('aria-describedby'),
+    'prysm-address-input-error',
   );
   assert.match(tv.el('modal').className, /\btop\b/, 'clear of the keyboard');
-  await tv.type('instance-input', ' 192.168.1.30 ');
+  await tv.type('prysm-address-input', ' 192.168.1.30 ');
   await tv.key(BACK);
-  assert.equal(tv.text('instance-value'), 'Add');
+  assert.equal(tv.text('prysm-address-value'), 'Add');
   assert(!tv.methods().includes('setPreferences'), 'Back sends nothing');
-  await tv.click('instance');
-  assert.equal(tv.el('instance-input').value, '');
-  await tv.type('instance-input', '192.168.1.30');
-  await tv.submit('instance-input');
+  await tv.click('prysm-address');
+  assert.equal(tv.el('prysm-address-input').value, '');
+  await tv.type('prysm-address-input', '192.168.1.30');
+  await tv.submit('prysm-address-input');
   await settle();
   assert(!tv.el('modal'));
-  assert.equal(tv.text('instance-value'), '192.168.1.30:8787');
+  assert.equal(tv.text('prysm-address-value'), '192.168.1.30:8787');
   assert.equal(
-    tv.supervisor.state().preferences.instance,
+    tv.supervisor.state().preferences.prysm_address,
     'http://192.168.1.30:8787',
     'Use this address saves it',
   );
-  await tv.click('instance');
+  await tv.click('prysm-address');
   assert.equal(
-    tv.el('instance-input').value,
+    tv.el('prysm-address-input').value,
     '192.168.1.30:8787',
     'edited as it is shown',
   );
@@ -1430,11 +1478,11 @@ test('saving a Prysm address checks that a portal answers there, and only warns'
   const save = async (options) => {
     const tv = await mountTv(t, options);
     await tv.click('primary');
-    await tv.type('instance-input', '192.168.1.30');
-    await tv.submit('instance-input');
+    await tv.type('prysm-address-input', '192.168.1.30');
+    await tv.submit('prysm-address-input');
     await settle();
     assert.equal(
-      tv.supervisor.state().preferences.instance,
+      tv.supervisor.state().preferences.prysm_address,
       'http://192.168.1.30:8787',
       'saved anyway',
     );
@@ -1465,8 +1513,8 @@ test('saving a Prysm address checks that a portal answers there, and only warns'
 test('a Prysm address is all the slim TV needs; then Start capture', async (t) => {
   const tv = await mountTv(t);
   await tv.click('primary');
-  await tv.type('instance-input', '192.168.1.20');
-  await tv.submit('instance-input');
+  await tv.type('prysm-address-input', '192.168.1.20');
+  await tv.submit('prysm-address-input');
   await settle();
   // The lights and the address check both use the one address.
   assert.deepEqual([...new Set(tv.urls)], ['http://192.168.1.20:8787']);
@@ -1479,7 +1527,7 @@ test('a Prysm address is all the slim TV needs; then Start capture', async (t) =
     ['setPreferences', 'setEnabled'],
   );
   assert.equal(
-    tv.supervisor.state().preferences.instance,
+    tv.supervisor.state().preferences.prysm_address,
     'http://192.168.1.20:8787',
   );
   assert.equal(tv.text('primary'), 'Stop capture');
@@ -1489,7 +1537,7 @@ test('a failed change keeps the saved value, says so, and never enables', async 
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -1522,11 +1570,11 @@ test('status updates keep focus; a change made elsewhere shows at once', async (
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
-  tv.el('instance').focus();
+  tv.el('prysm-address').focus();
   await act(async () =>
     tv.supervisor.publish({
       capturing: true,
@@ -1535,14 +1583,14 @@ test('status updates keep focus; a change made elsewhere shows at once', async (
     }),
   );
   await settle();
-  assert.equal(tv.focus(), 'instance');
+  assert.equal(tv.focus(), 'prysm-address');
   const prefs = tv.supervisor.state().preferences;
   await act(async () =>
     tv.supervisor.publish({ preferences: { ...prefs, autostart: true } }),
   );
   await settle();
   assert.equal(tv.text('autostart-value'), 'On');
-  assert.equal(tv.focus(), 'instance');
+  assert.equal(tv.focus(), 'prysm-address');
 });
 
 /** Hold the portal's next `setTarget` until the returned function is called. */
@@ -1881,7 +1929,7 @@ test('the TV lights card says a failure with the lights off', async (t) => {
       flavor,
       supervisor:
         flavor === 'slim'
-          ? { preferences: { instance: 'http://192.168.1.20:8787' } }
+          ? { preferences: { prysm_address: 'http://192.168.1.20:8787' } }
           : undefined,
     });
     await act(async () =>
@@ -1933,7 +1981,7 @@ test('a refused press is said until the lights change', async (t) => {
 test('a service newer than the app is shown, not offered setup', async (t) => {
   const tv = await mountTv(t, {
     supervisor: {
-      preferences: { instance: 'http://192.168.1.20:8787' },
+      preferences: { prysm_address: 'http://192.168.1.20:8787' },
       state: { video: 'hdr' },
     },
   });
@@ -1944,14 +1992,14 @@ test('a service newer than the app is shown, not offered setup', async (t) => {
 test('a change asked for while another is sent follows it', async (t) => {
   // It was dropped without a word: only the first change was saved.
   const tv = await mountTv(t, {
-    supervisor: { preferences: { instance: 'http://192.168.1.20:8787' } },
+    supervisor: { preferences: { prysm_address: 'http://192.168.1.20:8787' } },
   });
   tv.el('autostart').focus();
   tv.supervisor.hold();
   await tv.click('autostart');
-  await tv.click('instance');
-  await tv.type('instance-input', '192.168.1.30');
-  await tv.submit('instance-input');
+  await tv.click('prysm-address');
+  await tv.type('prysm-address-input', '192.168.1.30');
+  await tv.submit('prysm-address-input');
   await act(async () => tv.supervisor.release());
   await settle();
   assert.deepEqual(
@@ -1959,12 +2007,12 @@ test('a change asked for while another is sent follows it', async (t) => {
       .filter((call) => call.method === 'setPreferences')
       .map((call) => call.payload),
     [
-      { autostart: true, instance: 'http://192.168.1.20:8787' },
-      { autostart: true, instance: 'http://192.168.1.30:8787' },
+      { autostart: true, prysm_address: 'http://192.168.1.20:8787' },
+      { autostart: true, prysm_address: 'http://192.168.1.30:8787' },
     ],
   );
   assert.equal(tv.text('autostart-value'), 'On');
-  assert.equal(tv.text('instance-value'), '192.168.1.30:8787');
+  assert.equal(tv.text('prysm-address-value'), '192.168.1.30:8787');
 });
 
 test('a failed setup stays said while the service is still missing', async (t) => {
@@ -1994,11 +2042,11 @@ test('only the newest address is checked into a warning', async (t) => {
       if (probe.url.includes(address)) probe.resolve(reachable);
   };
   await tv.click('primary');
-  await tv.type('instance-input', '192.168.1.30');
-  await tv.submit('instance-input');
-  await tv.click('instance');
-  await tv.type('instance-input', '192.168.1.40');
-  await tv.submit('instance-input');
+  await tv.type('prysm-address-input', '192.168.1.30');
+  await tv.submit('prysm-address-input');
+  await tv.click('prysm-address');
+  await tv.type('prysm-address-input', '192.168.1.40');
+  await tv.submit('prysm-address-input');
   await act(async () => answer('192.168.1.40', true));
   await settle();
   const refused =
@@ -2017,7 +2065,7 @@ test('before the service answers, nothing flashes and focus waits', async (t) =>
       patterns: fakePlayer(),
       supervisor:
         flavor === 'slim'
-          ? { preferences: { instance: 'http://192.168.1.20:8787' } }
+          ? { preferences: { prysm_address: 'http://192.168.1.20:8787' } }
           : { state: { portal: null } },
     });
     assert.equal(tv.text('status-title'), 'Connecting…');
@@ -2100,7 +2148,7 @@ test('Up and Down scroll a long diagnostics text while focus stays on Back', asy
 
 test('removing the setup is tucked away, needs confirmation, and Back returns one level', async (t) => {
   const tv = await mountTv(t, {
-    supervisor: { preferences: { instance: 'http://192.168.1.20:8787' } },
+    supervisor: { preferences: { prysm_address: 'http://192.168.1.20:8787' } },
   });
   tv.el('service-options').focus();
   await tv.click('service-options');
@@ -2153,7 +2201,7 @@ test('hiding the page releases the subscriptions; showing it subscribes again', 
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -2211,7 +2259,7 @@ test('one lost subscription keeps the last state; a second in a row offers setup
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
         autostart: true,
       },
     },
@@ -2252,7 +2300,7 @@ test('one lost subscription keeps the last state; a second in a row offers setup
 test('a lost subscription then a missing service says so at once', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const tv = await mountTv(t, {
-    supervisor: { preferences: { instance: 'http://192.168.1.20:8787' } },
+    supervisor: { preferences: { prysm_address: 'http://192.168.1.20:8787' } },
   });
   tv.supervisor.setOffline(true);
   await act(async () => tv.supervisor.drop('Unknown service name'));
@@ -2268,7 +2316,7 @@ test('a waiting slim worker is described as waiting for Prysm, not as a failure'
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
       state: {
         enabled: true,
@@ -2297,7 +2345,7 @@ test('slim lighting buttons drive the remote Prysm; leaving never turns it off',
   const tv = await mountTv(t, {
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -2333,7 +2381,7 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     probe: () => Promise.resolve(true),
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -2353,7 +2401,7 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     probe: () => Promise.resolve(false),
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -2373,7 +2421,7 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     },
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -2390,7 +2438,7 @@ test('a remote Prysm without Remote capture is explained; an old browser gets th
     portal: { capture: { kind: 'device', path: '/dev/video0' }, output: wled },
     supervisor: {
       preferences: {
-        instance: 'http://192.168.1.20:8787',
+        prysm_address: 'http://192.168.1.20:8787',
       },
     },
   });
@@ -2401,7 +2449,7 @@ test('a remote Prysm without Remote capture is explained; an old browser gets th
   await tv.unmount();
   const old = await mountTv(t, {
     supported: false,
-    supervisor: { preferences: { instance: 'http://192.168.1.20:8787' } },
+    supervisor: { preferences: { prysm_address: 'http://192.168.1.20:8787' } },
   });
   assert.match(old.text('lighting-status'), /too old/);
   assert.deepEqual(old.urls, [], 'no HTTP client is created');
@@ -2412,7 +2460,7 @@ test('full: the TV portal is used over loopback and its address is shown', async
   assert.deepEqual(tv.urls, ['http://127.0.0.1:8787']);
   assert.equal(tv.text('portal-address-text'), '192.168.1.5:8787');
   assert.equal(tv.text('status-title'), 'Lights off');
-  assert.equal(tv.el('instance'), null, 'no slim rows');
+  assert.equal(tv.el('prysm-address'), null, 'no slim rows');
   assert.equal(tv.el('capture'), null, 'capture is set in the portal only');
   assert(!tv.el('primary'), 'the lighting modes are the one control');
   // After a failure the supervisor does not retry, the button restarts it.
@@ -2485,7 +2533,7 @@ test('neither package sets up capture, lights or the stream on the TV; both show
       rows,
       flavor === 'full'
         ? ['autostart', 'calibrate', 'service-options']
-        : ['instance', 'autostart', 'calibrate', 'service-options'],
+        : ['prysm-address', 'autostart', 'calibrate', 'service-options'],
     );
     assert.doesNotMatch(
       document.body.textContent,
@@ -2507,7 +2555,7 @@ test('neither package sets up capture, lights or the stream on the TV; both show
     assert.equal(tv.text('lighting-title'), 'Your lights');
     assert.equal(
       tv.el('portal-address').querySelector('code').textContent,
-      flavor === 'full' ? '192.168.1.5:8787' : shown(linked.instance),
+      flavor === 'full' ? '192.168.1.5:8787' : shown(linked.prysm_address),
     );
     await tv.unmount();
   }
@@ -2521,7 +2569,7 @@ test('lights without a setup are named plainly with the portal address, in both 
       portal: { capture: portals[flavor].capture },
     });
     const address =
-      flavor === 'full' ? '192.168.1.5:8787' : shown(linked.instance);
+      flavor === 'full' ? '192.168.1.5:8787' : shown(linked.prysm_address);
     assert.equal(tv.text('status-title'), 'Set up your lights');
     assert.equal(
       tv.text('status-description'),
@@ -2559,7 +2607,7 @@ test('lights without a setup are named plainly with the portal address, in both 
 
 test('the lights setup hint gives way to failures and to a missing receiver', () => {
   const running = { worker: { phase: 'running' } };
-  const linkedPrefs = { instance: 'http://192.168.1.20:8787' };
+  const linkedPrefs = { prysm_address: 'http://192.168.1.20:8787' };
   const fullOff = tvState('full', { ...running, target: 'off' });
   const noLights = { lights: false, address: 'http://192.168.1.20:8787' };
   const draft = completePreferences({});
@@ -2637,7 +2685,7 @@ test('TV bundles are classic deferred scripts with relative URLs and no demo cod
 /* ---- Slim stream encoding ---- */
 
 const linked = {
-  instance: 'http://192.168.1.20:8787',
+  prysm_address: 'http://192.168.1.20:8787',
 };
 
 test('slim: the status card shows the encoding in use while streaming', async (t) => {
@@ -2694,7 +2742,7 @@ test('slim: an encoder failure shows the error and sends the user to the portal 
   assert.doesNotMatch(document.body.textContent, /no device/);
   assert.equal(
     tv.el('portal-address').querySelector('code').textContent,
-    shown(linked.instance),
+    shown(linked.prysm_address),
   );
   assert.equal(tv.el('encoding'), null, 'no encoding setting on the TV');
 });
@@ -2772,7 +2820,7 @@ function fakePlayer(supported = true) {
 }
 const slimReady = {
   preferences: {
-    instance: 'http://192.168.1.20:8787',
+    prysm_address: 'http://192.168.1.20:8787',
   },
   state: { enabled: true },
 };

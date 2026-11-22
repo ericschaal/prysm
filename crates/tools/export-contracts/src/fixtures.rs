@@ -20,7 +20,8 @@ use prysm_runtime::{NullOutput, NullSettings};
 use prysm_webos_link::{FailureKind, SlimLink, Video, WorkerFailure};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
-    GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest, state_reply,
+    ErrorKind, GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest, error_reply,
+    state_reply,
 };
 use prysm_webos_service::state::{FullWorker, Package, Power, SlimWorker, State as TvState};
 use serde_json::{Value, json};
@@ -43,7 +44,7 @@ pub fn serialized() -> Value {
 fn luna() -> Value {
     let slim_preferences = Preferences {
         autostart: true,
-        instance: Some("http://192.168.1.20:8787".parse().expect("a Prysm address")),
+        prysm_address: Some("http://192.168.1.20:8787".parse().expect("a Prysm address")),
     };
     let portal = || Some("http://192.168.1.5:8787/".to_owned());
     let full = |target, worker| Package::Full { target, worker };
@@ -108,6 +109,16 @@ fn luna() -> Value {
     });
     let (full, slim) = (&full_states[0], &slim_states[0]);
     let states: Vec<&TvState> = full_states.iter().chain(&slim_states).collect();
+    let errors = [
+        (
+            ErrorKind::WrongPackage,
+            "setTarget is only for the full package",
+        ),
+        (ErrorKind::Internal, "the service is busy"),
+    ]
+    .map(|(kind, text)| {
+        serde_json::from_str::<Value>(&error_reply(kind, text)).expect("an error reply")
+    });
     json!({
         "luna/State": states,
         "luna/Preferences": [Preferences::default(), slim_preferences],
@@ -117,6 +128,7 @@ fn luna() -> Value {
             .map(|target| SetTargetRequest { target }),
         "luna/SetEnabledRequest": [SetEnabledRequest { enabled: false }],
         "luna/UninstallRequest": [UninstallRequest {}],
+        "luna/ErrorReply": errors,
     })
 }
 

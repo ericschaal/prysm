@@ -57,7 +57,7 @@ SLIM = (
     '"log":[]}'
 )
 SENDING = '"link":{"state":"sending","encoding":"raw","fps":30}'
-SLIM_PREFERENCES: JsonObject = {'autostart': True, 'instance': 'http://192.0.2.20:8787'}
+SLIM_PREFERENCES: JsonObject = {'autostart': True, 'prysm_address': 'http://192.0.2.20:8787'}
 NO_SERVICE = Result(1, '', f'Service does not exist: {commands.SERVICE}')
 ABSENT = ''.join(f'absent {path}\n' for path in (*commands.INSTALLED_PATHS, commands.DATA_DIR, commands.STAGING))
 INSTALLED = ABSENT.replace('absent /media', 'present /media').replace(f'absent {commands.DATA_DIR}', 'present /var/lib')
@@ -699,9 +699,9 @@ class Restore(unittest.TestCase):
         )
         done = found.restore(a_backup())
         sent = untyped(found.transport).calls[1].remote
-        self.assertIn('"autostart":true,"instance":"http://192.0.2.20:8787"', sent)
+        self.assertIn('"autostart":true,"prysm_address":"http://192.0.2.20:8787"', sent)
         self.assertIn('"enabled":true', untyped(found.transport).calls[2].remote)
-        self.assertIn('lighting: enabled (streaming to its instance), as backed up', done[-1])
+        self.assertIn('lighting: enabled (streaming to its Prysm), as backed up', done[-1])
 
     def test_a_slim_backup_not_enabled_leaves_it(self) -> None:
         found = recorded(('tv.get-state', ok(SLIM)), ('tv.set-preferences', ok('{"returnValue":true}')))
@@ -808,7 +808,7 @@ class Restore(unittest.TestCase):
             silent.restore(a_backup(target='linux', portal={'url': url, 'settings': {}, 'target': 'off'}))
 
     def test_the_command_refuses_when_nothing_answers(self) -> None:
-        """No Prysm answering, a refused Luna call or an instance the template refuses: exit 1, no traceback."""
+        """No Prysm answering, a refused Luna call or a Prysm address the template refuses: exit 1, no traceback."""
         path = Path(tempfile.mkdtemp()) / installed.BACKUP
         path.write_text(json.dumps(a_backup()))
         args = run.arguments(['settings', 'restore', 'tv', str(path), '--config', str(EXAMPLE)])
@@ -821,7 +821,7 @@ class Restore(unittest.TestCase):
             with mock.patch.object(run, '_existing', return_value=existing), contextlib.redirect_stderr(errors):
                 self.assertEqual(run.restore_settings(args, config.load(EXAMPLE)), 1)
             self.assertIn(said, errors.getvalue())
-        unsafe = a_backup(luna={'flavor': 'slim', 'preferences': {'instance': "http://x'$(reboot)"}})
+        unsafe = a_backup(luna={'flavor': 'slim', 'preferences': {'prysm_address': "http://x'$(reboot)"}})
         with self.assertRaises(commands.Refused):
             recorded(('tv.get-state', ok(SLIM))).restore(unsafe)
 
@@ -831,7 +831,7 @@ class Restore(unittest.TestCase):
         done = runner('settings', 'restore', 'tv', str(path), '--dry-run', '--config', str(EXAMPLE), offline=True)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn(f'luna://{commands.SERVICE}/setPreferences', done.stdout)
-        self.assertIn('"autostart":true,"instance":"http://192.0.2.20:8787"', done.stdout)
+        self.assertIn('"autostart":true,"prysm_address":"http://192.0.2.20:8787"', done.stdout)
         self.assertIn(f'luna://{commands.SERVICE}/setEnabled', done.stdout)
         other = runner('settings', 'restore', 'linux', str(path), '--dry-run', '--config', str(EXAMPLE), offline=True)
         self.assertEqual(other.returncode, 2)
