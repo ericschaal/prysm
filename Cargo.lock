@@ -1941,6 +1941,7 @@ name = "prysm-capture-remote"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "nix",
  "prysm-capture-remote",
  "prysm-core",
  "prysm-h264",

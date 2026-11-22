@@ -141,10 +141,13 @@ carries the uplink as one `link` tagged by `state`: `starting`, `sending`
 (the encoder, version, replaced or receiver-failed failure); the supervisor
 counts it as up once `sending` or `paused`. A stop shuts the uplink's socket
 down, which ends a connect, read or write at once, and no capture opens after
-it; what is left is one pump round (its pull, and a send's 1 s hardware
-encoder wait or 0.5 s host name lookup) and one capture release (4 s),
+it; what is left is one pump round (its 50 ms pull, and a send's 1 s
+hardware encoder wait or 0.5 s host name lookup), the encoder's 0.5 s
+end-of-stream wait when it closes, and one capture release (4 s): 5.55 s,
 within the slim worker's 6 s stop deadline and before the supervisor's 8 s
-KILL. All rules are one transition function
+KILL. Not bounded, and so not counted: the hardware encoder's PLAYING
+transition when the round opens it, and its NULL transition when it closes.
+All rules are one transition function
 ([`Report::next`](../../crates/hosts/webos-slim/src/link.rs)). Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 

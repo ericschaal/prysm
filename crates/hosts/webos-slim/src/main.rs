@@ -51,21 +51,29 @@ enum Check {
 /// shutdown without waiting.
 const STOP_DEADLINE: Duration = Duration::from_secs(6);
 
-/// The longest the forwarder thread goes on after a stop before it closes
-/// the capture, in what the stop does not cut short. The stop cuts the
-/// uplink's network calls at once and no capture opens after it, so what is
-/// left is one pump round: its pull (the runtime's 50 ms tick; a pull that
-/// closes a replaced capture is the release itself, and opens nothing) and
-/// its send (the hardware encoder waits up to 1 s for its output, in
-/// `prysm-h264-rvenc-sys`; a reconnect, the host name lookup).
-const AFTER_STOP: Duration = Duration::from_millis(50 + 1000);
+/// The bounded waits of the forwarder thread after a stop, besides the one
+/// capture release. The stop cuts the uplink's network calls at once and no
+/// capture opens after it, so what is left is one pump round and the end of
+/// the encoder:
+/// - the round's pull, at most one [`prysm_runtime::TICK`] (a pull that
+///   closes a replaced capture is the release itself, and opens nothing);
+/// - its send: the hardware encoder's wait for its output (a reconnect's
+///   host name lookup waits less, asserted below);
+/// - the encoder's close, when the cut send drops it or the forwarder drops
+///   the sink: its end-of-stream wait.
+///
+/// Unbounded, and not counted: the hardware encoder's PLAYING transition
+/// (when the round opens it) and its NULL transition (when it closes).
+const AFTER_STOP: Duration = prysm_runtime::TICK
+    .saturating_add(prysm_h264::HARDWARE_OUTPUT_WAIT)
+    .saturating_add(prysm_h264::HARDWARE_END_OF_STREAM_WAIT);
 const _: () = assert!(
-    resolve::RESOLVE_WAIT.as_millis() <= AFTER_STOP.as_millis(),
+    resolve::RESOLVE_WAIT.as_millis() <= prysm_h264::HARDWARE_OUTPUT_WAIT.as_millis(),
     "the host name lookup is the shorter of a send's waits"
 );
 const _: () = assert!(
     AFTER_STOP.as_millis() + prysm_capture_webos::RELEASE.as_millis() < STOP_DEADLINE.as_millis(),
-    "after a stop, one pump round and one capture release end within the deadline"
+    "after a stop, the bounded waits and one capture release end within the deadline"
 );
 const _: () = assert!(
     STOP_DEADLINE.as_millis() < KILL_AFTER.as_millis(),
@@ -103,7 +111,7 @@ async fn run(args: SlimArgs, link: Link) -> Result<()> {
     let mut prysm = Resolver::new(args.prysm);
     let offer = capture::offer(&[prysm_capture_webos::MODE]);
     // Cut when the worker is asked to stop: the uplink's network calls end
-    // at once, and no capture opens any more.
+    // at once. The capture reads the stop itself and opens nothing after it.
     let stopping = Hangup::default();
     let (sink, flow) = Uplink::new({
         let stopping = stopping.clone();
@@ -111,7 +119,7 @@ async fn run(args: SlimArgs, link: Link) -> Result<()> {
     });
     let video = VideoSignal::default();
     let capture = WebosCapture::new(video.clone());
-    let source = RequestedCapture::new(flow.clone(), stopping.clone(), move |settings| {
+    let source = RequestedCapture::new(flow.clone(), link.stop.clone(), move |settings| {
         Ok(Box::new(capture.start(&settings)?) as Box<dyn FrameSource>)
     });
     let stopped = {

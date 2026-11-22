@@ -226,7 +226,7 @@ impl Pipeline {
         self.source.push_buffer(buffer).map_err(gst_error)?;
         let sample = self
             .sink
-            .try_pull_sample(gst::ClockTime::SECOND)
+            .try_pull_sample(clock(crate::OUTPUT_WAIT))
             .ok_or_else(|| self.posted_error().unwrap_or(Error::Timeout))?;
         let buffer = sample
             .buffer()
@@ -309,11 +309,16 @@ fn dma_sync(fd: &OwnedFd, flags: u64) -> Result<(), Error> {
     .map_err(io("DMA synchronization"))
 }
 
+/// `wait` as a GStreamer clock time.
+fn clock(wait: std::time::Duration) -> gst::ClockTime {
+    gst::ClockTime::from_mseconds(u64::try_from(wait.as_millis()).unwrap_or(u64::MAX))
+}
+
 impl Drop for Pipeline {
     fn drop(&mut self) {
         let _ = self.source.end_of_stream();
         let _ = self.bus.timed_pop_filtered(
-            gst::ClockTime::from_mseconds(500),
+            clock(crate::END_OF_STREAM_WAIT),
             &[gst::MessageType::Eos, gst::MessageType::Error],
         );
         // The DMA slots drop after the pipeline is NULL (field order).

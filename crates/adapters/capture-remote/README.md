@@ -56,8 +56,10 @@ neither has a listener of its own:
   refuse the request for the caller's own reasons. Nothing switches encoder
   or encoding on its own. `RemoteSender::connect_until(…, &hangup)` connects
   the same way; `Hangup::cut` then shuts its socket down, which ends a
-  connect, read or write in progress at once, and fails every later
-  `connect_until` with that `Hangup`: a host cuts it when it stops.
+  connect (the socket is connecting before a cut can reach it), read or
+  write in progress at once, and fails every later `connect_until` with
+  that `Hangup`. Every call the cut ends fails with the cause `Stopping`. A
+  host cuts it when it stops.
 
 A new request needs a new connection: the engine reopens the source when the
 capture settings change, which closes the connection as *stopped*, and the

@@ -2,13 +2,13 @@ use crate::capture::{RequestedCapture, settings};
 use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
 use crate::resolve::Resolver;
 use prysm_capture_remote::testkit::Portal;
-use prysm_capture_remote::{Hangup, RemoteSender, RemoteSettings, SendError, StreamEncoding};
+use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError, StreamEncoding};
 use prysm_capture_webos::{Readiness, VideoSignal, WebosSettings};
 use prysm_core::Frame;
 use prysm_ports::{Error, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
-use prysm_webos_link::worker::{Link, Peer, Stop};
+use prysm_webos_link::worker::{Link, Peer, Stop, StopHandle};
 use prysm_webos_link::{Command, Event, LightingTarget, SlimStatus, Video, WorkerStatus};
 use prysm_webos_link::{FailureKind, SlimEncoding, SlimLink};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -97,7 +97,7 @@ fn start<S: Upstream + 'static>(
     let stop = link.stop.clone();
     let (sink, flow) = Uplink::new(connect);
     let sink = sink.retry_every(Duration::from_millis(20));
-    let source = RequestedCapture::new(flow.clone(), Hangup::default(), {
+    let source = RequestedCapture::new(flow.clone(), StopHandle::default(), {
         let opened = opened.clone();
         move |shape| opened.open(shape)
     });
@@ -921,9 +921,9 @@ fn a_version_mismatch_outlasts_an_unreachable_receiver() {
     assert_eq!(flow.wanted(), None, "the capture reopened");
 }
 
-/// A capture that does nothing, and cuts `stopping` when it is closed: the
-/// stop arrives while it is released.
-struct StopsWhileClosing(Hangup);
+/// A capture that does nothing, and asks the worker to stop when it is
+/// closed: the stop arrives while it is released.
+struct StopsWhileClosing(StopHandle);
 
 impl FrameSource for StopsWhileClosing {
     fn next_frame(&mut self, _timeout: Duration) -> Result<Pull> {
@@ -931,7 +931,7 @@ impl FrameSource for StopsWhileClosing {
     }
 
     fn close(self: Box<Self>) -> Result<()> {
-        self.0.cut();
+        self.0.request(Stop::Requested("SIGTERM"));
         Ok(())
     }
 }
@@ -950,13 +950,13 @@ fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
     ];
     let (uplink, flow) = Uplink::new(move || answers.pop().expect("an answer"));
     let mut uplink = uplink.retry_every(Duration::ZERO);
-    let stopping = Hangup::default();
+    let stop = StopHandle::default();
     let opened = Arc::new(Mutex::new(Vec::new()));
-    let mut source = RequestedCapture::new(flow.clone(), stopping.clone(), {
-        let (opened, stopping) = (opened.clone(), stopping.clone());
+    let mut source = RequestedCapture::new(flow.clone(), stop.clone(), {
+        let (opened, stop) = (opened.clone(), stop.clone());
         move |shape| {
             opened.lock().unwrap().push(shape);
-            Ok(Box::new(StopsWhileClosing(stopping.clone())) as Box<dyn FrameSource>)
+            Ok(Box::new(StopsWhileClosing(stop.clone())) as Box<dyn FrameSource>)
         }
     });
     uplink.tick().unwrap();
@@ -967,7 +967,8 @@ fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), Some(SOFTWARE));
     assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
-    assert!(stopping.is_cut());
+    assert!(stop.reason().is_some());
+    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
     assert_eq!(*opened.lock().unwrap(), [settings(&RAW)], "nothing opened");
     Box::new(source).close().unwrap();
 }

@@ -33,3 +33,4 @@ pub use null::{NullOutput, NullSettings};
 pub use sample::{SampleError, sample_rgb};
 pub use stats::{Counters, Timing};
 pub use surface::{Shutdown, Surface};
+pub use worker::TICK;

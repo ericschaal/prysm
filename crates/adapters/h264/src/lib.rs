@@ -25,6 +25,12 @@ mod software;
 
 pub use decoder::Decoder;
 pub use encoder::{Backend, Encoder, EncoderSettings, Picture};
+/// The hardware encoder's waits: for a picture's output, and for its end of
+/// stream when it closes.
+#[cfg(feature = "hardware")]
+pub use prysm_h264_rvenc_sys::{
+    END_OF_STREAM_WAIT as HARDWARE_END_OF_STREAM_WAIT, OUTPUT_WAIT as HARDWARE_OUTPUT_WAIT,
+};
 
 use prysm_core::{PixelFormat, YuvRange, YuvStandardMatrix};
 use std::ops::RangeInclusive;
