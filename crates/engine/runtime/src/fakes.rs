@@ -87,7 +87,8 @@ pub struct FakeSourceSettings {
     pub name: String,
     /// Fail `next_frame` after this many frames.
     pub fail_after: Option<u32>,
-    /// With `fail_after`: wait for this event in the log before failing.
+    /// With `fail_after`: record `source.failing:<name>`, then wait for this
+    /// event in the log before failing.
     pub fail_at: Option<String>,
     /// Produce no frames after this many (`Some(0)`: none at all), for
     /// `quiet_for_ms` or, when that is 0, for good.
@@ -211,6 +212,8 @@ impl FrameSource for FakeSource {
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         if self.settings.fail_after.is_some_and(|n| self.frames >= n) {
             if let Some(gate) = &self.settings.fail_at {
+                self.log
+                    .record(format!("source.failing:{}", self.settings.name));
                 self.log.block_until(gate);
             }
             return Err(Error::other("fake source failed"));

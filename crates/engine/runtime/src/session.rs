@@ -465,8 +465,10 @@ mod tests {
         )
         .map_err(|(error, _)| error)
         .unwrap();
-        assert!(log.wait_for("output.write:o", 2).await);
-        // The stop is asked (its first poll), then the source fails.
+        assert!(log.wait_for("source.failing:s", 1).await);
+        // The thread is inside the source's call, so it cannot see the stop
+        // before the failure. The stop is asked (its first poll), then the
+        // source fails.
         let (stopped, ()) = tokio::join!(session.stop(IdleMode::Native, DEADLINE), async {
             log.record("test.fail");
         });
