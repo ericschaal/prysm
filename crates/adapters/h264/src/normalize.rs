@@ -1,8 +1,5 @@
-//! SPS-only repair for rvenc's progressive Baseline Annex B output. Ported
-//! unchanged in behaviour from the qualified
-//! `crates/capture/prysm-webos-protocol/src/h264/hardware.rs` (tag
-//! `pre-1.0-consolidation`).
-use crate::{FrameKind, H264Error, MAX_ACCESS_UNIT_BYTES, ensure};
+//! SPS-only repair for rvenc's progressive Baseline Annex B output.
+use crate::{FrameKind, H264Error, MAX_ACCESS_UNIT_BYTES, annex_b, ensure};
 use h264_reader::nal::{Nal, RefNal, sps::SeqParameterSet};
 
 type Result<T> = std::result::Result<T, H264Error>;
@@ -47,7 +44,6 @@ fn ue(out: &mut Vec<bool>, value: u32) {
     out.extend(std::iter::repeat_n(false, n - 1));
     fixed(out, value, n);
 }
-#[allow(clippy::too_many_lines)] // SPS field order is clearer in one checked parser.
 fn repair_sps(nal: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
     ensure!(nal.len() <= 4096, "oversized hardware SPS");
     let mut rbsp = Vec::new();
@@ -197,24 +193,14 @@ pub(crate) fn normalize_access_unit(
     first: bool,
     output: &mut Vec<u8>,
 ) -> Result<FrameKind> {
-    ensure!(
-        !input.is_empty() && input.len() <= MAX_ACCESS_UNIT_BYTES,
-        "invalid hardware access unit length"
-    );
-    ensure!(
-        input.starts_with(&[0, 0, 1]) || input.starts_with(&[0, 0, 0, 1]),
-        "hardware output is not Annex B"
-    );
+    let units = annex_b::nal_units(input)?;
     output.clear();
     let mut sps = false;
     let mut pps = false;
     let mut picture = None;
     let mut first_slices = 0;
-    for unit in openh264::nal_units(input) {
-        let nal = unit
-            .get(3..)
-            .filter(|n| !n.is_empty())
-            .ok_or_else(|| H264Error::Bitstream("empty hardware NAL".into()))?;
+    for nal in units {
+        let nal = nal?;
         ensure!(nal[0] & 0x80 == 0, "invalid hardware NAL header");
         let kind = nal[0] & 31;
         output.extend_from_slice(&[0, 0, 1]);
