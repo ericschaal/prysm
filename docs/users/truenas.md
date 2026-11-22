@@ -59,7 +59,7 @@ Keep the portal on a trusted network; it has no password.
 - Settings: `settings.json` in the dataset. Snapshot the dataset before an
   upgrade.
 - Upgrade: change the image version in the app's YAML and redeploy. The lights
-  start off.
+  start off. From 0.2.0 or 1.0.0-rc.1, see [Upgrade to 1.0.0](upgrading.md).
 - Settings will not save: check the dataset permissions for the `user` in the
   YAML.
 - Logs: the app's log view in TrueNAS.

@@ -76,6 +76,6 @@ Arguments after the image name are passed to Prysm. Then follow the
 - Stop: `docker stop prysm`. Prysm turns the lights off and exits.
 - Upgrade: back up the settings, remove the container, and start it again with
   the new version (with `1` or `latest`, run `docker pull` first). The lights
-  start off.
+  start off. From 0.2.0 or 1.0.0-rc.1, see [Upgrade to 1.0.0](upgrading.md).
 
 The image has no FFmpeg, so the video-file source does not work in it.
