@@ -4,8 +4,8 @@ use crate::link::{self, Inbound, Link, LinkError, Outbound};
 use crate::offer::Offer;
 use crate::request::RemoteSettings;
 use crate::wire::{
-    self, Command, Encoding, HEADER_LEN, Header, MAX_TEXT_BYTES, Refusal, Refused, SenderMessage,
-    WireError,
+    self, Encoding, FromReceiver, HEADER_LEN, Header, MAX_TEXT_BYTES, Refusal, RefusalCause,
+    ToReceiver, WireError,
 };
 use bytes::{Bytes, BytesMut};
 use prysm_core::Frame;
@@ -156,7 +156,7 @@ impl RemoteSender {
             })
             .map_err(|error| {
                 if let LinkError::Wire(WireError::Json(_) | WireError::Request(_)) = &error {
-                    refuse(&mut link, Refused::Request, &chain(&error));
+                    refuse(&mut link, RefusalCause::Request, &chain(&error));
                 }
                 error.context(format!("{url} sent no valid request"))
             })?;
@@ -232,17 +232,17 @@ impl RemoteSender {
     /// (`reason`, shown to its user), and close the connection. Best effort:
     /// a receiver that is gone learns nothing.
     pub fn refuse(&mut self, reason: &str) {
-        self.refuse_with(reason, Refused::Request);
+        self.refuse_with(reason, RefusalCause::Request);
     }
 
     /// Like [`Self::refuse`], naming the requested encoding as the cause:
     /// its encoder cannot start or failed. `send` does this on an encoder
     /// failure.
     pub fn refuse_encoding(&mut self, reason: &str) {
-        self.refuse_with(reason, Refused::Encoding);
+        self.refuse_with(reason, RefusalCause::Encoding);
     }
 
-    fn refuse_with(&mut self, reason: &str, cause: Refused) {
+    fn refuse_with(&mut self, reason: &str, cause: RefusalCause) {
         // Within the write timeout, rather than giving up on a full buffer.
         let _ = self.set_blocking(true);
         refuse(&mut self.link, cause, reason);
@@ -252,8 +252,8 @@ impl RemoteSender {
     /// stream (its encoder produced the frame) and the request otherwise.
     fn refused(&mut self, error: Error) -> SendError {
         let cause = match self.stream {
-            Stream::H264 { .. } => Refused::Encoding,
-            Stream::Raw => Refused::Request,
+            Stream::H264 { .. } => RefusalCause::Encoding,
+            Stream::Raw => RefusalCause::Request,
         };
         self.refuse_with(&chain(&error), cause);
         SendError::Refused(error)
@@ -265,12 +265,12 @@ impl RemoteSender {
     fn read_pending(&mut self) -> Result<()> {
         while let Some(message) = self.link.receive().map_err(|error| self.failed(error))? {
             let command = match message {
-                Inbound::Text(text) => wire::decode_command(&text),
+                Inbound::Text(text) => wire::decode_from_receiver(&text),
                 Inbound::Binary(_) => Err(WireError::Unexpected),
             }
             .map_err(|error| self.failed(error.into()))?;
             match command {
-                Command::Keyframe => {
+                FromReceiver::Keyframe => {
                     if let Stream::H264 {
                         encoder: Some(encoder),
                         ..
@@ -279,8 +279,8 @@ impl RemoteSender {
                         encoder.restart();
                     }
                 }
-                Command::Unknown => {}
-                Command::Request(_) => return Err(self.failed(WireError::Unexpected.into())),
+                FromReceiver::Unknown => {}
+                FromReceiver::Request(_) => return Err(self.failed(WireError::Unexpected.into())),
             }
         }
         Ok(())
@@ -440,9 +440,9 @@ struct NoAuthorities(#[source] Option<rustls_native_certs::Error>);
 
 /// Tell the receiver that this end cannot produce its request, and close
 /// the connection. Best effort, within the socket's write timeout.
-fn refuse<S: Read + Write>(link: &mut Link<S>, cause: Refused, reason: &str) {
-    let refusal = SenderMessage::Refused(Refusal::new(cause, reason));
-    let _ = link.send(Outbound::Text(wire::encode_sender_message(&refusal)));
+fn refuse<S: Read + Write>(link: &mut Link<S>, cause: RefusalCause, reason: &str) {
+    let refusal = ToReceiver::Refused(Refusal::new(cause, reason));
+    let _ = link.send(Outbound::Text(wire::encode_to_receiver(&refusal)));
     link.close(None);
 }
 
@@ -470,13 +470,13 @@ fn read_request<S: Read + Write>(
             Err(LinkError::Wire(WireError::Closed(_))) => return Err(WireError::NoRequest.into()),
             Err(error) => return Err(error),
         };
-        match wire::decode_command(&text)? {
-            Command::Request(request) => {
+        match wire::decode_from_receiver(&text)? {
+            FromReceiver::Request(request) => {
                 return RemoteSettings::try_from(request)
                     .map_err(|error| WireError::Request(error).into());
             }
-            Command::Unknown => {}
-            Command::Keyframe => return Err(WireError::Unexpected.into()),
+            FromReceiver::Unknown => {}
+            FromReceiver::Keyframe => return Err(WireError::Unexpected.into()),
         }
     }
 }

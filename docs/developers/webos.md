@@ -90,9 +90,9 @@ menus, encoding); closes capture while the receiver has stopped the stream
 (lighting off). An encoder failure is reported with `failure.kind` `encoder`
 and refused until the desktop asks for another encoding; nothing falls back on
 its own. When another TV takes the stream over, the worker releases capture
-and encoder, reports `failure.kind` `replaced` and connects no more until
-capture is stopped and started again in the TV app (which restarts the
-worker), so two TVs never take the stream from each other in turn. Wire
+and encoder, reports `failure.kind` `replaced` and connects no more until the
+worker restarts (capture stopped and started, the TV waking, or a new Prysm
+address), so two TVs never take the stream from each other in turn. Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
 ## Luna API

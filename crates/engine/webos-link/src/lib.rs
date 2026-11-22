@@ -221,8 +221,8 @@ pub enum FailureKind {
     /// on either side is picked up without restarting it.
     Version,
     /// Slim: another sender (another TV) took over the stream at Prysm. The
-    /// worker released the capture and connects no more until it starts
-    /// again (capture stopped and started in the TV app).
+    /// worker released the capture and connects no more until it restarts
+    /// (capture stopped and started, the TV waking, or a new Prysm address).
     Replaced,
     /// Anything else.
     Other,

@@ -18,8 +18,10 @@ installed peers ignore it. The two never share a type.
   encoding is skipped). Anything else malformed ends the connection. The
   wire types are their own (`RequestMessage`, the offer's read types), so
   loosening them never loosens a setting.
-- A field the peer must not ignore is sent only when the peer's offer
-  announces it. The protocol version rises only when a peer of the previous
+- What a peer must not ignore is sent only when that peer asked for it:
+  the receiver asks for something new only when the sender's offer
+  announces it, and the sender sends something new only when the request
+  asks for it. The protocol version rises only when a peer of the previous
   version can no longer work with this one
   ([capture-remote](../../../crates/adapters/capture-remote/README.md#wire-protocol),
   [releasing](../releasing.md#what-the-version-promises)).

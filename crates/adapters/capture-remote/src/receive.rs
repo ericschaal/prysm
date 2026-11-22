@@ -4,8 +4,8 @@ use crate::link::{self, Inbound, Link, Outbound};
 use crate::offer::Offer;
 use crate::request::RemoteSettings;
 use crate::wire::{
-    self, Close, Command, Encoding, FrameMessage, HEADER_LEN, Header, MAX_PAYLOAD_BYTES, Refusal,
-    Refused, SenderMessage, WireError,
+    self, Close, Encoding, FrameMessage, FromSender, HEADER_LEN, Header, MAX_PAYLOAD_BYTES,
+    Refusal, RefusalCause, ToSender, WireError,
 };
 use prysm_core::FramePool;
 use prysm_h264::{Decoder, H264Error};
@@ -17,12 +17,16 @@ use tungstenite::WebSocket;
 use tungstenite::protocol::Role;
 
 /// How often the receive thread checks for `close` and for a newer sender.
-/// `close` returns within about one tick.
+/// The thread leaves a connection within about one tick of `close`.
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// How long one write to the sender (the request, a keyframe request, a
 /// close) may block.
-const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long, after closing a connection as stopped or replaced, the receive
+/// thread waits for the sender to answer the close, discarding its frames.
+pub(crate) const CLOSE_LINGER: Duration = Duration::from_secs(1);
 
 pub(crate) struct Receiver {
     receiving: Receiving,
@@ -109,10 +113,11 @@ impl Receiver {
                 link.close(None);
                 continue;
             }
-            send_command(&mut link, Command::Request(self.request.into()));
+            send(&mut link, &ToSender::Request(self.request.into()));
             next = self.serve(&mut link);
             if let Some(close) = next.close() {
                 link.close(Some(close));
+                link.drain(CLOSE_LINGER);
             }
         }
     }
@@ -167,9 +172,9 @@ impl Receiver {
             }
             let message = match self.read(link) {
                 Read::Message(Inbound::Binary(message)) => message,
-                Read::Message(Inbound::Text(text)) => match wire::decode_sender_message(&text) {
-                    Ok(SenderMessage::Refused(refusal)) => return self.fail_with(refusal),
-                    Ok(SenderMessage::Unknown) => continue,
+                Read::Message(Inbound::Text(text)) => match wire::decode_from_sender(&text) {
+                    Ok(FromSender::Refused(refusal)) => return self.fail_with(refusal),
+                    Ok(FromSender::Unknown) => continue,
                     Err(error) => return drop_connection(&error),
                 },
                 Read::Leave(next) => return next,
@@ -203,12 +208,12 @@ impl Receiver {
                     Decoded::Picture => {}
                     Decoded::Skipped => continue,
                     Decoded::Unstarted => {
-                        send_command(link, Command::Keyframe);
+                        send(link, &ToSender::Keyframe);
                         continue;
                     }
                     Decoded::Lost(error) => {
                         tracing::debug!(error = %chain(&error), "remote H.264 picture lost; requesting a keyframe");
-                        send_command(link, Command::Keyframe);
+                        send(link, &ToSender::Keyframe);
                         continue;
                     }
                     Decoded::Broken(error) => return self.fail_with_stream(error),
@@ -263,11 +268,11 @@ impl Receiver {
         );
         let context = format!("the sender cannot stream {}", self.request);
         self.worker.fail(match refusal.cause {
-            Refused::Encoding => Error::Invalid(ValidationError::new(
+            RefusalCause::Encoding => Error::Invalid(ValidationError::new(
                 format!("{}.encoding", Section::Capture.as_str()),
                 format!("{context}: {}", refusal.reason),
             )),
-            Refused::Request => Error::adapter(context, WireError::Refused(refusal.reason)),
+            RefusalCause::Request => Error::adapter(context, WireError::Refused(refusal.reason)),
         });
         Next::WaitForSender
     }
@@ -311,10 +316,10 @@ fn link_on(connection: Accepted) -> io::Result<Link<TcpStream>> {
     )))
 }
 
-/// One command to the sender. Best effort, bounded by the write timeout; if
+/// One message to the sender. Best effort, bounded by the write timeout; if
 /// the sender is gone, the next read ends the connection.
-fn send_command(link: &mut Link<TcpStream>, command: Command) {
-    let _ = link.send(Outbound::Text(wire::encode_command(&command)));
+fn send(link: &mut Link<TcpStream>, message: &ToSender) {
+    let _ = link.send(Outbound::Text(wire::encode_to_sender(message)));
 }
 
 /// Decoding state of one H.264 connection.

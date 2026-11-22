@@ -30,8 +30,8 @@ neither has a listener of its own:
   (older untaken frames are replaced, never queued) or `Pull::Idle` on
   timeout, and fails when the sender's offer excludes the request, the
   sender refuses it or its H.264 stream does not decode (see below). `close`
-  closes the connection as *stopped* and stops the thread within about
-  50 ms.
+  stops the thread within about 50 ms, closes the connection as *stopped*
+  and waits up to 1 s for the sender to answer the close.
   `modes(request)` answers from the newest offer a sender announced (refused
   attempts included, so it is known while lighting is off): the modes for
   the request's encoding, none when the sender lacks it, unknown before any
@@ -74,8 +74,9 @@ closes the capture until a receiver takes a connection again (it keeps
 reading the receiver's messages through `FrameSink::tick`, so it sees the
 close while nothing is captured). A connection closed as *replaced* stops
 the uplink: it releases capture and encoder, reports a failure of kind
-`replaced` and connects no more until the worker starts again (capture
-stopped and started in the TV app, or the service restarting it). When the
+`replaced` and connects no more until the worker restarts (capture stopped
+and started, the TV waking, a new Prysm address, or a restart after a
+failure). When the
 requested encoder fails it reports a failure of kind `encoder` and refuses
 every later connection with the same request (the receiver's source fails
 with the reason, so lighting stops with it in the portal) until the receiver
@@ -88,7 +89,7 @@ preview.
 ## Wire protocol
 
 One WebSocket carries one stream. **The version is the WebSocket
-subprotocol**, now `prysm-capture.v6`
+subprotocol**, `prysm-capture.v6`
 ([`CAPTURE_PROTOCOL`](../../engine/ports/src/handoff.rs)): the sender offers
 it in `Sec-WebSocket-Protocol`, the portal answers `101` with it, or
 `426 Upgrade Required` listing the versions it speaks (comma-separated) when
@@ -109,9 +110,11 @@ the same number may send what this end does not know:
 - an unknown value in a known field: a request's `encoding` is an invalid
   `encoding`, refused as a request; a refusal's `cause` is read as
   `request`; an offer's encoding is skipped;
-- anything a field this end does not know would change is sent only when
-  the peer's offer announces it: features are negotiated in the offer, not
-  by the version;
+- what a peer must not ignore is sent only when that peer asked for it. The
+  receiver asks the sender for something new only when the sender's offer
+  announces it; the sender sends something new only when the request asks
+  for it (a request field added later is optional, its absence meaning the
+  old behaviour). Features are negotiated this way, not by the version;
 - anything else malformed (text that is not JSON, a message missing a
   field, a frame to the sender, a bad frame header) ends the connection.
 
@@ -171,7 +174,7 @@ sender reads them as `WireError::Closed(Some(Close::…))`:
 | Code | `Close` | When | The slim TV |
 | --- | --- | --- | --- |
 | 4000 | `Stopped` | The source closed: lighting stopped, or the capture settings changed | Releases capture and encoder, shows *paused*, reconnects every second |
-| 4001 | `Replaced` | A newer sender's connection replaced this one | Releases capture and encoder, shows a failure of kind `replaced`, connects no more until started again |
+| 4001 | `Replaced` | A newer sender's connection replaced this one | Releases capture and encoder, shows a failure of kind `replaced`, connects no more until the worker restarts (capture stopped and started, the TV waking, or a new Prysm address) |
 
 Any other close, or none (a crash, the network), is a dropped connection:
 the slim TV keeps capturing and reconnects every second.
@@ -222,7 +225,8 @@ the same on every connection).
 - **Validation before allocation.** Format, dimensions and the payload's
   length against the header are checked before a frame is allocated. The
   WebSocket bounds each message too: the sender reads at most 4 KiB, the
-  receiver a header and the largest payload.
+  receiver a header and the largest payload. Either end drops a text
+  message over 4 KiB before parsing it.
 - **Malformed input** (a bad header or length, a message that is not JSON
   or lacks a field) drops that connection without panicking, its cause
   logged at debug level; the receiver waits for the sender to connect again.
@@ -234,7 +238,11 @@ the same on every connection).
 - **Timeouts.** Sender: 3 s for the connection and the upgrade (with TLS),
   3 s for the request, 2 s per write (a receiver that stops reading fails
   the send). Receiver: reads wake every 50 ms to check for `close` and newer
-  connections; a quiet connection is kept open; 1 s per write.
+  connections; a quiet connection is kept open; 1 s per write. After
+  closing a connection as *stopped* or *replaced* it reads and discards the
+  sender's frames for up to 1 s, until the sender answers the close or the
+  connection ends: closing a socket with unread frames resets the
+  connection, which could lose the close code (through a TLS proxy, say).
 - **Cost per frame.** 8 bytes of header plus the WebSocket's 2 to 10 bytes of
   framing and the client's 4-byte mask key. The sender builds each message
   in one reused buffer and the WebSocket copies it into its write buffer,

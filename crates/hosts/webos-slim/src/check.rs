@@ -27,7 +27,7 @@ or after, restarts the session half way (as on a keyframe request), and
 prints timings and sizes. With --prysm, then streams the same pictures to that
 Prysm for --frames more frames, at the default bitrate; its remote capture must
 request this encoding, size and rate. A sending TV worker is replaced and stops
-until capture is started again. Exit 0 when every check passed.";
+until it restarts. Exit 0 when every check passed.";
 
 #[derive(Debug, Clone, Parser)]
 #[command(after_help = AFTER_HELP)]

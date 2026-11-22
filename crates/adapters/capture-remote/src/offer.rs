@@ -123,14 +123,14 @@ impl Offer {
         .expect("offers serialize")
     }
 
-    /// The offer in an announcement; `None` for anything else, or when a
-    /// known encoding's modes do not parse.
+    /// The offer in an announcement; `None` for anything else. An encoding
+    /// this end does not know, or whose modes do not parse, is skipped.
     pub(crate) fn parse(announcement: &str) -> Option<Self> {
         let ReadOffer { encodings, prysm } = serde_json::from_str(announcement).ok()?;
         let encodings = encodings
             .into_iter()
-            .filter_map(|(name, modes)| Some((name.parse::<StreamEncoding>().ok()?, modes)))
-            .map(|(encoding, modes)| {
+            .filter_map(|(name, modes)| {
+                let encoding = name.parse::<StreamEncoding>().ok()?;
                 let modes = serde_json::from_value::<Vec<ReadMode>>(modes).ok()?;
                 let modes = modes
                     .into_iter()
@@ -138,7 +138,7 @@ impl Offer {
                     .collect::<Option<_>>()?;
                 Some((encoding, modes))
             })
-            .collect::<Option<_>>()?;
+            .collect();
         Some(Self { encodings, prysm })
     }
 }
@@ -181,16 +181,8 @@ mod tests {
         assert!(header.is_ascii() && !header.contains(' '));
         assert_eq!(offer.prysm(), Some(prysm_version::VERSION));
         assert_eq!(Offer::parse(&header), Some(offer.clone()));
-        let reversed = r#"{"width":{"min":4,"max":2,"step":1},"height":{"min":2,"max":2,"step":1},"fps":{"min":1,"max":1,"step":1}}"#;
-        for bad in [
-            String::new(),
-            "[]".to_owned(),
-            "{}".to_owned(),
-            r#"{"encodings":[]}"#.to_owned(),
-            r#"{"encodings":{"raw":[{"width":1}]}}"#.to_owned(),
-            format!(r#"{{"encodings":{{"raw":[{reversed}]}}}}"#),
-        ] {
-            assert_eq!(Offer::parse(&bad), None, "{bad}");
+        for bad in ["", "[]", "{}", r#"{"encodings":[]}"#] {
+            assert_eq!(Offer::parse(bad), None, "{bad}");
         }
 
         let request = RemoteSettings::default();
@@ -238,6 +230,8 @@ mod tests {
             "encodings": {
                 "h264_hardware": [mode],
                 "av1": [{ "profile": "main" }],
+                // Not modes: only this encoding is skipped.
+                "h264_software": [{ "width": 1 }],
                 "raw": [],
             },
             "battery": 80,
@@ -245,6 +239,11 @@ mod tests {
         .to_string();
         let offer = Offer::parse(&announcement).unwrap();
         assert_eq!(offer.prysm(), None);
+        let software = RemoteSettings {
+            encoding: StreamEncoding::H264Software,
+            ..RemoteSettings::default()
+        };
+        assert_eq!(offer.check(&software).unwrap_err().field, "encoding");
         assert_eq!(
             offer.modes(StreamEncoding::H264Hardware),
             Modes::Known(vec![hardware()])

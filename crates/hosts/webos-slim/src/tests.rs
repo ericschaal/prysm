@@ -600,6 +600,49 @@ async fn a_replaced_sender_gives_up() {
     result.unwrap();
 }
 
+/// A desktop updated while its lighting was off: the TV stopped by the old
+/// Prysm shows the version failure, not a pause.
+#[tokio::test]
+async fn a_version_mismatch_replaces_a_stopped_stream() {
+    use std::io::{Read, Write};
+    let portal = Portal::start();
+    let receiver = portal.source(RAW);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let newer = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut head = [0; 1024];
+            if stream.read(&mut head).is_ok() {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9\r\ncontent-length: 0\r\n\r\n",
+                );
+            }
+        }
+    });
+    let newer_url: tungstenite::http::Uri = format!("ws://{newer}/api/v1/capture/stream")
+        .parse()
+        .unwrap();
+    let mut old = connect(&portal);
+    let attempts = AtomicU32::new(0);
+    let (mut peer, _feed, task) = start(&Opened::nv12(), move || {
+        if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            old()
+        } else {
+            RemoteSender::connect(&newer_url, newer, &prysm_capture_remote::testkit::offer())
+        }
+    });
+    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    tokio::task::spawn_blocking(move || Box::new(receiver).close().unwrap())
+        .await
+        .unwrap();
+    peer.wait_for(|e| version_differs(e).is_some() && !status(e).unwrap().paused)
+        .await
+        .unwrap();
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+}
+
 /// A receiver that vanishes without a close code (a crash, the network)
 /// keeps the capture running.
 #[tokio::test]

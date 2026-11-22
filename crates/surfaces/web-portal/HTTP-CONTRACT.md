@@ -361,15 +361,16 @@ blocking socket, to the `remote` source:
 
 - For a sender of this version, its `prysm-capture-offer` header (what the
   TV can stream, at most 4096 ASCII bytes) is passed to the `remote` source
-  first, whatever the answer, so `POST /api/v1/capture/modes` knows a TV
-  that is waiting for lighting.
+  before the portal answers `101` or `503`, so `POST /api/v1/capture/modes`
+  knows a TV that is waiting for lighting. A sender of another version gets
+  `426` and its header is ignored.
 - `101 Switching Protocols` with `Sec-WebSocket-Protocol: prysm-capture.v6`
   when the request is a version-13 WebSocket upgrade offering that
   subprotocol and the `remote` source runs (lighting on with that capture).
   The newest connection replaces the one the source reads, which is closed
   with the *replaced* code.
 - `426 Upgrade Required` (`bad_request`), listing the versions the portal
-  speaks in `Sec-WebSocket-Protocol` (today only `prysm-capture.v6`), when
+  speaks in `Sec-WebSocket-Protocol` (`prysm-capture.v6`), when
   the sender offers none of them.
 - `503 unavailable` while no `remote` source runs: lighting is off or another
   capture is set. The TV retries every second.

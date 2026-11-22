@@ -22,8 +22,9 @@ export interface components {
          *     or its name does not resolve); the worker keeps reconnecting. `version`
          *     (slim): Prysm speaks another capture stream version; the older one needs
          *     updating, and the worker retries every 10 s. `replaced` (slim): another
-         *     TV took over the stream at Prysm; this one stopped sending until capture
-         *     is started again. `other`: anything else.
+         *     TV took over the stream at Prysm; this one stopped sending until the
+         *     worker restarts (capture stopped and started, the TV waking, or a new
+         *     Prysm address). `other`: anything else.
          * @enum {string}
          */
         FailureKind: "encoder" | "receiver" | "version" | "replaced" | "other";

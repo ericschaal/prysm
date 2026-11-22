@@ -1,14 +1,18 @@
 //! The lighting-host end: the `"remote"` source, fed by the portal.
 use crate::offer::Offer;
-use crate::receive::Receiver;
+use crate::receive::{CLOSE_LINGER, POLL_INTERVAL, Receiver, WRITE_TIMEOUT};
 use crate::request::RemoteSettings;
 use prysm_ports::{
     FrameSource, Handoff, Modes, OwnerThread, Pull, Result, SourceFactory, ValidationError,
 };
 use std::time::Duration;
 
-/// How long `close` waits for the receive thread, which stops within a tick.
-const RELEASE: Duration = Duration::from_secs(1);
+/// How long `close` waits for the receive thread: it stops within a tick,
+/// then closes the connection (one write) and lingers for the answer. The
+/// close's own flush may take a second write.
+const RELEASE: Duration = POLL_INTERVAL
+    .saturating_add(WRITE_TIMEOUT.saturating_mul(2))
+    .saturating_add(CLOSE_LINGER);
 
 /// Registers kind `"remote"`, its settings the [`RemoteSettings`]: frames a
 /// [`RemoteSender`](crate::RemoteSender) streams to the portal's capture

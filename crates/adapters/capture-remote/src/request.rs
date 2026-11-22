@@ -62,7 +62,7 @@ impl FromStr for StreamEncoding {
         Self::ALL
             .into_iter()
             .find(|encoding| encoding.name() == name)
-            .ok_or_else(|| "expected h264_hardware, h264_software or raw".into())
+            .ok_or_else(|| format!("expected one of {}", Self::ALL.map(Self::name).join(", ")))
     }
 }
 

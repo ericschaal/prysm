@@ -9,7 +9,7 @@
 use crate::request::{RemoteSettings, StreamEncoding};
 use prysm_core::{FrameError, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{CAPTURE_PROTOCOL_PREFIX, CAPTURE_VERSION, ValidationError};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// The frame header: format, range and matrix codes, flags, width and height
@@ -71,36 +71,38 @@ impl From<StreamEncoding> for Encoding {
     }
 }
 
-/// The receiver's text messages: its request (the first message), then
-/// keyframe requests: `{"type":"request","width":320,...}`,
-/// `{"type":"keyframe"}`. A type this end does not know is
-/// [`Command::Unknown`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The receiver's text messages, as the sender reads them: its request (the
+/// first message), then keyframe requests:
+/// `{"type":"request","width":320,...}`, `{"type":"keyframe"}`. A type this
+/// end does not know is [`FromReceiver::Unknown`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum Command {
+pub(crate) enum FromReceiver {
     Request(RequestMessage),
     /// The receiver cannot decode: start a new H.264 session (a keyframe).
     Keyframe,
-    #[serde(other, skip_serializing)]
+    #[serde(other)]
     Unknown,
 }
 
+/// The receiver's text messages, as it sends them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum ToSender {
+    Request(RequestMessage),
+    Keyframe,
+}
+
 /// The request as it travels: [`RemoteSettings`]' fields, every one
-/// required. An encoding this end does not know is `None`, refused as an
-/// invalid `encoding`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// required. The encoding is parsed with the settings, so one this end does
+/// not know is an invalid `encoding`, not a message that fails to decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RequestMessage {
     width: u32,
     height: u32,
     fps: u32,
     include_ui: bool,
-    #[serde(deserialize_with = "known")]
-    encoding: Option<StreamEncoding>,
-}
-
-/// A value this end knows, or `None` for one it does not.
-fn known<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<StreamEncoding>, D::Error> {
-    Ok(String::deserialize(deserializer)?.parse().ok())
+    encoding: String,
 }
 
 impl From<RemoteSettings> for RequestMessage {
@@ -117,7 +119,7 @@ impl From<RemoteSettings> for RequestMessage {
             height,
             fps,
             include_ui,
-            encoding: Some(encoding),
+            encoding: encoding.name().to_owned(),
         }
     }
 }
@@ -134,15 +136,14 @@ impl TryFrom<RequestMessage> for RemoteSettings {
             include_ui,
             encoding,
         } = message;
-        let encoding = encoding.ok_or_else(|| {
-            ValidationError::new("encoding", "expected h264_hardware, h264_software or raw")
-        })?;
         let settings = Self {
             width,
             height,
             fps,
             include_ui,
-            encoding,
+            encoding: encoding
+                .parse()
+                .map_err(|reason| ValidationError::new("encoding", reason))?,
         };
         settings.validate()?;
         Ok(settings)
@@ -150,10 +151,10 @@ impl TryFrom<RequestMessage> for RemoteSettings {
 }
 
 /// What a sender's refusal names as the cause; a cause this end does not
-/// know is read as [`Refused::Request`].
+/// know is read as [`RefusalCause::Request`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Refused {
+pub(crate) enum RefusalCause {
     /// The requested encoding: its encoder cannot start or failed.
     Encoding,
     /// The request as a whole.
@@ -161,21 +162,29 @@ pub(crate) enum Refused {
     Request,
 }
 
-/// The sender's text messages: `{"type":"refused","cause":"encoding",
-/// "reason":"..."}`, after which it closes the connection. A type this end
-/// does not know is [`SenderMessage::Unknown`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The sender's text messages, as the receiver reads them:
+/// `{"type":"refused","cause":"encoding","reason":"..."}`, after which the
+/// sender closes the connection. A type this end does not know is
+/// [`FromSender::Unknown`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum SenderMessage {
+pub(crate) enum FromSender {
     Refused(Refusal),
-    #[serde(other, skip_serializing)]
+    #[serde(other)]
     Unknown,
+}
+
+/// The sender's text messages, as it sends them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum ToReceiver {
+    Refused(Refusal),
 }
 
 /// The sender cannot produce the request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Refusal {
-    pub(crate) cause: Refused,
+    pub(crate) cause: RefusalCause,
     /// In the sender's words; at most [`MAX_REASON_BYTES`].
     pub(crate) reason: String,
 }
@@ -183,14 +192,10 @@ pub(crate) struct Refusal {
 impl Refusal {
     /// A refusal for `reason`, cut at a character boundary to
     /// [`MAX_REASON_BYTES`].
-    pub(crate) fn new(cause: Refused, reason: &str) -> Self {
-        let mut end = reason.len().min(MAX_REASON_BYTES);
-        while !reason.is_char_boundary(end) {
-            end -= 1;
-        }
+    pub(crate) fn new(cause: RefusalCause, reason: &str) -> Self {
         Self {
             cause,
-            reason: reason[..end].to_owned(),
+            reason: reason[..reason.floor_char_boundary(MAX_REASON_BYTES)].to_owned(),
         }
     }
 }
@@ -269,6 +274,8 @@ pub enum WireError {
     /// The peer closed the stream, saying why when it is a [`Close`].
     #[error("{}", .0.map_or_else(|| "the peer closed the stream".to_owned(), |close| close.to_string()))]
     Closed(Option<Close>),
+    #[error("a text message of {0} bytes exceeds {MAX_TEXT_BYTES}")]
+    TextTooLarge(usize),
     #[error("a frame of {0} bytes is shorter than its {HEADER_LEN}-byte header")]
     Short(usize),
     #[error("unknown pixel format code {format}/{range}/{matrix}")]
@@ -308,26 +315,26 @@ pub(crate) fn version_error(theirs: Option<&str>) -> WireError {
     }
 }
 
-/// A command, as its text message.
-pub(crate) fn encode_command(command: &Command) -> String {
-    serde_json::to_string(command).expect("commands serialize")
+/// A receiver's message, as its text message.
+pub(crate) fn encode_to_sender(message: &ToSender) -> String {
+    serde_json::to_string(message).expect("receiver messages serialize")
 }
 
-/// A command from its text message.
-pub(crate) fn decode_command(text: &str) -> Result<Command, WireError> {
+/// A receiver's message from its text message.
+pub(crate) fn decode_from_receiver(text: &str) -> Result<FromReceiver, WireError> {
     serde_json::from_str(text).map_err(|error| WireError::Json(error.to_string()))
 }
 
 /// A sender's message, as its text message.
-pub(crate) fn encode_sender_message(message: &SenderMessage) -> String {
+pub(crate) fn encode_to_receiver(message: &ToReceiver) -> String {
     serde_json::to_string(message).expect("sender messages serialize")
 }
 
 /// A sender's message from its text message; a refusal's reason is bounded.
-pub(crate) fn decode_sender_message(text: &str) -> Result<SenderMessage, WireError> {
-    let message: SenderMessage =
+pub(crate) fn decode_from_sender(text: &str) -> Result<FromSender, WireError> {
+    let message: FromSender =
         serde_json::from_str(text).map_err(|error| WireError::Json(error.to_string()))?;
-    if let SenderMessage::Refused(refusal) = &message
+    if let FromSender::Refused(refusal) = &message
         && refusal.reason.len() > MAX_REASON_BYTES
     {
         return Err(WireError::Json(format!(
@@ -743,24 +750,27 @@ mod tests {
 
     /// The request a command carries, as settings.
     fn settings(text: &str) -> Result<RemoteSettings, ValidationError> {
-        match decode_command(text) {
-            Ok(Command::Request(request)) => RemoteSettings::try_from(request),
+        match decode_from_receiver(text) {
+            Ok(FromReceiver::Request(request)) => RemoteSettings::try_from(request),
             other => panic!("{text}: {other:?}"),
         }
     }
 
     #[test]
     fn commands_are_tagged_json_and_requests_are_complete() {
-        let text = encode_command(&Command::Request(SOFTWARE.into()));
+        let text = encode_to_sender(&ToSender::Request(SOFTWARE.into()));
         assert_eq!(
             text,
             r#"{"type":"request","width":640,"height":280,"fps":25,"include_ui":false,"encoding":"h264_software"}"#
         );
         assert_eq!(settings(&text), Ok(SOFTWARE));
-        assert_eq!(encode_command(&Command::Keyframe), r#"{"type":"keyframe"}"#);
         assert_eq!(
-            decode_command(r#"{"type":"keyframe"}"#),
-            Ok(Command::Keyframe)
+            encode_to_sender(&ToSender::Keyframe),
+            r#"{"type":"keyframe"}"#
+        );
+        assert_eq!(
+            decode_from_receiver(r#"{"type":"keyframe"}"#),
+            Ok(FromReceiver::Keyframe)
         );
         // Every field is required; a request that is not JSON or not a
         // request fails to decode.
@@ -772,7 +782,7 @@ mod tests {
             "not json",
         ] {
             assert!(
-                matches!(decode_command(bad), Err(WireError::Json(_))),
+                matches!(decode_from_receiver(bad), Err(WireError::Json(_))),
                 "{bad}"
             );
         }
@@ -796,15 +806,19 @@ mod tests {
             Ok(SOFTWARE)
         );
         assert_eq!(
-            decode_command(r#"{"type":"keyframe","reason":"lost"}"#),
-            Ok(Command::Keyframe)
+            decode_from_receiver(r#"{"type":"keyframe","reason":"lost"}"#),
+            Ok(FromReceiver::Keyframe)
         );
         for unknown in [
             r#"{"type":"jump"}"#,
             r#"{"type":"pause"}"#,
             r#"{"type":"jump","x":1}"#,
         ] {
-            assert_eq!(decode_command(unknown), Ok(Command::Unknown), "{unknown}");
+            assert_eq!(
+                decode_from_receiver(unknown),
+                Ok(FromReceiver::Unknown),
+                "{unknown}"
+            );
         }
         assert_eq!(
             settings(
@@ -812,30 +826,28 @@ mod tests {
             ),
             Err(ValidationError::new(
                 "encoding",
-                "expected h264_hardware, h264_software or raw"
+                "expected one of h264_hardware, h264_software, raw"
             ))
         );
     }
 
     #[test]
     fn refusals_carry_a_bounded_reason_and_a_typed_cause() {
-        let refusal = Refusal::new(Refused::Encoding, "hardware H.264 encoder cannot start");
-        let text = encode_sender_message(&SenderMessage::Refused(refusal.clone()));
+        let refusal = Refusal::new(
+            RefusalCause::Encoding,
+            "hardware H.264 encoder cannot start",
+        );
+        let text = encode_to_receiver(&ToReceiver::Refused(refusal.clone()));
         assert_eq!(
             text,
             r#"{"type":"refused","cause":"encoding","reason":"hardware H.264 encoder cannot start"}"#
         );
-        assert_eq!(
-            decode_sender_message(&text),
-            Ok(SenderMessage::Refused(refusal))
-        );
+        assert_eq!(decode_from_sender(&text), Ok(FromSender::Refused(refusal)));
         // Cut at a character boundary.
         let long = "é".repeat(MAX_REASON_BYTES);
-        let cut = Refusal::new(Refused::Request, &long);
+        let cut = Refusal::new(RefusalCause::Request, &long);
         assert_eq!(cut.reason.len(), MAX_REASON_BYTES);
-        assert!(
-            decode_sender_message(&encode_sender_message(&SenderMessage::Refused(cut))).is_ok()
-        );
+        assert!(decode_from_sender(&encode_to_receiver(&ToReceiver::Refused(cut))).is_ok());
         for bad in [
             r#"{"type":"refused","reason":"x"}"#,
             r#"{"type":"refused","cause":"request"}"#,
@@ -843,7 +855,7 @@ mod tests {
             "not json",
         ] {
             assert!(
-                matches!(decode_sender_message(bad), Err(WireError::Json(_))),
+                matches!(decode_from_sender(bad), Err(WireError::Json(_))),
                 "{bad}"
             );
         }
@@ -852,7 +864,7 @@ mod tests {
             "x".repeat(MAX_REASON_BYTES + 1)
         );
         assert!(matches!(
-            decode_sender_message(&oversized),
+            decode_from_sender(&oversized),
             Err(WireError::Json(_))
         ));
     }
@@ -862,16 +874,19 @@ mod tests {
     #[test]
     fn sender_messages_tolerate_what_this_end_does_not_know() {
         assert_eq!(
-            decode_sender_message(r#"{"type":"refused","cause":"thermal","reason":"x","code":7}"#),
-            Ok(SenderMessage::Refused(Refusal::new(Refused::Request, "x")))
+            decode_from_sender(r#"{"type":"refused","cause":"thermal","reason":"x","code":7}"#),
+            Ok(FromSender::Refused(Refusal::new(
+                RefusalCause::Request,
+                "x"
+            )))
         );
         assert_eq!(
-            decode_sender_message(r#"{"type":"stats","sent":10}"#),
-            Ok(SenderMessage::Unknown)
+            decode_from_sender(r#"{"type":"stats","sent":10}"#),
+            Ok(FromSender::Unknown)
         );
         // Known causes keep their names.
         assert_eq!(
-            serde_json::to_string(&Refused::Request).unwrap(),
+            serde_json::to_string(&RefusalCause::Request).unwrap(),
             r#""request""#
         );
     }

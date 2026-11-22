@@ -1,8 +1,9 @@
 //! One WebSocket, either end: text messages (JSON commands and refusals)
 //! and binary messages (frames). The ends never see WebSocket types.
-use crate::wire::{Close, WireError};
+use crate::wire::{Close, MAX_TEXT_BYTES, WireError};
 use bytes::Bytes;
 use std::io::{ErrorKind, Read, Write};
+use std::time::{Duration, Instant};
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::protocol::frame::CloseFrame;
 use tungstenite::{Message, WebSocket};
@@ -66,10 +67,14 @@ impl<S: Read + Write> Link<S> {
     /// timeout (or, non-blocking, none is waiting).
     ///
     /// # Errors
-    /// The peer closed the link, or the socket failed.
+    /// The peer closed the link, sent a text message longer than
+    /// [`MAX_TEXT_BYTES`], or the socket failed.
     pub(crate) fn receive(&mut self) -> Result<Option<Inbound>, LinkError> {
         loop {
             match self.socket.read() {
+                Ok(Message::Text(text)) if text.len() > MAX_TEXT_BYTES => {
+                    return Err(WireError::TextTooLarge(text.len()).into());
+                }
                 Ok(Message::Text(text)) => {
                     return Ok(Some(Inbound::Text(text.as_str().to_owned())));
                 }
@@ -126,5 +131,25 @@ impl<S: Read + Write> Link<S> {
         });
         let _ = self.socket.close(frame);
         let _ = self.socket.flush();
+    }
+
+    /// After [`Self::close`]: read and discard what the peer still sends,
+    /// until it answers the close or the connection ends, for at most
+    /// `within` (reads wake at the socket's read timeout). Closing a socket
+    /// with unread input resets the connection, which can lose the close
+    /// before the peer reads it.
+    pub(crate) fn drain(&mut self, within: Duration) {
+        let deadline = Instant::now() + within;
+        while Instant::now() < deadline {
+            match self.socket.read() {
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(error))
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                    ) => {}
+                Err(_) => return,
+            }
+        }
     }
 }

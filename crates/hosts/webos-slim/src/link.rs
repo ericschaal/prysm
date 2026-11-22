@@ -67,7 +67,7 @@ enum UplinkState {
     EncoderFailed(String),
     /// Another sender replaced this one at the receiver, and how it was
     /// told: the uplink no longer connects and the capture is released
-    /// until the worker starts again, so two TVs never take the stream from
+    /// until the worker restarts, so two TVs never take the stream from
     /// each other in turn.
     Replaced(String),
 }
@@ -195,15 +195,18 @@ impl Upstream for RemoteSender {
 ///
 /// A receiver that closes the stream as replaced (another sender took it
 /// over) stops the uplink: it releases the capture, reports a failure of
-/// kind `replaced` and connects no more until the worker starts again. The
-/// replaced connection is always the live one: the uplink drops a failed
-/// connection, closing its socket, before it connects again, so a TV that
-/// reconnects after a network drop never hears its own old connection
-/// replaced.
+/// kind `replaced` and connects no more. That is this process's state, so it
+/// lasts until the worker restarts: capture stopped and started in the TV
+/// app, the TV waking from standby, a new Prysm address, or a restart after
+/// a failure. The replaced connection is always the live one: the uplink
+/// drops a failed connection, closing its socket, before it connects again,
+/// so a TV that reconnects after a network drop never hears its own old
+/// connection replaced.
 ///
 /// A Prysm of another capture stream version ([`WireError::Version`]) is
-/// reported as such and retried only every [`VERSION_RECONNECT`]: it lasts
-/// until one side is updated.
+/// reported as such, replacing a stopped stream or an encoder failure (they
+/// came from the Prysm before its update), and retried only every
+/// [`VERSION_RECONNECT`]: it lasts until one side is updated.
 ///
 /// A refusal ([`SendError::Refused`]: the requested encoder cannot start or
 /// failed) is reported as an encoder failure, and every later connection
@@ -260,18 +263,17 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
                 if versions_differ {
                     self.retry_at = Some(Instant::now() + self.version_retry);
                 }
+                let why = format!("waiting for the receiver: {}", chain(&error));
                 let mut report = self.flow.lock();
-                // A stopped receiver or a failed encoder is still the news.
-                if !matches!(
+                if versions_differ {
+                    // Prysm was updated: what it said before no longer holds.
+                    report.uplink = UplinkState::VersionDiffers(why);
+                } else if !matches!(
                     report.uplink,
                     UplinkState::Stopped | UplinkState::EncoderFailed(_)
                 ) {
-                    let why = format!("waiting for the receiver: {}", chain(&error));
-                    report.uplink = if versions_differ {
-                        UplinkState::VersionDiffers(why)
-                    } else {
-                        UplinkState::Waiting(why)
-                    };
+                    // A stopped receiver or a failed encoder is still the news.
+                    report.uplink = UplinkState::Waiting(why);
                 }
                 return;
             }

@@ -285,6 +285,11 @@ fn malformed_and_oversized_messages_drop_only_that_connection() {
         .send(Message::binary(raw_frame([1, 0, 0, 0], 4, 4, &[0; 47])))
         .unwrap();
     assert!(assert_dropped(short).is_empty());
+    // Text over the limit, though a message of a type this end ignores.
+    let mut long = greeted(&portal);
+    let padded = format!(r#"{{"type":"stats","pad":"{}"}}"#, "x".repeat(4096));
+    long.send(Message::text(padded)).unwrap();
+    assert!(assert_dropped(long).is_empty());
     // A message without a type.
     let mut untyped = greeted(&portal);
     untyped
@@ -445,7 +450,7 @@ fn requests_this_end_cannot_take_are_refused() {
             &[
                 r#"{"type":"request","width":320,"height":180,"fps":30,"include_ui":true,"encoding":"av1"}"#,
             ][..],
-            "invalid stream request: invalid encoding: expected h264_hardware, h264_software or raw",
+            "invalid stream request: invalid encoding: expected one of h264_hardware, h264_software, raw",
             true,
         ),
         (
@@ -684,6 +689,17 @@ fn close_is_prompt_stops_receiving_and_fails_the_sender() {
     let mut sender = portal.connect().unwrap();
     sender.send(&frame(5, 4, 4)).unwrap();
     receive(&mut source);
+    // A sender that reads, as the TV does at every frame or tick.
+    let reading = thread::spawn(move || {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            assert!(Instant::now() < deadline, "sender never noticed the close");
+            if let Err(error) = sender.tick() {
+                return error;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
 
     let started = Instant::now();
     Box::new(source).close().unwrap();
@@ -693,16 +709,59 @@ fn close_is_prompt_stops_receiving_and_fails_the_sender() {
         started.elapsed()
     );
     assert!(!portal.handoff.is_receiving());
+    let error = reading.join().unwrap();
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Stopped)),
+        "{error}"
+    );
+}
 
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "sender never noticed the close");
-        if let Err(error) = sender.send(&frame(6, 4, 4)) {
-            break error;
+/// Stream full-size raw frames from `sender` on a thread until a send
+/// fails, and return the failure.
+fn stream_until_closed(mut sender: RemoteSender) -> thread::JoinHandle<prysm_ports::Error> {
+    let big = frame(7, 1920, 1080);
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            assert!(Instant::now() < deadline, "the sender never saw the close");
+            if let Err(error) = sender.send(&big) {
+                return error;
+            }
         }
-        thread::sleep(Duration::from_millis(10));
-    };
-    assert!(error.source().is_some(), "{error}");
+    })
+}
+
+/// A sender that is streaming large frames when its connection ends still
+/// receives the close code: the receiver reads off its frames until the
+/// sender answers, so unread frames do not reset the connection first.
+#[test]
+fn a_streaming_sender_receives_the_close_code() {
+    // Replaced by a second sender.
+    let (portal, mut source) = open();
+    let streaming = stream_until_closed(portal.connect().unwrap());
+    receive(&mut source);
+    let second = portal.connect().unwrap();
+    let error = streaming.join().unwrap();
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Replaced)),
+        "{error}"
+    );
+    drop(second);
+    Box::new(source).close().unwrap();
+
+    // Stopped by the source closing.
+    let (portal, mut source) = open();
+    let streaming = stream_until_closed(portal.connect().unwrap());
+    receive(&mut source);
+    Box::new(source).close().unwrap();
+    let error = streaming.join().unwrap();
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Stopped)),
+        "{error}"
+    );
 }
 
 /// A sender with nothing to send (the slim TV stops capturing while

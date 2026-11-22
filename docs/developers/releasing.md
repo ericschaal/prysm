@@ -75,11 +75,11 @@ Covered:
   field removed or its meaning changed, the frame header changed, or a new
   message the peer must not ignore), which is a major change. Additions keep
   the number and are minor (fields, message types, flag bits, encodings,
-  offer keys, close codes): both ends ignore what they do not know, and a
-  feature a peer must understand is announced in its offer first. During a
-  transition the newer end may offer both numbers; until then an older and
-  a newer end refuse each other with `426`, naming the versions, and the TV
-  app asks to update the older one
+  offer keys, close codes): both ends ignore what they do not know, and
+  neither sends what the other must understand unless it asked for it (the
+  receiver in its request, the sender in its offer). A Prysm refuses a TV of
+  another number with `426`, listing the numbers it speaks; the TV names
+  both versions and the TV app asks to update the older of the two
   ([capture-remote](../../crates/adapters/capture-remote/README.md#wire-protocol));
 - the hosts' command-line flags and the exit codes
   [hosts](workspace.md#hosts) documents: 0 after a clean stop, 1 on failure,
