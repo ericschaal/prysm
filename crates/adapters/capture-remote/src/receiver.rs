@@ -1,16 +1,20 @@
 //! The lighting-host end: the `"remote"` source, fed by the portal.
 use crate::offer::Offer;
-use crate::receive::Receiver;
-use crate::request::StreamRequest;
+use crate::receive::{CLOSE_LINGER, POLL_INTERVAL, Receiver, WRITE_TIMEOUT};
+use crate::request::RemoteSettings;
 use prysm_ports::{
     FrameSource, Handoff, Modes, OwnerThread, Pull, Result, SourceFactory, ValidationError,
 };
 use std::time::Duration;
 
-/// How long `close` waits for the receive thread, which stops within a tick.
-const RELEASE: Duration = Duration::from_secs(1);
+/// How long `close` waits for the receive thread: it stops within a tick,
+/// then closes the connection (one write) and lingers for the answer. The
+/// close's own flush may take a second write.
+const RELEASE: Duration = POLL_INTERVAL
+    .saturating_add(WRITE_TIMEOUT.saturating_mul(2))
+    .saturating_add(CLOSE_LINGER);
 
-/// Registers kind `"remote"`, its settings the [`StreamRequest`]: frames a
+/// Registers kind `"remote"`, its settings the [`RemoteSettings`]: frames a
 /// [`RemoteSender`](crate::RemoteSender) streams to the portal's capture
 /// stream path. It owns the [`Handoff`] those connections come in through;
 /// the host gives [`Self::incoming`] to the portal, which also announces
@@ -30,14 +34,14 @@ impl RemoteReceiver {
 
 impl SourceFactory for RemoteReceiver {
     const KIND: &'static str = "remote";
-    type Settings = StreamRequest;
+    type Settings = RemoteSettings;
 
-    fn validate(&self, request: &StreamRequest) -> Result<(), ValidationError> {
+    fn validate(&self, request: &RemoteSettings) -> Result<(), ValidationError> {
         request.validate()
     }
 
     /// Refuses a request the newest offer excludes, then receives.
-    fn open(&self, request: &StreamRequest) -> Result<Box<dyn FrameSource>> {
+    fn open(&self, request: &RemoteSettings) -> Result<Box<dyn FrameSource>> {
         if let Some(offer) = offered(&self.incoming) {
             offer.check(request)?;
         }
@@ -46,7 +50,7 @@ impl SourceFactory for RemoteReceiver {
 
     /// What the newest offer streams in the request's encoding; unknown
     /// before a sender has tried to connect.
-    fn modes(&self, request: &StreamRequest) -> Modes {
+    fn modes(&self, request: &RemoteSettings) -> Modes {
         offered(&self.incoming).map_or(Modes::Unknown, |offer| offer.modes(request.encoding))
     }
 }
@@ -61,16 +65,19 @@ fn offered(handoff: &Handoff) -> Option<Offer> {
 /// not queued: `next_frame` returns the newest complete frame received since
 /// the last call.
 ///
-/// Every sender is asked for the same [`StreamRequest`]; a new request needs
+/// Every sender is asked for the same [`RemoteSettings`]; a new request needs
 /// a new source (the engine reopens it when the settings change, and the
 /// sender reconnects). A sender whose [`Offer`] excludes the request is not
 /// asked: `next_frame` fails with the invalid field (`capture.width`,
 /// `capture.encoding`, ...) and the source stops. So does a sender that
 /// cannot produce the request and refuses it, as an invalid
-/// `capture.encoding` when the requested encoder is what failed.
+/// `capture.encoding` when the requested encoder is what failed, and an
+/// H.264 stream whose keyframe does not decode.
+///
+/// Closing tells the connected sender that the stream stopped; a newer
+/// sender's connection tells the one it replaces.
 #[derive(Debug)]
 pub struct RemoteSource {
-    request: StreamRequest,
     thread: OwnerThread,
 }
 
@@ -80,7 +87,7 @@ impl RemoteSource {
     ///
     /// # Errors
     /// The receive thread cannot start.
-    pub fn open(handoff: &Handoff, request: StreamRequest) -> Result<Self> {
+    pub(crate) fn open(handoff: &Handoff, request: RemoteSettings) -> Result<Self> {
         let receiving = handoff.receive();
         let thread = OwnerThread::spawn(
             "prysm-remote-receiver",
@@ -91,13 +98,7 @@ impl RemoteSource {
                 Ok(())
             },
         )?;
-        Ok(Self { request, thread })
-    }
-
-    /// What every sender is asked for.
-    #[must_use]
-    pub fn request(&self) -> StreamRequest {
-        self.request
+        Ok(Self { thread })
     }
 }
 

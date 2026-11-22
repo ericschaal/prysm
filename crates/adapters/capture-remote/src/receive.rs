@@ -2,15 +2,14 @@
 //! each sender with the request and keeps only the newest frame.
 use crate::link::{self, Inbound, Link, Outbound};
 use crate::offer::Offer;
-use crate::request::StreamRequest;
+use crate::request::RemoteSettings;
 use crate::wire::{
-    self, Command, Encoding, FrameMessage, HEADER_LEN, Header, MAX_PAYLOAD_BYTES, Refusal, Refused,
-    WireError,
+    self, Close, Encoding, FrameMessage, FromSender, HEADER_LEN, Header, MAX_PAYLOAD_BYTES,
+    Refusal, RefusalCause, ToSender, WireError,
 };
 use prysm_core::FramePool;
 use prysm_h264::{Decoder, H264Error};
 use prysm_ports::{Accepted, Error, Receiving, Section, ValidationError, Worker, chain};
-use std::fmt::Display;
 use std::io;
 use std::net::TcpStream;
 use std::time::Duration;
@@ -18,16 +17,21 @@ use tungstenite::WebSocket;
 use tungstenite::protocol::Role;
 
 /// How often the receive thread checks for `close` and for a newer sender.
-/// `close` returns within about one tick.
+/// The thread leaves a connection within about one tick of `close`.
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// How long one write to the sender (the reply, a control) may block.
-const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long one write to the sender (the request, a keyframe request, a
+/// close) may block.
+pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long, after closing a connection as stopped or replaced, the receive
+/// thread waits for the sender to answer the close, discarding its frames.
+pub(crate) const CLOSE_LINGER: Duration = Duration::from_secs(1);
 
 pub(crate) struct Receiver {
     receiving: Receiving,
     worker: Worker,
-    request: StreamRequest,
+    request: RemoteSettings,
     pool: FramePool,
 }
 
@@ -39,6 +43,17 @@ enum Next {
     WaitForSender,
     /// A newer sender connected; it replaces this one.
     Switch(Accepted),
+}
+
+impl Next {
+    /// What the connection being left is told: stopped, or replaced.
+    fn close(&self) -> Option<Close> {
+        match self {
+            Self::Stop => Some(Close::Stopped),
+            Self::Switch(_) => Some(Close::Replaced),
+            Self::WaitForSender => None,
+        }
+    }
 }
 
 /// What reading a connection gave: a message, or a reason to leave it.
@@ -57,12 +72,13 @@ enum Decoded {
     Unstarted,
     /// A picture was lost: ask the sender for a keyframe.
     Lost(H264Error),
-    /// A keyframe did not decode: the stream itself is broken.
+    /// A keyframe did not decode, or no decoder starts: the stream itself
+    /// is broken.
     Broken(H264Error),
 }
 
 impl Receiver {
-    pub(crate) fn new(receiving: Receiving, worker: Worker, request: StreamRequest) -> Self {
+    pub(crate) fn new(receiving: Receiving, worker: Worker, request: RemoteSettings) -> Self {
         Self {
             receiving,
             worker,
@@ -92,17 +108,16 @@ impl Receiver {
             };
             // The portal agreed the version at the upgrade and announced the
             // sender's offer; the request comes first, if offered.
-            if let Err(excluded) = self.offered() {
+            if let Some(Err(excluded)) = self.offer().map(|offer| offer.check(&self.request)) {
                 next = self.fail_with_offer(&excluded);
-                link.close();
+                link.close(None);
                 continue;
             }
-            send_command(&mut link, Command::Request(self.request));
+            send(&mut link, &ToSender::Request(self.request.into()));
             next = self.serve(&mut link);
-            if matches!(next, Next::Stop) {
-                // Lighting stops: the sender pauses before the stream ends.
-                send_command(&mut link, Command::Pause);
-                link.close();
+            if let Some(close) = next.close() {
+                link.close(Some(close));
+                link.drain(CLOSE_LINGER);
             }
         }
     }
@@ -146,7 +161,8 @@ impl Receiver {
 
     /// Receive frames until the connection ends. Malformed input drops the
     /// connection (the cause is logged at debug level); the sender is
-    /// expected to reconnect. A refusal fails the source.
+    /// expected to reconnect. A refusal or a broken H.264 stream fails the
+    /// source.
     fn serve(&mut self, link: &mut Link<TcpStream>) -> Next {
         let encoding = self.request.encoding.into();
         let mut h264 = H264::default();
@@ -156,12 +172,11 @@ impl Receiver {
             }
             let message = match self.read(link) {
                 Read::Message(Inbound::Binary(message)) => message,
-                Read::Message(Inbound::Text(text)) => {
-                    return match wire::decode_refusal(&text) {
-                        Ok(refusal) => self.fail_with(refusal),
-                        Err(error) => drop_connection(&error),
-                    };
-                }
+                Read::Message(Inbound::Text(text)) => match wire::decode_from_sender(&text) {
+                    Ok(FromSender::Refused(refusal)) => return self.fail_with(refusal),
+                    Ok(FromSender::Unknown) => continue,
+                    Err(error) => return drop_connection(&error),
+                },
                 Read::Leave(next) => return next,
             };
             let FrameMessage { header, payload } = match wire::decode_frame(&message, encoding) {
@@ -193,30 +208,31 @@ impl Receiver {
                     Decoded::Picture => {}
                     Decoded::Skipped => continue,
                     Decoded::Unstarted => {
-                        send_command(link, Command::Keyframe);
+                        send(link, &ToSender::Keyframe);
                         continue;
                     }
                     Decoded::Lost(error) => {
                         tracing::debug!(error = %chain(&error), "remote H.264 picture lost; requesting a keyframe");
-                        send_command(link, Command::Keyframe);
+                        send(link, &ToSender::Keyframe);
                         continue;
                     }
-                    Decoded::Broken(error) => {
-                        tracing::warn!(error = %chain(&error), "a remote H.264 keyframe did not decode");
-                        return Next::WaitForSender;
-                    }
+                    Decoded::Broken(error) => return self.fail_with_stream(error),
                 },
             }
             self.worker.offer(writer.finish());
         }
     }
 
-    /// Whether the newest offer, if one was announced, streams the request.
-    fn offered(&self) -> Result<(), ValidationError> {
-        self.receiving
-            .announcement()
-            .and_then(|announcement| Offer::parse(&announcement))
-            .map_or(Ok(()), |offer| offer.check(&self.request))
+    /// The newest offer, if one was announced.
+    fn offer(&self) -> Option<Offer> {
+        Offer::parse(&self.receiving.announcement()?)
+    }
+
+    /// The sender's Prysm release, from its newest offer, for logs.
+    fn sender_release(&self) -> String {
+        self.offer()
+            .and_then(|offer| offer.prysm().map(str::to_owned))
+            .unwrap_or_else(|| "unknown".to_owned())
     }
 
     /// The sender's offer excludes the request: fail the source with the
@@ -226,6 +242,7 @@ impl Receiver {
             request = %self.request,
             field = excluded.field,
             reason = excluded.reason,
+            sender = self.sender_release(),
             "the remote sender does not offer the stream"
         );
         self.worker.fail(Error::Invalid(ValidationError::new(
@@ -245,25 +262,40 @@ impl Receiver {
         tracing::warn!(
             request = %self.request,
             reason = refusal.reason,
-            refused = ?refusal.refused,
+            cause = ?refusal.cause,
+            sender = self.sender_release(),
             "the remote sender refused the stream"
         );
         let context = format!("the sender cannot stream {}", self.request);
-        self.worker.fail(match refusal.refused {
-            Refused::Encoding => Error::Invalid(ValidationError::new(
+        self.worker.fail(match refusal.cause {
+            RefusalCause::Encoding => Error::Invalid(ValidationError::new(
                 format!("{}.encoding", Section::Capture.as_str()),
                 format!("{context}: {}", refusal.reason),
             )),
-            Refused::Request => Error::adapter(context, WireError::Refused(refusal.reason)),
+            RefusalCause::Request => Error::adapter(context, WireError::Refused(refusal.reason)),
         });
+        Next::WaitForSender
+    }
+
+    /// The sender's H.264 stream does not decode from a keyframe: it would
+    /// send the same on every connection, so fail the source with the
+    /// decoder's error. The source then stops.
+    fn fail_with_stream(&self, error: H264Error) -> Next {
+        let context = format!("the sender's stream ({}) does not decode", self.request);
+        tracing::warn!(
+            error = %chain(&error),
+            sender = self.sender_release(),
+            "{context}"
+        );
+        self.worker.fail(Error::adapter(context, error));
         Next::WaitForSender
     }
 }
 
 /// Leave a connection that failed or misbehaved: its cause at debug level,
 /// for diagnosing a sender, and wait for it to connect again.
-fn drop_connection(cause: &dyn Display) -> Next {
-    tracing::debug!(%cause, "dropped the remote sender's connection");
+fn drop_connection(cause: &(dyn std::error::Error + 'static)) -> Next {
+    tracing::debug!(cause = %chain(cause), "dropped the remote sender's connection");
     Next::WaitForSender
 }
 
@@ -284,10 +316,10 @@ fn link_on(connection: Accepted) -> io::Result<Link<TcpStream>> {
     )))
 }
 
-/// One command to the sender. Best effort, bounded by the write timeout; if
+/// One message to the sender. Best effort, bounded by the write timeout; if
 /// the sender is gone, the next read ends the connection.
-fn send_command(link: &mut Link<TcpStream>, command: Command) {
-    let _ = link.send(Outbound::Text(wire::encode_command(&command)));
+fn send(link: &mut Link<TcpStream>, message: &ToSender) {
+    let _ = link.send(Outbound::Text(wire::encode_to_sender(message)));
 }
 
 /// Decoding state of one H.264 connection.

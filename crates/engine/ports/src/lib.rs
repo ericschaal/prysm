@@ -28,8 +28,8 @@ pub use calibrations::{
 };
 pub use error::{Error, Result, ValidationError, chain};
 pub use handoff::{
-    Accepted, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, CAPTURE_VERSION,
-    Handoff, MAX_ANNOUNCEMENT_BYTES, Receiving,
+    Accepted, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_PROTOCOL_PREFIX, CAPTURE_STREAM_PATH,
+    CAPTURE_VERSION, Handoff, MAX_ANNOUNCEMENT_BYTES, Receiving,
 };
 pub use modes::{Mode, Modes, Span};
 pub use owner::{OwnerThread, Worker};

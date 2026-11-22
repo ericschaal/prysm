@@ -603,6 +603,7 @@ fn an_exit_keeps_an_actionable_kind_but_not_a_receiver_wait() {
         (FailureKind::Receiver, FailureKind::Other),
         (FailureKind::Encoder, FailureKind::Encoder),
         (FailureKind::Version, FailureKind::Version),
+        (FailureKind::Replaced, FailureKind::Replaced),
         (FailureKind::Other, FailureKind::Other),
     ] {
         let mut m = slim(Preferences {

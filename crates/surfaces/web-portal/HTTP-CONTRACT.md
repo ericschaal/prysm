@@ -66,7 +66,7 @@ into `@prysm/contracts/application`.
 | `GET /api/v1/candidates/{section}/{kind}` | — | `200 Candidate[]`: what the adapter finds to choose from; see [Candidates](#candidates) |
 | `POST /api/v1/capture/modes` | `CaptureSettings` (a capture section, `{ kind, ... }`) | `200 Modes`: the sizes and rates that capture delivers; see [Capture modes](#capture-modes) |
 | `GET /metrics` (only when enabled) | — | `200` Prometheus text; see [Metrics](#metrics). Disabled: `404` like any unknown path |
-| `GET /api/v1/capture/stream` (only with a capture handoff) | WebSocket upgrade, subprotocol `prysm-capture.v5` | `101`: a capture-only TV's frame stream; see [Capture stream](#capture-stream) |
+| `GET /api/v1/capture/stream` (only with a capture handoff) | WebSocket upgrade, subprotocol `prysm-capture.v6` | `101`: a capture-only TV's frame stream; see [Capture stream](#capture-stream) |
 
 `State` is `{ version, target, session, input?, device, calibration?, settings, revision, failure?, surface_failures }`.
 `version` is the Prysm product version (`1.0.0`, `1.0.0-rc.1`); `revision` only counts settings replacements.
@@ -355,20 +355,23 @@ did not deliver.
 webOS worker) streams its picture on, on the portal's own listener: the TV
 needs one address, and the stream passes an HTTPS reverse proxy as `wss://`.
 The wire protocol is the
-[capture-remote adapter's](../../adapters/capture-remote/README.md#wire-protocol-version-5);
+[capture-remote adapter's](../../adapters/capture-remote/README.md#wire-protocol);
 the portal only answers the upgrade and hands the connection, as a plain
 blocking socket, to the `remote` source:
 
 - For a sender of this version, its `prysm-capture-offer` header (what the
   TV can stream, at most 4096 ASCII bytes) is passed to the `remote` source
-  first, whatever the answer, so `POST /api/v1/capture/modes` knows a TV
-  that is waiting for lighting.
-- `101 Switching Protocols` with `Sec-WebSocket-Protocol: prysm-capture.v5`
+  before the portal answers `101` or `503`, so `POST /api/v1/capture/modes`
+  knows a TV that is waiting for lighting. A sender of another version gets
+  `426` and its header is ignored.
+- `101 Switching Protocols` with `Sec-WebSocket-Protocol: prysm-capture.v6`
   when the request is a version-13 WebSocket upgrade offering that
   subprotocol and the `remote` source runs (lighting on with that capture).
-  The newest connection replaces the one the source reads.
-- `426 Upgrade Required` (`bad_request`), naming `prysm-capture.v5` in
-  `Sec-WebSocket-Protocol`, when the sender offers another version or none.
+  The newest connection replaces the one the source reads, which is closed
+  with the *replaced* code.
+- `426 Upgrade Required` (`bad_request`), listing the versions the portal
+  speaks in `Sec-WebSocket-Protocol` (`prysm-capture.v6`), when
+  the sender offers none of them.
 - `503 unavailable` while no `remote` source runs: lighting is off or another
   capture is set. The TV retries every second.
 - `400 bad_request` for a request that is not an upgrade; `405` for other

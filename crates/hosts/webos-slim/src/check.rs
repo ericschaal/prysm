@@ -23,10 +23,11 @@ const TOLERANCE: f64 = 8.0;
 const AFTER_HELP: &str = "\
 Encodes synthetic NV12 pictures with exactly that encoder, decodes each one and
 checks that every 16x16 block shows its own picture, not one up to two before
-or after, restarts the session half way (as on resume), and
+or after, restarts the session half way (as on a keyframe request), and
 prints timings and sizes. With --prysm, then streams the same pictures to that
 Prysm for --frames more frames, at the default bitrate; its remote capture must
-request this encoding, size and rate. Exit 0 when every check passed.";
+request this encoding, size and rate. A sending TV worker is replaced and stops
+until it restarts. Exit 0 when every check passed.";
 
 #[derive(Debug, Clone, Parser)]
 #[command(after_help = AFTER_HELP)]
@@ -332,16 +333,14 @@ fn stream(
         ));
     }
     let interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps));
-    let mut paused = 0;
     for index in 0..frames {
         let tick = Instant::now();
         sender
             .send(&picture(width, height, index))
             .map_err(|error| format!("frame {index}: {}", chain(&error)))?;
-        paused += u32::from(sender.paused());
         std::thread::sleep(interval.saturating_sub(tick.elapsed()));
     }
-    println!("check-encoder: streamed {frames} frames to {prysm} ({paused} dropped while paused)");
+    println!("check-encoder: streamed {frames} frames to {prysm}");
     Ok(())
 }
 

@@ -2,7 +2,8 @@
 //! upgrade and hand-over. Every wait is bounded.
 use prysm_capture_remote::testkit::{BOUND, Portal};
 use prysm_capture_remote::{
-    Offer, RemoteReceiver, RemoteSender, RemoteSource, StreamEncoding, StreamRequest, WireError,
+    Close, Offer, RemoteReceiver, RemoteSender, RemoteSettings, RemoteSource, SendError,
+    StreamEncoding, WireError,
 };
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{FrameSink, FrameSource, Mode, Modes, SourceFactory, Span};
@@ -18,7 +19,7 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 /// Uncompressed frames of any size and format.
-const RAW: StreamRequest = StreamRequest {
+const RAW: RemoteSettings = RemoteSettings {
     width: 320,
     height: 180,
     fps: 30,
@@ -243,15 +244,23 @@ fn a_second_sender_replaces_the_first() {
     assert_eq!(receive(&mut source).as_slice()[0], 3);
     assert_dropped(stalled);
 
-    // A second working sender takes over; the first one's stream ends.
+    // A second working sender takes over; the first one is told.
     let mut second = portal.connect().unwrap();
     second.send(&frame(4, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 4);
     let deadline = Instant::now() + BOUND;
-    while sender.tick().is_ok() {
+    let error = loop {
         assert!(Instant::now() < deadline, "the replaced sender kept going");
+        if let Err(error) = sender.tick() {
+            break error;
+        }
         thread::sleep(Duration::from_millis(10));
-    }
+    };
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Replaced)),
+        "{error}"
+    );
     Box::new(source).close().unwrap();
 }
 
@@ -259,15 +268,15 @@ fn a_second_sender_replaces_the_first() {
 fn malformed_and_oversized_messages_drop_only_that_connection() {
     let (portal, mut source) = open();
 
-    // Text that is not a refusal.
+    // Text that is not JSON.
     let mut garbage = greeted(&portal);
     garbage.send(Message::text("GET / HTTP/1.1")).unwrap();
     assert!(assert_dropped(garbage).is_empty());
 
-    // 4096x4096 RGB: over the payload limit from the header alone.
+    // One past the largest size: rejected from the header alone.
     let mut oversized = greeted(&portal);
     oversized
-        .send(Message::binary(raw_frame([1, 0, 0, 0], 4096, 4096, &[])))
+        .send(Message::binary(raw_frame([1, 0, 0, 0], 1921, 1080, &[])))
         .unwrap();
     assert!(assert_dropped(oversized).is_empty());
     // A payload one byte shorter than the header's frame.
@@ -276,14 +285,17 @@ fn malformed_and_oversized_messages_drop_only_that_connection() {
         .send(Message::binary(raw_frame([1, 0, 0, 0], 4, 4, &[0; 47])))
         .unwrap();
     assert!(assert_dropped(short).is_empty());
-    // A refusal with a field the protocol does not have.
-    let mut unknown = greeted(&portal);
-    unknown
-        .send(Message::text(
-            r#"{"refused":"request","reason":"x","why":1}"#,
-        ))
+    // Text over the limit, though a message of a type this end ignores.
+    let mut long = greeted(&portal);
+    let padded = format!(r#"{{"type":"stats","pad":"{}"}}"#, "x".repeat(4096));
+    long.send(Message::text(padded)).unwrap();
+    assert!(assert_dropped(long).is_empty());
+    // A message without a type.
+    let mut untyped = greeted(&portal);
+    untyped
+        .send(Message::text(r#"{"refused":"request","reason":"x"}"#))
         .unwrap();
-    assert!(assert_dropped(unknown).is_empty());
+    assert!(assert_dropped(untyped).is_empty());
     assert!(
         source
             .next_frame(Duration::from_millis(50))
@@ -294,6 +306,38 @@ fn malformed_and_oversized_messages_drop_only_that_connection() {
     let mut sender = portal.connect().unwrap();
     sender.send(&frame(4, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 4);
+    Box::new(source).close().unwrap();
+}
+
+/// What this end does not know is ignored: a sender message of another
+/// type, unknown fields of a refusal's, and frame flag bits.
+#[test]
+fn unknown_messages_fields_and_flags_are_ignored() {
+    let (portal, mut source) = open();
+    let mut client = greeted(&portal);
+    client
+        .send(Message::text(r#"{"type":"stats","sent":3}"#))
+        .unwrap();
+    client
+        .send(Message::binary(raw_frame([1, 0, 0, 0xff], 2, 2, &[9; 12])))
+        .unwrap();
+    assert_eq!(receive(&mut source).as_slice()[0], 9);
+    // A refusal with a cause and a field this end does not know: a refusal
+    // of the request.
+    client
+        .send(Message::text(
+            r#"{"type":"refused","cause":"thermal","reason":"too hot","celsius":90}"#,
+        ))
+        .unwrap();
+    let deadline = Instant::now() + BOUND;
+    let error = loop {
+        assert!(Instant::now() < deadline, "the refusal never arrived");
+        match source.next_frame(Duration::from_millis(50)) {
+            Err(error) => break error,
+            Ok(pull) => assert!(pull.is_idle()),
+        }
+    };
+    assert_eq!(wire_cause(&error), WireError::Refused("too hot".into()));
     Box::new(source).close().unwrap();
 }
 
@@ -324,7 +368,8 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
     }
     Box::new(source).close().unwrap();
 
-    // A newer Prysm: this sender is told both versions.
+    // A newer Prysm lists the versions it speaks: this sender names the
+    // highest.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let newer = thread::spawn(move || {
@@ -333,7 +378,7 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
         let _ = stream.read(&mut head).unwrap();
         stream
             .write_all(
-                b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9\r\ncontent-length: 0\r\n\r\n",
+                b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9, prysm-capture.v7\r\ncontent-length: 0\r\n\r\n",
             )
             .unwrap();
     });
@@ -351,44 +396,119 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
         "{error}"
     );
     newer.join().unwrap();
+}
 
-    // Receivers that upgrade but send no request, or one this sender cannot
-    // understand.
-    for (answer, expected) in [
-        (None, WireError::NoRequest),
+/// A receiver that sends `messages` after the upgrade, then reports what
+/// the sender answered before closing.
+fn receiver_sending(
+    messages: &'static [&'static str],
+) -> (std::net::SocketAddr, thread::JoinHandle<Vec<Message>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let peer = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(BOUND)).unwrap();
+        let mut socket = prysm_capture_remote::testkit::accept(stream);
+        if messages.is_empty() {
+            socket.close(None).unwrap();
+        }
+        for message in messages {
+            socket.send(Message::text(*message)).unwrap();
+        }
+        let mut answers = Vec::new();
+        while let Ok(message) = socket.read() {
+            if !matches!(message, Message::Close(_)) {
+                answers.push(message);
+            }
+        }
+        answers
+    });
+    (addr, peer)
+}
+
+/// A receiver that sends no request fails the connect; one whose request
+/// this sender cannot parse, validate or offer is refused, naming the
+/// request as the cause.
+#[test]
+fn requests_this_end_cannot_take_are_refused() {
+    let offer = Offer::new([(
+        StreamEncoding::Raw,
+        vec![Mode::new(
+            Span::exactly(320),
+            Span::exactly(180),
+            Span::new(1, 30, 1).unwrap(),
+        )],
+    )]);
+    for (messages, expected, refused) in [
+        (&[][..], "the receiver did not send its request", false),
         (
-            Some(r#"{"type":"request","include_ui":9}"#),
-            WireError::Json("invalid type: integer `9`, expected a boolean".into()),
+            &[r#"{"type":"request","include_ui":9}"#][..],
+            "invalid message: invalid type: integer `9`, expected a boolean",
+            true,
+        ),
+        (
+            &[
+                r#"{"type":"request","width":320,"height":180,"fps":30,"include_ui":true,"encoding":"av1"}"#,
+            ][..],
+            "invalid stream request: invalid encoding: expected one of h264_hardware, h264_software, raw",
+            true,
+        ),
+        (
+            &[
+                r#"{"type":"request","width":321,"height":180,"fps":30,"include_ui":true,"encoding":"raw"}"#,
+            ][..],
+            "invalid stream request: invalid width: must be an even number from 2 to 1920",
+            true,
+        ),
+        (
+            &[
+                r#"{"type":"request","width":640,"height":360,"fps":30,"include_ui":true,"encoding":"raw"}"#,
+            ][..],
+            "invalid stream request: invalid width: ",
+            true,
         ),
     ] {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let peer = thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            let mut socket = prysm_capture_remote::testkit::accept(stream);
-            match answer {
-                Some(answer) => socket.send(Message::text(answer)).unwrap(),
-                None => socket.close(None).unwrap(),
-            }
-            let _ = socket.flush();
-            // Hold the connection until the sender has read the answer.
-            let _ = socket.read();
-        });
+        let (addr, peer) = receiver_sending(messages);
         let url = format!("ws://{addr}/api/v1/capture/stream")
             .parse()
             .unwrap();
-        let error =
-            RemoteSender::connect(&url, addr, &prysm_capture_remote::testkit::offer()).unwrap_err();
-        let cause = wire_cause(&error);
-        match (&cause, &expected) {
-            (WireError::Json(got), WireError::Json(want)) => {
-                assert!(got.starts_with(want.as_str()), "{got}");
-            }
-            _ => assert_eq!(cause, expected, "{error}"),
-        }
+        let error = RemoteSender::connect(&url, addr, &offer).unwrap_err();
+        let cause = prysm_ports::chain(&wire_cause(&error));
+        assert!(cause.starts_with(expected), "{cause}");
         assert!(error.to_string().contains(&addr.to_string()), "{error}");
-        peer.join().unwrap();
+        let answers = peer.join().unwrap();
+        if refused {
+            let [Message::Text(refusal)] = &answers[..] else {
+                panic!("{answers:?}");
+            };
+            let refusal: serde_json::Value = serde_json::from_str(refusal).unwrap();
+            assert_eq!(refusal["type"], "refused");
+            assert_eq!(refusal["cause"], "request");
+            assert!(
+                refusal["reason"].as_str().unwrap().starts_with(expected),
+                "{refusal}"
+            );
+        } else {
+            assert!(answers.is_empty(), "{answers:?}");
+        }
     }
+}
+
+/// Messages of types this end does not know may precede the request.
+#[test]
+fn unknown_messages_before_the_request_are_skipped() {
+    let (addr, peer) = receiver_sending(&[
+        r#"{"type":"hello","prysm":"9.0.0"}"#,
+        r#"{"type":"request","width":320,"height":180,"fps":30,"include_ui":true,"encoding":"raw","hdr":true}"#,
+    ]);
+    let url = format!("ws://{addr}/api/v1/capture/stream")
+        .parse()
+        .unwrap();
+    let sender =
+        RemoteSender::connect(&url, addr, &prysm_capture_remote::testkit::offer()).unwrap();
+    assert_eq!(sender.request(), RAW);
+    drop(sender);
+    peer.join().unwrap();
 }
 
 /// A sender that connects while lighting is off (no source receives) is
@@ -411,13 +531,12 @@ fn a_sender_before_the_source_waits_for_it() {
 #[test]
 fn the_sender_receives_the_request_and_a_new_source_changes_it() {
     let (portal, source) = open();
-    assert_eq!(source.request(), RAW);
     let sender = portal.connect().unwrap();
     assert_eq!(sender.request(), RAW);
     Box::new(source).close().unwrap();
     drop(sender);
 
-    let changed = StreamRequest {
+    let changed = RemoteSettings {
         width: 640,
         height: 360,
         fps: 60,
@@ -466,6 +585,16 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
         "the sender cannot stream 320x180 at 30 fps with menus as raw"
     );
 
+    // A frame the stream cannot carry: the sender refuses the request.
+    let error = refused(|sender| {
+        let error = sender.deliver(&frame(0, 1922, 2)).unwrap_err();
+        assert!(matches!(error, SendError::Refused(_)), "{error}");
+    });
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Refused("cannot send frame: frame 1922x2 is outside 1x1 to 1920x1080".into())
+    );
+
     // A refused encoding names the setting, with the sender's reason.
     let error = refused(|sender| sender.refuse_encoding("no encoder here"));
     let prysm_ports::Error::Invalid(invalid) = &error else {
@@ -499,28 +628,28 @@ fn a_refused_attempt_still_tells_the_receiver_what_the_sender_offers() {
     let error = portal.connect_offering(&raw_offer()).unwrap_err();
     assert_eq!(wire_cause(&error), WireError::Unavailable(503));
     assert_eq!(factory.modes(&RAW), raw_offer().modes(StreamEncoding::Raw));
-    let software = StreamRequest {
+    let software = RemoteSettings {
         encoding: StreamEncoding::H264Software,
         ..RAW
     };
     assert_eq!(factory.modes(&software), Modes::Known(Vec::new()));
 
     // Opening refuses what the offer excludes, naming the field.
-    let invalid = |request: &StreamRequest| match factory.open(request) {
+    let invalid = |request: &RemoteSettings| match factory.open(request) {
         Err(prysm_ports::Error::Invalid(invalid)) => invalid.field,
         Err(error) => panic!("{error:?}"),
         Ok(_) => panic!("{request} opened"),
     };
     assert_eq!(invalid(&software), "encoding");
-    assert_eq!(invalid(&StreamRequest { fps: 60, ..RAW }), "fps");
-    assert_eq!(invalid(&StreamRequest { height: 360, ..RAW }), "height");
+    assert_eq!(invalid(&RemoteSettings { fps: 60, ..RAW }), "fps");
+    assert_eq!(invalid(&RemoteSettings { height: 360, ..RAW }), "height");
     factory.open(&RAW).unwrap().close().unwrap();
 }
 
 #[test]
 fn a_sender_that_does_not_offer_the_request_fails_the_source_unasked() {
     let portal = Portal::start();
-    let mut source = portal.source(StreamRequest {
+    let mut source = portal.source(RemoteSettings {
         width: 640,
         height: 360,
         fps: 60,
@@ -560,6 +689,17 @@ fn close_is_prompt_stops_receiving_and_fails_the_sender() {
     let mut sender = portal.connect().unwrap();
     sender.send(&frame(5, 4, 4)).unwrap();
     receive(&mut source);
+    // A sender that reads, as the TV does at every frame or tick.
+    let reading = thread::spawn(move || {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            assert!(Instant::now() < deadline, "sender never noticed the close");
+            if let Err(error) = sender.tick() {
+                return error;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
 
     let started = Instant::now();
     Box::new(source).close().unwrap();
@@ -569,37 +709,86 @@ fn close_is_prompt_stops_receiving_and_fails_the_sender() {
         started.elapsed()
     );
     assert!(!portal.handoff.is_receiving());
-
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "sender never noticed the close");
-        if let Err(error) = sender.send(&frame(6, 4, 4)) {
-            break error;
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    assert!(error.source().is_some(), "{error}");
+    let error = reading.join().unwrap();
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Stopped)),
+        "{error}"
+    );
 }
 
-/// A sender with nothing to send (the slim TV stops capturing while paused)
-/// still reads control messages through `tick`: a receiver that closes
-/// (lighting stops) pauses it before the connection ends.
+/// Stream full-size raw frames from `sender` on a thread until a send
+/// fails, and return the failure.
+fn stream_until_closed(mut sender: RemoteSender) -> thread::JoinHandle<prysm_ports::Error> {
+    let big = frame(7, 1920, 1080);
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            assert!(Instant::now() < deadline, "the sender never saw the close");
+            if let Err(error) = sender.send(&big) {
+                return error;
+            }
+        }
+    })
+}
+
+/// A sender that is streaming large frames when its connection ends still
+/// receives the close code: the receiver reads off its frames until the
+/// sender answers, so unread frames do not reset the connection first.
 #[test]
-fn idle_reads_the_pause_of_a_closing_receiver() {
+fn a_streaming_sender_receives_the_close_code() {
+    // Replaced by a second sender.
+    let (portal, mut source) = open();
+    let streaming = stream_until_closed(portal.connect().unwrap());
+    receive(&mut source);
+    let second = portal.connect().unwrap();
+    let error = streaming.join().unwrap();
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Replaced)),
+        "{error}"
+    );
+    drop(second);
+    Box::new(source).close().unwrap();
+
+    // Stopped by the source closing.
+    let (portal, mut source) = open();
+    let streaming = stream_until_closed(portal.connect().unwrap());
+    receive(&mut source);
+    Box::new(source).close().unwrap();
+    let error = streaming.join().unwrap();
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Stopped)),
+        "{error}"
+    );
+}
+
+/// A sender with nothing to send (the slim TV stops capturing while
+/// stopped) still reads the receiver's messages through `tick`: a source
+/// that closes (lighting stops) ends the stream with the stopped code.
+#[test]
+fn idle_reads_the_close_of_a_stopped_receiver() {
     let (portal, mut source) = open();
     let mut sender = portal.connect().unwrap();
     sender.send(&frame(1, 4, 4)).unwrap();
     receive(&mut source);
     sender.tick().unwrap();
-    assert!(!sender.paused());
 
     Box::new(source).close().unwrap();
     let deadline = Instant::now() + BOUND;
-    while sender.tick().is_ok() {
+    let error = loop {
         assert!(Instant::now() < deadline, "sender never noticed the close");
+        if let Err(error) = sender.tick() {
+            break error;
+        }
         thread::sleep(Duration::from_millis(10));
-    }
-    assert!(sender.paused(), "paused before the connection ended");
+    };
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Stopped)),
+        "{error}"
+    );
 }
 
 #[test]
@@ -620,16 +809,16 @@ fn connecting_to_a_dead_peer_fails_with_a_source() {
 #[test]
 fn factory_decodes_validates_and_opens() {
     let factory = RemoteReceiver::default();
-    let defaults: StreamRequest = serde_json::from_str("{}").unwrap();
-    assert_eq!(defaults, StreamRequest::default());
+    let defaults: RemoteSettings = serde_json::from_str("{}").unwrap();
+    assert_eq!(defaults, RemoteSettings::default());
     assert!(factory.validate(&defaults).is_ok());
-    let full: StreamRequest = serde_json::from_str(
+    let full: RemoteSettings = serde_json::from_str(
         r#"{ "width": 640, "height": 280, "fps": 25, "include_ui": false, "encoding": "raw" }"#,
     )
     .unwrap();
     assert_eq!(
         full,
-        StreamRequest {
+        RemoteSettings {
             width: 640,
             height: 280,
             fps: 25,
@@ -642,17 +831,20 @@ fn factory_decodes_validates_and_opens() {
         r#"{ "x": 1 }"#,
         r#"{ "encoding": "lz4" }"#,
     ] {
-        assert!(serde_json::from_str::<StreamRequest>(bad).is_err(), "{bad}");
+        assert!(
+            serde_json::from_str::<RemoteSettings>(bad).is_err(),
+            "{bad}"
+        );
     }
     for (bad, field) in [
         (
-            StreamRequest {
+            RemoteSettings {
                 width: 321,
                 ..defaults
             },
             "width",
         ),
-        (StreamRequest { fps: 0, ..defaults }, "fps"),
+        (RemoteSettings { fps: 0, ..defaults }, "fps"),
     ] {
         assert_eq!(factory.validate(&bad).unwrap_err().field, field);
     }

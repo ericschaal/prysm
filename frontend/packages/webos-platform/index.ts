@@ -165,6 +165,7 @@ const failureKinds: Record<FailureKind, true> = {
   encoder: true,
   receiver: true,
   version: true,
+  replaced: true,
   other: true,
 };
 const targets: Record<LightingTarget, true> = {

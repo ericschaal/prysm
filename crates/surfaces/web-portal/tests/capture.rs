@@ -1,7 +1,7 @@
 //! The capture stream path against a real engine whose source is the remote
 //! receiver: a sender (the TV's slim worker) streams through the portal.
 use prysm_capture_remote::{
-    RemoteReceiver, RemoteSender, StreamEncoding, StreamRequest, WireError,
+    RemoteReceiver, RemoteSender, RemoteSettings, StreamEncoding, WireError,
 };
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, FrameSink, LightingTarget, Modes, Settings};
@@ -18,7 +18,7 @@ use tungstenite::http::{HeaderValue, Uri};
 
 const LIMIT: Duration = Duration::from_secs(10);
 
-const RAW: StreamRequest = StreamRequest {
+const RAW: RemoteSettings = RemoteSettings {
     width: 16,
     height: 8,
     fps: 30,

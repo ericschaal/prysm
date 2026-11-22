@@ -2,7 +2,8 @@
 //! loopback, for tests: accept, answer the WebSocket upgrade at the capture
 //! stream path, and hand the connection over. Every wait is bounded. Also a
 //! TLS-terminating proxy with a test certificate, for `wss://`.
-use crate::{Offer, RemoteSender, RemoteSource, StreamEncoding, StreamRequest};
+use crate::wire::{MAX_FPS, MAX_HEIGHT, MAX_WIDTH};
+use crate::{Offer, RemoteSender, RemoteSettings, RemoteSource, StreamEncoding};
 use prysm_ports::{
     Accepted, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Handoff, Mode, Result,
     Span,
@@ -23,12 +24,16 @@ use tungstenite::stream::MaybeTlsStream;
 /// The longest any wait here takes.
 pub const BOUND: Duration = Duration::from_secs(5);
 
-/// An offer of every request [`StreamRequest::validate`] accepts, in every
+/// An offer of every request [`RemoteSettings::validate`] accepts, in every
 /// encoding: a sender that refuses only by failing.
 #[must_use]
 pub fn offer() -> Offer {
     let span = |min, max, step| Span::new(min, max, step).expect("a span");
-    let any = Mode::new(span(2, 1920, 2), span(2, 1080, 2), span(1, 60, 1));
+    let any = Mode::new(
+        span(2, MAX_WIDTH, 2),
+        span(2, MAX_HEIGHT, 2),
+        span(1, MAX_FPS, 1),
+    );
     Offer::new(StreamEncoding::ALL.map(|encoding| (encoding, vec![any])))
 }
 
@@ -95,7 +100,7 @@ impl Portal {
     /// # Panics
     /// The receive thread cannot start.
     #[must_use]
-    pub fn source(&self, request: StreamRequest) -> RemoteSource {
+    pub fn source(&self, request: RemoteSettings) -> RemoteSource {
         RemoteSource::open(&self.handoff, request).unwrap()
     }
 

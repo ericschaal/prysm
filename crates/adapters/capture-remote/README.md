@@ -2,9 +2,9 @@
 
 Frames from a capture-only host (webOS slim) to a lighting host (headless)
 through the lighting host's web portal. The lighting host decides what it
-wants: its settings hold a `StreamRequest` (size, rate, menus, encoding) that
-the sender follows. Both ends are blocking adapters on `std::net`; neither
-has a listener of its own:
+wants: its settings, `RemoteSettings` (size, rate, menus, encoding), are the
+request the sender follows. Both ends are blocking adapters on `std::net`;
+neither has a listener of its own:
 
 - `RemoteReceiver` registers source kind `"remote"`:
 
@@ -15,9 +15,10 @@ has a listener of its own:
                    "include_ui": true, "encoding": "h264_hardware" } }
   ```
 
-  Every field is optional; these are the defaults. An even `width` (2 to
-  1920) and `height` (2 to 1080), `fps` 1 to 60 are what the protocol
-  carries; what a sender streams is its [offer](#wire-protocol-version-5).
+  Every field is optional; these are the defaults. Like all settings they are
+  strict: an unknown field is refused. An even `width` (2 to 1920) and
+  `height` (2 to 1080), `fps` 1 to 60 are what the protocol carries; what a
+  sender streams is its [offer](#wire-protocol).
   `include_ui` blends the sender's on-screen menus into the picture;
   `encoding` is `h264_hardware` (the TV's encoder), `h264_software`
   (OpenH264 on the TV) or `raw`. The host gives its `incoming()`
@@ -27,11 +28,10 @@ has a listener of its own:
   socket. `open` takes those connections on one receive thread, which also
   decodes H.264. `next_frame(timeout)` returns the newest complete frame
   (older untaken frames are replaced, never queued) or `Pull::Idle` on
-  timeout, and fails when the sender's offer excludes the request or the
-  sender refuses it (see below). `close`
-  pauses the sender and stops the thread within about 50 ms. Closing is the
-  only pause: the next source (lighting on again) gets a new connection,
-  which starts unpaused.
+  timeout, and fails when the sender's offer excludes the request, the
+  sender refuses it or its H.264 stream does not decode (see below). `close`
+  stops the thread within about 50 ms, closes the connection as *stopped*
+  and waits up to 1 s for the sender to answer the close.
   `modes(request)` answers from the newest offer a sender announced (refused
   attempts included, so it is known while lighting is off): the modes for
   the request's encoding, none when the sender lacks it, unknown before any
@@ -42,18 +42,22 @@ has a listener of its own:
   WebSocket at `url` (`ws://host:port/api/v1/capture/stream`, or `wss://` for
   an `https://` Prysm, verified against the system's certificate
   authorities) by connecting to `address`, where the caller resolved the
-  host, sending its `Offer`. It learns the request first (`request()`), and `send` encodes each
+  host, sending its `Offer`. It learns the request first (`request()`),
+  refusing one it cannot parse, validate or offer, and `send` encodes each
   frame with exactly the requested encoder from
   [`prysm-h264`](../h264/src/lib.rs), opened at the first frame. Any error is
   final for that connection. `deliver` (what `send` calls) returns a
-  `SendError`: `Encoder` when the requested encoder cannot start or failed,
-  after the sender refused the encoding to the receiver (`refuse_encoding`),
-  else `Connection`. `refuse(reason)` refuses the request for any other
-  reason. Nothing switches encoder or encoding on its own.
+  `SendError`: `Refused` when the requested encoder cannot start or failed,
+  or a frame does not fit the stream, after the sender refused the request
+  to the receiver; else `Connection`, whose `WireError::Closed` cause names
+  the receiver's close code. `refuse(reason)` and `refuse_encoding(reason)`
+  refuse the request for the caller's own reasons. Nothing switches encoder
+  or encoding on its own.
 
 A new request needs a new connection: the engine reopens the source when the
-capture settings change, which closes the connection, and the sender's next
-connection (the slim TV worker retries every second) gets the new request.
+capture settings change, which closes the connection as *stopped*, and the
+sender's next connection (the slim TV worker retries every second) gets the
+new request.
 
 The slim TV worker offers its capture's modes (`prysm_capture_webos::MODE`)
 raw, and in each H.264 encoder the build has, within that encoder's
@@ -65,81 +69,115 @@ The slim TV worker takes one Prysm address (`--prysm http://host:8787` or
 the sender in an uplink that reconnects at most every second and reports the
 wait (the portal answers `503` while no remote source receives: lighting off,
 or another capture). It captures at the requested size, rate and menus,
-reopening the TV capture when they change, and closes the capture while the
-receiver has paused the stream (it keeps reading control messages through
-`FrameSink::tick`, so a resume would reach it); a receiver that pauses and
-then closes, as on lighting stop, leaves the capture closed until a receiver
-connects again. When the requested encoder fails it reports a failure of
-kind `encoder` and refuses every later connection with the same request (the
-receiver's source fails with the reason, so lighting stops with it in the
-portal) until the receiver asks for something else.
+reopening the TV capture when they change. A connection closed as *stopped*
+closes the capture until a receiver takes a connection again (it keeps
+reading the receiver's messages through `FrameSink::tick`, so it sees the
+close while nothing is captured). A connection closed as *replaced* stops
+the uplink: it releases capture and encoder, reports a failure of kind
+`replaced` and connects no more until the worker restarts (capture stopped
+and started, the TV waking, a new Prysm address, or a restart after a
+failure). When the
+requested encoder fails it reports a failure of kind `encoder` and refuses
+every later connection with the same request (the receiver's source fails
+with the reason, so lighting stops with it in the portal) until the receiver
+asks for something else.
 
 To watch a TV's stream on a desktop without lights, run `prysm-headless` with
 the `remote` capture and the `null` output; the portal shows the rate and the
 preview.
 
-## Wire protocol (version 5)
+## Wire protocol
 
 One WebSocket carries one stream. **The version is the WebSocket
-subprotocol** `prysm-capture.v5` ([`CAPTURE_PROTOCOL`](../../engine/ports/src/handoff.rs)):
-the sender offers it in `Sec-WebSocket-Protocol`, the portal answers `101`
-with it, or `426 Upgrade Required` naming the one it speaks when the sender
-offers another (or none). The sender then fails with `WireError::Version {
-ours, theirs }` (`theirs` from the `426`'s `Sec-WebSocket-Protocol`; `None`
-when the peer names none); the slim TV worker shows it as its waiting reason.
+subprotocol**, `prysm-capture.v6`
+([`CAPTURE_PROTOCOL`](../../engine/ports/src/handoff.rs)): the sender offers
+it in `Sec-WebSocket-Protocol`, the portal answers `101` with it, or
+`426 Upgrade Required` listing the versions it speaks (comma-separated) when
+the sender offers none of them. The sender then fails with
+`WireError::Version { ours, theirs }` (`theirs` the highest version the
+`426` lists; `None` when it lists none); the slim TV worker shows it as a
+failure of kind `version` and retries every 10 s.
 
-**The offer** (new in version 5) travels in the upgrade request's
-`prysm-capture-offer` header
+**Versions.** The number rises only when a peer of the previous number can
+no longer work with this one: a field removed or its meaning changed, the
+frame header changed, or a new message the peer must not ignore. That is a
+major Prysm release ([releasing](../../../docs/developers/releasing.md#what-the-version-promises)).
+Additions keep the number and are minor: fields, message types, flag bits,
+encodings, offer keys, close codes. Every end reads tolerantly, so a peer of
+the same number may send what this end does not know:
+
+- unknown fields and message types are ignored;
+- an unknown value in a known field: a request's `encoding` is an invalid
+  `encoding`, refused as a request; a refusal's `cause` is read as
+  `request`; an offer's encoding is skipped;
+- what a peer must not ignore is sent only when that peer asked for it. The
+  receiver asks the sender for something new only when the sender's offer
+  announces it; the sender sends something new only when the request asks
+  for it (a request field added later is optional, its absence meaning the
+  old behaviour). Features are negotiated this way, not by the version;
+- anything else malformed (text that is not JSON, a message missing a
+  field, a frame to the sender, a bad frame header) ends the connection.
+
+**The offer** travels in the upgrade request's `prysm-capture-offer` header
 ([`CAPTURE_OFFER_HEADER`](../../engine/ports/src/handoff.rs)): compact JSON,
-a map from encoding to the modes the sender streams in it, an encoding it
-lacks absent:
+the modes the sender streams in each encoding it has (an encoding it lacks
+absent) and, optionally, its Prysm release:
 
 ```json
-{"h264_hardware":[{"width":{"min":176,"max":1920,"step":2},
+{"encodings":{"h264_hardware":[{"width":{"min":176,"max":1920,"step":2},
   "height":{"min":144,"max":1080,"step":2},"fps":{"min":1,"max":30,"step":1}}],
- "raw":[...]}
+ "raw":[...]},"prysm":"1.0.0"}
 ```
 
 A mode is every combination of its `width`, `height` and `fps` spans
-(`min`, `min + step`, … `max`). For a sender of this version the portal
-announces the header to the remote source *before* deciding to answer `101`
-or `503`, so every attempt, refused or not, delivers it; at most 4096 ASCII
-bytes are kept, anything else is ignored. A connection whose sender's offer
-excludes the request is closed without a request (the sender fails with
-`NoRequest`), and the source fails as for an encoding refusal, with the
-field the offer excludes (`capture.width`, `capture.height`, `capture.fps`,
-or `capture.encoding` for an encoding not offered) and the reason `the
-sender cannot stream 640x360 at 60 fps with menus as raw: at 640x360 this
-source delivers a frame rate of 1 to 30`. An unparseable or missing offer leaves the request
-unchecked.
+(`min`, `min + step`, … `max`). The portal announces the header to the
+remote source *before* deciding to answer `101` or `503`, so every attempt,
+refused or not, delivers it; at most 4096 ASCII bytes are kept, anything
+else is ignored. A connection whose sender's offer excludes the request is
+closed without a request (the sender fails with `NoRequest`), and the source
+fails as for an encoding refusal, with the field the offer excludes
+(`capture.width`, `capture.height`, `capture.fps`, or `capture.encoding` for
+an encoding not offered) and the reason `the sender cannot stream 640x360 at
+60 fps with menus as raw: at 640x360 this source delivers a frame rate of 1
+to 30`. An unparseable or missing offer leaves the request unchecked; the
+sender checks it against its offer too. The receiver logs the sender's
+release with a refusal.
 
-**Text messages** carry JSON, unknown fields refused:
+**Text messages** carry JSON objects tagged by `type`:
 
 - Receiver → sender, first: the request, `{"type":"request","width":320,
-  "height":180,"fps":30,"include_ui":true,"encoding":"h264_hardware"}` (the
-  settings' fields; defaults fill omitted ones). It is fixed for the
-  connection. A sender that gets anything else first, or nothing within
-  3 s, fails with `NoRequest`; one it cannot parse or that fails validation
-  with `Json` or `Request`.
-- Receiver → sender, any time after: `{"type":"pause"}` (frames are not
-  wanted: the sender drops frames unencoded and closes its encoder session,
-  releasing a hardware encoder), `{"type":"resume"}` (sends again; the next
-  H.264 picture starts a new session), `{"type":"keyframe"}` (the next H.264
-  picture starts a new session). The receiver sends pause when its source is
-  closed (lighting stops); it never sends resume (the next source's
-  connection starts unpaused), but the sender honours it. Anything else
-  fails the sender's connection. The sender reads pending messages without
-  blocking at the start of each `send` and in `tick`; a receiver that has
-  closed shows as `WireError::Closed`.
+  "height":180,"fps":30,"include_ui":true,"encoding":"h264_hardware"}`, the
+  settings' fields, every one required. It is fixed for the connection.
+  Messages of other types may come before it and are skipped. A sender that
+  gets a frame or a keyframe request first fails with `Unexpected`, one that
+  gets no request within 3 s with `NoRequest`. One it cannot parse (`Json`), that fails
+  validation or that its offer excludes (`Request`) it refuses, cause
+  `request`.
+- Receiver → sender, any time after: `{"type":"keyframe"}`, the next H.264
+  picture starts a new session. A second request fails the sender's
+  connection. The sender reads pending messages without blocking at the
+  start of each `send` and in `tick`.
 - Sender → receiver, instead of frames, then the sender closes: the refusal,
-  `{"refused":"encoding","reason":"cannot encode frame: hardware H.264
-  encoder cannot start: …"}`, `refused` being `encoding` (its encoder cannot
-  start or failed) or `request`, the reason at most 1024 bytes. The source
-  then fails and stops: an encoding refusal is `Error::Invalid` for field
-  `capture.encoding` with the reason `the sender cannot stream 320x180 at 30
-  fps with menus as h264_hardware: <reason>`, so the portal can show it on
-  that setting; any other refusal is an adapter failure with that context,
-  caused by `WireError::Refused(reason)`.
+  `{"type":"refused","cause":"encoding","reason":"cannot encode frame:
+  hardware H.264 encoder cannot start: …"}`, `cause` being `encoding` (its
+  encoder cannot start or failed, or produced a frame the stream cannot
+  carry) or `request` (anything else), the reason at most 1024 bytes. The
+  source then fails and stops: an encoding refusal is `Error::Invalid` for
+  field `capture.encoding` with the reason `the sender cannot stream 320x180
+  at 30 fps with menus as h264_hardware: <reason>`, so the portal can show it
+  on that setting; a request refusal is an adapter failure with that
+  context, caused by `WireError::Refused(reason)`.
+
+**Close codes** (receiver → sender) say why the receiver ended a stream; the
+sender reads them as `WireError::Closed(Some(Close::…))`:
+
+| Code | `Close` | When | The slim TV |
+| --- | --- | --- | --- |
+| 4000 | `Stopped` | The source closed: lighting stopped, or the capture settings changed | Releases capture and encoder, shows *paused*, reconnects every second |
+| 4001 | `Replaced` | A newer sender's connection replaced this one | Releases capture and encoder, shows a failure of kind `replaced`, connects no more until the worker restarts (capture stopped and started, the TV waking, or a new Prysm address) |
+
+Any other close, or none (a crash, the network), is a dropped connection:
+the slim TV keeps capturing and reconnects every second.
 
 **Binary messages** are frames only (sender → receiver): an 8-byte header,
 then the payload; the payload's length is the rest of the message.
@@ -149,17 +187,21 @@ then the payload; the payload's length is the rest of the message.
 | 0 | 1 | format | `1` RGB24, `2` BGR24, `3` YUYV, `4` NV12 |
 | 1 | 1 | YUV range | `0` (RGB/BGR), `1` limited, `2` full |
 | 2 | 1 | YUV matrix | `0` (RGB/BGR), `1` BT.601, `2` BT.709, `3` BT.2020, `4` SMPTE 240, `5` BT.470-6, `6` FCC |
-| 3 | 1 | flags | raw: `0`. H.264: bit 0 *keyframe*; other bits `0` |
-| 4 | 2 | width | big-endian `u16`, 1..=4096 |
-| 6 | 2 | height | big-endian `u16`, 1..=4096 |
+| 3 | 1 | flags | H.264: bit 0 *keyframe*. Senders write other bits `0`; receivers ignore them |
+| 4 | 2 | width | big-endian `u16`, 1..=1920 |
+| 6 | 2 | height | big-endian `u16`, 1..=1080 |
 
-Raw: the payload is exactly `width * height * 3` (RGB/BGR), `* 2` (YUYV) or
-`* 3 / 2` (NV12) bytes. H.264: 1 to 6,220,800 bytes (1080p RGB). The format
-describes the frame's pixels; NV12 is the Y plane (`width` bytes per row)
-followed by the interleaved UV plane (`width` bytes per row, `height / 2`
-rows), with even width and height. MJPEG and custom YUV matrices are
-rejected by the sender. A frame's size is its own: the receiver does not
-require the requested one (the slim TV captures at it).
+An unknown format, range or matrix code ends the connection. Raw: the payload
+is exactly `width * height * 3` (RGB/BGR), `* 2` (YUYV) or `* 3 / 2` (NV12)
+bytes. H.264: 1 to 8,388,608 bytes (8 MiB, the largest access unit
+`prysm-h264` produces, more than a 1080p RGB frame). The format describes the
+frame's pixels; NV12 is the Y plane (`width` bytes per row) followed by the
+interleaved UV plane (`width` bytes per row, `height / 2` rows), with even
+width and height. MJPEG and custom YUV matrices are rejected by the sender. A
+frame's size is its own: the receiver does not require the requested one (the
+slim TV captures at it). A frame the sender cannot put in a message (too
+large, or the wrong pixels) is refused, cause `encoding` for an H.264 stream
+and `request` for raw.
 
 **H.264 stream** (`h264_hardware` or `h264_software`). Each payload is one
 access unit (Annex B, Baseline, progressive, one picture) of a frame whose
@@ -167,39 +209,46 @@ decoded pixels the header describes: limited-range BT.709 NV12 only, the
 webOS capture's native format. An encoder *session* starts with SPS, PPS and
 an IDR picture of the current frame, flagged *keyframe*; the receiver
 decodes it with a new decoder, so no reference crosses sessions. A session
-starts on each connection, after a resume and on a keyframe request; with
-the software encoder there are no other IDR pictures, since TCP loses
-nothing. Rate control may skip a frame (nothing is sent). Before OpenH264
-sees an access unit the receiver checks its NAL types and every SPS (size
-equal to the header's, Baseline, progressive, at most 1920x1088,
-limited-range BT.709 colour signal), and decodes into a reused `FramePool`
-frame, so the processor sees NV12 exactly as from a raw stream. A picture
-that does not decode (a lost reference, a corrupt picture, or a stream that
-does not start with a keyframe) is dropped, the receiver sends *keyframe*
-once and skips pictures until the next keyframe; a keyframe that does not
-decode drops the connection.
+starts on each connection and on a keyframe request; with the software
+encoder there are no other IDR pictures, since TCP loses nothing. Rate
+control may skip a frame (nothing is sent). Before OpenH264 sees an access
+unit the receiver checks its NAL types and every SPS (size equal to the
+header's, Baseline, progressive, at most 1920x1088, limited-range BT.709
+colour signal), and decodes into a reused `FramePool` frame, so the
+processor sees NV12 exactly as from a raw stream. A picture that does not
+decode (a lost reference, a corrupt picture, or a stream that does not start
+with a keyframe) is dropped, the receiver sends *keyframe* once and skips
+pictures until the next keyframe. A keyframe that does not decode fails the
+source at once with the decoder's error as the cause (the sender would send
+the same on every connection).
 
-- **Validation before allocation.** Format, flags, dimensions and the
-  payload's length against the header are checked before a frame is
-  allocated. The WebSocket bounds each message too: the sender reads at most
-  4 KiB, the receiver a header and the largest payload.
-- **Malformed input** (a bad header or length, invalid JSON, a keyframe that
-  does not decode) drops that connection without panicking, its cause logged
-  at debug level; the receiver waits for the sender to connect again.
-- **One sender at a time.** A new connection replaces the current one (it
-  closes), so a TV that restarts without closing its old socket is accepted
-  at once; a second TV takes over from the first, which then reconnects and
-  takes over again every second. A sender disconnecting is not an error.
+- **Validation before allocation.** Format, dimensions and the payload's
+  length against the header are checked before a frame is allocated. The
+  WebSocket bounds each message too: the sender reads at most 4 KiB, the
+  receiver a header and the largest payload. Either end drops a text
+  message over 4 KiB before parsing it.
+- **Malformed input** (a bad header or length, a message that is not JSON
+  or lacks a field) drops that connection without panicking, its cause
+  logged at debug level; the receiver waits for the sender to connect again.
+- **One sender at a time.** A new connection replaces the current one, which
+  is closed as *replaced*, so a TV that restarts without closing its old
+  socket is accepted at once. A slim TV that is replaced stops sending, so a
+  second TV takes over from the first and keeps the stream. A sender
+  disconnecting is not an error.
 - **Timeouts.** Sender: 3 s for the connection and the upgrade (with TLS),
   3 s for the request, 2 s per write (a receiver that stops reading fails
   the send). Receiver: reads wake every 50 ms to check for `close` and newer
-  connections; a quiet connection is kept open.
-- **Cost per frame.** 8 bytes of header (16 before version 4) plus the
-  WebSocket's 2 to 10 bytes of framing and the client's 4-byte mask key. The
-  sender builds each message in one reused buffer and the WebSocket copies it
-  into its write buffer, masking it there. The receiver's WebSocket reads it
-  into a message buffer; raw pixels are then copied once into a reused
-  `FramePool` frame, H.264 is decoded straight from the message.
+  connections; a quiet connection is kept open; 1 s per write. After
+  closing a connection as *stopped* or *replaced* it reads and discards the
+  sender's frames for up to 1 s, until the sender answers the close or the
+  connection ends: closing a socket with unread frames resets the
+  connection, which could lose the close code (through a TLS proxy, say).
+- **Cost per frame.** 8 bytes of header plus the WebSocket's 2 to 10 bytes of
+  framing and the client's 4-byte mask key. The sender builds each message
+  in one reused buffer and the WebSocket copies it into its write buffer,
+  masking it there. The receiver's WebSocket reads it into a message buffer;
+  raw pixels are then copied once into a reused `FramePool` frame, H.264 is
+  decoded straight from the message.
 - **Bandwidth.** Raw: the TV sends its capture tap's native limited BT.709
   NV12 without converting it; 320x180 NV12 at 30 fps is 86,408 bytes per
   frame (header included), about 20.7 Mbit/s; 640x360 about 83 Mbit/s. H.264

@@ -153,9 +153,9 @@ pub enum SlimWorker {
             schema(value_type = Option<crate::schema::SlimEncodingSchema>, nullable = false)
         )]
         encoding: Option<SlimEncoding>,
-        /// The receiver paused the stream because its lighting is off; the
-        /// TV capture is stopped until the receiver asks again. Not a
-        /// failure.
+        /// The receiver stopped the stream because its lighting is off; the
+        /// TV capture is released until a receiver takes a connection
+        /// again. Not a failure.
         paused: bool,
     },
     Stopping,

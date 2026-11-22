@@ -128,11 +128,11 @@ pub struct SlimStatus {
     /// receiver (always the one it requested).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoding: Option<SlimEncoding>,
-    /// The receiver paused the stream (its lighting is off), and the TV
-    /// capture is stopped until it asks for frames again. Not a failure:
-    /// `failure` is unset meanwhile.
+    /// The receiver stopped the stream (its lighting is off), and the TV
+    /// capture is released until a receiver takes a connection again. Not a
+    /// failure: `failure` is unset meanwhile.
     pub paused: bool,
-    /// The receiver wait, or the encoder or version failure.
+    /// The receiver wait, or the encoder, version or replaced failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<WorkerFailure>,
 }
@@ -217,9 +217,13 @@ pub enum FailureKind {
     /// reconnecting.
     Receiver,
     /// Slim: Prysm speaks another capture stream version than this TV app;
-    /// both need the same release. The worker retries slowly, so an update
+    /// the older one needs updating. The worker retries slowly, so an update
     /// on either side is picked up without restarting it.
     Version,
+    /// Slim: another sender (another TV) took over the stream at Prysm. The
+    /// worker released the capture and connects no more until it restarts
+    /// (capture stopped and started, the TV waking, or a new Prysm address).
+    Replaced,
     /// Anything else.
     Other,
 }

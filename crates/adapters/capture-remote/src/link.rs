@@ -1,9 +1,11 @@
 //! One WebSocket, either end: text messages (JSON commands and refusals)
 //! and binary messages (frames). The ends never see WebSocket types.
-use crate::wire::WireError;
+use crate::wire::{Close, MAX_TEXT_BYTES, WireError};
 use bytes::Bytes;
 use std::io::{ErrorKind, Read, Write};
+use std::time::{Duration, Instant};
 use tungstenite::protocol::WebSocketConfig;
+use tungstenite::protocol::frame::CloseFrame;
 use tungstenite::{Message, WebSocket};
 
 /// One message from the peer.
@@ -21,7 +23,8 @@ pub(crate) enum Outbound {
 /// Why a link ended.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LinkError {
-    /// The peer closed it, or sent what this end does not take.
+    /// The peer closed it (saying why, when it is a [`Close`]), or sent
+    /// what this end does not take.
     #[error(transparent)]
     Wire(#[from] WireError),
     #[error(transparent)]
@@ -64,19 +67,26 @@ impl<S: Read + Write> Link<S> {
     /// timeout (or, non-blocking, none is waiting).
     ///
     /// # Errors
-    /// The peer closed the link, or the socket failed.
+    /// The peer closed the link, sent a text message longer than
+    /// [`MAX_TEXT_BYTES`], or the socket failed.
     pub(crate) fn receive(&mut self) -> Result<Option<Inbound>, LinkError> {
         loop {
             match self.socket.read() {
+                Ok(Message::Text(text)) if text.len() > MAX_TEXT_BYTES => {
+                    return Err(WireError::TextTooLarge(text.len()).into());
+                }
                 Ok(Message::Text(text)) => {
                     return Ok(Some(Inbound::Text(text.as_str().to_owned())));
                 }
                 Ok(Message::Binary(message)) => return Ok(Some(Inbound::Binary(message))),
                 // Pongs are queued by the read and sent with the next write.
                 Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => {}
-                Ok(Message::Close(_))
-                | Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
-                    return Err(WireError::Closed.into());
+                Ok(Message::Close(frame)) => {
+                    let close = frame.and_then(|frame| Close::from_code(frame.code.into()));
+                    return Err(WireError::Closed(close).into());
+                }
+                Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
+                    return Err(WireError::Closed(None).into());
                 }
                 Err(tungstenite::Error::Io(error))
                     if matches!(
@@ -113,9 +123,33 @@ impl<S: Read + Write> Link<S> {
         Ok(self.socket.flush()?)
     }
 
-    /// Close the link, best effort.
-    pub(crate) fn close(&mut self) {
-        let _ = self.socket.close(None);
+    /// Close the link, best effort, with `close`'s code if given.
+    pub(crate) fn close(&mut self, close: Option<Close>) {
+        let frame = close.map(|close| CloseFrame {
+            code: close.code().into(),
+            reason: "".into(),
+        });
+        let _ = self.socket.close(frame);
         let _ = self.socket.flush();
+    }
+
+    /// After [`Self::close`]: read and discard what the peer still sends,
+    /// until it answers the close or the connection ends, for at most
+    /// `within` (reads wake at the socket's read timeout). Closing a socket
+    /// with unread input resets the connection, which can lose the close
+    /// before the peer reads it.
+    pub(crate) fn drain(&mut self, within: Duration) {
+        let deadline = Instant::now() + within;
+        while Instant::now() < deadline {
+            match self.socket.read() {
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(error))
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                    ) => {}
+                Err(_) => return,
+            }
+        }
     }
 }

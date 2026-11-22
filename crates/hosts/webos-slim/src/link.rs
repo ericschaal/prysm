@@ -2,7 +2,9 @@
 //! keeps reconnecting to the receiver, follows its request and tells the
 //! link whether frames flow.
 use futures::future::BoxFuture;
-use prysm_capture_remote::{RemoteSender, SendError, StreamEncoding, StreamRequest, WireError};
+use prysm_capture_remote::{
+    Close, RemoteSender, RemoteSettings, SendError, StreamEncoding, WireError,
+};
 use prysm_capture_webos::VideoSignal;
 use prysm_core::Frame;
 use prysm_ports::{Error, FrameSink, Result, chain};
@@ -40,7 +42,7 @@ pub struct Flow {
 struct Report {
     /// The receiver's latest request, kept while it is away: the capture
     /// follows it.
-    requested: Option<StreamRequest>,
+    requested: Option<RemoteSettings>,
     uplink: UplinkState,
 }
 
@@ -52,11 +54,10 @@ enum UplinkState {
     Starting,
     /// Connected; frames go out in this encoding.
     Sending(SlimEncoding),
-    /// The receiver paused the stream (its lighting is off): the capture
-    /// stops. The encoding while still connected. A receiver that pauses and
-    /// then closes the connection, as it does when lighting stops, leaves
-    /// the uplink paused until a receiver connects again.
-    Paused(Option<SlimEncoding>),
+    /// The receiver stopped the stream (its lighting is off, or its capture
+    /// settings changed): the capture is released until a receiver takes a
+    /// connection again.
+    Stopped,
     /// The receiver is unavailable, and why.
     Waiting(String),
     /// Prysm speaks another capture stream version, and which.
@@ -64,18 +65,11 @@ enum UplinkState {
     /// The requested encoder failed, and why; that request is refused until
     /// it changes.
     EncoderFailed(String),
-}
-
-impl UplinkState {
-    /// A connected `sink`: sending, or paused by the receiver.
-    fn connected(sink: &impl Upstream) -> Self {
-        let encoding = slim_encoding(sink.request().encoding);
-        if sink.paused() {
-            Self::Paused(Some(encoding))
-        } else {
-            Self::Sending(encoding)
-        }
-    }
+    /// Another sender replaced this one at the receiver, and how it was
+    /// told: the uplink no longer connects and the capture is released
+    /// until the worker restarts, so two TVs never take the stream from
+    /// each other in turn.
+    Replaced(String),
 }
 
 impl Flow {
@@ -84,23 +78,26 @@ impl Flow {
     }
 
     /// What to capture for: the receiver's latest request, kept while it is
-    /// away; `None` before the first connection and while it has paused
-    /// the stream.
-    pub fn wanted(&self) -> Option<StreamRequest> {
+    /// away; `None` before the first connection, while the receiver has
+    /// stopped the stream, while it speaks another version and once another
+    /// sender replaced this one.
+    pub fn wanted(&self) -> Option<RemoteSettings> {
         let report = self.lock();
         match report.uplink {
-            UplinkState::Paused(_) => None,
+            UplinkState::Stopped | UplinkState::VersionDiffers(_) | UplinkState::Replaced(_) => {
+                None
+            }
             _ => report.requested,
         }
     }
 
     /// The status fields the uplink owns, with `fps` frames sent per second
-    /// reported while sending. A paused stream is not a failure.
+    /// reported while sending. A stopped stream is `paused`, not a failure.
     fn status(&self, fps: u16) -> SlimStatus {
         let (fps, encoding, paused, failure) = match &self.lock().uplink {
             UplinkState::Starting => (None, None, false, None),
             UplinkState::Sending(encoding) => (Some(fps), Some(*encoding), false, None),
-            UplinkState::Paused(encoding) => (None, *encoding, true, None),
+            UplinkState::Stopped => (None, None, true, None),
             UplinkState::Waiting(why) => (
                 None,
                 None,
@@ -118,6 +115,12 @@ impl Flow {
                 None,
                 false,
                 Some(WorkerFailure::new(FailureKind::Encoder, why.clone())),
+            ),
+            UplinkState::Replaced(why) => (
+                None,
+                None,
+                false,
+                Some(WorkerFailure::new(FailureKind::Replaced, why.clone())),
             ),
         };
         SlimStatus {
@@ -144,21 +147,19 @@ pub fn slim_encoding(encoding: StreamEncoding) -> SlimEncoding {
     }
 }
 
-/// One connection to the receiver, with the receiver's request; the
-/// receiver can pause it.
+/// One connection to the receiver, with the receiver's request.
 pub trait Upstream: Send {
-    fn request(&self) -> StreamRequest;
-    /// The receiver does not want frames; `deliver` drops them.
-    fn paused(&self) -> bool;
+    fn request(&self) -> RemoteSettings;
     /// Send one frame.
     ///
     /// # Errors
-    /// The requested encoder failed, or the connection did.
+    /// This end refused the request (its encoder failed), or the connection
+    /// failed or was closed.
     fn deliver(&mut self, frame: &Frame) -> std::result::Result<(), SendError>;
-    /// No frame: read the receiver's pause and resume.
+    /// No frame: read the receiver's messages, and so its close.
     ///
     /// # Errors
-    /// The connection failed.
+    /// The connection failed or was closed.
     fn tick(&mut self) -> Result<()>;
     /// Tell the receiver its requested encoding cannot be produced (the
     /// encoder failed), and end the stream.
@@ -166,11 +167,8 @@ pub trait Upstream: Send {
 }
 
 impl Upstream for RemoteSender {
-    fn request(&self) -> StreamRequest {
+    fn request(&self) -> RemoteSettings {
         RemoteSender::request(self)
-    }
-    fn paused(&self) -> bool {
-        RemoteSender::paused(self)
     }
     fn deliver(&mut self, frame: &Frame) -> std::result::Result<(), SendError> {
         RemoteSender::deliver(self, frame)
@@ -192,19 +190,29 @@ impl Upstream for RemoteSender {
 /// which the capture follows; the frame that opens a connection is dropped,
 /// since it was captured before the request was known.
 ///
-/// A receiver that pauses the stream (its lighting is off) stops the
-/// capture through [`Flow::wanted`]; ticks keep reading its control
-/// messages, so a resume starts it again. A receiver that pauses and then
-/// closes (lighting stopped) leaves the capture stopped until a receiver
-/// connects again; one that vanishes without pausing (a crash, the
-/// network) leaves it running.
+/// A receiver that closes the stream as stopped (its lighting is off)
+/// stops the capture through [`Flow::wanted`] until a receiver takes a
+/// connection again; ticks keep reading its messages while nothing is
+/// captured, so the close is seen. One that vanishes without saying so (a
+/// crash, the network) leaves the capture running.
+///
+/// A receiver that closes the stream as replaced (another sender took it
+/// over) stops the uplink: it releases the capture, reports a failure of
+/// kind `replaced` and connects no more. That is this process's state, so it
+/// lasts until the worker restarts: capture stopped and started in the TV
+/// app, the TV waking from standby, a new Prysm address, or a restart after
+/// a failure. The replaced connection is always the live one: the uplink
+/// drops a failed connection, closing its socket, before it connects again,
+/// so a TV that reconnects after a network drop never hears its own old
+/// connection replaced.
 ///
 /// A Prysm of another capture stream version ([`WireError::Version`]) is
-/// reported as such and retried only every [`VERSION_RECONNECT`]: it lasts
-/// until one side is updated.
+/// reported as such, replacing a stopped stream or an encoder failure (they
+/// came from the Prysm before its update), and retried only every
+/// [`VERSION_RECONNECT`]: it lasts until one side is updated.
 ///
-/// An encoder failure ([`SendError::Encoder`]: the requested encoder cannot
-/// start or failed) is reported as such, and every later connection
+/// A refusal ([`SendError::Refused`]: the requested encoder cannot start or
+/// failed) is reported as an encoder failure, and every later connection
 /// with the same request is refused with that reason (the receiver shows
 /// it) until the receiver asks for something else. There is no switch to
 /// another encoder.
@@ -216,7 +224,7 @@ pub struct Uplink<S, C> {
     version_retry: Duration,
     flow: Arc<Flow>,
     /// The request whose encoder failed, and why.
-    failed: Option<(StreamRequest, String)>,
+    failed: Option<(RemoteSettings, String)>,
 }
 
 impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
@@ -242,9 +250,12 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
     }
 
     /// Connect unless an attempt was made within [`RECONNECT`], or within
-    /// [`VERSION_RECONNECT`] after Prysm answered with another version.
+    /// [`VERSION_RECONNECT`] after Prysm answered with another version;
+    /// never once replaced.
     fn reconnect(&mut self) {
-        if self.retry_at.is_some_and(|at| Instant::now() < at) {
+        if self.retry_at.is_some_and(|at| Instant::now() < at)
+            || matches!(self.flow.lock().uplink, UplinkState::Replaced(_))
+        {
             return;
         }
         self.retry_at = Some(Instant::now() + self.retry);
@@ -255,18 +266,17 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
                 if versions_differ {
                     self.retry_at = Some(Instant::now() + self.version_retry);
                 }
+                let why = format!("waiting for the receiver: {}", chain(&error));
                 let mut report = self.flow.lock();
-                // A paused receiver or a failed encoder is still the news.
-                if !matches!(
+                if versions_differ {
+                    // Prysm was updated: what it said before no longer holds.
+                    report.uplink = UplinkState::VersionDiffers(why);
+                } else if !matches!(
                     report.uplink,
-                    UplinkState::Paused(_) | UplinkState::EncoderFailed(_)
+                    UplinkState::Stopped | UplinkState::EncoderFailed(_)
                 ) {
-                    let why = format!("waiting for the receiver: {}", chain(&error));
-                    report.uplink = if versions_differ {
-                        UplinkState::VersionDiffers(why)
-                    } else {
-                        UplinkState::Waiting(why)
-                    };
+                    // A stopped receiver or a failed encoder is still the news.
+                    report.uplink = UplinkState::Waiting(why);
                 }
                 return;
             }
@@ -275,6 +285,8 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         if let Some((failed, reason)) = &self.failed {
             if *failed == request {
                 sink.refuse_encoding(reason);
+                // The failure is the news again, whatever was shown meanwhile.
+                self.flow.lock().uplink = UplinkState::EncoderFailed(reason.clone());
                 return;
             }
             self.failed = None;
@@ -286,22 +298,25 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         self.sink = Some(sink);
     }
 
-    /// The connection ended: wait for the receiver, or remember an encoder
-    /// failure. A receiver that paused before closing stays paused.
+    /// The connection ended, and its socket closes: remember an encoder
+    /// failure, stop as the receiver said, or wait for it.
     fn lost(&mut self, error: SendError) {
         let Some(sink) = self.sink.take() else {
             return;
         };
         self.flow.lock().uplink = match error {
-            SendError::Encoder(error) => {
+            SendError::Refused(error) => {
                 let reason = chain(&error);
                 self.failed = Some((sink.request(), reason.clone()));
                 UplinkState::EncoderFailed(reason)
             }
-            SendError::Connection(_) if sink.paused() => UplinkState::Paused(None),
-            SendError::Connection(error) => {
-                UplinkState::Waiting(format!("waiting for the receiver: {}", chain(&error)))
-            }
+            SendError::Connection(error) => match wire_cause(&error) {
+                Some(WireError::Closed(Some(Close::Stopped))) => UplinkState::Stopped,
+                Some(WireError::Closed(Some(Close::Replaced))) => {
+                    UplinkState::Replaced(chain(&error))
+                }
+                _ => UplinkState::Waiting(format!("waiting for the receiver: {}", chain(&error))),
+            },
         };
     }
 }
@@ -314,46 +329,50 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
         };
         match sink.deliver(frame) {
             Ok(()) => {
-                if !sink.paused() {
-                    self.flow.sent.fetch_add(1, Ordering::Relaxed);
-                }
-                self.flow.lock().uplink = UplinkState::connected(sink);
+                self.flow.sent.fetch_add(1, Ordering::Relaxed);
             }
             Err(error) => self.lost(error),
         }
         Ok(())
     }
 
-    /// Reconnect, or read the receiver's pause and resume while the
-    /// capture delivers nothing (it is stopped while paused).
+    /// Reconnect, or read the receiver's messages while the capture
+    /// delivers nothing.
     fn tick(&mut self) -> Result<()> {
         let Some(sink) = &mut self.sink else {
             self.reconnect();
             return Ok(());
         };
-        match sink.tick() {
-            Ok(()) => self.flow.lock().uplink = UplinkState::connected(sink),
-            Err(error) => self.lost(SendError::Connection(error)),
+        if let Err(error) = sink.tick() {
+            self.lost(SendError::Connection(error));
         }
         Ok(())
     }
 }
 
+/// The wire cause of an uplink error, if it has one.
+fn wire_cause(error: &Error) -> Option<&WireError> {
+    match error {
+        Error::Adapter {
+            source: Some(source),
+            ..
+        } => source.downcast_ref(),
+        _ => None,
+    }
+}
+
 /// Whether `error` is Prysm answering with another capture stream version.
 fn is_version_mismatch(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::Adapter { source: Some(source), .. }
-            if matches!(source.downcast_ref::<WireError>(), Some(WireError::Version { .. }))
-    )
+    matches!(wire_cause(error), Some(WireError::Version { .. }))
 }
 
 /// `Surface<()>`: video commands into the capture, frame flow out as status:
 /// `capturing` while frames are delivered, `fps` (frames sent per second)
 /// while sending, `encoding` while connected,
-/// `paused` while the receiver paused the stream, `failure` naming the
-/// encoder failure, Prysm's other capture stream version, or else the wait
-/// while the receiver is unavailable.
+/// `paused` while the receiver has stopped the stream, `failure` naming the
+/// encoder failure, the sender that replaced this one, Prysm's other
+/// capture stream version, or else the wait while the receiver is
+/// unavailable.
 /// `Lighting` is protocol misuse here and stops the worker as failed.
 pub struct ForwarderLink {
     link: Link,
