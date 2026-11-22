@@ -26,7 +26,7 @@ from prysm_acceptance.bench import only
 from prysm_acceptance.checks import Answer, Bench, Failed, Skipped, ask_person, tell_person
 from prysm_acceptance.config import Config
 from prysm_acceptance.host import Host, Sender, shown
-from prysm_acceptance.host_cells import Clip, Record, processed
+from prysm_acceptance.host_cells import Clip, Record, screen_sync
 from prysm_acceptance.options import Flavour, TvCell
 from prysm_acceptance.prysm_api import Prysm, SessionState, Target, near, rates
 from prysm_acceptance.tv import Encoding, Power, Tv, Video
@@ -272,7 +272,7 @@ def ask_for(prysm: Prysm, section: JsonObject) -> None:
     """Save `section` as the capture and light WLED (Screen sync); fails unless both are accepted and frames
     come within 30 s."""
     _capture_saved(prysm, section)
-    processed(prysm, seconds=30)
+    screen_sync(prysm, seconds=30)
 
 
 def state_plan(found: Tv, wanted: Shown, config: Config, include_ui: bool = False) -> list[str]:
@@ -297,7 +297,7 @@ def state_plan(found: Tv, wanted: Shown, config: Config, include_ui: bool = Fals
             else ''
         ),
         f'PUT /api/v1/settings capture {width}x{height}@{fps} ' + ('with' if include_ui else 'without') + ' the UI, '
-        'PUT /api/v1/target processed, running with frames within 30 s',
+        'PUT /api/v1/target screen_sync, running with frames within 30 s',
         f'GET /api/v1/preview/stream: the frames that arrive are {size}',
         '(any part not reached fails the check, saying which)',
     ]
@@ -443,7 +443,7 @@ def test_offer(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> No
     does=lambda found, cell, config: [
         *state_plan(found, Shown.VIDEO, config),
         f'for each encoding: PUT /api/v1/settings remote capture {CAPTURE[0]}x{CAPTURE[1]}@{CAPTURE[2]}, PUT '
-        f'/api/v1/target processed, GET /api/v1/state every second for {config.checks.seconds} s, '
+        f'/api/v1/target screen_sync, GET /api/v1/state every second for {config.checks.seconds} s, '
         'GET /api/v1/preview/stream (the size that arrives)',
         *shown(found.sample_command(), found.state_command()),
         'PUT /api/v1/target off',
@@ -491,7 +491,7 @@ def test_encodings(cell: TvCell, config: Config, screen: Screen, prysm: Prysm, r
         *state_plan(found, Shown.VIDEO, config),
         'PUT /api/v1/target off',
         *shown(found.state_command()),
-        'PUT /api/v1/target processed',
+        'PUT /api/v1/target screen_sync',
     ]
 )
 def test_pause_resume(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> None:
@@ -502,7 +502,7 @@ def test_pause_resume(cell: TvCell, screen: Screen, prysm: Prysm, record: Record
     start = time.monotonic()
     paused = tv.wait_state(screen.tv.get_state, lambda s: tv.paused(s) and not tv.capturing(s), 15)
     paused_after = round(time.monotonic() - start, 1)
-    prysm.set_target(Target.PROCESSED)
+    prysm.set_target(Target.SCREEN_SYNC)
     start = time.monotonic()
     resumed = tv.wait_state(screen.tv.get_state, lambda s: tv.capturing(s) and not tv.paused(s), 20)
     evidence: dict[str, object] = {
@@ -591,7 +591,7 @@ def _quiet(prysm: Prysm, found: Tv, seconds: float) -> dict[str, object]:
                 'session': prysm_api.session(state),
                 'running': prysm_api.running(state),
                 'input': state.get('input'),
-                'failure': state.get('failure'),
+                'failure': prysm_api.failure(state),
                 'tv_failure': tv_state.get('failure'),
                 'tv_capturing': tv.capturing(tv_state),
             }
@@ -611,7 +611,7 @@ def _quiet(prysm: Prysm, found: Tv, seconds: float) -> dict[str, object]:
     does=lambda found, cell, config: [
         'the UI state, as above, without frames to wait for:',
         *state_plan(found, Shown.UI, config, include_ui=False)[:4],
-        f'PUT /api/v1/target processed; for {QUIET_SECONDS} s every second GET /api/v1/state and:',
+        f'PUT /api/v1/target screen_sync; for {QUIET_SECONDS} s every second GET /api/v1/state and:',
         *shown(found.state_command()),
         'GET /api/v1/preview/stream: no frame',
         'then the capture with the UI again: running with frames within 30 s, of the UI size',
@@ -625,9 +625,9 @@ def test_ui_off(cell: TvCell, screen: Screen, prysm: Prysm, record: Record) -> N
     reached = screen.confirm(Shown.UI)
     with stated(reached):
         _capture_saved(prysm, _ui_section(cell, include_ui=False))
-        reply = prysm.set_target(Target.PROCESSED)
+        reply = prysm.set_target(Target.SCREEN_SYNC)
         if reply.status != 204:
-            raise Failed(f'PUT /api/v1/target processed: HTTP {reply.status}', reply.json())
+            raise Failed(f'PUT /api/v1/target screen_sync: HTTP {reply.status}', reply.json())
         quiet = _quiet(prysm, screen.tv, QUIET_SECONDS)
     back = in_state(screen, Shown.UI, prysm, _ui_section(cell))
     record(

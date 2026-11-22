@@ -14,7 +14,7 @@ Calibrating uses two small pieces, not a session:
   the steps are independent.
 - **The pattern** the TV shows is engine state beside the target:
   `PUT /api/v1/calibration` with `{ pattern, uncorrected }`, cleared by
-  `DELETE`. It needs Screen sync on (`409 not_processed` otherwise) and never
+  `DELETE`. It needs Screen sync on (`409 needs_screen_sync` otherwise) and never
   starts it. While set, the processor runs without smoothing, and without the
   active calibration when `uncorrected` is true. It clears when the target leaves
   Screen sync, at shutdown, and 10 minutes after the last `PUT`.

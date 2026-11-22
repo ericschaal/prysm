@@ -24,7 +24,7 @@ fn bad_arguments_exit_with_usage() {
 fn spawn(settings: &std::path::Path) -> std::process::Child {
     Command::new(BINARY)
         .args(["--settings", settings.to_str().unwrap()])
-        .args(["--listen", "127.0.0.1:0", "--lighting", "off"])
+        .args(["--listen", "127.0.0.1:0", "--target", "off"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

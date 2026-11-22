@@ -11,6 +11,7 @@
 | Supervised TV worker process | A hung vendor capture call is recovered only by killing its process. |
 | [Two TV packages, explicit stream encoding](2026-11-12-two-tv-packages.md) | No in-app mode switch; an encoder failure is reported, not hidden by a fallback. |
 | [Strict settings, tolerant wire messages](2026-11-22-strict-settings-tolerant-wire.md) | A typo in a settings file is caught; a TV and a desktop of different minor releases still work together. |
+| [Open response enums, closed request enums](2026-11-22-open-response-enums.md) | A minor release may add a value Prysm sends, read as the contract states, never as off; a value Prysm cannot carry out is refused. |
 | Portal on the LAN without a password; foreign origins refused | Simple LAN use; protects against other web pages, not against the network ([access](../../../crates/surfaces/web-portal/HTTP-CONTRACT.md#access)). |
 
 Earlier choices that no longer apply: the Host allowlist (`PRYSM_ALLOWED_HOSTS`),

@@ -43,9 +43,9 @@ pub enum Command {
     /// Input, app or picture mode changed: reopen the native tap. (A struct
     /// variant, so unknown fields are rejected like everywhere else.)
     ResetVideo {},
-    /// Full only: the TV UI's enable/disable. A slim worker treats it as
-    /// protocol misuse and exits [`exit::FAILED`].
-    Lighting { target: LightingTarget },
+    /// Full only: the lighting target the TV app chose. A slim worker treats
+    /// it as protocol misuse and exits [`exit::FAILED`].
+    Target { target: LightingTarget },
 }
 
 /// The TV's main video output, as Luna `videooutput/getStatus` reports the

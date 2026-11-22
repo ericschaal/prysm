@@ -21,8 +21,8 @@ class Target(StrEnum):
     """What Prysm's lights do: `PUT /api/v1/target`."""
 
     OFF = 'off'
-    PROCESSED = 'processed'
-    DEVICE_NATIVE = 'device_native'
+    SCREEN_SYNC = 'screen_sync'
+    EFFECTS = 'effects'
 
 
 # Settings stay opaque JSON: the checks read and change a few fields (`section`)
@@ -70,19 +70,25 @@ class SessionState(StrEnum):
     """What the runtime is doing: `State.session.state`."""
 
     STOPPED = 'stopped'
-    RUNNING = 'running'
-    NATIVE = 'native'
+    SCREEN_SYNC = 'screen_sync'
+    EFFECTS = 'effects'
     FAULTED = 'faulted'
-
-
-class Session(TypedDict):
-    state: SessionState
 
 
 class Failure(TypedDict, total=False):
     kind: str
     message: str
     field: str
+    section: str
+
+
+class Session(TypedDict):
+    """`State.session`: `failure` only while stopped or showing the lights' effects, `message` only while
+    faulted."""
+
+    state: SessionState
+    failure: NotRequired[Failure]
+    message: NotRequired[str]
 
 
 class Device(TypedDict, total=False):
@@ -103,7 +109,6 @@ class State(TypedDict, total=False):
     session: Session
     input: Input | None
     device: Device
-    failure: Failure
 
 
 class Candidate(TypedDict):
@@ -257,8 +262,13 @@ def session(state: State | None) -> SessionState | None:
     return (state or State()).get('session', cast('Session', {})).get('state')
 
 
+def failure(state: State | None) -> Failure | None:
+    """The failure the session carries, if any."""
+    return (state or State()).get('session', cast('Session', {})).get('failure')
+
+
 def running(state: State) -> bool:
-    return session(state) == SessionState.RUNNING and (state.get('input') or Input()).get('receiving', False)
+    return session(state) == SessionState.SCREEN_SYNC and (state.get('input') or Input()).get('receiving', False)
 
 
 def rates(samples: Sequence[Input | None]) -> Rates:

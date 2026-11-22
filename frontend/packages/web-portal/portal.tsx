@@ -88,9 +88,11 @@ function pathOf(lighting: LightingSituation): PathState {
     }
     case 'effects':
       return { kind: 'effects' };
-    // The path shows a start as off until the session runs.
+    // The path shows a start as off until the session runs, and a state
+    // newer than this page as nothing it can name.
     case 'starting':
     case 'off':
+    case 'unknown':
       return { kind: 'off' };
   }
 }
@@ -170,8 +172,8 @@ function PortalFrame() {
     lighting,
     path,
     problemAt: (section) =>
-      path.kind === 'failed' && path.at === section && snapshot.failure
-        ? plainFailure(snapshot.failure, snapshot.target, 'Device effects')
+      lighting.kind === 'failed' && lighting.at === section
+        ? plainFailure(lighting.failure, snapshot.target, 'Device effects')
         : null,
     saveProcessing: (expected, processing) =>
       dispatch(commands.configureProcessing(expected, processing)),
@@ -226,7 +228,7 @@ function SetupPage({ close }: { close: (notice: string) => void }) {
             save={(expected, capture, value) =>
               dispatch(commands.configureSetup(expected, capture, value))
             }
-            start={() => dispatch(commands.setTarget('processed'))}
+            start={() => dispatch(commands.setTarget('screen_sync'))}
             close={close}
           />
         </CaptureModesContext>

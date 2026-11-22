@@ -224,8 +224,8 @@ def smoke(args, remote):
         passed('malformed request rejected')
         assert remote.luna('getState', {'subscribe': True})['subscribed'] is True
         passed('subscription acknowledged')
-        for method, payload in (('setEnabled', {'enabled': True}), ('setPreferences', {'autostart': False}),
-                                ('uninstall', {})):
+        for method, payload in (('setTarget', {'target': 'screen_sync'}), ('setEnabled', {'enabled': True}),
+                                ('setPreferences', {'autostart': False}), ('uninstall', {})):
             assert remote.luna(method, payload)['returnValue'] is False, method
         passed('mutations refused without the app identity')
 
@@ -265,7 +265,10 @@ def exercise_worker(args, remote, state, directory, worker):
         assert value['returnValue'] is True and value['preferences']['instance'] == prysm, value
         passed('setPreferences persisted')
         remote.run(f'test -f {directory}/state/tv.json')
-    value = remote.luna('setEnabled', {'enabled': True}, **app)
+    if args.flavour == 'slim':
+        value = remote.luna('setEnabled', {'enabled': True}, **app)
+    else:
+        value = remote.luna('setTarget', {'target': 'screen_sync'}, **app)
     assert value['returnValue'] is True, value
     def running(value):
         return value['worker']['phase'] == 'running'

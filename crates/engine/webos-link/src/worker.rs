@@ -567,7 +567,7 @@ mod tests {
                     Event::Status(WorkerStatus::Full(FullStatus {
                         capturing: true,
                         fps: Some(u16::MAX),
-                        target: prysm_ports::LightingTarget::DeviceNative,
+                        target: prysm_ports::LightingTarget::Effects,
                         portal: Some(text.clone()),
                         failure: failure(),
                     })),

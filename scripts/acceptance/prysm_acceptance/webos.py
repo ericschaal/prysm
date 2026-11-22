@@ -32,19 +32,19 @@ class Preferences(TypedDict, total=False):
 
 class LunaReply(tv.State, total=False):
     """A Luna reply; `getState`'s fields (the service's state) as the checks read them. The package's intent is
-    `lighting` in the full package and `enabled` in the slim one; each has only its own."""
+    `target` in the full package and `enabled` in the slim one; each has only its own."""
 
     returnValue: bool  # noqa: N815 -- Luna's field name (Ruff exempts it only on a direct TypedDict)
     errorText: str  # noqa: N815 -- Luna's field name
     flavor: Flavour
     preferences: Preferences
-    lighting: Target
+    target: Target
     enabled: bool
 
 
 # What a backup keeps of `getState`, per package: its flavour, preferences and intent.
 BACKED_UP: dict[Flavour, tuple[str, ...]] = {
-    Flavour.FULL: ('flavor', 'preferences', 'lighting'),
+    Flavour.FULL: ('flavor', 'preferences', 'target'),
     Flavour.SLIM: ('flavor', 'preferences', 'enabled'),
 }
 

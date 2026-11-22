@@ -28,7 +28,7 @@ async fn enabled_metrics_count_frames_and_follow_the_origin_policy() {
             true,
         )
         .await;
-        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.target("screen_sync").await.0, StatusCode::NO_CONTENT);
         // The counters the endpoint renders, not the fake's log: a write is
         // logged before its frame is counted.
         eventually_async("three counted frames", LIMIT, || {
@@ -49,8 +49,8 @@ async fn enabled_metrics_count_frames_and_follow_the_origin_policy() {
         assert_secure(&response);
         let text = response.text().await.unwrap();
         assert!(text.contains("# TYPE prysm_frames_received_total counter\n"));
-        assert!(text.contains("prysm_target{target=\"processed\"} 1\n"));
-        assert!(text.contains("prysm_session_state{state=\"running\"} 1\n"));
+        assert!(text.contains("prysm_target{target=\"screen_sync\"} 1\n"));
+        assert!(text.contains("prysm_session_state{state=\"screen_sync\"} 1\n"));
         assert!(text.contains("prysm_source_opens_total 1\n"));
         let received = text
             .lines()

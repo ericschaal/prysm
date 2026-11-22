@@ -17,11 +17,11 @@ async fn state_read_and_set_target() {
         assert_eq!(state["settings"]["capture"]["kind"], "fake");
         assert!(state.get("failure").is_none(), "{state}");
 
-        let (status, _) = portal.target("processed").await;
+        let (status, _) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         let state = portal.state().await;
-        assert_eq!(state["target"], "processed");
-        assert_eq!(state["session"]["state"], "running");
+        assert_eq!(state["target"], "screen_sync");
+        assert_eq!(state["session"]["state"], "screen_sync");
         assert!(portal.log.wait_for("output.write:", 1).await);
 
         let (status, _) = portal.target("off").await;
@@ -161,11 +161,11 @@ async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
         // Lighting must be on first.
         let (status, body) = put(gray.clone()).await;
         assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(body["kind"], "not_processed");
+        assert_eq!(body["kind"], "needs_screen_sync");
         assert!(body.get("field").is_none());
         assert!(portal.state().await.get("calibration").is_none());
 
-        portal.target("processed").await;
+        portal.target("screen_sync").await;
         let before = portal.state().await;
         let (status, _) = put(gray.clone()).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -228,7 +228,7 @@ async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
         assert_eq!(cleared.status(), StatusCode::NO_CONTENT);
         assert!(portal.state().await.get("calibration").is_none());
 
-        // Leaving processed lighting clears it.
+        // Leaving screen sync clears it.
         assert_eq!(put(gray.clone()).await.0, StatusCode::NO_CONTENT);
         portal.target("off").await;
         let state = portal.state().await;
@@ -251,7 +251,7 @@ async fn a_processing_trial_applies_without_saving() {
 
         // Accepted with lighting off or on; nothing saved, no new revision.
         assert_eq!(put(processing.clone()).await.0, StatusCode::NO_CONTENT);
-        portal.target("processed").await;
+        portal.target("screen_sync").await;
         assert_eq!(put(processing.clone()).await.0, StatusCode::NO_CONTENT);
         let state = portal.state().await;
         assert_eq!(state["revision"], before["revision"]);
@@ -305,7 +305,7 @@ async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
             ..fakes::settings()
         };
         let portal = start(failing, Duration::from_secs(5)).await;
-        let (status, body) = portal.target("processed").await;
+        let (status, body) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(
             body,
@@ -315,9 +315,15 @@ async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
                 "section": "capture",
             })
         );
-        assert_eq!(portal.state().await["failure"]["kind"], "adapter");
+        assert_eq!(
+            portal.state().await["session"]["failure"]["kind"],
+            "adapter"
+        );
         // The state says the same side, for the portal's Video stop.
-        assert_eq!(portal.state().await["failure"]["section"], "capture");
+        assert_eq!(
+            portal.state().await["session"]["failure"]["section"],
+            "capture"
+        );
         portal.shutdown().await.unwrap();
 
         // The output opens at the first frame: its failure ends the session
@@ -327,22 +333,25 @@ async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
             ..FakeOutputSettings::default()
         });
         let portal = start(failing, Duration::from_secs(5)).await;
-        let (status, _) = portal.target("processed").await;
+        let (status, _) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         portal
             .engine
             .snapshot()
-            .wait_for(|snapshot| snapshot.failure.is_some())
+            .wait_for(|snapshot| snapshot.session.failure().is_some())
             .await
             .unwrap();
         let state = portal.state().await;
-        assert_eq!(state["failure"]["kind"], "adapter");
-        assert_eq!(state["failure"]["message"], "fake output cannot open");
-        assert_eq!(state["failure"]["section"], "output");
+        assert_eq!(state["session"]["failure"]["kind"], "adapter");
+        assert_eq!(
+            state["session"]["failure"]["message"],
+            "fake output cannot open"
+        );
+        assert_eq!(state["session"]["failure"]["section"], "output");
         portal.shutdown().await.unwrap();
 
         let portal = start(Settings::default(), Duration::from_secs(5)).await;
-        let (status, body) = portal.target("processed").await;
+        let (status, body) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["field"], "capture");
         portal.shutdown().await.unwrap();

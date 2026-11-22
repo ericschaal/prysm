@@ -56,26 +56,34 @@ has one reading.
 
 | Where | Field | Newer value read as |
 | --- | --- | --- |
-| State stream (`decodeState` in `application-client/http.ts`) | `target` | `off` |
-| | `session.state` | `stopped` (a faulted session's newer `phase` is kept and not named) |
+| State stream (`decodeState` in `application-client/http.ts`) | `target` | `unknown`: no mode is selected; a known one can still be chosen |
+| | `session.state` | `unknown`, keeping a `failure` or `message` it carries |
 | Preview and colors streams | event `type` | skipped |
 | Light card, TV lights card | `device.issue` | "The lights are not showing screen sync." |
 | TV service (`decodeState` in `webos-platform`) | `power`, `video` | `unknown` |
 | | `failure.kind` | `other` |
-| | full `lighting` | `off` |
-| | worker `phase` | stopped |
+| | full `target` | `unknown` |
+| | worker `phase` | `unknown`: "Updating…", with no start or stop |
 | | slim link `state` | starting |
 | | slim `encoding` | kept, shown as sent |
 | TV calibration screen | `calibration.pattern` | the waiting pattern |
 
-Anything else malformed ends the stream or the reply (`Invalid state
-event.`, `invalid_reply`). What the lights are doing is decided once, by
-`lightingSituation` (`application-client`): faulted, off, failed, screen sync,
-effects or starting, in that order. Off keeps a failure (settings that could
-not be applied, a switch off that failed): the light card and the TV's lights
-card say it, while the setup path, the section pages and the full package's
-status headline read off as off. All of them read that one situation, and
-`describeSituation` gives its words.
+No value is read as off or stopped
+([decision](decisions/2026-11-22-open-response-enums.md)). Anything else
+malformed ends the stream or the reply (`Invalid state event.`,
+`invalid_reply`). What the lights are doing is decided once, by
+`lightingSituation` (`application-client`) from the target and the session
+(with the failure it carries), in this order: faulted, unknown (a target or
+session state newer than the page), off, reached (`session.state` equals the
+target: screen sync or effects), failed (the session carries a failure),
+starting. Every pair lands on exactly one. Screen sync never carries a
+failure; effects carry one only for saved settings that do not validate (a
+note on the light card). Off keeps a stopped session's failure (settings
+that could not be applied, a switch off that failed): the light card and
+the TV's lights card say it, while the setup path, the section pages and the
+full package's status headline read off as off. A faulted session's
+`message` (what did not finish) is under Details. All of them read that one
+situation, and `describeSituation` gives its words.
 
 ## Saving from a page
 

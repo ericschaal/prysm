@@ -17,7 +17,8 @@ pub const MAX_BYTES: usize = 65_536;
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Preferences {
-    /// Start enabled (full: processed lighting) when the service starts.
+    /// Start when the service starts: the full package starts screen sync,
+    /// the slim package streams to its receiver.
     #[serde(default)]
     pub autostart: bool,
     /// Slim only: the headless Prysm's address, such as
@@ -298,8 +299,8 @@ mod tests {
         fs::write(&boot, "boot-1\n").unwrap();
         let mut store = FileStore::new(dir.path().join("tv.json")).with_boot_id(&boot);
         assert_eq!(store.resume(), None);
-        store.remember(LightingTarget::DeviceNative).unwrap();
-        assert_eq!(store.resume(), Some(LightingTarget::DeviceNative));
+        store.remember(LightingTarget::Effects).unwrap();
+        assert_eq!(store.resume(), Some(LightingTarget::Effects));
         assert_eq!(
             fs::metadata(dir.path().join("resume.json"))
                 .unwrap()
@@ -314,7 +315,7 @@ mod tests {
         // Without a boot id nothing is kept.
         let mut store =
             FileStore::new(dir.path().join("tv.json")).with_boot_id(dir.path().join("missing"));
-        store.remember(LightingTarget::Processed).unwrap();
+        store.remember(LightingTarget::ScreenSync).unwrap();
         assert_eq!(store.resume(), None);
     }
 

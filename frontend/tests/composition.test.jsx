@@ -71,12 +71,14 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
         'capture is set in the portal only',
       );
       assert.equal(!!document.getElementById('instance'), flavor === 'slim');
-      await act(async () => document.getElementById('mode-processed').click());
-      assert.equal(fixture.snapshot().target, 'processed');
+      await act(async () =>
+        document.getElementById('mode-screen_sync').click(),
+      );
+      assert.equal(fixture.snapshot().target, 'screen_sync');
       await act(async () => root.unmount());
       // Leaving the UI releases the streams and never turns lighting off.
       assert(fixture.calls.includes('unsubscribe'));
-      assert.equal(fixture.snapshot().target, 'processed');
+      assert.equal(fixture.snapshot().target, 'screen_sync');
       assert.equal(supervisor.subscribers(), 0);
     } finally {
       dom.window.close();
@@ -113,10 +115,10 @@ test('embedded TV and browser portal share one application; either may close', a
       );
     });
     await act(async () => sleep(5));
-    await act(async () => document.getElementById('mode-processed').click());
+    await act(async () => document.getElementById('mode-screen_sync').click());
     assert.equal(
       browser.selectors.selectSnapshot(browser.store.getState()).target,
-      'processed',
+      'screen_sync',
     );
     await act(async () => tvRoot.unmount());
     tvClosed = true;
@@ -129,7 +131,7 @@ test('embedded TV and browser portal share one application; either may close', a
       ),
     );
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.44');
-    assert.equal(fixture.snapshot().target, 'processed');
+    assert.equal(fixture.snapshot().target, 'screen_sync');
     assert(!fixture.calls.includes('target:off'));
   } finally {
     if (!tvClosed) await act(async () => tvRoot.unmount());

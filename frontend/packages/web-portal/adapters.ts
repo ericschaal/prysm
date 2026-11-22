@@ -18,7 +18,7 @@ export interface EditorProps<S> {
 
 /** What the lighting controls offer for a configured output. */
 export interface OutputLighting {
-  /** Label of the device's own effects (`device_native`); absent if it has none. */
+  /** Label of the device's own effects (the target `effects`); absent if it has none. */
   effects?: string;
   /** A link to the device's own interface. */
   link?: { label: string; href: string };

@@ -127,7 +127,7 @@ for (const flavor of ['full', 'slim'] as const) {
 async function lightsOn(page: Page, flavor: Flavor) {
   await openTv(page, flavor, { focus: start[flavor] });
   if (flavor === 'full') {
-    await pressUntil(page, 'ArrowLeft', 'mode-processed');
+    await pressUntil(page, 'ArrowLeft', 'mode-screen_sync');
     await press(page, 'Enter');
     await expect(page.locator('#status-title')).toHaveText('Screen sync on');
   } else {

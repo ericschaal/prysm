@@ -23,15 +23,32 @@ declare const captureModes: CaptureModesClient;
 
 // @ts-expect-error The generated state carries revisions as numbers.
 const revision: State['revision'] = '1';
-// @ts-expect-error Faulted sessions name the phase that did not finish.
+// @ts-expect-error Faulted sessions say what did not finish.
 const faulted: State['session'] = { state: 'faulted' };
+const syncFailure: State['session'] = {
+  state: 'screen_sync',
+  // @ts-expect-error Screen sync carries no failure.
+  failure: { kind: 'internal', message: 'x' },
+};
+const stoppedFailure: State['session'] = {
+  state: 'stopped',
+  failure: { kind: 'adapter', message: 'x', section: 'output' },
+};
 // @ts-expect-error Adapter sections are tagged by kind.
 const untagged: WledSettings = { address: '192.0.2.1', leds: {} };
 // Every webOS capture field is optional; Rust fills the defaults.
 const defaults: WebosSettings = { kind: 'webos' };
 // @ts-expect-error The webOS source has no device path.
 const pathed: WebosSettings = { kind: 'webos', path: '/dev/video0' };
-void [revision, faulted, untagged, defaults, pathed];
+void [
+  revision,
+  faulted,
+  syncFailure,
+  stoppedFailure,
+  untagged,
+  defaults,
+  pathed,
+];
 
 <WebPortal
   application={device}
@@ -121,7 +138,7 @@ const tvState: TvState = {
 const fullState: TvState = {
   flavor: 'full',
   preferences: {},
-  lighting: 'processed',
+  target: 'screen_sync',
   power: 'active',
   video: 'available',
   worker: { phase: 'stopping', portal: 'http://192.168.1.5:8787/' },
@@ -140,9 +157,9 @@ const fullOnly: TvState = {
 const slimOnly: TvState = {
   flavor: 'full',
   preferences: {},
-  // @ts-expect-error The full package's intent is its lighting, not `enabled`.
+  // @ts-expect-error The full package's intent is its target, not `enabled`.
   enabled: true,
-  lighting: 'off',
+  target: 'off',
   power: 'active',
   video: 'available',
   worker: { phase: 'stopped' },

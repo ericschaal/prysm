@@ -19,7 +19,9 @@ test('commands resolve with the runtime result and observed state follows the st
   const fixture = fakeApplicationPort({ capture, output });
   const { application, release, state } = await connected(fixture);
   assert.equal(state().connection.status, 'connected');
-  await application.store.dispatch(application.commands.setTarget('processed'));
+  await application.store.dispatch(
+    application.commands.setTarget('screen_sync'),
+  );
   assert.deepEqual(state().lastCommand, {
     id: 1,
     kind: 'setTarget',
@@ -27,7 +29,7 @@ test('commands resolve with the runtime result and observed state follows the st
     failure: null,
   });
   await tick();
-  assert.equal(state().connection.snapshot.session.state, 'running');
+  assert.equal(state().connection.snapshot.session.state, 'screen_sync');
 
   const revision = await application.store.dispatch(
     application.commands.configureOutput(0, {
@@ -100,10 +102,10 @@ test('each runtime has its own store and the stream reconnects after loss', asyn
   const first = await connected(fixture);
   const second = await connected(fakeApplicationPort({ capture, output }));
   await first.application.store.dispatch(
-    first.application.commands.setTarget('processed'),
+    first.application.commands.setTarget('screen_sync'),
   );
   await tick();
-  assert.equal(first.state().connection.snapshot.target, 'processed');
+  assert.equal(first.state().connection.snapshot.target, 'screen_sync');
   assert.equal(second.state().connection.snapshot.target, 'off');
 
   let fail = true;
@@ -199,7 +201,7 @@ test('an observation acquired after release is closed without replacing newer st
   const release = application.connect();
   await tick();
   resolveLate({
-    initial: { ...fixture.snapshot(), target: 'device_native' },
+    initial: { ...fixture.snapshot(), target: 'effects' },
     updates: (async function* () {})(),
     close() {
       closed++;

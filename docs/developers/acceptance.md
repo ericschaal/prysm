@@ -138,7 +138,7 @@ The checks, in order, through the
 - the frame rate is within the tolerance of the source's, sent alike,
   nothing falls behind;
 - the colours follow the test clip (a card without a feed: not black);
-- WLED effects (`device_native`), Screen sync again, off;
+- WLED effects (`effects`), Screen sync again, off;
 - WLED's brightness: 40 % reported within 5 s at `bri` 102, gone within 35 s
   with Force max brightness, `state.bri` unchanged, `/json/cfg` under 64 KiB;
 - with a card, capture release and re-open;
@@ -664,7 +664,7 @@ and none after it.
   directory: the settings and lighting target from its portal (the full
   package's at the address `getState` reports; the Linux package's at
   `HOST:8787`), and on the TV `getState`'s flavour, preferences (`autostart`,
-  `instance`) and intent (full `lighting`, slim `enabled`), and the data files `tv.json`,
+  `instance`) and intent (full `target`, slim `enabled`), and the data files `tv.json`,
   `settings.json` and `resume.json` as they are. It reads the file back and
   compares it. When the backup cannot be taken (an installed Prysm that does
   not answer) or does not compare, the cell stops and nothing is removed.

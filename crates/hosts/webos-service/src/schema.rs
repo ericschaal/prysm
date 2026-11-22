@@ -9,13 +9,14 @@
 //! | --- | --- | --- |
 //! | `getState` | [`GetStateRequest`] | [`StateReply`], then one per change when subscribed |
 //! | `setPreferences` | [`Preferences`] (complete) | [`StateReply`] |
-//! | `setEnabled` | [`SetEnabledRequest`] | [`StateReply`] |
+//! | `setTarget` (full) | [`SetTargetRequest`] | [`StateReply`] |
+//! | `setEnabled` (slim) | [`SetEnabledRequest`] | [`StateReply`] |
 //! | `uninstall` | [`UninstallRequest`] | [`DoneReply`] |
 //!
 //! Any method can fail with [`ErrorReply`].
 use crate::identity::APP_ID;
 use crate::preferences::Preferences;
-use crate::service::{GetStateRequest, SetEnabledRequest, UninstallRequest};
+use crate::service::{GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest};
 use crate::state::{FullWorker, Package, Power, SlimWorker, State};
 use serde::{Deserialize, Serialize};
 pub use utoipa::openapi::OpenApi;
@@ -24,7 +25,7 @@ use utoipa::{OpenApi as _, ToSchema};
 
 /// The Luna API's own version, in the document's `info.version`; not the
 /// product version, which only `VERSION` carries.
-pub const API_VERSION: &str = "3";
+pub const API_VERSION: &str = "4";
 
 // Mirrors `prysm_webos_link::Video`.
 /// The TV's main video output.
@@ -81,8 +82,8 @@ pub struct WorkerFailureSchema {
 #[serde(rename_all = "snake_case")]
 pub enum LightingTargetSchema {
     Off,
-    Processed,
-    DeviceNative,
+    ScreenSync,
+    Effects,
 }
 
 // Mirrors `prysm_webos_link::SlimEncoding`.
@@ -188,6 +189,7 @@ pub struct ErrorReply {
     VideoSchema,
     LightingTargetSchema,
     GetStateRequest,
+    SetTargetRequest,
     SetEnabledRequest,
     UninstallRequest,
     StateReply,
@@ -220,11 +222,7 @@ mod tests {
         for video in [Video::Unknown, Video::Unavailable, Video::Available] {
             assert_mirror_round_trips::<Video, VideoSchema>(&video);
         }
-        for target in [
-            LightingTarget::Off,
-            LightingTarget::Processed,
-            LightingTarget::DeviceNative,
-        ] {
+        for target in LightingTarget::ALL {
             assert_mirror_round_trips::<LightingTarget, LightingTargetSchema>(&target);
         }
         for kind in [
@@ -290,7 +288,7 @@ mod tests {
     #[test]
     fn document_describes_both_flavors_in_one_set_of_schemas() {
         let document = serde_json::to_value(document()).unwrap();
-        assert_eq!(document["info"]["version"], json!("3"));
+        assert_eq!(document["info"]["version"], json!("4"));
         let schemas = &document["components"]["schemas"];
         // The common fields, and the package's own tagged by `flavor`.
         let parts = schemas["State"]["allOf"].as_array().unwrap();
@@ -304,7 +302,7 @@ mod tests {
             ["log", "power", "preferences", "video"]
         );
         let full = variant(schemas, "Package", "flavor", "full");
-        assert_eq!(required(full), ["flavor", "lighting", "worker"]);
+        assert_eq!(required(full), ["flavor", "target", "worker"]);
         assert_eq!(
             full["properties"]["worker"]["$ref"],
             json!("#/components/schemas/FullWorker")
@@ -364,7 +362,12 @@ mod tests {
             schemas["SlimEncoding"]["enum"],
             json!(["h264_hardware", "h264_software", "raw"])
         );
-        for name in ["GetStateRequest", "SetEnabledRequest", "UninstallRequest"] {
+        for name in [
+            "GetStateRequest",
+            "SetTargetRequest",
+            "SetEnabledRequest",
+            "UninstallRequest",
+        ] {
             assert_eq!(
                 schemas[name]["additionalProperties"],
                 json!(false),

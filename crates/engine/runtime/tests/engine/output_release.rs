@@ -1,4 +1,4 @@
-//! When the output shows the session's colours: device native, quiet sources, the colors feed.
+//! When the output shows the session's colours: the lights' own effects, quiet sources, the colors feed.
 use crate::common::*;
 use prysm_ports::{LightingTarget, Registry, SessionState, Settings};
 use prysm_runtime::fakes::{
@@ -7,15 +7,15 @@ use prysm_runtime::fakes::{
 use prysm_runtime::{ColorsWatch, Engine};
 
 #[tokio::test]
-async fn device_native_idles_the_output_without_a_session() {
+async fn effects_idle_the_output_without_a_session() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, named("a", "a"), DEADLINE).await;
-        handle
-            .set_target(LightingTarget::DeviceNative)
-            .await
-            .unwrap();
-        assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+        handle.set_target(LightingTarget::Effects).await.unwrap();
+        assert!(matches!(
+            handle.snapshot().borrow().session,
+            SessionState::Effects { .. }
+        ));
         // Put in its own effects without being taken over.
         assert_eq!(log.events(), ["output.idle:a:Native"]);
 
@@ -47,7 +47,7 @@ async fn quiet_source_rewrites_last_colors() {
         let (handle, engine) = Engine::start(registry, Box::new(store), DEADLINE)
             .await
             .unwrap();
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         // Two frames, then at least one refresh of the last colors.
         assert!(log.wait_for("output.write:o", 3).await);
         engine.shutdown().await.unwrap();
@@ -75,12 +75,16 @@ async fn a_source_without_frames_never_takes_the_output() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, quiet(0, 0), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let waiting = snapshot_until(&handle, |s| {
             s.input.is_some_and(|i| !i.receiving && i.fps == 0.0)
         })
         .await;
-        assert_eq!(waiting.session, SessionState::Running);
+        assert!(
+            matches!(waiting.session, SessionState::ScreenSync),
+            "{}",
+            waiting.session
+        );
 
         // Off leaves an untouched output untouched, and the whole session
         // never opened it.
@@ -97,7 +101,7 @@ async fn a_quiet_source_releases_the_output_until_frames_return() {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, quiet(3, 3_600), DEADLINE).await;
         let colors = handle.colors();
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:o", 3).await);
         assert_eq!(log.count("output.open:o"), 1);
         colors_until(&colors, true).await;
@@ -107,9 +111,13 @@ async fn a_quiet_source_releases_the_output_until_frames_return() {
         assert!(log.wait_for("output.idle:o:Native", 1).await);
         assert!(colors.latest().is_none());
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Running);
+        assert!(
+            matches!(snapshot.session, SessionState::ScreenSync),
+            "{}",
+            snapshot.session
+        );
         assert!(snapshot.input.is_some_and(|i| !i.receiving));
-        assert!(snapshot.failure.is_none());
+        assert!(snapshot.session.failure().is_none());
 
         // The next frame takes it again.
         assert!(log.wait_for("output.open:o", 2).await);
@@ -132,20 +140,20 @@ async fn stopping_while_released_leaves_the_output_in_the_stop_mode() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, quiet(2, 0), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.idle:o:Native", 1).await);
 
-        // Already native: nothing to reopen.
-        handle
-            .set_target(LightingTarget::DeviceNative)
-            .await
-            .unwrap();
+        // Already showing its effects: nothing to reopen.
+        handle.set_target(LightingTarget::Effects).await.unwrap();
         assert_eq!(log.count("output.open:o"), 1);
-        assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+        assert!(matches!(
+            handle.snapshot().borrow().session,
+            SessionState::Effects { .. }
+        ));
 
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.idle:o:Native", 2).await);
-        // Released to native, stopped Off: turned off without being taken
+        // Released to its effects, stopped Off: turned off without being taken
         // over again.
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert_eq!(log.count("output.open:o"), 2);
@@ -176,18 +184,15 @@ async fn colors_follow_the_lights_and_only_while_watched() {
         assert_eq!(handle.preview_viewers(), 0, "colors are not a preview");
         assert!(colors.latest().is_none(), "off");
 
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         colors_until(&colors, true).await;
         let written = colors.latest().unwrap();
         assert!(!written.top.is_empty() && !written.left.is_empty());
 
-        handle
-            .set_target(LightingTarget::DeviceNative)
-            .await
-            .unwrap();
+        handle.set_target(LightingTarget::Effects).await.unwrap();
         assert!(colors.latest().is_none(), "effects show their own colors");
 
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         colors_until(&colors, true).await;
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert!(colors.latest().is_none());

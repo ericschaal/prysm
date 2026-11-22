@@ -80,7 +80,7 @@ async fn a_trial_lights_without_saving_and_a_save_ends_it() {
     within_async(LIMIT, async {
         let store = MemoryStore::with(settings());
         let (handle, engine) = start(&store).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let full = wait_for_green(&handle, "lit", |g| g > 0.0).await;
         let before = handle.snapshot().borrow().clone();
 
@@ -99,7 +99,7 @@ async fn a_trial_lights_without_saving_and_a_save_ends_it() {
             .unwrap();
         assert_eq!(revision, before.revision.next());
         wait_for_green(&handle, "full again", |g| g > full * 0.9).await;
-        assert!(handle.snapshot().borrow().failure.is_none());
+        assert!(handle.snapshot().borrow().session.failure().is_none());
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -124,7 +124,7 @@ async fn a_trial_is_validated_like_settings() {
 async fn a_trial_nobody_saves_expires() {
     let store = MemoryStore::with(settings());
     let (handle, engine) = start(&store).await;
-    handle.set_target(LightingTarget::Processed).await.unwrap();
+    handle.set_target(LightingTarget::ScreenSync).await.unwrap();
     let full = wait_for_green(&handle, "lit", |g| g > 0.0).await;
     let second = Duration::from_secs(1);
 
@@ -132,7 +132,7 @@ async fn a_trial_nobody_saves_expires() {
     handle.try_processing(brightness(20)).await.unwrap();
     tokio::time::advance(TRIAL_TIMEOUT - second).await;
     // A no-op command is a round trip through the engine's loop.
-    handle.set_target(LightingTarget::Processed).await.unwrap();
+    handle.set_target(LightingTarget::ScreenSync).await.unwrap();
     tokio::time::resume();
     wait_for_green(&handle, "dimmed", |g| g < full * 0.5).await;
 
@@ -140,13 +140,13 @@ async fn a_trial_nobody_saves_expires() {
     tokio::time::pause();
     handle.try_processing(brightness(20)).await.unwrap();
     tokio::time::advance(TRIAL_TIMEOUT - second).await;
-    handle.set_target(LightingTarget::Processed).await.unwrap();
+    handle.set_target(LightingTarget::ScreenSync).await.unwrap();
     tokio::time::resume();
     wait_for_green(&handle, "still dimmed", |g| g < full * 0.5).await;
 
     tokio::time::pause();
     tokio::time::advance(second * 2).await;
-    handle.set_target(LightingTarget::Processed).await.unwrap();
+    handle.set_target(LightingTarget::ScreenSync).await.unwrap();
     tokio::time::resume();
     wait_for_green(&handle, "full again", |g| g > full * 0.9).await;
     assert_eq!(store.saved(), Some(settings()));

@@ -63,7 +63,8 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
           new ApplicationError({
             kind: 'stale_revision',
             message: 'Settings changed; review them before saving again.',
-            ...(live ? { current: live.revision } : {}),
+            // Disconnected, the revision last seen: saving waits for the next.
+            current: snapshot?.revision ?? expected,
           }),
         );
       return client.replaceSettings(

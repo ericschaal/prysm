@@ -143,28 +143,81 @@ export interface components {
             width?: number;
         };
         /**
-         * @description A stable failure body: the message a user can act on. An adapter failure
-         *     carries its cause chain (`context: cause: cause`), since the cause is what
-         *     names the problem (a device's error, a remote sender's reason).
+         * @description A failure reply (any non-2xx), tagged by `kind`: the message a user can
+         *     act on, with what the kind needs to act on it.
          */
         Failure: {
             /**
-             * Format: int64
-             * @description The revision to retry against after `stale_revision`.
+             * @description The rejected setting as a dotted path, such as `output.address`;
+             *     absent when no one field is at fault.
              */
-            current?: number;
-            /** @description The rejected setting as a dotted path, such as `output.address`. */
             field?: string;
-            kind: components["schemas"]["FailureKind"];
+            /** @enum {string} */
+            kind: "invalid";
+            message: string;
+        } | {
+            /**
+             * Format: int64
+             * @description The revision to retry against.
+             */
+            current: number;
+            /** @enum {string} */
+            kind: "stale_revision";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "adapter";
             message: string;
             /**
-             * @description Which side an `adapter` failure came from, when the engine knows:
-             *     the capture source or the output.
+             * @description Which side failed, when the engine knows: the capture source or
+             *     the output.
              */
             section?: components["schemas"]["FailureSection"];
+        } | {
+            /** @enum {string} */
+            kind: "needs_screen_sync";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "faulted";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "unavailable";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "internal";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "forbidden";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "not_found";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "method_not_allowed";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "bad_request";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "payload_too_large";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "unsupported_media_type";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "busy";
+            message: string;
         };
-        /** @enum {string} */
-        FailureKind: "invalid" | "stale_revision" | "not_processed" | "faulted" | "adapter" | "unavailable" | "internal" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
         /**
          * @description The side of the signal path a failure came from.
          * @enum {string}
@@ -303,10 +356,36 @@ export interface components {
             top?: number;
         };
         /**
+         * @description Why the lighting is as it is: the failure a session state carries. An
+         *     adapter failure carries its cause chain (`context: cause: cause`), since
+         *     the cause is what names the problem (a device's error, a remote sender's
+         *     reason).
+         */
+        LightingFailure: {
+            /**
+             * @description The rejected setting as a dotted path, such as `output.address`;
+             *     absent when the settings as a whole are at fault.
+             */
+            field?: string;
+            /** @enum {string} */
+            kind: "invalid";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "adapter";
+            message: string;
+            /** @description Which side failed, when the engine knows. */
+            section?: components["schemas"]["FailureSection"];
+        } | {
+            /** @enum {string} */
+            kind: "internal";
+            message: string;
+        };
+        /**
          * @description What the user wants the LEDs to do.
          * @enum {string}
          */
-        LightingTarget: "off" | "processed" | "device_native";
+        LightingTarget: "off" | "screen_sync" | "effects";
         /**
          * @description One way a source delivers: every combination of these widths, heights
          *     and frame rates.
@@ -348,12 +427,6 @@ export interface components {
          * @enum {string}
          */
         Pattern: "gray_192" | "red" | "yellow" | "green" | "cyan" | "blue" | "magenta" | "blue_pair" | "red_pair" | "green_pair" | "coast" | "garden" | "dusk" | "review_grid";
-        /**
-         * @description Where a faulted session stopped making progress, or `source_unreleased`:
-         *     it finished without confirming its source's release.
-         * @enum {string}
-         */
-        Phase: "running" | "closing_source" | "idling_output" | "finishing" | "source_unreleased";
         /** @description One server-sent event of the preview stream. */
         PreviewEvent: (components["schemas"]["PreviewFrame"] & {
             /** @enum {string} */
@@ -490,18 +563,32 @@ export interface components {
              */
             width?: number;
         };
-        /** @description What the runtime is actually doing. */
+        /**
+         * @description What the runtime is actually doing. Screen sync carries no failure: it
+         *     runs on valid settings and has reached its target.
+         */
         Session: {
+            /**
+             * @description Why the target is not reached, why the lights may not be off, or
+             *     that the saved settings do not validate; absent while none does.
+             */
+            failure?: components["schemas"]["LightingFailure"];
             /** @enum {string} */
             state: "stopped";
         } | {
             /** @enum {string} */
-            state: "running";
+            state: "screen_sync";
         } | {
+            /**
+             * @description Why screen sync, asked from the effects, did not start, or that
+             *     the saved settings do not validate; absent while none does.
+             */
+            failure?: components["schemas"]["LightingFailure"];
             /** @enum {string} */
-            state: "native";
+            state: "effects";
         } | {
-            phase: components["schemas"]["Phase"];
+            /** @description What did not finish, for people. */
+            message: string;
             /** @enum {string} */
             state: "faulted";
         };
@@ -513,7 +600,7 @@ export interface components {
         };
         /**
          * @description Reply to a successful settings replacement. Applying them may still fail;
-         *     that failure appears in the state's `failure`.
+         *     that failure appears in the state's `session`.
          */
         SettingsReplaced: {
             /** Format: int64 */
@@ -560,12 +647,6 @@ export interface components {
              *     without video; `session.state` and `input.receiving` say which.
              */
             device: components["schemas"]["DeviceReport"];
-            /**
-             * @description The last lighting failure; absent while there is none. Every target
-             *     change, settings apply, shutdown and session end replaces it, so the
-             *     next one that succeeds clears it.
-             */
-            failure?: components["schemas"]["Failure"];
             /**
              * @description Frames arriving from the source, measured about once a second; absent
              *     while no session runs.
@@ -697,7 +778,6 @@ export type CorrectionControls = components['schemas']['CorrectionControls'];
 export type DeviceReport = components['schemas']['DeviceReport'];
 export type DeviceSettings = components['schemas']['DeviceSettings'];
 export type Failure = components['schemas']['Failure'];
-export type FailureKind = components['schemas']['FailureKind'];
 export type FailureSection = components['schemas']['FailureSection'];
 export type FileSettings = components['schemas']['FileSettings'];
 export type Input = components['schemas']['Input'];
@@ -705,6 +785,7 @@ export type Latency = components['schemas']['Latency'];
 export type LedColor = components['schemas']['LedColor'];
 export type LedColors = components['schemas']['LedColors'];
 export type LedCounts = components['schemas']['LedCounts'];
+export type LightingFailure = components['schemas']['LightingFailure'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type Mode = components['schemas']['Mode'];
 export type Modes = components['schemas']['Modes'];
@@ -712,7 +793,6 @@ export type NullSettings = components['schemas']['NullSettings'];
 export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Pattern = components['schemas']['Pattern'];
-export type Phase = components['schemas']['Phase'];
 export type PreviewEvent = components['schemas']['PreviewEvent'];
 export type PreviewFrame = components['schemas']['PreviewFrame'];
 export type PreviewViewport = components['schemas']['PreviewViewport'];

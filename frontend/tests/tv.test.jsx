@@ -254,9 +254,9 @@ test('generated Rust states decode as they are; malformed ones do not', () => {
   assert(malformed({ ...state(), worker: { ...state().worker, fps: '30' } }));
   assert(malformed({ ...state(), log: [1] }));
   assert(malformed(null));
-  // Each package has its own fields: full its lighting, slim `enabled` and
+  // Each package has its own fields: full its target, slim `enabled` and
   // a worker that reports its stream.
-  assert(malformed({ ...state(), lighting: null }), 'full has a lighting');
+  assert(malformed({ ...state(), target: null }), 'full has a target');
   assert(malformed({ ...state(), flavor: 'slim' }), 'slim says if enabled');
   const slim = fixtures['luna/State'].find((value) => value.flavor === 'slim');
   assert(malformed({ ...slim, flavor: 'full' }), 'full has no `enabled`');
@@ -297,13 +297,14 @@ test('values newer than the app have one reading each', () => {
     decodeState({ ...state(), failure: { kind: 'overheated', message: 'x' } }),
     { ...state(), failure: { kind: 'other', message: 'x' } },
   );
-  assert.deepEqual(decodeState({ ...state(), lighting: 'ambient' }), {
+  // Never read as off or stopped: a target or phase newer than the app.
+  assert.deepEqual(decodeState({ ...state(), target: 'ambient' }), {
     ...state(),
-    lighting: 'off',
+    target: 'unknown',
   });
   assert.deepEqual(decodeState({ ...state(), worker: { phase: 'paused' } }), {
     ...state(),
-    worker: { phase: 'stopped' },
+    worker: { phase: 'unknown' },
   });
   const slim = fixtures['luna/State'].find((value) => value.flavor === 'slim');
   const link = (value) =>
@@ -356,15 +357,15 @@ test('the state subscription retries after unsubscribed, malformed and refused r
   bridge.channels[3].reply({
     returnValue: true,
     subscribed: true,
-    ...state({ lighting: 'off' }),
+    ...state({ target: 'off' }),
   });
   bridge.channels[3].reply({
     returnValue: true,
-    ...state({ lighting: 'processed' }),
+    ...state({ target: 'screen_sync' }),
   });
   assert.deepEqual(
-    events.slice(-2).map((event) => event.online && event.state.lighting),
-    ['off', 'processed'],
+    events.slice(-2).map((event) => event.online && event.state.target),
+    ['off', 'screen_sync'],
   );
   assert.equal('returnValue' in events.at(-1).state, false);
   bridge.channels[3].reply({
@@ -397,17 +398,19 @@ test('a silent service times out after 30 s; late replies are ignored', async (t
   assert.equal(events.length, 1);
   stop();
 
-  const enabling = service.setEnabled(true);
+  const targeting = service.setTarget('screen_sync');
   t.mock.timers.tick(CALL_TIMEOUT_MS);
-  await assert.rejects(enabling, { kind: 'timeout' });
+  await assert.rejects(targeting, { kind: 'timeout' });
   const channel = bridge.channels.at(-1);
   assert.equal(channel.cancelled, 1);
   // A retry works after the timeout.
-  const again = service.setEnabled(true);
+  const again = service.setTarget('screen_sync');
+  assert.equal(bridge.channels.at(-1).uri, `${SERVICE_URI}/setTarget`);
+  assert.deepEqual(bridge.channels.at(-1).payload, { target: 'screen_sync' });
   bridge.channels
     .at(-1)
-    .reply({ returnValue: true, ...state({ lighting: 'processed' }) });
-  assert.equal((await again).lighting, 'processed');
+    .reply({ returnValue: true, ...state({ target: 'screen_sync' }) });
+  assert.equal((await again).target, 'screen_sync');
 });
 
 test('commands carry the contract payloads and fail with typed errors', async () => {
@@ -605,21 +608,18 @@ test('status card covers the supervisor states for both packages', () => {
   assert.equal(title(true, slim({ enabled: false })), 'Capture off');
   const full = (change = {}) =>
     tvState('full', {
-      lighting: 'processed',
+      target: 'screen_sync',
       worker: { phase: 'running' },
       ...change,
     });
-  const lightsOff = tvStatus(true, full({ lighting: 'off' }), draft());
+  const lightsOff = tvStatus(true, full({ target: 'off' }), draft());
   assert.deepEqual(
     [lightsOff.title, lightsOff.label, lightsOff.action],
     ['Lights off', '', 'none'],
     'the lighting modes start screen sync; no second button',
   );
   assert.equal(title(true, full({ capturing: true })), 'Screen sync on');
-  assert.equal(
-    title(true, full({ lighting: 'device_native' })),
-    'WLED effects on',
-  );
+  assert.equal(title(true, full({ target: 'effects' })), 'WLED effects on');
   const noFrames = tvStatus(true, full({ capturing: false }), draft());
   assert.equal(
     noFrames.title,
@@ -656,9 +656,9 @@ test('status card covers the supervisor states for both packages', () => {
       slim({ failure: { kind: 'replaced', message: 'x' } }),
       slim({ failure: { kind: 'receiver_failed', message: 'x' } }),
       slim({ failure: { kind: 'other', message: 'x' } }),
-      full({ lighting: 'off' }),
+      full({ target: 'off' }),
       full({ capturing: true }),
-      full({ lighting: 'device_native' }),
+      full({ target: 'effects' }),
       full({ failure: { kind: 'other', message: 'x' } }),
     ].map((value) => tvStatus(true, value, draft())),
     tvStatus(true, full({}), draft(), { lights: false, address: null }),
@@ -1143,7 +1143,7 @@ test('every state keeps the same slots, plain words and focus on a control', asy
     // Lighting (full) or capture (slim), in the package's own terms.
     const [on, off] =
       flavor === 'full'
-        ? [{ lighting: 'processed' }, { lighting: 'off' }]
+        ? [{ target: 'screen_sync' }, { target: 'off' }]
         : [{ enabled: true }, { enabled: false }];
     const running = { worker: { phase: 'running' }, ...on };
     const states = [
@@ -1297,7 +1297,7 @@ test('remote arrows move focus through rows and columns without changing setting
     'the lighting row is one stop, entered at its chosen mode',
   );
   await tv.key(LEFT);
-  assert.equal(tv.focus(), 'mode-device_native');
+  assert.equal(tv.focus(), 'mode-effects');
   await tv.key(RIGHT);
   await tv.key(RIGHT);
   assert.equal(
@@ -1550,13 +1550,13 @@ function holdTarget(tv) {
 test('a lighting mode keeps focus and the track stays lit while it applies', async (t) => {
   const tv = await mountTv(t, { flavor: 'full' });
   const release = holdTarget(tv);
-  tv.el('mode-processed').focus();
-  await tv.click('mode-processed');
+  tv.el('mode-screen_sync').focus();
+  await tv.click('mode-screen_sync');
   // Waiting for the portal: nothing dims, nothing moves focus.
-  for (const id of ['mode-processed', 'mode-device_native', 'mode-off'])
+  for (const id of ['mode-screen_sync', 'mode-effects', 'mode-off'])
     assert(!tv.el(id).disabled, id);
-  assert.equal(tv.el('mode-processed').getAttribute('aria-busy'), 'true');
-  assert.equal(tv.focus(), 'mode-processed');
+  assert.equal(tv.el('mode-screen_sync').getAttribute('aria-busy'), 'true');
+  assert.equal(tv.focus(), 'mode-screen_sync');
   await tv.click('mode-off');
   assert.deepEqual(
     tv.application.calls.filter((call) => call.startsWith('target:')),
@@ -1565,9 +1565,9 @@ test('a lighting mode keeps focus and the track stays lit while it applies', asy
   );
   await act(async () => release());
   await settle();
-  assert.equal(tv.el('mode-processed').getAttribute('aria-pressed'), 'true');
-  assert.equal(tv.el('mode-processed').getAttribute('aria-busy'), null);
-  assert.equal(tv.focus(), 'mode-processed');
+  assert.equal(tv.el('mode-screen_sync').getAttribute('aria-pressed'), 'true');
+  assert.equal(tv.el('mode-screen_sync').getAttribute('aria-busy'), null);
+  assert.equal(tv.focus(), 'mode-screen_sync');
 });
 
 test('full: saving Start with TV adds no button that would push the lights down', async (t) => {
@@ -1587,9 +1587,9 @@ test('the title follows the portal, so it agrees with the lights card', async (t
   const tv = await mountTv(t, { flavor: 'full' });
   assert.equal(tv.text('status-title'), 'Lights off');
   // Chosen on a phone: the portal knows before the TV service does.
-  await act(async () => tv.application.client.setTarget('device_native'));
+  await act(async () => tv.application.client.setTarget('effects'));
   await settle();
-  assert.equal(tv.supervisor.state().lighting, 'off', 'the service lags');
+  assert.equal(tv.supervisor.state().target, 'off', 'the service lags');
   assert.equal(tv.text('status-title'), 'WLED effects on');
 });
 
@@ -1599,9 +1599,11 @@ test('the title and the lights card agree on what the lights do', async (t) => {
   const tv = await mountTv(t, { flavor: 'full' });
   await act(async () =>
     tv.application.publish({
-      target: 'processed',
-      session: { state: 'stopped' },
-      failure: { kind: 'adapter', message: 'WLED cannot be reached' },
+      target: 'screen_sync',
+      session: {
+        state: 'stopped',
+        failure: { kind: 'adapter', message: 'WLED cannot be reached' },
+      },
     }),
   );
   await settle();
@@ -1613,15 +1615,17 @@ test('the title and the lights card agree on what the lights do', async (t) => {
   assert.equal(tv.text('lighting-status'), 'Screen sync could not start.');
   await act(async () =>
     tv.application.publish({
-      target: 'processed',
-      session: { state: 'native' },
-      failure: undefined,
+      target: 'screen_sync',
+      session: { state: 'effects' },
     }),
   );
   await settle();
   assert.equal(tv.text('lighting-status'), 'Starting screen sync…');
   await act(async () =>
-    tv.application.publish({ target: 'off', session: { state: 'running' } }),
+    tv.application.publish({
+      target: 'off',
+      session: { state: 'screen_sync' },
+    }),
   );
   await settle();
   assert.equal(tv.text('lighting-status'), 'Lights are off.');
@@ -1630,7 +1634,7 @@ test('the title and the lights card agree on what the lights do', async (t) => {
 
 test('the full status follows the portal: its failure, named by mode, and a faulted session', () => {
   const full = tvState('full', {
-    lighting: 'processed',
+    target: 'screen_sync',
     worker: { phase: 'running' },
   });
   const draft = completePreferences({});
@@ -1644,9 +1648,8 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     full,
     draft,
     facts({
-      target: 'processed',
-      session: { state: 'stopped' },
-      failure: { kind: 'adapter', message: 'x' },
+      target: 'screen_sync',
+      session: { state: 'stopped', failure: { kind: 'adapter', message: 'x' } },
     }),
   );
   assert.deepEqual(
@@ -1661,20 +1664,28 @@ test('the full status follows the portal: its failure, named by mode, and a faul
       full,
       draft,
       facts({
-        target: 'device_native',
-        session: { state: 'stopped' },
-        failure: { kind: 'adapter', message: 'x' },
+        target: 'effects',
+        session: {
+          state: 'stopped',
+          failure: { kind: 'adapter', message: 'x' },
+        },
       }),
     ).title,
     'WLED effects stopped',
   );
   // Faulted, whatever the target: Prysm itself stopped.
-  for (const target of ['processed', 'off']) {
+  for (const target of ['screen_sync', 'off']) {
     const faulted = tvStatus(
       true,
       full,
       draft,
-      facts({ target, session: { state: 'faulted', phase: 'finishing' } }),
+      facts({
+        target,
+        session: {
+          state: 'faulted',
+          message: 'Lighting did not finish stopping in time.',
+        },
+      }),
     );
     assert.deepEqual(
       [faulted.title, faulted.description, faulted.attention],
@@ -1682,11 +1693,41 @@ test('the full status follows the portal: its failure, named by mode, and a faul
       target,
     );
   }
+  // Newer than this app: said, never read as off.
+  for (const snapshot of [
+    { target: 'unknown', session: { state: 'stopped' } },
+    { target: 'screen_sync', session: { state: 'unknown' } },
+  ]) {
+    const newer = tvStatus(true, full, draft, facts(snapshot));
+    assert.deepEqual(
+      [newer.title, newer.description],
+      ['Prysm is newer than this app', 'Update it to see what the lights do.'],
+      JSON.stringify(snapshot),
+    );
+  }
+  assert.equal(
+    tvStatus(true, { ...full, target: 'unknown' }, draft).title,
+    'Prysm is newer than this app',
+    'without the portal, the service’s target',
+  );
+  // A worker phase newer than this app: no start or stop.
+  for (const flavor of ['full', 'slim']) {
+    const updating = tvStatus(
+      true,
+      { ...tvState(flavor, {}), worker: { phase: 'unknown' } },
+      draft,
+    );
+    assert.deepEqual(
+      [updating.title, updating.action, updating.label],
+      ['Updating…', 'none', ''],
+      flavor,
+    );
+  }
   const waiting = tvStatus(
     true,
     full,
     draft,
-    facts({ target: 'processed', session: { state: 'stopped' } }),
+    facts({ target: 'screen_sync', session: { state: 'stopped' } }),
   );
   assert.equal(waiting.title, 'Waiting for video', 'the TV has no frames');
   assert.equal(
@@ -1694,7 +1735,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
       true,
       full,
       draft,
-      facts({ target: 'device_native', session: { state: 'stopped' } }),
+      facts({ target: 'effects', session: { state: 'stopped' } }),
     ).title,
     'WLED effects on',
   );
@@ -1712,8 +1753,10 @@ test('the TV lights card says a failure with the lights off', async (t) => {
     });
     await act(async () =>
       tv.application.publish({
-        failure: { kind: 'adapter', section: 'output', message: 'no answer' },
-        session: { state: 'stopped' },
+        session: {
+          state: 'stopped',
+          failure: { kind: 'adapter', section: 'output', message: 'no answer' },
+        },
       }),
     );
     await settle();
@@ -1732,7 +1775,7 @@ test('a refused press is said until the lights change', async (t) => {
   // It stayed, over the live state, until the next press.
   const tv = await mountTv(t, { flavor: 'full' });
   tv.application.failNext({ kind: 'unavailable', message: 'no answer' });
-  await tv.click('mode-processed');
+  await tv.click('mode-screen_sync');
   assert.equal(
     tv.text('lighting-status'),
     'A device is not available right now.',
@@ -1740,8 +1783,8 @@ test('a refused press is said until the lights change', async (t) => {
   // The command ran after all: the portal's state says so.
   await act(async () =>
     tv.application.publish({
-      target: 'processed',
-      session: { state: 'running' },
+      target: 'screen_sync',
+      session: { state: 'screen_sync' },
     }),
   );
   await settle();
@@ -2126,20 +2169,20 @@ test('slim lighting buttons drive the remote Prysm; leaving never turns it off',
     },
   });
   assert.equal(tv.text('lighting-status'), 'Lights are off.');
-  await tv.click('mode-processed');
-  assert.equal(tv.application.snapshot().target, 'processed');
+  await tv.click('mode-screen_sync');
+  assert.equal(tv.application.snapshot().target, 'screen_sync');
   assert.equal(tv.text('lighting-status'), 'Screen sync is running.');
   assert(
     tv.el('lighting-status').querySelector('.visually-hidden'),
     'the chosen mode says it; the sentence is only read out',
   );
-  assert.equal(tv.el('mode-processed').getAttribute('aria-pressed'), 'true');
-  assert.equal(tv.text('mode-device_native'), 'WLED effects');
+  assert.equal(tv.el('mode-screen_sync').getAttribute('aria-pressed'), 'true');
+  assert.equal(tv.text('mode-effects'), 'WLED effects');
   tv.application.failNext({
     kind: 'adapter',
     message: 'WLED cannot be reached',
   });
-  await tv.click('mode-device_native');
+  await tv.click('mode-effects');
   assert.equal(
     tv.text('lighting-status'),
     'WLED effects could not start.',
@@ -2147,7 +2190,7 @@ test('slim lighting buttons drive the remote Prysm; leaving never turns it off',
   );
   await tv.unmount();
   assert(tv.application.calls.includes('unsubscribe'));
-  assert.equal(tv.application.snapshot().target, 'processed');
+  assert.equal(tv.application.snapshot().target, 'screen_sync');
   assert.equal(tv.supervisor.subscribers(), 0);
 });
 
@@ -2168,7 +2211,7 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
   );
   assert.doesNotMatch(document.body.textContent, /--allow-origin|null/);
   assert(
-    refused.el('mode-processed').disabled,
+    refused.el('mode-screen_sync').disabled,
     'the modes stay in place, unavailable without a state',
   );
   await refused.unmount();
@@ -2242,7 +2285,7 @@ test('full: the TV portal is used over loopback and its address is shown', async
   // After a failure the supervisor does not retry, the button restarts it.
   await act(async () =>
     tv.supervisor.publish({
-      lighting: 'processed',
+      target: 'screen_sync',
       failure: { kind: 'other', message: 'capture failed' },
     }),
   );
@@ -2251,20 +2294,22 @@ test('full: the TV portal is used over loopback and its address is shown', async
   assert.equal(tv.text('primary'), 'Try again');
   await tv.click('primary');
   await settle();
+  // Off, then the target that failed.
   assert.deepEqual(
     tv.supervisor.calls
-      .filter((call) => call.method === 'setEnabled')
-      .map((call) => call.payload.enabled),
-    [false, true],
+      .filter((call) => call.method === 'setTarget')
+      .map((call) => call.payload.target),
+    ['off', 'screen_sync'],
   );
+  assert(!tv.methods().includes('setEnabled'), 'the slim package’s method');
 });
 
 test('full: the lights card says why the lights do not follow the picture', async (t) => {
   const tv = await mountTv(t, { flavor: 'full' });
-  await tv.click('mode-processed');
+  await tv.click('mode-screen_sync');
   await act(async () =>
     tv.application.publish({
-      session: { state: 'running' },
+      session: { state: 'screen_sync' },
       input: { fps: 30, receiving: true },
       device: { issue: 'other_sender' },
     }),
@@ -2356,7 +2401,7 @@ test('lights without a setup are named plainly with the portal address, in both 
     // Full has no primary button here: focus rests where OK only opens
     // something, never on the switch.
     assert.equal(tv.focus(), flavor === 'full' ? 'service-options' : 'primary');
-    assert(!tv.el('mode-processed'));
+    assert(!tv.el('mode-screen_sync'));
     // Once the portal has lights, the usual home returns by itself; nothing
     // starts until the lights are chosen.
     await act(async () =>
@@ -2366,7 +2411,7 @@ test('lights without a setup are named plainly with the portal address, in both 
     );
     await settle();
     assert.notEqual(tv.text('status-title'), 'Set up your lights');
-    assert(tv.el('mode-processed'), 'the modes are back');
+    assert(tv.el('mode-screen_sync'), 'the modes are back');
     assert(!tv.el('portal-address').classList.contains('setup-lights'));
     assert.equal(tv.application.snapshot().target, 'off');
     await tv.unmount();
@@ -2376,7 +2421,7 @@ test('lights without a setup are named plainly with the portal address, in both 
 test('the lights setup hint gives way to failures and to a missing receiver', () => {
   const running = { worker: { phase: 'running' } };
   const linkedPrefs = { instance: 'http://192.168.1.20:8787' };
-  const fullOff = tvState('full', { ...running, lighting: 'off' });
+  const fullOff = tvState('full', { ...running, target: 'off' });
   const noLights = { lights: false, address: 'http://192.168.1.20:8787' };
   const draft = completePreferences({});
   const status = (value) => tvStatus(true, value, draft, noLights);
@@ -2658,7 +2703,7 @@ test('full: Calibrate turns screen sync on, shows the phone address and follows 
   await tv.click('calibrate');
   assert.deepEqual(
     tv.application.calls.filter((call) => call.startsWith('target:')),
-    ['target:processed'],
+    ['target:screen_sync'],
   );
   assert.equal(tv.el('app'), null, 'the main screen is closed');
   assert.equal(tv.text('calibration-address'), '192.168.1.5:8787/#/calibrate');
@@ -2694,7 +2739,7 @@ test('full: Calibrate turns screen sync on, shows the phone address and follows 
   assert.equal(tv.focus(), 'calibrate');
   assert.equal(tv.el('modal'), null, 'Back does not ask to close the app');
   assert(!tv.application.calls.includes('target:off'));
-  assert.equal(tv.application.snapshot().target, 'processed');
+  assert.equal(tv.application.snapshot().target, 'screen_sync');
 });
 
 test('full: Calibrate does not open on a page hidden while screen sync starts', async (t) => {
@@ -2723,7 +2768,7 @@ test('full: Calibrate does not open on a page hidden while screen sync starts', 
     await hide(false);
   }
   assert(tv.el('app'), 'the main screen, shown again');
-  assert.equal(tv.application.snapshot().target, 'processed');
+  assert.equal(tv.application.snapshot().target, 'screen_sync');
 });
 
 test('a pattern stays on screen while the portal stream comes back', async (t) => {
@@ -2745,7 +2790,7 @@ test('a pattern stays on screen while the portal stream comes back', async (t) =
 test('slim: calibration uses the computer portal, already on, and ends when the app is hidden', async (t) => {
   const player = fakePlayer();
   const tv = await mountTv(t, { patterns: player, supervisor: slimReady });
-  await act(async () => tv.application.client.setTarget('processed'));
+  await act(async () => tv.application.client.setTarget('screen_sync'));
   await settle();
   const before = tv.application.calls.length;
   await tv.click('calibrate');
@@ -2770,7 +2815,7 @@ test('slim: calibration uses the computer portal, already on, and ends when the 
   assert.equal(player.stops, 1);
   assert(tv.el('app'));
   assert.equal(tv.application.snapshot().calibration, undefined);
-  assert.equal(tv.application.snapshot().target, 'processed');
+  assert.equal(tv.application.snapshot().target, 'screen_sync');
   Object.defineProperty(document, 'hidden', {
     value: false,
     configurable: true,

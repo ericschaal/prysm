@@ -389,13 +389,13 @@ fn a_tv_stream_lights_wled_and_sigterm_turns_it_off() {
     let (host, port) = start(&write_settings(dir.path(), &wled_settings(&wled)));
     let sender = TvSender::plain(port, 0, RED);
 
-    assert_eq!(put_target(port, "processed", None).status, 204);
+    assert_eq!(put_target(port, "screen_sync", None).status, 204);
     sender.expect("connected");
     // The output opens at the first frame: out of a realtime session, then live.
     assert_eq!(wled.next_state(), json!({ "live": false }));
     assert_eq!(wled.next_state(), body(LIVE));
     wled.expect_colour(RED);
-    wait_for_state(port, "running", |state| session(state) == "running");
+    wait_for_state(port, "screen_sync", |state| session(state) == "screen_sync");
     let configured = wait_for_state(port, "WLED's configuration read", |state| {
         state["device"]["brightness_percent"] == 100
     });
@@ -419,11 +419,11 @@ fn dithering_changes_while_lighting_runs() {
     let dir = tempfile::tempdir().unwrap();
     let (host, port) = start(&write_settings(dir.path(), &wled_settings(&wled)));
     let sender = TvSender::plain(port, 0, RED);
-    assert_eq!(put_target(port, "processed", None).status, 204);
+    assert_eq!(put_target(port, "screen_sync", None).status, 204);
     sender.expect("connected");
     wled.expect_state(&body(LIVE));
     wled.expect_colour(RED);
-    wait_for_state(port, "running", |state| session(state) == "running");
+    wait_for_state(port, "screen_sync", |state| session(state) == "screen_sync");
 
     for dither in [false, true] {
         let before = state(port);
@@ -433,10 +433,14 @@ fn dithering_changes_while_lighting_runs() {
         assert_eq!(saved.status, 200, "dither {dither}: {}", saved.body);
         // The save has replaced the session: only packets sent after it count.
         wled.drain();
-        let state = wait_for_state(port, &format!("running with dither {dither}"), |state| {
-            session(state) == "running" && state["settings"]["output"]["dither"] == dither
-        });
-        assert_eq!(state["failure"], Value::Null, "{state:#}");
+        let state = wait_for_state(
+            port,
+            &format!("screen sync with dither {dither}"),
+            |state| {
+                session(state) == "screen_sync" && state["settings"]["output"]["dither"] == dither
+            },
+        );
+        assert_eq!(state["session"]["failure"], Value::Null, "{state:#}");
         wled.expect_colour(RED);
     }
     drop(sender);
@@ -453,7 +457,7 @@ fn a_dropped_sender_releases_wled_to_its_own_state() {
     let dir = tempfile::tempdir().unwrap();
     let (host, port) = start(&write_settings(dir.path(), &wled_settings(&wled)));
     let sender = TvSender::plain(port, 0, RED);
-    assert_eq!(put_target(port, "processed", None).status, 204);
+    assert_eq!(put_target(port, "screen_sync", None).status, 204);
     sender.expect("connected");
     wled.expect_state(&body(LIVE));
     wled.expect_colour(RED);
@@ -462,8 +466,8 @@ fn a_dropped_sender_releases_wled_to_its_own_state() {
     // After the session's three-second grace without frames.
     wled.expect_state(&body(NATIVE));
     let state = state(port);
-    assert_eq!(session(&state), "running", "{state:#}");
-    assert_eq!(state["failure"], Value::Null);
+    assert_eq!(session(&state), "screen_sync", "{state:#}");
+    assert_eq!(state["session"]["failure"], Value::Null);
 
     let sender = TvSender::plain(port, 0, BLUE);
     sender.expect("connected");
@@ -494,7 +498,7 @@ fn a_tv_stream_through_a_tls_proxy_lights_wled() {
         0,
         BLUE,
     );
-    assert_eq!(put_target(port, "processed", None).status, 204);
+    assert_eq!(put_target(port, "screen_sync", None).status, 204);
     sender.expect("connected");
     wled.expect_state(&body(LIVE));
     wled.expect_colour(BLUE);
@@ -512,25 +516,27 @@ fn a_wled_error_is_a_typed_output_failure() {
     let dir = tempfile::tempdir().unwrap();
     let (host, port) = start(&write_settings(dir.path(), &wled_settings(&wled)));
     let sender = TvSender::plain(port, 0, RED);
-    assert_eq!(put_target(port, "processed", None).status, 204);
+    assert_eq!(put_target(port, "screen_sync", None).status, 204);
     sender.expect("connected");
 
-    let state = wait_for_state(port, "failed", |state| !state["failure"].is_null());
-    let failure = &state["failure"];
+    let state = wait_for_state(port, "failed", |state| {
+        !state["session"]["failure"].is_null()
+    });
+    let failure = &state["session"]["failure"];
     assert_eq!(failure["kind"], "adapter", "{state:#}");
     assert_eq!(failure["section"], "output", "{state:#}");
     let message = failure["message"].as_str().unwrap();
     assert!(message.contains("did not switch to live mode"), "{message}");
     assert!(message.contains(&wled.address()), "{message}");
-    assert_eq!(state["target"], "processed");
+    assert_eq!(state["target"], "screen_sync");
     assert_eq!(session(&state), "stopped");
     drop(sender);
     let (status, stderr) = host.terminate();
     assert!(status.success(), "{stderr:#?}");
 }
 
-/// A start from WLED's own effects that failed leaves the session `native`
-/// with the target `processed`; a settings save then retries the start
+/// A start from WLED's own effects that failed leaves the session `effects`
+/// with the target `screen_sync`; a settings save then retries the start
 /// instead of clearing the failure and leaving the card "starting" (the
 /// engine fix in ef7c4be, which the portal's null output cannot reach).
 ///
@@ -550,17 +556,20 @@ fn a_save_after_a_failed_start_from_effects_retries() {
     );
     let port = host.portal_port();
 
-    assert_eq!(put_target(port, "device_native", None).status, 204);
+    assert_eq!(put_target(port, "effects", None).status, 204);
     wled.expect_state(&body(NATIVE));
-    wait_for_state(port, "native", |state| session(state) == "native");
+    wait_for_state(port, "effects", |state| session(state) == "effects");
 
-    put_target(port, "processed", None);
+    put_target(port, "screen_sync", None);
     let failed = wait_for_state(port, "failed from effects", |state| {
-        !state["failure"].is_null()
+        !state["session"]["failure"].is_null()
     });
-    assert_eq!(failed["target"], "processed", "{failed:#}");
-    assert_eq!(session(&failed), "native", "{failed:#}");
-    assert_eq!(failed["failure"]["section"], "capture", "{failed:#}");
+    assert_eq!(failed["target"], "screen_sync", "{failed:#}");
+    assert_eq!(session(&failed), "effects", "{failed:#}");
+    assert_eq!(
+        failed["session"]["failure"]["section"], "capture",
+        "{failed:#}"
+    );
 
     // The save retries the start, now with the TV streaming.
     let sender = TvSender::plain(port, 0, RED);
@@ -568,12 +577,12 @@ fn a_save_after_a_failed_start_from_effects_retries() {
     changed["capture"] = remote_capture();
     let saved = save_settings(port, &failed, &changed);
     assert_eq!(saved.status, 200, "{}", saved.body);
-    let state = wait_for_state(port, "running, or stuck starting", |state| {
-        session(state) == "running" || state["failure"].is_null()
+    let state = wait_for_state(port, "screen sync, or stuck starting", |state| {
+        session(state) == "screen_sync" || state["session"]["failure"].is_null()
     });
-    assert_eq!(state["failure"], Value::Null, "{state:#}");
-    let state = wait_for_state(port, "running", |state| session(state) == "running");
-    assert_eq!(state["target"], "processed");
+    assert_eq!(state["session"]["failure"], Value::Null, "{state:#}");
+    let state = wait_for_state(port, "screen_sync", |state| session(state) == "screen_sync");
+    assert_eq!(state["target"], "screen_sync");
     sender.expect("connected");
     wled.expect_state(&body(LIVE));
     wled.expect_colour(RED);
@@ -620,12 +629,20 @@ fn a_corrupt_or_invalid_settings_file_on_start() {
     let corrupt = dir.path().join("corrupt.json");
     std::fs::write(&corrupt, "{ not json").unwrap();
     let (host, port) = start(corrupt.to_str().unwrap());
-    let state = wait_for_state(port, "failed", |state| !state["failure"].is_null());
+    let state = wait_for_state(port, "failed", |state| {
+        !state["session"]["failure"].is_null()
+    });
     // The settings' problem as a whole: `invalid`, no field, no section.
-    assert_eq!(state["failure"]["kind"], "invalid", "{state:#}");
-    assert!(state["failure"].get("field").is_none(), "{state:#}");
-    assert!(state["failure"].get("section").is_none(), "{state:#}");
-    let message = state["failure"]["message"].as_str().unwrap();
+    assert_eq!(state["session"]["failure"]["kind"], "invalid", "{state:#}");
+    assert!(
+        state["session"]["failure"].get("field").is_none(),
+        "{state:#}"
+    );
+    assert!(
+        state["session"]["failure"].get("section").is_none(),
+        "{state:#}"
+    );
+    let message = state["session"]["failure"]["message"].as_str().unwrap();
     assert!(
         message.starts_with("cannot parse settings file"),
         "{message}"
@@ -645,8 +662,10 @@ fn a_corrupt_or_invalid_settings_file_on_start() {
 
     let invalid = write_settings(dir.path(), &json!({ "output": { "kind": "bogus" } }));
     let (host, port) = start(&invalid);
-    let state = wait_for_state(port, "failed", |state| !state["failure"].is_null());
-    assert_eq!(state["failure"]["kind"], "invalid", "{state:#}");
+    let state = wait_for_state(port, "failed", |state| {
+        !state["session"]["failure"].is_null()
+    });
+    assert_eq!(state["session"]["failure"]["kind"], "invalid", "{state:#}");
     assert_eq!(state["target"], "off");
     assert_eq!(
         std::fs::read_to_string(&invalid).unwrap(),

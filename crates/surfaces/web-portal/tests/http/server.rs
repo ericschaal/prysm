@@ -162,17 +162,17 @@ async fn faulted_engine_is_unavailable() {
             ..fakes::settings()
         };
         let portal = start(slow_close, Duration::from_millis(50)).await;
-        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.target("screen_sync").await.0, StatusCode::NO_CONTENT);
         let (status, body) = portal.target("off").await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["kind"], "faulted");
-        let (status, body) = portal.target("processed").await;
+        let (status, body) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["kind"], "faulted");
         let state = portal.state().await;
         assert_eq!(
             state["session"],
-            json!({ "state": "faulted", "phase": "closing_source" })
+            json!({ "state": "faulted", "message": "The video source did not close in time." })
         );
         // A faulted engine cannot shut down cleanly; the portal still stops.
         assert!(portal.shutdown().await.is_err());

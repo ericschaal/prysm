@@ -81,14 +81,14 @@ test('full: a lighting mode applies with OK and the status follows', async ({
   page,
 }) => {
   await openTv(page, 'full', { focus: 'mode-off' });
-  await pressUntil(page, 'ArrowLeft', 'mode-processed');
+  await pressUntil(page, 'ArrowLeft', 'mode-screen_sync');
   await press(page, 'Enter');
   await expect(statusTitle(page)).toHaveText('Screen sync on');
-  await expect(page.locator('#mode-processed')).toHaveAttribute(
+  await expect(page.locator('#mode-screen_sync')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  expect(await lightingTarget(page)).toBe('processed');
+  expect(await lightingTarget(page)).toBe('screen_sync');
   await pressUntil(page, 'ArrowRight', 'mode-off');
   await press(page, 'Enter');
   await expect(statusTitle(page)).toHaveText('Lights off');
@@ -135,12 +135,12 @@ for (const flavor of ['full', 'slim'] as const) {
     expect(await controls(page)).toEqual([]);
     expect(await focusedId(page)).toBe('(nothing)');
     await expectSizes(page);
-    expect(await lightingTarget(page)).toBe('processed');
+    expect(await lightingTarget(page)).toBe('screen_sync');
     await press(page, 'Back');
     await expect(screen).toHaveCount(0);
     await expect(row).toBeFocused();
     expect(await lightingTarget(page), 'lighting stays as it is').toBe(
-      'processed',
+      'screen_sync',
     );
   });
 }
@@ -175,7 +175,7 @@ test('full first run: set up the service, then the lights from the phone', async
   expect(await lightingTarget(page), 'nothing started').toBe('off');
   expect(await supervisorState(page)).toMatchObject({
     flavor: 'full',
-    lighting: 'off',
+    target: 'off',
   });
 });
 

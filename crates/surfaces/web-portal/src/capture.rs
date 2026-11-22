@@ -9,7 +9,7 @@ use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
 use prysm_ports::{Accepted, Answer, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, Handoff};
-use prysm_protocol::FailureKind;
+use prysm_protocol::Failure;
 
 /// Answer a WebSocket upgrade as the [`Handoff`] says ([`Handoff::answer`]):
 /// `426`, listing the versions spoken here (this one), when the sender offers
@@ -24,8 +24,9 @@ pub(crate) fn upgrade(
     let Some(key) = websocket_key(request.headers()) else {
         return failure(
             StatusCode::BAD_REQUEST,
-            FailureKind::BadRequest,
-            "expected a WebSocket upgrade",
+            Failure::BadRequest {
+                message: "expected a WebSocket upgrade".into(),
+            },
         );
     };
     let headers = request.headers();
@@ -41,8 +42,11 @@ pub(crate) fn upgrade(
         Answer::Version => {
             let mut refused = failure(
                 StatusCode::UPGRADE_REQUIRED,
-                FailureKind::BadRequest,
-                "the sender speaks another capture stream version; update the older one",
+                Failure::BadRequest {
+                    message:
+                        "the sender speaks another capture stream version; update the older one"
+                            .into(),
+                },
             );
             refused.headers_mut().insert(
                 header::SEC_WEBSOCKET_PROTOCOL,
@@ -51,11 +55,7 @@ pub(crate) fn upgrade(
             return refused;
         }
         Answer::Unavailable => {
-            return failure(
-                StatusCode::SERVICE_UNAVAILABLE,
-                FailureKind::Unavailable,
-                "no source receives the capture stream: lighting is off or the capture is not `remote`",
-            );
+            return failure(StatusCode::SERVICE_UNAVAILABLE, Failure::Unavailable { message: "no source receives the capture stream: lighting is off or the capture is not `remote`".into() });
         }
     };
     let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());

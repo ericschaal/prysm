@@ -19,10 +19,17 @@ async fn an_ended_source_stops_cleanly_turns_lighting_off_and_idles_the_output()
             },
         );
         let (handle, engine, _) = start(&log, ending, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
 
-        let snapshot = snapshot_until(&handle, |s| s.session == SessionState::Stopped).await;
-        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        let snapshot = snapshot_until(&handle, |s| {
+            matches!(s.session, SessionState::Stopped { .. })
+        })
+        .await;
+        assert!(
+            snapshot.session.failure().is_none(),
+            "{:?}",
+            snapshot.session.failure()
+        );
         assert_eq!(snapshot.target, LightingTarget::Off);
         assert!(snapshot.input.is_none());
         assert_eq!(log.count("output.write:a"), 3);
@@ -39,10 +46,13 @@ async fn an_ended_source_stops_cleanly_turns_lighting_off_and_idles_the_output()
         // replayed source would already be open.
         handle.replace_settings(current, changed).await.unwrap();
         assert_eq!(log.count("source.open:a"), 1);
-        assert_eq!(handle.snapshot().borrow().session, SessionState::Stopped);
+        assert!(matches!(
+            handle.snapshot().borrow().session,
+            SessionState::Stopped { .. }
+        ));
 
         // Asked again, it plays again.
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("source.open:a", 2).await);
         snapshot_until(&handle, |s| s.target == LightingTarget::Off).await;
         engine.shutdown().await.unwrap();
@@ -53,7 +63,7 @@ async fn an_ended_source_stops_cleanly_turns_lighting_off_and_idles_the_output()
 /// The session ended on its own and was being left `Off` when the lights were
 /// asked for their own effects: they get them, and the state says so.
 #[tokio::test]
-async fn device_native_asked_while_a_session_ends_on_its_own_still_reaches_native() {
+async fn effects_asked_while_a_session_ends_on_its_own_still_come_on() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let ending = settings(
@@ -69,15 +79,15 @@ async fn device_native_asked_while_a_session_ends_on_its_own_still_reaches_nativ
             },
         );
         let (handle, engine, _) = start(&log, ending, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.idle:o:Off", 1).await);
 
-        handle
-            .set_target(LightingTarget::DeviceNative)
-            .await
-            .unwrap();
+        handle.set_target(LightingTarget::Effects).await.unwrap();
         assert!(before(&log, "output.idle:o:Off", "output.idle:o:Native"));
-        assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+        assert!(matches!(
+            handle.snapshot().borrow().session,
+            SessionState::Effects { .. }
+        ));
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -108,14 +118,22 @@ async fn off_asked_while_a_session_fails_on_its_own_succeeds() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, failing_slowly("o"), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.idle:o:Off", 1).await);
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Stopped);
+        assert!(
+            matches!(snapshot.session, SessionState::Stopped { .. }),
+            "{}",
+            snapshot.session
+        );
         assert_eq!(snapshot.target, LightingTarget::Off);
-        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        assert!(
+            snapshot.session.failure().is_none(),
+            "{:?}",
+            snapshot.session.failure()
+        );
         assert_eq!(log.count("output.idle:o:Off"), 1, "idled once");
         engine.shutdown().await.unwrap();
     })
@@ -129,7 +147,7 @@ async fn a_restart_while_a_session_fails_on_its_own_reports_only_the_new_session
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, failing_slowly("o"), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.idle:o:Off", 1).await);
 
         handle
@@ -139,8 +157,16 @@ async fn a_restart_while_a_session_fails_on_its_own_reports_only_the_new_session
         assert!(before(&log, "output.idle:o:Off", "source.open:s2"));
         assert!(log.wait_for("output.write:o2", 1).await);
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Running);
-        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        assert!(
+            matches!(snapshot.session, SessionState::ScreenSync),
+            "{}",
+            snapshot.session
+        );
+        assert!(
+            snapshot.session.failure().is_none(),
+            "{:?}",
+            snapshot.session.failure()
+        );
         engine.shutdown().await.unwrap();
         assert_eq!(log.count("output.idle:o2:Off"), 1);
     })
@@ -166,7 +192,7 @@ async fn a_restart_while_the_source_ends_on_its_own_turns_lighting_off() {
             },
         );
         let (handle, engine, _) = start(&log, ending, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.idle:o:Off", 1).await);
 
         handle
@@ -175,8 +201,16 @@ async fn a_restart_while_the_source_ends_on_its_own_turns_lighting_off() {
             .unwrap();
         let snapshot = handle.snapshot().borrow().clone();
         assert_eq!(snapshot.target, LightingTarget::Off);
-        assert_eq!(snapshot.session, SessionState::Stopped);
-        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        assert!(
+            matches!(snapshot.session, SessionState::Stopped { .. }),
+            "{}",
+            snapshot.session
+        );
+        assert!(
+            snapshot.session.failure().is_none(),
+            "{:?}",
+            snapshot.session.failure()
+        );
         assert_eq!(log.count("source.open:s2"), 0, "nothing restarted");
         engine.shutdown().await.unwrap();
     })
@@ -186,22 +220,27 @@ async fn a_restart_while_the_source_ends_on_its_own_turns_lighting_off() {
 /// The lights' own effects asked while the session fails on its own: they
 /// get them, and the reply is the effects', not the old failure.
 #[tokio::test]
-async fn device_native_asked_while_a_session_fails_on_its_own_reaches_native() {
+async fn effects_asked_while_a_session_fails_on_its_own_come_on() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, failing_slowly("o"), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.idle:o:Off", 1).await);
 
-        handle
-            .set_target(LightingTarget::DeviceNative)
-            .await
-            .unwrap();
+        handle.set_target(LightingTarget::Effects).await.unwrap();
         assert!(before(&log, "output.idle:o:Off", "output.idle:o:Native"));
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Native);
-        assert_eq!(snapshot.target, LightingTarget::DeviceNative);
-        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        assert!(
+            matches!(snapshot.session, SessionState::Effects { .. }),
+            "{}",
+            snapshot.session
+        );
+        assert_eq!(snapshot.target, LightingTarget::Effects);
+        assert!(
+            snapshot.session.failure().is_none(),
+            "{:?}",
+            snapshot.session.failure()
+        );
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -227,18 +266,22 @@ async fn a_failing_idle_after_an_own_end_is_the_reply() {
             },
         );
         let (handle, engine, _) = start(&log, unreachable, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.idle:o:Off", 1).await);
 
         let error = handle
-            .set_target(LightingTarget::DeviceNative)
+            .set_target(LightingTarget::Effects)
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), "fake output cannot idle");
         assert_eq!(log.count("output.idle:o:Native"), 1);
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Stopped);
-        assert_eq!(snapshot.target, LightingTarget::DeviceNative);
+        assert!(
+            matches!(snapshot.session, SessionState::Stopped { .. }),
+            "{}",
+            snapshot.session
+        );
+        assert_eq!(snapshot.target, LightingTarget::Effects);
         engine.shutdown().await.unwrap();
     })
     .await;

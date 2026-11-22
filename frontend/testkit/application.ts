@@ -52,7 +52,7 @@ export function fakeApplicationPort<C, O>(initial: {
     snapshot = { ...snapshot, ...change };
     for (const changed of subscribers) changed(snapshot);
   }
-  /** As the engine: calibration ends when the target leaves `processed`. */
+  /** As the engine: calibration ends when the target leaves `screen_sync`. */
   function clearCalibration() {
     snapshot = { ...snapshot };
     delete snapshot.calibration;
@@ -132,27 +132,21 @@ export function fakeApplicationPort<C, O>(initial: {
       const { capture, output } = snapshot.settings;
       let missing: 'output' | 'capture' | null = null;
       if (target !== 'off' && !output) missing = 'output';
-      else if (target === 'processed' && !capture) missing = 'capture';
+      else if (target === 'screen_sync' && !capture) missing = 'capture';
       if (missing) {
-        const failure: Failure = {
+        // As the engine: the reply, and the session's failure.
+        const failure = {
           kind: 'invalid',
           field: missing,
           message: 'not configured',
-        };
-        publish({ target, session: { state: 'stopped' }, failure });
+        } as const;
+        publish({ target, session: { state: 'stopped', failure } });
         throw new ApplicationError(failure);
       }
-      if (target !== 'processed') clearCalibration();
+      if (target !== 'screen_sync') clearCalibration();
       publish({
         target,
-        failure: undefined,
-        session: {
-          state: {
-            off: 'stopped',
-            processed: 'running',
-            device_native: 'native',
-          }[target] as 'stopped' | 'running' | 'native',
-        },
+        session: { state: target === 'off' ? 'stopped' : target },
       });
     },
     setCalibration: async (calibration) => {
@@ -167,11 +161,10 @@ export function fakeApplicationPort<C, O>(initial: {
       if (!calibration) {
         clearCalibration();
         publish({});
-      } else if (snapshot.target !== 'processed') {
+      } else if (snapshot.target !== 'screen_sync') {
         throw new ApplicationError({
-          kind: 'not_processed',
-          message:
-            'calibration patterns need lighting on: set the target to processed first',
+          kind: 'needs_screen_sync',
+          message: 'calibration patterns need screen sync: turn it on first',
         });
       } else publish({ calibration });
     },

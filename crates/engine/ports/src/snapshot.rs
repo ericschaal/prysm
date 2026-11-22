@@ -8,47 +8,79 @@ use std::fmt;
 pub enum LightingTarget {
     #[default]
     Off,
-    /// Colors processed from captured frames.
-    Processed,
-    /// The output's own effect; no capture.
-    DeviceNative,
+    /// The lights follow the colours of captured frames.
+    ScreenSync,
+    /// The output's own effects; no capture.
+    Effects,
 }
 
 impl LightingTarget {
-    pub const ALL: [Self; 3] = [Self::Off, Self::Processed, Self::DeviceNative];
+    pub const ALL: [Self; 3] = [Self::Off, Self::ScreenSync, Self::Effects];
 
-    /// The serialized name, such as `device_native`.
+    /// The serialized name, such as `screen_sync`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",
-            Self::Processed => "processed",
-            Self::DeviceNative => "device_native",
+            Self::ScreenSync => "screen_sync",
+            Self::Effects => "effects",
         }
     }
 }
 
-/// What the runtime is actually doing.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// What the runtime is actually doing. A failure is kept only while it
+/// explains the present: why the target is not reached, why the lights may
+/// not be off, or that the saved settings do not validate. Screen sync runs
+/// on valid settings and has reached its target, so it carries none.
+#[derive(Debug, Clone)]
 pub enum SessionState {
     /// No session; the output (if any was touched) is idle.
-    #[default]
-    Stopped,
-    Running,
-    /// The output was put in its native idle mode.
-    Native,
+    Stopped { failure: Option<Error> },
+    /// A session runs.
+    ScreenSync,
+    /// The output was put in its own effects, without a session.
+    Effects { failure: Option<Error> },
     /// A session did not stop in time, or its source's release is
     /// unconfirmed. Only shutdown is accepted.
     Faulted(SessionPhase),
 }
 
-/// `stopped`, `running`, `native` or `faulted while <phase>`.
+impl Default for SessionState {
+    fn default() -> Self {
+        Self::Stopped { failure: None }
+    }
+}
+
+impl SessionState {
+    /// The failure this state carries, if any.
+    #[must_use]
+    pub fn failure(&self) -> Option<&Error> {
+        match self {
+            Self::Stopped { failure } | Self::Effects { failure } => failure.as_ref(),
+            Self::ScreenSync | Self::Faulted(_) => None,
+        }
+    }
+
+    /// Whether this state is what `target` asks for.
+    #[must_use]
+    pub fn reached(&self, target: LightingTarget) -> bool {
+        matches!(
+            (target, self),
+            (LightingTarget::Off, Self::Stopped { .. })
+                | (LightingTarget::ScreenSync, Self::ScreenSync)
+                | (LightingTarget::Effects, Self::Effects { .. })
+        )
+    }
+}
+
+/// `stopped`, `screen_sync`, `effects` or `faulted while <phase>`; the
+/// failure is not part of it.
 impl fmt::Display for SessionState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Stopped => f.write_str("stopped"),
-            Self::Running => f.write_str("running"),
-            Self::Native => f.write_str("native"),
+            Self::Stopped { .. } => f.write_str("stopped"),
+            Self::ScreenSync => f.write_str("screen_sync"),
+            Self::Effects { .. } => f.write_str("effects"),
             Self::Faulted(phase) => write!(f, "faulted while {phase}"),
         }
     }
@@ -95,15 +127,10 @@ pub struct Snapshot {
     /// checks; republished with `input`. Empty while no session holds the
     /// output.
     pub device: DeviceReport,
-    /// The calibration pattern shown, while the target is `Processed`. Not
+    /// The calibration pattern shown, while the target is `ScreenSync`. Not
     /// persisted; while set, processing runs without smoothing (and without
     /// correction when `uncorrected`), leaving `settings` untouched.
     pub calibration: Option<CalibrationPattern>,
-    /// The last lighting failure. Every target change, settings apply,
-    /// shutdown and session end replaces it, so the next one that succeeds
-    /// clears it, unless the saved settings do not validate: that is then
-    /// the failure.
-    pub failure: Option<Error>,
     /// Surfaces that failed. Lighting continues without them.
     pub surface_failures: Vec<Error>,
 }
@@ -210,7 +237,15 @@ mod tests {
 
     #[test]
     fn session_states_display_their_phase() {
-        assert_eq!(SessionState::Native.to_string(), "native");
+        assert_eq!(SessionState::default().to_string(), "stopped");
+        assert_eq!(SessionState::ScreenSync.to_string(), "screen_sync");
+        assert_eq!(
+            SessionState::Effects {
+                failure: Some(Error::other("cannot idle"))
+            }
+            .to_string(),
+            "effects"
+        );
         assert_eq!(
             SessionState::Faulted(SessionPhase::ClosingSource).to_string(),
             "faulted while closing the source"
@@ -219,5 +254,35 @@ mod tests {
             SessionState::Faulted(SessionPhase::SourceUnreleased).to_string(),
             "faulted while confirming the source's release"
         );
+    }
+
+    #[test]
+    fn a_state_reaches_only_its_own_target() {
+        let failure = || Some(Error::other("x"));
+        let states = [
+            SessionState::Stopped { failure: None },
+            SessionState::Stopped { failure: failure() },
+            SessionState::ScreenSync,
+            SessionState::Effects { failure: None },
+            SessionState::Effects { failure: failure() },
+            SessionState::Faulted(SessionPhase::Running),
+        ];
+        let expected: [&[LightingTarget]; 6] = [
+            &[LightingTarget::Off],
+            &[LightingTarget::Off],
+            &[LightingTarget::ScreenSync],
+            &[LightingTarget::Effects],
+            &[LightingTarget::Effects],
+            &[],
+        ];
+        for (state, expected) in states.iter().zip(expected) {
+            let reached: Vec<_> = LightingTarget::ALL
+                .into_iter()
+                .filter(|target| state.reached(*target))
+                .collect();
+            assert_eq!(reached, expected, "{state}");
+        }
+        assert!(states[1].failure().is_some() && states[4].failure().is_some());
+        assert!(states[2].failure().is_none() && states[5].failure().is_none());
     }
 }

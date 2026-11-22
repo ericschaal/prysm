@@ -62,12 +62,12 @@ crate and one builder line.
   process restart. Processing-only changes reach a running session at the
   next frame. Capture or output changes (an LED count too) stop the session
   and start a new one, the same path as off then on. If applying fails, the
-  settings stay saved and the state carries the failure.
+  settings stay saved and the session carries the failure.
 - A calibration pattern is not a session and not a setting: it is state
-  beside the target, shown only while the target is `processed` (otherwise
-  the command fails as `not_processed`). While it shows, the session runs
+  beside the target, shown only while the target is `screen_sync` (otherwise
+  the command fails as `needs_screen_sync`). While it shows, the session runs
   without smoothing (and without correction when `uncorrected`). It clears
-  when the target leaves `processed`, at shutdown, and after
+  when the target leaves `screen_sync`, at shutdown, and after
   `CALIBRATION_TIMEOUT` (10 minutes) without being set again. A processing
   trial nobody tries again or saves ends after `TRIAL_TIMEOUT` (30 s).
 - The session only adds to shared counters; the engine samples them once a
@@ -140,7 +140,7 @@ TV two threads take a 640x360 frame from 11 to 7 ms
 The output is opened at the first frame, not when lighting starts, so a source
 without video never takes WLED over. After 3 s without frames the output is
 idled to the device's own state and reopened at the next frame. An output
-nobody holds (released, or `device_native` without a session) is put in
+nobody holds (released, or `effects` without a session) is put in
 another idle mode without being opened (`OutputFactory::idle`): WLED is
 switched off, or to its effects, without entering live mode first. While a
 session runs the engine measures, once a second, the frame rate, whether
@@ -155,26 +155,32 @@ publishes nothing and nothing is encoded. See
 A session ends in one order on every path, including failures: set the stop
 flag, leave the loop, close the source, idle the output, join the thread. The
 output's `idle` is the failure compensation: off for `off`, the device's own
-effects for `device_native`. After the join no frame is in flight.
+effects for `effects`. After the join no frame is in flight.
 
 A session that ends on its own (a failure, or a source that ended) idles its
 output off, or in a stop's mode once a stop has asked. A request or
 shutdown that arrives after its loop ended is handled after that end,
 whichever the engine saw first: the same reply, state, failure and saved
 settings. A session that ends on its own while a request is stopping it
-ended while being stopped: the reply is its failures, then the output's in
-the stop's mode. The thread idles in that mode itself when the stop asked
+ended while being stopped: stopped for `off`, the reply is its failures,
+then the output's (the lights may not be off); stopped for the lights' own
+effects, the effects replace it, so its failure is logged and the reply is
+whether the effects came on. A restart (new capture or output settings)
+replaces the old session the same way: the old output's idle failure is
+logged, and the reply is the new session's start. The thread idles in that mode itself when the stop asked
 before it idled; otherwise the session sets it after the join through its
 own output (not over a source whose release is unconfirmed): a second idle
 happens only when the thread idled before the stop asked. An
-ended source turns a `processed` target `off`, so lighting does not restart
+ended source turns a `screen_sync` target `off`, so lighting does not restart
 until asked again.
 
 The engine joins with a deadline (10 s in the desktop hosts), and gives a
 late idle after an own end the same deadline. A session that does not finish
 puts the engine in a single `Faulted` state that names the outstanding step
 and accepts only shutdown; so does a source whose release is not confirmed
-(phase `source_unreleased`), since it may still hold its device. Native
+(phase `source_unreleased`), since it may still hold its device. The phase
+is in the logs; the state says what did not finish in words
+(`session.message`). Native
 watchdogs stay inside the capture adapters. Host shutdown stops the session
 with the output idled off; requests still queued behind it are refused.
 

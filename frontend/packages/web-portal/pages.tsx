@@ -1,9 +1,10 @@
 import type { Processing } from '@prysm/contracts/application';
-import type {
-  ApplicationSnapshot,
-  DiscoveryClient,
-  LightingSituation,
-  LightingTarget,
+import {
+  situationFailure,
+  type ApplicationSnapshot,
+  type DiscoveryClient,
+  type LightingSituation,
+  type LightingTarget,
 } from '@prysm/application-client';
 import { useRef, type ReactNode, type RefObject } from 'react';
 import { useParams } from 'react-router';
@@ -177,7 +178,7 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
       online,
       target: snapshot.target,
       path: portal.path,
-      failure: snapshot.failure ?? null,
+      failure: situationFailure(portal.lighting),
       input: snapshot.input,
       device: snapshot.device,
     },

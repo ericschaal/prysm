@@ -10,7 +10,7 @@ Its variants are what callers match on; never match on message text.
 | `UnusableSettings` | The settings store could not be read at start (the file does not decode, has another format, or cannot be read); carries the store's error and its causes, no field. The engine runs unconfigured, reporting it until a save | `invalid`, no `field` (422 for a command it refuses) |
 | `Adapter` | A device or adapter failed to open, read, write or idle; `section` says capture or output when known | `adapter` (502) |
 | `StaleRevision` | Settings were replaced from an old revision | `stale_revision` (409) |
-| `NotProcessed` | A calibration pattern while Screen sync is off | `not_processed` (409) |
+| `NeedsScreenSync` | A calibration pattern while Screen sync is off | `needs_screen_sync` (409) |
 | `Faulted` | A session did not finish within its deadline, or did not confirm its source's release (phase `source_unreleased`); only shutdown is accepted | `faulted` (503) |
 | `Panicked`, `Closed` | A runtime task panicked, or the engine stopped | `internal` (500), `unavailable` (503) |
 
@@ -29,9 +29,13 @@ The full wire mapping is in the
   registry adds the section (`fps` becomes `capture.fps`).
 - A source that finishes (`Pull::Ended`, a file at its end) is success:
   lighting stops without a failure and the target becomes `off`.
-- A session failure is reported once, as `State.failure`. The target stays as
-  requested, so the next settings change retries; nothing reconnects on its
-  own.
+- A session failure is reported once, in the session it explains
+  (`State.session.failure`, on `stopped` or `effects`; screen sync and a
+  fault carry none). A failure of what a command replaced (the old output of
+  a restart, a session that ended as the lights' own effects were asked for)
+  is logged at `warn` and is neither published nor the reply. The target
+  stays as requested, so the next settings change retries; nothing
+  reconnects on its own.
 - An output's `idle` runs on every session exit; a failure there is reported,
   not hidden.
 - Surface failures (a portal listener that dies) are recorded in

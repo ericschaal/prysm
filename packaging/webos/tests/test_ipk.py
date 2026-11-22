@@ -60,7 +60,7 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(worker_role['exeName'], INSTALLED + worker)
         self.assertEqual(worker_role['allowedNames'], ['com.webos.service.capture.client*', 'com.webos.rm.client.*'])
         self.assertEqual(api, {'public': [info['id'] + '/' + method for method in methods]})
-        self.assertEqual(methods, ['getState', 'setPreferences', 'setEnabled', 'uninstall'])
+        self.assertEqual(methods, ['getState', 'setPreferences', 'setTarget', 'setEnabled', 'uninstall'])
         self.assertEqual(list(client), [info['id']])
         unit = (HERE / 'service/supervisor.service').read_text().splitlines()
         self.assertIn('Name=' + info['id'], unit)
@@ -272,7 +272,8 @@ class SmokeProbeTests(unittest.TestCase):
         self.assertEqual(role['exeName'], directory + '/prysm-webos-slim-service')
         self.assertEqual(role['allowedNames'], [smoke.SERVICE])
         api = json.loads(files['probe.api.json'])['public']
-        self.assertEqual(api, [smoke.SERVICE + '/' + m for m in ('getState', 'setPreferences', 'setEnabled', 'uninstall')])
+        methods = ('getState', 'setPreferences', 'setTarget', 'setEnabled', 'uninstall')
+        self.assertEqual(api, [smoke.SERVICE + '/' + m for m in methods])
         self.assertEqual(json.loads(files['probe.worker.role.json'])['exeName'], directory + '/prysm-webos-slim')
         self.assertIn(directory + '/probe.worker.role.json', json.loads(manifest)['roleFiles'])
         # The probe's Luna manifest has the packaged app's version.

@@ -80,7 +80,7 @@ Options:
       --allow-origin <ORIGIN>  Also allow browser pages from ORIGIN (repeatable; 'null': no origin, as the TV app; '*': any)
       --metrics                Also serve Prometheus metrics at /metrics on the portal
       --no-portal              Serve no web portal
-      --start                  Request processed lighting at launch (else idle)
+      --start                  Start screen sync at launch (else idle)
       --log-file <PATH>        Append log lines to PATH instead of stderr
       --check-settings         Only validate the settings file for this host's adapters, then exit
   -h, --help                   Print help

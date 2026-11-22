@@ -69,7 +69,7 @@ const screens: Screen[] = [
     name: 'Home, screen sync on',
     focus: 'mode-off',
     reach: async (page) => {
-      await pressUntil(page, 'ArrowLeft', 'mode-processed');
+      await pressUntil(page, 'ArrowLeft', 'mode-screen_sync');
       await press(page, 'Enter');
       await expect(page.locator('#status-title')).toHaveText('Screen sync on');
     },

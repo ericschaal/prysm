@@ -45,7 +45,7 @@ async fn colors_are_idle_unless_lights_follow_the_screen_and_sent_only_when_chan
         let first = next_state(&mut events, &mut buffer, |_| true).await;
         assert_eq!(first, json!({ "type": "idle" }));
 
-        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.target("screen_sync").await.0, StatusCode::NO_CONTENT);
         let colors = next_state(&mut events, &mut buffer, |_| true).await;
         assert_summary(&colors);
         assert!(colors.get("jpeg").is_none());
@@ -61,14 +61,11 @@ async fn colors_are_idle_unless_lights_follow_the_screen_and_sent_only_when_chan
         }
 
         // The device's own effects are not Prysm's colors.
-        assert_eq!(
-            portal.target("device_native").await.0,
-            StatusCode::NO_CONTENT
-        );
+        assert_eq!(portal.target("effects").await.0, StatusCode::NO_CONTENT);
         let idle = next_state(&mut events, &mut buffer, |_| true).await;
         assert_eq!(idle, json!({ "type": "idle" }));
 
-        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.target("screen_sync").await.0, StatusCode::NO_CONTENT);
         assert_summary(&next_state(&mut events, &mut buffer, |_| true).await);
         assert_eq!(portal.target("off").await.0, StatusCode::NO_CONTENT);
         next_state(&mut events, &mut buffer, |e| e["type"] == "idle").await;
@@ -113,7 +110,7 @@ async fn colors_cadence_is_capped_at_ten_per_second() {
             ..defaults
         };
         let portal = start(blinking, Duration::from_secs(5)).await;
-        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.target("screen_sync").await.0, StatusCode::NO_CONTENT);
         let response = colors_stream(&portal).await;
         let mut events = response.bytes_stream();
         let mut buffer = String::new();

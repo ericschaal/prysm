@@ -1,8 +1,8 @@
 import {
   describeOutputIssue,
   plainFailure,
-  type Failure,
-  type LightingTarget,
+  type LightingFailure,
+  type TargetReading,
 } from '@prysm/application-client';
 import type { DeviceReport, Input } from '@prysm/contracts/application';
 import { ledCountsDiffer } from './adapters';
@@ -12,9 +12,10 @@ import type { PathState } from './setup-card';
 /** What the state says about screen sync now, for a section's status. */
 export interface LiveState {
   online: boolean;
-  target: LightingTarget;
+  target: TargetReading;
   path: PathState;
-  failure: Failure | null;
+  /** The failure the lighting situation says (see `situationFailure`). */
+  failure: LightingFailure | null;
   input?: Input;
   /** What the lights say about themselves. */
   device: DeviceReport;
@@ -95,7 +96,13 @@ export function sectionStatus(
         ? 'Screen sync is off, so this source isn’t in use.'
         : 'Screen sync is off, so these lights aren’t in use.',
     };
-  if (target === 'device_native') {
+  if (target === 'unknown')
+    return {
+      tone: 'idle',
+      title: 'Prysm is newer than this app',
+      detail: 'Update it to see what the lights do.',
+    };
+  if (target === 'effects') {
     if (capture)
       return {
         tone: 'idle',

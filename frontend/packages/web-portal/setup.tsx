@@ -222,7 +222,7 @@ export function SetupWizard<
       close('Setup saved. Screen sync is starting.');
     } catch (error) {
       close(
-        `Setup saved, but screen sync did not start. ${plainFailure(failureOf(error), 'processed', 'Device effects')}`,
+        `Setup saved, but screen sync did not start. ${plainFailure(failureOf(error), 'screen_sync', 'Device effects')}`,
       );
     }
   }

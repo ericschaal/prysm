@@ -1,7 +1,7 @@
 //! The engine's side of the supervisor link: commands in, status out.
 use futures::future::BoxFuture;
 use prysm_capture_webos::VideoSignal;
-use prysm_ports::{Error, LightingTarget, Result, SessionPhase, SessionState, Snapshot, chain};
+use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot, chain};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{
@@ -81,7 +81,7 @@ impl EngineLink {
                 beat = now + self.heartbeat;
             }
             if let SessionState::Faulted(phase) = snapshot.session {
-                let cause = faulted(phase, snapshot.failure.as_ref());
+                let cause = Error::Faulted(phase).to_string();
                 events.send(&Event::Faulted {
                     cause: cause.clone(),
                 });
@@ -107,7 +107,7 @@ impl EngineLink {
                     None => return Ok(()),
                     Some(Command::Video { video }) => self.video.set(video),
                     Some(Command::ResetVideo {}) => self.video.reset(),
-                    Some(Command::Lighting { target }) => {
+                    Some(Command::Target { target }) => {
                         retry.cancel();
                         apply(&engine, target).await;
                     }
@@ -143,15 +143,6 @@ async fn apply(engine: &EngineHandle, target: LightingTarget) {
     let _ = engine.set_target(target).await;
 }
 
-/// Why the session faulted, with the failure's causes when there is one.
-fn faulted(phase: SessionPhase, failure: Option<&Error>) -> String {
-    let fault = Error::Faulted(phase);
-    match failure {
-        Some(failure) => format!("{fault}: {}", chain(failure)),
-        None => fault.to_string(),
-    }
-}
-
 async fn wait(at: Option<Instant>) {
     match at {
         Some(at) => sleep_until(at).await,
@@ -161,12 +152,12 @@ async fn wait(at: Option<Instant>) {
 
 fn status(snapshot: &Snapshot, portal: Option<&str>) -> WorkerStatus {
     let failure = snapshot
-        .failure
-        .as_ref()
+        .session
+        .failure()
         .or(snapshot.surface_failures.last());
     WorkerStatus::Full(FullStatus {
         // Running and frames arriving: false while waiting for video.
-        capturing: snapshot.session == SessionState::Running
+        capturing: matches!(snapshot.session, SessionState::ScreenSync)
             && snapshot.input.is_some_and(|input| input.receiving),
         fps: snapshot.input.map(|input| whole_fps(input.fps)),
         target: snapshot.target,
@@ -202,7 +193,7 @@ impl Retry {
     }
 
     fn observe(&mut self, snapshot: &Snapshot, now: Instant) {
-        if snapshot.session == SessionState::Running {
+        if matches!(snapshot.session, SessionState::ScreenSync) {
             self.running_since.get_or_insert(now);
         }
         if !wants_retry(snapshot) {
@@ -232,20 +223,24 @@ impl Retry {
 /// worker then fails (exit 1), and the supervisor starts a new one after its
 /// backoff instead of this worker retrying in place.
 fn needs_restart(snapshot: &Snapshot) -> Option<String> {
-    let failure = snapshot.failure.as_ref()?;
-    (snapshot.session == SessionState::Stopped && prysm_capture_webos::needs_new_process(failure))
-        .then(|| chain(failure))
+    let SessionState::Stopped {
+        failure: Some(failure),
+    } = &snapshot.session
+    else {
+        return None;
+    };
+    prysm_capture_webos::needs_new_process(failure).then(|| chain(failure))
 }
 
 /// A non-Off target whose session ended with a failure that a retry can fix.
 /// Invalid or missing settings wait for the user instead.
 fn wants_retry(snapshot: &Snapshot) -> bool {
     snapshot.target != LightingTarget::Off
-        && snapshot.session == SessionState::Stopped
-        && snapshot
-            .failure
-            .as_ref()
-            .is_some_and(|failure| !matches!(failure, Error::Invalid(_) | Error::Decode { .. }))
+        && matches!(
+            &snapshot.session,
+            SessionState::Stopped { failure: Some(failure) }
+                if !matches!(failure, Error::Invalid(_) | Error::Decode { .. })
+        )
 }
 
 #[cfg(test)]
@@ -277,19 +272,21 @@ mod tests {
     fn snapshot(seen: Seen) -> Snapshot {
         let stopped = |target, failure| Snapshot {
             target,
-            failure: Some(failure),
+            session: SessionState::Stopped {
+                failure: Some(failure),
+            },
             ..Snapshot::default()
         };
         match seen {
             Seen::Off => stopped(LightingTarget::Off, Error::other("source failed")),
             Seen::Running => Snapshot {
-                target: LightingTarget::Processed,
-                session: SessionState::Running,
+                target: LightingTarget::ScreenSync,
+                session: SessionState::ScreenSync,
                 ..Snapshot::default()
             },
-            Seen::Failed => stopped(LightingTarget::Processed, Error::other("source failed")),
+            Seen::Failed => stopped(LightingTarget::ScreenSync, Error::other("source failed")),
             Seen::Invalid => stopped(
-                LightingTarget::Processed,
+                LightingTarget::ScreenSync,
                 Error::Invalid(ValidationError::new("output", "missing")),
             ),
         }
@@ -307,8 +304,10 @@ mod tests {
             )
         };
         let stopped = Snapshot {
-            target: LightingTarget::Processed,
-            failure: Some(unrecoverable()),
+            target: LightingTarget::ScreenSync,
+            session: SessionState::Stopped {
+                failure: Some(unrecoverable()),
+            },
             ..Snapshot::default()
         };
         assert_eq!(
@@ -317,11 +316,13 @@ mod tests {
                 "cannot open webOS video capture: vtCapture_create failed: vtcapture exception: bad_alloc"
             )
         );
-        let running = Snapshot {
-            session: SessionState::Running,
+        let showing_effects = Snapshot {
+            session: SessionState::Effects {
+                failure: Some(unrecoverable()),
+            },
             ..stopped
         };
-        assert_eq!(needs_restart(&running), None);
+        assert_eq!(needs_restart(&showing_effects), None);
         for seen in [Seen::Off, Seen::Running, Seen::Failed, Seen::Invalid] {
             assert_eq!(needs_restart(&snapshot(seen)), None, "{seen:?}");
         }

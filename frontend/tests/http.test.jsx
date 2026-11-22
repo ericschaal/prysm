@@ -58,11 +58,11 @@ test('the state stream decodes split events and comments, sends no credentials a
   const next = observation.updates.next();
   stream.enqueue(
     encode(
-      `data: ${JSON.stringify(state({ target: 'processed', revision: 4 }))}\n\n`,
+      `data: ${JSON.stringify(state({ target: 'screen_sync', revision: 4 }))}\n\n`,
     ),
   );
   const update = (await next).value;
-  assert.equal(update.target, 'processed');
+  assert.equal(update.target, 'screen_sync');
   assert.equal(update.revision, 4);
   observation.close();
   assert((await observation.updates.next()).done);
@@ -122,21 +122,54 @@ test('every state, preview and colors event Rust sends decodes as it is', () => 
       assert.deepEqual(decode(example), { event: example });
 });
 
-test('a target or session state newer than the page is read as off or stopped', async () => {
+test('a target or session state newer than the page is read as unknown, never off or stopped', async () => {
   // The whole state was refused, so an open page reconnected for ever.
   const newer = state({ target: 'ambient', session: { state: 'dimming' } });
   assert.deepEqual(decodeState(newer), {
-    event: { ...newer, target: 'off', session: { state: 'stopped' } },
+    event: { ...newer, target: 'unknown', session: { state: 'unknown' } },
   });
-  // A faulted session's newer phase is kept; one without a phase is malformed.
-  const faulted = state({ session: { state: 'faulted', phase: 'cooling' } });
+  // A newer state's failure and message are kept, to be shown.
+  const failure = { kind: 'adapter', message: 'x' };
+  const carrying = state({
+    session: { state: 'dimming', failure, message: 'm', extra: 1 },
+  });
+  assert.deepEqual(decodeState(carrying), {
+    event: {
+      ...carrying,
+      session: { state: 'unknown', failure, message: 'm' },
+    },
+  });
+  // A faulted session says what did not finish; one without it is malformed.
+  const faulted = state({
+    session: { state: 'faulted', message: 'Lighting did not stop in time.' },
+  });
   assert.deepEqual(decodeState(faulted), { event: faulted });
   assert.equal(
     decodeState(state({ session: { state: 'faulted' } })),
     'invalid',
   );
+  // Each known state keeps only what it carries: screen sync no failure.
+  for (const [sent, read] of [
+    [
+      { state: 'stopped', failure },
+      { state: 'stopped', failure },
+    ],
+    [
+      { state: 'effects', failure },
+      { state: 'effects', failure },
+    ],
+    [{ state: 'effects' }, { state: 'effects' }],
+    [{ state: 'screen_sync', failure }, { state: 'screen_sync' }],
+  ])
+    assert.deepEqual(decodeState(state({ session: sent })), {
+      event: state({ session: read }),
+    });
+  assert.equal(
+    decodeState(state({ session: { state: 'stopped', failure: 'x' } })),
+    'invalid',
+  );
   assert.equal(decodeState(state({ target: 3 })), 'invalid');
-  assert.equal(decodeState(state({ session: 'running' })), 'invalid');
+  assert.equal(decodeState(state({ session: 'screen_sync' })), 'invalid');
   // Events of a newer kind are skipped; a known kind must be whole.
   assert.equal(decodePreview({ type: 'thumbnail' }), 'unknown');
   assert.equal(decodePreview({ type: 'unavailable' }), 'invalid');
@@ -151,8 +184,8 @@ test('a target or session state newer than the page is read as off or stopped', 
       }),
   });
   const observation = await client.observe(new AbortController().signal);
-  assert.equal(observation.initial.target, 'off');
-  assert.deepEqual(observation.initial.session, { state: 'stopped' });
+  assert.equal(observation.initial.target, 'unknown');
+  assert.deepEqual(observation.initial.session, { state: 'unknown' });
   observation.close();
 });
 
@@ -164,12 +197,12 @@ test('commands use PUT with JSON bodies and return the runtime result', async ()
       return url.endsWith('/settings') ? json(200, { revision: 8 }) : json(204);
     },
   });
-  await client.setTarget('device_native');
+  await client.setTarget('effects');
   const settings = state().settings;
   assert.equal(await client.tryProcessing(settings.processing), undefined);
   assert.equal(await client.replaceSettings(7, settings), 8);
   assert.deepEqual(requests, [
-    ['/api/v1/target', 'PUT', { target: 'device_native' }],
+    ['/api/v1/target', 'PUT', { target: 'effects' }],
     ['/api/v1/processing/trial', 'PUT', settings.processing],
     ['/api/v1/settings', 'PUT', { expected: 7, settings }],
   ]);
@@ -224,7 +257,7 @@ test('a lost reply is unavailable, not a definite rejection', async () => {
       throw new TypeError('network down');
     },
   });
-  await assert.rejects(client.setTarget('processed'), (error) =>
+  await assert.rejects(client.setTarget('screen_sync'), (error) =>
     /Check the current state/.test(error.message),
   );
 });
@@ -242,7 +275,7 @@ test('a base URL targets a remote portal for commands and the stream', async () 
       return url.endsWith('/target') ? json(204) : json(200, { revision: 2 });
     },
   });
-  await client.setTarget('processed');
+  await client.setTarget('screen_sync');
   assert.equal(await client.replaceSettings(1, state().settings), 2);
   const observation = await client.observe(new AbortController().signal);
   assert.equal(observation.initial.target, 'off');

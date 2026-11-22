@@ -2,6 +2,7 @@
   "public": [
     "io.github.ericschaal.prysm.service/getState",
     "io.github.ericschaal.prysm.service/setPreferences",
+    "io.github.ericschaal.prysm.service/setTarget",
     "io.github.ericschaal.prysm.service/setEnabled",
     "io.github.ericschaal.prysm.service/uninstall"
   ]

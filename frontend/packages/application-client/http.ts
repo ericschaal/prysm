@@ -8,14 +8,15 @@ import {
   type ColorsEvent,
   type DiscoveryClient,
   type Failure,
+  type LightingFailure,
   type LightingTarget,
   type Mode,
   type Modes,
   type PreviewClient,
   type PreviewEvent,
   type Session,
+  type SessionReading,
 } from './index';
-import type { Phase } from '@prysm/contracts/application';
 
 /**
  * Above the longest command the portal waits for, which sets no deadline of
@@ -34,7 +35,8 @@ function timeoutSignal(ms: number): AbortSignal {
   return controller.signal;
 }
 
-const failure = (kind: Failure['kind'], message: string) =>
+/** A failure this page makes itself: one that carries only its message. */
+const failure = (kind: 'unavailable' | 'forbidden', message: string) =>
   new ApplicationError({ kind, message });
 
 /** Decode the server's failure body; anything else becomes `unavailable`. */
@@ -371,30 +373,30 @@ const isObject = (value: unknown): value is Fields =>
 /** Keyed by every value of the generated union, so the compiler keeps them in step. */
 const targets: Record<LightingTarget, true> = {
   off: true,
-  processed: true,
-  device_native: true,
+  screen_sync: true,
+  effects: true,
 };
-type Running = Exclude<Session['state'], 'faulted'>;
-const sessions: Record<Running, true> = {
+const sessions: Record<Session['state'], true> = {
   stopped: true,
-  running: true,
-  native: true,
+  screen_sync: true,
+  effects: true,
+  faulted: true,
 };
 /** `raw` if it is one of `values`, else `fallback`: a value newer than this page. */
-function known<T extends string>(
+function known<T extends string, F extends string>(
   values: Record<T, true>,
   raw: string,
-  fallback: T,
-): T {
+  fallback: F,
+): T | F {
   return Object.keys(values).includes(raw) ? (raw as T) : fallback;
 }
 
 /**
  * A state as this page reads it. Its structure is checked; a value newer
- * than this page in a known field has one reading: an unknown target is
- * `off`, an unknown session state `stopped`, and a faulted session's
- * unknown phase is kept (it is not named). Fields not checked here reach
- * the views as sent, and each has its own reading there.
+ * than this page in a known field has one reading: an unknown target, or
+ * an unknown session state, is `unknown` (never off or stopped), and the
+ * failure or message such a session carries is kept. Fields not checked
+ * here reach the views as sent, and each has its own reading there.
  */
 export function decodeState(
   value: unknown,
@@ -413,16 +415,47 @@ export function decodeState(
     !Array.isArray(value.surface_failures)
   )
     return 'invalid';
-  let decoded: Session;
-  if (session.state !== 'faulted')
-    decoded = { state: known(sessions, session.state, 'stopped') };
-  else if (typeof session.phase === 'string')
-    decoded = { state: 'faulted', phase: session.phase as Phase };
-  else return 'invalid';
+  let carries: LightingFailure | undefined;
+  if (session.failure !== undefined) {
+    if (
+      !isObject(session.failure) ||
+      typeof session.failure.kind !== 'string' ||
+      typeof session.failure.message !== 'string'
+    )
+      return 'invalid';
+    carries = session.failure as unknown as LightingFailure;
+  }
+  const message =
+    typeof session.message === 'string' ? session.message : undefined;
+  // Absent stays absent: a value is omitted, never `undefined`.
+  const carried = carries ? { failure: carries } : {};
+  let decoded: SessionReading;
+  switch (known(sessions, session.state, 'unknown')) {
+    case 'stopped':
+      decoded = { state: 'stopped', ...carried };
+      break;
+    case 'effects':
+      decoded = { state: 'effects', ...carried };
+      break;
+    case 'screen_sync':
+      decoded = { state: 'screen_sync' };
+      break;
+    case 'faulted':
+      if (message === undefined) return 'invalid';
+      decoded = { state: 'faulted', message };
+      break;
+    case 'unknown':
+      decoded = {
+        state: 'unknown',
+        ...carried,
+        ...(message === undefined ? {} : { message }),
+      };
+      break;
+  }
   return {
     event: {
       ...(value as unknown as ApplicationSnapshot<unknown, unknown>),
-      target: known(targets, value.target, 'off'),
+      target: known(targets, value.target, 'unknown'),
       session: decoded,
     },
   };

@@ -94,8 +94,8 @@ impl Ui {
     fn shortcut(&mut self, code: KeyCode) -> Option<Action> {
         let target = |target| Some(Action::Run(Command::SetTarget(target)));
         match code {
-            KeyCode::Char('p') => target(LightingTarget::Processed),
-            KeyCode::Char('n') => target(LightingTarget::DeviceNative),
+            KeyCode::Char('s') => target(LightingTarget::ScreenSync),
+            KeyCode::Char('e') => target(LightingTarget::Effects),
             KeyCode::Char('o') => target(LightingTarget::Off),
             KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
             KeyCode::Char(':') => {
@@ -135,23 +135,23 @@ impl Ui {
 }
 
 pub(crate) const HELP: &str =
-    " p processed · n native · o off · : command (on|off|native|load <path>) · q quit";
+    " s screen sync · e effects · o off · : on|off|effects|load <path> · q quit";
 
 fn parse(line: &str) -> Result<Option<Action>, String> {
     let line = line.trim();
     let run = |target| Ok(Some(Action::Run(Command::SetTarget(target))));
     match line {
         "" => Ok(None),
-        "on" | "processed" => run(LightingTarget::Processed),
+        "on" | "screen_sync" => run(LightingTarget::ScreenSync),
+        "effects" => run(LightingTarget::Effects),
         "off" => run(LightingTarget::Off),
-        "native" => run(LightingTarget::DeviceNative),
         "q" | "quit" => Ok(Some(Action::Quit)),
         _ => match line.strip_prefix("load ").map(str::trim) {
             Some(path) if !path.is_empty() => {
                 Ok(Some(Action::Run(Command::Load(PathBuf::from(path)))))
             }
             _ => Err(format!(
-                "Unknown command `{line}`; use on, off, native or load <path>"
+                "Unknown command `{line}`; use on, screen_sync, effects, off or load <path>"
             )),
         },
     }
@@ -183,10 +183,10 @@ mod tests {
     fn shortcuts_set_targets_and_quit() {
         let mut ui = Ui::default();
         assert_eq!(
-            press(&mut ui, "pnox"),
+            press(&mut ui, "seox"),
             [
-                set(LightingTarget::Processed),
-                set(LightingTarget::DeviceNative),
+                set(LightingTarget::ScreenSync),
+                set(LightingTarget::Effects),
                 set(LightingTarget::Off)
             ]
         );
@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(ui.key(KeyCode::Esc.into()), Some(Action::Quit));
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(ui.key(ctrl_c), Some(Action::Quit));
-        let mut release = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
+        let mut release = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
         release.kind = KeyEventKind::Release;
         assert_eq!(ui.key(release), None);
     }
@@ -215,11 +215,19 @@ mod tests {
         ui.key(KeyCode::Esc.into());
         assert_eq!(ui.key(KeyCode::Enter.into()), None);
         assert_eq!(ui.footer(200), HELP);
-        press(&mut ui, ":native");
-        assert_eq!(
-            ui.key(KeyCode::Enter.into()),
-            Some(set(LightingTarget::DeviceNative))
-        );
+        for (command, target) in [
+            (":effects", LightingTarget::Effects),
+            (":screen_sync", LightingTarget::ScreenSync),
+            (":on", LightingTarget::ScreenSync),
+            (":off", LightingTarget::Off),
+        ] {
+            press(&mut ui, command);
+            assert_eq!(
+                ui.key(KeyCode::Enter.into()),
+                Some(set(target)),
+                "{command}"
+            );
+        }
     }
 
     #[test]

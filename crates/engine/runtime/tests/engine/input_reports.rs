@@ -22,7 +22,7 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
         let (handle, engine, _) = start(&log, quiet, DEADLINE).await;
         assert!(handle.snapshot().borrow().input.is_none(), "no session");
 
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let started = tokio::time::Instant::now();
         let waiting = handle.snapshot().borrow().input.unwrap();
         assert!(!waiting.receiving, "nothing measured yet");
@@ -41,7 +41,11 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
         // After 150 frames it goes quiet.
         let quiet = snapshot_until(&handle, |s| s.input.is_some_and(|i| !i.receiving)).await;
         assert!(quiet.input.unwrap().fps.abs() < f32::EPSILON);
-        assert_eq!(quiet.session, SessionState::Running);
+        assert!(
+            matches!(quiet.session, SessionState::ScreenSync),
+            "{}",
+            quiet.session
+        );
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert!(handle.snapshot().borrow().input.is_none());
@@ -67,7 +71,7 @@ async fn latency_starts_at_capture_when_every_frame_has_a_capture_time() {
             },
         );
         let (handle, engine, _) = start(&log, captured, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let measured =
             snapshot_until(&handle, |s| s.input.is_some_and(|i| i.latency.is_some())).await;
         let input = measured.input.unwrap();
@@ -107,7 +111,7 @@ async fn input_reports_frames_sent_and_the_received_to_flushed_span() {
             },
         );
         let (handle, engine, _) = start(&log, slow, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let measured =
             snapshot_until(&handle, |s| s.input.is_some_and(|i| i.latency.is_some())).await;
         let input = measured.input.unwrap();
@@ -128,7 +132,7 @@ async fn input_reports_frames_sent_and_the_received_to_flushed_span() {
         );
 
         // The 61st write fails: only flushed frames are timed.
-        snapshot_until(&handle, |s| s.failure.is_some()).await;
+        snapshot_until(&handle, |s| s.session.failure().is_some()).await;
         let stats = handle.stats();
         assert_eq!(stats.flushed.count, stats.frames_sent);
         assert_eq!(stats.frames_sent, 60);
@@ -158,7 +162,7 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
             },
         );
         let (handle, engine, _) = start(&log, overridden, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let reported = snapshot_until(&handle, |s| s.device.issue.is_some()).await;
         assert_eq!(reported.device.issue, Some(OutputIssue::Overridden));
         assert_eq!(
@@ -171,8 +175,12 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
             Some(120),
             "and so does its own LED count"
         );
-        assert_eq!(reported.session, SessionState::Running);
-        assert!(reported.failure.is_none());
+        assert!(
+            matches!(reported.session, SessionState::ScreenSync),
+            "{}",
+            reported.session
+        );
+        assert!(reported.session.failure().is_none());
         let writes = log.count("output.write:o");
         assert!(
             log.wait_for("output.write:o", writes + 10).await,
@@ -222,7 +230,7 @@ async fn a_slow_output_is_named_after_a_few_seconds() {
             },
         );
         let (handle, engine, _) = start(&log, slow, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(behind_within(&handle, Behind::Output, 8).await);
         engine.shutdown().await.unwrap();
     })

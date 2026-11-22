@@ -139,7 +139,7 @@ export function SectionEditor<S extends AdapterSection>({
   const blocked = Object.keys(errors.local).length > 0;
 
   const stalled = useLingering(
-    live.target === 'processed' && live.path.kind === 'waiting',
+    live.target === 'screen_sync' && live.path.kind === 'waiting',
     checkForMs,
     0,
   );
@@ -199,7 +199,12 @@ export function SectionEditor<S extends AdapterSection>({
       else
         setPhase({
           kind: 'problem',
-          message: saveProblem({ ...reason, field: undefined }),
+          // Without its field: the field is not shown, so it is not named.
+          message: saveProblem(
+            reason.kind === 'invalid'
+              ? { ...reason, field: undefined }
+              : reason,
+          ),
         });
       setFocus({ field });
     }
@@ -311,7 +316,7 @@ export function SectionEditor<S extends AdapterSection>({
 
   // The large preview shows something only while screen sync runs.
   const open =
-    showPreview && saved !== null && live.target === 'processed'
+    showPreview && saved !== null && live.target === 'screen_sync'
       ? {
           label: section === 'capture' ? 'See the picture' : 'Check placement',
           onOpen: showPreview,

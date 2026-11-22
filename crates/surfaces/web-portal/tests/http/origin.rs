@@ -13,7 +13,7 @@ async fn foreign_origins_are_refused_without_running_the_command() {
         let put = |origin: Option<&str>, host: Option<&str>| {
             let mut request = portal
                 .request(Method::PUT, "/api/v1/target")
-                .json(&json!({ "target": "processed" }));
+                .json(&json!({ "target": "screen_sync" }));
             if let Some(origin) = origin {
                 request = request.header(header::ORIGIN, origin);
             }
@@ -139,7 +139,7 @@ async fn a_listed_origin_gets_cors_on_commands_and_streams() {
         let put = portal
             .request(Method::PUT, "/api/v1/target")
             .header(header::ORIGIN, TV)
-            .json(&json!({ "target": "processed" }))
+            .json(&json!({ "target": "screen_sync" }))
             .send()
             .await
             .unwrap();
@@ -189,7 +189,7 @@ async fn listing_null_allows_only_the_null_origin() {
         let put = portal
             .request(Method::PUT, "/api/v1/target")
             .header(header::ORIGIN, "null")
-            .json(&json!({ "target": "processed" }))
+            .json(&json!({ "target": "screen_sync" }))
             .send()
             .await
             .unwrap();

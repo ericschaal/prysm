@@ -279,18 +279,25 @@ export function useTvService(service: TvService, active: boolean) {
     say,
     /** Apply `patch` to the preferences now; only a failure is reported (an older notice is cleared). */
     set: (patch: Edits) => run(() => sendPreferences(patch), '', NOT_SAVED),
+    /** Slim package: capture on or off. */
     enable: (enabled: boolean) =>
       run(
         () => service.setEnabled(enabled),
         '',
         enabled ? 'Couldn’t start.' : 'Couldn’t stop.',
       ),
-    /** Full package: off and on again, as after a failure. */
+    /**
+     * Full package: off and on again, as after a failure, back to the target
+     * that failed (screen sync when it was off, or newer than this app).
+     */
     retry: () =>
       run(
         async () => {
-          await service.setEnabled(false);
-          await service.setEnabled(true);
+          const failed = state?.flavor === 'full' ? state.target : 'off';
+          await service.setTarget('off');
+          await service.setTarget(
+            failed === 'off' || failed === 'unknown' ? 'screen_sync' : failed,
+          );
         },
         '',
         'Couldn’t start.',

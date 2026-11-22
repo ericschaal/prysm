@@ -50,9 +50,9 @@ pub enum Error {
         current: Revision,
     },
     /// A calibration pattern was asked for while the target is not
-    /// `Processed`: patterns are shown through processed lighting.
-    #[error("calibration patterns need lighting on: set the target to processed first")]
-    NotProcessed,
+    /// `ScreenSync`: patterns are shown through screen sync.
+    #[error("calibration patterns need screen sync: turn it on first")]
+    NeedsScreenSync,
     /// A session did not stop within its deadline, or did not confirm its
     /// source's release; only shutdown is accepted.
     #[error("runtime is faulted: session did not finish {0}")]

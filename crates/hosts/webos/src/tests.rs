@@ -110,15 +110,15 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         video: Video::Available,
     });
     peer.send(Command::ResetVideo {});
-    peer.send(Command::Lighting {
-        target: LightingTarget::Processed,
+    peer.send(Command::Target {
+        target: LightingTarget::ScreenSync,
     });
     let running = peer
         .wait_for("a capturing status", |e| {
             status(e).is_some_and(|s| s.capturing)
         })
         .await;
-    assert_eq!(status(&running).unwrap().target, LightingTarget::Processed);
+    assert_eq!(status(&running).unwrap().target, LightingTarget::ScreenSync);
     assert_eq!(
         feed.current(),
         Readiness {
@@ -129,7 +129,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
     );
     assert!(log.wait_for("output.write:", 1).await);
 
-    peer.send(Command::Lighting {
+    peer.send(Command::Target {
         target: LightingTarget::Off,
     });
     peer.wait_for("a status that is not capturing", |e| {
@@ -146,7 +146,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
 
 #[tokio::test]
 async fn initial_target_applies_and_status_repeats_as_heartbeat() {
-    let (mut peer, _feed, log, task) = start(fakes::settings(), LightingTarget::Processed);
+    let (mut peer, _feed, log, task) = start(fakes::settings(), LightingTarget::ScreenSync);
     let running = peer
         .wait_for("a capturing status", |e| {
             status(e).is_some_and(|s| s.capturing)
@@ -176,7 +176,7 @@ async fn a_failed_session_is_retried_and_reported() {
         fail_after: Some(3),
         ..FakeSourceSettings::default()
     });
-    let (mut peer, _feed, log, task) = start(settings, LightingTarget::Processed);
+    let (mut peer, _feed, log, task) = start(settings, LightingTarget::ScreenSync);
     assert!(log.wait_for("source.open:", 3).await, "{:?}", log.events());
     let failed = peer
         .wait_for("a status with a failure", |e| {
@@ -193,7 +193,7 @@ async fn a_failed_session_is_retried_and_reported() {
             .contains("fake source failed")
     );
 
-    peer.send(Command::Lighting {
+    peer.send(Command::Target {
         target: LightingTarget::Off,
     });
     peer.wait_for("a status with lighting off", |e| {
@@ -236,7 +236,7 @@ async fn the_link_retries_after_the_delay_and_not_after_off() {
     let portal = Arc::new(Mutex::new(Some(PORTAL.to_owned())));
     let opens = |log: &CallLog| log.count("source.open_failed:");
     let (mut peer, _feed, log, task) =
-        start_timed(settings, LightingTarget::Processed, &portal, FIRST, FIRST);
+        start_timed(settings, LightingTarget::ScreenSync, &portal, FIRST, FIRST);
     peer.wait_for("a status with a failure", |e| {
         status(e).is_some_and(|s| s.failure.is_some())
     })
@@ -250,7 +250,7 @@ async fn the_link_retries_after_the_delay_and_not_after_off() {
     advance(&mut peer, &portal, FIRST, "http://10.0.0.4:8787/").await;
     assert_eq!(opens(&log), 2, "retried before the doubled delay");
 
-    peer.send(Command::Lighting {
+    peer.send(Command::Target {
         target: LightingTarget::Off,
     });
     peer.wait_for("a status with lighting off", |e| {
@@ -270,7 +270,7 @@ async fn missing_settings_are_reported_without_opening_the_source() {
         output: None,
         ..fakes::settings()
     };
-    let (mut peer, _feed, log, task) = start(settings, LightingTarget::Processed);
+    let (mut peer, _feed, log, task) = start(settings, LightingTarget::ScreenSync);
     let failed = peer
         .wait_for("a status with a failure", |e| {
             status(e).is_some_and(|s| s.failure.is_some())
@@ -297,8 +297,9 @@ async fn an_unconfirmed_release_faults_the_worker() {
         fail_close: true,
         ..FakeSourceSettings::default()
     });
-    let (mut peer, _feed, _log, task) = start(settings, LightingTarget::Processed);
-    // The status just before the fault says lighting no longer runs.
+    let (mut peer, _feed, _log, task) = start(settings, LightingTarget::ScreenSync);
+    // The status just before the fault says lighting no longer runs; the
+    // fault itself, not a failure, says why.
     let mut previous = None;
     let fault = loop {
         let event = peer.event().await.unwrap();
@@ -308,7 +309,7 @@ async fn an_unconfirmed_release_faults_the_worker() {
         previous = Some(event);
     };
     let last = previous.as_ref().and_then(status).unwrap();
-    assert!(!last.capturing && last.failure.is_some(), "{last:?}");
+    assert!(!last.capturing && last.failure.is_none(), "{last:?}");
     let Event::Faulted { cause } = fault else {
         unreachable!()
     };
@@ -379,7 +380,7 @@ async fn a_session_waiting_for_video_is_not_capturing() {
         quiet_after: Some(0),
         ..FakeSourceSettings::default()
     });
-    let (mut peer, _feed, log, task) = start(settings, LightingTarget::Processed);
+    let (mut peer, _feed, log, task) = start(settings, LightingTarget::ScreenSync);
     peer.send(Command::Video {
         video: Video::Unavailable,
     });
@@ -387,7 +388,7 @@ async fn a_session_waiting_for_video_is_not_capturing() {
     let waiting = peer
         .wait_for("a status waiting for video", |e| {
             status(e).is_some_and(|s| {
-                s.target == LightingTarget::Processed && !s.capturing && s.fps == Some(0)
+                s.target == LightingTarget::ScreenSync && !s.capturing && s.fps == Some(0)
             })
         })
         .await;
@@ -396,7 +397,7 @@ async fn a_session_waiting_for_video_is_not_capturing() {
     // second) without a frame: the window this proves nothing opened in.
     assert_eq!(log.count("output.open:"), 0, "{:?}", log.events());
 
-    peer.send(Command::Lighting {
+    peer.send(Command::Target {
         target: LightingTarget::Off,
     });
     peer.wait_for("a status with lighting off", |e| {

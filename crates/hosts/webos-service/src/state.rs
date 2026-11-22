@@ -72,7 +72,7 @@ pub enum Package {
             feature = "schema",
             schema(value_type = crate::schema::LightingTargetSchema)
         )]
-        lighting: LightingTarget,
+        target: LightingTarget,
         worker: FullWorker,
     },
     /// `prysm-webos-slim`: capture forwarded to a headless Prysm.
@@ -209,7 +209,7 @@ mod tests {
     fn the_package_tag_is_the_flavor() {
         for package in [
             Package::Full {
-                lighting: LightingTarget::Off,
+                target: LightingTarget::Off,
                 worker: FullWorker::Stopped,
             },
             Package::Slim {

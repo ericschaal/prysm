@@ -113,17 +113,17 @@ fn cool(cast: f32) -> bool {
 }
 
 #[tokio::test]
-async fn patterns_need_processed_lighting() {
+async fn patterns_need_screen_sync() {
     within_async(LIMIT, async {
         let store = MemoryStore::with(settings(None, &source(128, None)));
         let (handle, engine, log) = start(&store).await;
-        for target in [LightingTarget::Off, LightingTarget::DeviceNative] {
+        for target in [LightingTarget::Off, LightingTarget::Effects] {
             handle.set_target(target).await.unwrap();
             let error = handle
                 .set_calibration(pattern(Pattern::Red, false))
                 .await
                 .unwrap_err();
-            assert!(matches!(error, Error::NotProcessed), "{error:?}");
+            assert!(matches!(error, Error::NeedsScreenSync), "{error:?}");
             assert_eq!(calibration(&handle), None);
             // Clearing is always accepted.
             handle.set_calibration(None).await.unwrap();
@@ -141,7 +141,7 @@ async fn set_switch_and_clear_leave_settings_and_revision_untouched() {
         let store = MemoryStore::with(saved.clone());
         let (handle, engine, log) = start(&store).await;
         let revision = handle.snapshot().borrow().revision;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, "cool", cool).await;
 
         handle
@@ -160,7 +160,7 @@ async fn set_switch_and_clear_leave_settings_and_revision_untouched() {
         let snapshot = handle.snapshot().borrow().clone();
         assert_eq!(snapshot.revision, revision);
         assert_eq!(snapshot.settings, saved);
-        assert!(snapshot.failure.is_none());
+        assert!(snapshot.session.failure().is_none());
         assert_eq!(store.saved(), Some(saved));
         assert_eq!(log.count("source.open:a"), 1, "patterns never reopen");
         assert_eq!(log.count("output.open:a"), 1);
@@ -174,7 +174,7 @@ async fn uncorrected_shows_at_once_without_the_calibration_and_clearing_restores
     within_async(LIMIT, async {
         let store = MemoryStore::with(settings(Some("cool"), &source(128, None)));
         let (handle, engine, _) = start(&store).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, "cool", cool).await;
 
         // Uncorrected: no calibration and no smoothing, so exactly neutral at once.
@@ -228,7 +228,7 @@ async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
         let store = MemoryStore::with(saved.clone());
         let (handle, engine, log) = start(&store).await;
         let _viewer = handle.preview();
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, "cool", cool).await;
         assert!(green_levels(&handle).await > 2, "60 s smoothing blends");
 
@@ -257,23 +257,23 @@ async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
 }
 
 #[tokio::test]
-async fn leaving_processed_ending_and_shutdown_clear_the_pattern() {
+async fn leaving_screen_sync_ending_and_shutdown_clear_the_pattern() {
     within_async(LIMIT, async {
         let store = MemoryStore::with(settings(None, &source(128, None)));
         let (handle, engine, _) = start(&store).await;
-        for target in [LightingTarget::Off, LightingTarget::DeviceNative] {
-            handle.set_target(LightingTarget::Processed).await.unwrap();
+        for target in [LightingTarget::Off, LightingTarget::Effects] {
+            handle.set_target(LightingTarget::ScreenSync).await.unwrap();
             handle
                 .set_calibration(pattern(Pattern::Coast, false))
                 .await
                 .unwrap();
-            // Asking for processed again keeps it.
-            handle.set_target(LightingTarget::Processed).await.unwrap();
+            // Asking for screen sync again keeps it.
+            handle.set_target(LightingTarget::ScreenSync).await.unwrap();
             assert_eq!(calibration(&handle), pattern(Pattern::Coast, false));
             handle.set_target(target).await.unwrap();
             assert_eq!(calibration(&handle), None, "{target:?}");
         }
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         handle
             .set_calibration(pattern(Pattern::Dusk, true))
             .await
@@ -284,7 +284,7 @@ async fn leaving_processed_ending_and_shutdown_clear_the_pattern() {
         // A source that ends turns lighting off, and with it the pattern.
         let store = MemoryStore::with(settings(None, &source(128, Some(500))));
         let (handle, engine, _) = start(&store).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         handle
             .set_calibration(pattern(Pattern::Garden, false))
             .await
@@ -307,7 +307,7 @@ async fn a_pattern_nobody_sets_again_expires() {
     {
         let store = MemoryStore::with(settings(None, &source(128, None)));
         let (handle, engine, _) = start(&store).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let minute = Duration::from_secs(60);
         assert!(CALIBRATION_TIMEOUT > minute * 2);
 
@@ -318,7 +318,7 @@ async fn a_pattern_nobody_sets_again_expires() {
             .unwrap();
         tokio::time::advance(CALIBRATION_TIMEOUT - minute).await;
         // A no-op command is a round trip through the engine's loop.
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert_eq!(calibration(&handle), pattern(Pattern::Blue, false));
 
         // Setting it again, even unchanged, restarts the timeout.
@@ -327,7 +327,7 @@ async fn a_pattern_nobody_sets_again_expires() {
             .await
             .unwrap();
         tokio::time::advance(CALIBRATION_TIMEOUT - minute).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert_eq!(calibration(&handle), pattern(Pattern::Blue, false));
 
         tokio::time::advance(minute * 2).await;
@@ -340,10 +340,10 @@ async fn a_pattern_nobody_sets_again_expires() {
         let snapshot = handle.snapshot().borrow().clone();
         assert_eq!(
             snapshot.target,
-            LightingTarget::Processed,
+            LightingTarget::ScreenSync,
             "lighting stays on"
         );
-        assert!(snapshot.failure.is_none());
+        assert!(snapshot.session.failure().is_none());
         engine.shutdown().await.unwrap();
     }
 }

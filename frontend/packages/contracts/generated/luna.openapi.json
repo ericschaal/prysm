@@ -151,8 +151,8 @@
         "description": "What the user wants the LEDs to do.",
         "enum": [
           "off",
-          "processed",
-          "device_native"
+          "screen_sync",
+          "effects"
         ],
         "type": "string"
       },
@@ -168,7 +168,7 @@
                 ],
                 "type": "string"
               },
-              "lighting": {
+              "target": {
                 "$ref": "#/components/schemas/LightingTarget",
                 "description": "The engine's target, including changes made in the portal."
               },
@@ -177,7 +177,7 @@
               }
             },
             "required": [
-              "lighting",
+              "target",
               "worker",
               "flavor"
             ],
@@ -224,7 +224,7 @@
         "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional, an unset one absent). Fields marked \"Slim only\" must stay unset\nin the full package.",
         "properties": {
           "autostart": {
-            "description": "Start enabled (full: processed lighting) when the service starts.",
+            "description": "Start when the service starts: the full package starts screen sync,\nthe slim package streams to its receiver.",
             "type": "boolean"
           },
           "instance": {
@@ -238,15 +238,29 @@
       },
       "SetEnabledRequest": {
         "additionalProperties": false,
-        "description": "`setEnabled` request.",
+        "description": "`setEnabled` request (slim package).",
         "properties": {
           "enabled": {
-            "description": "Slim: frames should flow. Full: processed lighting (or off).",
+            "description": "Frames should flow to the receiver.",
             "type": "boolean"
           }
         },
         "required": [
           "enabled"
+        ],
+        "type": "object"
+      },
+      "SetTargetRequest": {
+        "additionalProperties": false,
+        "description": "`setTarget` request (full package).",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/LightingTarget",
+            "description": "What the lights do: off, screen sync, or their own effects."
+          }
+        },
+        "required": [
+          "target"
         ],
         "type": "object"
       },
@@ -538,7 +552,7 @@
       "name": "Apache-2.0"
     },
     "title": "Prysm TV service (luna://io.github.ericschaal.prysm.service)",
-    "version": "3"
+    "version": "4"
   },
   "openapi": "3.1.0",
   "paths": {}

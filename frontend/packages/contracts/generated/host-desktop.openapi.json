@@ -268,53 +268,285 @@
         "type": "object"
       },
       "Failure": {
-        "description": "A stable failure body: the message a user can act on. An adapter failure\ncarries its cause chain (`context: cause: cause`), since the cause is what\nnames the problem (a device's error, a remote sender's reason).",
-        "properties": {
-          "current": {
-            "description": "The revision to retry against after `stale_revision`.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
+        "description": "A failure reply (any non-2xx), tagged by `kind`: the message a user can\nact on, with what the kind needs to act on it.",
+        "oneOf": [
+          {
+            "description": "Settings were rejected.",
+            "properties": {
+              "field": {
+                "description": "The rejected setting as a dotted path, such as `output.address`;\nabsent when no one field is at fault.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "invalid"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
           },
-          "field": {
-            "description": "The rejected setting as a dotted path, such as `output.address`.",
-            "type": "string"
+          {
+            "description": "Settings changed since `expected`.",
+            "properties": {
+              "current": {
+                "description": "The revision to retry against.",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "stale_revision"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "current",
+              "kind"
+            ],
+            "type": "object"
           },
-          "kind": {
-            "$ref": "#/components/schemas/FailureKind"
+          {
+            "description": "A device or adapter failed. Its message carries the cause chain.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "adapter"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "section": {
+                "$ref": "#/components/schemas/FailureSection",
+                "description": "Which side failed, when the engine knows: the capture source or\nthe output."
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
           },
-          "message": {
-            "type": "string"
+          {
+            "description": "Calibration patterns need the `screen_sync` target.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "needs_screen_sync"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
           },
-          "section": {
-            "$ref": "#/components/schemas/FailureSection",
-            "description": "Which side an `adapter` failure came from, when the engine knows:\nthe capture source or the output."
+          {
+            "description": "The runtime is faulted and accepts nothing until restarted.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "faulted"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The runtime or surface is stopping or stopped.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An unexpected internal failure.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "internal"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "forbidden"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "not_found"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "method_not_allowed"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The request was malformed.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "bad_request"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "payload_too_large"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unsupported_media_type"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Too many concurrent requests or streams.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "busy"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "kind",
-          "message"
-        ],
-        "type": "object"
-      },
-      "FailureKind": {
-        "enum": [
-          "invalid",
-          "stale_revision",
-          "not_processed",
-          "faulted",
-          "adapter",
-          "unavailable",
-          "internal",
-          "forbidden",
-          "not_found",
-          "method_not_allowed",
-          "bad_request",
-          "payload_too_large",
-          "unsupported_media_type",
-          "busy"
-        ],
-        "type": "string"
+        ]
       },
       "FailureSection": {
         "description": "The side of the signal path a failure came from.",
@@ -526,12 +758,82 @@
         },
         "type": "object"
       },
+      "LightingFailure": {
+        "description": "Why the lighting is as it is: the failure a session state carries. An\nadapter failure carries its cause chain (`context: cause: cause`), since\nthe cause is what names the problem (a device's error, a remote sender's\nreason).",
+        "oneOf": [
+          {
+            "description": "The saved settings do not validate, or cannot be read.",
+            "properties": {
+              "field": {
+                "description": "The rejected setting as a dotted path, such as `output.address`;\nabsent when the settings as a whole are at fault.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "invalid"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A device or adapter failed.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "adapter"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "section": {
+                "$ref": "#/components/schemas/FailureSection",
+                "description": "Which side failed, when the engine knows."
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An unexpected internal failure.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "internal"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "LightingTarget": {
         "description": "What the user wants the LEDs to do.",
         "enum": [
           "off",
-          "processed",
-          "device_native"
+          "screen_sync",
+          "effects"
         ],
         "type": "string"
       },
@@ -650,17 +952,6 @@
           "garden",
           "dusk",
           "review_grid"
-        ],
-        "type": "string"
-      },
-      "Phase": {
-        "description": "Where a faulted session stopped making progress, or `source_unreleased`:\nit finished without confirming its source's release.",
-        "enum": [
-          "running",
-          "closing_source",
-          "idling_output",
-          "finishing",
-          "source_unreleased"
         ],
         "type": "string"
       },
@@ -943,10 +1234,15 @@
         "type": "object"
       },
       "Session": {
-        "description": "What the runtime is actually doing.",
+        "description": "What the runtime is actually doing. Screen sync carries no failure: it\nruns on valid settings and has reached its target.",
         "oneOf": [
           {
+            "description": "No session; the lights are not driven.",
             "properties": {
+              "failure": {
+                "$ref": "#/components/schemas/LightingFailure",
+                "description": "Why the target is not reached, why the lights may not be off, or\nthat the saved settings do not validate; absent while none does."
+              },
               "state": {
                 "enum": [
                   "stopped"
@@ -960,10 +1256,11 @@
             "type": "object"
           },
           {
+            "description": "The lights follow the screen.",
             "properties": {
               "state": {
                 "enum": [
-                  "running"
+                  "screen_sync"
                 ],
                 "type": "string"
               }
@@ -974,11 +1271,15 @@
             "type": "object"
           },
           {
-            "description": "The output shows its own effect.",
+            "description": "The lights show their own effects.",
             "properties": {
+              "failure": {
+                "$ref": "#/components/schemas/LightingFailure",
+                "description": "Why screen sync, asked from the effects, did not start, or that\nthe saved settings do not validate; absent while none does."
+              },
               "state": {
                 "enum": [
-                  "native"
+                  "effects"
                 ],
                 "type": "string"
               }
@@ -991,8 +1292,9 @@
           {
             "description": "A session did not stop in time, or did not confirm its source's\nrelease; only a restart recovers.",
             "properties": {
-              "phase": {
-                "$ref": "#/components/schemas/Phase"
+              "message": {
+                "description": "What did not finish, for people.",
+                "type": "string"
               },
               "state": {
                 "enum": [
@@ -1002,7 +1304,7 @@
               }
             },
             "required": [
-              "phase",
+              "message",
               "state"
             ],
             "type": "object"
@@ -1029,7 +1331,7 @@
         "type": "object"
       },
       "SettingsReplaced": {
-        "description": "Reply to a successful settings replacement. Applying them may still fail;\nthat failure appears in the state's `failure`.",
+        "description": "Reply to a successful settings replacement. Applying them may still fail;\nthat failure appears in the state's `session`.",
         "properties": {
           "revision": {
             "format": "int64",
@@ -1101,10 +1403,6 @@
           "device": {
             "$ref": "#/components/schemas/DeviceReport",
             "description": "What the lights say about themselves, from the output's own checks\n(about once a second). Empty while no session holds the output: no\nsession, or one that has no frame yet or released the output after 3 s\nwithout video; `session.state` and `input.receiving` say which."
-          },
-          "failure": {
-            "$ref": "#/components/schemas/Failure",
-            "description": "The last lighting failure; absent while there is none. Every target\nchange, settings apply, shutdown and session end replaces it, so the\nnext one that succeeds clears it."
           },
           "input": {
             "$ref": "#/components/schemas/Input",

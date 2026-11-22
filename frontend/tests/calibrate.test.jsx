@@ -71,13 +71,13 @@ const questions = {
 
 /** Screen sync running, optionally with saved calibrations; opens the Calibrate page. */
 async function openCalibrate({
-  target = 'processed',
+  target = 'screen_sync',
   calibrations,
   Host = HeadlessWebPortal,
 } = {}) {
   const portal = await renderPortal(Host, { capture, output }, (snapshot) => ({
     target,
-    session: { state: target === 'processed' ? 'running' : 'stopped' },
+    session: { state: target === 'screen_sync' ? 'screen_sync' : 'stopped' },
     settings: {
       ...snapshot.settings,
       processing: {
@@ -607,8 +607,8 @@ test('without screen sync on the TV the page says what to do and shows no patter
   const refused = await openCalibrate();
   try {
     refused.fixture.failNext({
-      kind: 'not_processed',
-      message: 'set the target to processed first',
+      kind: 'needs_screen_sync',
+      message: 'calibration patterns need screen sync: turn it on first',
     });
     await press(button('Start'));
     assert.equal(

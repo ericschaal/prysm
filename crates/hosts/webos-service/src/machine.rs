@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-/// How long a sent `Lighting` target wins over older worker reports.
+/// How long a sent `Target` wins over older worker reports.
 pub const ECHO: Duration = Duration::from_secs(2);
 pub const LOG_LINES: usize = 20;
 
@@ -23,6 +23,11 @@ pub enum Input {
     VideoContextChanged,
     /// Already validated and persisted.
     Preferences(Preferences),
+    /// Full only: the lighting target the app chose. Slim ignores it (the
+    /// service refuses it first).
+    Target(LightingTarget),
+    /// Slim only: frames should flow. Full ignores it (the service refuses
+    /// it first).
     Enabled(bool),
     Worker(Event),
     WorkerLog(String),
@@ -125,7 +130,7 @@ enum Package {
         settings: PathBuf,
         listen: SocketAddr,
         /// The engine target, reported by the worker and used at spawn.
-        lighting: LightingTarget,
+        target: LightingTarget,
         report: Option<FullStatus>,
     },
     Slim {
@@ -167,10 +172,8 @@ impl Package {
     /// What the TV app sees of the package while the worker is at `process`.
     fn published(&self, process: Process) -> state::Package {
         match self {
-            Self::Full {
-                lighting, report, ..
-            } => state::Package::Full {
-                lighting: *lighting,
+            Self::Full { target, report, .. } => state::Package::Full {
+                target: *target,
                 worker: FullWorker::new(process, report.as_ref()),
             },
             Self::Slim { enabled, report } => state::Package::Slim {
@@ -205,11 +208,11 @@ pub struct Machine {
 }
 
 impl Machine {
-    /// Intent starts from `autostart`: enabled (full: processed lighting) or not.
+    /// Intent starts from `autostart`: enabled (full: screen sync) or not.
     #[must_use]
     pub fn new(spec: Spec, preferences: Preferences) -> Self {
         let intent = if preferences.autostart {
-            LightingTarget::Processed
+            LightingTarget::ScreenSync
         } else {
             LightingTarget::Off
         };
@@ -225,7 +228,7 @@ impl Machine {
                 Spec::Full { settings, listen } => Package::Full {
                     settings,
                     listen,
-                    lighting: intent,
+                    target: intent,
                     report: None,
                 },
                 Spec::Slim => Package::Slim {
@@ -252,12 +255,12 @@ impl Machine {
     }
 
     /// What the user asked for: full, the lighting target (also when changed
-    /// in the portal); slim, `Processed` while enabled, else `Off`.
+    /// in the portal); slim, `ScreenSync` while enabled, else `Off`.
     #[must_use]
     pub fn intent(&self) -> LightingTarget {
         match self.package {
-            Package::Full { lighting, .. } => lighting,
-            Package::Slim { enabled: true, .. } => LightingTarget::Processed,
+            Package::Full { target, .. } => target,
+            Package::Slim { enabled: true, .. } => LightingTarget::ScreenSync,
             Package::Slim { enabled: false, .. } => LightingTarget::Off,
         }
     }
@@ -286,7 +289,8 @@ impl Machine {
                 }
             }
             Input::Preferences(preferences) => self.set_preferences(preferences, now, &mut effects),
-            Input::Enabled(enabled) => self.set_enabled(enabled, now, &mut effects),
+            Input::Target(target) => self.set_target(target, now, &mut effects),
+            Input::Enabled(enabled) => self.set_enabled(enabled),
             Input::Worker(event) => self.worker_event(event, now, &mut effects),
             Input::WorkerLog(line) => {
                 if self.log.len() == LOG_LINES {
@@ -393,13 +397,13 @@ impl Machine {
             Package::Full {
                 settings,
                 listen,
-                lighting,
+                target,
                 ..
             } => Some(
                 FullArgs {
                     settings: settings.clone(),
                     listen: *listen,
-                    lighting: *lighting,
+                    target: *target,
                 }
                 .to_args(),
             ),
@@ -516,28 +520,34 @@ impl Machine {
         }
     }
 
-    fn set_enabled(&mut self, enabled: bool, now: Instant, effects: &mut Vec<Effect>) {
-        // Off ends the slim worker; the full worker stays wanted, so its
-        // failure and backoff stay current.
-        if !enabled && matches!(self.package, Package::Slim { .. }) {
-            self.dismiss();
-        }
+    /// Full: the worker stays wanted whatever the target, so its failure
+    /// and backoff stay current; a running one is sent the target.
+    fn set_target(&mut self, target: LightingTarget, now: Instant, effects: &mut Vec<Effect>) {
         let running = self.running();
-        match &mut self.package {
-            Package::Slim {
-                enabled: current, ..
-            } => *current = enabled,
-            Package::Full { lighting, .. } => {
-                *lighting = match (enabled, *lighting) {
-                    (false, _) => LightingTarget::Off,
-                    (true, LightingTarget::Off) => LightingTarget::Processed,
-                    (true, current) => current,
-                };
-                if running {
-                    effects.push(Effect::Send(Command::Lighting { target: *lighting }));
-                    self.echo_until = Some(now + ECHO);
-                }
-            }
+        let Package::Full {
+            target: current, ..
+        } = &mut self.package
+        else {
+            return;
+        };
+        *current = target;
+        if running {
+            effects.push(Effect::Send(Command::Target { target }));
+            self.echo_until = Some(now + ECHO);
+        }
+    }
+
+    /// Slim: off ends the worker (`reconcile` stops one no longer wanted).
+    fn set_enabled(&mut self, enabled: bool) {
+        let Package::Slim {
+            enabled: current, ..
+        } = &mut self.package
+        else {
+            return;
+        };
+        *current = enabled;
+        if !enabled {
+            self.dismiss();
         }
     }
 
@@ -593,10 +603,13 @@ impl Machine {
     /// Full: take the worker's target (also changed in the portal), unless a
     /// target sent within [`ECHO`] is still on its way to the worker.
     fn follow(&mut self, target: LightingTarget, now: Instant) {
-        if let Package::Full { lighting, .. } = &mut self.package {
+        if let Package::Full {
+            target: current, ..
+        } = &mut self.package
+        {
             let echoed = self.echo_until.is_none_or(|until| now >= until);
-            if echoed || target == *lighting {
-                *lighting = target;
+            if echoed || target == *current {
+                *current = target;
                 self.echo_until = None;
             }
         }

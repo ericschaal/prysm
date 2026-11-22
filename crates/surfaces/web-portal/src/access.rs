@@ -5,7 +5,7 @@ use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::http::uri::Authority;
 use hyper::{StatusCode, Uri};
 use prysm_ports::ValidationError;
-use prysm_protocol::FailureKind;
+use prysm_protocol::Failure;
 
 /// Which browser pages, besides the portal's own, may call the API. Requests
 /// without an `Origin` header (curl, native clients) are always served; there
@@ -113,8 +113,9 @@ pub(crate) fn check(
     let denied = || {
         Box::new(failure(
             StatusCode::FORBIDDEN,
-            FailureKind::Forbidden,
-            "origin denied",
+            Failure::Forbidden {
+                message: "origin denied".into(),
+            },
         ))
     };
     let mut values = headers.get_all(header::ORIGIN).iter();

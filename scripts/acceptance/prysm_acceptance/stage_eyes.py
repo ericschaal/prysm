@@ -88,7 +88,7 @@ def question(text: str, prepare: Prepare | None = None) -> Callable[[Ctx], tuple
 
 
 def _lighting(ctx: Ctx, prysm: prysm_api.Prysm) -> str:
-    reply = prysm.set_target(Target.PROCESSED)
+    reply = prysm.set_target(Target.SCREEN_SYNC)
     if reply.status != 204:
         raise Failed(f'could not turn screen sync on: HTTP {reply.status}', reply.json())
     return 'screen sync on'

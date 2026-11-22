@@ -10,7 +10,7 @@ use bytes::Bytes;
 use futures::stream;
 use hyper::{StatusCode, body::Frame as BodyFrame};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
-use prysm_protocol::{COLOR_SEGMENTS, ColorsEvent, FailureKind, LedColor, LedColors};
+use prysm_protocol::{COLOR_SEGMENTS, ColorsEvent, Failure, LedColor, LedColors};
 use prysm_runtime::{ColorsWatch, EngineHandle, Shutdown};
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,8 +40,9 @@ impl Colors {
         let Ok(permit) = self.listeners.clone().try_acquire_owned() else {
             return failure(
                 StatusCode::TOO_MANY_REQUESTS,
-                FailureKind::Busy,
-                "too many colors streams",
+                Failure::Busy {
+                    message: "too many colors streams".into(),
+                },
             );
         };
         let now = Instant::now();

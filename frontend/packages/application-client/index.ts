@@ -6,12 +6,12 @@ import type {
   Failure,
   FailureSection,
   Input,
+  LightingFailure,
   LightingTarget,
   Mode,
   Modes,
   OutputIssue,
   Pattern,
-  Phase,
   PreviewEvent,
   Session,
   Settings as GeneratedSettings,
@@ -24,6 +24,7 @@ export type {
   CaptureSettings,
   ColorsEvent,
   Failure,
+  LightingFailure,
   LightingTarget,
   Mode,
   Modes,
@@ -61,85 +62,133 @@ export type {
   PreviewFrame,
 } from '@prysm/contracts/application';
 
-/** What a faulted session was doing when it stopped. */
-const phases: Record<Phase, string> = {
-  running: 'running',
-  closing_source: 'closing the capture source',
-  idling_output: 'idling the lights',
-  finishing: 'finishing',
-  source_unreleased: 'confirming the capture source was released',
-};
-
 /** What the lights show while on: screen sync or the output's own effects. */
 export type LightingMode = Exclude<LightingTarget, 'off'>;
 
 /**
- * What the lights are doing, decided once from the requested target, the
- * session and the failure; every view of the lights shows this.
+ * A target as this page reads it: `unknown` is one newer than this page,
+ * which selects no mode. Choosing a known one still works.
+ */
+export type TargetReading = LightingTarget | 'unknown';
+
+/**
+ * A session as this page reads it: `unknown` is a state newer than this
+ * page; a failure or message it carries is kept, to be shown.
+ */
+export type SessionReading =
+  Session | { state: 'unknown'; failure?: LightingFailure; message?: string };
+
+/** The failure `session` carries, if any. */
+function sessionFailure(session: SessionReading): LightingFailure | null {
+  return 'failure' in session ? (session.failure ?? null) : null;
+}
+
+/**
+ * The side of the path a failure came from: typed for adapter failures,
+ * else the section of the setting it names.
+ */
+function failureSide(
+  failure: Failure | LightingFailure,
+): FailureSection | null {
+  if ('section' in failure && failure.section) return failure.section;
+  const named = 'field' in failure ? failure.field?.split('.')[0] : undefined;
+  return named === 'capture' || named === 'output' ? named : null;
+}
+
+/**
+ * What the lights are doing, decided once from the requested target and the
+ * session (with the failure it carries); every view of the lights shows
+ * this. The rule is ordered, so every pair lands on exactly one:
  *
- * - `faulted`: the session stopped responding; nothing works until a restart.
+ * - `faulted`: the session stopped responding; nothing works until a
+ *   restart. `message` says what did not finish.
+ * - `unknown`: the target or the session state is newer than this page.
  * - `off`: the lights were asked off (the session may still be stopping).
- *   With the lights off a failure still stays said: settings that could not
- *   be applied at the start, or a switch off that failed.
- * - `failed`: the mode asked for did not start; `at` is the side that
- *   failed, when known. After a failed start from effects the session stays
- *   `native`: the failure still wins.
+ *   With the lights off a stopped session's failure still stays said:
+ *   settings that do not validate, or a switch off that failed.
  * - `sync`: screen sync runs; `input` says whether frames arrive, absent
- *   until measured.
- * - `effects`: the output's own effects run.
+ *   until measured. It never carries a failure.
+ * - `effects`: the output's own effects run; `failure` is saved settings
+ *   that do not validate.
+ * - `failed`: the mode asked for is not running and the session says why;
+ *   `at` is the side that failed, when known, and `effectsOn` says the
+ *   lights' own effects still show (a start of screen sync that failed
+ *   from them).
  * - `starting`: the mode asked for is not running yet (also while switching
  *   from the other one).
  */
 export type LightingSituation =
-  | { kind: 'faulted'; phase: Phase }
-  | { kind: 'off'; failure: Failure | null }
+  | { kind: 'faulted'; message: string }
+  | { kind: 'unknown'; failure: LightingFailure | null; message: string | null }
+  | { kind: 'off'; failure: LightingFailure | null }
   | {
       kind: 'failed';
       target: LightingMode;
-      failure: Failure;
+      failure: LightingFailure;
       at: FailureSection | null;
+      effectsOn: boolean;
     }
   | { kind: 'sync'; input: Input | undefined }
-  | { kind: 'effects' }
+  | { kind: 'effects'; failure: LightingFailure | null }
   | { kind: 'starting'; target: LightingMode };
 
 export function lightingSituation({
   target,
   session,
-  failure,
   input,
 }: {
-  target: LightingTarget;
-  session: Session;
-  failure?: Failure | null;
+  target: TargetReading;
+  session: SessionReading;
   input?: Input;
 }): LightingSituation {
   if (session.state === 'faulted')
-    return { kind: 'faulted', phase: session.phase };
-  if (target === 'off') return { kind: 'off', failure: failure ?? null };
-  if (failure) {
-    // Which side failed: typed for adapter failures, else the setting named.
-    const field = failure.field?.split('.')[0];
-    const named = field === 'capture' || field === 'output' ? field : null;
-    return { kind: 'failed', target, failure, at: failure.section ?? named };
-  }
-  if (target === 'processed' && session.state === 'running')
+    return { kind: 'faulted', message: session.message };
+  if (target === 'unknown' || session.state === 'unknown')
+    return {
+      kind: 'unknown',
+      failure: sessionFailure(session),
+      message: session.state === 'unknown' ? (session.message ?? null) : null,
+    };
+  if (target === 'off')
+    return {
+      kind: 'off',
+      failure: session.state === 'stopped' ? (session.failure ?? null) : null,
+    };
+  if (target === 'screen_sync' && session.state === 'screen_sync')
     return { kind: 'sync', input };
-  if (target === 'device_native' && session.state === 'native')
-    return { kind: 'effects' };
+  if (target === 'effects' && session.state === 'effects')
+    return { kind: 'effects', failure: session.failure ?? null };
+  const failure = sessionFailure(session);
+  if (failure)
+    return {
+      kind: 'failed',
+      target,
+      failure,
+      at: failureSide(failure),
+      effectsOn: session.state === 'effects',
+    };
   return { kind: 'starting', target };
 }
 
 /** The failure a situation says, whether the lights are on or off. */
-export function situationFailure(situation: LightingSituation): Failure | null {
-  return situation.kind === 'failed' || situation.kind === 'off'
-    ? situation.failure
-    : null;
+export function situationFailure(
+  situation: LightingSituation,
+): LightingFailure | null {
+  switch (situation.kind) {
+    case 'failed':
+    case 'off':
+    case 'effects':
+    case 'unknown':
+      return situation.failure;
+    default:
+      return null;
+  }
 }
 
 /**
  * A situation in words: `headline` for a heading (no full stop), `sentence`
- * to read out. `effects` names the output's own effects (`device_native`).
+ * to read out. `effects` names the output's own effects (the target
+ * `effects`).
  */
 export function describeSituation(
   situation: LightingSituation,
@@ -147,19 +196,26 @@ export function describeSituation(
 ): { headline: string; sentence: string } {
   const both = (words: string) => ({ headline: words, sentence: `${words}.` });
   switch (situation.kind) {
-    case 'faulted': {
-      // A phase newer than this page is not named.
-      const doing = phases[situation.phase] as string | undefined;
-      const words = `Prysm stopped responding${doing ? ` while ${doing}` : ''}. Restart Prysm to recover.`;
-      return { headline: words, sentence: words };
-    }
+    case 'faulted':
+      return {
+        headline: 'Prysm stopped responding',
+        sentence: 'Prysm stopped responding. Restart Prysm to recover.',
+      };
+    case 'unknown':
+      return {
+        headline: 'Prysm is newer than this app',
+        sentence:
+          'Prysm is newer than this app. Update it to see what the lights do.',
+      };
     case 'off':
       return both('Lights are off');
     case 'failed':
+      if (situation.target === 'effects')
+        return both(`${effects} could not start`);
       return both(
-        situation.target === 'processed'
-          ? 'Screen sync stopped'
-          : `${effects} could not start`,
+        situation.effectsOn
+          ? 'Screen sync could not start'
+          : 'Screen sync stopped',
       );
     case 'sync':
       return {
@@ -170,7 +226,7 @@ export function describeSituation(
       return both(`${effects} are on`);
     case 'starting': {
       const words =
-        situation.target === 'processed'
+        situation.target === 'screen_sync'
           ? 'Starting screen sync…'
           : `Starting ${effects}…`;
       return { headline: words, sentence: words };
@@ -184,15 +240,15 @@ export function describeSituation(
  * Without a side it is said by what stopped; the message is under Details.
  */
 export function plainFailure(
-  failure: Failure,
-  target: LightingTarget,
+  failure: Failure | LightingFailure,
+  target: TargetReading,
   effects: string,
 ) {
   // Settings that do not validate name a section's field, yet no device
   // was asked: with the lights off that is all there is to say.
   if (failure.kind === 'invalid' && target === 'off')
     return 'Prysm can’t use these settings.';
-  const section = failure.section ?? failure.field?.split('.')[0];
+  const section = failureSide(failure);
   if (section === 'capture') return 'The video source is not working.';
   if (section === 'output') return 'The lights are not responding.';
   switch (failure.kind) {
@@ -203,7 +259,7 @@ export function plainFailure(
     case 'adapter':
     case 'invalid':
       if (target === 'off') return 'The lights could not be switched off.';
-      return target === 'device_native'
+      return target === 'effects'
         ? `${effects} could not start.`
         : 'Screen sync could not start.';
     default:
@@ -221,9 +277,17 @@ export type Settings<C, O> = Omit<GeneratedSettings, 'capture' | 'output'> & {
   capture?: C;
   output?: O;
 };
-/** The runtime state the server sends whole on every change. */
-export type ApplicationSnapshot<C, O> = Omit<State, 'settings'> & {
+/**
+ * The runtime state the server sends whole on every change, as this page
+ * reads it: a target or session state newer than this page is `unknown`.
+ */
+export type ApplicationSnapshot<C, O> = Omit<
+  State,
+  'settings' | 'target' | 'session'
+> & {
   settings: Settings<C, O>;
+  target: TargetReading;
+  session: SessionReading;
 };
 
 /** A live state stream: the current state, then each later state. */
@@ -242,7 +306,7 @@ export interface ApplicationClient<C, O> {
   setTarget(target: LightingTarget): Promise<void>;
   /**
    * Show a calibration pattern, or end calibration with `null`. Needs the
-   * target `processed`; the engine ends it after ten minutes without a call.
+   * target `screen_sync`; the engine ends it after ten minutes without a call.
    */
   setCalibration(calibration: CalibrationPattern | null): Promise<void>;
   /** Returns the new settings revision. */

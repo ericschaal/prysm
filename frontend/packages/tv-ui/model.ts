@@ -133,15 +133,18 @@ export interface PortalFacts {
 
 /** The target a running or starting situation was asked for. */
 function targetOf(
-  lighting: Exclude<LightingSituation, { kind: 'faulted' | 'failed' }>,
+  lighting: Exclude<
+    LightingSituation,
+    { kind: 'faulted' | 'failed' | 'unknown' }
+  >,
 ): LightingTarget {
   switch (lighting.kind) {
     case 'off':
       return 'off';
     case 'sync':
-      return 'processed';
+      return 'screen_sync';
     case 'effects':
-      return 'device_native';
+      return 'effects';
     case 'starting':
       return lighting.target;
   }
@@ -212,6 +215,10 @@ export function tvStatus(
   if (phase === 'stopping') {
     title = full ? 'Restarting Prysm…' : 'Stopping capture…';
     description = 'This takes a moment.';
+  } else if (phase === 'unknown') {
+    // The service is newer than this app, as during an update.
+    title = 'Updating…';
+    description = 'Update this app if this stays.';
   } else if (failed && !full && kind === 'encoder') {
     // The encoding is Prysm's setting, so the fix is in its portal.
     title = 'Encoding not supported';
@@ -259,13 +266,18 @@ export function tvStatus(
       attention = true;
     } else if (lighting?.kind === 'failed') {
       // The lights card says what failed; its modes try again.
-      title =
-        lighting.target === 'device_native' ? 'WLED effects stopped' : stopped;
+      title = lighting.target === 'effects' ? 'WLED effects stopped' : stopped;
       description = 'Try again, or choose another mode.';
       attention = true;
+    } else if (
+      lighting?.kind === 'unknown' ||
+      (!lighting && state.target === 'unknown')
+    ) {
+      title = 'Prysm is newer than this app';
+      description = 'Update it to see what the lights do.';
     } else {
       // The supervisor hears of a change made in the portal a moment later.
-      const target = lighting ? targetOf(lighting) : state.lighting;
+      const target = lighting ? targetOf(lighting) : state.target;
       // Without the portal's measure yet, the TV's own word.
       const flowing = lighting
         ? lighting.kind === 'sync' && (lighting.input?.receiving ?? capturing)
@@ -273,7 +285,7 @@ export function tvStatus(
       if (target === 'off') {
         title = 'Lights off';
         description = 'Choose Screen sync: the lights follow the picture.';
-      } else if (target === 'device_native') {
+      } else if (target === 'effects') {
         title = 'WLED effects on';
         description = 'Your lights run their own effects.';
       } else if (flowing) {
@@ -322,7 +334,9 @@ export function tvStatus(
   // after a failure the supervisor does not retry by itself.
   let label = '';
   let action: PrimaryAction = 'none';
-  if (phase === 'stopping') {
+  if (phase === 'unknown') {
+    // Nothing to start or stop in a phase this app cannot read.
+  } else if (phase === 'stopping') {
     if (!full) label = 'Please wait…';
   } else if (full) {
     if (failed && phase !== 'retrying') {
@@ -445,6 +459,7 @@ const phaseNames = {
   running: 'running',
   stopping: 'stopping',
   retrying: 'waiting to restart after a failure',
+  unknown: 'unknown (newer than this app)',
 } as const;
 
 function capturingText(state: State) {

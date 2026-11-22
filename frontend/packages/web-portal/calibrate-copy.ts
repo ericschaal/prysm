@@ -133,7 +133,7 @@ export const needsTv = `The TV needs to show the patterns with screen sync on. $
 /** Why the TV did not show a pattern. */
 export function tvProblem(error: unknown) {
   const reason = failureOf(error);
-  return reason.kind === 'not_processed'
+  return reason.kind === 'needs_screen_sync'
     ? needsTv
     : `The TV pattern did not change: ${reason.message}`;
 }

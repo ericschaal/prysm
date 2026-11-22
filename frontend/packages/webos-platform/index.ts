@@ -8,12 +8,11 @@ import type {
   FailureKind,
   FullWorker,
   LightingTarget,
-  Package,
   Power,
   Preferences,
   SlimEncoding,
   SlimWorker,
-  State,
+  State as Sent,
   Video,
   WorkerFailure,
 } from '@prysm/contracts/luna';
@@ -26,10 +25,37 @@ export type {
   Preferences,
   SlimEncoding,
   SlimWorker,
-  State,
   Video,
   WorkerFailure,
 };
+
+/** A target as this app reads it: `unknown` is one newer than this app. */
+export type TargetReading = LightingTarget | 'unknown';
+
+/**
+ * A worker as this app reads it: `unknown` is a phase newer than this app,
+ * which offers no start or stop.
+ */
+export type WorkerReading<W> = W | { phase: 'unknown' };
+
+/**
+ * The installed package as this app reads it, tagged by `flavor`: the
+ * contract's `Package`, with values newer than this app read as `unknown`.
+ */
+export type PackageReading =
+  | {
+      flavor: 'full';
+      target: TargetReading;
+      worker: WorkerReading<FullWorker>;
+    }
+  | { flavor: 'slim'; enabled: boolean; worker: WorkerReading<SlimWorker> };
+
+/**
+ * The supervisor's state as this app reads it ({@link decodeState}): the
+ * contract's `State`, its package read as {@link PackageReading}.
+ */
+export type State = Omit<Sent, 'flavor' | 'target' | 'enabled' | 'worker'> &
+  PackageReading;
 
 /** The installed package, the tag of {@link State}. */
 export type Flavor = State['flavor'];
@@ -38,9 +64,12 @@ export type Worker = State['worker'];
 /** Slim: where the running worker's stream to Prysm stands, tagged by `state`. */
 export type SlimLink = Extract<SlimWorker, { phase: 'running' }>['link'];
 
-/** Lighting is not off (full), or frames should flow (slim). */
+/**
+ * Lighting is not off (full; a target newer than this app is not read as
+ * off), or frames should flow (slim).
+ */
 export function isEnabled(state: State): boolean {
-  return state.flavor === 'full' ? state.lighting !== 'off' : state.enabled;
+  return state.flavor === 'full' ? state.target !== 'off' : state.enabled;
 }
 
 /** Frames flow from a running worker (both packages report it). */
@@ -146,6 +175,9 @@ export interface TvService {
   watch(listener: (event: ServiceEvent) => void): () => void;
   /** Store the complete preferences; resolves with the new state. */
   setPreferences(preferences: Preferences): Promise<State>;
+  /** Full: what the lights do; the slim package refuses it. */
+  setTarget(target: LightingTarget): Promise<State>;
+  /** Slim: whether frames flow; the full package refuses it. */
   setEnabled(enabled: boolean): Promise<State>;
   /** Stop the worker, remove the setup and end the service; settings stay. */
   uninstall(): Promise<void>;
@@ -177,15 +209,15 @@ const failureKinds: Record<FailureKind, true> = {
 };
 const targets: Record<LightingTarget, true> = {
   off: true,
-  processed: true,
-  device_native: true,
+  screen_sync: true,
+  effects: true,
 };
 /** `raw` if it is one of `values`, else `fallback`: a value newer than this app. */
-function known<T extends string>(
+function known<T extends string, F extends string>(
   values: Record<T, true>,
   raw: string,
-  fallback: T,
-): T {
+  fallback: F,
+): T | F {
   return Object.keys(values).indexOf(raw) >= 0 ? (raw as T) : fallback;
 }
 // An absent value is omitted, never `null`.
@@ -214,18 +246,23 @@ function decodeFailure(value: unknown): WorkerFailure | null {
 
 /**
  * The phases both packages share: stopped, and retrying with its seconds; a
- * phase newer than this app is read as stopped. `null` when malformed.
+ * phase newer than this app is `unknown`. `null` when malformed.
  */
 function decodeCommonPhase(
   worker: Fields,
-): { phase: 'stopped' } | { phase: 'retrying'; seconds: number } | null {
-  if (worker.phase !== 'retrying') return { phase: 'stopped' };
+):
+  | { phase: 'stopped' }
+  | { phase: 'retrying'; seconds: number }
+  | { phase: 'unknown' }
+  | null {
+  if (worker.phase === 'stopped') return { phase: 'stopped' };
+  if (worker.phase !== 'retrying') return { phase: 'unknown' };
   return typeof worker.seconds === 'number'
     ? { phase: 'retrying', seconds: worker.seconds }
     : null;
 }
 
-function decodeFullWorker(value: unknown): FullWorker | null {
+function decodeFullWorker(value: unknown): WorkerReading<FullWorker> | null {
   if (!isObject(value) || typeof value.phase !== 'string') return null;
   switch (value.phase) {
     case 'running':
@@ -270,7 +307,7 @@ function decodeSlimLink(value: unknown): SlimLink | null {
   }
 }
 
-function decodeSlimWorker(value: unknown): SlimWorker | null {
+function decodeSlimWorker(value: unknown): WorkerReading<SlimWorker> | null {
   if (!isObject(value) || typeof value.phase !== 'string') return null;
   switch (value.phase) {
     case 'running': {
@@ -287,14 +324,14 @@ function decodeSlimWorker(value: unknown): SlimWorker | null {
 }
 
 /** The package's own fields, by its `flavor`; an unknown flavor is malformed. */
-function decodePackage(state: Fields): Package | null {
+function decodePackage(state: Fields): PackageReading | null {
   switch (state.flavor) {
     case 'full': {
       const worker = decodeFullWorker(state.worker);
-      return typeof state.lighting === 'string' && worker
+      return typeof state.target === 'string' && worker
         ? {
             flavor: 'full',
-            lighting: known(targets, state.lighting, 'off'),
+            target: known(targets, state.target, 'unknown'),
             worker,
           }
         : null;
@@ -322,9 +359,9 @@ function isPreferences(value: unknown): value is Preferences {
  * A state as this app reads it, or `null` when it is malformed. Its
  * structure is checked; a value newer than this app in a known field has
  * one reading: an unknown power or video is `unknown`, an unknown failure
- * kind `other`, an unknown lighting target `off`, an unknown worker phase
- * stopped and an unknown slim link state starting, so an app older than its
- * service still shows the service it talks to.
+ * kind `other`, an unknown lighting target or worker phase `unknown` (never
+ * off or stopped) and an unknown slim link state starting, so an app older
+ * than its service still shows the service it talks to.
  */
 export function decodeState(value: unknown): State | null {
   if (!isObject(value)) return null;
@@ -539,6 +576,7 @@ export function lunaTvService(
     },
     setPreferences: (preferences) =>
       request(method('setPreferences'), preferences, stateOf),
+    setTarget: (target) => request(method('setTarget'), { target }, stateOf),
     setEnabled: (enabled) =>
       request(method('setEnabled'), { enabled }, stateOf),
     uninstall: () => request(method('uninstall'), {}, () => undefined),
