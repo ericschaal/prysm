@@ -28,7 +28,7 @@ mod service;
 
 pub use check::check_registration;
 pub use library::{Loaded, load_once};
-pub use service::{Bus, Config, Handler, Request, Response, run};
+pub use service::{Bus, Config, Handler, Refusal, Request, Response, run};
 
 #[allow(
     dead_code,

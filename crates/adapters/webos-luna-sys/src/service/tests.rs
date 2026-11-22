@@ -39,7 +39,13 @@ const CONFIG: Config<'static> = Config {
     methods: &["getState", "uninstall"],
     calls: &[("luna://power/get", "{}"), ("luna://video/get", "{}")],
     tick: Duration::from_millis(100),
+    refuse,
 };
+
+/// The test service's error reply: the refusal and its text (no quotes in them).
+fn refuse(refusal: Refusal, text: &str) -> String {
+    format!(r#"{{"returnValue":false,"refusal":"{refusal:?}","errorText":"{text}"}}"#)
+}
 
 fn index(calls: &[String], call: &str) -> usize {
     calls
@@ -91,7 +97,9 @@ fn requests_replies_and_ticks_reach_the_handler_and_teardown_is_ordered() {
     assert!(
         calls
             .iter()
-            .any(|c| c.starts_with("reply {\"returnValue\":false") && c.contains("exceeds"))
+            .any(|c| c.starts_with("reply {\"returnValue\":false")
+                && c.contains(r#""refusal":"TooLarge""#)
+                && c.contains("exceeds"))
     );
     // The recall cancelled call 2 and made it again.
     let cancelled = index(&calls, "cancel 2");
@@ -150,7 +158,8 @@ fn a_failed_subscribe_or_reply_still_answers_and_publishes() {
             .position(|c| c.starts_with(r#"reply {"returnValue":false"#))
             .unwrap_or_else(|| panic!("{failing}: the caller got no answer: {calls:#?}"));
         assert!(
-            calls[error_reply].contains("failed"),
+            calls[error_reply].contains("failed")
+                && calls[error_reply].contains(r#""refusal":"Internal""#),
             "{}",
             calls[error_reply]
         );
@@ -221,15 +230,6 @@ fn a_reply_while_closing_does_not_reach_the_handler() {
     run_with(mock::luna(), mock::glib(), &CONFIG, Box::new(recorder)).unwrap();
     assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
     index(&mock::calls(), "unregister");
-}
-
-#[test]
-fn error_replies_are_valid_json() {
-    let reply = error_reply("bad \"quote\" \\ and\nnewline");
-    assert_eq!(
-        reply,
-        r#"{"returnValue":false,"errorText":"bad \"quote\" \\ and\u000anewline"}"#
-    );
 }
 
 #[cfg(not(target_os = "linux"))]

@@ -203,6 +203,10 @@ pub struct Machine {
     /// and by a bad exit ([`Machine::exited`]); dismissed ([`Machine::dismiss`]),
     /// and once the next worker is up again or ran [`Backoff::HEALTHY`].
     failure: Option<WorkerFailure>,
+    /// Why the saved preferences could not be read (kind
+    /// [`FailureKind::Preferences`]), until the app saves new ones. Shown
+    /// only while no other failure is current.
+    unreadable: Option<WorkerFailure>,
     log: VecDeque<String>,
     shutdown: bool,
 }
@@ -244,9 +248,19 @@ impl Machine {
             backoff: Backoff::default(),
             failed: None,
             failure: None,
+            unreadable: None,
             log: VecDeque::new(),
             shutdown: false,
         }
+    }
+
+    /// The saved preferences could not be read (`why`): the machine runs
+    /// with the ones it was given and reports this until the app saves
+    /// preferences ([`Input::Preferences`]).
+    #[must_use]
+    pub fn with_unreadable_preferences(mut self, why: impl Into<String>) -> Self {
+        self.unreadable = Some(WorkerFailure::new(FailureKind::Preferences, why));
+        self
     }
 
     #[must_use]
@@ -353,7 +367,8 @@ impl Machine {
 
     /// The worker's own word (first why it is failing now, then its report)
     /// wins over why the last one ended; while the supervisor stops it as
-    /// failed, that reason wins.
+    /// failed, that reason wins. Unreadable preferences come last: the
+    /// others name the fix for what is failing now.
     fn current_failure(&self) -> Option<WorkerFailure> {
         let worker = || {
             self.failed
@@ -368,6 +383,7 @@ impl Machine {
             } => self.failure.clone().or_else(worker),
             _ => worker().or_else(|| self.failure.clone()),
         }
+        .or_else(|| self.unreadable.clone())
     }
 
     fn running(&self) -> bool {
@@ -408,7 +424,11 @@ impl Machine {
                 .to_args(),
             ),
             Package::Slim { enabled, .. } => {
-                let prysm = self.preferences.instance.clone().filter(|_| *enabled)?;
+                let prysm = self
+                    .preferences
+                    .prysm_address
+                    .clone()
+                    .filter(|_| *enabled)?;
                 Some(SlimArgs { prysm }.to_args())
             }
         }
@@ -511,8 +531,10 @@ impl Machine {
         effects: &mut Vec<Effect>,
     ) {
         let relaunch = matches!(self.package, Package::Slim { .. })
-            && self.preferences.instance != preferences.instance;
+            && self.preferences.prysm_address != preferences.prysm_address;
         self.preferences = preferences;
+        // Saved: the file is readable again.
+        self.unreadable = None;
         if relaunch {
             // New worker settings: the old worker ends, and `reconcile`
             // starts the new one as soon as it is gone, without backoff.

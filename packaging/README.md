@@ -139,7 +139,7 @@ the old `io.prysm.capture` app: remove it (and its service setup) first.
 
 Picture settings (size, rate, menus, encoding) live in a web portal in both
 flavours, never in the TV's Luna preferences (`tv.json` holds only
-`autostart`, and for slim `instance`). Full: the `webos`
+`autostart`, and for slim `prysm_address`). Full: the `webos`
 capture section of the worker's `settings.json`, edited in the TV's own
 portal (default 640x360 at 30 fps). Slim: the `remote` capture section of the
 desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
@@ -147,7 +147,7 @@ desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
 TV on every connection ([wire protocol](../crates/adapters/capture-remote/README.md));
 the TV captures and encodes as asked. Saving other capture settings restarts
 lighting, the TV reconnects within a second and follows the new request.
-`instance` is the desktop Prysm's portal address (`http://` or `https://`),
+`prysm_address` is the desktop Prysm's portal address (`http://` or `https://`),
 the host an IP address or a name such as `prysm.local` (checked for syntax
 only when saved); the slim worker resolves it at every connection attempt,
 waiting at most 0.5 s per attempt (a slower answer is used by the next one),
@@ -251,7 +251,9 @@ Installed layout (`/media/developer/apps/usr/palm/…`):
 and the boot hook `/var/lib/webosbrew/init.d/io.github.ericschaal.prysm`; preferences and
 settings live in `/var/lib/io.github.ericschaal.prysm` (`tv.json`, `resume.json`, full:
 `settings.json`). The Luna method `uninstall` (from the
-TV app) removes the registration before the IPK is removed.
+TV app) removes the registration before the IPK is removed. A refused call
+replies `errorKind` and `errorText`
+([Luna API](../docs/developers/webos.md#luna-api)).
 
 Checks without a TV:
 

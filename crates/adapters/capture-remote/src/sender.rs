@@ -813,9 +813,9 @@ mod tests {
             connecting.join().unwrap().unwrap_err()
         });
         assert!(stopped(&error), "{}", chain(&error));
-        // Only the connect's wait: no upgrade was ever written. Not on
-        // macOS, which sometimes completes such a connect (seen in CI): the
-        // cut then ends the upgrade's read instead, as asserted above.
+        // Only the connect's wait: no upgrade was ever written. Linux
+        // always drops the SYN; macOS sometimes completes the connect (seen
+        // in CI), and the cut then ends the upgrade's read instead.
         if cfg!(target_os = "linux") {
             assert_eq!(hangup.waits(), 1, "the connect never completed");
         }

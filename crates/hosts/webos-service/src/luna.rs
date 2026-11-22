@@ -3,7 +3,7 @@ use crate::identity::Identity;
 use crate::install::{FsInstaller, Installer};
 use crate::launcher::{Launcher, ProcessLauncher};
 use crate::preferences::{FileStore, PreferencesStore};
-use crate::service::{Bus, METHODS, STATE_KEY, Service, WATCHES, Watch};
+use crate::service::{Bus, ErrorKind, METHODS, STATE_KEY, Service, WATCHES, Watch, error_reply};
 use prysm_webos_luna_sys as sys;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -34,9 +34,19 @@ pub fn serve(
         methods: &METHODS,
         calls: &calls,
         tick: TICK,
+        refuse,
     };
     eprintln!("prysm-webos-service: registering {}", identity.service);
     sys::run(&config, Box::new(Glue::new(service, stop, deadline)))
+}
+
+/// The error reply for a call the bus answers itself.
+fn refuse(refusal: sys::Refusal, text: &str) -> String {
+    let kind = match refusal {
+        sys::Refusal::TooLarge => ErrorKind::TooLarge,
+        sys::Refusal::Internal => ErrorKind::Internal,
+    };
+    error_reply(kind, text)
 }
 
 /// Adapts the service to the sys crate's handler.
@@ -182,5 +192,25 @@ mod tests {
         let mut bus = sys::Bus::default();
         assert!(glue.tick(&mut bus, now));
         assert!(!glue.tick(&mut bus, now + Duration::from_secs(1)));
+    }
+
+    /// The bus's own refusals carry the service's error kinds.
+    #[test]
+    fn bus_refusals_are_service_errors() {
+        for (refusal, kind) in [
+            (sys::Refusal::TooLarge, "too_large"),
+            (sys::Refusal::Internal, "internal"),
+        ] {
+            let reply: serde_json::Value =
+                serde_json::from_str(&refuse(refusal, "a \"quoted\"\nline")).unwrap();
+            assert_eq!(
+                reply,
+                serde_json::json!({
+                    "returnValue": false,
+                    "errorKind": kind,
+                    "errorText": "a \"quoted\"\nline",
+                })
+            );
+        }
     }
 }

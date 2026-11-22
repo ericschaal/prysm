@@ -53,6 +53,7 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | TV is asleep, Screen saver is on | Capture continues when the TV wakes. |
 | Waiting for video | Play video or use an active HDMI input. The Home screen may give no picture. |
 | Screen sync stopped, Capture stopped | The TV tries again by itself and counts down. If it repeats, the reason is under **Service options → View diagnostics**. Stop other capture apps. |
+| Couldn’t read settings | The TV's saved settings could not be read, so Prysm uses its defaults and leaves the file as it is. Change a setting (**Start with TV**, or for slim the **Prysm address**) to save new ones. **View diagnostics** says what was wrong. |
 | Slim: Waiting for Prysm | Check the **Prysm address** (the one you open the portal with), that Prysm on the computer has the **LG TV on your network** source with its lights on, and, behind a reverse proxy, that it passes WebSockets on `/api/v1/capture/stream` without a login. |
 | Slim: Update Prysm or TV app | Prysm on the computer and the TV app send the picture in different ways. Update the older of the two; the TV checks again every second, so there is no need to restart it. |
 | Slim: Another TV took over | Another TV sends its picture to the same Prysm, so this one stopped. It sends again when you choose **Stop capture**, then **Start capture**, when the TV wakes from standby, or when you change the Prysm address. |

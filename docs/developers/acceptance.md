@@ -516,7 +516,7 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
 - **prysm**: full: the TV's portal at the address `getState` reports, given
   the run's settings (WLED output, neutral processing, the webOS capture at
   640 × 360 and 30 fps without the UI) with `PUT /api/v1/settings`; slim: the
-  receiver delivered and started, then the TV's `setPreferences` (`instance`,
+  receiver delivered and started, then the TV's `setPreferences` (`prysm_address`,
   the receiver) and `setEnabled true`, as the app does; the receiver is
   stopped and removed at the end;
 - **running**: the sender WLED should see: the TV (the host of the portal
@@ -665,7 +665,7 @@ and none after it.
   directory: the settings and lighting target from its portal (the full
   package's at the address `getState` reports; the Linux package's at
   `HOST:8787`), and on the TV `getState`'s flavour, preferences (`autostart`,
-  `instance`) and intent (full `target`, slim `enabled`), and the data files `tv.json`,
+  `prysm_address`) and intent (full `target`, slim `enabled`), and the data files `tv.json`,
   `settings.json` and `resume.json` as they are, and for the Linux package
   its options file `/etc/default/prysm-headless` as it is (`deb.options`;
   the purge deletes it). It reads the file back and

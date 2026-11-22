@@ -6,7 +6,7 @@ use crate::install::Installer;
 use crate::launcher::{Launcher, Output, Worker};
 use crate::machine::{Effect, Input, Machine, Spec};
 use crate::observe;
-use crate::preferences::{Preferences, PreferencesStore};
+use crate::preferences::{Preferences, PreferencesFile, PreferencesStore};
 use crate::state::{Flavor, Power, State};
 use prysm_ports::chain;
 use prysm_webos_link::{LightingTarget, Video};
@@ -121,16 +121,60 @@ pub struct Reply {
     pub subscribe: bool,
 }
 
-impl Reply {
-    fn error(text: impl Into<String>) -> Self {
-        let mut reply = Map::new();
-        reply.insert("returnValue".into(), false.into());
-        reply.insert("errorText".into(), text.into().into());
+/// Why a call failed: the error reply's `errorKind`. `too_large`: the
+/// payload exceeds 4096 bytes. `unknown_method`: no such method.
+/// `forbidden`: only the TV app may change Prysm. `removing`: the service is
+/// being removed. `invalid_request`: the payload is not the method's request.
+/// `wrong_package`: the other package's method (`setTarget` on slim,
+/// `setEnabled` on full). `invalid_preferences`: a preference the installed
+/// package does not have. `save_failed`: the preferences could not be saved.
+/// `internal`: the service could not read the call or send its reply. Open:
+/// an app reads a kind it does not know as a refusal and shows `errorText`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub enum ErrorKind {
+    /// The payload exceeds [`MAX_PAYLOAD`] bytes.
+    TooLarge,
+    /// The service has no such method.
+    UnknownMethod,
+    /// Only the TV app may change Prysm.
+    Forbidden,
+    /// The service is being removed.
+    Removing,
+    /// The payload is not this method's request.
+    InvalidRequest,
+    /// The other package's method: `setTarget` on slim, `setEnabled` on full.
+    WrongPackage,
+    /// A preference the installed package does not have.
+    InvalidPreferences,
+    /// The preferences could not be saved.
+    SaveFailed,
+    /// The bus could not read the call or send the reply.
+    Internal,
+}
+
+/// A failed call: its kind and the text for people.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Refusal {
+    kind: ErrorKind,
+    text: String,
+}
+
+impl Refusal {
+    fn new(kind: ErrorKind, text: impl Into<String>) -> Self {
         Self {
-            payload: Value::Object(reply).to_string(),
-            subscribe: false,
+            kind,
+            text: text.into(),
         }
     }
+}
+
+/// The error reply LS2 carries: `returnValue: false`, `errorKind` and
+/// `errorText`.
+#[must_use]
+pub fn error_reply(kind: ErrorKind, text: &str) -> String {
+    serde_json::json!({ "returnValue": false, "errorKind": kind, "errorText": text }).to_string()
 }
 
 /// Fixed facts of one service instance.
@@ -162,38 +206,50 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
     renew: Renewals,
     video_context: Option<Value>,
     published: Option<String>,
+    /// `tv.json` as last read or saved; the default while it is unreadable,
+    /// so the next save replaces it.
+    file: PreferencesFile,
     /// The intent last given to the store.
     remembered: Option<LightingTarget>,
     uninstall: Uninstall,
 }
 
 impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
-    /// Load preferences (invalid ones are reported and replaced by defaults).
+    /// Load preferences. Unreadable ones are reported (the state's failure
+    /// `preferences`), the defaults used, and the file left as it is until
+    /// the app saves preferences.
     pub fn new(config: Config, launcher: L, mut store: S, installer: I, now: Instant) -> Self {
-        let defaults = Preferences::default();
-        let preferences = match store.load() {
-            Ok(Some(preferences)) => match preferences.validate(config.flavor) {
-                Ok(()) => preferences,
-                Err(error) => {
-                    eprintln!("prysm-webos-service: ignoring saved preferences: {error}");
-                    defaults
-                }
-            },
-            Ok(None) => defaults,
-            Err(error) => {
-                eprintln!(
-                    "prysm-webos-service: ignoring saved preferences: {}",
-                    chain(&error)
-                );
-                defaults
+        let flavor = config.flavor;
+        let loaded = store
+            .load()
+            .map_err(|error| chain(&error))
+            .and_then(|file| {
+                let file = file.unwrap_or_default();
+                let preferences = file
+                    .preferences(flavor)
+                    .map_err(|error| format!("invalid saved preferences: {error}"))?;
+                Ok((file, preferences))
+            });
+        let (file, preferences, unreadable) = match loaded {
+            Ok((file, preferences)) => (file, preferences, None),
+            Err(why) => {
+                eprintln!("prysm-webos-service: using the default preferences: {why}");
+                (
+                    PreferencesFile::default(),
+                    Preferences::default(),
+                    Some(why),
+                )
             }
         };
         // A restart within one boot (an update, a crash) resumes the intent.
         let resumed = store.resume();
-        let machine = match resumed {
+        let mut machine = match resumed {
             Some(intent) => Machine::resumed(config.spec.clone(), preferences, intent),
             None => Machine::new(config.spec.clone(), preferences),
         };
+        if let Some(why) = unreadable {
+            machine = machine.with_unreadable_preferences(why);
+        }
         Self {
             config,
             machine,
@@ -208,6 +264,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             },
             video_context: None,
             published: None,
+            file,
             remembered: resumed,
             uninstall: Uninstall::No,
         }
@@ -230,7 +287,10 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     ) -> Reply {
         match self.try_request(bus, method, sender, payload, now) {
             Ok(reply) => reply,
-            Err(error) => Reply::error(error),
+            Err(Refusal { kind, text }) => Reply {
+                payload: error_reply(kind, &text),
+                subscribe: false,
+            },
         }
     }
 
@@ -241,26 +301,44 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         sender: &str,
         payload: &str,
         now: Instant,
-    ) -> Result<Reply, String> {
+    ) -> Result<Reply, Refusal> {
         if payload.len() > MAX_PAYLOAD {
-            return Err(format!("payload exceeds {MAX_PAYLOAD} bytes"));
+            return Err(Refusal::new(
+                ErrorKind::TooLarge,
+                format!("payload exceeds {MAX_PAYLOAD} bytes"),
+            ));
         }
         let Some(method) = Method::parse(method) else {
-            return Err(format!("unknown method `{method}`"));
+            return Err(Refusal::new(
+                ErrorKind::UnknownMethod,
+                format!("unknown method `{method}`"),
+            ));
         };
         if method != Method::GetState && sender != self.config.app_id {
             // Checked before the payload is even parsed.
-            return Err(format!("only {} may change Prysm", self.config.app_id));
+            return Err(Refusal::new(
+                ErrorKind::Forbidden,
+                format!("only {} may change Prysm", self.config.app_id),
+            ));
         }
         if self.uninstall == Uninstall::Requested {
-            return Err("the service is being removed".into());
+            return Err(Refusal::new(
+                ErrorKind::Removing,
+                "the service is being removed",
+            ));
         }
         let name = method.name();
-        let parse_error = |error: serde_json::Error| format!("invalid {name} request: {error}");
+        let invalid = |why: &dyn std::fmt::Display| {
+            Refusal::new(
+                ErrorKind::InvalidRequest,
+                format!("invalid {name} request: {why}"),
+            )
+        };
+        let parse_error = |error: serde_json::Error| invalid(&error);
         // Only objects: serde would also accept a struct as an array.
         let payload = match serde_json::from_str::<Value>(payload).map_err(parse_error)? {
             Value::Object(object) => Value::Object(object),
-            _ => return Err(format!("invalid {name} request: expected an object")),
+            _ => return Err(invalid(&"expected an object")),
         };
         match method {
             Method::GetState => {
@@ -274,10 +352,18 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             Method::SetPreferences => {
                 let preferences: Preferences =
                     serde_json::from_value(payload).map_err(parse_error)?;
-                preferences.validate(self.config.flavor)?;
+                let flavor = self.config.flavor;
+                preferences
+                    .validate(flavor)
+                    .map_err(|why| Refusal::new(ErrorKind::InvalidPreferences, why))?;
+                // Only the package's own fields change; the rest of the
+                // file is written back as read.
+                let mut file = self.file.clone();
+                file.replace(&preferences, flavor);
                 self.store
-                    .save(&preferences)
-                    .map_err(|error| chain(&error))?;
+                    .save(&file)
+                    .map_err(|error| Refusal::new(ErrorKind::SaveFailed, chain(&error)))?;
+                self.file = file;
                 self.input(bus, Input::Preferences(preferences), now);
                 Ok(self.state_reply(now))
             }
@@ -308,13 +394,13 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     }
 
     /// Refuse `method`, the other package's, before its request is decoded.
-    fn only_for(&self, flavor: Flavor, method: &str) -> Result<(), String> {
+    fn only_for(&self, flavor: Flavor, method: &str) -> Result<(), Refusal> {
         if self.config.flavor == flavor {
             return Ok(());
         }
-        Err(format!(
-            "{method} is only for the {} package",
-            flavor.as_str()
+        Err(Refusal::new(
+            ErrorKind::WrongPackage,
+            format!("{method} is only for the {} package", flavor.as_str()),
         ))
     }
 

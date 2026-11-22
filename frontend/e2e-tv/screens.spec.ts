@@ -28,7 +28,7 @@ async function serviceOptions(page: Page, flavor: Flavor) {
   await pressUntil(
     page,
     'ArrowRight',
-    flavor === 'full' ? 'autostart' : 'instance',
+    flavor === 'full' ? 'autostart' : 'prysm-address',
   );
   await pressUntil(page, 'ArrowDown', 'service-options');
   await press(page, 'Enter');
@@ -134,7 +134,7 @@ const screens: Screen[] = [
     name: 'Prysm address',
     focus: 'primary',
     reach: async (page) => {
-      await pressUntil(page, 'ArrowRight', 'instance');
+      await pressUntil(page, 'ArrowRight', 'prysm-address');
       await press(page, 'Enter');
       await expect(page.locator('#dialog-title')).toHaveText('Prysm address');
     },
