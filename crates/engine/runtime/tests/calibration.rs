@@ -4,7 +4,7 @@
 //!
 //! The fake source fills its frames with gray, so the correction shows in the
 //! preview: equal red and blue is neutral, less red than blue is the cool
-//! calibration. Smoothing is long (60 s) and blends frame content (before the
+//! calibration. Smoothing is the longest (2 s) and blends frame content (before the
 //! correction), so a source blinking between two grays shows only those two
 //! levels while a pattern switches smoothing off.
 use prysm_ports::{
@@ -32,7 +32,7 @@ fn source(fill: u8, end_after: Option<u32>) -> FakeSourceSettings {
     }
 }
 
-/// Gray frames, 60 s smoothing, a cool calibration.
+/// Gray frames, the longest smoothing, a cool calibration.
 fn settings(active: Option<&str>, source: &FakeSourceSettings) -> Settings {
     Settings {
         capture: Some(AdapterSettings::new("fake", source)),
@@ -47,7 +47,7 @@ fn settings(active: Option<&str>, source: &FakeSourceSettings) -> Settings {
             // Slow and without cuts, so only the pattern's own config is quick.
             style: Style::Custom,
             custom_style: Some(StyleValues {
-                smoothing_seconds: 60.0,
+                smoothing_seconds: StyleValues::MAX_SMOOTHING_SECONDS,
                 cut_response_percent: 0,
                 ..StyleValues::DEFAULT
             }),
@@ -230,7 +230,7 @@ async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
         let _viewer = handle.preview();
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, "cool", cool).await;
-        assert!(green_levels(&handle).await > 2, "60 s smoothing blends");
+        assert!(green_levels(&handle).await > 2, "long smoothing blends");
 
         handle
             .set_calibration(pattern(Pattern::Gray192, false))

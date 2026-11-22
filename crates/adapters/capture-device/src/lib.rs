@@ -19,7 +19,7 @@ pub const STOP: prysm_ports::SourceStop = prysm_ports::SourceStop {
 };
 
 use prysm_ports::{
-    Candidate, FrameSource, Mode, Modes, Result, SourceFactory, Span, ValidationError, capture_size,
+    Candidate, FrameSource, Mode, Modes, Result, SourceFactory, ValidationError, capture_size,
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -83,17 +83,11 @@ impl SourceFactory for DeviceSource {
 }
 
 /// `listed` within what [`DeviceSettings::validate`] accepts
-/// ([`capture_size::SIZES`], and on macOS `AVFoundation`'s `i32` rates),
-/// sorted and without repeats.
+/// ([`capture_size::SIZES`]), sorted and without repeats.
 fn bounded(listed: &[Mode]) -> Vec<Mode> {
-    let bound = Mode::new(
-        capture_size::SIZES.width(),
-        capture_size::SIZES.height(),
-        Span::new(1, i32::MAX.unsigned_abs(), 1).expect("a span"),
-    );
     listed
         .iter()
-        .filter_map(|mode| mode.and(&bound))
+        .filter_map(|mode| mode.and(&capture_size::SIZES))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -105,6 +99,7 @@ mod tests;
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+    use prysm_ports::Span;
 
     #[test]
     fn listed_modes_are_bounded_sorted_and_unique() {
@@ -117,12 +112,15 @@ mod mode_tests {
             Mode::new(exactly(640), exactly(360), thirty),
             Mode::new(exactly(7680), exactly(4320), thirty),
             Mode::new(span(2, 8000, 2), exactly(480), exactly(60)),
+            Mode::new(exactly(1280), exactly(720), span(1, 240, 1)),
+            Mode::new(exactly(1280), exactly(720), exactly(240)),
         ]);
         assert_eq!(
             modes,
             [
                 Mode::new(span(2, 3840, 2), Span::exactly(480), Span::exactly(60)),
                 Mode::new(Span::exactly(640), Span::exactly(360), span(1, 30, 1)),
+                Mode::new(Span::exactly(1280), Span::exactly(720), span(1, 120, 1)),
                 Mode::new(Span::exactly(1920), Span::exactly(1080), span(1, 30, 1)),
             ]
         );

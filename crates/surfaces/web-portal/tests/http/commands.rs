@@ -70,14 +70,15 @@ async fn capture_modes_answer_for_the_posted_section() {
             .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["field"], "capture.kind");
-        let (status, _) = portal
+        let (status, body) = portal
             .json(
                 Method::POST,
                 modes,
                 json!({ "kind": "fake", "width": "wide" }),
             )
             .await;
-        assert!(status.is_client_error(), "{status}");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "capture.width");
         let (status, body) = portal
             .json(Method::POST, modes, json!({ "path": "x" }))
             .await;
@@ -265,11 +266,23 @@ async fn a_processing_trial_applies_without_saving() {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["kind"], "invalid");
         assert_eq!(body["field"], "processing.brightness_percent");
+        // The body is the processing section: a problem inside it names
+        // the field; a body that is not one is malformed.
         let mut unknown = processing.clone();
         unknown["token"] = json!("x");
         let (status, body) = put(unknown).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["kind"], "bad_request");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "processing.token");
+        let mut style = processing.clone();
+        style["style"] = json!({ "kind": "loud" });
+        let (status, body) = put(style).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "processing.style.kind");
+        for whole in [json!(3), json!([])] {
+            let (status, body) = put(whole.clone()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{whole}");
+            assert_eq!(body["kind"], "bad_request");
+        }
 
         let get = portal
             .request(Method::GET, "/api/v1/processing/trial")
@@ -463,16 +476,67 @@ async fn invalid_settings_are_unprocessable_and_not_saved() {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["field"], "output.kind");
 
-        let mut undecodable = settings;
+        let mut undecodable = settings.clone();
         undecodable["output"] = json!({ "kind": "fake", "fail_after": "soon" });
         let (status, body) = replace(&portal, initial, undecodable).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "output.fail_after");
         assert!(
             body["message"]
                 .as_str()
                 .unwrap()
-                .starts_with("cannot decode `fake` settings:")
+                .starts_with("cannot decode `fake` settings:"),
+            "{body}"
         );
+
+        // Problems inside `settings` that its types refuse while decoding.
+        let calibrations = json!([{ "id": "a", "name": "A" }, { "id": 2, "name": "B" }]);
+        for (section, name, value, field) in [
+            (None, "format", json!(1), "format"),
+            (
+                Some("processing"),
+                "style",
+                json!({ "kind": "loud" }),
+                "processing.style.kind",
+            ),
+            (
+                Some("processing"),
+                "brightnes_percent",
+                json!(80),
+                "processing.brightnes_percent",
+            ),
+            (
+                Some("processing"),
+                "brightness_percent",
+                json!("bright"),
+                "processing.brightness_percent",
+            ),
+            (
+                Some("processing"),
+                "calibrations",
+                calibrations,
+                "processing.calibrations[1].id",
+            ),
+            (None, "processing", json!([]), "processing"),
+            (
+                Some("processing"),
+                "calibrations",
+                json!([{ "id": "a", "name": "A", "correction": [] }]),
+                "processing.calibrations[0].correction",
+            ),
+            (None, "capture", json!({ "path": "x" }), "capture"),
+            (None, "output", json!(3), "output"),
+        ] {
+            let mut refused = settings.clone();
+            match section {
+                Some(section) => refused[section][name] = value,
+                None => refused[name] = value,
+            }
+            let (status, body) = replace(&portal, initial, refused).await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{field}: {body}");
+            assert_eq!(body["kind"], "invalid", "{field}");
+            assert_eq!(body["field"], field, "{body}");
+        }
         assert_eq!(portal.state().await["revision"], initial);
         assert_eq!(portal.store.saved(), Some(fakes::settings()));
         portal.shutdown().await.unwrap();
@@ -480,23 +544,41 @@ async fn invalid_settings_are_unprocessable_and_not_saved() {
     .await;
 }
 
-/// The format number is the file's, not the settings document's.
+/// A body that is not JSON, and the envelope around `settings` (a top-level
+/// field unknown, missing or of the wrong type), are malformed requests: no
+/// setting is at fault. The format number is the file's: inside `settings`
+/// it is an unknown setting (above).
 #[tokio::test]
-async fn settings_with_a_format_number_are_a_bad_request() {
+async fn a_malformed_settings_request_is_a_bad_request() {
     within_async(LIMIT, async {
         let portal = start(fakes::settings(), Duration::from_secs(5)).await;
-        let (initial, mut settings) = dimmed(&portal).await;
-        settings["format"] = json!(1);
-        let (status, body) = replace(&portal, initial, settings).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["kind"], "bad_request");
-        assert!(
-            body["message"]
-                .as_str()
-                .unwrap()
-                .contains("unknown field `format`"),
-            "{body}"
-        );
+        let (initial, settings) = dimmed(&portal).await;
+        let valid = json!({ "expected": initial, "settings": settings });
+        let bodies = [
+            json!({ "expected": "x", "settings": settings }).to_string(),
+            json!({ "expected": initial, "settings": settings, "force": true }).to_string(),
+            json!({ "settings": settings }).to_string(),
+            json!({ "expected": initial, "settings": 3 }).to_string(),
+            json!({ "expected": initial, "settings": [] }).to_string(),
+            json!([]).to_string(),
+            "{".to_owned(),
+            format!("{valid} {{}}"),
+            r#"{ "expected": 1, "settings": { "processing": { "brightness_percent": 80, } } }"#
+                .to_owned(),
+        ];
+        for text in bodies {
+            let response = portal
+                .request(Method::PUT, "/api/v1/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(text.clone())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{text}");
+            let body: Value = response.json().await.unwrap();
+            assert_eq!(body["kind"], "bad_request", "{text}");
+            assert!(body.get("field").is_none(), "{text}");
+        }
         assert_eq!(portal.state().await["revision"], initial);
         portal.shutdown().await.unwrap();
     })

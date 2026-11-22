@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { captureDefaults } from '@prysm/contracts/constants';
 import type { DeviceSettings } from '@prysm/contracts/host-desktop';
 import {
   DeviceRows,
@@ -10,7 +11,6 @@ import {
   type EditorProps,
   type ModesState,
 } from '@prysm/web-portal';
-import { deviceDefaults } from './settings';
 
 /** How long typing pauses before the typed device is asked about. */
 export const typedDeviceMs = 400;
@@ -71,7 +71,7 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
         asked ? (
           <PictureChoice
             value={value}
-            defaults={deviceDefaults}
+            defaults={captureDefaults.device}
             onChange={onChange}
             modes={modes}
             source="This device"

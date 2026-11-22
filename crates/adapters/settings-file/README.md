@@ -93,7 +93,7 @@ fields is required:
 
 | Field | Range | Effect |
 | --- | --- | --- |
-| `smoothing_seconds` | 0 or more | Seconds to complete most of a change; 0 disables smoothing |
+| `smoothing_seconds` | 0-2 | Seconds to complete most of a change; 0 disables smoothing |
 | `cut_response_percent` | 0-100 | How much of a scene cut the lights take at once |
 | `brightness_ramp_seconds` | 0-2 | The least time from dark to full brightness; 0 sets no limit |
 | `spatial_reach_percent` | 1-100 | Edge depth: how far into the picture each light looks |
@@ -102,9 +102,9 @@ fields is required:
 | `dark_floor_percent` | 0-20 | The neutral white glow, in percent of full light, kept in dark scenes |
 
 A refused value names its path, such as
-`processing.custom_style.dark_floor_percent`. `brightness_percent`,
-`sample_density`, `remove_black_bars` and the calibrations are outside
-styles.
+`processing.custom_style.dark_floor_percent`. `brightness_percent` (0-100),
+`sample_density` (1-512), `remove_black_bars` and the calibrations are
+outside styles.
 
 With a custom style:
 

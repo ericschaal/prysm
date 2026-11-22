@@ -27,7 +27,7 @@ pub struct Calibration {
 /// Correction controls, each -100 to 100; all zero is no correction.
 /// Converted to [`ColorCorrection`] for the processor.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(remote = "Self", default, deny_unknown_fields)]
 pub struct CorrectionControls {
     /// Positive warms (attenuates blue), negative cools (attenuates red).
     pub warmth: i16,
@@ -40,10 +40,12 @@ pub struct CorrectionControls {
     pub blue: PrimaryControls,
 }
 
+crate::map_only!(CorrectionControls, "correction controls as an object");
+
 /// One picture primary's controls, each -100 to 100. White stays as the
 /// white balance leaves it whatever they are.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(remote = "Self", default, deny_unknown_fields)]
 pub struct PrimaryControls {
     /// Positive turns the colour toward the next primary in red, green, blue
     /// order (red more orange, green more turquoise, blue more purple),
@@ -52,6 +54,7 @@ pub struct PrimaryControls {
     /// Negative makes the colour softer, positive stronger.
     pub strength: i16,
 }
+crate::map_only!(PrimaryControls, "a primary's controls as an object");
 
 impl From<PrimaryControls> for PrimaryAdjustment {
     fn from(PrimaryControls { hue, strength }: PrimaryControls) -> Self {

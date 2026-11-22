@@ -9,7 +9,7 @@ are generated from OpenAPI documents the Rust exporter prints.
 | [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs) | `State`, `Session`, `Failure`, request/response bodies; schema mirrors of the ports types and the adapter-schema hook ([`schema.rs`](../../crates/engine/protocol/src/schema.rs), feature `schema`) | `@prysm/contracts/application` |
 | Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null), `@prysm/contracts/host-webos` (webos, wled) |
 | [`prysm-webos-service`](../../crates/hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences` (no picture settings: those are the portals'), request and reply bodies; schema mirrors of `Video`, `SlimEncoding`, `FailureKind`, `LightingTarget` (feature `schema`) | `@prysm/contracts/luna` |
-| [`prysm-export-contracts`](../../crates/tools/export-contracts/src/main.rs) | Which documents exist and which adapters each host document registers; serialization fixtures; [constants](../../crates/tools/export-contracts/src/constants.rs) the frontends use as they are (the built-in styles' values) | Module names, `@prysm/contracts/constants` |
+| [`prysm-export-contracts`](../../crates/tools/export-contracts/src/main.rs) | Which documents exist and which adapters each host document registers; serialization fixtures; [constants](../../crates/tools/export-contracts/src/constants.rs) the frontends use as they are (the built-in styles' values, the capture kinds' defaults) | Module names, `@prysm/contracts/constants` |
 
 Ports types are the wire types: the portal sends `prysm_ports::Settings` as is.
 `prysm-protocol` describes them with schema-only mirrors, and its tests keep each
@@ -98,9 +98,12 @@ to the generator, and `--check` fails on missing, changed or obsolete files
 without writing. `fixtures.json` holds actual Rust serializations of every root, which
 the [contract tests](../../frontend/tests/contracts.test.mjs) validate against the
 generated schemas. `constants.generated.ts` holds server-known values as
-`export const … as const` (`builtInStyles`), so a frontend built with the
-backend keeps no copy of them; the portal types them with the generated
-schemas.
+`export const … as const` (`builtInStyles`; `captureDefaults`, each capture
+kind's field defaults read from its schema's `default`), so a frontend built
+with the backend keeps no copy of them; the portal types them with the
+generated schemas. A capture panel creates a new section with every
+defaulted field written from `captureDefaults`, so a later default changes
+only new setups.
 
 The documents contain schemas only. Routes, status codes and limits are in the
 [portal HTTP contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md).

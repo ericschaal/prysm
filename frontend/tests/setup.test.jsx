@@ -343,7 +343,13 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
       'WLED192.0.2.4, 20 LEDs',
     ]);
     await next();
-    assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'webos' });
+    assert.deepEqual(fixture.snapshot().settings.capture, {
+      kind: 'webos',
+      width: 640,
+      height: 360,
+      fps: 30,
+      include_ui: true,
+    });
     assert.equal(fixture.snapshot().target, 'screen_sync');
     await openEditor('Video source');
     assert.equal($('.page-heading h2').textContent, 'Video source');
@@ -377,6 +383,7 @@ test('setup offers the same size-and-rate choice and saves the chosen preset', a
       width: 320,
       height: 180,
       fps: 30,
+      include_ui: true,
     });
   } finally {
     await portal.unmount();
@@ -459,6 +466,9 @@ test('setup lists the devices present at once and finds lights on request; the t
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'device',
       path: '/dev/video9',
+      width: 640,
+      height: 360,
+      fps: 30,
     });
     assert.deepEqual(fixture.snapshot().settings.output, {
       kind: 'wled',

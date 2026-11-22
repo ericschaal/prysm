@@ -3,7 +3,6 @@ import type { Processing, StyleValues } from '@prysm/contracts/application';
 import { FieldScopeProvider } from './form';
 import { CheckboxField, RangeField } from './fields';
 import {
-  fineLimits,
   processingLimits,
   styleLimits,
   useLiveProcessing,
@@ -278,13 +277,13 @@ export function StyleSettings(props: LiveProps) {
               help="Softens quick changes. 0 turns it off."
               format={seconds}
               {...knob('smoothing_seconds', shown)}
-              // Steps of 0.05 s; a saved value above the usual 2 s still fits.
+              // Steps of 0.05 s, without the slider's binary fractions.
               onChange={(next) =>
                 knob('smoothing_seconds', shown).onChange(
                   Math.round(next * 100) / 100,
                 )
               }
-              {...fineLimits.smoothing(shown.smoothing_seconds)}
+              {...styleLimits.smoothing_seconds}
             />
             <RangeField
               label="Scene cuts"
@@ -348,7 +347,7 @@ export function Detail(props: LiveProps) {
           label="Detail"
           help="Higher follows small details more closely but works the computer harder. 128 suits most screens."
           {...slider('sample_density')}
-          {...fineLimits.detail(live.value.sample_density)}
+          {...processingLimits.sample_density}
         />
       </div>
     </FieldScopeProvider>

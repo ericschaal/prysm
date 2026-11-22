@@ -42,7 +42,7 @@ pub(crate) fn upgrade(
         Answer::Version => {
             let mut refused = failure(
                 StatusCode::UPGRADE_REQUIRED,
-                Failure::BadRequest {
+                Failure::UpgradeRequired {
                     message:
                         "the sender speaks another capture stream version; update the older one"
                             .into(),
