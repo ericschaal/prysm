@@ -24,6 +24,8 @@ prysm-version.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
+# A socket registered before it connects, so a stop can shut it down.
+socket2 = "0.6"
 tungstenite = { workspace = true, features = ["handshake", "rustls-tls-native-roots"] }
 # wss: ring as the crypto provider, and the system's certificate
 # authorities, loaded once per process.

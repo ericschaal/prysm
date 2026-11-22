@@ -690,12 +690,13 @@ impl Machine {
 
 /// The failure a worker's end is: `described`, with the worker's last
 /// failure. An encoder, version or replaced report keeps its kind (the TV
-/// app offers its fix); a receiver wait is no reason to exit, so `other`.
+/// app offers its fix); a receiver wait or a failed receiver is no reason
+/// for this worker to exit, so `other`.
 fn exit_failure(described: String, last: Option<WorkerFailure>) -> WorkerFailure {
     match last {
         Some(last) => WorkerFailure {
             kind: match last.kind {
-                FailureKind::Receiver => FailureKind::Other,
+                FailureKind::Receiver | FailureKind::ReceiverFailed => FailureKind::Other,
                 kind => kind,
             },
             message: format!("{described}: {}", last.message),

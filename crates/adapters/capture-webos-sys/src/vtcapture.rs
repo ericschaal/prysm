@@ -78,14 +78,24 @@ pub enum Error {
 }
 
 impl Error {
-    /// Capture is not retried in this process: driver creation failed, or
-    /// the registration check failed in any way.
+    /// The tap is not reopened: driver creation failed, or the registration
+    /// check failed in any way. The source that met it ends; whether a new
+    /// source is tried is its host's decision (see [`Self::needs_new_process`]).
     #[must_use]
     pub fn is_fatal(&self) -> bool {
         matches!(
             self,
             Self::Create(_) | Self::Permission(_) | Self::Registered(_) | Self::Luna(_)
         )
+    }
+
+    /// No capture can succeed again in this process: driver creation failed
+    /// (it can leave live threads and stale globals), or a client name stays
+    /// registered (every later check fails). A new process has new names and
+    /// a fresh driver.
+    #[must_use]
+    pub fn needs_new_process(&self) -> bool {
+        matches!(self, Self::Create(_) | Self::Registered(_))
     }
 }
 

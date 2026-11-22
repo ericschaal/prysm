@@ -1,6 +1,6 @@
 //! The TV capture, shaped by the receiver's request.
 use crate::link::Flow;
-use prysm_capture_remote::{Offer, RemoteSettings, StreamEncoding};
+use prysm_capture_remote::{Hangup, Offer, RemoteSettings, StreamEncoding};
 use prysm_capture_webos::WebosSettings;
 use prysm_ports::{FrameSource, Mode, Pull, Result};
 use std::sync::Arc;
@@ -43,9 +43,12 @@ pub fn settings(request: &RemoteSettings) -> WebosSettings {
 /// sender replaced this one. It keeps running while a receiver that did not say so is away, so a
 /// dropped connection does not restart the TV capture. With nothing open,
 /// `next_frame` waits out its timeout and reports idle, which keeps the
-/// uplink reconnecting and reading the receiver's messages.
+/// uplink reconnecting and reading the receiver's messages. Once the worker
+/// stops (`stopping` is cut) nothing is opened any more, so a stop costs at
+/// most one release: of the capture being replaced, or of the open one.
 pub struct RequestedCapture<O> {
     flow: Arc<Flow>,
+    stopping: Hangup,
     open: O,
     current: Option<(WebosSettings, Box<dyn FrameSource>)>,
 }
@@ -54,9 +57,10 @@ impl<O> RequestedCapture<O>
 where
     O: FnMut(WebosSettings) -> Result<Box<dyn FrameSource>> + Send,
 {
-    pub fn new(flow: Arc<Flow>, open: O) -> Self {
+    pub fn new(flow: Arc<Flow>, stopping: Hangup, open: O) -> Self {
         Self {
             flow,
+            stopping,
             open,
             current: None,
         }
@@ -73,12 +77,16 @@ where
             if let Some((_, old)) = self.current.take() {
                 old.close()?;
             }
+            if self.stopping.is_cut() {
+                return Ok(Pull::Idle);
+            }
             if let Some(wanted) = wanted {
                 self.current = Some((wanted, (self.open)(wanted)?));
             }
         }
         match &mut self.current {
             Some((_, source)) => source.next_frame(timeout),
+            None if self.stopping.is_cut() => Ok(Pull::Idle),
             None => {
                 std::thread::sleep(timeout);
                 Ok(Pull::Idle)

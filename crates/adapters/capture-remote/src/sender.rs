@@ -14,7 +14,7 @@ use prysm_h264::{Encoder, EncoderSettings, H264Error};
 use prysm_ports::{CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, Error, FrameSink, Result, chain};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderValue, StatusCode, Uri, header};
@@ -30,12 +30,83 @@ pub const CONNECT_DEADLINE: Duration = receive::WRITE_TIMEOUT
     .saturating_add(receive::CLOSE_LINGER)
     .saturating_add(receive::POLL_INTERVAL)
     .saturating_add(Duration::from_millis(200));
-/// How long one `send` may block on a receiver that stopped reading.
+/// How long one `send` may block on a receiver that reads slowly or not at
+/// all: one deadline for the whole message, however many writes it takes.
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// The link's socket. While a deadline is set (during the connect), every
-/// read and write waits at most until then, so a peer that answers a byte
-/// at a time cannot stretch the connect.
+/// Ends the network calls of the senders connected with it the moment
+/// [`Hangup::cut`] is called: it shuts their sockets down, which wakes a
+/// blocked connect, read or write at once, and every later connect fails at
+/// once. A host cuts it when it is asked to stop, so a stop never waits for
+/// a receiver. Cheap to clone; clones share the state.
+#[derive(Debug, Clone, Default)]
+pub struct Hangup(Arc<Mutex<Lines>>);
+
+/// The sockets a [`Hangup`] cuts, by registration number.
+#[derive(Debug, Default)]
+struct Lines {
+    cut: bool,
+    next: u64,
+    sockets: Vec<(u64, TcpStream)>,
+}
+
+impl Hangup {
+    /// Shut down every registered socket, and refuse every later one.
+    pub fn cut(&self) {
+        let mut lines = self.lines();
+        lines.cut = true;
+        for (_, socket) in lines.sockets.drain(..) {
+            let _ = socket.shutdown(std::net::Shutdown::Both);
+        }
+    }
+
+    /// Whether [`Self::cut`] was called.
+    #[must_use]
+    pub fn is_cut(&self) -> bool {
+        self.lines().cut
+    }
+
+    /// Cut `socket` with the others until the registration drops; once cut,
+    /// this fails.
+    fn register(&self, socket: &socket2::Socket) -> std::io::Result<Registration> {
+        let mut lines = self.lines();
+        if lines.cut {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "the sender is stopping",
+            ));
+        }
+        let id = lines.next;
+        lines.next += 1;
+        lines.sockets.push((id, socket.try_clone()?.into()));
+        Ok(Registration {
+            hangup: self.clone(),
+            id,
+        })
+    }
+
+    fn lines(&self) -> std::sync::MutexGuard<'_, Lines> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// A socket a [`Hangup`] cuts; dropping it closes the [`Hangup`]'s handle
+/// on it, so the connection can close.
+#[derive(Debug)]
+struct Registration {
+    hangup: Hangup,
+    id: u64,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        self.hangup.lines().sockets.retain(|(id, _)| *id != self.id);
+    }
+}
+
+/// The link's socket. While a deadline is set (the connect, or one blocking
+/// send), every read and write waits at most until then, so a peer that
+/// answers or reads a byte at a time cannot stretch it.
 struct Socket {
     stream: TcpStream,
     deadline: Option<Instant>,
@@ -115,6 +186,8 @@ pub struct RemoteSender {
     /// A second handle on the link's socket, TLS or not, to switch it
     /// between non-blocking and blocking.
     socket: TcpStream,
+    /// The [`Hangup`]'s handle on the socket, dropped with the sender.
+    _hangup: Registration,
     /// The capture stream's URL, for messages.
     url: Uri,
     request: RemoteSettings,
@@ -193,18 +266,43 @@ impl RemoteSender {
     /// stream with a code before it ([`WireError::Closed`]), all within
     /// [`CONNECT_DEADLINE`].
     pub fn connect(url: &Uri, address: SocketAddr, offer: &Offer) -> Result<Self> {
-        Self::connect_by(url, address, offer, Instant::now() + CONNECT_DEADLINE)
+        Self::connect_until(url, address, offer, &Hangup::default())
+    }
+
+    /// [`Self::connect`], ended at once (while connecting, or later while
+    /// the sender is used) when `hangup` is cut.
+    ///
+    /// # Errors
+    /// As [`Self::connect`], or `hangup` was cut.
+    pub fn connect_until(
+        url: &Uri,
+        address: SocketAddr,
+        offer: &Offer,
+        hangup: &Hangup,
+    ) -> Result<Self> {
+        let deadline = Instant::now() + CONNECT_DEADLINE;
+        Self::connect_by(url, address, offer, hangup, deadline)
     }
 
     fn connect_by(
         url: &Uri,
         address: SocketAddr,
         offer: &Offer,
+        hangup: &Hangup,
         deadline: Instant,
     ) -> Result<Self> {
         let failed = |error| Error::adapter(format!("cannot connect to {url}"), error);
         let left = deadline.saturating_duration_since(Instant::now());
-        let stream = TcpStream::connect_timeout(&address, left).map_err(failed)?;
+        // Registered before it connects, so a cut wakes the connect too.
+        let raw = socket2::Socket::new(
+            socket2::Domain::for_address(address),
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )
+        .map_err(failed)?;
+        let registration = hangup.register(&raw).map_err(failed)?;
+        raw.connect_timeout(&address.into(), left).map_err(failed)?;
+        let stream = TcpStream::from(raw);
         stream.set_nodelay(true).map_err(failed)?;
         let handle = stream.try_clone().map_err(failed)?;
         let socket = Socket {
@@ -224,17 +322,11 @@ impl RemoteSender {
                 error.context(format!("{url} sent no valid request"))
             })?;
         // From here the link's reads never wait (the receiver's messages are
-        // read before each frame), and a write waits out a full send buffer
+        // read before each frame), and a send waits out a full send buffer
         // for at most the write timeout.
-        let socket = match link.socket_mut() {
-            MaybeTlsStream::Plain(socket) => socket,
-            MaybeTlsStream::Rustls(tls) => &mut tls.sock,
-            _ => unreachable!("`upgrade` opens plain or rustls streams only"),
-        };
-        socket.deadline = None;
+        inner(&mut link).deadline = None;
         handle
-            .set_write_timeout(Some(WRITE_TIMEOUT))
-            .and_then(|()| handle.set_nonblocking(true))
+            .set_nonblocking(true)
             .map_err(|error| Error::adapter(format!("cannot configure {url}"), error))?;
         let stream = match request.encoder() {
             None => Stream::Raw,
@@ -246,6 +338,7 @@ impl RemoteSender {
         Ok(Self {
             link,
             socket: handle,
+            _hangup: registration,
             url: url.clone(),
             request,
             stream,
@@ -317,6 +410,7 @@ impl RemoteSender {
         // Within the write timeout, rather than giving up on a full buffer.
         let _ = self.set_blocking(true);
         refuse(&mut self.link, cause, reason);
+        let _ = self.set_blocking(false);
     }
 
     /// Refuse the request for `error`, naming the encoding of an H.264
@@ -358,7 +452,7 @@ impl RemoteSender {
     }
 
     /// Send one message. A full send buffer is waited out, blocking for at
-    /// most the write timeout.
+    /// most the write timeout in all.
     fn send_message(&mut self, message: Message) -> Result<(), LinkError> {
         match self.link.send(message) {
             Err(error) if error.would_block() => {
@@ -371,7 +465,10 @@ impl RemoteSender {
         }
     }
 
-    fn set_blocking(&self, blocking: bool) -> Result<(), LinkError> {
+    /// Switch the socket to blocking, its waits ending [`WRITE_TIMEOUT`]
+    /// from now, or back to non-blocking.
+    fn set_blocking(&mut self, blocking: bool) -> Result<(), LinkError> {
+        inner(&mut self.link).deadline = blocking.then(|| Instant::now() + WRITE_TIMEOUT);
         self.socket
             .set_nonblocking(!blocking)
             .map_err(|error| LinkError::Socket(error.into()))
@@ -427,6 +524,15 @@ fn append_picture(
     Ok(Encoded::Appended {
         keyframe: picture.keyframe,
     })
+}
+
+/// The link's own socket, under TLS or not.
+fn inner(link: &mut Link<MaybeTlsStream<Socket>>) -> &mut Socket {
+    match link.socket_mut() {
+        MaybeTlsStream::Plain(socket) => socket,
+        MaybeTlsStream::Rustls(tls) => &mut tls.sock,
+        _ => unreachable!("`upgrade` opens plain or rustls streams only"),
+    }
 }
 
 /// Upgrade `socket` to a WebSocket at `url` with this end's subprotocol and
@@ -627,6 +733,109 @@ mod tests {
         address
     }
 
+    /// A receiver that accepted and then holds its socket: it sends the raw
+    /// request when `request`, and then reads nothing. Says when it has
+    /// accepted.
+    fn holding(request: bool) -> (SocketAddr, std::sync::mpsc::Receiver<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted, told) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            let _held: Box<dyn std::any::Any> = if request {
+                let mut socket = crate::testkit::accept(socket);
+                socket
+                    .send(tungstenite::Message::text(
+                        r#"{"type":"request","width":320,"height":180,"fps":30,"include_ui":true,"encoding":"raw"}"#,
+                    ))
+                    .unwrap();
+                Box::new(socket)
+            } else {
+                Box::new(socket)
+            };
+            let _ = accepted.send(());
+            std::thread::park();
+        });
+        (address, told)
+    }
+
+    fn url(address: SocketAddr) -> Uri {
+        format!("ws://{address}/api/v1/capture/stream")
+            .parse()
+            .unwrap()
+    }
+
+    /// Whether `error` ends in a timeout rather than in the cut socket.
+    fn timed_out(error: &Error) -> bool {
+        error.cause::<std::io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            )
+        }) || error.cause::<tungstenite::Error>().is_some_and(|error| {
+            matches!(error, tungstenite::Error::Io(error)
+                if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock))
+        })
+    }
+
+    /// A cut ends a connect that waits for the receiver's answer, at once
+    /// (not at its deadline), and every connect after it.
+    #[test]
+    fn a_cut_ends_a_connect() {
+        let (address, accepted) = holding(false);
+        let hangup = Hangup::default();
+        let connecting = {
+            let hangup = hangup.clone();
+            std::thread::spawn(move || {
+                RemoteSender::connect_until(
+                    &url(address),
+                    address,
+                    &crate::testkit::offer(),
+                    &hangup,
+                )
+                .map(|_| ())
+            })
+        };
+        accepted.recv().unwrap();
+        hangup.cut();
+        let error = prysm_testkit::within(Duration::from_secs(5), move || {
+            connecting.join().unwrap().unwrap_err()
+        });
+        assert!(!timed_out(&error), "{}", chain(&error));
+        let again =
+            RemoteSender::connect_until(&url(address), address, &crate::testkit::offer(), &hangup)
+                .unwrap_err();
+        assert_eq!(
+            again.cause::<std::io::Error>().map(std::io::Error::kind),
+            Some(std::io::ErrorKind::ConnectionAborted),
+            "{}",
+            chain(&again)
+        );
+    }
+
+    /// A cut ends a send to a receiver that stopped reading at once, not
+    /// after the write timeout.
+    #[test]
+    fn a_cut_ends_a_send_to_a_receiver_that_does_not_read() {
+        let (address, accepted) = holding(true);
+        let hangup = Hangup::default();
+        let mut sender =
+            RemoteSender::connect_until(&url(address), address, &crate::testkit::offer(), &hangup)
+                .unwrap();
+        accepted.recv().unwrap();
+        let sending = std::thread::spawn(move || {
+            let frame = Frame::fill(1, 320, 180, prysm_core::PixelFormat::RGB24).unwrap();
+            loop {
+                if let Err(error) = sender.deliver(&frame) {
+                    return Error::from(error);
+                }
+            }
+        });
+        hangup.cut();
+        let error = prysm_testkit::within(Duration::from_secs(5), move || sending.join().unwrap());
+        assert!(!timed_out(&error), "{}", chain(&error));
+    }
+
     /// However slowly the receiver answers, the connect ends by its deadline.
     #[test]
     fn a_receiver_that_drips_cannot_hold_up_the_connect() {
@@ -639,7 +848,9 @@ mod tests {
             let started = Instant::now();
             let failed = prysm_testkit::within(Duration::from_secs(10), move || {
                 let offer = crate::testkit::offer();
-                RemoteSender::connect_by(&url, address, &offer, started + deadline).is_err()
+                let hangup = Hangup::default();
+                RemoteSender::connect_by(&url, address, &offer, &hangup, started + deadline)
+                    .is_err()
             });
             assert!(failed, "upgraded {upgraded}");
             assert!(

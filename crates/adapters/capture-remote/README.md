@@ -54,7 +54,10 @@ neither has a listener of its own:
   to the receiver; else `Connection`, whose `WireError::Closed` cause names
   the receiver's close code. `refuse(reason)` and `refuse_encoding(reason)`
   refuse the request for the caller's own reasons. Nothing switches encoder
-  or encoding on its own.
+  or encoding on its own. `RemoteSender::connect_until(…, &hangup)` connects
+  the same way; `Hangup::cut` then shuts its socket down, which ends a
+  connect, read or write in progress at once, and fails every later
+  `connect_until` with that `Hangup`: a host cuts it when it stops.
 
 A new request needs a new connection: the engine reopens the source when the
 capture settings change, which closes the connection as *stopped*, and the
@@ -184,8 +187,11 @@ sender reads them as `WireError::Closed(Some(Close::…))`:
 
 Any other close, or none (a crash, the network), is a dropped connection:
 the slim TV keeps capturing and reconnects every second. So a sender that
-predates a close code (4002 is the newest) reads it as a dropped connection;
-the version stays.
+predates a close code (4002 is the newest) reads it as a dropped connection:
+an older slim TV keeps its capture and encoder open after a 4002 and
+reconnects every second, where a 4000 had released them. It still works with
+this receiver (a close code is an addition, see **Versions**), so the
+version stays.
 
 **Binary messages** are frames only (sender → receiver): an 8-byte header,
 then the payload; the payload's length is the rest of the message.
@@ -252,7 +258,8 @@ every connection).
   upgrade (with TLS) and the request, however slowly the receiver answers
   ([`CONNECT_DEADLINE`](src/sender.rs): the receiver's 1 s close write, 1 s
   linger and one 50 ms read for a connection the new one replaces, plus
-  200 ms); 2 s per write (a receiver that stops reading fails the send).
+  200 ms); 2 s for each message sent, however many writes it takes (a
+  receiver that reads slowly or not at all fails the send).
   Receiver: reads wake every 50 ms to check for `close` and newer
   connections; a quiet connection is kept open; 1 s per write. After
   closing a connection it asked for frames as *stopped*, *replaced* or

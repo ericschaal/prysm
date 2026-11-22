@@ -36,6 +36,17 @@ pub use video::{Readiness, Video, VideoSignal};
 
 use prysm_ports::{FrameSource, Modes, Result, SourceFactory, ValidationError};
 
+/// Whether `failure` (a source's) means no TV capture can succeed again in
+/// this process: driver creation failed, or a capture client name stays
+/// registered with Luna. A host restarts its process for it instead of
+/// opening a new source.
+#[must_use]
+pub fn needs_new_process(failure: &prysm_ports::Error) -> bool {
+    failure
+        .cause::<prysm_capture_webos_sys::Error>()
+        .is_some_and(prysm_capture_webos_sys::Error::needs_new_process)
+}
+
 /// Opens the TV's video capture.
 #[derive(Debug, Clone, Default)]
 pub struct WebosCapture {

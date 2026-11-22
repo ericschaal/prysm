@@ -91,11 +91,17 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   ([native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
 - Before each video tap opens, the worker registers its two capture client
   names with Luna and removes them again. Any failure of that check ends
-  video capture until the worker restarts; the cause says whether a name was
-  denied ("Invalid permissions"), stayed registered, or Luna failed
-  otherwise (LS2 has no typed denial, so that may be a denial worded
-  differently). Other video failures are retried; the first of a run logs a
-  warning and the rest debug. After a failed driver call a tap
+  the capture source at once, without reopening its tap; the cause says
+  whether a name was denied ("Invalid permissions"), stayed registered, or
+  Luna failed otherwise (LS2 has no typed denial, so that may be a denial
+  worded differently). What follows is the package's: the full worker
+  re-applies the lighting with its backoff (1 s doubling to 30 s), which
+  opens a new source and checks again in the same process; the slim worker
+  fails, and the supervisor starts a new one after its backoff. A name that
+  stays registered, or a failed driver creation (`vtCapture_create`), cannot
+  succeed again in the process, so the full worker fails then too (exit 1)
+  instead of retrying in place. Other video failures reopen the tap; the
+  first of a run logs a warning and the rest debug. After a failed driver call a tap
   accepts nothing but its release
   ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs),
   [native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
@@ -133,10 +139,12 @@ closed, and connection attempts go on, so a receiver that asks again
 carries the uplink as one `link` tagged by `state`: `starting`, `sending`
 (`encoding`, `fps`), `paused`, `waiting` (the receiver wait) or `failed`
 (the encoder, version, replaced or receiver-failed failure); the supervisor
-counts it as up once `sending` or `paused`. A connect ends within 2.75 s
-(0.5 s for the host name, 2.25 s on the network), so a stop during one still
-releases the capture (4 s) within the slim worker's 7 s stop deadline, below
-the supervisor's 8 s KILL. All rules are one transition function
+counts it as up once `sending` or `paused`. A stop shuts the uplink's socket
+down, which ends a connect, read or write at once, and no capture opens after
+it; what is left is one pump round (its pull, and a send's 1 s hardware
+encoder wait or 0.5 s host name lookup) and one capture release (4 s),
+within the slim worker's 6 s stop deadline and before the supervisor's 8 s
+KILL. All rules are one transition function
 ([`Report::next`](../../crates/hosts/webos-slim/src/link.rs)). Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 

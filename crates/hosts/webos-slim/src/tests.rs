@@ -2,7 +2,7 @@ use crate::capture::{RequestedCapture, settings};
 use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
 use crate::resolve::Resolver;
 use prysm_capture_remote::testkit::Portal;
-use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError, StreamEncoding};
+use prysm_capture_remote::{Hangup, RemoteSender, RemoteSettings, SendError, StreamEncoding};
 use prysm_capture_webos::{Readiness, VideoSignal, WebosSettings};
 use prysm_core::Frame;
 use prysm_ports::{Error, FrameSource, Pull, Result};
@@ -97,7 +97,7 @@ fn start<S: Upstream + 'static>(
     let stop = link.stop.clone();
     let (sink, flow) = Uplink::new(connect);
     let sink = sink.retry_every(Duration::from_millis(20));
-    let source = RequestedCapture::new(flow.clone(), {
+    let source = RequestedCapture::new(flow.clone(), Hangup::default(), {
         let opened = opened.clone();
         move |shape| opened.open(shape)
     });
@@ -919,6 +919,57 @@ fn a_version_mismatch_outlasts_an_unreachable_receiver() {
     assert_eq!(flow.wanted(), None);
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), None, "the capture reopened");
+}
+
+/// A capture that does nothing, and cuts `stopping` when it is closed: the
+/// stop arrives while it is released.
+struct StopsWhileClosing(Hangup);
+
+impl FrameSource for StopsWhileClosing {
+    fn next_frame(&mut self, _timeout: Duration) -> Result<Pull> {
+        Ok(Pull::Idle)
+    }
+
+    fn close(self: Box<Self>) -> Result<()> {
+        self.0.cut();
+        Ok(())
+    }
+}
+
+/// The receiver asks for another shape, and the stop comes while the old
+/// capture is released: the new one is never opened, so the stop costs one
+/// release, not two.
+#[test]
+fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
+    use prysm_ports::FrameSink;
+    let log = CallLog::new();
+    // Popped from the end: RAW first, then SOFTWARE.
+    let mut answers = vec![
+        Ok(Fake::new(&log, SOFTWARE, 0)),
+        Ok(Fake::new(&log, RAW, 0)),
+    ];
+    let (uplink, flow) = Uplink::new(move || answers.pop().expect("an answer"));
+    let mut uplink = uplink.retry_every(Duration::ZERO);
+    let stopping = Hangup::default();
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let mut source = RequestedCapture::new(flow.clone(), stopping.clone(), {
+        let (opened, stopping) = (opened.clone(), stopping.clone());
+        move |shape| {
+            opened.lock().unwrap().push(shape);
+            Ok(Box::new(StopsWhileClosing(stopping.clone())) as Box<dyn FrameSource>)
+        }
+    });
+    uplink.tick().unwrap();
+    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert_eq!(*opened.lock().unwrap(), [settings(&RAW)]);
+    // The receiver drops, then asks for another shape.
+    uplink.send(&crate::check::picture(16, 16, 1)).unwrap();
+    uplink.tick().unwrap();
+    assert_eq!(flow.wanted(), Some(SOFTWARE));
+    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(stopping.is_cut());
+    assert_eq!(*opened.lock().unwrap(), [settings(&RAW)], "nothing opened");
+    Box::new(source).close().unwrap();
 }
 
 #[test]
