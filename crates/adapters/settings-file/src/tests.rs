@@ -358,3 +358,176 @@ fn relative_path_saves_in_the_working_directory() {
     assert_eq!(store.directory(), Path::new("."));
     assert_eq!(store.path(), Path::new("settings.json"));
 }
+
+/// What `load` refuses, `save` refuses too, before touching the file: a
+/// saved file always loads.
+#[test]
+fn settings_too_large_to_load_are_not_saved() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let mut store = SettingsFile::new(&path);
+    store.save(&sample()).unwrap();
+    let before = fs::read(&path).unwrap();
+    let huge = Settings {
+        capture: Some(AdapterSettings::new(
+            "file",
+            &json!({ "path": "a".repeat(1024 * 1024) }),
+        )),
+        ..Settings::default()
+    };
+    let error = store.save(&huge).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!("cannot save settings file {}", path.display())
+    );
+    assert!(
+        full_message(&error).ends_with("it is larger than 1 MiB"),
+        "{error}"
+    );
+    let io = error.cause::<std::io::Error>().unwrap();
+    assert_eq!(io.kind(), std::io::ErrorKind::FileTooLarge);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(entries(directory.path()), ["settings.json"]);
+}
+
+/// After the rename the new settings are what the next load returns, so a
+/// directory sync that fails is not a failed save.
+#[test]
+fn a_failed_directory_sync_after_the_rename_still_saves() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let mut store = SettingsFile::new(&path)
+        .with_directory_sync(|_| Err(std::io::Error::other("fsync not supported")));
+    store.save(&sample()).unwrap();
+    assert_eq!(store.load().unwrap(), Some(sample()));
+}
+
+/// The files beside `settings.json`, with their contents.
+fn set_aside(directory: &Path) -> Vec<(String, Vec<u8>)> {
+    entries(directory)
+        .into_iter()
+        .filter(|name| name != "settings.json")
+        .map(|name| {
+            let bytes = fs::read(directory.join(&name)).unwrap();
+            (name, bytes)
+        })
+        .collect()
+}
+
+/// A file a load could not read is never replaced: the next save keeps it
+/// beside the new one, under a name of its own.
+#[test]
+fn a_save_after_a_failed_load_keeps_the_unreadable_file_beside_it() {
+    for text in [
+        &br#"{ "output": { "kind": "null" } }"#[..],
+        br#"{ "format": 2, "added": true }"#,
+        b"{ \"format\": 1, \"processing\": ",
+        br#"{ "format": 1, "processing": { "brightness_percent": "80" } }"#,
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, text).unwrap();
+        let mut store = SettingsFile::new(&path);
+        assert!(store.load().is_err());
+        assert_eq!(fs::read(&path).unwrap(), text, "a load writes nothing");
+
+        store.save(&sample()).unwrap();
+        assert_eq!(store.load().unwrap(), Some(sample()));
+        let aside = set_aside(directory.path());
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        let (name, bytes) = &aside[0];
+        assert!(name.starts_with("settings.json.unreadable-"), "{name}");
+        assert_eq!(bytes, text);
+
+        // Once replaced, saves replace as usual.
+        store.save(&Settings::default()).unwrap();
+        assert_eq!(set_aside(directory.path()).len(), 1);
+    }
+}
+
+#[test]
+fn a_save_after_a_failed_load_of_an_oversized_file_keeps_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let big = vec![b' '; 1024 * 1024 + 1];
+    fs::write(&path, &big).unwrap();
+    let mut store = SettingsFile::new(&path);
+    assert!(store.load().is_err());
+    store.save(&sample()).unwrap();
+    let aside = set_aside(directory.path());
+    assert_eq!(aside.len(), 1);
+    assert_eq!(aside[0].1, big);
+}
+
+#[test]
+fn a_save_after_a_failed_load_of_a_vanished_file_just_saves() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, "{}").unwrap();
+    let mut store = SettingsFile::new(&path);
+    assert!(store.load().is_err());
+    fs::remove_file(&path).unwrap();
+    store.save(&sample()).unwrap();
+    assert_eq!(entries(directory.path()), ["settings.json"]);
+}
+
+/// A file this user cannot read is set aside at the next save, and the new
+/// one does not take its permissions.
+#[cfg(unix)]
+#[test]
+fn a_save_after_an_unreadable_file_keeps_it_and_owns_the_new_one() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, "{ \"format\": 1 }").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    let mut store = SettingsFile::new(&path);
+    let Err(error) = store.load() else {
+        // Running as root: permissions do not apply, nothing to test.
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI runs tests as a user that permissions apply to"
+        );
+        eprintln!("skipped: permissions do not apply to this user");
+        return;
+    };
+    assert!(
+        error.to_string().starts_with("cannot read settings file"),
+        "{error}"
+    );
+    assert_eq!(
+        error.cause::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    store.save(&sample()).unwrap();
+    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert_eq!(store.load().unwrap(), Some(sample()));
+    let names: Vec<_> = entries(directory.path())
+        .into_iter()
+        .filter(|name| name.starts_with("settings.json.unreadable-"))
+        .collect();
+    assert_eq!(names.len(), 1, "{names:?}");
+}
+
+/// Only a regular file is replaced: whatever else is at the path stays.
+#[cfg(unix)]
+#[test]
+fn a_save_never_replaces_what_is_not_a_regular_file() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let _socket = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let mut store = SettingsFile::new(&path);
+    assert!(store.load().is_err());
+    let error = store.save(&sample()).unwrap_err();
+    assert!(
+        full_message(&error).ends_with("it is not a regular file"),
+        "{}",
+        full_message(&error)
+    );
+    assert!(fs::symlink_metadata(&path).unwrap().file_type().is_socket());
+    assert_eq!(entries(directory.path()), ["settings.json"]);
+}

@@ -1,12 +1,13 @@
 use crate::address::{Host, Names};
 use crate::ddp::WledRenderer;
 use crate::dither::Encoding;
+use crate::http::{self, Deadline};
 use crate::observe::{self, Observer};
-use crate::{LedCounts, WledSettings, http};
+use crate::{LedCounts, WledSettings};
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    Candidate, DeviceBrightness, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result,
-    ValidationError, chain, system_lookup,
+    Candidate, DeviceReport, Error, IdleMode, LedOutput, OutputFactory, Result, ValidationError,
+    chain, system_lookup,
 };
 use serde_json::{Value, json};
 use std::net::SocketAddr;
@@ -14,6 +15,13 @@ use std::time::{Duration, Instant};
 
 /// WLED's DDP port (UDP).
 const DDP_PORT: u16 = 4048;
+
+/// The longest any idle takes: a held output's mode change, or for a device
+/// nobody holds ([`Wled::idle`]) its name resolution and mode change
+/// together. A session's stop waits for it after its source's release, so
+/// a host's stop deadline must exceed its source's release limit plus this:
+/// a host asserts that with its own constants.
+pub const IDLE_LIMIT: Duration = http::TIMEOUT;
 
 /// Opens WLED outputs. Enable DDP reception in WLED's Sync Interfaces settings.
 #[derive(Debug)]
@@ -51,6 +59,22 @@ impl Wled {
         self.names = Names::new(lookup);
         self
     }
+
+    /// The device `settings` name, its host resolved within `wait`.
+    fn device(&self, settings: &WledSettings, wait: Duration) -> Result<Device> {
+        settings.validate()?;
+        let address = settings.device()?;
+        let ip = self.names.resolve(&address, wait)?;
+        let label = match address.host {
+            Host::Ip(_) => address.to_string(),
+            Host::Name(_) => format!("{address} ({ip})"),
+        };
+        Ok(Device {
+            http: SocketAddr::new(ip, address.port),
+            host: address.to_string(),
+            label,
+        })
+    }
 }
 
 impl OutputFactory for Wled {
@@ -69,42 +93,43 @@ impl OutputFactory for Wled {
 
     /// Resolves the host, then takes the device over for live colours. On
     /// failure the device is turned off again unless it could not be reached
-    /// at all.
+    /// at all. Each of the three steps takes at most [`http::TIMEOUT`]; a
+    /// stop that comes while a session opens its output waits for them.
     fn open(&self, settings: &WledSettings) -> Result<Box<dyn LedOutput>> {
-        settings.validate()?;
-        let address = settings.device()?;
-        let ip = self.names.resolve(&address, http::TIMEOUT)?;
-        let ddp = SocketAddr::new(ip, self.ddp_port);
+        let device = self.device(settings, http::TIMEOUT)?;
+        let ddp = SocketAddr::new(device.http.ip(), self.ddp_port);
         let renderer = WledRenderer::new(ddp)
             .map_err(|source| Error::adapter(format!("cannot open DDP socket to {ddp}"), source))?;
-        let label = match address.host {
-            Host::Ip(_) => address.to_string(),
-            Host::Name(_) => format!("{address} ({ip})"),
-        };
-        let device = SocketAddr::new(ip, address.port);
-        let host = address.to_string();
-        let output = WledOutput {
-            observer: Observer::new(device, &host, self.check_every, Instant::now()),
+        if let Err(live) = device.enter(Mode::Live, Deadline::after(http::TIMEOUT)) {
+            let context = device.context(Mode::Live);
+            if matches!(live, http::RequestError::Connect(_)) {
+                return Err(Error::adapter(context, live));
+            }
+            return Err(
+                match device.enter(Mode::Off, Deadline::after(http::TIMEOUT)) {
+                    Ok(()) => Error::adapter(context, live),
+                    Err(off) => Error::adapter(context, NotTurnedOff { live, off }),
+                },
+            );
+        }
+        Ok(Box::new(WledOutput {
+            observer: Observer::new(device.http, &device.host, self.check_every, Instant::now()),
             device,
-            host,
-            label,
             renderer,
             leds: settings.leds,
             encoding: Encoding::new(settings.dither),
-        };
-        match output.enter(Mode::Live) {
-            Ok(()) => Ok(Box::new(output)),
-            Err(live) => {
-                let context = output.context(Mode::Live);
-                if matches!(live, http::RequestError::Connect(_)) {
-                    return Err(Error::adapter(context, live));
-                }
-                Err(match output.enter(Mode::Off) {
-                    Ok(()) => Error::adapter(context, live),
-                    Err(off) => Error::adapter(context, NotTurnedOff { live, off }),
-                })
-            }
-        }
+        }))
+    }
+
+    /// Resolves the host and sets the mode, without live mode first: the
+    /// device never shows Prysm's colours meanwhile. Within [`IDLE_LIMIT`].
+    fn idle(&self, settings: &WledSettings, mode: IdleMode) -> Result<()> {
+        let deadline = Deadline::after(IDLE_LIMIT);
+        let device = self.device(settings, IDLE_LIMIT)?;
+        let mode = Mode::from(mode);
+        device
+            .enter(mode, deadline)
+            .map_err(|source| Error::adapter(device.context(mode), source))
     }
 }
 
@@ -135,26 +160,32 @@ impl Mode {
     }
 }
 
-struct WledOutput {
-    /// Resolved at open; HTTP port from the address.
-    device: SocketAddr,
+impl From<IdleMode> for Mode {
+    fn from(mode: IdleMode) -> Self {
+        match mode {
+            IdleMode::Off => Self::Off,
+            IdleMode::Native => Self::Native,
+        }
+    }
+}
+
+/// A WLED device's JSON API, resolved.
+struct Device {
+    /// The resolved IP; the HTTP port from the address.
+    http: SocketAddr,
     /// `Host` header: the configured `host[:port]`.
     host: String,
     /// The device in messages: the configured address, plus the IP for a name.
     label: String,
-    renderer: WledRenderer,
-    /// Validated at open.
-    leds: LedCounts,
-    /// Follows WLED's gamma and brightness at every write.
-    encoding: Encoding,
-    observer: Observer,
 }
 
-impl WledOutput {
-    /// A previous realtime session can ignore `lor` until it is released.
-    fn enter(&self, mode: Mode) -> Result<(), http::RequestError> {
-        http::post_state(self.device, &self.host, &json!({"live": false}))?;
-        http::post_state(self.device, &self.host, &mode.state())
+impl Device {
+    /// Switch to `mode` by `deadline`, both requests included. A previous
+    /// realtime session can ignore `lor` until it is released, so live mode
+    /// is left first.
+    fn enter(&self, mode: Mode, deadline: Deadline) -> Result<(), http::RequestError> {
+        http::post_state(self.http, &self.host, &json!({"live": false}), deadline)?;
+        http::post_state(self.http, &self.host, &mode.state(), deadline)
     }
 
     fn context(&self, mode: Mode) -> String {
@@ -167,6 +198,16 @@ impl WledOutput {
     }
 }
 
+struct WledOutput {
+    device: Device,
+    renderer: WledRenderer,
+    /// Validated at open.
+    leds: LedCounts,
+    /// Follows WLED's gamma and brightness at every write.
+    encoding: Encoding,
+    observer: Observer,
+}
+
 impl LedOutput for WledOutput {
     fn write(&mut self, colors: &EdgeColors) -> Result<()> {
         self.encoding
@@ -175,31 +216,22 @@ impl LedOutput for WledOutput {
             .render_edges(colors, self.leds, &self.encoding, Instant::now())
             .map_err(|source| {
                 Error::adapter(
-                    format!("cannot send colours to WLED at {}", self.label),
+                    format!("cannot send colours to WLED at {}", self.device.label),
                     source,
                 )
             })
     }
 
+    /// Within [`IDLE_LIMIT`].
     fn idle(mut self: Box<Self>, mode: IdleMode) -> Result<()> {
         self.observer.cancel();
-        let mode = match mode {
-            IdleMode::Off => Mode::Off,
-            IdleMode::Native => Mode::Native,
-        };
-        self.enter(mode)
-            .map_err(|source| Error::adapter(self.context(mode), source))
+        let mode = Mode::from(mode);
+        self.device
+            .enter(mode, Deadline::after(IDLE_LIMIT))
+            .map_err(|source| Error::adapter(self.device.context(mode), source))
     }
 
-    fn observe(&mut self) -> Option<OutputIssue> {
-        self.observer.poll(Instant::now())
-    }
-
-    fn brightness(&self) -> Option<DeviceBrightness> {
-        self.observer.brightness()
-    }
-
-    fn device_led_count(&self) -> Option<u32> {
-        self.observer.led_count()
+    fn report(&mut self) -> DeviceReport {
+        self.observer.report(Instant::now())
     }
 }

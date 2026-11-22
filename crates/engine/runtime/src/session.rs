@@ -1,7 +1,7 @@
 //! One session: a thread owning a source, the processor and an output, and
 //! the engine's handle on it.
 use crate::feeds::Feeds;
-use crate::leds::{Leds, OpenOutput};
+use crate::leds::{Configured, Leds};
 use crate::slot::LatestSlot;
 use crate::stats::{FrameTimes, Stats};
 use crate::worker::{Exit, Flags, Worker, guarded};
@@ -13,7 +13,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 /// A quiet source must not let the device time out of live mode: the last
-/// colors are rewritten at this interval.
+/// colors are rewritten at this interval, a fifth of WLED's default realtime
+/// timeout (2.5 s, its "Realtime timeout" setting, which a user can lower).
 const REFRESH: Duration = Duration::from_millis(500);
 
 /// How long a source may deliver no frames before the session releases the
@@ -70,7 +71,7 @@ pub(crate) enum Stop {
 struct Finished {
     end: SessionEnd,
     leds: Leds,
-    open_output: OpenOutput,
+    output: Configured,
 }
 
 /// Shared by the engine's [`Session`] handle and the session thread.
@@ -94,8 +95,8 @@ fn lights(error: Error) -> Error {
 }
 
 /// Leave the output in `mode`, a panic reported as the failure.
-fn idle(leds: &mut Leds, mode: IdleMode, open: &mut OpenOutput) -> Result<IdleMode> {
-    guarded("idling the output", || leds.finish(mode, open))
+fn idle(leds: &mut Leds, mode: IdleMode, output: &Configured) -> Result<IdleMode> {
+    guarded("idling the output", || leds.finish(mode, output))
         .map(|()| mode)
         .map_err(lights)
 }
@@ -103,13 +104,16 @@ fn idle(leds: &mut Leds, mode: IdleMode, open: &mut OpenOutput) -> Result<IdleMo
 /// The session thread's state between frames.
 ///
 /// Each frame: apply a pending config, process, write (opening the output if
-/// not held), record the frame's times, observe, publish what is watched. A quiet tick rewrites (and observes) the last colors, and after
-/// [`VIDEO_GRACE`] without frames idles the output in [`RELEASE`], clears the
-/// published colors and closes it until the next frame. When the loop ends
-/// (stop, failure, or [`Pull::Ended`](prysm_ports::Pull::Ended)) the feeds
-/// are cleared, `source.close()`, and the output is left in the stop's idle
-/// mode, or [`UNASKED`] when no stop asked (idled if held, reopened only if
-/// it was left in another mode; never opened for `Off` if no frame came).
+/// not held), record the frame's times, take the output's report, publish
+/// what is watched. A quiet tick rewrites the last colors (and takes the
+/// report), and after [`VIDEO_GRACE`] without frames idles the output in
+/// [`RELEASE`], clears the published colors and closes it until the next
+/// frame. When the loop ends (stop, failure, or
+/// [`Pull::Ended`](prysm_ports::Pull::Ended)) the feeds are cleared,
+/// `source.close()`, and the output is left in the stop's idle mode, or
+/// [`UNASKED`] when no stop asked: idled if held, else put in that mode
+/// without being opened, only if it was left in another one (never touched
+/// for `Off` if no frame came).
 struct SessionLoop {
     processor: PrysmProcessor,
     leds: Leds,
@@ -118,7 +122,7 @@ struct SessionLoop {
     last_frame: Instant,
     /// When the last frame was done; `None` before the first.
     previous_done: Option<Instant>,
-    open_output: OpenOutput,
+    output: Configured,
     control: Arc<Control>,
     /// What [`Control::observed`] holds, so it is written only on a change.
     reported: DeviceReport,
@@ -151,7 +155,7 @@ impl SessionLoop {
         let processed = Instant::now();
         let write = self
             .leds
-            .write(&colors, processed, &mut self.open_output, &self.stats);
+            .write(&colors, processed, &self.output, &self.stats);
         // Recorded whether or not the write worked.
         self.stats.frame(FrameTimes {
             previous_done: self.previous_done.replace(Instant::now()),
@@ -161,7 +165,7 @@ impl SessionLoop {
             written: write.as_ref().ok().copied(),
         });
         let written = write.map_err(lights)?;
-        let observed = self.leds.observe();
+        let observed = self.leds.report();
         self.report(observed);
         self.feeds
             .publish(&colors, shown, self.processor.viewport());
@@ -186,9 +190,9 @@ impl SessionLoop {
         {
             *written = self
                 .leds
-                .write(colors, now, &mut self.open_output, &self.stats)
+                .write(colors, now, &self.output, &self.stats)
                 .map_err(lights)?;
-            let observed = self.leds.observe();
+            let observed = self.leds.report();
             self.report(observed);
         }
         Ok(())
@@ -210,7 +214,7 @@ impl SessionLoop {
             Exit::Stopped => self.control.stop_mode.get().copied().unwrap_or(UNASKED),
             Exit::Ended | Exit::Failed(_) => UNASKED,
         };
-        let left = idle(&mut self.leds, mode, &mut self.open_output);
+        let left = idle(&mut self.leds, mode, &self.output);
         Finished {
             end: SessionEnd {
                 exit,
@@ -218,7 +222,7 @@ impl SessionLoop {
                 left,
             },
             leds: self.leds,
-            open_output: self.open_output,
+            output: self.output,
         }
     }
 }
@@ -236,7 +240,7 @@ impl Session {
     /// caller can still release it.
     pub(crate) fn start(
         source: Box<dyn FrameSource>,
-        open_output: OpenOutput,
+        output: Configured,
         config: Config,
         feeds: Feeds,
         stats: Arc<Stats>,
@@ -253,7 +257,7 @@ impl Session {
             last: None,
             last_frame: Instant::now(),
             previous_done: None,
-            open_output,
+            output,
             control: control.clone(),
             reported: DeviceReport::default(),
             feeds,
@@ -323,7 +327,7 @@ impl Session {
         let Finished {
             end,
             mut leds,
-            mut open_output,
+            output,
         } = self.worker.stop(deadline).await.map_err(Error::Faulted)??;
         if matches!(end.exit, Exit::Stopped) {
             return Ok(Stop::AsAsked(end));
@@ -333,8 +337,7 @@ impl Session {
         if mode == UNASKED || end.released.is_err() {
             return Ok(Stop::OnItsOwn { end, idled: Ok(()) });
         }
-        let idling =
-            tokio::task::spawn_blocking(move || idle(&mut leds, mode, &mut open_output).map(drop));
+        let idling = tokio::task::spawn_blocking(move || idle(&mut leds, mode, &output).map(drop));
         let idled = match tokio::time::timeout_at(until, idling).await {
             // `idle` catches a panic, so the task always returns.
             Ok(idled) => idled.unwrap_or(Err(Error::Panicked("idling the output"))),
@@ -353,7 +356,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::fakes::{CallLog, FakeOutputSettings, FakeOutputs, FakeSource, FakeSourceSettings};
-    use prysm_ports::{OutputFactory, Processing};
+    use prysm_ports::{AdapterSettings, OutputFactory, Processing, Registry};
 
     const DEADLINE: Duration = Duration::from_secs(2);
 
@@ -372,15 +375,16 @@ mod tests {
                 ..source
             },
         ));
-        let outputs = FakeOutputs(log.clone());
+        let mut registry = Registry::default();
+        registry.add_output(FakeOutputs(log.clone()));
         let output = FakeOutputSettings {
             name: "o".into(),
             ..output
         };
-        let open: OpenOutput = Box::new(move || outputs.open(&output));
+        let output = Configured::new(registry, AdapterSettings::new(FakeOutputs::KIND, &output));
         let session = Session::start(
             source,
-            open,
+            output,
             Processing::default().config(),
             Feeds::default(),
             Arc::default(),

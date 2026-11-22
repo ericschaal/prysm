@@ -6,6 +6,7 @@ use serde::{
 };
 use serde_json::{Number, Value};
 use std::{
+    ffi::OsStr,
     fmt, fs, io,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -165,17 +166,57 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for WithoutFormat<A> {
     }
 }
 
+/// Why bytes are not settings this Prysm reads.
+enum Refused {
+    TooLarge(io::Error),
+    Json(serde_json::Error),
+    Format(FormatError),
+}
+
+/// The settings in a file's bytes. `load` reads the file with it and `save`
+/// checks what it writes with it, so whatever is saved loads.
+fn decode(bytes: &[u8]) -> std::result::Result<Settings, Refused> {
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(Refused::TooLarge(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            "it is larger than 1 MiB",
+        )));
+    }
+    let file: Value = serde_json::from_slice(bytes).map_err(Refused::Json)?;
+    check_format(&file).map_err(Refused::Format)?;
+    settings(bytes).map_err(Refused::Json)
+}
+
+/// What a file the last `load` could not read is renamed to at the next
+/// `save`: its own name, this, and six random characters, in its directory.
+pub const UNREADABLE: &str = ".unreadable-";
+
 /// A [`SettingsStore`] backed by one JSON file, replaced atomically on save.
+/// A file that the last `load` could not read is never replaced: the next
+/// `save` first moves it beside the new one (see [`UNREADABLE`]).
 #[derive(Debug, Clone)]
 pub struct SettingsFile {
     path: PathBuf,
+    /// The last `load` found something at the path that it could not read.
+    unread: bool,
+    sync_directory: fn(&Path) -> io::Result<()>,
 }
 
 impl SettingsFile {
     /// Nothing is touched until the first `load` or `save`. A relative path
     /// resolves against the working directory at each call.
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            unread: false,
+            sync_directory,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_directory_sync(mut self, sync: fn(&Path) -> io::Result<()>) -> Self {
+        self.sync_directory = sync;
+        self
     }
 
     #[must_use]
@@ -200,10 +241,8 @@ impl SettingsFile {
             source,
         )
     }
-}
 
-impl SettingsStore for SettingsFile {
-    fn load(&mut self) -> Result<Option<Settings>> {
+    fn read(&self) -> Result<Option<Settings>> {
         let file = match fs::File::open(&self.path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -213,20 +252,45 @@ impl SettingsStore for SettingsFile {
         file.take(MAX_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|error| self.failed("read", error))?;
-        if bytes.len() as u64 > MAX_BYTES {
-            return Err(self.failed(
-                "read",
-                io::Error::new(io::ErrorKind::FileTooLarge, "it is larger than 1 MiB"),
-            ));
-        }
-        let file: Value =
-            serde_json::from_slice(&bytes).map_err(|error| self.failed("parse", error))?;
-        check_format(&file).map_err(|error| self.failed("load", error))?;
-        settings(&bytes)
-            .map(Some)
-            .map_err(|error| self.failed("parse", error))
+        decode(&bytes).map(Some).map_err(|refused| match refused {
+            Refused::TooLarge(error) => self.failed("read", error),
+            Refused::Json(error) => self.failed("parse", error),
+            Refused::Format(error) => self.failed("load", error),
+        })
     }
 
+    /// Move the file at the path to a name of its own beside it, and return
+    /// that name; `None` when nothing is there any more.
+    fn set_aside(&self) -> io::Result<Option<PathBuf>> {
+        let mut prefix = self
+            .path
+            .file_name()
+            .unwrap_or(OsStr::new("settings"))
+            .to_os_string();
+        prefix.push(UNREADABLE);
+        // A new file of its own, so the rename replaces nothing else; removed
+        // on drop unless the rename put the unreadable file there.
+        let aside = tempfile::Builder::new()
+            .prefix(&prefix)
+            .tempfile_in(self.directory())?
+            .into_temp_path();
+        match fs::rename(&self.path, &aside) {
+            Ok(()) => aside.keep().map(Some).map_err(|error| error.error),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl SettingsStore for SettingsFile {
+    fn load(&mut self) -> Result<Option<Settings>> {
+        let loaded = self.read();
+        self.unread = loaded.is_err();
+        loaded
+    }
+
+    /// `Err` leaves the stored settings as they were; `Ok` once the new file
+    /// is in place, even if syncing its directory then fails (logged).
     fn save(&mut self, settings: &Settings) -> Result<()> {
         let saved = Saved {
             format: FORMAT,
@@ -235,12 +299,26 @@ impl SettingsStore for SettingsFile {
         let mut bytes =
             serde_json::to_vec_pretty(&saved).map_err(|error| self.failed("encode", error))?;
         bytes.push(b'\n');
+        decode(&bytes).map_err(|refused| match refused {
+            Refused::TooLarge(error) => self.failed("save", error),
+            Refused::Json(error) => self.failed("save", error),
+            Refused::Format(error) => self.failed("save", error),
+        })?;
 
         // Everything before the rename only touches the temporary file, which
         // is removed on drop; the existing file stays intact.
         let mut temporary = tempfile::NamedTempFile::new_in(self.directory())
             .map_err(|error| self.failed("create a temporary file for", error))?;
         match fs::metadata(&self.path) {
+            Ok(existing) if !existing.is_file() => {
+                return Err(self.failed(
+                    "replace",
+                    io::Error::new(io::ErrorKind::InvalidInput, "it is not a regular file"),
+                ));
+            }
+            // The file set aside keeps its permissions; the new one has the
+            // temporary file's, owner-only.
+            Ok(_) if self.unread => {}
             Ok(existing) => temporary
                 .as_file()
                 .set_permissions(existing.permissions())
@@ -253,16 +331,30 @@ impl SettingsStore for SettingsFile {
             .and_then(|()| temporary.as_file().sync_all())
             .map_err(|error| self.failed("write a temporary file for", error))?;
 
+        if self.unread {
+            let aside = self
+                .set_aside()
+                .map_err(|error| self.failed("set aside the unreadable", error))?;
+            self.unread = false;
+            if let Some(aside) = aside {
+                tracing::warn!(
+                    "kept the settings file it could not read as {}",
+                    aside.display()
+                );
+            }
+        }
         // The rename is the commit point.
         temporary
             .persist(&self.path)
             .map_err(|error| self.failed("replace", error.error))?;
-        sync_directory(self.directory()).map_err(|error| {
-            self.failed(
-                "make durable (the new contents were written, but may not survive a crash)",
-                error,
-            )
-        })
+        if let Err(error) = (self.sync_directory)(self.directory()) {
+            tracing::warn!(
+                "saved settings file {}, but syncing its directory failed, so the \
+                 save may not survive a crash: {error}",
+                self.path.display()
+            );
+        }
+        Ok(())
     }
 }
 

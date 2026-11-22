@@ -3,9 +3,9 @@
 use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
-    AdapterSettings, Candidate, DeviceBrightness, Error, FrameSink, FrameSource, IdleMode,
-    LedOutput, LightingTarget, Mode, Modes, OutputFactory, OutputIssue, Pull, Result, Settings,
-    SettingsStore, SourceFactory, Span, ValidationError,
+    AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, FrameSink, FrameSource,
+    IdleMode, LedOutput, LightingTarget, Mode, Modes, OutputFactory, OutputIssue, Pull, Result,
+    Settings, SettingsStore, SourceFactory, Span, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -89,6 +89,8 @@ pub struct FakeSourceSettings {
     pub fail_open: bool,
     /// Block in `open` this long, like a device that does not answer.
     pub open_delay_ms: u64,
+    /// Block in `modes` this long, after recording the call.
+    pub modes_delay_ms: u64,
     /// Rejected by `validate`.
     pub invalid: bool,
     /// Block in `close` this long, to exceed a stop deadline.
@@ -158,6 +160,7 @@ impl SourceFactory for FakeSources {
     /// The frame size the settings give, at 1 to 60 fps.
     fn modes(&self, settings: &FakeSourceSettings) -> Modes {
         self.0.record("source.modes");
+        thread::sleep(Duration::from_millis(settings.modes_delay_ms));
         let (width, height) = settings.frame_size();
         Modes::from(Mode::new(
             Span::exactly(width),
@@ -255,12 +258,12 @@ pub struct FakeOutputSettings {
     pub panic_idle: bool,
     /// Rejected by `validate`.
     pub invalid: bool,
-    /// `observe` reports the device overridden after this many writes.
+    /// `report` says the device is overridden after this many writes.
     pub overridden_after: Option<u32>,
-    /// `brightness` reports the device's own brightness at this percent
-    /// once a frame was written.
+    /// `report` gives the device's own brightness at this percent once a
+    /// frame was written.
     pub brightness: Option<u8>,
-    /// `device_led_count` reports this once a frame was written.
+    /// `report` gives this LED count once a frame was written.
     pub device_led_count: Option<u32>,
     /// Each `write` takes this long, like a slow device.
     pub write_delay_ms: u64,
@@ -298,6 +301,12 @@ impl OutputFactory for FakeOutputs {
         }))
     }
 
+    /// Records `output.idle:<name>:<mode>` as the output's own idle does,
+    /// without opening anything.
+    fn idle(&self, settings: &FakeOutputSettings, mode: IdleMode) -> Result<()> {
+        idle(&self.0, settings, mode)
+    }
+
     /// One fake device, `{ "name": "found" }`.
     fn candidates(&self) -> Vec<Candidate> {
         #[derive(Serialize)]
@@ -329,38 +338,41 @@ impl LedOutput for FakeOutput {
         Ok(())
     }
 
-    fn observe(&mut self) -> Option<OutputIssue> {
-        self.settings
-            .overridden_after
-            .is_some_and(|n| self.writes >= n)
-            .then_some(OutputIssue::Overridden)
-    }
-
-    fn brightness(&self) -> Option<DeviceBrightness> {
-        self.settings
-            .brightness
-            .filter(|_| self.writes > 0)
-            .and_then(DeviceBrightness::from_percent)
-    }
-
-    fn device_led_count(&self) -> Option<u32> {
-        self.settings.device_led_count.filter(|_| self.writes > 0)
+    fn report(&mut self) -> DeviceReport {
+        let written = self.writes > 0;
+        DeviceReport {
+            issue: self
+                .settings
+                .overridden_after
+                .is_some_and(|n| self.writes >= n)
+                .then_some(OutputIssue::Overridden),
+            brightness: self
+                .settings
+                .brightness
+                .filter(|_| written)
+                .and_then(DeviceBrightness::from_percent),
+            led_count: self.settings.device_led_count.filter(|_| written),
+        }
     }
 
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {
-        self.log
-            .record(format!("output.idle:{}:{mode:?}", self.settings.name));
-        assert!(!self.settings.panic_idle, "fake output panics in idle");
-        let native = match mode {
-            IdleMode::Native => self.settings.native_idle_delay_ms,
-            IdleMode::Off => 0,
-        };
-        thread::sleep(Duration::from_millis(self.settings.idle_delay_ms + native));
-        if self.settings.fail_idle {
-            return Err(Error::other("fake output cannot idle"));
-        }
-        Ok(())
+        idle(&self.log, &self.settings, mode)
     }
+}
+
+/// A fake device put in `mode`, held or not.
+fn idle(log: &CallLog, settings: &FakeOutputSettings, mode: IdleMode) -> Result<()> {
+    log.record(format!("output.idle:{}:{mode:?}", settings.name));
+    assert!(!settings.panic_idle, "fake output panics in idle");
+    let native = match mode {
+        IdleMode::Native => settings.native_idle_delay_ms,
+        IdleMode::Off => 0,
+    };
+    thread::sleep(Duration::from_millis(settings.idle_delay_ms + native));
+    if settings.fail_idle {
+        return Err(Error::other("fake output cannot idle"));
+    }
+    Ok(())
 }
 
 /// Records `"sink.send"` per frame.

@@ -2,11 +2,27 @@ use crate::surface::Surfaces;
 use crate::{Engine, EngineHandle, Surface};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
-use prysm_ports::{Error, OutputFactory, Registry, Result, SettingsStore, SourceFactory};
+use prysm_ports::{
+    Error, OutputFactory, Registry, Result, SOURCE_OPEN_LIMIT, SettingsStore, SourceFactory,
+};
 use std::future::Future;
 use std::time::Duration;
 
-const STOP_DEADLINE: Duration = Duration::from_secs(10);
+/// How long a stopping session may take unless the host sets its own
+/// ([`Builder::stop_deadline`]); the desktop hosts keep it.
+pub const STOP_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The longest an engine command takes with [`STOP_DEADLINE`]: replacing a
+/// running session stops it and then opens the new source (the output opens
+/// later, on the session thread). Every other command does less: a stop, an
+/// idle within an output's own bound, or nothing blocking. The portal sets
+/// no deadline of its own; a client waits longer than this. A host with a
+/// shorter stop deadline (the TV's) stays below it.
+pub const COMMAND_LIMIT: Duration = STOP_DEADLINE.saturating_add(SOURCE_OPEN_LIMIT);
+const _: () = assert!(
+    COMMAND_LIMIT.as_millis() < 30_000,
+    "the portal's client waits 30 s for a command (frontend/packages/application-client/http.ts)"
+);
 
 /// Entry point for a full host: `Prysm::builder(store).source(..).output(..).surface(..).run(..)`.
 pub struct Prysm;

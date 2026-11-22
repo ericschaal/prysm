@@ -126,19 +126,24 @@ impl SourceFactory for Camera {
 An **output** is the same shape with `OutputFactory` and `LedOutput`
 (`write(&EdgeColors)`, `idle(self: Box<Self>, IdleMode)`); `idle` runs on every
 session exit, so it is also the failure compensation. An output that can ask
-its device whether it shows the colours implements `observe()` (default: no
-answer); the session calls it after every write, so it must not wait, and the
-engine republishes it as `Snapshot::device.issue` once a second. WLED checks
-its state about once a second and reports power off, live override, no live
-mode, another sender or no answer; Prysm keeps sending and does not switch
-WLED back. `brightness()` (read right after `observe()`) reports the device's
-own brightness while it scales the colours, as `Snapshot::device.brightness`;
-WLED's comes from `bri` in its state and, every 30th check instead of the
-state, `if.live.maxbri` and `light.scale-bri` from `/json/cfg`. The session opens the
+its device about itself implements `report()` (default: nothing known): why
+the device does not show the colours, its own brightness while it scales
+them, and how many LEDs it drives, as a `DeviceReport`. The session calls it
+after every write, so it must not wait, and the engine republishes it as
+`Snapshot::device` once a second. WLED checks its state about once a second
+and reports power off, live override, no live mode, another sender or no
+answer; Prysm keeps sending and does not switch WLED back. Its brightness
+comes from `bri` in its state and, every 30th check instead of the state,
+`if.live.maxbri` and `light.scale-bri` from `/json/cfg`. The session opens the
 output at the source's first frame, not at start, and idles it `Native` (the
 device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
-at the next frame; a source that never delivers never takes the device over. Register it with
-`.output(MyLeds)` in each host that should offer it.
+at the next frame; a source that never delivers never takes the device over.
+To put a device nobody holds in another idle mode (lights off after such a
+release, or the device's own effects without a session) the engine calls
+`OutputFactory::idle(settings, mode)`, which by default opens and idles; an
+output that can set the mode without taking the device over overrides it,
+as WLED does. Register it with `.output(MyLeds)` in each host that should
+offer it.
 
 A **surface** gets an `EngineHandle` (commands, snapshot watch, preview and
 colors watches)

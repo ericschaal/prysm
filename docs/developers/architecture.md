@@ -75,7 +75,14 @@ crate and one builder line.
 - The revision starts at a random value in each process, so a page holding a
   revision from before a restart gets a conflict.
 - Loaded settings that no longer validate are kept and reported as the
-  failure; a file that cannot be read or parsed stops start-up.
+  failure. A settings file that cannot be read or decoded (no `format`, a
+  newer format, cut-off JSON, a wrong type, over 1 MiB, unreadable) starts
+  the host unconfigured, its cause reported as the failure until a save;
+  the file is left as it is, and that save keeps it beside the new one
+  ([settings file](../../crates/adapters/settings-file/README.md#unreadable-files)).
+- A save that the store refuses leaves the engine's settings as they were;
+  a save the store took is installed even if the file's directory could not
+  be synced, so the engine always holds what the next start loads.
 
 ## What a capture delivers
 
@@ -132,7 +139,10 @@ TV two threads take a 640x360 frame from 11 to 7 ms
 
 The output is opened at the first frame, not when lighting starts, so a source
 without video never takes WLED over. After 3 s without frames the output is
-idled to the device's own state and reopened at the next frame. While a
+idled to the device's own state and reopened at the next frame. An output
+nobody holds (released, or `device_native` without a session) is put in
+another idle mode without being opened (`OutputFactory::idle`): WLED is
+switched off, or to its effects, without entering live mode first. While a
 session runs the engine measures, once a second, the frame rate, whether
 frames arrive and the mean latency per link (`State.input`).
 
@@ -165,11 +175,18 @@ and accepts only shutdown; so does a source whose release is not confirmed
 watchdogs stay inside the capture adapters. Host shutdown stops the session
 with the output idled off; requests still queued behind it are refused.
 
-Commands have no deadline of their own; each adapter bounds its blocking
-calls instead. Resolving a WLED host name takes at most 1.5 s, and so does
-one WLED request (connect, send, whole reply) however slowly the device
-answers. Opening a video device waits up to 10 s for its format query and
+Commands have no deadline of their own, nor do the portal's replies; each
+adapter bounds its blocking calls instead. Resolving a WLED host name takes
+at most 1.5 s, and so does one WLED mode change (both its requests: connect,
+send, whole reply) however slowly the device answers. An idle, name
+resolution included, takes at most 1.5 s (`IDLE_LIMIT`), so a stop waits for
+the source's release plus 1.5 s (on the TV 4 s + 1.5 s, within its 6 s
+deadline); a stop that comes while a session opens WLED also waits for the
+open (resolution, live mode and, if that failed, switching it off: at most
+4.5 s). Opening a video device waits up to 10 s for its format query and
 activation together, then, if that ran out, up to 3 s for the release.
+The WLED state checks never block the session thread: their connect, request
+and reply each go on without waiting, at every frame.
 
 As a backstop, shutdown gives the engine's blocking adapter and settings
 calls one shared grace (the stop deadline unless the host sets one; 1 s in

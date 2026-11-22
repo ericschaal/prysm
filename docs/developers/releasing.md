@@ -61,8 +61,10 @@ Covered:
 - the settings file and its `format` number
   ([settings-file](../../crates/adapters/settings-file/README.md)). A Prysm
   reads files of its own format only and refuses any other number, naming
-  both. The number is raised only when Prysm can no longer read files with
-  the previous one (a field renamed or removed, or its meaning changed),
+  both; a file it refuses starts the host unconfigured rather than failing
+  it, and is kept beside the new file at the next save. The number is
+  raised only when Prysm can no longer read files with the previous one (a
+  field renamed or removed, or its meaning changed),
   which is a major change. Additions keep the number and are minor: an older
   Prysm refuses a newer file by the unknown field's name;
 - the TV parts one installed version uses of another: the Luna service

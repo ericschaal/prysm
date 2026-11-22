@@ -88,7 +88,7 @@ const CASES: &[Row] = &[
     (
         Start::Off,
         Target(DeviceNative),
-        &["output.open:o", "output.idle:o:Native"],
+        &["output.idle:o:Native"],
         NATIVE,
         Done,
     ),
@@ -140,7 +140,7 @@ const CASES: &[Row] = &[
     (
         Start::Native,
         Target(Off),
-        &["output.open:o", "output.idle:o:Off"],
+        &["output.idle:o:Off"],
         STOPPED,
         Done,
     ),
@@ -157,7 +157,7 @@ const CASES: &[Row] = &[
     (
         Start::Native,
         Output,
-        &["output.open:o2", "output.idle:o2:Native"],
+        &["output.idle:o2:Native"],
         NATIVE,
         Done,
     ),
@@ -165,7 +165,7 @@ const CASES: &[Row] = &[
     (
         Start::ProcessedFromNative,
         Target(Off),
-        &["output.open:o", "output.idle:o:Off"],
+        &["output.idle:o:Off"],
         STOPPED,
         Done,
     ),
@@ -216,7 +216,7 @@ const CASES: &[Row] = &[
     (
         Start::ProcessedFailed,
         Target(DeviceNative),
-        &["output.open:o", "output.idle:o:Native"],
+        &["output.idle:o:Native"],
         NATIVE,
         Done,
     ),
@@ -253,28 +253,28 @@ const CASES: &[Row] = &[
     (
         Start::NativeFailed,
         Target(DeviceNative),
-        &["output.open:o", "output.idle:o:Native"],
+        &["output.idle:o:Native"],
         STOPPED,
         Failed,
     ),
     (
         Start::NativeFailed,
         Process,
-        &["output.open:o", "output.idle:o:Native"],
+        &["output.idle:o:Native"],
         STOPPED,
         Failed,
     ),
     (
         Start::NativeFailed,
         Capture,
-        &["output.open:o", "output.idle:o:Native"],
+        &["output.idle:o:Native"],
         STOPPED,
         Failed,
     ),
     (
         Start::NativeFailed,
         Output,
-        &["output.open:o2", "output.idle:o2:Native"],
+        &["output.idle:o2:Native"],
         NATIVE,
         Done,
     ),

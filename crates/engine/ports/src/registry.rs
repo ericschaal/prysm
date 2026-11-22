@@ -1,11 +1,19 @@
 use crate::{
-    AdapterSettings, Error, FrameSource, LedOutput, Modes, Result, Section, Settings,
+    AdapterSettings, Error, FrameSource, IdleMode, LedOutput, Modes, Result, Section, Settings,
     ValidationError,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// The longest a [`SourceFactory::open`] may take, releasing what a failed
+/// open held included. A command that (re)starts lighting waits for a
+/// session's stop and one source open, so this and the stop deadline bound
+/// every command (`prysm_runtime::COMMAND_LIMIT`). Each capture adapter
+/// asserts that its own open bounds fit.
+pub const SOURCE_OPEN_LIMIT: Duration = Duration::from_secs(13);
 
 /// Opens a [`FrameSource`] from typed settings. Opening may block.
 pub trait SourceFactory: Send + Sync + 'static {
@@ -51,6 +59,17 @@ pub trait OutputFactory: Send + Sync + 'static {
     /// # Errors
     /// Device or I/O failure.
     fn open(&self, settings: &Self::Settings) -> Result<Box<dyn LedOutput>>;
+    /// Put the device in `mode` without taking it over: what opening it and
+    /// idling at once leaves, for a device nobody holds (lights turned off
+    /// after a released session, or the device's own effects without one).
+    /// The default does just that; a factory that can set the mode alone
+    /// does so, so the device never shows Prysm's colours meanwhile.
+    ///
+    /// # Errors
+    /// Device or I/O failure.
+    fn idle(&self, settings: &Self::Settings, mode: IdleMode) -> Result<()> {
+        self.open(settings)?.idle(mode)
+    }
     /// What this kind finds to choose from, such as devices on the network.
     /// See [`Candidate`]; the default finds nothing.
     fn candidates(&self) -> Vec<Candidate> {
@@ -112,7 +131,7 @@ impl Candidate {
 #[derive(Clone, Default)]
 pub struct Registry {
     sources: BTreeMap<&'static str, Arc<dyn ErasedSource>>,
-    outputs: BTreeMap<&'static str, Arc<dyn Erased<dyn LedOutput>>>,
+    outputs: BTreeMap<&'static str, Arc<dyn ErasedOutput>>,
 }
 
 impl Registry {
@@ -167,6 +186,18 @@ impl Registry {
         let section = Section::Output;
         find(&self.outputs, section, &settings.kind)?
             .open(settings)
+            .map_err(|error| within(section, error))
+    }
+
+    /// Put the configured output in `mode` without opening it; see
+    /// [`OutputFactory::idle`].
+    ///
+    /// # Errors
+    /// Unknown kind, invalid settings or the factory's failure.
+    pub fn idle_output(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()> {
+        let section = Section::Output;
+        find(&self.outputs, section, &settings.kind)?
+            .idle(settings, mode)
             .map_err(|error| within(section, error))
     }
 
@@ -227,6 +258,10 @@ trait ErasedSource: Erased<dyn FrameSource> {
     fn modes(&self, settings: &AdapterSettings) -> Result<Modes>;
 }
 
+trait ErasedOutput: Erased<dyn LedOutput> {
+    fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()>;
+}
+
 fn decode<S: DeserializeOwned>(settings: &AdapterSettings) -> Result<S> {
     serde_json::from_value(Value::Object(settings.fields.clone())).map_err(|source| Error::Decode {
         kind: settings.kind.clone(),
@@ -254,6 +289,14 @@ impl<F: SourceFactory> Erased<dyn FrameSource> for Source<F> {
 impl<F: SourceFactory> ErasedSource for Source<F> {
     fn modes(&self, settings: &AdapterSettings) -> Result<Modes> {
         Ok(self.0.modes(&decode(settings)?))
+    }
+}
+
+impl<F: OutputFactory> ErasedOutput for Output<F> {
+    fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()> {
+        let typed = decode(settings)?;
+        self.0.validate(&typed)?;
+        self.0.idle(&typed, mode)
     }
 }
 

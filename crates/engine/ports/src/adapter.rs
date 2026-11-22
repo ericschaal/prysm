@@ -1,4 +1,4 @@
-use crate::{Result, Settings, ValidationError};
+use crate::{DeviceReport, Result, Settings, ValidationError};
 use prysm_core::{EdgeColors, Frame};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -69,28 +69,13 @@ pub trait LedOutput: Send {
     fn write(&mut self, colors: &EdgeColors) -> Result<()>;
     /// Called once after the last `write`; also the failure-compensation path.
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()>;
-    /// Why the device is not showing the written colours, as far as it
-    /// last said; `None` while it shows them or the output cannot tell.
-    /// Called on the session thread after every `write`, so it returns
-    /// within milliseconds: an output that asks its device does so at its
-    /// own low rate and without waiting for the answer.
-    fn observe(&mut self) -> Option<OutputIssue> {
-        None
-    }
-    /// The device's own brightness, as far as it last said, while it scales
-    /// the written colours; `None` while it does not or the output cannot
-    /// tell. Learned by the same checks as [`observe`](Self::observe), read
-    /// right after it and as cheap.
-    fn brightness(&self) -> Option<DeviceBrightness> {
-        None
-    }
-    /// How many LEDs the device itself says it drives, as far as it last
-    /// said; `None` while the output cannot tell. A report, not a failure:
-    /// a count other than the written colours' leaves LEDs dark or colours
-    /// unshown, and writing goes on. Learned and read like
-    /// [`brightness`](Self::brightness).
-    fn device_led_count(&self) -> Option<u32> {
-        None
+    /// What the device says about itself, as far as it last said (see
+    /// [`DeviceReport`]); empty while the output cannot tell. Called on the
+    /// session thread after every `write`, so it returns within
+    /// milliseconds: an output that asks its device does so at its own low
+    /// rate and without waiting for the answer.
+    fn report(&mut self) -> DeviceReport {
+        DeviceReport::default()
     }
 }
 
@@ -210,8 +195,14 @@ impl<T: FrameSink + ?Sized> FrameSink for Box<T> {
 
 /// Persisted settings. Blocking; the engine calls it off the async runtime.
 pub trait SettingsStore: Send {
-    /// `Ok(None)`: nothing saved yet.
+    /// `Ok(None)`: nothing saved yet. `Err`: the store holds something it
+    /// cannot read as settings, or cannot read at all; the engine then
+    /// starts unconfigured and reports this as its failure. What could not
+    /// be read is kept: the next [`save`](Self::save) must not destroy it.
     fn load(&mut self) -> Result<Option<Settings>>;
+    /// Store `settings` for the next [`load`](Self::load). `Err` means they
+    /// were not stored, so the engine keeps the settings it had; `Ok` that
+    /// they were, even if they may not yet survive a crash.
     fn save(&mut self, settings: &Settings) -> Result<()>;
 }
 

@@ -11,7 +11,9 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 /// An event stream with nothing new sends [`KEEPALIVE_COMMENT`] this often,
-/// so a vanished reader is noticed by the write deadline and releases its
+/// so a reader that left is noticed (a reset fails the write; one that
+/// vanished silently once the send buffer is full and the write deadline
+/// passes, which takes long at a few bytes per comment) and releases its
 /// stream slot.
 pub(crate) const KEEPALIVE: Duration = Duration::from_secs(15);
 /// An event-stream comment: ignored by readers, written like any event.
@@ -99,8 +101,9 @@ pub(crate) fn failure(status: StatusCode, kind: FailureKind, message: &str) -> R
     }
 }
 
-/// A runtime command failure. Source chains stay local; the body carries the
-/// kind, a message and, where relevant, the field or current revision.
+/// A runtime command failure: the kind, a message (for an adapter failure its
+/// whole cause chain, see [`Failure`]) and, where relevant, the field, the
+/// current revision or the section.
 pub(crate) fn error(error: &Error) -> Response {
     let body = Failure::from(error);
     let status = match body.kind {

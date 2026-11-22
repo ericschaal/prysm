@@ -610,22 +610,38 @@ fn saved_settings_survive_a_restart() {
     assert!(status.success(), "{stderr:#?}");
 }
 
-/// A file that is not JSON stops the start, naming it, and is left as it
-/// was; valid JSON with invalid settings starts idle with a typed failure,
-/// so the portal can fix it.
+/// A file that is not JSON starts unconfigured with the parse error as the
+/// failure, and is left as it was until a save from the portal, which keeps
+/// it beside the new one; valid JSON with invalid settings starts idle with
+/// a typed failure, so the portal can fix it.
 #[test]
 fn a_corrupt_or_invalid_settings_file_on_start() {
     let dir = tempfile::tempdir().unwrap();
     let corrupt = dir.path().join("corrupt.json");
     std::fs::write(&corrupt, "{ not json").unwrap();
-    let output = std::process::Command::new(BINARY)
-        .args([corrupt.to_str().unwrap(), "--listen", "127.0.0.1:0"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("cannot parse settings file"), "{stderr}");
+    let (host, port) = start(corrupt.to_str().unwrap());
+    let state = wait_for_state(port, "failed", |state| !state["failure"].is_null());
+    // The settings' problem as a whole: `invalid`, no field, no section.
+    assert_eq!(state["failure"]["kind"], "invalid", "{state:#}");
+    assert!(state["failure"].get("field").is_none(), "{state:#}");
+    assert!(state["failure"].get("section").is_none(), "{state:#}");
+    let message = state["failure"]["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("cannot parse settings file"),
+        "{message}"
+    );
     assert_eq!(std::fs::read_to_string(&corrupt).unwrap(), "{ not json");
+    let saved = save_settings(port, &state, &json!({ "output": { "kind": "null" } }));
+    assert_eq!(saved.status, 200, "{}", saved.body);
+    let (status, stderr) = host.terminate();
+    assert!(status.success(), "{stderr:#?}");
+    let aside: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path != &corrupt)
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "{ not json");
 
     let invalid = write_settings(dir.path(), &json!({ "output": { "kind": "bogus" } }));
     let (host, port) = start(&invalid);

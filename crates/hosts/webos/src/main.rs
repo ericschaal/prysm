@@ -80,7 +80,8 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
 /// portal only has to add the WLED output.
 fn seed(path: &Path) -> Result<()> {
     let mut store = SettingsFile::new(path);
-    if store.load()?.is_none() {
+    // Only a missing file: one that cannot be read is the engine's to report.
+    if matches!(store.load(), Ok(None)) {
         store.save(&Settings {
             capture: Some(AdapterSettings::new(
                 WebosCapture::KIND,

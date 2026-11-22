@@ -141,7 +141,26 @@ applied calibration; without it no correction is applied. Both are omitted when 
 `load` returns `None` only when the file does not exist; an empty or malformed
 file is an error, never silently treated as unconfigured. A file larger than
 1 MiB is refused before parsing, so a wrong path (a device, a log) is not read
-whole.
+whole. `save` checks the bytes it is about to write the way `load` reads them
+(size, format, fields) and refuses what `load` would refuse, before touching
+anything, so whatever is saved loads.
+
+## Unreadable files
+
+A file that `load` refuses (no `format`, a newer or older format, cut-off or
+invalid JSON, a wrong type or unknown field, over 1 MiB, a permission or I/O
+error) is never replaced unseen: the engine then starts unconfigured and
+shows the cause as the failure, and the file stays as it was. The next
+`save`, which only a user's save from the portal makes, first renames it to
+`settings.json.unreadable-XXXXXX` (six random characters, a name of its own,
+so no earlier one is overwritten) beside the new file, logs that name, and
+then writes the new file as usual, owner-only rather than with the
+unreadable file's permissions. If the file is gone by then, nothing is set
+aside. None of these is fatal, since a save keeps the file and a restart
+would fix none of them; only a panicking store stops start-up.
+
+`save` replaces only a regular file (or a link to one): a directory, socket
+or device at the path is refused (`it is not a regular file`) and left alone.
 
 ## Atomicity
 
@@ -149,8 +168,10 @@ whole.
 over the target, and on Unix fsyncs the directory. The rename is the commit
 point: a reader or a crash sees either the old file or the new one, never a
 truncated mix. Any failure before the rename removes the temporary file and leaves
-the existing file untouched. A failure of the final directory sync is reported,
-but the new contents are already in place.
+the existing file untouched, and `save` fails. After the rename the save has
+happened: a failure of the final directory sync is logged as a warning (the
+save may not survive a crash) and `save` succeeds, so the engine installs
+the settings the file now holds.
 
 Permissions of an existing file are kept. A newly created file is owner-only
 (`0600` on Unix).

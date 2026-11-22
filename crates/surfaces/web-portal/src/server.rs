@@ -39,18 +39,33 @@ pub(crate) async fn serve(
         shutdown.clone(),
     ));
     let mut connections = JoinSet::new();
+    // An accept that found the process out of descriptors or memory: the
+    // next waits until a connection ends and frees what it held.
+    let mut exhausted = false;
     let result = loop {
         tokio::select! {
             biased;
             () = shutdown.requested() => break Ok(()),
-            Some(_) = connections.join_next(), if !connections.is_empty() => {}
-            accepted = listener.accept(), if connections.len() < CONNECTIONS => match accepted {
-                Ok((socket, _)) => {
-                    connections.spawn(connection(socket, context.clone()));
+            Some(_) = connections.join_next(), if !connections.is_empty() => exhausted = false,
+            accepted = listener.accept(), if !exhausted && connections.len() < CONNECTIONS => {
+                match accepted {
+                    Ok((socket, _)) => {
+                        connections.spawn(connection(socket, context.clone()));
+                    }
+                    Err(error) => match refused(&error, connections.len()) {
+                        Refused::Connection => {}
+                        Refused::Exhausted => {
+                            tracing::warn!(
+                                "the portal accepts again once a connection ends: {error}"
+                            );
+                            exhausted = true;
+                        }
+                        Refused::Listener => {
+                            break Err(Error::adapter("portal listener failed", error));
+                        }
+                    },
                 }
-                Err(error) if transient(&error) => {}
-                Err(error) => break Err(Error::adapter("portal listener failed", error)),
-            },
+            }
         }
     };
     // Refuse new connections at once; open ones finish their current request.
@@ -75,15 +90,42 @@ pub(crate) async fn serve(
     result
 }
 
-/// Failures of one pending connection, not of the listener.
-fn transient(error: &io::Error) -> bool {
-    matches!(
+/// What a failed `accept` means for the portal.
+#[derive(Debug, PartialEq, Eq)]
+enum Refused {
+    /// One pending connection failed; the next is accepted.
+    Connection,
+    /// The process is out of descriptors or memory: accepting resumes once
+    /// a connection ends and frees what it held.
+    Exhausted,
+    /// The listener itself failed, or it is exhausted with no connection
+    /// open whose end would free anything: the portal stops.
+    Listener,
+}
+
+/// What `error` from `accept` means while `open` connections are served.
+fn refused(error: &io::Error, open: usize) -> Refused {
+    if matches!(
         error.kind(),
         io::ErrorKind::ConnectionAborted
             | io::ErrorKind::ConnectionReset
             | io::ErrorKind::Interrupted
             | io::ErrorKind::WouldBlock
-    )
+    ) {
+        return Refused::Connection;
+    }
+    #[cfg(unix)]
+    let exhausted = matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
+    );
+    #[cfg(not(unix))]
+    let exhausted = error.kind() == io::ErrorKind::OutOfMemory;
+    if exhausted && open > 0 {
+        Refused::Exhausted
+    } else {
+        Refused::Listener
+    }
 }
 
 async fn connection(socket: TcpStream, context: Arc<Context>) {
@@ -103,6 +145,37 @@ async fn connection(socket: TcpStream, context: Arc<Context>) {
         () = shutdown.requested() => {
             connection.as_mut().graceful_shutdown();
             let _ = connection.await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every kind of `accept` failure, with and without open connections.
+    #[cfg(unix)]
+    #[test]
+    fn an_exhausted_listener_waits_for_a_connection_to_end() {
+        let os = io::Error::from_raw_os_error;
+        let kind = io::Error::from;
+        #[rustfmt::skip]
+        let cases = [
+            (kind(io::ErrorKind::ConnectionAborted), 0, Refused::Connection),
+            (kind(io::ErrorKind::ConnectionReset), 3, Refused::Connection),
+            (kind(io::ErrorKind::Interrupted), 0, Refused::Connection),
+            (kind(io::ErrorKind::WouldBlock), 0, Refused::Connection),
+            (os(libc::EMFILE), 1, Refused::Exhausted),
+            (os(libc::ENFILE), 64, Refused::Exhausted),
+            (os(libc::ENOBUFS), 2, Refused::Exhausted),
+            (os(libc::ENOMEM), 2, Refused::Exhausted),
+            (os(libc::EMFILE), 0, Refused::Listener),
+            (os(libc::ENOMEM), 0, Refused::Listener),
+            (os(libc::EBADF), 5, Refused::Listener),
+            (os(libc::EINVAL), 0, Refused::Listener),
+        ];
+        for (error, open, expected) in cases {
+            assert_eq!(refused(&error, open), expected, "{error} with {open} open");
         }
     }
 }

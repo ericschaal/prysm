@@ -9,11 +9,11 @@ the lights off after every restart.
 | Problem | Fix |
 | --- | --- |
 | Portal does not open | On the computer, try `http://localhost:8787`. From a phone, use the computer's IP address and port 8787. Check the log for the address Prysm printed and for errors. |
-| "origin denied" | A page from another site tried to use the portal. To allow a specific page, start Prysm with `--allow-origin ORIGIN`; the slim TV app needs `--allow-origin null`. |
+| "origin denied" | A page from another site tried to use the portal. To allow a specific page, start Prysm with `--allow-origin ORIGIN`; the slim TV app needs `--allow-origin null`. Behind an HTTPS reverse proxy the portal's own pages work when the proxy forwards the `Host` header; a proxy that rewrites it needs `--allow-origin https://` plus the proxy's address. |
 | Cannot save settings | Prysm's user must be able to write the settings directory. In Docker, mount a directory at `/data`, writable by user 10001. |
 | "These settings were changed elsewhere" | Someone saved in another browser, or Prysm restarted. The form shows the current settings; make your change again. |
 | Saved, but lights fail | The settings are saved; the light card shows why the start failed. Fix the device or address and turn Screen sync on again. |
-| Prysm does not start | The settings file may be damaged. Run `prysm-headless --check-settings PATH` to see the error. |
+| Prysm starts without settings, and the light card names the settings file | The file is damaged, from another Prysm version, or not readable by Prysm's user. Run `prysm-headless --check-settings PATH` to see the error, fix the file and restart; or set Prysm up again in the portal, which keeps the old file beside the new one (`settings.json.unreadable-…`). |
 
 Logs:
 

@@ -28,10 +28,19 @@ loses a reply reads the state instead of resubmitting.
 There is no login or token. Anyone who can reach the port can read the state
 and control the lights. The portal refuses requests from web pages of other
 sites by their `Origin` header, unless the host was started with
-`--allow-origin ORIGIN` (`null` for the slim TV app, `*` for any). `Host` is
-not checked, so DNS rebinding is not prevented. The full TV worker allows any
-origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
-`--listen`.
+`--allow-origin ORIGIN` (`null` for the slim TV app, `*` for any). The
+portal's own pages are those whose `Origin` is `http://` or `https://` plus
+the request's `Host`, so a reverse proxy that serves the portal over HTTPS
+and forwards `Host` needs no option; one that rewrites `Host` needs
+`--allow-origin https://prysm.example.com`. `Host` is not checked, so DNS
+rebinding is not prevented. The full TV worker allows any origin. Keep the
+portal on a trusted LAN, or bind it to `127.0.0.1` with `--listen`.
+
+Candidates and capture modes are lookups the portal runs off the engine's
+mailbox, each once at a time: who asks the same while it runs gets its
+answer, so no client can stack up blocking lookups. The
+portal waits for every command without a deadline of its own, since each
+ends (see [architecture](architecture.md#shutdown-ordering)).
 
 ## Settings ownership
 
