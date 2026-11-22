@@ -1,4 +1,5 @@
 use crate::formats::Rates;
+use crate::interruptions::Interruptions;
 use crate::{
     CaptureError, CaptureSink, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
 };
@@ -8,7 +9,7 @@ use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 use v4l::buffer::Type;
 mod stream;
-use stream::Stream;
+use stream::{Dequeued, Stream};
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
 
@@ -363,6 +364,23 @@ fn stream_failed(error: std::io::Error, doing: &'static str) -> CaptureError {
     }
 }
 
+/// What capture was doing when a dequeue failed.
+const CAPTURING: &str = "error capturing frame";
+
+/// Stop the stream and, unless `sink` stops meanwhile, start it again.
+/// STREAMOFF gives every buffer back, including one the driver kept.
+fn restart(stream: &mut Stream, sink: &dyn CaptureSink) -> Result<()> {
+    stream
+        .stop()
+        .map_err(|error| stream_failed(error, "failed to stop capture stream to restart it"))?;
+    if !sink.should_stop(Duration::ZERO) {
+        stream
+            .start()
+            .map_err(|error| stream_failed(error, "failed to restart capture stream"))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn run(
     device_path: Option<&str>,
     width: u32,
@@ -407,12 +425,13 @@ pub(crate) fn run(
         let mut pool = FramePool::default();
         let mut stats = crate::trace_stats::TraceStats::new("v4l_capture");
         let mut rejections = crate::rejections::Rejections::new(rate);
+        let mut interruptions = Interruptions::default();
         loop {
             if stopped() {
                 return Ok(());
             }
             let started = stats.start();
-            match stream.frame(|data, buffer| {
+            let dequeued = stream.frame(|data, buffer| {
                 let captured = captured_at(buffer);
                 let corrupted = buffer.flags & v4l::v4l_sys::V4L2_BUF_FLAG_ERROR != 0;
                 pool.copy_from_strided(
@@ -427,29 +446,35 @@ pub(crate) fn run(
                 .ok_or_else(|| {
                     crate::rejections::rejection(corrupted, data.len(), format.size as usize)
                 })
-            }) {
-                Ok(Ok(frame)) => {
+            });
+            match dequeued.map_err(|error| stream_failed(error, CAPTURING))? {
+                Dequeued::Buffer(Ok(frame)) => {
+                    interruptions.dequeued();
                     rejections.accepted();
                     stats.record(started, frame.len(), Some(pool.stats()));
                     sink.frame(frame);
                 }
-                Ok(Err(reason)) => {
+                Dequeued::Buffer(Err(reason)) => {
+                    interruptions.dequeued();
                     stats.failure();
                     rejections.rejected(reason, Instant::now())?;
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+                Dequeued::Stalled => {
                     stats.failure();
                     rejections.stalled();
-                    stream.stop().map_err(|error| {
-                        stream_failed(error, "failed to stop stalled capture stream")
-                    })?;
-                    if !stopped() {
-                        stream.start().map_err(|error| {
-                            stream_failed(error, "failed to restart stalled capture stream")
-                        })?;
-                    }
+                    restart(&mut stream, sink)?;
                 }
-                Err(error) => return Err(stream_failed(error, "error capturing frame")),
+                Dequeued::Interrupted(error) => {
+                    stats.failure();
+                    if !interruptions.interrupted(Instant::now()) {
+                        return Err(stream_failed(error, CAPTURING));
+                    }
+                    tracing::warn!(%error, "Capture interrupted; restarting the stream");
+                    if sink.should_stop(crate::interruptions::PAUSE) {
+                        return Ok(());
+                    }
+                    restart(&mut stream, sink)?;
+                }
             }
         }
     })();

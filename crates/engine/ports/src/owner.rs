@@ -256,7 +256,8 @@ impl Worker {
 
     /// Publish `frame`, replacing one not yet taken.
     pub fn offer(&self, frame: Frame) {
-        self.shared.update(|state| state.frame = Some(frame));
+        // The replaced frame is dropped after the lock is released.
+        drop(self.shared.update(|state| state.frame.replace(frame)));
     }
 
     /// Publish a terminal failure; the first one is kept.

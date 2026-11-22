@@ -33,6 +33,23 @@ pub(super) fn device_gone(error: &io::Error) -> bool {
     error.raw_os_error() == Some(libc::ENODEV)
 }
 
+/// Whether `error` from `VIDIOC_DQBUF` may be temporary: EIO, which V4L2
+/// also uses for problems like signal loss (see [`crate::interruptions`]).
+fn interrupted(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::EIO)
+}
+
+/// What [`Stream::frame`] got from the device.
+pub(super) enum Dequeued<T> {
+    /// A buffer, and what was made of it.
+    Buffer(T),
+    /// No buffer within the timeout.
+    Stalled,
+    /// DQBUF failed with a possibly temporary error; the stream needs a
+    /// restart before the next frame.
+    Interrupted(io::Error),
+}
+
 fn buffer(index: u32) -> v4l2_buffer {
     v4l2_buffer {
         index,
@@ -138,13 +155,23 @@ impl Stream {
         }
         Ok(())
     }
-    pub fn frame<T>(&mut self, copy: impl FnOnce(&[u8], &v4l2_buffer) -> T) -> io::Result<T> {
+    /// Dequeue the next buffer, give it to `copy` and queue it again.
+    pub fn frame<T>(
+        &mut self,
+        copy: impl FnOnce(&[u8], &v4l2_buffer) -> T,
+    ) -> io::Result<Dequeued<T>> {
         if self.handle.poll(libc::POLLIN, self.timeout)? == 0 {
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "VIDIOC_DQBUF"));
+            return Ok(Dequeued::Stalled);
         }
         let mut info = buffer(0);
         // SAFETY: DQBUF takes a `v4l2_buffer`.
-        unsafe { self.ioctl(v4l2::vidioc::VIDIOC_DQBUF, &mut info) }?;
+        match unsafe { self.ioctl(v4l2::vidioc::VIDIOC_DQBUF, &mut info) } {
+            Ok(()) => {}
+            // `info` names no buffer: one the driver may have taken comes
+            // back only with STREAMOFF.
+            Err(error) if interrupted(&error) => return Ok(Dequeued::Interrupted(error)),
+            Err(error) => return Err(error),
+        }
         let mapping = self
             .buffers
             .get(info.index as usize)
@@ -164,7 +191,7 @@ impl Stream {
             ))
         };
         self.queue(info.index)?;
-        result
+        result.map(Dequeued::Buffer)
     }
     pub fn release(&mut self) -> io::Result<()> {
         let fd = self.handle.fd();
@@ -370,6 +397,17 @@ mod tests {
             stream
                 .release_with(|_, _| panic!("released"), |_, _| panic!("unmapped"))
                 .unwrap();
+        }
+    }
+
+    #[test]
+    fn only_eio_interrupts_a_dequeue() {
+        assert!(interrupted(&io::Error::from_raw_os_error(libc::EIO)));
+        for errno in [libc::ENODEV, libc::EINVAL, libc::EPIPE] {
+            assert!(
+                !interrupted(&io::Error::from_raw_os_error(errno)),
+                "{errno}"
+            );
         }
     }
 

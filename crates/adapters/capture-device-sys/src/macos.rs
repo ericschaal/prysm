@@ -1,8 +1,9 @@
 use std::mem::ManuallyDrop;
 use std::num::NonZeroU32;
+use std::panic::{self, AssertUnwindSafe};
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
@@ -82,52 +83,22 @@ define_class!(
             sample_buffer: CMSampleBufferRef,
             _connection: &AVCaptureConnection,
         ) {
-            // SAFETY: AVFoundation passes a valid sample buffer that it keeps
-            // alive for this call; the Get-rule wrapper retains it for as long
-            // as the wrapper lives and releases only that retain.
-            let sample_buffer = unsafe { CMSampleBuffer::wrap_under_get_rule(sample_buffer) };
-            let captured = captured_at(sample_buffer.get_presentation_time_stamp());
-            let Some(image_buffer) = sample_buffer.get_image_buffer() else {
-                return;
-            };
-            let Some(pixel_buffer) = image_buffer.downcast::<CVPixelBuffer>() else {
-                return;
-            };
-            if let Ok(mut capture) = self.ivars().capture.lock()
-                && let Some(capture) = capture.as_mut()
-            {
-                let started = capture.stats.start();
-                if let Some(frame) = frame_from_pixel_buffer(&pixel_buffer, &mut capture.pool) {
-                    capture.stats.record(started, frame.len(), Some(capture.pool.stats()));
-                    capture.sink.frame(frame.with_captured(captured));
-                } else {
-                    capture.stats.failure();
-                }
-            }
+            self.guarded("captureOutput:didOutputSampleBuffer:fromConnection:", || {
+                // SAFETY: AVFoundation passes a valid sample buffer that it
+                // keeps alive for this call; the Get-rule wrapper retains it
+                // for as long as the wrapper lives and releases only that retain.
+                self.deliver(&unsafe { CMSampleBuffer::wrap_under_get_rule(sample_buffer) });
+            });
         }
     }
 
     impl Delegate {
         #[unsafe(method(captureFailed:))]
         fn capture_failed(&self, notification: &NSNotification) {
-            // The session's NSError, when there is one, is the source below.
-            let error = format!("capture failed: {}", notification.name());
-            // SAFETY: This notification name is a process-lifetime Foundation string.
-            let error = if &*notification.name() == unsafe { AVCaptureDeviceWasDisconnectedNotification } {
-                CaptureError::Disconnected { details: error, source: None }
-            } else {
-                // SAFETY: This dictionary key is a process-lifetime Foundation string.
-                let source = notification.userInfo()
-                    .and_then(|info| info.objectForKey(unsafe { AVCaptureSessionErrorKey }))
-                    .and_then(|value| value.downcast::<NSError>().ok());
-                CaptureError::Backend(match source {
-                    Some(source) => anyhow::Error::new(source).context(error),
-                    None => anyhow!(error),
-                })
-            };
-            *self.ivars().error.lock().expect("capture error mutex poisoned") = Some(error);
+            self.guarded("captureFailed:", || self.fail(failure(notification)));
         }
 
+        // Not guarded: setting the ivars and NSObject's `init` do not panic.
         #[unsafe(method_id(init))]
         fn init(this: Allocated<Self>) -> Option<Retained<Self>> {
             let this = this.set_ivars(DelegateIvars {
@@ -156,12 +127,73 @@ impl Delegate {
         this
     }
 
-    fn failed(&self) -> bool {
+    /// Runs `body`, the Objective-C method `method`. objc2 declares the method
+    /// `extern "C-unwind"`, so a panic would unwind into the AVFoundation or
+    /// Foundation code that called it; instead it is caught here and becomes
+    /// the capture's failure, with the panic's message as its cause.
+    fn guarded(&self, method: &'static str, body: impl FnOnce()) {
+        let Err(payload) = panic::catch_unwind(AssertUnwindSafe(body)) else {
+            return;
+        };
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|message| (*message).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic without a message".to_owned());
+        // A payload's destructor may panic in turn; that second payload is leaked.
+        if let Err(payload) = panic::catch_unwind(AssertUnwindSafe(|| drop(payload))) {
+            std::mem::forget(payload);
+        }
+        self.fail(CaptureError::Backend(
+            anyhow!(message).context(format!("{method} panicked")),
+        ));
+    }
+
+    /// Copies `sample_buffer` into a frame for the sink, unless capture is
+    /// ending.
+    fn deliver(&self, sample_buffer: &CMSampleBuffer) {
+        let captured = captured_at(sample_buffer.get_presentation_time_stamp());
+        let Some(image_buffer) = sample_buffer.get_image_buffer() else {
+            return;
+        };
+        let Some(pixel_buffer) = image_buffer.downcast::<CVPixelBuffer>() else {
+            return;
+        };
+        // Poisoned only by a panic in this method, which `guarded` recorded as
+        // the failure that stops capture: no frame is delivered after it.
+        let Ok(mut capture) = self.ivars().capture.lock() else {
+            return;
+        };
+        let Some(capture) = capture.as_mut() else {
+            return;
+        };
+        let started = capture.stats.start();
+        if let Some(frame) = frame_from_pixel_buffer(&pixel_buffer, &mut capture.pool) {
+            capture
+                .stats
+                .record(started, frame.len(), Some(capture.pool.stats()));
+            capture.sink.frame(frame.with_captured(captured));
+        } else {
+            capture.stats.failure();
+        }
+    }
+
+    /// The failure that stops capture. Only whole values are stored and taken
+    /// under this lock, so a poisoned one still holds a whole value.
+    fn error(&self) -> MutexGuard<'_, Option<CaptureError>> {
         self.ivars()
             .error
             .lock()
-            .expect("capture error mutex poisoned")
-            .is_some()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Records `error`, unless a failure is recorded already.
+    fn fail(&self, error: CaptureError) {
+        self.error().get_or_insert(error);
+    }
+
+    fn failed(&self) -> bool {
+        self.error().is_some()
     }
 
     fn observe_failure(&self, name: &NSString, object: &AnyObject) {
@@ -177,11 +209,37 @@ impl Delegate {
     }
 }
 
+/// Runs from the class's `dealloc`, called by Objective-C, so nothing here or
+/// in the ivars' drops may panic: removing an observer does not, and the
+/// ivars hold only buffers, counters and a clone of the sink's `Arc` that
+/// [`run`]'s caller outlives.
 impl Drop for Delegate {
     fn drop(&mut self) {
         // SAFETY: self is the live observer registered by observe_failure.
         unsafe { NSNotificationCenter::defaultCenter().removeObserver(self) };
     }
+}
+
+/// The failure a session runtime error or device disconnection `notification`
+/// reports; the session's `NSError`, when there is one, is its source.
+fn failure(notification: &NSNotification) -> CaptureError {
+    let error = format!("capture failed: {}", notification.name());
+    // SAFETY: This notification name is a process-lifetime Foundation string.
+    if &*notification.name() == unsafe { AVCaptureDeviceWasDisconnectedNotification } {
+        return CaptureError::Disconnected {
+            details: error,
+            source: None,
+        };
+    }
+    // SAFETY: This dictionary key is a process-lifetime Foundation string.
+    let source = notification
+        .userInfo()
+        .and_then(|info| info.objectForKey(unsafe { AVCaptureSessionErrorKey }))
+        .and_then(|value| value.downcast::<NSError>().ok());
+    CaptureError::Backend(match source {
+        Some(source) => anyhow::Error::new(source).context(error),
+        None => anyhow!(error),
+    })
 }
 
 /// When a sample with presentation time `pts` was captured. Capture sessions
@@ -237,59 +295,81 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer, pool: &mut FramePool) -
             return None;
         }
     };
-    if pixel_buffer.lock_base_address(kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess {
+    // Packed YUYV is one plane; a planar buffer's base address is not its pixels.
+    if pixel_buffer.is_planar() {
+        tracing::error!("Unexpected planar YUYV pixel buffer");
         return None;
     }
-
     let width = pixel_buffer.get_width();
     let height = pixel_buffer.get_height();
     let stride = pixel_buffer.get_bytes_per_row();
-    // SAFETY: the base address is locked above and read only until the
-    // unlock below; null (no data) is handled.
-    let base = unsafe { pixel_buffer.get_base_address() }
+    let row_size = width.checked_mul(2)?;
+    // The bytes from the first pixel to the last: every row but the last
+    // ends in padding up to `stride`.
+    let size = stride
+        .checked_mul(height.checked_sub(1)?)?
+        .checked_add(row_size)?;
+    if row_size == 0 || stride < row_size || size > isize::MAX.unsigned_abs() {
+        return None;
+    }
+    let data_size = pixel_buffer.get_data_size();
+    if size > data_size {
+        tracing::error!("YUYV pixel buffer holds {data_size} bytes, not the {size} of its rows");
+        return None;
+    }
+
+    let locked = BaseAddressLock::new(pixel_buffer)?;
+    // SAFETY: the base address is locked until `locked` drops, after the
+    // reads below; null (no data) is handled.
+    let base = unsafe { locked.0.get_base_address() }
         .cast_const()
         .cast::<u8>();
-
-    let frame = if base.is_null() {
-        None
+    if base.is_null() {
+        return None;
+    }
+    let mut frame = pool
+        .acquire(
+            u32::try_from(width).ok()?,
+            u32::try_from(height).ok()?,
+            PixelFormat::YUYV { range, matrix },
+        )
+        .ok()?;
+    if stride == row_size {
+        // SAFETY: `base` points at the locked plane of `data_size >= size`
+        // bytes, and `size` is at most `isize::MAX` (both checked above);
+        // without padding, `size` is `height * row_size`, the frame's length.
+        frame
+            .as_mut_slice()
+            .copy_from_slice(unsafe { slice::from_raw_parts(base, size) });
     } else {
-        (|| {
-            let row_size = width.checked_mul(2)?;
-            let size = stride
-                .checked_mul(height.checked_sub(1)?)?
-                .checked_add(row_size)?;
-            if row_size == 0 || stride < row_size || size > isize::MAX as usize {
-                return None;
-            }
-            let mut frame = pool
-                .acquire(
-                    u32::try_from(width).ok()?,
-                    u32::try_from(height).ok()?,
-                    PixelFormat::YUYV { range, matrix },
-                )
-                .ok()?;
-            if stride == row_size {
-                // SAFETY: `base` is the locked packed plane of at least
-                // `stride * height` bytes; without padding, `size` is
-                // `height * row_size`, all within it and the frame's length.
-                frame
-                    .as_mut_slice()
-                    .copy_from_slice(unsafe { slice::from_raw_parts(base, size) });
-            } else {
-                for (row, target) in frame.as_mut_slice().chunks_exact_mut(row_size).enumerate() {
-                    // SAFETY: `row < height`, so `row * stride + row_size <= size`,
-                    // which lies within the locked plane (checked above, at most
-                    // `isize::MAX`); the padding after each row is skipped.
-                    let pixels = unsafe { slice::from_raw_parts(base.add(row * stride), row_size) };
-                    target.copy_from_slice(pixels);
-                }
-            }
-            Some(frame.finish())
-        })()
-    };
+        for (row, target) in frame.as_mut_slice().chunks_exact_mut(row_size).enumerate() {
+            // SAFETY: `row < height`, so `row * stride + row_size <= size`,
+            // which lies within the locked plane of `data_size` bytes and is
+            // at most `isize::MAX` (both checked above); the padding after
+            // each row is skipped.
+            let pixels = unsafe { slice::from_raw_parts(base.add(row * stride), row_size) };
+            target.copy_from_slice(pixels);
+        }
+    }
+    drop(locked);
+    Some(frame.finish())
+}
 
-    pixel_buffer.unlock_base_address(kCVPixelBufferLock_ReadOnly);
-    frame
+/// A pixel buffer's base address locked for reading, unlocked on drop (also
+/// when a panic unwinds past it).
+struct BaseAddressLock<'a>(&'a CVPixelBuffer);
+
+impl<'a> BaseAddressLock<'a> {
+    fn new(pixel_buffer: &'a CVPixelBuffer) -> Option<Self> {
+        (pixel_buffer.lock_base_address(kCVPixelBufferLock_ReadOnly) == kCVReturnSuccess)
+            .then_some(Self(pixel_buffer))
+    }
+}
+
+impl Drop for BaseAddressLock<'_> {
+    fn drop(&mut self) {
+        self.0.unlock_base_address(kCVPixelBufferLock_ReadOnly);
+    }
 }
 
 fn video_settings(width: u32, height: u32) -> Retained<NSDictionary<NSString, NSObject>> {
@@ -329,11 +409,12 @@ struct RunningSession {
 impl Drop for RunningSession {
     fn drop(&mut self) {
         // Publication ends before stop; the serial barrier settles every queued callback.
+        // A lock poisoned by a callback's panic still holds the state to release.
         self.delegate
             .ivars()
             .capture
             .lock()
-            .expect("capture mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .take();
         self.session.stop_running();
         // SAFETY: `setSampleBufferDelegate:queue:` exists on this output with
@@ -562,14 +643,7 @@ fn start_session(
         )
         .into());
     }
-    if let Some(error) = running
-        .delegate
-        .ivars()
-        .error
-        .lock()
-        .expect("capture error mutex poisoned")
-        .take()
-    {
+    if let Some(error) = running.delegate.error().take() {
         return Err(error);
     }
     if !running.session.is_running() || running.delegate.failed() {
@@ -636,13 +710,7 @@ pub(crate) fn run(
     sink.ready();
     // The capture thread itself waits; frames arrive on the session's queue.
     while !session.delegate.failed() && !sink.should_stop(FAILURE_POLL) {}
-    let error = session
-        .delegate
-        .ivars()
-        .error
-        .lock()
-        .expect("capture error mutex poisoned")
-        .take();
+    let error = session.delegate.error().take();
     drop(session);
     error.map_or(Ok(()), Err)
 }
@@ -722,6 +790,41 @@ mod tests {
                 "the delegate released the sink"
             );
         }
+    }
+
+    #[test]
+    fn a_panicking_callback_fails_capture_instead_of_unwinding() {
+        let sink: Arc<dyn CaptureSink> = Arc::new(crate::device::Discard);
+        let delegate = Delegate::new(sink.clone());
+        delegate.guarded("first:", || {
+            let _capture = delegate.ivars().capture.lock();
+            panic!("broken {}", "invariant");
+        });
+        delegate.guarded("second:", || panic!("later"));
+        assert!(
+            delegate.ivars().capture.lock().is_err(),
+            "frames stop: the panic poisoned their state"
+        );
+        let error = delegate.error().take().unwrap();
+        assert_eq!(
+            prysm_ports::chain(&error),
+            "first: panicked: broken invariant",
+            "the first failure is kept, its message the cause"
+        );
+        drop(delegate);
+        assert_eq!(
+            Arc::strong_count(&sink),
+            1,
+            "the delegate released the sink"
+        );
+
+        let delegate = Delegate::new(Arc::new(crate::device::Discard));
+        delegate.guarded("static:", || panic!("a static message"));
+        let error = delegate.error().take().unwrap();
+        assert_eq!(
+            prysm_ports::chain(&error),
+            "static: panicked: a static message"
+        );
     }
 
     #[test]

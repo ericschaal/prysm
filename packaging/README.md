@@ -186,7 +186,7 @@ on standard error.
 
 `--out DIR` changes the output folder; `CARGO_TARGET_DIR` is honoured. The
 script builds the flavour's two binaries with `--profile webos` (fat LTO, one
-codegen unit, stripped) for Cortex-A9 with `-C target-feature=-soft-float,+neon`
+codegen unit, stripped, integer overflow checked) for Cortex-A9 with `-C target-feature=-soft-float,+neon`
 (hardware floating point and NEON while keeping the soft-float calling
 convention of the TV's libraries; without it Rust emulates every float
 operation and the full worker managed 3 fps at 640x360 with a core pegged,

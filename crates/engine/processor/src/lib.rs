@@ -1,3 +1,5 @@
+// The library has no unsafe code; only the example's allocator does.
+#![forbid(unsafe_code)]
 use frames::{FrameView, Viewport};
 use nodes::{BlackBarDetector, SpatialSampler, TemporalSmoother};
 use prysm_core::{ColorCorrection, Config, EdgeColors, Frame, LinearColor, PixelFormat};

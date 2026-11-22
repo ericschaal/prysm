@@ -235,7 +235,6 @@ fn the_two_part_evaluation_agrees_with_every_cell_at_full_resolution() {
     for (name, view) in accuracy_pictures() {
         for focus in [50, 100] {
             let mut errors = errors(&view, focus, 0.1, Sizes::SHIPPED);
-            #[allow(clippy::cast_precision_loss, reason = "a few hundred LEDs")]
             let mean = errors.iter().sum::<f32>() / errors.len() as f32;
             let p95 = percentile(&mut errors, 0.95);
             let max = percentile(&mut errors, 1.0);
@@ -323,7 +322,6 @@ fn evaluation_sizes_table() {
             let fields = &probe.focus.fields;
             let samples: usize = fields.iter().map(|f| f.starts.len() - 1).sum();
             let near: usize = fields.iter().map(|f| f.near.len()).sum();
-            #[allow(clippy::cast_precision_loss, reason = "small counts")]
             let colours = near as f32 / samples as f32 + probe.focus.blocks.len() as f32;
             println!(
                 "| {:.0} % | {name} | {colours:.0} | {worst_p95:.2} | {worst_max:.2} |",

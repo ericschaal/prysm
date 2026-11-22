@@ -184,20 +184,24 @@ impl UiCapture {
         if (surface.width, surface.height) != (width, height) || width == 0 || height == 0 {
             return Err(Error::Invalid("HAL surface size"));
         }
-        if surface.bpp != 32 || usize::from(surface.pitch) < usize::from(width) * 4 {
+        let pitch = usize::from(surface.pitch);
+        let row = usize::from(width) * 4;
+        if surface.bpp != 32 || pitch < row {
             return Err(Error::Invalid("HAL surface format"));
         }
-        let pitch = usize::from(surface.pitch);
         let rows = usize::from(height);
         let length = match surface.property {
-            0 => pitch * rows,
-            bytes => bytes as usize,
+            0 => pitch.checked_mul(rows),
+            bytes => usize::try_from(bytes).ok(),
         };
-        // Every row's pixels must lie inside the mapping.
-        if length < pitch * (rows - 1) + usize::from(width) * 4 || length > 64 * 1024 * 1024 {
-            return Err(Error::Invalid("HAL surface length"));
+        // Every row's pixels must lie inside the mapping; `rows` is at least 1.
+        let end = pitch
+            .checked_mul(rows - 1)
+            .and_then(|last| last.checked_add(row));
+        match (length, end) {
+            (Some(length), Some(end)) if end <= length && length <= 64 * 1024 * 1024 => Ok(length),
+            _ => Err(Error::Invalid("HAL surface length")),
         }
-        Ok(length)
     }
 
     /// Capture the graphics plane into the surface.

@@ -385,7 +385,6 @@ mod tests {
         (seconds / FRAME).round() as usize
     }
 
-    #[allow(clippy::cast_precision_loss, reason = "test frame indices are small")]
     fn time_of(frame: usize) -> f64 {
         frame as f64 * FRAME
     }
@@ -454,7 +453,6 @@ mod tests {
         // The fixed rate exactly as it was before cuts and the ramp existed.
         let fixed = |previous: &EdgeColors, input: &EdgeColors, elapsed: f64, seconds: f32| {
             let ratio = -(-20.0_f64.ln() * elapsed / f64::from(seconds)).exp_m1();
-            #[allow(clippy::cast_possible_truncation, reason = "a share in 0..=1")]
             previous.blend(input, ratio as f32)
         };
         let mut seed = Seeded(0xF1ED);
@@ -717,7 +715,6 @@ mod tests {
                 "{seconds} s down: frame {at} of {frames}"
             );
             // No frame moves faster than the ramp.
-            #[allow(clippy::cast_possible_truncation, reason = "a frame's step in 0..1")]
             let step = (FRAME / f64::from(seconds)) as f32;
             for lightness in [&up, &down] {
                 for pair in lightness.windows(2) {

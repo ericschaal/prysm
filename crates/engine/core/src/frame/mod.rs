@@ -97,11 +97,11 @@ impl PixelFormat {
 
     /// Bytes per stored row and the number of stored rows, counting both NV12
     /// planes (each NV12 row, luma or chroma, is `width` bytes).
-    /// `None` for variable-size formats.
+    /// `None` for variable-size formats and for sizes beyond `usize`.
     fn rows(&self, width: u32, height: u32) -> Option<(usize, usize)> {
         let (width, height) = (width as usize, height as usize);
         match self {
-            Self::NV12 { .. } => Some((width, height + height / 2)),
+            Self::NV12 { .. } => Some((width, height.checked_add(height / 2)?)),
             _ => Some((width.checked_mul(self.bytes_per_pixel()?)?, height)),
         }
     }
