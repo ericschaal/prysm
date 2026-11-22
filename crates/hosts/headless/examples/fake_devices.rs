@@ -12,21 +12,16 @@
 //! `POST /api/v1/capture/modes` answers them; any other path is unknown, as
 //! an unplugged device is. Opening one fails: the tests do not capture.
 use prysm_capture_device::DeviceSettings;
-use prysm_capture_file::FileSource;
-use prysm_capture_remote::RemoteReceiver;
 use prysm_host::{Program, assets};
-use prysm_output_wled::Wled;
 use prysm_ports::{
     Candidate, Error, FrameSource, Mode, Modes, Result, SourceFactory, ValidationError,
 };
-use prysm_runtime::{Builder, NullOutput};
 use serde::Deserialize;
 use std::process::ExitCode;
 
 const PROGRAM: Program = Program {
     name: "prysm-headless",
     about: "prysm-headless with the video devices PRYSM_FAKE_DEVICES lists.",
-    full_screen: false,
 };
 
 #[derive(Deserialize)]
@@ -80,22 +75,13 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let remote = RemoteReceiver::default();
-    let tv_stream = remote.incoming();
-    let adapters = |prysm: Builder| {
-        prysm
-            .source(devices)
-            .source(FileSource)
-            .source(remote)
-            .output(Wled::default())
-            .output(NullOutput)
-    };
+    let (adapters, tv_stream) = prysm_host::desktop_adapters(devices);
     prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
         prysm
             .surface(host.status())
             .surface(host.start())
             .surface(host.portal(assets::HEADLESS)?.capture_stream(tv_stream))
-            .run(host.signals()?)
+            .run(host.signals())
             .await
     })
 }

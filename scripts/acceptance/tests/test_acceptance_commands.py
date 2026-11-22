@@ -1,8 +1,10 @@
 """The acceptance runner's allow-list and its transport."""
 
+import os
 from pathlib import Path
 import re
 import socket
+import subprocess
 import sys
 from typing import cast
 import unittest
@@ -293,6 +295,21 @@ class AllowList(unittest.TestCase):
             # config.toml is the owner's own, untracked copy.
             if path.is_file() and path.name != 'config.toml':
                 self.assertNotIn('192.168.18.', path.read_text(), path.name)
+
+
+class Spawn(unittest.TestCase):
+    def test_a_background_command_runs_in_a_session_of_its_own(self) -> None:
+        # A Ctrl-C on the runner's terminal must not reach it: the runner's stop is its only signal.
+        command = commands.Command('test', (sys.executable, '-c', 'import time; time.sleep(30)'), 0, background=True)
+        process = transport.Real(log=lambda line: None).spawn(
+            command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        try:
+            self.assertEqual(os.getsid(process.pid), process.pid)
+            self.assertNotEqual(os.getpgid(process.pid), os.getpgid(0))
+        finally:
+            process.kill()
+            process.wait()
 
 
 class HeldStdin(unittest.TestCase):

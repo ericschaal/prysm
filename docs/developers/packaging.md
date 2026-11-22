@@ -16,11 +16,15 @@ or deploy. Release builds: [releasing](releasing.md).
 
 | Target | File | Built by |
 | --- | --- | --- |
-| `mac` | `prysm-headless-macos-arm64` (this Mac's architecture) | `npm run bundle`, then `cargo build --release --locked -p prysm-headless`; macOS only |
+| `mac` | `prysm-headless-macos-arm64` (this Mac's architecture) | `npm run bundle`, then `cargo build --release --locked -p prysm-headless --target <this Mac's triple>`, copied from where cargo reports it wrote the binary; macOS only |
 | `linux-arm64`, `linux-amd64` | `prysm-headless-linux-<arch>` | The Dockerfile's `artifacts` target |
 | `deb-arm64`, `deb-amd64` | `prysm-headless-linux-<arch>.deb` | The same `artifacts` target |
 | `image-arm64`, `image-amd64` | `prysm-headless-linux-<arch>.tar` | The Dockerfile's `runtime` target, an archive for `docker load` |
 | `tv-full`, `tv-slim` | `prysm-tv-full.ipk`, `prysm-tv-slim.ipk` | `npm run bundle`, then [build-ipk.sh](../../packaging/webos/build-ipk.sh); needs `WEBOS_SDK` (see [webOS](#webos)) |
+
+Before it builds anything, `dist` checks every tool `cargo xtask doctor`
+lists for the targets given (for `tv-*` also the webOS SDK, `ares-package`
+and Python) and names the ones missing or too old.
 
 Every artifact embeds the portal: the `release` and `webos` profiles fail
 without `frontend/dist`, where a debug build would fall back to a "not
