@@ -24,10 +24,6 @@ prysm-version.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
-# A socket registered before it connects, so a stop can shut it down.
-socket2 = "0.6"
-# poll(2) for the connect, which a stop shuts down.
-nix = { version = "0.32", features = ["poll"] }
 tungstenite = { workspace = true, features = ["handshake", "rustls-tls-native-roots"] }
 # wss: ring as the crypto provider, and the system's certificate
 # authorities, loaded once per process.
@@ -37,6 +33,10 @@ utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 prysm-testkit.workspace = true
+# `Hangup::waits`, so a test cuts only a call that waits.
+prysm-ports = { workspace = true, features = ["testkit"] }
+# A listener whose full accept queue drops a connect's SYN.
+socket2.workspace = true
 prysm-capture-remote = { path = ".", features = ["testkit"] }
 prysm-runtime = { workspace = true, features = ["testkit"] }
 serde_json.workspace = true

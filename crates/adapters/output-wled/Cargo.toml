@@ -25,6 +25,8 @@ utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 prysm-testkit.workspace = true
+# `Hangup::waits`, so a test cuts only a call that waits.
+prysm-ports = { workspace = true, features = ["testkit"] }
 
 [lints]
 workspace = true

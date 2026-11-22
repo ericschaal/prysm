@@ -1,5 +1,7 @@
 use prysm_core::EdgeColors;
-use prysm_ports::{IdleMode, LedOutput, OpenFailure, OutputFactory, Result, ValidationError};
+use prysm_ports::{
+    Hangup, IdleMode, LedOutput, OpenFailure, OutputFactory, Result, ValidationError,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -53,7 +55,11 @@ impl OutputFactory for NullOutput {
         }
     }
 
-    fn open(&self, _settings: &NullSettings) -> Result<Box<dyn LedOutput>, OpenFailure> {
+    fn open(
+        &self,
+        _settings: &NullSettings,
+        _stop: &Hangup,
+    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
         Ok(Box::new(NullLeds))
     }
 }
@@ -65,7 +71,7 @@ impl LedOutput for NullLeds {
         Ok(())
     }
 
-    fn idle(self: Box<Self>, _mode: IdleMode) -> Result<()> {
+    fn idle(self: Box<Self>, _mode: IdleMode, _stop: &Hangup) -> Result<()> {
         Ok(())
     }
 }
@@ -86,15 +92,16 @@ mod tests {
         };
         registry.validate(&settings).unwrap();
 
-        let mut output = registry.open_output(&null).unwrap();
+        let never = Hangup::default();
+        let mut output = registry.open_output(&null, &never).unwrap();
         output.write(&EdgeColors::default()).unwrap();
-        output.idle(IdleMode::Native).unwrap();
+        output.idle(IdleMode::Native, &never).unwrap();
 
         let extra = NullSettings(BTreeMap::from([("host".into(), ())]));
         let error = NullOutput.validate(&extra).unwrap_err();
         assert_eq!(error.field, "host");
         let extra = AdapterSettings::new(NullOutput::KIND, &extra);
-        assert!(registry.open_output(&extra).is_err());
+        assert!(registry.open_output(&extra, &never).is_err());
     }
 
     #[cfg(feature = "schema")]

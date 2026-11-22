@@ -194,27 +194,38 @@ open has one, `OPEN_LIMIT` (3 s): resolution and live mode by its first
 state checks never block the session thread: their connect, request and
 reply each go on without waiting, at every frame.
 
-A stop waits for the pull in flight, the source's close, and at most
-`STOP_WAIT` (4.5 s) for WLED: an open in flight (also one that follows the
-frame the pull returned) and an idle, or two idles (a release to the
-device's effects in flight, or, without the release, a session idling `Off`
-on its own when the stop asked for its effects: the thread reads the stop's
+An open of the output and a release to the device's effects after a quiet
+spell end when the stop comes: setting the stop flag cuts the session's
+`prysm_ports::Hangup`, which the session gives both calls, and the cut
+shuts their sockets down and wakes a wait for a name. The ended call says
+truthfully whether a request may have reached the device
+(`OpenFailure::Touched`, or a release that leaves the device's mode
+unknown); the loop then sees the stop, not a failure, and the stop's own
+idle, which nothing cuts, sets the mode once after the source's close. An
+open that follows the frame the pull returned fails at once, as every call
+after the cut does. A session's own idle after it ended on its own is not
+cut.
+
+So a stop waits for the pull in flight, the source's close and one idle
+(`IDLE_LIMIT`), or `STOP_WAIT` (two idles, 3 s) for a session idling `Off`
+on its own when the stop asked for its effects (the thread reads the stop's
 mode after closing the source). A pull returns within its timeout (`TICK`,
 50 ms) for the `device`, `remote` and `webos` sources; a `file` pull that
 found output may take the rest of a frame (2 s), and at the end of the file
 FFmpeg's exit too (2 s more), so each source states what its stop takes
-(`SourceStop`). The desktop hosts assert, for each source they register,
-that this and WLED's share fit their 10 s stop deadline (`file`, the
-longest: 0.05 s + 2 s + 4.5 s + 3 s = 9.55 s). The TV's does not fit: its
-release limit is 4 s and its stop deadline 6 s, and these stops exceed it,
-so the engine then faults and only a restart recovers:
+(`SourceStop`). Each host asserts, with `prysm_host::stops_in_time`, for
+each source it registers, that every case fits its stop deadline: the
+desktop hosts' 10 s (`file`, the longest: a pull that ends the file,
+0.05 s + 4 s, then 3 s and 1.5 s, 8.55 s) and the TV's 6 s (`webos`,
+whose release limit is 4 s):
 
-- an open in flight that fails: 3 s, then 4 s and 1.5 s, 8.5 s;
-- an open in flight that succeeds: 1.5 s + 4 s + 1.5 s, 7 s;
-- a release to the device's effects in flight, then a stop `Off`:
-  1.5 s + 4 s + 1.5 s, 7 s.
-
-A stop that meets none of them takes up to 4 s + 1.5 s, 5.5 s.
+| What the stop meets on the TV | Takes at most |
+| --- | --- |
+| nothing in flight | 0.05 s + 4 s + 1.5 s, 5.55 s |
+| an open in flight that would fail | the same, 5.55 s |
+| an open in flight that would succeed | the same, 5.55 s |
+| a release to the device's effects in flight, then a stop `Off` | the same, 5.55 s |
+| a session idling `Off` on its own, then a stop for the effects | 1.5 s + 1.5 s, 3 s |
 
 As a backstop, shutdown gives the engine's blocking adapter and settings
 calls one shared grace (the stop deadline unless the host sets one; 1 s in

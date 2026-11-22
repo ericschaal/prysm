@@ -7,8 +7,8 @@ use crate::output::NotTurnedOff;
 use crate::{IDLE_LIMIT, LedCounts, MAX_LEDS, OPEN_LIMIT, Wled, WledSettings};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{
-    AdapterSettings, DeviceBrightness, Error, IdleMode, LedOutput, OpenFailure, OutputFactory,
-    OutputIssue, Registry,
+    AdapterSettings, DeviceBrightness, Error, Hangup, IdleMode, LedOutput, OpenFailure,
+    OutputFactory, OutputIssue, Registry,
 };
 use prysm_testkit::eventually;
 use serde_json::{Value, json};
@@ -164,7 +164,7 @@ impl Device {
 
     fn open_with(&self, leds: LedCounts, dither: bool) -> Result<Box<dyn LedOutput>, Error> {
         self.wled
-            .open(&self.settings(leds, dither))
+            .open(&self.settings(leds, dither), &Hangup::default())
             .map_err(OpenFailure::into_error)
     }
 
@@ -270,7 +270,7 @@ fn open_through_the_registry_releases_then_enters_live_mode() {
             dither: true,
         },
     );
-    let _output = registry.open_output(&settings).unwrap();
+    let _output = registry.open_output(&settings, &Hangup::default()).unwrap();
     device.expect(&[release(), live()]);
 }
 
@@ -303,7 +303,7 @@ fn idle_off_and_native_release_then_set_the_idle_state() {
     ] {
         let device = Device::new(vec![Reply::Json(OK); 4]);
         let output = device.open(one_each()).unwrap();
-        output.idle(mode).unwrap();
+        output.idle(mode, &Hangup::default()).unwrap();
         device.expect(&[release(), live(), release(), state]);
     }
 }
@@ -329,7 +329,14 @@ fn idle_without_an_output_sets_the_mode_without_taking_the_device_over() {
 fn a_spent_deadline_sends_nothing() {
     let device = Device::new(vec![Reply::Json(OK)]);
     let spent = http::Deadline::after(Duration::ZERO);
-    let error = http::post_state(device.http(), "wled", &json!({"on": true}), spent).unwrap_err();
+    let error = http::post_state(
+        device.http(),
+        "wled",
+        &json!({"on": true}),
+        spent,
+        &Hangup::default(),
+    )
+    .unwrap_err();
     assert!(
         matches!(error, RequestError::TimedOut(Duration::ZERO)),
         "{error:?}"
@@ -339,6 +346,7 @@ fn a_spent_deadline_sends_nothing() {
         "wled",
         &json!({"on": false}),
         http::Deadline::after(WAIT),
+        &Hangup::default(),
     )
     .unwrap();
     assert_eq!(device.call(), json!({"on": false}));
@@ -387,7 +395,10 @@ fn unreachable_device_fails_open_with_its_cause() {
         leds: one_each(),
         dither: true,
     };
-    let failure = Wled::local(4048).open(&settings).err().unwrap();
+    let failure = Wled::local(4048)
+        .open(&settings, &Hangup::default())
+        .err()
+        .unwrap();
     assert!(
         matches!(failure, OpenFailure::Untouched(_)),
         "nothing reached it"
@@ -420,7 +431,7 @@ fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
         ]);
         let failure = device
             .wled
-            .open(&device.settings(one_each(), true))
+            .open(&device.settings(one_each(), true), &Hangup::default())
             .err()
             .unwrap();
         assert!(
@@ -487,7 +498,7 @@ fn idle_failure_keeps_its_cause() {
         Reply::Raw("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".into()),
     ]);
     let output = device.open(one_each()).unwrap();
-    let error = output.idle(IdleMode::Off).unwrap_err();
+    let error = output.idle(IdleMode::Off, &Hangup::default()).unwrap_err();
     assert!(error.to_string().contains("off mode"), "{error}");
     assert!(matches!(request_error(&error), RequestError::Status(404)));
     device.expect(&[release(), live(), release()]);
@@ -689,7 +700,7 @@ fn host_name_is_resolved_at_open_for_http_and_ddp() {
         leds: one_each(),
         dither: true,
     };
-    let mut output = device.wled.open(&settings).unwrap();
+    let mut output = device.wled.open(&settings, &Hangup::default()).unwrap();
     let (head, state) = device.call_with_head();
     assert_eq!(state, release());
     let host = format!("\r\nHost: {}\r\n", device.address("localhost"));
@@ -708,7 +719,7 @@ fn unresolvable_host_fails_open_naming_the_host() {
     };
     let wled = Wled::default()
         .with_lookup(|_, _| Err(io::Error::new(io::ErrorKind::NotFound, "no such host")));
-    let failure = wled.open(&settings).err().unwrap();
+    let failure = wled.open(&settings, &Hangup::default()).err().unwrap();
     assert!(
         matches!(failure, OpenFailure::Untouched(_)),
         "nothing reached it"
@@ -727,7 +738,13 @@ fn unresolvable_host_fails_open_naming_the_host() {
     else {
         panic!("expected an adapter error with a source: {error:?}");
     };
-    assert!(source.downcast_ref::<io::Error>().is_some(), "{source:?}");
+    assert!(
+        matches!(
+            source.downcast_ref::<prysm_ports::CallError>(),
+            Some(prysm_ports::CallError::Failed(_))
+        ),
+        "{source:?}"
+    );
 }
 
 /// A name whose lookup hangs fails each open at the deadline, and the
@@ -752,7 +769,11 @@ fn a_hanging_lookup_is_bounded_and_not_repeated() {
         dither: true,
     };
     for _ in 0..2 {
-        let error = wled.open(&settings).err().unwrap().into_error();
+        let error = wled
+            .open(&settings, &Hangup::default())
+            .err()
+            .unwrap()
+            .into_error();
         assert_eq!(
             prysm_ports::chain(&error),
             "cannot resolve WLED host wled.local: no answer yet"
@@ -1123,7 +1144,7 @@ fn idle_abandons_a_check_in_flight_and_restores_the_device() {
         // The fixture answers one connection at a time: the idle's requests
         // are answered only once the check's connection is closed, so an
         // idle that waited for the check would time out instead.
-        output.idle(mode).unwrap();
+        output.idle(mode, &Hangup::default()).unwrap();
         device.expect(&[release(), state]);
     }
 }
@@ -1147,7 +1168,7 @@ fn findings_survive_until_the_next_check_and_idle_still_restores() {
         (output.report().issue == Some(OutputIssue::Off)).then_some(())
     });
     device.check_request();
-    output.idle(IdleMode::Off).unwrap();
+    output.idle(IdleMode::Off, &Hangup::default()).unwrap();
     device.expect(&[release(), off()]);
 }
 
@@ -1294,7 +1315,7 @@ fn an_open_output_reports_wled_brightness() {
     assert_eq!(Some(brightness), percent(40));
     device.check_request();
     device.get_request("/json/cfg");
-    output.idle(IdleMode::Off).unwrap();
+    output.idle(IdleMode::Off, &Hangup::default()).unwrap();
     device.expect(&[release(), off()]);
 }
 
@@ -1353,7 +1374,7 @@ fn an_open_output_reports_wled_led_count_and_keeps_sending() {
     assert_eq!(count, 120);
     output.write(&EdgeColors::default()).unwrap();
     device.check_request();
-    output.idle(IdleMode::Off).unwrap();
+    output.idle(IdleMode::Off, &Hangup::default()).unwrap();
     device.expect(&[release(), off()]);
 }
 
@@ -1490,7 +1511,118 @@ fn an_open_output_encodes_for_wled_gamma() {
         }
         device.check_request();
         device.get_request("/json/cfg");
-        output.idle(IdleMode::Off).unwrap();
+        output.idle(IdleMode::Off, &Hangup::default()).unwrap();
         device.expect(&[release(), off()]);
     }
+}
+
+/// The bound of a call the cut ends.
+const AT_ONCE: Duration = Duration::from_secs(1);
+
+/// Whether `error` says a cut ended it.
+fn stopped(error: &Error) -> bool {
+    error.cause::<prysm_ports::Stopping>().is_some()
+}
+
+/// Wait (yielding) until `hangup` counts a blocking wait.
+fn blocked(hangup: &Hangup) {
+    let hangup = hangup.clone();
+    prysm_testkit::within(WAIT, move || {
+        while hangup.waits() == 0 {
+            thread::yield_now();
+        }
+    });
+}
+
+/// Open on its own thread with a [`Hangup`], cut it once `ready` returns,
+/// and the failure, within [`AT_ONCE`] of the cut.
+fn cut_open(wled: Wled, settings: WledSettings, ready: impl FnOnce(&Hangup)) -> OpenFailure {
+    let hangup = Hangup::default();
+    let opening = {
+        let hangup = hangup.clone();
+        thread::spawn(move || wled.open(&settings, &hangup).err())
+    };
+    ready(&hangup);
+    hangup.cut();
+    prysm_testkit::within(AT_ONCE, move || opening.join().unwrap()).expect("the open failed")
+}
+
+/// A cut ends an open waiting for its first reply at once: the request may
+/// have reached the device, so it is touched, and it is not turned off
+/// again (whoever cut it sets the mode).
+#[test]
+fn a_cut_ends_an_open_waiting_for_a_reply() {
+    let device = Device::new(vec![Reply::Hang]);
+    let settings = device.settings(one_each(), true);
+    let wled = Wled::local(device.udp.local_addr().unwrap().port());
+    let failure = cut_open(wled, settings, |_| assert_eq!(device.call(), release()));
+    let OpenFailure::Touched(error) = failure else {
+        panic!("the request may have reached it");
+    };
+    assert!(stopped(&error), "{}", prysm_ports::chain(&error));
+    device.expect(&[]);
+}
+
+/// An open after the cut (one that follows the frame a stopping session's
+/// pull returned) fails at once without connecting: nothing reached the
+/// device. (capture-remote's tests show a cut waking a connect in
+/// progress, through the same `prysm_ports::Hangup::connect`.)
+#[test]
+fn an_open_after_the_cut_reaches_nothing() {
+    let device = Device::new(Vec::new());
+    let hangup = Hangup::default();
+    hangup.cut();
+    let failure = device
+        .wled
+        .open(&device.settings(one_each(), true), &hangup)
+        .err()
+        .expect("the open failed");
+    let OpenFailure::Untouched(error) = failure else {
+        panic!("nothing reached it");
+    };
+    assert!(stopped(&error), "{}", prysm_ports::chain(&error));
+    device.expect(&[]);
+}
+
+/// A cut ends an open waiting for its name to resolve at once.
+#[test]
+fn a_cut_ends_an_open_waiting_for_its_name() {
+    // Opened once the test is done, so the lookup thread ends with it.
+    static GATE: (std::sync::Mutex<bool>, std::sync::Condvar) =
+        (std::sync::Mutex::new(false), std::sync::Condvar::new());
+    let wled = Wled::default().with_lookup(|_, _| {
+        let (open, opened) = &GATE;
+        let _open = opened
+            .wait_while(open.lock().unwrap(), |open| !*open)
+            .unwrap();
+        Err(io::Error::other("too late"))
+    });
+    let settings = WledSettings {
+        address: "wled.local".into(),
+        leds: one_each(),
+        dither: true,
+    };
+    let OpenFailure::Untouched(error) = cut_open(wled, settings, blocked) else {
+        panic!("nothing reached it");
+    };
+    assert!(stopped(&error), "{}", prysm_ports::chain(&error));
+    *GATE.0.lock().unwrap() = true;
+    GATE.1.notify_all();
+}
+
+/// A cut ends a held output's idle waiting for its reply at once.
+#[test]
+fn a_cut_ends_an_idle_waiting_for_a_reply() {
+    let device = Device::new(vec![Reply::Json(OK), Reply::Json(OK), Reply::Hang]);
+    let output = device.open(one_each()).unwrap();
+    device.expect(&[release(), live()]);
+    let hangup = Hangup::default();
+    let idling = {
+        let hangup = hangup.clone();
+        thread::spawn(move || output.idle(IdleMode::Native, &hangup))
+    };
+    assert_eq!(device.call(), release());
+    hangup.cut();
+    let error = prysm_testkit::within(AT_ONCE, move || idling.join().unwrap()).unwrap_err();
+    assert!(stopped(&error), "{}", prysm_ports::chain(&error));
 }

@@ -14,6 +14,13 @@
 //!   turns it off before returning. [`Wled`]'s own `idle` does the same for a
 //!   device nobody holds, without live mode first. Either takes at most
 //!   [`IDLE_LIMIT`], name resolution included.
+//! - An open and a held output's `idle` end at once when the
+//!   [`Hangup`](prysm_ports::Hangup) they were given is cut (a session cuts
+//!   it when it is asked to stop): the wait for the name, the connect, the
+//!   request and the reply. The failure then has the cause
+//!   [`Stopping`](prysm_ports::Stopping), and an open says truthfully
+//!   whether a request may have reached the device; it does not turn the
+//!   device off again, as whoever cut it sets the mode next.
 //! - `report` checks WLED's own state about once a second without waiting for
 //!   the connect or the reply, and reports when it is not showing the colours:
 //!   switched off, live override on, not in live mode, another sender, or no

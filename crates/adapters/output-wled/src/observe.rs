@@ -261,11 +261,11 @@ impl Observer {
             Some(Protocol::TCP),
         )
         .and_then(|socket| socket.set_nonblocking(true).map(|()| socket))
-        .map_err(RequestError::Connect)?;
+        .map_err(|error| RequestError::Connect(error.into()))?;
         match socket.connect(&self.device.into()) {
             Ok(()) => {}
             Err(error) if connecting(&error) => {}
-            Err(error) => return Err(RequestError::Connect(error)),
+            Err(error) => return Err(RequestError::Connect(error.into())),
         }
         Ok(Pending {
             ask,
@@ -347,12 +347,12 @@ impl Pending {
             None => {
                 // A failed connect leaves its error on the socket.
                 if let Some(error) = self.stream.take_error()? {
-                    return Err(RequestError::Connect(error));
+                    return Err(RequestError::Connect(error.into()));
                 }
                 match self.stream.peer_addr() {
                     Ok(_) => {}
                     Err(error) if error.kind() == ErrorKind::NotConnected => return Ok(None),
-                    Err(error) => return Err(RequestError::Connect(error)),
+                    Err(error) => return Err(RequestError::Connect(error.into())),
                 }
                 *self.local.insert(self.stream.local_addr()?.ip())
             }

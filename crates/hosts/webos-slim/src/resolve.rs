@@ -1,5 +1,5 @@
 //! Prysm's address, resolved at every connection attempt.
-use prysm_ports::{Error, Result};
+use prysm_ports::{Error, Hangup, Result};
 use prysm_webos_link::PrysmAddress;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -43,7 +43,7 @@ impl Resolver {
             return Ok(address);
         }
         self.names
-            .resolve(self.wait)
+            .resolve(self.wait, &Hangup::default())
             .map_err(|error| Error::adapter(format!("cannot resolve {}", self.prysm), error))
     }
 }

@@ -8,11 +8,11 @@ description = "Shared by the hosts: the embedded portal bundles; for the desktop
 
 [features]
 # `desktop_adapters`: the adapters both desktop hosts register, kept out of
-# the TV worker, which uses this crate only for its portal bundle.
+# the TV worker, which uses this crate only for its portal bundle and
+# `stops_in_time`.
 desktop = [
     "dep:prysm-capture-file",
     "dep:prysm-capture-remote",
-    "dep:prysm-output-wled",
 ]
 
 [dependencies]
@@ -23,7 +23,7 @@ prysm-version.workspace = true
 prysm-web-portal.workspace = true
 prysm-capture-file = { workspace = true, optional = true }
 prysm-capture-remote = { workspace = true, optional = true }
-prysm-output-wled = { workspace = true, optional = true }
+prysm-output-wled.workspace = true
 clap.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["rt", "signal", "sync"] }
