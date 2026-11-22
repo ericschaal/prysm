@@ -28,11 +28,15 @@ pub(crate) fn listed(pid: u32) -> bool {
 }
 
 /// SIGKILL to the process group `pid` leads (each FFmpeg has its own);
-/// `Ok` also when nothing in it is left to signal.
+/// `Ok` also when nothing in it is left to signal. `pid` is a child of this
+/// process that it has not reaped, so the group exists and is the one it
+/// started. macOS answers `EPERM` when no member could be signalled, as for
+/// a group whose only members have exited and wait to be reaped; Linux
+/// succeeds there.
 pub(crate) fn kill_group(pid: u32) -> io::Result<()> {
     let group = i32::try_from(pid).map_err(io::Error::other)?;
     match killpg(Pid::from_raw(group), Signal::SIGKILL) {
-        Ok(()) | Err(Errno::ESRCH) => Ok(()),
+        Ok(()) | Err(Errno::ESRCH | Errno::EPERM) => Ok(()),
         Err(errno) => Err(errno.into()),
     }
 }
@@ -47,5 +51,30 @@ pub fn kill_remaining() {
         if let Err(error) = kill_group(pid) {
             tracing::warn!(pid, %error, "cannot kill FFmpeg");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    /// A player that exited before its source is closed: its group holds
+    /// only a process waiting to be reaped.
+    #[test]
+    fn killing_a_group_whose_process_has_exited_succeeds() {
+        let mut child = Command::new("true")
+            .process_group(0)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // The end of its output: the process is exiting, and is not reaped.
+        let mut output = Vec::new();
+        let mut stdout = child.stdout.take().unwrap();
+        stdout.read_to_end(&mut output).unwrap();
+        kill_group(child.id()).unwrap();
+        child.wait().unwrap();
     }
 }
