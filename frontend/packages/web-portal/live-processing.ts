@@ -39,12 +39,12 @@ export type ProcessingControls = Pick<
  */
 export const processingLimits = {
   brightness_percent: { min: 0, max: 100, step: 1 },
-  sample_density: { min: 1, max: 1024, step: 1 },
+  sample_density: { min: 1, max: 512, step: 1 },
 } as const;
 
 /** The style knobs' limits, from the generated `StyleValues` schema likewise. */
 export const styleLimits = {
-  smoothing_seconds: { min: 0, step: 'any' },
+  smoothing_seconds: { min: 0, max: 2, step: 0.05 },
   cut_response_percent: { min: 0, max: 100, step: 1 },
   brightness_ramp_seconds: { min: 0, max: 2, step: 0.1 },
   spatial_reach_percent: { min: 1, max: 100, step: 1 },
@@ -52,23 +52,6 @@ export const styleLimits = {
   saturation_boost_percent: { min: 0, max: 100, step: 1 },
   dark_floor_percent: { min: 0, max: 20, step: 1 },
 } as const;
-
-/**
- * Smoothing and Detail as sliders: the range a person tunes in, widened to
- * any saved value beyond it (both settings allow more than is useful).
- */
-export const fineLimits = {
-  smoothing: (value: number) => ({
-    min: styleLimits.smoothing_seconds.min,
-    max: Math.max(2, value),
-    step: 0.05,
-  }),
-  detail: (value: number) => ({
-    min: processingLimits.sample_density.min,
-    max: Math.max(512, value),
-    step: 1,
-  }),
-};
 
 /** Wait this long after the last change before applying it. */
 export const processingDelayMs = 400;

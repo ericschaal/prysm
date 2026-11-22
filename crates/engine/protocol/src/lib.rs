@@ -238,14 +238,23 @@ pub enum Failure {
     MethodNotAllowed {
         message: String,
     },
-    /// The request was malformed.
+    /// The request was malformed: not JSON, or a field outside the settings
+    /// unknown, missing or of the wrong type.
     BadRequest {
+        message: String,
+    },
+    /// The request body did not arrive in time.
+    RequestTimeout {
         message: String,
     },
     PayloadTooLarge {
         message: String,
     },
     UnsupportedMediaType {
+        message: String,
+    },
+    /// A capture stream sender of another version.
+    UpgradeRequired {
         message: String,
     },
     /// Too many concurrent requests or streams.
@@ -269,8 +278,10 @@ impl Failure {
             | Self::NotFound { message }
             | Self::MethodNotAllowed { message }
             | Self::BadRequest { message }
+            | Self::RequestTimeout { message }
             | Self::PayloadTooLarge { message }
             | Self::UnsupportedMediaType { message }
+            | Self::UpgradeRequired { message }
             | Self::Busy { message } => message,
         }
     }
@@ -300,10 +311,9 @@ impl From<&Error> for Failure {
                 message: prysm_ports::chain(error),
                 field: None,
             },
-            // The decoder's message names the field the user got wrong.
-            Error::Decode { source, .. } => Self::Invalid {
+            Error::Decode { field, source, .. } => Self::Invalid {
                 message: format!("{message}: {source}"),
-                field: None,
+                field: Some(field.clone()),
             },
             Error::Adapter { .. } => Self::Adapter {
                 message: prysm_ports::chain(error),
@@ -575,9 +585,12 @@ mod tests {
         let source = serde_json::from_str::<u8>("\"x\"").unwrap_err();
         let decode = Failure::from(&Error::Decode {
             kind: "wled".into(),
+            field: "output.leds".into(),
             source: std::sync::Arc::new(source),
         });
-        assert!(matches!(&decode, Failure::Invalid { field: None, .. }));
+        assert!(
+            matches!(&decode, Failure::Invalid { field: Some(field), .. } if field == "output.leds")
+        );
         assert!(
             decode
                 .message()

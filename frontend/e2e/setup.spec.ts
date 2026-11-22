@@ -40,7 +40,15 @@ test('setup saves a TV source and no lights, on disk and on Home', async ({
     page.getByRole('status').filter({ hasText: 'Setup saved.' }),
   ).toBeVisible();
   const saved = await prysm.savedSettings();
-  expect(saved.capture).toEqual({ kind: 'remote' });
+  // Written in full: a later default changes only new setups.
+  expect(saved.capture).toEqual({
+    kind: 'remote',
+    width: 320,
+    height: 180,
+    fps: 30,
+    include_ui: true,
+    encoding: 'h264_hardware',
+  });
   expect(saved.output).toEqual({ kind: 'null' });
 
   const setup = page.getByRole('region', { name: 'Your setup' });

@@ -181,11 +181,19 @@ export interface components {
             message: string;
         } | {
             /** @enum {string} */
+            kind: "request_timeout";
+            message: string;
+        } | {
+            /** @enum {string} */
             kind: "payload_too_large";
             message: string;
         } | {
             /** @enum {string} */
             kind: "unsupported_media_type";
+            message: string;
+        } | {
+            /** @enum {string} */
+            kind: "upgrade_required";
             message: string;
         } | {
             /** @enum {string} */
@@ -571,7 +579,7 @@ export interface components {
             saturation_boost_percent: number;
             /**
              * Format: float
-             * @description Seconds; 0 disables smoothing.
+             * @description Seconds to complete most of a change; 0 disables smoothing.
              */
             smoothing_seconds: number;
             /**

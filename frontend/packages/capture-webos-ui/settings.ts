@@ -34,11 +34,3 @@ export function describeTvPicture(
 
 export const includeMenusHelp =
   'Menus are captured over the video, and when nothing is playing (such as the Home screen) the TV’s own screens are captured. Off: video only.';
-
-/** What Rust uses for an omitted field. */
-export const webosDefaults = {
-  width: 640,
-  height: 360,
-  fps: 30,
-  include_ui: true,
-} as const;

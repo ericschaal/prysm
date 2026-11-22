@@ -6,7 +6,7 @@ Its variants are what callers match on; never match on message text.
 | Variant | Meaning | Portal `kind` |
 | --- | --- | --- |
 | `Invalid` | A setting failed validation; carries the field path, such as `output.address` | `invalid` (422) |
-| `Decode` | Adapter settings under `kind` could not be decoded | `invalid` (422) |
+| `Decode` | Adapter settings under `kind` could not be decoded; carries the field path where decoding stopped, such as `capture.fps` (the section alone when the section as a whole is at fault) | `invalid` (422) |
 | `UnusableSettings` | The settings store could not be read at start (the file does not decode, has another format, or cannot be read); carries the store's error and its causes, no field. The engine runs unconfigured, reporting it until a save | `invalid`, no `field` (422 for a command it refuses) |
 | `Adapter` | A device or adapter failed to open, read, write or idle; `section` says capture or output when known | `adapter` (502) |
 | `StaleRevision` | Settings were replaced from an old revision | `stale_revision` (409) |

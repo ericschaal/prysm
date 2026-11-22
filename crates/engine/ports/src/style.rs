@@ -112,7 +112,8 @@ pub(crate) mod as_object {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StyleValues {
-    /// Seconds to complete most of a change; 0 disables smoothing.
+    /// Seconds to complete most of a change, at most
+    /// [`StyleValues::MAX_SMOOTHING_SECONDS`]; 0 disables smoothing.
     pub smoothing_seconds: f32,
     /// How much of a scene cut the lights take at once.
     pub cut_response_percent: u8,
@@ -131,6 +132,10 @@ impl StyleValues {
     /// invalid setting) falls back to. Evaluated when compiled, so it cannot
     /// fail at run time.
     pub const DEFAULT: Self = Style::Natural.built_in().unwrap();
+
+    /// The longest smoothing: slower than this, the lights trail the
+    /// picture by more than a scene lasts.
+    pub const MAX_SMOOTHING_SECONDS: f32 = 2.0;
 
     /// The longest brightness ramp: slower than this, a cut to a bright
     /// scene looks like a fade rather than a cut.
@@ -152,10 +157,13 @@ impl StyleValues {
                 .then_some(())
                 .ok_or_else(|| ValidationError::new(path(field), format!("must be {min}-{max}")))
         };
-        if !(self.smoothing_seconds.is_finite() && self.smoothing_seconds >= 0.0) {
+        if !(0.0..=Self::MAX_SMOOTHING_SECONDS).contains(&self.smoothing_seconds) {
             return Err(ValidationError::new(
                 path("smoothing_seconds"),
-                "must be a finite number of seconds, 0 to disable",
+                format!(
+                    "must be 0 to {} seconds, 0 to disable",
+                    Self::MAX_SMOOTHING_SECONDS
+                ),
             ));
         }
         percent("cut_response_percent", self.cut_response_percent, 0, 100)?;
@@ -274,13 +282,23 @@ mod tests {
                 format!("{at}.{field}")
             );
         }
-        for seconds in [-0.1, f32::INFINITY] {
+        for seconds in [-0.1, 2.01, f32::INFINITY] {
             let values = StyleValues {
                 brightness_ramp_seconds: seconds,
                 ..natural
             };
             assert!(values.validate(at).is_err(), "{seconds}");
+            let values = StyleValues {
+                smoothing_seconds: seconds,
+                ..natural
+            };
+            assert!(values.validate(at).is_err(), "{seconds}");
         }
+        let longest = StyleValues {
+            smoothing_seconds: StyleValues::MAX_SMOOTHING_SECONDS,
+            ..natural
+        };
+        assert_eq!(longest.validate(at), Ok(()));
         let floor = StyleValues {
             dark_floor_percent: 21,
             ..natural

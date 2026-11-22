@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { captureDefaults } from '@prysm/contracts/constants';
 import type {
   RemoteReceiverSettings,
   StreamEncoding,
@@ -10,7 +11,9 @@ import {
   useEachCaptureModes,
   type EditorProps,
 } from '@prysm/web-portal';
-import { encodingChoices, remoteDefaults } from './settings';
+import { encodingChoices } from './settings';
+
+const defaults = captureDefaults.remote;
 
 /** One question per encoding: only the encoding selects the TV's answer. */
 const queries = encodingChoices.map(({ value }) => ({
@@ -28,7 +31,7 @@ export function RemoteEditor({
   onChange,
 }: EditorProps<RemoteReceiverSettings>) {
   const states = useEachCaptureModes(queries);
-  const encoding = value.encoding ?? remoteDefaults.encoding;
+  const encoding = value.encoding ?? defaults.encoding;
   /** The saved encoding stays listed, and in sight while it is not offered. */
   const [saved] = useState(encoding);
   const modesOf = (of: StreamEncoding) =>
@@ -60,7 +63,7 @@ export function RemoteEditor({
   return (
     <TvPictureFields
       value={value}
-      defaults={remoteDefaults}
+      defaults={defaults}
       onChange={onChange}
       modes={modesOf(encoding)}
       source="This TV"

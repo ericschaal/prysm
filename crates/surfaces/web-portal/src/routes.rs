@@ -205,12 +205,14 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             Some(_) => method_not_allowed(),
             None => not_found(),
         },
-        "/api/v1/target" if method == Method::PUT => match decode::<TargetRequest>(request).await {
-            Ok(body) => applied(command(context.engine.set_target(body.target)).await),
-            Err(response) => *response,
-        },
+        "/api/v1/target" if method == Method::PUT => {
+            match decode::<TargetRequest>(request, Body::Request).await {
+                Ok(body) => applied(command(context.engine.set_target(body.target)).await),
+                Err(response) => *response,
+            }
+        }
         "/api/v1/calibration" if method == Method::PUT => {
-            match decode::<CalibrationPattern>(request).await {
+            match decode::<CalibrationPattern>(request, Body::Request).await {
                 Ok(body) => applied(command(context.engine.set_calibration(Some(body))).await),
                 Err(response) => *response,
             }
@@ -219,19 +221,21 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             applied(command(context.engine.set_calibration(None)).await)
         }
         "/api/v1/processing/trial" if method == Method::PUT => {
-            match decode::<Processing>(request).await {
+            match decode::<Processing>(request, Body::Section(Section::Processing)).await {
                 Ok(body) => applied(command(context.engine.try_processing(body)).await),
                 Err(response) => *response,
             }
         }
         "/api/v1/settings" if method == Method::PUT => replace_settings(context, request).await,
-        CAPTURE_MODES if method == Method::POST => match decode::<AdapterSettings>(request).await {
-            Ok(body) => match command(context.engine.capture_modes(body)).await {
-                Ok(modes) => response::json(StatusCode::OK, &modes),
+        CAPTURE_MODES if method == Method::POST => {
+            match decode::<AdapterSettings>(request, Body::Section(Section::Capture)).await {
+                Ok(body) => match command(context.engine.capture_modes(body)).await {
+                    Ok(modes) => response::json(StatusCode::OK, &modes),
+                    Err(response) => *response,
+                },
                 Err(response) => *response,
-            },
-            Err(response) => *response,
-        },
+            }
+        }
         _ if path.starts_with(CANDIDATES) => {
             candidates(context, &path[CANDIDATES.len()..], &method).await
         }
@@ -251,7 +255,7 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
 
 /// `PUT /api/v1/settings`: the new revision once saved.
 async fn replace_settings(context: &Context, request: Request<Incoming>) -> Response {
-    let body = match decode::<SettingsRequest>(request).await {
+    let body = match decode::<SettingsRequest>(request, Body::Settings).await {
         Ok(body) => body,
         Err(response) => return *response,
     };
@@ -323,7 +327,40 @@ async fn command<T>(call: impl Future<Output = Result<T>>) -> Result<T, Box<Resp
         .map_err(|error| Box::new(response::error(&error)))
 }
 
-async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Box<Response>> {
+/// Where a request body holds settings. A value there that does not decode
+/// is `422 invalid` with its `field`; any other problem (a body that is not
+/// JSON, a field around the settings unknown, missing or of the wrong type)
+/// is `400 bad_request`.
+#[derive(Debug, Clone, Copy)]
+enum Body {
+    /// None: a request such as `TargetRequest`.
+    Request,
+    /// In `SettingsRequest.settings`, whose paths are field paths as they
+    /// are (`processing.style.kind`).
+    Settings,
+    /// Inside the body, which is one section (`Processing` is
+    /// `processing`); the body as a whole is the request.
+    Section(Section),
+}
+
+impl Body {
+    /// The settings field at `path` in the body, if it is one; never the
+    /// body as a whole.
+    fn field(self, path: &serde_path_to_error::Path) -> Option<String> {
+        path.iter().next()?;
+        let path = path.to_string();
+        match self {
+            Self::Request => None,
+            Self::Settings => path.strip_prefix("settings.").map(str::to_owned),
+            Self::Section(section) => Some(format!("{section}.{path}")),
+        }
+    }
+}
+
+async fn decode<T: DeserializeOwned>(
+    request: Request<Incoming>,
+    settings: Body,
+) -> Result<T, Box<Response>> {
     let reject = |status, body| Box::new(failure(status, body));
     let json = request
         .headers()
@@ -344,7 +381,7 @@ async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Bo
         Err(_) => {
             return Err(reject(
                 StatusCode::REQUEST_TIMEOUT,
-                Failure::BadRequest {
+                Failure::RequestTimeout {
                     message: "request body timed out".into(),
                 },
             ));
@@ -367,14 +404,32 @@ async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Bo
         }
         Ok(Ok(body)) => body.to_bytes(),
     };
-    serde_json::from_slice(&body).map_err(|error| {
+    let malformed = |error: &serde_json::Error| {
         reject(
             StatusCode::BAD_REQUEST,
             Failure::BadRequest {
                 message: format!("invalid request: {error}"),
             },
         )
-    })
+    };
+    let mut json = serde_json::Deserializer::from_slice(&body);
+    let value = serde_path_to_error::deserialize(&mut json).map_err(|error| {
+        let field = (error.inner().classify() == serde_json::error::Category::Data)
+            .then(|| settings.field(error.path()))
+            .flatten();
+        match field {
+            Some(field) => reject(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Failure::Invalid {
+                    message: error.inner().to_string(),
+                    field: Some(field),
+                },
+            ),
+            None => malformed(error.inner()),
+        }
+    })?;
+    json.end().map_err(|error| malformed(&error))?;
+    Ok(value)
 }
 
 /// Server-sent events: the current state at once, then the latest state after

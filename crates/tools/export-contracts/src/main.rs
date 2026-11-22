@@ -53,9 +53,10 @@ fn webos() -> Contract {
 /// `fixtures`, Rust serializations the frontend tests validate against the
 /// documents.
 fn main() -> Result<(), Box<dyn Error>> {
+    let documents = documents()?;
     let output = json!({
-        "documents": documents()?,
-        "constants": constants::serialized()?,
+        "constants": constants::serialized(&documents)?,
+        "documents": documents,
         "fixtures": fixtures::serialized(),
     });
     let mut stdout = io::stdout().lock();

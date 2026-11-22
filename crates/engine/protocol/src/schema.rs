@@ -60,11 +60,12 @@ pub struct SettingsSchema {
     processing: ProcessingSchema,
 }
 
-// `schema(...)` takes literals only: the calibration, detail, ramp and floor limits below are spelled out.
+// `schema(...)` takes literals only: the calibration, detail, smoothing, ramp and floor limits below are spelled out.
 const _: () = assert!(
     MAX_CALIBRATIONS == 32 && MAX_CALIBRATION_ID_LEN == 64 && MAX_CALIBRATION_NAME_CHARS == 64
 );
-const _: () = assert!(prysm_ports::Processing::MAX_SAMPLE_DENSITY == 1024);
+const _: () = assert!(prysm_ports::Processing::MAX_SAMPLE_DENSITY == 512);
+const _: () = assert!(prysm_ports::StyleValues::MAX_SMOOTHING_SECONDS == 2.0);
 const _: () = assert!(prysm_ports::StyleValues::MAX_BRIGHTNESS_RAMP_SECONDS == 2.0);
 const _: () = assert!(prysm_ports::StyleValues::MAX_DARK_FLOOR_PERCENT == 20);
 
@@ -87,7 +88,7 @@ pub struct ProcessingSchema {
     /// At most one sample per sampling-grid cell along an edge (128 along the
     /// longer side): density 200 reaches it for 16:9 pictures of 640x360 or
     /// more, a higher one for squarer or smaller pictures.
-    #[schema(minimum = 1, maximum = 1024)]
+    #[schema(minimum = 1, maximum = 512)]
     sample_density: u16,
     remove_black_bars: bool,
     /// Saved color corrections; ids are unique.
@@ -134,8 +135,8 @@ pub struct ChosenStyleSchema {
 #[schema(as = StyleValues)]
 #[serde(deny_unknown_fields)]
 pub struct StyleValuesSchema {
-    /// Seconds; 0 disables smoothing.
-    #[schema(minimum = 0)]
+    /// Seconds to complete most of a change; 0 disables smoothing.
+    #[schema(minimum = 0, maximum = 2)]
     smoothing_seconds: f32,
     /// How much of a scene cut the lights take at once; 0 eases a cut in
     /// like any other change.

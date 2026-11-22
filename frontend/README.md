@@ -159,7 +159,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     ticked style's values, generated from Rust (`@prysm/contracts/constants`);
     later it returns to the kept values. Detail
     (`#/settings/detail`: 1 to 512) stays outside styles. All sliders are in
-    Home's one slider style, widened to fit a saved value beyond, and apply
+    Home's one slider style, over the whole range Prysm accepts, and apply
     live (debounced 400 ms, sliders on release) because processing-only
     changes reach a running session without restarting it. [Calibrations](packages/web-portal/calibrations.tsx)
     (`#/settings/calibrations`): one row each ("In use" or "Not in use") opening

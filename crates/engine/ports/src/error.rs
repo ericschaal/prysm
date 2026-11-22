@@ -29,9 +29,14 @@ pub enum Error {
     /// unconfigured until a save.
     #[error(transparent)]
     UnusableSettings(Arc<Error>),
+    /// Adapter settings under `kind` that do not decode as its type.
     #[error("cannot decode `{kind}` settings")]
     Decode {
         kind: String,
+        /// Where decoding stopped, a path like [`ValidationError::field`]
+        /// (`capture.fps`); the section alone (`capture`) when the section
+        /// as a whole is at fault, such as for a missing field.
+        field: String,
         #[source]
         source: Arc<serde_json::Error>,
     },
@@ -179,6 +184,7 @@ mod tests {
         assert!(Error::other("no cause").cause::<std::io::Error>().is_none());
         let decode = Error::Decode {
             kind: "fake".into(),
+            field: "capture.fps".into(),
             source: Arc::new(serde_json::from_str::<u8>("x").unwrap_err()),
         };
         assert!(decode.cause::<serde_json::Error>().is_some());

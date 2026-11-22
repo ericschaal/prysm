@@ -27,7 +27,7 @@ pub struct FileSettings {
     pub height: u32,
     /// Upper bound on the delivered frame rate.
     #[serde(default = "default_fps")]
-    #[cfg_attr(feature = "schema", schema(minimum = 1, default = default_fps))]
+    #[cfg_attr(feature = "schema", schema(minimum = 1, maximum = 120, default = default_fps))]
     pub fps: u32,
     /// Loop the file forever instead of ending lighting at its end.
     #[serde(default)]
@@ -77,6 +77,10 @@ mod schema_tests {
         assert_eq!(schema["properties"]["width"]["default"], json!(640));
         assert_eq!(schema["properties"]["height"]["maximum"], json!(2160));
         assert_eq!(schema["properties"]["fps"]["default"], json!(30));
+        assert_eq!(
+            schema["properties"]["fps"]["maximum"],
+            json!(prysm_ports::capture_size::MAX_FPS)
+        );
         assert_eq!(FileSettings::name(), "FileSettings");
     }
 }

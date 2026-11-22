@@ -136,10 +136,12 @@ impl Default for Processing {
 }
 
 impl Processing {
-    /// The most a user may set. The sampler gives an edge at most one sample
-    /// per grid cell, which density 128,000 / (the 640x360 copy's longer side)
-    /// reaches: 200 for 16:9, about 267 for a square, 400 for a 320x180 picture.
-    pub const MAX_SAMPLE_DENSITY: u16 = 1024;
+    /// The most a user may set, in the file as on the portal's slider: above
+    /// every density that still adds samples. The sampler gives an edge at
+    /// most one sample per grid cell, which density 128,000 / (the 640x360
+    /// copy's longer side) reaches: 200 for 16:9, about 267 for a square, 400
+    /// for a 320x180 picture.
+    pub const MAX_SAMPLE_DENSITY: u16 = 512;
 
     /// # Errors
     /// Rejects values the processor would silently clamp or ignore, and a

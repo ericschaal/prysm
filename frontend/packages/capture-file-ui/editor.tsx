@@ -1,3 +1,4 @@
+import { captureDefaults } from '@prysm/contracts/constants';
 import type { FileSettings } from '@prysm/contracts/host-desktop';
 import {
   PictureChoice,
@@ -5,7 +6,6 @@ import {
   useCaptureModes,
   type EditorProps,
 } from '@prysm/web-portal';
-import { fileDefaults } from './settings';
 
 /** Every file gets the same answer: FFmpeg scales it. */
 const fileQuery = { kind: 'file', path: '' } as const;
@@ -25,7 +25,7 @@ export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
       />
       <PictureChoice
         value={value}
-        defaults={fileDefaults}
+        defaults={captureDefaults.file}
         onChange={onChange}
         modes={modes}
         source="A file"
