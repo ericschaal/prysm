@@ -345,6 +345,13 @@ impl Session {
         if idled_in == mode || end.released.is_err() {
             return Ok(Stop::OnItsOwn(end));
         }
+        // The stop's idle replaces the thread's; its failure is said here.
+        if let Err(error) = &end.left {
+            tracing::warn!(
+                error = %prysm_ports::chain(error),
+                "the output's idle after the session's own end failed; idling again as the stop asks"
+            );
+        }
         let idling = tokio::task::spawn_blocking(move || idle(&mut leds, mode, &output));
         let left = match tokio::time::timeout_at(until, idling).await {
             // `idle` catches a panic, so the task always returns.
