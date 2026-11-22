@@ -29,9 +29,10 @@ pub(crate) fn listed(pid: u32) -> bool {
 
 /// SIGKILL to the process group `pid` leads (each FFmpeg has its own);
 /// `Ok` also when nothing in it is left to signal. `pid` is a child of this
-/// process that it has not reaped, so the group is this user's: macOS
-/// answers `EPERM`, where Linux signals nothing, for a group whose only
-/// members have exited and wait to be reaped.
+/// process that it has not reaped, so the group exists and is the one it
+/// started. macOS answers `EPERM` when no member could be signalled, as for
+/// a group whose only members have exited and wait to be reaped; Linux
+/// succeeds there.
 pub(crate) fn kill_group(pid: u32) -> io::Result<()> {
     let group = i32::try_from(pid).map_err(io::Error::other)?;
     match killpg(Pid::from_raw(group), Signal::SIGKILL) {
