@@ -72,10 +72,10 @@ futures = "0.3"
 # Data-parallel sampling on a dedicated pool (crates/engine/processor/src/workers.rs).
 rayon = "1.11"
 libloading = "0.9"
-nix = "0.31"
+nix = "0.32"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-signal-hook = "0.3"
+signal-hook = "0.4"
 tempfile = "3.27"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "macros", "sync"] }
