@@ -334,9 +334,6 @@ fn full_keeps_the_fields_it_does_not_own() {
     );
 }
 
-/// An unreadable `tv.json` is reported as the `preferences` failure, the
-/// defaults are used, and the file stays as it is until preferences are
-/// saved.
 /// A store whose file cannot be read and cannot be replaced.
 #[derive(Default)]
 struct Broken {
@@ -416,6 +413,9 @@ fn a_missing_preferences_file_is_no_failure() {
     assert_eq!(state.preferences, Preferences::default());
 }
 
+/// An unreadable `tv.json` is reported as the `preferences` failure, the
+/// defaults are used, and the file stays as it is until preferences are
+/// saved.
 #[test]
 fn unreadable_preferences_are_reported_and_kept_until_saved() {
     let dir = tempfile::tempdir().unwrap();
