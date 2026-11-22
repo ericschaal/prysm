@@ -1,6 +1,9 @@
 //! Explicit V4L buffer lifetime. Unlike the upstream stream, cleanup never panics.
 use crate::{CaptureError, Result};
-use std::{io, ptr::NonNull, sync::Arc, time::Duration};
+use std::ffi::c_void;
+use std::os::fd::RawFd;
+use std::time::{Duration, Instant};
+use std::{io, ptr::NonNull, sync::Arc};
 use v4l::{
     Device,
     device::Handle,
@@ -11,16 +14,35 @@ use v4l::{
     v4l2,
 };
 
+/// What capture was doing when the stream failed.
+const WAITING: &str = "error waiting for a capture frame";
+const CAPTURING: &str = "error capturing frame";
+const REQUEUING: &str = "failed to requeue capture buffer";
+
+/// A raw ioctl on the stream's device, as `v4l2::ioctl` makes it: the request
+/// and a pointer to the structure that request takes.
+type Ioctl<'a> = dyn FnMut(v4l2::vidioc::_IOC_TYPE, *mut c_void) -> io::Result<()> + 'a;
+
 struct Mapping {
     pointer: NonNull<u8>,
     length: usize,
 }
+
+/// A device's capture buffers, mapped for reading.
+///
+/// - `allocated`: REQBUFS gave the device's buffers to this stream; only
+///   `REQBUFS(0)` in [`Stream::release`] gives them back, once every mapping
+///   is gone.
+/// - `buffers`: one slot per buffer index; `None` once unmapped (only by
+///   `release`, which then never maps again).
+/// - `active`: STREAMON succeeded. When it is false no buffer is queued:
+///   a start that fails undoes itself with STREAMOFF.
 pub(super) struct Stream {
     handle: Arc<Handle>,
     buffers: Vec<Option<Mapping>>,
     allocated: bool,
     active: bool,
-    timeout: i32,
+    timeout: Duration,
 }
 
 /// Whether `error` from a V4L2 ioctl means the device is gone (unplugged or
@@ -29,12 +51,39 @@ pub(super) struct Stream {
 /// frees the queue's buffers (at the latest when the fd closes). Nothing else
 /// counts: EIO, EPROTO or ESHUTDOWN can come from a device still registered,
 /// whose buffers may still be held.
-pub(super) fn device_gone(error: &io::Error) -> bool {
+fn device_gone(error: &io::Error) -> bool {
     error.raw_os_error() == Some(libc::ENODEV)
 }
 
-/// Whether `error` from `VIDIOC_DQBUF` may be temporary: EIO, which V4L2
-/// also uses for problems like signal loss (see [`crate::interruptions`]).
+/// A failure of the running stream, `doing` what: [`CaptureError::Disconnected`]
+/// when the device is gone, else a backend error.
+pub(super) fn failed(error: io::Error, doing: &'static str) -> CaptureError {
+    if device_gone(&error) {
+        CaptureError::Disconnected {
+            details: doing.into(),
+            source: Some(error),
+        }
+    } else {
+        anyhow::Error::new(error).context(doing).into()
+    }
+}
+
+/// The outcome of capturing after `release` freed the stream: a failed
+/// release is [`CaptureError::Cleanup`] (the device must not be reopened),
+/// caused by the capture's own error when there was one.
+pub(super) fn released(release: io::Result<()>, result: Result<()>) -> Result<()> {
+    match (release, result) {
+        (Ok(()), result) => result,
+        (Err(release), Ok(())) => Err(CaptureError::Cleanup(release.into())),
+        (Err(release), Err(capture)) => Err(CaptureError::Cleanup(
+            anyhow::Error::new(capture).context(release),
+        )),
+    }
+}
+
+/// Whether `error` from `VIDIOC_DQBUF` or `VIDIOC_QBUF` may be temporary:
+/// EIO, which V4L2 also uses for problems like signal loss (see
+/// [`crate::health`]).
 fn interrupted(error: &io::Error) -> bool {
     error.raw_os_error() == Some(libc::EIO)
 }
@@ -45,9 +94,9 @@ pub(super) enum Dequeued<T> {
     Buffer(T),
     /// No buffer within the timeout.
     Stalled,
-    /// DQBUF failed with a possibly temporary error; the stream needs a
-    /// restart before the next frame.
-    Interrupted(io::Error),
+    /// DQBUF or QBUF failed with a possibly temporary error; the stream needs
+    /// a restart before the next frame.
+    Interrupted(CaptureError),
 }
 
 fn buffer(index: u32) -> v4l2_buffer {
@@ -61,6 +110,15 @@ fn buffer(index: u32) -> v4l2_buffer {
     }
 }
 
+/// The kernel's ioctl on `fd`, for the `_with` methods.
+fn kernel(fd: RawFd) -> impl FnMut(v4l2::vidioc::_IOC_TYPE, *mut c_void) -> io::Result<()> {
+    // SAFETY: each `_with` method passes only the requests its documentation
+    // names, each with a pointer to the live structure that request takes;
+    // `fd` is the stream's, open for as long as the stream (which outlives
+    // the call) holds its handle.
+    move |request, value| unsafe { v4l2::ioctl(fd, request, value) }
+}
+
 impl Stream {
     pub fn new(device: &Device, timeout: Duration) -> Result<Self> {
         let mut stream = Self {
@@ -68,13 +126,12 @@ impl Stream {
             buffers: Vec::new(),
             allocated: false,
             active: false,
-            timeout: i32::try_from(timeout.as_millis()).expect("bounded capture timeout"),
+            timeout,
         };
         if let Err(error) = stream.allocate() {
-            stream
-                .release()
-                .map_err(|error| CaptureError::Cleanup(error.into()))?;
-            return Err(CaptureError::Backend(error.into()));
+            let allocation = Err(CaptureError::Backend(error.into()));
+            return Err(released(stream.release(), allocation)
+                .expect_err("a failed allocation stays failed after release"));
         }
         Ok(stream)
     }
@@ -115,11 +172,12 @@ impl Stream {
             // SAFETY: for MMAP memory QUERYBUF sets `m.offset`, the union member
             // read; mapping `length` bytes at that offset of this device is what
             // V4L2 defines, and the mapping lives until `release` unmaps it.
+            // Read-only: a capture queue's buffers are only read here.
             let pointer = unsafe {
                 v4l2::mmap(
                     std::ptr::null_mut(),
                     info.length as usize,
-                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::PROT_READ,
                     libc::MAP_SHARED,
                     self.handle.fd(),
                     info.m.offset.into(),
@@ -132,19 +190,40 @@ impl Stream {
         }
         Ok(())
     }
-    fn queue(&self, index: u32) -> io::Result<()> {
-        // SAFETY: QBUF takes a `v4l2_buffer`.
-        unsafe { self.ioctl(v4l2::vidioc::VIDIOC_QBUF, &mut buffer(index)) }
-    }
+    /// Queue every buffer and stream on.
     pub fn start(&mut self) -> io::Result<()> {
-        for index in 0..self.buffers.len() {
-            self.queue(u32::try_from(index).expect("V4L buffer index"))?;
-        }
+        self.start_with(&mut kernel(self.handle.fd()))
+    }
+    /// [`Self::start`] through `ioctl`: QBUF with a `v4l2_buffer`, STREAMON
+    /// and STREAMOFF with the buffer type. A failure streams off again, which
+    /// also takes back the buffers queued before it, so a later start can
+    /// queue them again.
+    fn start_with(&mut self, ioctl: &mut Ioctl<'_>) -> io::Result<()> {
         let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        // SAFETY: STREAMON takes the buffer type, a `u32`.
-        unsafe { self.ioctl(v4l2::vidioc::VIDIOC_STREAMON, &mut kind) }?;
-        self.active = true;
-        Ok(())
+        let mut started = || {
+            for index in 0..self.buffers.len() {
+                let index = u32::try_from(index).expect("V4L buffer index");
+                ioctl(
+                    v4l2::vidioc::VIDIOC_QBUF,
+                    std::ptr::from_mut(&mut buffer(index)).cast(),
+                )?;
+            }
+            ioctl(
+                v4l2::vidioc::VIDIOC_STREAMON,
+                std::ptr::from_mut(&mut kind).cast(),
+            )
+        };
+        let result = started();
+        if result.is_err() {
+            // The start's own error is the one reported; a buffer this cannot
+            // take back is freed by `release`.
+            let _ = ioctl(
+                v4l2::vidioc::VIDIOC_STREAMOFF,
+                std::ptr::from_mut(&mut kind).cast(),
+            );
+        }
+        self.active = result.is_ok();
+        result
     }
     pub fn stop(&mut self) -> io::Result<()> {
         if self.active {
@@ -156,63 +235,104 @@ impl Stream {
         Ok(())
     }
     /// Dequeue the next buffer, give it to `copy` and queue it again.
-    pub fn frame<T>(
+    pub fn frame<T>(&mut self, copy: impl FnOnce(&[u8], &v4l2_buffer) -> T) -> Result<Dequeued<T>> {
+        let handle = Arc::clone(&self.handle);
+        self.frame_with(
+            &mut |timeout| handle.poll(libc::POLLIN, timeout),
+            &mut kernel(handle.fd()),
+            copy,
+        )
+    }
+    /// [`Self::frame`] through `poll` (milliseconds in, ready descriptors
+    /// out) and `ioctl`: DQBUF and QBUF, each with a `v4l2_buffer`.
+    fn frame_with<T>(
         &mut self,
+        poll: &mut dyn FnMut(i32) -> io::Result<i32>,
+        ioctl: &mut Ioctl<'_>,
         copy: impl FnOnce(&[u8], &v4l2_buffer) -> T,
-    ) -> io::Result<Dequeued<T>> {
-        if self.handle.poll(libc::POLLIN, self.timeout)? == 0 {
-            return Ok(Dequeued::Stalled);
+    ) -> Result<Dequeued<T>> {
+        let deadline = Instant::now() + self.timeout;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match poll(i32::try_from(left.as_millis()).unwrap_or(i32::MAX)) {
+                Ok(0) => return Ok(Dequeued::Stalled),
+                Ok(_) => break,
+                // A signal handler ran on this thread: poll(2) is never
+                // restarted, so wait again for what is left.
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(failed(error, WAITING)),
+            }
         }
         let mut info = buffer(0);
-        // SAFETY: DQBUF takes a `v4l2_buffer`.
-        match unsafe { self.ioctl(v4l2::vidioc::VIDIOC_DQBUF, &mut info) } {
+        match ioctl(
+            v4l2::vidioc::VIDIOC_DQBUF,
+            std::ptr::from_mut(&mut info).cast(),
+        ) {
             Ok(()) => {}
             // `info` names no buffer: one the driver may have taken comes
             // back only with STREAMOFF.
-            Err(error) if interrupted(&error) => return Ok(Dequeued::Interrupted(error)),
-            Err(error) => return Err(error),
+            Err(error) if interrupted(&error) => {
+                return Ok(Dequeued::Interrupted(failed(error, CAPTURING)));
+            }
+            Err(error) => return Err(failed(error, CAPTURING)),
         }
-        let mapping = self
+        let Some(mapping) = self
             .buffers
             .get(info.index as usize)
             .and_then(Option::as_ref)
-            .ok_or_else(|| io::Error::other("capture device returned an invalid buffer index"))?;
+        else {
+            let error = io::Error::other("capture device returned an invalid buffer index");
+            return Err(failed(error, CAPTURING));
+        };
         let length = info.bytesused as usize;
         let result = if length > mapping.length {
             Err(io::Error::other("capture frame exceeds its mapped buffer"))
         } else {
             // SAFETY: `pointer` maps `mapping.length >= length` readable bytes
-            // (unmapped only by `release`, which needs `&mut self`); the buffer is
-            // dequeued, so the driver does not write it until it is queued again
-            // below, after `copy` (which cannot keep the slice) returns.
+            // (unmapped only by `release`, never called while this runs); the
+            // buffer is dequeued, so the driver does not write it until it is
+            // queued again below, after `copy` (which cannot keep the slice)
+            // returns.
             Ok(copy(
                 unsafe { std::slice::from_raw_parts(mapping.pointer.as_ptr(), length) },
                 &info,
             ))
         };
-        self.queue(info.index)?;
-        result.map(Dequeued::Buffer)
+        match ioctl(
+            v4l2::vidioc::VIDIOC_QBUF,
+            std::ptr::from_mut(&mut buffer(info.index)).cast(),
+        ) {
+            Ok(()) => {}
+            // The restart that follows queues every buffer again.
+            Err(error) if interrupted(&error) => {
+                return Ok(Dequeued::Interrupted(failed(error, REQUEUING)));
+            }
+            Err(error) => return Err(failed(error, REQUEUING)),
+        }
+        result
+            .map(Dequeued::Buffer)
+            .map_err(|error| failed(error, CAPTURING))
     }
     pub fn release(&mut self) -> io::Result<()> {
         let fd = self.handle.fd();
         self.release_with(
-            // SAFETY: `release_with` passes only STREAMOFF with the buffer type and
-            // REQBUFS with a `v4l2_requestbuffers`, each the structure its request takes.
-            |request, value| unsafe { v4l2::ioctl(fd, request, value) },
+            &mut kernel(fd),
             // SAFETY: `release_with` passes each mapping's pointer and length as
             // `mmap` returned them, once: a mapping unmapped is removed from its slot.
-            |pointer, length| unsafe { v4l2::munmap(pointer, length) },
+            &mut |pointer, length| unsafe { v4l2::munmap(pointer, length) },
         )
     }
-    /// Stop, unmap and free whatever is still held. A device that is gone
-    /// ([`device_gone`]) has nothing left to stop or free, so that counts as
-    /// released; its mappings are still unmapped, which needs no device.
+    /// Stop, unmap and free whatever is still held, through `ioctl`
+    /// (STREAMOFF with the buffer type, REQBUFS with a `v4l2_requestbuffers`)
+    /// and `unmap`. A device that is gone ([`device_gone`]) has nothing left
+    /// to stop or free, so that counts as released; its mappings are still
+    /// unmapped, which needs no device.
     fn release_with(
         &mut self,
-        mut ioctl: impl FnMut(v4l2::vidioc::_IOC_TYPE, *mut std::ffi::c_void) -> io::Result<()>,
-        mut unmap: impl FnMut(*mut std::ffi::c_void, usize) -> io::Result<()>,
+        ioctl: &mut Ioctl<'_>,
+        unmap: &mut dyn FnMut(*mut c_void, usize) -> io::Result<()>,
     ) -> io::Result<()> {
-        let mut ioctl = |request, value: *mut std::ffi::c_void| match ioctl(request, value) {
+        let mut ioctl = |request, value: *mut c_void| match ioctl(request, value) {
             Err(error) if device_gone(&error) => Ok(()),
             result => result,
         };
@@ -271,182 +391,4 @@ impl Drop for Stream {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::cell::RefCell;
-
-    fn allocated() -> Stream {
-        Stream {
-            handle: Device::with_path("/dev/null").unwrap().handle(),
-            buffers: (0..2)
-                .map(|_| {
-                    Some(Mapping {
-                        pointer: NonNull::dangling(),
-                        length: 1,
-                    })
-                })
-                .collect(),
-            allocated: true,
-            active: true,
-            timeout: 0,
-        }
-    }
-    #[test]
-    fn every_release_failure_is_retained_and_other_cleanup_is_attempted() {
-        for failed_step in ["stop", "unmap", "free"] {
-            let mut stream = allocated();
-            let calls = RefCell::new(Vec::new());
-            let result = stream.release_with(
-                |request, _| {
-                    let step = if request == v4l2::vidioc::VIDIOC_STREAMOFF {
-                        "stop"
-                    } else {
-                        "free"
-                    };
-                    calls.borrow_mut().push(step);
-                    if step == failed_step {
-                        Err(io::Error::other(step))
-                    } else {
-                        Ok(())
-                    }
-                },
-                |_, _| {
-                    calls.borrow_mut().push("unmap");
-                    if failed_step == "unmap" {
-                        Err(io::Error::other("unmap"))
-                    } else {
-                        Ok(())
-                    }
-                },
-            );
-            assert_eq!(result.unwrap_err().to_string(), failed_step);
-            assert_eq!(stream.active, failed_step == "stop");
-            assert_eq!(stream.allocated, failed_step != "stop");
-            assert_eq!(
-                stream.buffers.iter().filter(|slot| slot.is_some()).count(),
-                if failed_step == "unmap" { 2 } else { 0 }
-            );
-            assert_eq!(
-                *calls.borrow(),
-                if failed_step == "unmap" {
-                    vec!["stop", "unmap", "unmap"]
-                } else {
-                    vec!["stop", "unmap", "unmap", "free"]
-                }
-            );
-            // A second attempt only touches resources that were not successfully released.
-            let retry = RefCell::new(Vec::new());
-            stream
-                .release_with(
-                    |_, _| {
-                        retry.borrow_mut().push("ioctl");
-                        Ok(())
-                    },
-                    |_, _| {
-                        retry.borrow_mut().push("unmap");
-                        Ok(())
-                    },
-                )
-                .unwrap();
-            assert!(!stream.active && !stream.allocated);
-            assert!(stream.buffers.iter().all(Option::is_none));
-            assert_eq!(
-                retry.borrow().len(),
-                if failed_step == "unmap" { 3 } else { 1 }
-            );
-        }
-    }
-    /// Release with `stop` and `free` as the STREAMOFF and REQBUFS results,
-    /// counting unmaps.
-    fn release_failing(
-        stream: &mut Stream,
-        stop: Option<i32>,
-        free: Option<i32>,
-        unmapped: &mut usize,
-    ) -> io::Result<()> {
-        stream.release_with(
-            |request, _| {
-                let errno = if request == v4l2::vidioc::VIDIOC_STREAMOFF {
-                    stop
-                } else {
-                    free
-                };
-                errno.map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno)))
-            },
-            |_, _| {
-                *unmapped += 1;
-                Ok(())
-            },
-        )
-    }
-
-    #[test]
-    fn a_device_gone_is_released_and_still_unmapped() {
-        for (stop, free) in [
-            (Some(libc::ENODEV), None),
-            (None, Some(libc::ENODEV)),
-            (Some(libc::ENODEV), Some(libc::ENODEV)),
-        ] {
-            let mut stream = allocated();
-            let mut unmapped = 0;
-            release_failing(&mut stream, stop, free, &mut unmapped).unwrap();
-            assert_eq!(unmapped, 2);
-            assert!(!stream.active && !stream.allocated);
-            assert!(stream.buffers.iter().all(Option::is_none));
-            // Nothing is left for a retry (or `Drop`) to touch.
-            stream
-                .release_with(|_, _| panic!("released"), |_, _| panic!("unmapped"))
-                .unwrap();
-        }
-    }
-
-    #[test]
-    fn only_eio_interrupts_a_dequeue() {
-        assert!(interrupted(&io::Error::from_raw_os_error(libc::EIO)));
-        for errno in [libc::ENODEV, libc::EINVAL, libc::EPIPE] {
-            assert!(
-                !interrupted(&io::Error::from_raw_os_error(errno)),
-                "{errno}"
-            );
-        }
-    }
-
-    #[test]
-    fn other_errors_still_fail_the_release() {
-        for (stop, free, failed) in [
-            (Some(libc::EIO), None, libc::EIO),
-            (None, Some(libc::EBUSY), libc::EBUSY),
-            // A device gone when stopping does not excuse a failure to free.
-            (Some(libc::ENODEV), Some(libc::EBUSY), libc::EBUSY),
-        ] {
-            let mut stream = allocated();
-            let mut unmapped = 0;
-            let error = release_failing(&mut stream, stop, free, &mut unmapped).unwrap_err();
-            assert_eq!(error.raw_os_error(), Some(failed));
-            assert_eq!(unmapped, 2);
-            assert_eq!(stream.active, stop == Some(libc::EIO));
-            assert_eq!(stream.allocated, free.is_some());
-            // Leave nothing for `Drop` to try on the test's fd.
-            release_failing(&mut stream, None, None, &mut unmapped).unwrap();
-        }
-    }
-
-    #[test]
-    fn successful_release_is_idempotent_and_preserves_first_error() {
-        let mut stream = allocated();
-        let error = stream
-            .release_with(
-                |_, _| Err(io::Error::other("ioctl")),
-                |_, _| Err(io::Error::other("unmap")),
-            )
-            .unwrap_err();
-        assert_eq!(error.to_string(), "ioctl");
-        stream.release_with(|_, _| Ok(()), |_, _| Ok(())).unwrap();
-        stream
-            .release_with(
-                |_, _| panic!("already released"),
-                |_, _| panic!("already unmapped"),
-            )
-            .unwrap();
-    }
-}
+mod tests;

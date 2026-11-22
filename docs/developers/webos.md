@@ -82,6 +82,13 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   can block for seconds, and a stop during one is reported as an
   unconfirmed release. The first failure of a run logs a warning, the rest debug
   ([native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
+- Before each video tap opens, the worker registers its two capture client
+  names with Luna and removes them again. A name its role does not allow
+  ("Invalid permissions") or a name Luna cannot remove again ends video
+  capture until the worker restarts; any other Luna failure there is retried
+  like a failed open. After a failed
+  driver call a tap accepts nothing but its release
+  ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs)).
 - The supervisor reaps a worker before starting another (or lets go of one
   still not reaped 8 s after its KILL). Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.

@@ -143,8 +143,11 @@ impl Tap for HalTap {
             })?;
         self.converter
             .convert(
-                plane.pixels,
-                plane.pitch,
+                |y, row| {
+                    plane
+                        .copy_row(y, row)
+                        .map_err(|error| Error::adapter("cannot read the TV UI plane", error))
+                },
                 plane.width as usize,
                 plane.height as usize,
                 frame.as_mut_slice(),

@@ -7,9 +7,9 @@
 //! `LSUnregister` removed every native reference. The handler sits in a
 //! `RefCell`; LS2 is never called while it is borrowed (bus actions are
 //! deferred), and a re-entrant callback that finds it borrowed is dropped.
+use crate::Error;
 use crate::generated::glib::{self, Glib};
 use crate::generated::luna::{self as ffi, LSHandle, LSMessage, LSMethod, Luna};
-use crate::{Error, GLIB_LIBRARY, LUNA_LIBRARY};
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::io::Write;
@@ -91,23 +91,12 @@ pub fn run(config: &Config<'_>, handler: Box<dyn Handler>) -> Result<(), Error> 
             "the Luna service bus exists only on an LG webOS TV",
         ));
     }
-    // SAFETY: signatures generated from the matching TV SDK; each table keeps
-    // its library loaded for as long as its function pointers exist.
-    let luna = unsafe { Luna::new(LUNA_LIBRARY) }.map_err(|source| Error::Load {
-        library: LUNA_LIBRARY.into(),
-        source,
-    })?;
-    // SAFETY: as above.
-    let glib = unsafe { Glib::new(GLIB_LIBRARY) }.map_err(|source| Error::Load {
-        library: GLIB_LIBRARY.into(),
-        source,
-    })?;
-    run_with(luna, glib, config, handler)
+    run_with(crate::luna()?, crate::glib()?, config, handler)
 }
 
 pub(crate) fn run_with(
-    luna: Luna,
-    glib: Glib,
+    luna: &'static Luna,
+    glib: &'static Glib,
     config: &Config<'_>,
     handler: Box<dyn Handler>,
 ) -> Result<(), Error> {
@@ -132,8 +121,8 @@ struct Call {
 }
 
 struct Callbacks {
-    luna: Luna,
-    glib: Glib,
+    luna: &'static Luna,
+    glib: &'static Glib,
     handle: NonNull<LSHandle>,
     context: NonNull<glib::GMainContext>,
     main_loop: NonNull<glib::GMainLoop>,
@@ -151,8 +140,8 @@ struct Service {
 
 impl Service {
     fn new(
-        luna: Luna,
-        glib: Glib,
+        luna: &'static Luna,
+        glib: &'static Glib,
         config: &Config<'_>,
         handler: Box<dyn Handler>,
     ) -> Result<Self, Error> {
@@ -187,7 +176,7 @@ impl Service {
             return Err(Error::Glib("cannot create a GLib loop"));
         };
         let mut handle = ptr::null_mut();
-        let registered = check(&luna, "LSRegister", |error| {
+        let registered = check(luna, "LSRegister", |error| {
             // SAFETY: NUL-terminated name and a writable local handle.
             unsafe { luna.LSRegister(name.as_ptr(), &raw mut handle, error) }
         });
@@ -238,7 +227,7 @@ impl Service {
     fn register(&mut self, tick: Duration) -> Result<(), Error> {
         let state = &self.callbacks;
         let data = Rc::as_ptr(state).cast_mut().cast::<c_void>();
-        check(&state.luna, "LSRegisterCategory", |error| {
+        check(state.luna, "LSRegisterCategory", |error| {
             // SAFETY: the sentinel-terminated table and its names outlive the registration.
             unsafe {
                 state.luna.LSRegisterCategory(
@@ -251,7 +240,7 @@ impl Service {
                 )
             }
         })?;
-        check(&state.luna, "LSCategorySetData", |error| {
+        check(state.luna, "LSCategorySetData", |error| {
             // SAFETY: the shared Rc pointee stays alive until LSUnregister completes.
             unsafe {
                 state
@@ -259,7 +248,7 @@ impl Service {
                     .LSCategorySetData(state.handle.as_ptr(), c"/".as_ptr(), data, error)
             }
         })?;
-        check(&state.luna, "LSGmainAttach", |error| {
+        check(state.luna, "LSGmainAttach", |error| {
             // SAFETY: handle and private loop are live and never cross threads.
             unsafe {
                 state
@@ -304,7 +293,7 @@ impl Callbacks {
     fn call(&self, index: usize) -> Result<(), Error> {
         let call = &self.calls[index];
         let mut token = 0;
-        check(&self.luna, "LSCall", |error| {
+        check(self.luna, "LSCall", |error| {
             // SAFETY: live handle and strings; the user data is this call's slot,
             // which lives in the shared allocation until LSUnregister.
             unsafe {
@@ -327,7 +316,7 @@ impl Callbacks {
         let call = &self.calls[index];
         let token = call.token.get();
         if token != 0 {
-            check(&self.luna, "LSCallCancel", |error| {
+            check(self.luna, "LSCallCancel", |error| {
                 // SAFETY: the token was written by this handle's LSCall.
                 unsafe { self.luna.LSCallCancel(self.handle.as_ptr(), token, error) }
             })?;
@@ -341,7 +330,7 @@ impl Callbacks {
             let published = (|| {
                 let key = CString::new(key).map_err(|_| Error::Nul)?;
                 let payload = CString::new(payload).map_err(|_| Error::Nul)?;
-                check(&self.luna, "LSSubscriptionReply", |error| {
+                check(self.luna, "LSSubscriptionReply", |error| {
                     // SAFETY: registered handle; LS2 copies both strings before returning.
                     unsafe {
                         self.luna.LSSubscriptionReply(
@@ -379,8 +368,8 @@ impl Callbacks {
             state: self,
             raw: NonNull::new(raw).ok_or(Error::Glib("missing Luna message"))?,
         };
-        let method = message.method()?;
         let handled = (|| {
+            let method = message.method().map_err(|error| error.to_string())?;
             let sender = message.sender()?;
             let payload = message.payload()?;
             let mut bus = Bus::default();
@@ -400,12 +389,16 @@ impl Callbacks {
         })();
         match handled {
             Ok((response, bus)) => {
-                if response.subscribe {
-                    message.subscribe()?;
-                }
-                message.respond(&response.payload)?;
+                let sent = (|| {
+                    if response.subscribe {
+                        message.subscribe()?;
+                    }
+                    message.respond(&response.payload)
+                })();
+                // The handler has run: what it asked of the bus happens
+                // whether or not its reply went out.
                 self.apply(bus);
-                Ok(())
+                sent.or_else(|error| message.respond(&error_reply(&error.to_string())))
             }
             Err(text) => message.respond(&error_reply(&text)),
         }
@@ -504,7 +497,7 @@ impl Message<'_> {
 
     fn respond(&self, payload: &str) -> Result<(), Error> {
         let payload = CString::new(payload).map_err(|_| Error::Nul)?;
-        check(&self.state.luna, "LSMessageReply", |error| {
+        check(self.state.luna, "LSMessageReply", |error| {
             // SAFETY: live message; LS2 copies the payload before returning.
             unsafe {
                 self.state.luna.LSMessageReply(
@@ -519,7 +512,7 @@ impl Message<'_> {
 
     fn subscribe(&self) -> Result<bool, Error> {
         let mut subscribed = false;
-        check(&self.state.luna, "LSSubscriptionProcess", |error| {
+        check(self.state.luna, "LSSubscriptionProcess", |error| {
             // SAFETY: LS2 takes its own reference to the message if it subscribes;
             // this wrapper is never stored.
             unsafe {
@@ -580,9 +573,9 @@ impl Drop for Service {
                 log(&format!("cannot cancel a call: {error}"));
             }
         }
-        if let Err(error) = check(&state.luna, "LSUnregister", |error| {
+        if let Err(error) = check(state.luna, "LSUnregister", |error| {
             // SAFETY: the handle is ours. This removes every LS2 callback source
-            // before the Rc pointee, the method table or the libraries are freed.
+            // before the Rc pointee or the method table is freed.
             unsafe { state.luna.LSUnregister(state.handle.as_ptr(), error) }
         }) {
             log(&format!("{error}"));
@@ -629,7 +622,7 @@ impl<'api> LunaError<'api> {
         &raw mut self.raw
     }
 
-    fn message(&self) -> String {
+    pub(crate) fn message(&self) -> String {
         if self.raw.message.is_null() {
             return format!("failed (code {})", self.raw.error_code);
         }

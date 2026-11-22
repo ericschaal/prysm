@@ -5,10 +5,11 @@ use crate::ffi::{
     prysm_vt_preprocess, prysm_vt_release,
 };
 use libloading::Library;
+use prysm_webos_luna_sys::{Loaded, load_once};
 use std::ffi::{CStr, c_char, c_void};
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 /// What to capture. LG negotiates exactly these values in `vtCapture_preprocess`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,8 +44,16 @@ pub enum Error {
         #[source]
         source: libloading::Error,
     },
-    #[error("Luna denied the capture registration: {0}")]
-    Permission(String),
+    /// The process's role does not allow the capture client names.
+    #[error("the capture registration is not allowed")]
+    Permission(#[source] prysm_webos_luna_sys::Error),
+    /// A capture client name the check registered stays registered, so every
+    /// later check in this process fails.
+    #[error("a capture client name stays registered")]
+    Registered(#[source] prysm_webos_luna_sys::Error),
+    /// The registration check failed for another reason; a retry may pass.
+    #[error("the capture registration could not be checked")]
+    Luna(#[source] prysm_webos_luna_sys::Error),
     /// Driver creation failed; it can leave live threads and stale globals, so
     /// the process must restart before capture is retried.
     #[error("vtCapture_create failed: {0}")]
@@ -68,17 +77,45 @@ impl Error {
     /// Retrying in this process cannot succeed.
     #[must_use]
     pub fn is_fatal(&self) -> bool {
-        matches!(self, Self::Create(_) | Self::Permission(_))
+        matches!(
+            self,
+            Self::Create(_) | Self::Permission(_) | Self::Registered(_)
+        )
     }
 }
+
+/// A library that does not load is [`Error::Load`], a denied name
+/// [`Error::Permission`], a name left registered [`Error::Registered`], and
+/// any other Luna failure [`Error::Luna`].
+impl From<prysm_webos_luna_sys::Error> for Error {
+    fn from(error: prysm_webos_luna_sys::Error) -> Self {
+        use prysm_webos_luna_sys::Error as Luna;
+        match error {
+            Luna::Load { library, source } => Self::Load { library, source },
+            denied @ Luna::Denied { .. } => Self::Permission(denied),
+            unremoved @ Luna::Unremoved { .. } => Self::Registered(unremoved),
+            other => Self::Luna(other),
+        }
+    }
+}
+
+/// The length of the message buffer every bridge call writes an exception
+/// into, terminated.
+const MESSAGE: usize = 512;
 
 macro_rules! api {
     ($name:ident { $($field:ident: $ty:ty = $symbol:literal),* $(,)? }) => {
         /// The VTCapture entry points. Lives for the whole process.
         struct $name { $($field: $ty,)* }
         impl $name {
-            fn load(library: &'static Library, names: &[&str]) -> Result<Self, Error> {
-                let missing = |source| Error::Load { library: names.join(" or "), source };
+            fn load(
+                library: &'static Library,
+                names: &[&str],
+            ) -> Result<Self, prysm_webos_luna_sys::Error> {
+                let missing = |source| prysm_webos_luna_sys::Error::Load {
+                    library: names.join(" or "),
+                    source,
+                };
                 Ok(Self {
                     $($field: {
                         // SAFETY: signatures and layouts match tv-native-apis. The
@@ -107,63 +144,15 @@ api!(VtApi {
     release: VtRelease = "vtCapture_release",
 });
 
-/// Load `libvtcapture` on first use and keep it for the life of the process.
+/// Load `libvtcapture` on first use and keep it for the life of the process
+/// (the vendor code can leave threads running and global pointers set, after
+/// a failed create or even after a release).
 fn vt() -> Result<&'static VtApi, Error> {
     static VT: Mutex<Loaded<VtApi>> = Mutex::new(Loaded::Nothing);
     let names = ["libvtcapture.so.1", "libvtcapture.so"];
-    // Never unloaded: the vendor code can leave threads running and global
-    // pointers set, after a failed create or even after a release.
-    load_once(&VT, &names, |library| VtApi::load(library, &names))
-}
-
-/// How far loading a library and its entry points `A` has come.
-pub(crate) enum Loaded<A: 'static> {
-    Nothing,
-    /// The library loaded but an entry point was missing.
-    Library(&'static Library),
-    Api(&'static A),
-}
-
-/// The entry points `symbols` reads from the first of `names` that loads.
-/// Library and entry points are kept in `slot` and never unloaded; a retry
-/// after a missing symbol reuses the library instead of loading, and
-/// leaking, another handle.
-pub(crate) fn load_once<A>(
-    slot: &Mutex<Loaded<A>>,
-    names: &[&str],
-    symbols: impl FnOnce(&'static Library) -> Result<A, Error>,
-) -> Result<&'static A, Error> {
-    let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
-    let library = match *slot {
-        Loaded::Api(api) => return Ok(api),
-        Loaded::Library(library) => library,
-        Loaded::Nothing => {
-            let library: &'static Library = Box::leak(Box::new(open(names)?));
-            *slot = Loaded::Library(library);
-            library
-        }
-    };
-    let api: &'static A = Box::leak(Box::new(symbols(library)?));
-    *slot = Loaded::Api(api);
-    Ok(api)
-}
-
-/// The first of `names` that loads.
-fn open(names: &[&str]) -> Result<Library, Error> {
-    let mut last = None;
-    for name in names {
-        // SAFETY: only known LG system libraries are loaded; their
-        // constructors require root. Each is loaded once per process, on the
-        // thread of the first tap; later taps may live on other threads.
-        match unsafe { Library::new(*name) } {
-            Ok(library) => return Ok(library),
-            Err(error) => last = Some(error),
-        }
-    }
-    Err(Error::Load {
-        library: names.join(" or "),
-        source: last.unwrap_or(libloading::Error::DlOpenUnknown),
-    })
+    Ok(load_once(&VT, &names, |library| {
+        VtApi::load(library, &names)
+    })?)
 }
 
 fn status(code: i32, operation: &'static str) -> Result<(), Error> {
@@ -188,40 +177,72 @@ fn vt_result(code: i32, error: &[u8]) -> Result<i32, Error> {
 
 macro_rules! vt_call {
     ($owner:expr, $bridge:ident, $function:expr $(, $arg:expr)* $(,)?) => {{
-        let mut error = [0_u8; 512];
+        let mut error = [0_u8; MESSAGE];
         // SAFETY: signatures are statically checked; the exclusively owned
-        // driver and borrowed out parameters remain live throughout the call.
-        let code = unsafe { $bridge($function, $owner.driver.as_ptr(), $($arg,)* error.as_mut_ptr().cast()) };
+        // driver and borrowed out parameters remain live throughout the call,
+        // and the bridge writes at most `MESSAGE` bytes of message.
+        let code = unsafe {
+            $bridge($function, $owner.driver.as_ptr(), $($arg,)* error.as_mut_ptr().cast(), MESSAGE)
+        };
         vt_result(code, &error)
     }};
 }
 
-/// A driver plane: `length` readable bytes at `pointer`, borrowed for `'a`.
-/// The driver may still write them (its buffers are reused), so they are only
-/// ever read through the pointer, never as a Rust slice.
+/// Vendor memory: `length` readable bytes at `pointer`, borrowed for `'a`.
+/// The vendor side may still write them (a driver reuses its buffers; a
+/// graphics blit may not have finished), so they are only ever read through
+/// the pointer, never as a Rust slice. Shared by both taps.
 #[derive(Debug, Clone, Copy)]
-struct Plane<'a> {
+pub(crate) struct Plane<'a> {
     pointer: NonNull<u8>,
     length: usize,
     borrow: PhantomData<&'a [u8]>,
 }
 
-/// A driver plane borrowed for as long as `owner`.
-///
-/// # Safety
-/// `pointer` must be readable for `length` bytes for as long as `owner` is
-/// borrowed.
-unsafe fn driver_plane<T>(_owner: &T, pointer: *mut u8, length: i32) -> Result<Plane<'_>, Error> {
+impl Plane<'_> {
+    /// # Safety
+    /// `pointer` must be readable for `length` bytes for the whole lifetime
+    /// the plane is given.
+    pub(crate) unsafe fn new(pointer: NonNull<u8>, length: usize) -> Self {
+        Self {
+            pointer,
+            length,
+            borrow: PhantomData,
+        }
+    }
+
+    /// Copy the `target.len()` bytes from `offset` into `target`.
+    pub(crate) fn copy(&self, offset: usize, target: &mut [u8]) -> Result<(), Error> {
+        if offset
+            .checked_add(target.len())
+            .is_none_or(|end| end > self.length)
+        {
+            return Err(Error::Invalid("short plane"));
+        }
+        // SAFETY: `offset + target.len() <= length` (checked above), so the
+        // read stays inside the plane, readable for its lifetime (`new`);
+        // `target` is Rust memory, apart from the vendor's. Assumed: the only
+        // writer is the vendor side, and a write meanwhile may mix frames in
+        // the copy.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                self.pointer.as_ptr().add(offset),
+                target.as_mut_ptr(),
+                target.len(),
+            );
+        }
+        Ok(())
+    }
+}
+
+/// A driver plane's pointer and length, if they can be one.
+fn checked_plane(pointer: *mut u8, length: i32) -> Result<(NonNull<u8>, usize), Error> {
     let length = usize::try_from(length).map_err(|_| Error::Invalid("negative plane length"))?;
     let pointer = NonNull::new(pointer).ok_or(Error::Invalid("driver plane"))?;
     if length == 0 || length > 64 * 1024 * 1024 {
         return Err(Error::Invalid("driver plane"));
     }
-    Ok(Plane {
-        pointer,
-        length,
-        borrow: PhantomData,
-    })
+    Ok((pointer, length))
 }
 
 /// Copy active rows without padding into `output`, exactly `rows * row_bytes` long.
@@ -235,25 +256,15 @@ fn copy_plane(
     if rows == 0 || rows > 1080 || row_bytes == 0 || stride < row_bytes || stride > 32768 {
         return Err(Error::Invalid("plane geometry"));
     }
-    if source.length < stride * (rows - 1) + row_bytes {
-        return Err(Error::Invalid("short plane"));
-    }
     if output.len() != row_bytes * rows {
         return Err(Error::Invalid("NV12 output size"));
     }
+    // A short plane is refused before anything is copied.
+    if source.length < stride * (rows - 1) + row_bytes {
+        return Err(Error::Invalid("short plane"));
+    }
     for (row, target) in output.chunks_exact_mut(row_bytes).enumerate() {
-        // SAFETY: `row * stride + row_bytes <= length` (checked above), so the
-        // read stays inside the plane, which is readable while borrowed;
-        // `target` is Rust memory, apart from the driver's. Assumed: the
-        // only writer is the vendor/DMA side, and a write meanwhile may mix
-        // frames in the copy.
-        unsafe {
-            ptr::copy_nonoverlapping(
-                source.pointer.as_ptr().add(row * stride),
-                target.as_mut_ptr(),
-                row_bytes,
-            );
-        }
+        source.copy(row * stride, target)?;
     }
     Ok(())
 }
@@ -287,12 +298,38 @@ impl VideoFrame<'_> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Stage {
+/// How far the driver got; cleanup undoes each stage reached, last first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Reached {
     Created,
     Initialized,
     Prepared,
     Running,
+}
+
+/// Where a tap stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    /// Usable, its driver this far.
+    Working(Reached),
+    /// A driver call failed with the driver this far: only release is left,
+    /// since the driver's state after the failure is unknown.
+    Failed(Reached),
+    /// Cleaned up.
+    Released,
+}
+
+/// What [`VtCapture::next`] found: [`Acquired`] before its planes borrow the tap.
+enum Next {
+    Frame {
+        y: (NonNull<u8>, usize),
+        uv: (NonNull<u8>, usize),
+        width: u32,
+        height: u32,
+        stride: usize,
+    },
+    Pending,
+    NotReady,
 }
 
 /// One native capture tap; see the crate documentation.
@@ -305,7 +342,8 @@ pub struct VtCapture {
     stage: Stage,
     plane: PlaneInfo,
     properties: Box<Properties>,
-    released: bool,
+    /// Not `Send`: a tap is opened, used and released on one thread.
+    _thread: PhantomData<*const ()>,
 }
 
 /// Prevent the known `LSRegister` denial before allocating vendor video state:
@@ -316,10 +354,7 @@ fn check_luna() -> Result<(), Error> {
         format!("com.webos.rm.client.prysm.{pid}"),
         format!("com.webos.service.capture.client.prysm.{pid}"),
     ];
-    prysm_webos_luna_sys::check_registration(&names).map_err(|error| match error {
-        prysm_webos_luna_sys::Error::Load { library, source } => Error::Load { library, source },
-        other => Error::Permission(other.to_string()),
-    })
+    Ok(prysm_webos_luna_sys::check_registration(&names)?)
 }
 
 impl VtCapture {
@@ -342,10 +377,17 @@ impl VtCapture {
         let api = vt()?;
         check_luna()?;
         let mut driver = ptr::null_mut();
-        let mut error = [0_u8; 512];
-        // SAFETY: typed create symbol and valid out parameters; C++ catches throws.
-        let code =
-            unsafe { prysm_vt_create(api.create, &raw mut driver, error.as_mut_ptr().cast()) };
+        let mut error = [0_u8; MESSAGE];
+        // SAFETY: typed create symbol and valid out parameters, a message
+        // buffer of `MESSAGE` bytes; C++ catches throws.
+        let code = unsafe {
+            prysm_vt_create(
+                api.create,
+                &raw mut driver,
+                error.as_mut_ptr().cast(),
+                MESSAGE,
+            )
+        };
         vt_result(code, &error)
             .and_then(|code| status(code, "vtCapture_create"))
             .map_err(|error| Error::Create(Box::new(error)))?;
@@ -354,20 +396,33 @@ impl VtCapture {
             api,
             driver,
             client: Box::new([0; 128]),
-            stage: Stage::Created,
+            stage: Stage::Working(Reached::Created),
             plane: PlaneInfo::default(),
             properties: Box::new(properties),
-            released: false,
+            _thread: PhantomData,
         };
         // `c_char` is `u8` on ARM (the TV) and `i8` on x86: convert portably.
         this.client[..2].fill(c_char::from_ne_bytes(*b"0"));
-        this.prepare()?;
+        this.step(Self::prepare)?;
         Ok(this)
+    }
+
+    /// Runs `step` on a working tap. An error fails the tap, so the next
+    /// call is refused and only release is left.
+    fn step<T>(&mut self, step: fn(&mut Self) -> Result<T, Error>) -> Result<T, Error> {
+        if !matches!(self.stage, Stage::Working(_)) {
+            return Err(Error::Invalid("used after a failure"));
+        }
+        let result = step(self);
+        if let (Err(_), Stage::Working(reached)) = (&result, self.stage) {
+            self.stage = Stage::Failed(reached);
+        }
+        result
     }
 
     /// Initialize, preprocess and start the driver. `Ok(false)`: not ready.
     fn prepare(&mut self) -> Result<bool, Error> {
-        if self.stage == Stage::Created {
+        if self.stage == Stage::Working(Reached::Created) {
             let code = vt_call!(
                 self,
                 prysm_vt_init,
@@ -382,7 +437,7 @@ impl VtCapture {
                 code,
                 "vtCapture_init (11 = Luna permission denied, 17 = not ready)",
             )?;
-            self.stage = Stage::Initialized;
+            self.stage = Stage::Working(Reached::Initialized);
         }
         let code = vt_call!(
             self,
@@ -393,11 +448,11 @@ impl VtCapture {
         )?;
         if code == 1 {
             // LG finalizes the session on status 1; preprocessing alone cannot reopen it.
-            self.stage = Stage::Created;
+            self.stage = Stage::Working(Reached::Created);
             return Ok(false);
         }
         status(code, "vtCapture_preprocess")?;
-        self.stage = Stage::Prepared;
+        self.stage = Stage::Working(Reached::Prepared);
         let mut plane = PlaneInfo::default();
         status(
             vt_call!(
@@ -422,7 +477,7 @@ impl VtCapture {
         }
         self.plane = plane;
         // A failed process may have partially started the driver; stop on release.
-        self.stage = Stage::Running;
+        self.stage = Stage::Working(Reached::Running);
         status(
             vt_call!(
                 self,
@@ -439,36 +494,60 @@ impl VtCapture {
     /// re-initialization here can renegotiate it.
     ///
     /// # Errors
-    /// A native failure; the caller releases this tap and reopens.
+    /// A native failure; the tap is then failed: later calls return
+    /// [`Error::Invalid`], and the caller releases it and reopens.
     pub fn acquire(&mut self) -> Result<Acquired<'_>, Error> {
-        if self.stage <= Stage::Initialized && !self.prepare()? {
-            return Ok(Acquired::NotReady);
+        Ok(match self.step(Self::next)? {
+            Next::Frame {
+                y,
+                uv,
+                width,
+                height,
+                stride,
+            } => {
+                // SAFETY: assumed, as nothing documents it: a successful
+                // acquisition supplies driver buffers that stay readable
+                // until the next driver call. The planes borrow `self` (the
+                // returned frame's lifetime), so no driver call or release
+                // happens before they are dropped.
+                let (y, uv) = unsafe { (Plane::new(y.0, y.1), Plane::new(uv.0, uv.1)) };
+                Acquired::Frame(VideoFrame {
+                    width,
+                    height,
+                    stride,
+                    y,
+                    uv,
+                })
+            }
+            Next::Pending => Acquired::Pending,
+            Next::NotReady => Acquired::NotReady,
+        })
+    }
+
+    /// Prepare the driver if a re-initialization is due, then ask for its
+    /// current buffer.
+    fn next(&mut self) -> Result<Next, Error> {
+        let unprepared = matches!(
+            self.stage,
+            Stage::Working(Reached::Created | Reached::Initialized)
+        );
+        if unprepared && !self.prepare()? {
+            return Ok(Next::NotReady);
         }
         let mut buffer = BufferInfo::default();
         let code = vt_call!(self, prysm_vt_buffer, self.api.buffer, &raw mut buffer)?;
         if code == 2 {
-            return Ok(Acquired::Pending);
+            return Ok(Next::Pending);
         }
         status(code, "vtCapture_currentCaptureBuffInfo")?;
         let [_, _, width, height] = self.plane.region;
-        let stride = usize::try_from(self.plane.stride).map_err(|_| Error::Invalid("stride"))?;
-        // SAFETY: assumed, as nothing documents it: a successful acquisition
-        // supplies driver buffers that stay readable until the next driver
-        // call. The planes borrow `self`, so no driver call or release
-        // happens before they are dropped.
-        let (y, uv) = unsafe {
-            (
-                driver_plane(self, buffer.y, buffer.y_len)?,
-                driver_plane(self, buffer.uv, buffer.uv_len)?,
-            )
-        };
-        Ok(Acquired::Frame(VideoFrame {
+        Ok(Next::Frame {
+            y: checked_plane(buffer.y, buffer.y_len)?,
+            uv: checked_plane(buffer.uv, buffer.uv_len)?,
             width: u32::from(width.cast_unsigned()),
             height: u32::from(height.cast_unsigned()),
-            stride,
-            y,
-            uv,
-        }))
+            stride: usize::try_from(self.plane.stride).map_err(|_| Error::Invalid("stride"))?,
+        })
     }
 
     /// Stop, postprocess, finalize and release the driver.
@@ -479,22 +558,22 @@ impl VtCapture {
         self.cleanup()
     }
 
+    /// Undo each stage reached, working or failed; nothing once released.
     fn cleanup(&mut self) -> Result<(), Error> {
-        self.released = true;
+        let reached = match std::mem::replace(&mut self.stage, Stage::Released) {
+            Stage::Working(reached) | Stage::Failed(reached) => reached,
+            Stage::Released => return Ok(()),
+        };
         let mut first = None;
         for (needed, function, operation) in [
+            (reached >= Reached::Running, self.api.stop, "vtCapture_stop"),
             (
-                self.stage >= Stage::Running,
-                self.api.stop,
-                "vtCapture_stop",
-            ),
-            (
-                self.stage >= Stage::Prepared,
+                reached >= Reached::Prepared,
                 self.api.postprocess,
                 "vtCapture_postprocess",
             ),
             (
-                self.stage >= Stage::Initialized,
+                reached >= Reached::Initialized,
                 self.api.finalize,
                 "vtCapture_finalize",
             ),
@@ -517,9 +596,7 @@ impl VtCapture {
 impl Drop for VtCapture {
     /// Release without reporting when [`VtCapture::release`] was not called.
     fn drop(&mut self) {
-        if !self.released {
-            let _ = self.cleanup();
-        }
+        let _ = self.cleanup();
     }
 }
 
@@ -535,6 +612,10 @@ mod tests {
         uv: [u8; 4],
         cleanup: Vec<u8>,
         stop_code: i32,
+        /// The stride `vtCapture_planeInfo` reports.
+        plane_stride: i32,
+        /// Calls of `vtCapture_currentCaptureBuffInfo`.
+        buffers: usize,
     }
 
     fn driver(code: i32) -> Driver {
@@ -546,6 +627,8 @@ mod tests {
             uv: [128; 4],
             cleanup: Vec::new(),
             stop_code: 0,
+            plane_stride: 4,
+            buffers: 0,
         }
     }
 
@@ -553,6 +636,7 @@ mod tests {
         // SAFETY: the test owns Driver and BufferInfo for the duration of this call.
         unsafe {
             let driver = &mut *driver.cast::<Driver>();
+            driver.buffers += 1;
             if driver.code != 0 {
                 return driver.code;
             }
@@ -611,11 +695,15 @@ mod tests {
         }
         driver.code
     }
-    unsafe extern "C" fn fake_plane(_: *mut c_void, _: *mut c_char, plane: *mut PlaneInfo) -> i32 {
-        // SAFETY: the caller supplies a live output parameter.
+    unsafe extern "C" fn fake_plane(
+        driver: *mut c_void,
+        _: *mut c_char,
+        plane: *mut PlaneInfo,
+    ) -> i32 {
+        // SAFETY: the test owns the driver; the caller supplies a live output parameter.
         unsafe {
             *plane = PlaneInfo {
-                stride: 4,
+                stride: (*driver.cast::<Driver>()).plane_stride,
                 region: [0, 0, 2, 2],
                 active: [0; 4],
             };
@@ -649,19 +737,19 @@ mod tests {
         }
 
         /// A capture of this driver; declare it after the `Fake` so it drops first.
-        fn capture(&self, stage: Stage) -> VtCapture {
+        fn capture(&self, reached: Reached) -> VtCapture {
             VtCapture {
                 api: &FAKE_API,
                 driver: self.0.cast(),
                 client: Box::new([0; 128]),
-                stage,
+                stage: Stage::Working(reached),
                 plane: PlaneInfo {
                     stride: 4,
                     region: [0, 0, 2, 2],
                     active: [0; 4],
                 },
                 properties: Box::default(),
-                released: false,
+                _thread: PhantomData,
             }
         }
 
@@ -693,7 +781,7 @@ mod tests {
     #[test]
     fn finalized_session_reinitializes_without_recreating_the_driver() {
         let fake = Fake::new(1);
-        let mut capture = fake.capture(Stage::Initialized);
+        let mut capture = fake.capture(Reached::Initialized);
         assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
         assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
         assert_eq!(fake.with(|driver| driver.initializations), 1);
@@ -711,7 +799,7 @@ mod tests {
             driver.y = [16, 235, 99, 99, 16, 235, 99, 99];
             driver.uv = [128, 128, 99, 99];
         });
-        let mut capture = fake.capture(Stage::Running);
+        let mut capture = fake.capture(Reached::Running);
         assert_eq!(copied(&mut capture), [16, 235, 16, 235, 128, 128]);
         fake.with(|driver| driver.y[0] = 235);
         assert_eq!(copied(&mut capture), [235, 235, 16, 235, 128, 128]);
@@ -738,10 +826,9 @@ mod tests {
     #[test]
     fn planes_are_copied_through_their_pointer_within_bounds() {
         let mut source = [1_u8, 2, 99, 99, 3, 4];
-        let pointer = source.as_mut_ptr();
-        let owner = ();
+        let (pointer, length) = checked_plane(source.as_mut_ptr(), 6).unwrap();
         // SAFETY: `source` outlives the plane and is not otherwise used meanwhile.
-        let plane = unsafe { driver_plane(&owner, pointer, 6) }.unwrap();
+        let plane = unsafe { Plane::new(pointer, length) };
         let mut output = [0; 4];
         copy_plane(plane, 4, 2, 2, &mut output).unwrap();
         assert_eq!(output, [1, 2, 3, 4]);
@@ -749,15 +836,130 @@ mod tests {
             copy_plane(plane, 4, 3, 2, &mut [0; 6]),
             Err(Error::Invalid("short plane"))
         ));
-        // SAFETY: a null pointer is rejected before any use.
-        let null = unsafe { driver_plane(&owner, ptr::null_mut(), 6) };
-        assert!(matches!(null, Err(Error::Invalid("driver plane"))));
+        let mut row = [0; 2];
+        plane.copy(4, &mut row).unwrap();
+        assert_eq!(row, [3, 4]);
+        for offset in [5, usize::MAX] {
+            assert!(matches!(
+                plane.copy(offset, &mut row),
+                Err(Error::Invalid("short plane"))
+            ));
+        }
+        assert!(matches!(
+            checked_plane(ptr::null_mut(), 6),
+            Err(Error::Invalid("driver plane"))
+        ));
+    }
+
+    #[test]
+    fn a_failed_call_leaves_only_release() {
+        // A failed acquisition: the next does not reach the driver.
+        let fake = Fake::new(12);
+        let mut capture = fake.capture(Reached::Running);
+        assert!(matches!(
+            capture.acquire(),
+            Err(Error::Status { code: 12, .. })
+        ));
+        fake.with(|driver| driver.code = 0);
+        assert!(matches!(
+            capture.acquire(),
+            Err(Error::Invalid("used after a failure"))
+        ));
+        capture.release().unwrap();
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
+
+        // A failed preparation: the next acquisition neither prepares nor
+        // asks for a buffer; release undoes what the driver reached.
+        let fake = Fake::new(0);
+        fake.with(|driver| driver.plane_stride = 1);
+        let mut capture = fake.capture(Reached::Initialized);
+        assert!(matches!(capture.acquire(), Err(Error::Invalid("stride"))));
+        assert!(matches!(
+            capture.acquire(),
+            Err(Error::Invalid("used after a failure"))
+        ));
+        assert_eq!(fake.with(|driver| driver.buffers), 0);
+        drop(capture);
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [2, 3, 4]);
+    }
+
+    /// Every stage reached, working or failed: what an acquisition does and
+    /// what release undoes.
+    #[test]
+    fn every_stage_is_released_by_what_it_reached() {
+        let undone = |reached| match reached {
+            Reached::Created => vec![4],
+            Reached::Initialized => vec![3, 4],
+            Reached::Prepared => vec![2, 3, 4],
+            Reached::Running => vec![1, 2, 3, 4],
+        };
+        for reached in [
+            Reached::Created,
+            Reached::Initialized,
+            Reached::Prepared,
+            Reached::Running,
+        ] {
+            let fake = Fake::new(0);
+            let mut capture = fake.capture(reached);
+            capture.stage = Stage::Failed(reached);
+            assert!(matches!(
+                capture.acquire(),
+                Err(Error::Invalid("used after a failure"))
+            ));
+            assert_eq!(
+                fake.with(|driver| (driver.initializations, driver.buffers)),
+                (0, 0),
+                "{reached:?}: a failed tap never reaches the driver"
+            );
+            capture.release().unwrap();
+            assert_eq!(fake.with(|driver| driver.cleanup.clone()), undone(reached));
+
+            let fake = Fake::new(0);
+            drop(fake.capture(reached));
+            assert_eq!(
+                fake.with(|driver| driver.cleanup.clone()),
+                undone(reached),
+                "{reached:?}, working"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_denied_or_stuck_name_is_fatal() {
+        use prysm_webos_luna_sys::Error as Luna;
+        let denied = Error::from(Luna::Denied {
+            name: "com.webos.rm.client.prysm.1".into(),
+            message: "Invalid permissions for com.webos.rm.client.prysm.1".into(),
+        });
+        assert!(matches!(denied, Error::Permission(_)) && denied.is_fatal());
+        let unremoved = Error::from(Luna::Unremoved {
+            name: "com.webos.rm.client.prysm.1".into(),
+            message: "failed".into(),
+        });
+        assert!(matches!(unremoved, Error::Registered(_)) && unremoved.is_fatal());
+        for other in [
+            Luna::Luna {
+                operation: "LSRegister",
+                message: "Service name already registered".into(),
+            },
+            Luna::Luna {
+                operation: "LSErrorInit",
+                message: "cannot initialize a Luna error".into(),
+            },
+            Luna::Nul,
+        ] {
+            let error = Error::from(other);
+            assert!(
+                matches!(error, Error::Luna(_)) && !error.is_fatal(),
+                "{error}"
+            );
+        }
     }
 
     #[test]
     fn status_two_is_pending_not_an_error() {
         let fake = Fake::new(2);
-        let mut capture = fake.capture(Stage::Running);
+        let mut capture = fake.capture(Reached::Running);
         assert!(matches!(capture.acquire().unwrap(), Acquired::Pending));
         fake.with(|driver| driver.code = 0);
         assert!(matches!(capture.acquire().unwrap(), Acquired::Frame(_)));
@@ -767,7 +969,7 @@ mod tests {
     fn release_reports_a_failed_step_after_running_every_step() {
         let fake = Fake::new(0);
         fake.with(|driver| driver.stop_code = 5);
-        let capture = fake.capture(Stage::Running);
+        let capture = fake.capture(Reached::Running);
         let error = capture.release().unwrap_err();
         assert_eq!(error.to_string(), "vtCapture_stop failed with status 5");
         assert!(!error.is_fatal());
@@ -777,7 +979,7 @@ mod tests {
     #[test]
     fn cleanup_follows_the_stage_reached() {
         let fake = Fake::new(0);
-        drop(fake.capture(Stage::Created));
+        drop(fake.capture(Reached::Created));
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [4]);
     }
 

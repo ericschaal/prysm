@@ -1,5 +1,5 @@
 use crate::formats::Rates;
-use crate::interruptions::Interruptions;
+use crate::health::{Event, Health, PAUSE, Verdict, stall_timeout};
 use crate::{
     CaptureError, CaptureSink, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
 };
@@ -9,9 +9,36 @@ use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 use v4l::buffer::Type;
 mod stream;
-use stream::{Dequeued, Stream};
+use stream::{Dequeued, Stream, failed, released};
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
+
+/// The pixel formats capture negotiates, in order of preference: YUYV is
+/// smaller (2 bytes a pixel against 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Captured {
+    Yuyv,
+    Rgb,
+    Bgr,
+}
+
+impl Captured {
+    const PREFERRED: [Self; 3] = [Self::Yuyv, Self::Rgb, Self::Bgr];
+
+    fn fourcc(self) -> FourCC {
+        FourCC::new(match self {
+            Self::Yuyv => b"YUYV",
+            Self::Rgb => b"RGB3",
+            Self::Bgr => b"BGR3",
+        })
+    }
+
+    fn of(fourcc: FourCC) -> Option<Self> {
+        Self::PREFERRED
+            .into_iter()
+            .find(|captured| captured.fourcc() == fourcc)
+    }
+}
 
 /// Range and matrix from the negotiated format. A matrix the device leaves
 /// unnamed follows the picture `height` ([`crate::unspecified_matrix`]).
@@ -137,65 +164,51 @@ fn configure_frame_rate(device: &Device, refresh_rate_hz: NonZeroU32) -> anyhow:
     Ok(())
 }
 
+/// The negotiated format and what its pixels are.
 fn configure_stream(
     device: &mut Device,
     width: u32,
     height: u32,
     refresh_rate_hz: NonZeroU32,
-) -> Result<(Format, YuvRange, YuvStandardMatrix)> {
+) -> Result<(Format, PixelFormat)> {
     let mut fmt = device.format().context("failed to read capture format")?;
 
     fmt.width = width;
     fmt.height = height;
 
-    // Try formats in order of preference (YUYV is smaller and more efficient)
-    let preferred_formats = [
-        FourCC::new(b"YUYV"), // YUV 4:2:2 (2 bytes/pixel)
-        FourCC::new(b"RGB3"), // RGB24 (3 bytes/pixel)
-        FourCC::new(b"BGR3"), // BGR24 (3 bytes/pixel)
-    ];
-
     let mut last_error = None;
-    for fourcc in preferred_formats {
-        fmt.fourcc = fourcc;
-        match device.set_format(&fmt) {
-            Ok(_) => {
-                let format = device
-                    .format()
-                    .context("failed to read negotiated capture format")?;
-
-                // Drivers may substitute dimensions; require the configured native size.
-                if format.width != width || format.height != height {
-                    continue;
-                }
-                if format.fourcc == FourCC::new(b"YUYV") && !format.width.is_multiple_of(2) {
-                    continue;
-                }
-                if format.fourcc == FourCC::new(b"YUYV")
-                    || format.fourcc == FourCC::new(b"RGB3")
-                    || format.fourcc == FourCC::new(b"BGR3")
-                {
-                    tracing::info!(
-                        "Video format set to: {:?} {}x{} (stride: {})",
-                        format.fourcc,
-                        format.width,
-                        format.height,
-                        format.stride
-                    );
-
-                    let (range, matrix) = if format.fourcc == FourCC::new(b"YUYV") {
-                        negotiated_colorimetry(device)?
-                    } else {
-                        (YuvRange::Full, YuvStandardMatrix::Bt601)
-                    };
-                    configure_frame_rate(device, refresh_rate_hz)?;
-                    return Ok((format, range, matrix));
-                }
-            }
-            Err(e) => {
-                last_error = Some(crate::check_format_rejection(e)?);
-            }
+    for wanted in Captured::PREFERRED {
+        fmt.fourcc = wanted.fourcc();
+        if let Err(e) = device.set_format(&fmt) {
+            last_error = Some(crate::check_format_rejection(e)?);
+            continue;
         }
+        let format = device
+            .format()
+            .context("failed to read negotiated capture format")?;
+        // Drivers may substitute dimensions; require the configured native size.
+        if format.width != width || format.height != height {
+            continue;
+        }
+        // A driver may also substitute the format: only those read here count.
+        let pixels = match Captured::of(format.fourcc) {
+            Some(Captured::Yuyv) if format.width.is_multiple_of(2) => {
+                let (range, matrix) = negotiated_colorimetry(device)?;
+                PixelFormat::YUYV { range, matrix }
+            }
+            Some(Captured::Yuyv) | None => continue,
+            Some(Captured::Rgb) => PixelFormat::RGB24,
+            Some(Captured::Bgr) => PixelFormat::BGR24,
+        };
+        tracing::info!(
+            "Video format set to: {:?} {}x{} (stride: {})",
+            format.fourcc,
+            format.width,
+            format.height,
+            format.stride
+        );
+        configure_frame_rate(device, refresh_rate_hz)?;
+        return Ok((format, pixels));
     }
 
     Err(CaptureError::UnsupportedFormat {
@@ -258,9 +271,6 @@ pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
         .collect()
 }
 
-/// The pixel formats [`configure_stream`] negotiates.
-const CAPTURED: [&[u8; 4]; 3] = [b"YUYV", b"RGB3", b"BGR3"];
-
 /// Every even number.
 const EVEN: Span = Span::new(0, u32::MAX, 2).expect("a span");
 
@@ -279,16 +289,11 @@ pub(crate) fn list_formats(path: &str) -> Option<Vec<Mode>> {
         return Some(Vec::new());
     }
     let mut found = Vec::new();
-    for fourcc in descriptions
+    for (fourcc, captured) in descriptions
         .into_iter()
-        .map(|description| description.fourcc)
-        .filter(|fourcc| {
-            CAPTURED
-                .iter()
-                .any(|captured| *fourcc == FourCC::new(captured))
-        })
+        .filter_map(|description| Some((description.fourcc, Captured::of(description.fourcc)?)))
     {
-        let yuyv = fourcc == FourCC::new(b"YUYV");
+        let yuyv = captured == Captured::Yuyv;
         // A driver that cannot list what it captures leaves it unknown.
         for size in device.enum_framesizes(fourcc).ok()? {
             let (width, height, rates) = match size.size {
@@ -351,32 +356,94 @@ fn rates_at(device: &Device, fourcc: FourCC, width: u32, height: u32) -> Option<
     Some(rates)
 }
 
-/// A failure of the running stream, `doing` what: [`CaptureError::Disconnected`]
-/// when the device is gone, else a backend error.
-fn stream_failed(error: std::io::Error, doing: &'static str) -> CaptureError {
-    if stream::device_gone(&error) {
-        CaptureError::Disconnected {
-            details: doing.into(),
-            source: Some(error),
-        }
-    } else {
-        anyhow::Error::new(error).context(doing).into()
+/// Stop the stream and start it again. STREAMOFF gives every buffer back,
+/// including one the driver kept.
+fn restart(stream: &mut Stream) -> Result<()> {
+    stream
+        .stop()
+        .map_err(|error| failed(error, "failed to stop capture stream to restart it"))?;
+    stream
+        .start()
+        .map_err(|error| failed(error, "failed to restart capture stream"))
+}
+
+/// Carries out `verdict`: restarts (each after [`PAUSE`]) for as long as
+/// `health` says so, where a failed `restart` is one more interruption, and
+/// a device gone ends capture. `Ok(true)` to capture on, `Ok(false)` when
+/// `sink` stops meanwhile.
+fn settle(
+    mut verdict: Verdict,
+    health: &mut Health,
+    sink: &dyn CaptureSink,
+    mut restart: impl FnMut() -> Result<()>,
+    now: impl Fn() -> Instant,
+) -> Result<bool> {
+    loop {
+        verdict = match verdict {
+            Verdict::Continue => return Ok(true),
+            Verdict::Fail(error) => return Err(error),
+            Verdict::Restart if sink.should_stop(PAUSE) => return Ok(false),
+            Verdict::Restart => match restart() {
+                Ok(()) => Verdict::Continue,
+                Err(error @ CaptureError::Disconnected { .. }) => Verdict::Fail(error),
+                Err(error) => health.on(Event::Interrupted(error), now()),
+            },
+        };
     }
 }
 
-/// What capture was doing when a dequeue failed.
-const CAPTURING: &str = "error capturing frame";
-
-/// Stop the stream and, unless `sink` stops meanwhile, start it again.
-/// STREAMOFF gives every buffer back, including one the driver kept.
-fn restart(stream: &mut Stream, sink: &dyn CaptureSink) -> Result<()> {
+/// Stream from `stream`, whose buffers hold `format` as `pixels`, into
+/// `sink` until it stops or capture fails.
+fn capture(
+    stream: &mut Stream,
+    format: &Format,
+    pixels: PixelFormat,
+    rate: NonZeroU32,
+    sink: &dyn CaptureSink,
+) -> Result<()> {
+    let stopped = || sink.should_stop(Duration::ZERO);
+    if stopped() {
+        return Ok(());
+    }
     stream
-        .stop()
-        .map_err(|error| stream_failed(error, "failed to stop capture stream to restart it"))?;
-    if !sink.should_stop(Duration::ZERO) {
-        stream
-            .start()
-            .map_err(|error| stream_failed(error, "failed to restart capture stream"))?;
+        .start()
+        .map_err(|error| failed(error, "failed to start capture stream"))?;
+    sink.ready();
+    let mut pool = FramePool::default();
+    let mut stats = crate::trace_stats::TraceStats::new("v4l_capture");
+    let mut health = Health::new(rate);
+    while !stopped() {
+        let started = stats.start();
+        let dequeued = stream.frame(|data, buffer| {
+            let captured = captured_at(buffer);
+            let corrupted = buffer.flags & v4l::v4l_sys::V4L2_BUF_FLAG_ERROR != 0;
+            pool.copy_from_strided(
+                data,
+                format.width,
+                format.height,
+                pixels,
+                format.stride as usize,
+                corrupted,
+            )
+            .map(|frame| frame.with_captured(captured))
+        })?;
+        let event = match dequeued {
+            Dequeued::Buffer(Ok(frame)) => {
+                stats.record(started, frame.len(), Some(pool.stats()));
+                sink.frame(frame);
+                Event::Frame
+            }
+            Dequeued::Buffer(Err(reason)) => Event::Rejected(reason.into()),
+            Dequeued::Stalled => Event::Stalled,
+            Dequeued::Interrupted(error) => Event::Interrupted(error),
+        };
+        if !matches!(event, Event::Frame) {
+            stats.failure();
+        }
+        let verdict = health.on(event, Instant::now());
+        if !settle(verdict, &mut health, sink, || restart(stream), Instant::now)? {
+            return Ok(());
+        }
     }
     Ok(())
 }
@@ -405,84 +472,10 @@ pub(crate) fn run(
             )
         }
     })?;
-    let (format, range, matrix) = configure_stream(&mut device, width, height, rate)?;
-    let pixel_format = match format.fourcc.str() {
-        Ok("YUYV") => PixelFormat::YUYV { range, matrix },
-        Ok("RGB3") => PixelFormat::RGB24,
-        Ok("BGR3") => PixelFormat::BGR24,
-        _ => unreachable!("validated capture format"),
-    };
-    let timeout = Duration::from_secs(1) + Duration::from_secs(1) / rate.get();
-    let mut stream = Stream::new(&device, timeout)?;
-    let result = (|| -> Result<()> {
-        if stopped() {
-            return Ok(());
-        }
-        stream
-            .start()
-            .map_err(|error| stream_failed(error, "failed to start capture stream"))?;
-        sink.ready();
-        let mut pool = FramePool::default();
-        let mut stats = crate::trace_stats::TraceStats::new("v4l_capture");
-        let mut rejections = crate::rejections::Rejections::new(rate);
-        let mut interruptions = Interruptions::default();
-        loop {
-            if stopped() {
-                return Ok(());
-            }
-            let started = stats.start();
-            let dequeued = stream.frame(|data, buffer| {
-                let captured = captured_at(buffer);
-                let corrupted = buffer.flags & v4l::v4l_sys::V4L2_BUF_FLAG_ERROR != 0;
-                pool.copy_from_strided(
-                    data,
-                    format.width,
-                    format.height,
-                    pixel_format,
-                    format.stride as usize,
-                    corrupted,
-                )
-                .map(|frame| frame.with_captured(captured))
-                .ok_or_else(|| {
-                    crate::rejections::rejection(corrupted, data.len(), format.size as usize)
-                })
-            });
-            match dequeued.map_err(|error| stream_failed(error, CAPTURING))? {
-                Dequeued::Buffer(Ok(frame)) => {
-                    interruptions.answered();
-                    rejections.accepted();
-                    stats.record(started, frame.len(), Some(pool.stats()));
-                    sink.frame(frame);
-                }
-                Dequeued::Buffer(Err(reason)) => {
-                    interruptions.answered();
-                    stats.failure();
-                    rejections.rejected(reason, Instant::now())?;
-                }
-                Dequeued::Stalled => {
-                    interruptions.answered();
-                    stats.failure();
-                    rejections.stalled();
-                    restart(&mut stream, sink)?;
-                }
-                Dequeued::Interrupted(error) => {
-                    stats.failure();
-                    if !interruptions.interrupted(Instant::now()) {
-                        return Err(stream_failed(error, CAPTURING));
-                    }
-                    tracing::warn!(%error, "Capture interrupted; restarting the stream");
-                    if sink.should_stop(crate::interruptions::PAUSE) {
-                        return Ok(());
-                    }
-                    restart(&mut stream, sink)?;
-                }
-            }
-        }
-    })();
-    stream
-        .release()
-        .map_err(|error| CaptureError::Cleanup(error.into()))?;
-    result
+    let (format, pixels) = configure_stream(&mut device, width, height, rate)?;
+    let mut stream = Stream::new(&device, stall_timeout(rate))?;
+    let result = capture(&mut stream, &format, pixels, rate, sink);
+    released(stream.release(), result)
 }
 
 #[cfg(test)]
@@ -509,38 +502,79 @@ mod tests {
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
     }
 
-    #[test]
-    fn a_device_gone_while_streaming_is_a_disconnection_with_its_cause() {
-        let gone = stream_failed(
-            std::io::Error::from_raw_os_error(libc::ENODEV),
-            "error capturing frame",
-        );
-        let CaptureError::Disconnected {
-            source: Some(source),
-            ..
-        } = &gone
-        else {
-            panic!("expected a disconnection, got {gone:?}")
-        };
-        assert_eq!(source.raw_os_error(), Some(libc::ENODEV));
-        assert_eq!(
-            gone.to_string(),
-            "capture device disconnected: error capturing frame"
-        );
+    /// A sink that never stops and never waits.
+    struct Running;
 
-        let CaptureError::Backend(other) = stream_failed(
-            std::io::Error::from_raw_os_error(libc::EIO),
-            "error capturing frame",
-        ) else {
-            panic!("expected a backend error")
-        };
-        assert_eq!(
-            other
-                .downcast_ref::<std::io::Error>()
-                .unwrap()
-                .raw_os_error(),
-            Some(libc::EIO)
+    impl CaptureSink for Running {
+        fn ready(&self) {}
+        fn frame(&self, _: crate::Frame) {}
+        fn should_stop(&self, _: Duration) -> bool {
+            false
+        }
+    }
+
+    /// `settle` after an interruption at `start`, with restarts that give
+    /// `restarts` in turn (then succeed), each a pause later than the last.
+    fn settled(restarts: Vec<Result<()>>) -> (Result<bool>, usize) {
+        let start = Instant::now();
+        let mut health = Health::new(NonZeroU32::new(30).unwrap());
+        let interruption = CaptureError::Backend(anyhow::anyhow!("EIO"));
+        let verdict = health.on(Event::Interrupted(interruption), start);
+        let attempts = std::cell::Cell::new(0);
+        let mut restarts = restarts.into_iter();
+        let result = settle(
+            verdict,
+            &mut health,
+            &Running,
+            || {
+                attempts.set(attempts.get() + 1);
+                restarts.next().unwrap_or(Ok(()))
+            },
+            || start + PAUSE * u32::try_from(attempts.get()).unwrap(),
         );
+        (result, attempts.get())
+    }
+
+    fn refused() -> Result<()> {
+        Err(failed(
+            std::io::Error::from_raw_os_error(libc::EBUSY),
+            "failed to restart capture stream",
+        ))
+    }
+
+    #[test]
+    fn a_failed_restart_is_retried_within_the_grace() {
+        let (result, attempts) = settled(vec![refused(), refused(), Ok(())]);
+        assert!(result.unwrap(), "capturing again");
+        assert_eq!(attempts, 3);
+        // Three seconds of refusals, a pause apart: the last one ends capture.
+        let (result, attempts) = settled((0..100).map(|_| refused()).collect());
+        let error = result.unwrap_err();
+        assert_eq!(attempts, 30, "{error}");
+        assert_eq!(
+            prysm_ports::chain(&error),
+            "failed to restart capture stream: Device or resource busy (os error 16)"
+        );
+    }
+
+    #[test]
+    fn a_device_gone_during_a_restart_ends_capture_at_once() {
+        let gone = Err(failed(
+            std::io::Error::from_raw_os_error(libc::ENODEV),
+            "failed to restart capture stream",
+        ));
+        let (result, attempts) = settled(vec![refused(), gone]);
+        assert!(matches!(result, Err(CaptureError::Disconnected { .. })));
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn the_preferred_formats_are_the_ones_listed_and_read() {
+        for captured in Captured::PREFERRED {
+            assert_eq!(Captured::of(captured.fourcc()), Some(captured));
+        }
+        assert_eq!(Captured::of(FourCC::new(b"MJPG")), None);
+        assert_eq!(Captured::PREFERRED[0], Captured::Yuyv);
     }
 
     #[test]
