@@ -29,6 +29,14 @@ impl CallLog {
         Self::default()
     }
 
+    /// Block this thread, which is not the async runtime's, until `event`
+    /// was recorded.
+    pub fn block_until(&self, event: &str) {
+        let mut calls = self.0.subscribe();
+        let _ =
+            futures::executor::block_on(calls.wait_for(|events| events.iter().any(|e| e == event)));
+    }
+
     pub fn record(&self, event: impl Into<String>) {
         let event = event.into();
         self.0.send_modify(|events| events.push(event));
@@ -89,8 +97,9 @@ pub struct FakeSourceSettings {
     pub fail_open: bool,
     /// Block in `open` this long, like a device that does not answer.
     pub open_delay_ms: u64,
-    /// Block in `modes` this long, after recording the call.
-    pub modes_delay_ms: u64,
+    /// Block in `modes`, after recording the call, until the log holds this
+    /// event: a gate the test opens with [`CallLog::record`].
+    pub modes_until: Option<String>,
     /// Rejected by `validate`.
     pub invalid: bool,
     /// Block in `close` this long, to exceed a stop deadline.
@@ -160,7 +169,9 @@ impl SourceFactory for FakeSources {
     /// The frame size the settings give, at 1 to 60 fps.
     fn modes(&self, settings: &FakeSourceSettings) -> Modes {
         self.0.record("source.modes");
-        thread::sleep(Duration::from_millis(settings.modes_delay_ms));
+        if let Some(gate) = &settings.modes_until {
+            self.0.block_until(gate);
+        }
         let (width, height) = settings.frame_size();
         Modes::from(Mode::new(
             Span::exactly(width),

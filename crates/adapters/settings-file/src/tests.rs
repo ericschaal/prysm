@@ -445,6 +445,24 @@ fn a_save_after_a_failed_load_keeps_the_unreadable_file_beside_it() {
     }
 }
 
+/// A save whose rename fails after the unreadable file got its second
+/// name leaves it at its path, with no second name: what a load finds, and
+/// so the failure reported, is what it was.
+#[test]
+fn a_failed_replace_after_a_failed_load_leaves_the_unreadable_file_at_its_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, "{ not json").unwrap();
+    let mut store =
+        SettingsFile::new(&path).with_replace(|_, _| Err(std::io::Error::other("disk full")));
+    let before = store.load().unwrap_err().to_string();
+    let error = store.save(&sample()).unwrap_err();
+    assert!(full_message(&error).ends_with("disk full"), "{error}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
+    assert_eq!(entries(directory.path()), ["settings.json"]);
+    assert_eq!(store.load().unwrap_err().to_string(), before);
+}
+
 #[test]
 fn a_save_after_a_failed_load_of_an_oversized_file_keeps_it() {
     let directory = tempfile::tempdir().unwrap();

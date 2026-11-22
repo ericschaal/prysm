@@ -176,17 +176,32 @@ watchdogs stay inside the capture adapters. Host shutdown stops the session
 with the output idled off; requests still queued behind it are refused.
 
 Commands have no deadline of their own, nor do the portal's replies; each
-adapter bounds its blocking calls instead. Resolving a WLED host name takes
-at most 1.5 s, and so does one WLED mode change (both its requests: connect,
-send, whole reply) however slowly the device answers. An idle, name
-resolution included, takes at most 1.5 s (`IDLE_LIMIT`), so a stop waits for
-the source's release plus 1.5 s (on the TV 4 s + 1.5 s, within its 6 s
-deadline); a stop that comes while a session opens WLED also waits for the
-open (resolution, live mode and, if that failed, switching it off: at most
-4.5 s). Opening a video device waits up to 10 s for its format query and
-activation together, then, if that ran out, up to 3 s for the release.
-The WLED state checks never block the session thread: their connect, request
-and reply each go on without waiting, at every frame.
+adapter bounds its blocking calls instead (`COMMAND_LIMIT` in the runtime).
+Opening a video device waits up to 10 s for its format query and activation
+together, then, if that ran out, up to 3 s for the release. A WLED idle,
+name resolution included, has one deadline, `IDLE_LIMIT` (1.5 s); a WLED
+open has one, `OPEN_LIMIT` (3 s): resolution and live mode by its first
+1.5 s, switching the device off again after a failure by its end. The WLED
+state checks never block the session thread: their connect, request and
+reply each go on without waiting, at every frame.
+
+A stop waits for the source's close, then the output's idle, and, when it
+comes while the session opens WLED at a frame, for that open first. With
+each host's stop deadline and its source's release limit (none of these
+sums is asserted; the constants live in the hosts and capture adapters):
+
+| Host and source | Stop deadline | Release | Close and idle | With an open in flight |
+| --- | --- | --- | --- | --- |
+| TV, `webos` | 6 s | 4 s | 5.5 s | 8.5 s: exceeds the stop deadline; the engine then faults |
+| Desktop, `device` | 10 s | 3 s | 4.5 s | 7.5 s |
+| Desktop, `file` | 10 s | 5 s (exit 2 s, reap 3 s) | 6.5 s | 9.5 s |
+| Desktop, `remote` | 10 s | 5.05 s | 6.55 s | 9.55 s |
+
+Every other case fits its stop deadline. On the TV a stop that meets an
+open in flight exceeds it: the engine then faults and only a restart
+recovers. It would fit with a stop deadline above 8.5 s (with the 1 s
+shutdown grace, the supervisor's KILL after 8 s would then have to move
+above 9.5 s), or with an open that ends when the stop comes (then 5.5 s).
 
 As a backstop, shutdown gives the engine's blocking adapter and settings
 calls one shared grace (the stop deadline unless the host sets one; 1 s in

@@ -52,6 +52,9 @@ impl Leds {
         let began = if self.is_held() {
             ready
         } else {
+            // An open that fails may have changed the device (WLED's turns
+            // it off again, or fails to): its mode is unknown then.
+            *self = Self::Unknown;
             *self = Self::Held(output.open()?);
             stats.output_opened();
             Instant::now()
@@ -119,6 +122,7 @@ mod tests {
     #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
     struct Fails {
         idle: bool,
+        open: bool,
     }
 
     /// Records opens, idles of what it opened (`idle:<mode>`), and modes set
@@ -145,6 +149,9 @@ mod tests {
 
         fn open(&self, fails: &Fails) -> Result<Box<dyn LedOutput>> {
             self.0.lock().unwrap().push("open".into());
+            if fails.open {
+                return Err(Error::other("cannot open"));
+            }
             Ok(Box::new(Output {
                 calls: self.0.clone(),
                 fails: *fails,
@@ -235,7 +242,13 @@ mod tests {
             registry.add_output(Recorder(made.clone()));
             let output = Configured::new(
                 registry,
-                AdapterSettings::new(Recorder::KIND, &Fails { idle: fail_idle }),
+                AdapterSettings::new(
+                    Recorder::KIND,
+                    &Fails {
+                        idle: fail_idle,
+                        open: false,
+                    },
+                ),
             );
             let mut leds = leds(from, &output);
             made.lock().unwrap().clear();
@@ -244,6 +257,42 @@ mod tests {
             assert_eq!(*made.lock().unwrap(), calls, "{case:?}");
             assert_eq!(state(&leds), left, "{case:?}");
             assert_eq!(finished.is_ok(), left != "unknown", "{case:?}");
+        }
+    }
+
+    /// A failed open (WLED's turns the device off again, or may not) leaves
+    /// the device in no known mode, whatever it was left in before: the
+    /// end then sets the stop's mode instead of trusting the old one.
+    #[test]
+    fn a_failed_open_leaves_the_mode_unknown() {
+        use IdleMode::{Native, Off};
+        for (from, mode) in [
+            (Before::Untouched, Off),
+            (Before::LeftOff, Off),
+            (Before::LeftNative, Native),
+        ] {
+            let made = Calls::default();
+            let mut registry = Registry::default();
+            registry.add_output(Recorder(made.clone()));
+            let output = Configured::new(
+                registry,
+                AdapterSettings::new(
+                    Recorder::KIND,
+                    &Fails {
+                        idle: false,
+                        open: true,
+                    },
+                ),
+            );
+            let mut leds = leds(from, &output);
+            let stats = Stats::default();
+            let wrote = leds.write(&EdgeColors::default(), Instant::now(), &output, &stats);
+            assert!(wrote.is_err(), "{from:?}");
+            assert_eq!(state(&leds), "unknown", "{from:?}");
+            made.lock().unwrap().clear();
+            leds.finish(mode, &output).unwrap();
+            assert_eq!(*made.lock().unwrap(), [format!("set:{mode:?}")], "{from:?}");
+            assert_eq!(state(&leds), format!("left {mode:?}"), "{from:?}");
         }
     }
 }

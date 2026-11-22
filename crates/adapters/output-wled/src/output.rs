@@ -16,12 +16,32 @@ use std::time::{Duration, Instant};
 /// WLED's DDP port (UDP).
 const DDP_PORT: u16 = 4048;
 
-/// The longest any idle takes: a held output's mode change, or for a device
-/// nobody holds ([`Wled::idle`]) its name resolution and mode change
-/// together. A session's stop waits for it after its source's release, so
-/// a host's stop deadline must exceed its source's release limit plus this:
-/// a host asserts that with its own constants.
+/// The longest any idle takes, one deadline for all of it: a held output's
+/// mode change, or for a device nobody holds ([`Wled::idle`]) its name
+/// resolution and mode change.
 pub const IDLE_LIMIT: Duration = http::TIMEOUT;
+
+/// The longest an open takes, one deadline for all of it: name resolution
+/// and live mode by [`http::TIMEOUT`] after it starts, then, if live mode
+/// failed, switching the device off again within [`IDLE_LIMIT`].
+pub const OPEN_LIMIT: Duration = http::TIMEOUT.saturating_add(IDLE_LIMIT);
+
+// What a session's stop waits for, by these limits: the source's close,
+// then the output's idle (`IDLE_LIMIT`); and when the stop comes while the
+// session opens WLED at a frame, that open first (`OPEN_LIMIT`). With each
+// host's stop deadline and its source's release limit, which live in the
+// hosts and the capture adapters (none of these sums is asserted):
+//
+// | Host and source | Stop deadline | Release | Close and idle | With an open in flight |
+// | --- | --- | --- | --- | --- |
+// | TV, `webos` | 6 s | 4 s | 5.5 s | 8.5 s: exceeds the stop deadline; the engine then faults |
+// | Desktop, `device` | 10 s | 3 s | 4.5 s | 7.5 s |
+// | Desktop, `file` | 10 s | 5 s (exit 2 s, reap 3 s) | 6.5 s | 9.5 s |
+// | Desktop, `remote` | 10 s | 5.05 s | 6.55 s | 9.55 s |
+//
+// Every other row fits its stop deadline. The TV's open-in-flight case
+// fits only with a stop deadline above 8.5 s, or with an open that ends
+// when the stop comes (then 5.5 s).
 
 /// Opens WLED outputs. Enable DDP reception in WLED's Sync Interfaces settings.
 #[derive(Debug)]
@@ -93,24 +113,24 @@ impl OutputFactory for Wled {
 
     /// Resolves the host, then takes the device over for live colours. On
     /// failure the device is turned off again unless it could not be reached
-    /// at all. Each of the three steps takes at most [`http::TIMEOUT`]; a
-    /// stop that comes while a session opens its output waits for them.
+    /// at all. All within [`OPEN_LIMIT`]: taking over by its first
+    /// [`http::TIMEOUT`], turning off again by its end.
     fn open(&self, settings: &WledSettings) -> Result<Box<dyn LedOutput>> {
-        let device = self.device(settings, http::TIMEOUT)?;
+        let deadline = Deadline::after(OPEN_LIMIT);
+        let take_over = deadline.earlier(IDLE_LIMIT);
+        let device = self.device(settings, take_over.remaining())?;
         let ddp = SocketAddr::new(device.http.ip(), self.ddp_port);
         let renderer = WledRenderer::new(ddp)
             .map_err(|source| Error::adapter(format!("cannot open DDP socket to {ddp}"), source))?;
-        if let Err(live) = device.enter(Mode::Live, Deadline::after(http::TIMEOUT)) {
+        if let Err(live) = device.enter(Mode::Live, take_over) {
             let context = device.context(Mode::Live);
             if matches!(live, http::RequestError::Connect(_)) {
                 return Err(Error::adapter(context, live));
             }
-            return Err(
-                match device.enter(Mode::Off, Deadline::after(http::TIMEOUT)) {
-                    Ok(()) => Error::adapter(context, live),
-                    Err(off) => Error::adapter(context, NotTurnedOff { live, off }),
-                },
-            );
+            return Err(match device.enter(Mode::Off, deadline) {
+                Ok(()) => Error::adapter(context, live),
+                Err(off) => Error::adapter(context, NotTurnedOff { live, off }),
+            });
         }
         Ok(Box::new(WledOutput {
             observer: Observer::new(device.http, &device.host, self.check_every, Instant::now()),
@@ -125,7 +145,7 @@ impl OutputFactory for Wled {
     /// device never shows Prysm's colours meanwhile. Within [`IDLE_LIMIT`].
     fn idle(&self, settings: &WledSettings, mode: IdleMode) -> Result<()> {
         let deadline = Deadline::after(IDLE_LIMIT);
-        let device = self.device(settings, IDLE_LIMIT)?;
+        let device = self.device(settings, deadline.remaining())?;
         let mode = Mode::from(mode);
         device
             .enter(mode, deadline)

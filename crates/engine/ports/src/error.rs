@@ -57,7 +57,6 @@ pub enum Error {
     /// source's release; only shutdown is accepted.
     #[error("runtime is faulted: session did not finish {0}")]
     Faulted(SessionPhase),
-
     #[error("{0} panicked")]
     Panicked(&'static str),
     #[error("runtime has stopped")]

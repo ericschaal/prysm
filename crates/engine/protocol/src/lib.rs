@@ -178,8 +178,6 @@ pub enum FailureKind {
     Adapter,
     /// The runtime or surface is stopping or stopped.
     Unavailable,
-    /// The command did not answer in time; its outcome shows in the state.
-    Timeout,
     /// An unexpected internal failure.
     Internal,
     Forbidden,
@@ -223,7 +221,6 @@ impl From<&Error> for Failure {
             },
             Error::NotProcessed => Self::new(FailureKind::NotProcessed, message),
             Error::Faulted(_) => Self::new(FailureKind::Faulted, message),
-
             Error::Panicked(_) => Self::new(FailureKind::Internal, message),
             Error::Closed => Self::new(FailureKind::Unavailable, message),
         }

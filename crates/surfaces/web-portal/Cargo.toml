@@ -34,7 +34,7 @@ prysm-capture-remote = { workspace = true, features = ["testkit"] }
 prysm-runtime = { workspace = true, features = ["testkit"] }
 prysm-testkit.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "io-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "io-util", "test-util"] }
 
 [lints]
 workspace = true

@@ -596,11 +596,17 @@ async fn an_unreadable_store_starts_unconfigured_and_reports_it_until_a_save() {
     .await;
 }
 
-/// Saves fail, as a store does whose stored settings stay as they were.
-struct Refusing;
+/// Saves fail, as a store does whose stored settings stay as they were;
+/// loads fail too when `unreadable`.
+struct Refusing {
+    unreadable: bool,
+}
 
 impl SettingsStore for Refusing {
     fn load(&mut self) -> prysm_ports::Result<Option<Settings>> {
+        if self.unreadable {
+            return Err(Error::other("cannot parse settings file"));
+        }
         Ok(None)
     }
 
@@ -609,23 +615,34 @@ impl SettingsStore for Refusing {
     }
 }
 
-/// A refused save leaves the engine with what is stored.
+/// A refused save leaves the engine with what is stored, and a store that
+/// could not be read reported as it was: its file is still what it was.
 #[tokio::test]
 async fn a_refused_save_installs_nothing() {
     within_async(LIMIT, async {
-        let log = CallLog::new();
-        let (handle, engine) = Engine::start(registry(&log), Box::new(Refusing), DEADLINE)
-            .await
-            .unwrap();
-        let before = revision(&handle);
-        let error = handle
-            .replace_settings(before, named("a", "a"))
-            .await
-            .unwrap_err();
-        assert_eq!(error.to_string(), "cannot save settings file");
-        assert_eq!(revision(&handle), before);
-        assert_eq!(handle.snapshot().borrow().settings, Settings::default());
-        engine.shutdown().await.unwrap();
+        for unreadable in [false, true] {
+            let log = CallLog::new();
+            let store = Box::new(Refusing { unreadable });
+            let (handle, engine) = Engine::start(registry(&log), store, DEADLINE)
+                .await
+                .unwrap();
+            let before = revision(&handle);
+            let error = handle
+                .replace_settings(before, named("a", "a"))
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), "cannot save settings file");
+            assert_eq!(revision(&handle), before);
+            let snapshot = handle.snapshot().borrow().clone();
+            assert_eq!(snapshot.settings, Settings::default());
+            assert_eq!(
+                matches!(snapshot.failure, Some(Error::UnusableSettings(_))),
+                unreadable,
+                "{:?}",
+                snapshot.failure
+            );
+            engine.shutdown().await.unwrap();
+        }
     })
     .await;
 }

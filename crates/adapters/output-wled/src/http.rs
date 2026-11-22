@@ -6,9 +6,11 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
-/// Bounds name resolution, and each mode change (its exchanges together:
+/// Bounds name resolution with a mode change (its exchanges together:
 /// connect, request and response) however slowly the device answers. See
-/// [`IDLE_LIMIT`](crate::output::IDLE_LIMIT) for what a stop waits for.
+/// [`IDLE_LIMIT`](crate::output::IDLE_LIMIT) and
+/// [`OPEN_LIMIT`](crate::output::OPEN_LIMIT), and what a stop waits for
+/// beside them.
 pub const TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// When the exchanges of one step must be done, and the budget it was
@@ -26,6 +28,22 @@ impl Deadline {
             at: Instant::now() + budget,
             budget,
         }
+    }
+
+    /// This deadline, `by` sooner: the part of its budget before a last
+    /// step that gets `by`.
+    #[must_use]
+    pub fn earlier(self, by: Duration) -> Self {
+        Self {
+            at: self.at.checked_sub(by).unwrap_or(self.at),
+            budget: self.budget.saturating_sub(by),
+        }
+    }
+
+    /// The time left, zero once it passed.
+    #[must_use]
+    pub fn remaining(self) -> Duration {
+        self.at.saturating_duration_since(Instant::now())
     }
 
     /// The time left; [`RequestError::TimedOut`] once there is none.

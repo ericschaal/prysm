@@ -11,8 +11,12 @@ use std::time::Duration;
 /// The longest a [`SourceFactory::open`] may take, releasing what a failed
 /// open held included. A command that (re)starts lighting waits for a
 /// session's stop and one source open, so this and the stop deadline bound
-/// every command (`prysm_runtime::COMMAND_LIMIT`). Each capture adapter
-/// asserts that its own open bounds fit.
+/// every command (`prysm_runtime::COMMAND_LIMIT`). `device` waits in its
+/// open (for the device to be ready, then to release a failed one) and
+/// asserts that those bounds fit. `webos`, `file` and `remote` open without
+/// waiting for hardware or a peer: they load libraries, start a thread or
+/// spawn FFmpeg and return, and wait for frames only once pulled, so they
+/// need no assertion.
 pub const SOURCE_OPEN_LIMIT: Duration = Duration::from_secs(13);
 
 /// Opens a [`FrameSource`] from typed settings. Opening may block.

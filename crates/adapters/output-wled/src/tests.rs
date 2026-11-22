@@ -1,9 +1,10 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
 use crate::address::{DeviceAddress, Host};
 use crate::ddp::{Gamma, Transfer};
+use crate::http::{self, RequestError, TIMEOUT};
 use crate::observe::{BACKOFF, EVERY, Observer, REPLY};
 use crate::output::NotTurnedOff;
-use crate::{IDLE_LIMIT, LedCounts, MAX_LEDS, Wled, WledSettings, http::RequestError};
+use crate::{IDLE_LIMIT, LedCounts, MAX_LEDS, OPEN_LIMIT, Wled, WledSettings};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{
     AdapterSettings, DeviceBrightness, Error, IdleMode, LedOutput, OutputFactory, OutputIssue,
@@ -31,8 +32,6 @@ enum Reply {
     Raw(String),
     /// No reply: hold the connection until the client closes it.
     Hang,
-    /// [`Reply::Json`] after this long, like a slow device.
-    Late(Duration, &'static str),
 }
 
 struct Device {
@@ -66,16 +65,11 @@ impl Device {
                     return;
                 }
                 let response = match reply {
-                    Reply::Json(body) | Reply::Late(_, body) => {
-                        if let Reply::Late(delay, _) = reply {
-                            thread::sleep(delay);
-                        }
-                        format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                    Reply::Json(body) => format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
                          Content-Length: {}\r\n\r\n{body}",
-                            body.len()
-                        )
-                    }
+                        body.len()
+                    ),
                     Reply::Raw(bytes) => bytes,
                     Reply::Hang => {
                         let _ = socket.read(&mut [0; 1]);
@@ -327,24 +321,58 @@ fn idle_without_an_output_sets_the_mode_without_taking_the_device_over() {
     }
 }
 
-/// Both requests of a mode change share one deadline: a slow first answer
-/// leaves the second only what is left of [`IDLE_LIMIT`].
+/// A request whose deadline has passed is not sent: the device's first
+/// request is the one made after it, with time left.
+#[test]
+fn a_spent_deadline_sends_nothing() {
+    let device = Device::new(vec![Reply::Json(OK)]);
+    let spent = http::Deadline::after(Duration::ZERO);
+    let error = http::post_state(device.http(), "wled", &json!({"on": true}), spent).unwrap_err();
+    assert!(
+        matches!(error, RequestError::TimedOut(Duration::ZERO)),
+        "{error:?}"
+    );
+    http::post_state(
+        device.http(),
+        "wled",
+        &json!({"on": false}),
+        http::Deadline::after(WAIT),
+    )
+    .unwrap();
+    assert_eq!(device.call(), json!({"on": false}));
+}
+
+/// Both requests of an idle share its one deadline, which a timeout names.
 #[test]
 fn an_idle_is_bounded_as_a_whole() {
-    let slow = IDLE_LIMIT - Duration::from_millis(500);
-    let device = Device::new(vec![Reply::Late(slow, OK), Reply::Hang]);
+    let device = Device::new(vec![Reply::Json(OK), Reply::Hang]);
     let settings = device.settings(one_each(), true);
-    let started = Instant::now();
     let error = device.wled.idle(&settings, IdleMode::Off).unwrap_err();
-    let elapsed = started.elapsed();
     assert!(
         matches!(request_error(&error), RequestError::TimedOut(IDLE_LIMIT)),
         "{error:?}"
     );
+    device.expect(&[release(), off()]);
+}
+
+/// An open has one deadline: live mode by its first part, which a timeout
+/// names, and turning the device off again by its end, [`OPEN_LIMIT`].
+#[test]
+fn an_open_is_bounded_as_a_whole() {
+    let device = Device::new(vec![Reply::Hang, Reply::Hang]);
+    let Err(error) = device.open(one_each()) else {
+        panic!("live mode never answered");
+    };
+    let failed: &NotTurnedOff = source(&error).downcast_ref().expect("both failed");
     assert!(
-        elapsed < IDLE_LIMIT + Duration::from_millis(300),
-        "{elapsed:?}"
+        matches!(failed.live, RequestError::TimedOut(TIMEOUT)),
+        "{failed:?}"
     );
+    assert!(
+        matches!(failed.off, RequestError::TimedOut(OPEN_LIMIT)),
+        "{failed:?}"
+    );
+    device.expect(&[release(), release()]);
 }
 
 #[test]
@@ -885,28 +913,38 @@ fn an_unreachable_state_endpoint_is_reported_at_once() {
 }
 
 /// A device that does not answer the connect (a firewall dropping TCP 80,
-/// say) does not hold the caller: the connect is finished by later polls,
-/// and given up with the reply at [`REPLY`].
+/// say) does not hold the caller: the poll that starts the check returns
+/// with it connecting, later polls go on, and the check is given up at
+/// [`REPLY`]. A listener whose queue is full stands in: Linux lets the
+/// connects wait (macOS refuses them, so the test is Linux's).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_state_check_never_waits_for_the_connect() {
-    // TEST-NET-1: nothing answers, or the network refuses it at once.
-    let silent = SocketAddr::from(([192, 0, 2, 1], 80));
-    let t0 = Instant::now();
-    let mut observer = Observer::new(silent, "wled", Duration::ZERO, t0);
-    let started = Instant::now();
-    let found = observer.poll(t0);
-    assert!(
-        started.elapsed() < Duration::from_millis(100),
-        "{:?}",
-        started.elapsed()
-    );
-    if observer.checking() {
-        assert_eq!(found, None, "connecting");
-        assert_eq!(observer.poll(t0 + REPLY), Some(OutputIssue::Unreachable));
-        assert!(!observer.checking());
-    } else {
-        assert_eq!(found, Some(OutputIssue::Unreachable));
+    let listener =
+        socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+    listener
+        .bind(&SocketAddr::from(([127, 0, 0, 1], 0)).into())
+        .unwrap();
+    listener.listen(0).unwrap();
+    let address = listener.local_addr().unwrap().as_socket().unwrap();
+    // Connects nobody accepts, until one is left waiting: the queue is full.
+    let mut fillers = Vec::new();
+    loop {
+        let filler = std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100));
+        match filler {
+            Ok(filler) => fillers.push(filler),
+            Err(_) => break,
+        }
+        assert!(fillers.len() < 64, "the queue never filled");
     }
+    let t0 = Instant::now();
+    let mut observer = Observer::new(address, "wled", Duration::ZERO, t0);
+    assert_eq!(observer.poll(t0), None, "the check started");
+    assert!(observer.checking(), "still connecting");
+    assert_eq!(observer.poll(t0 + REPLY / 2), None);
+    assert!(observer.checking(), "still connecting");
+    assert_eq!(observer.poll(t0 + REPLY), Some(OutputIssue::Unreachable));
+    assert!(!observer.checking());
 }
 
 /// State checks allow 64 KiB, more than the 20 KiB of other requests:

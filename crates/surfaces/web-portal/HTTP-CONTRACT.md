@@ -426,11 +426,13 @@ the portal, in command replies and in `State.failure`.
 | 503 | `unavailable` | The engine has stopped |
 
 The portal sets no deadline on a command: every one ends, since the engine
-bounds a session's stop and every adapter bounds its own calls. The
-`timeout` kind is never sent. A client sets its own limit above the longest
+bounds a session's stop and every adapter bounds its own calls. A client
+sets its own limit above the longest
 command, `prysm_runtime::COMMAND_LIMIT`: a desktop host's default stop
 deadline plus `prysm_ports::SOURCE_OPEN_LIMIT`, which every capture
-adapter's open fits (the portal's client waits 30 s).
+adapter's open fits (the portal's client waits 30 s). That is one command's
+time: a command queued behind others in the engine's mailbox waits for
+them too.
 
 An `adapter` failure in the state carries the same `section`: `capture` when
 opening or reading the source failed, `output` when opening, writing or
@@ -522,9 +524,12 @@ What it does not protect against:
   write (slow or vanished readers are disconnected once the socket's send
   buffer is full).
 - When `accept` finds the process out of file descriptors or memory
-  (`EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`), the portal accepts again once
-  one of its connections ends and frees what it held, with no timer; with
-  no connection open nothing would, so the listener then fails.
+  (`EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`), the portal stops accepting
+  until one of its own connections ends, with no timer; with no connection
+  open nothing would wake it, so the listener then fails. Only its own
+  connections ending wakes it: descriptors freed elsewhere in the process
+  do not, so while its open connections are long-lived (event streams) it
+  accepts nothing until one of them ends.
 
 ## Lifetime
 
@@ -533,7 +538,7 @@ What it does not protect against:
 | Constructed | Surface starts | Adopt the listener the host bound; a listener that cannot be used ends the surface with `Error::Adapter` (`cannot use the portal listener`). |
 | Serving | Request fails validation | Respond without calling the engine. |
 | Serving | Client disconnects | Drop its connection; a command already sent to the engine still completes. |
-| Serving | `accept` out of descriptors or memory, a connection open | Stop accepting until a connection ends. |
+| Serving | `accept` out of descriptors or memory, a connection open | Stop accepting until one of the portal's connections ends (only that wakes it; see [Limits](#limits)). |
 | Serving | Listener fails (not a per-connection error, nor out of resources with a connection open) | Stop serving; the runtime records a surface failure; lighting continues. |
 | Serving | Host shutdown | Close the listener at once, end streams, let open requests finish for up to 5 s, then abort the rest. |
 

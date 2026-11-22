@@ -20,7 +20,6 @@ export function saveProblem(failure: Failure) {
         ? 'Not saved. Check the marked field.'
         : 'Not saved: Prysm can’t use these settings.';
     case 'unavailable':
-    case 'timeout':
       return 'Not saved: Prysm did not answer. Try again.';
     case 'busy':
       return 'Not saved: Prysm is busy. Try again in a moment.';

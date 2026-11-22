@@ -151,12 +151,17 @@ A file that `load` refuses (no `format`, a newer or older format, cut-off or
 invalid JSON, a wrong type or unknown field, over 1 MiB, a permission or I/O
 error) is never replaced unseen: the engine then starts unconfigured and
 shows the cause as the failure, and the file stays as it was. The next
-`save`, which only a user's save from the portal makes, first renames it to
-`settings.json.unreadable-XXXXXX` (six random characters, a name of its own,
-so no earlier one is overwritten) beside the new file, logs that name, and
-then writes the new file as usual, owner-only rather than with the
-unreadable file's permissions. If the file is gone by then, nothing is set
-aside. None of these is fatal, since a save keeps the file and a restart
+`save`, which only a user's save from the portal makes, first gives it a
+second name, `settings.json.unreadable-XXXXXX` (six random characters, a
+name of its own, so no earlier one is overwritten): a hard link, so the file
+never leaves its path before the new one replaces it. Then the new file is
+renamed over the path as usual, owner-only rather than with the unreadable
+file's permissions, and the kept name is logged. If that rename fails, the
+second name is removed and the unreadable file is still where it was, so the
+failure shown still matches the disk. Where the filesystem has no hard
+links, the second name is a copy, which needs the file readable: a file
+Prysm may not read then cannot be set aside, and the save fails without
+changing anything. If the file is gone by then, nothing is set aside. None of these is fatal, since a save keeps the file and a restart
 would fix none of them; only a panicking store stops start-up.
 
 `save` replaces only a regular file (or a link to one): a directory, socket

@@ -200,6 +200,8 @@ pub struct SettingsFile {
     /// The last `load` found something at the path that it could not read.
     unread: bool,
     sync_directory: fn(&Path) -> io::Result<()>,
+    /// Renames the written temporary file over the path.
+    replace: fn(tempfile::NamedTempFile, &Path) -> io::Result<()>,
 }
 
 impl SettingsFile {
@@ -210,7 +212,17 @@ impl SettingsFile {
             path: path.into(),
             unread: false,
             sync_directory,
+            replace,
         }
+    }
+
+    #[cfg(test)]
+    fn with_replace(
+        mut self,
+        replace: fn(tempfile::NamedTempFile, &Path) -> io::Result<()>,
+    ) -> Self {
+        self.replace = replace;
+        self
     }
 
     #[cfg(test)]
@@ -259,26 +271,37 @@ impl SettingsFile {
         })
     }
 
-    /// Move the file at the path to a name of its own beside it, and return
-    /// that name; `None` when nothing is there any more.
-    fn set_aside(&self) -> io::Result<Option<PathBuf>> {
+    /// Give the file at the path a second name of its own beside it, and
+    /// return it; `None` when nothing is there any more. The file stays at
+    /// its path, so it is never missing: the save's rename then leaves it
+    /// under the new name only. The name is removed when the returned path
+    /// is dropped unkept, as after a failed rename. A hard link; where the
+    /// filesystem has none, a copy, which needs the file readable (else the
+    /// save fails and nothing changes).
+    fn set_aside(&self) -> io::Result<Option<tempfile::TempPath>> {
         let mut prefix = self
             .path
             .file_name()
             .unwrap_or(OsStr::new("settings"))
             .to_os_string();
         prefix.push(UNREADABLE);
-        // A new file of its own, so the rename replaces nothing else; removed
-        // on drop unless the rename put the unreadable file there.
-        let aside = tempfile::Builder::new()
-            .prefix(&prefix)
-            .tempfile_in(self.directory())?
-            .into_temp_path();
-        match fs::rename(&self.path, &aside) {
-            Ok(()) => aside.keep().map(Some).map_err(|error| error.error),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
-        }
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(&prefix);
+        // A name nothing has: a hard link or a new file never replaces one.
+        let linked = builder.make_in(self.directory(), |aside| fs::hard_link(&self.path, aside));
+        let aside = match linked {
+            Ok(aside) => aside,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(link) => builder
+                .make_in(self.directory(), |aside| copy_new(&self.path, aside))
+                .map_err(|copy| {
+                    io::Error::new(
+                        copy.kind(),
+                        format!("{copy}; a hard link failed too: {link}"),
+                    )
+                })?,
+        };
+        Ok(Some(aside.into_temp_path()))
     }
 }
 
@@ -331,22 +354,25 @@ impl SettingsStore for SettingsFile {
             .and_then(|()| temporary.as_file().sync_all())
             .map_err(|error| self.failed("write a temporary file for", error))?;
 
-        if self.unread {
-            let aside = self
-                .set_aside()
-                .map_err(|error| self.failed("set aside the unreadable", error))?;
-            self.unread = false;
-            if let Some(aside) = aside {
-                tracing::warn!(
-                    "kept the settings file it could not read as {}",
-                    aside.display()
-                );
-            }
+        let aside = if self.unread {
+            self.set_aside()
+                .map_err(|error| self.failed("set aside the unreadable", error))?
+        } else {
+            None
+        };
+        // The rename is the commit point. A failure leaves the unreadable
+        // file at its path, and its second name is removed.
+        (self.replace)(temporary, &self.path).map_err(|error| self.failed("replace", error))?;
+        self.unread = false;
+        if let Some(aside) = aside {
+            let aside = aside
+                .keep()
+                .map_err(|error| self.failed("keep the unreadable", error.error))?;
+            tracing::warn!(
+                "kept the settings file it could not read as {}",
+                aside.display()
+            );
         }
-        // The rename is the commit point.
-        temporary
-            .persist(&self.path)
-            .map_err(|error| self.failed("replace", error.error))?;
         if let Err(error) = (self.sync_directory)(self.directory()) {
             tracing::warn!(
                 "saved settings file {}, but syncing its directory failed, so the \
@@ -356,6 +382,29 @@ impl SettingsStore for SettingsFile {
         }
         Ok(())
     }
+}
+
+fn replace(temporary: tempfile::NamedTempFile, path: &Path) -> io::Result<()> {
+    temporary
+        .persist(path)
+        .map(drop)
+        .map_err(|error| error.error)
+}
+
+/// Copy `from` to the new file `to`, which must not exist; nothing is left
+/// at `to` when it fails.
+fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
+    let mut target = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    let copied = fs::File::open(from)
+        .and_then(|mut source| io::copy(&mut source, &mut target))
+        .and_then(|_| target.sync_all());
+    if copied.is_err() {
+        let _ = fs::remove_file(to);
+    }
+    copied
 }
 
 #[cfg(unix)]

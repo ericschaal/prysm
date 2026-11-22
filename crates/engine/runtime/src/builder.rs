@@ -18,6 +18,12 @@ pub const STOP_DEADLINE: Duration = Duration::from_secs(10);
 /// idle within an output's own bound, or nothing blocking. The portal sets
 /// no deadline of its own; a client waits longer than this. A host with a
 /// shorter stop deadline (the TV's) stays below it.
+///
+/// It is one command's own time, not its wait behind others in the
+/// engine's mailbox, which runs one at a time: a command queued behind a
+/// slow one takes up to this per command ahead of it. A client's limit
+/// (the portal's 30 s) therefore covers one slow command and not a queue
+/// of them; past it, the client reads the state for the outcome.
 pub const COMMAND_LIMIT: Duration = STOP_DEADLINE.saturating_add(SOURCE_OPEN_LIMIT);
 const _: () = assert!(
     COMMAND_LIMIT.as_millis() < 30_000,
