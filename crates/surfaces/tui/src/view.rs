@@ -325,7 +325,7 @@ fn idle_text(snapshot: &Snapshot) -> &'static str {
     match snapshot.session {
         SessionState::Running => "Waiting for the first frame",
         SessionState::Native => "The output shows its native effect",
-        SessionState::Faulted(_) => "Session did not stop; only shutdown is accepted",
+        SessionState::Faulted(_) => "Session did not finish; only shutdown is accepted",
         SessionState::Stopped if snapshot.failure.is_some() => "Lighting stopped after a failure",
         SessionState::Stopped => "Lighting off · press p to start",
     }

@@ -96,7 +96,8 @@ pub enum Session {
     Running,
     /// The output shows its own effect.
     Native,
-    /// A session did not stop in time; only a restart recovers.
+    /// A session did not stop in time, or did not confirm its source's
+    /// release; only a restart recovers.
     Faulted {
         #[cfg_attr(feature = "schema", schema(value_type = schema::PhaseSchema))]
         phase: SessionPhase,

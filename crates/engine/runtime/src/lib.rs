@@ -15,6 +15,7 @@ mod meter;
 mod null;
 mod sample;
 mod session;
+mod slot;
 mod stats;
 mod surface;
 mod worker;

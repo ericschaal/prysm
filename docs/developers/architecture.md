@@ -115,10 +115,23 @@ flag, leave the loop, close the source, idle the output, join the thread. The
 output's `idle` is the failure compensation: off for `off`, the device's own
 effects for `device_native`. After the join no frame is in flight.
 
-The engine joins with a deadline (10 s in the desktop hosts). A session that
-does not finish puts the engine in a single `Faulted` state that names the
-outstanding step and accepts only shutdown. Native watchdogs stay inside the
-capture adapters. Host shutdown stops the session with the output idled off.
+A session that ends on its own (a failure, or a source that ended) idles its
+output off. A request or shutdown that arrives after its loop ended is
+handled after that end, whichever the engine saw first: the same reply,
+state, failure and saved settings. A session that ends on its own while a
+request is stopping it ended while being stopped: the reply is its failures,
+then the output's in the stop's mode, which the session sets after the join
+through its own output (not over a source whose release is unconfirmed). An
+ended source turns a `processed` target `off`, so lighting does not restart
+until asked again.
+
+The engine joins with a deadline (10 s in the desktop hosts), and gives a
+late idle after an own end the same deadline. A session that does not finish
+puts the engine in a single `Faulted` state that names the outstanding step
+and accepts only shutdown; so does a source whose release is not confirmed
+(phase `source_unreleased`), since it may still hold its device. Native
+watchdogs stay inside the capture adapters. Host shutdown stops the session
+with the output idled off; requests still queued behind it are refused.
 
 Commands have no deadline of their own; each adapter bounds its blocking
 calls instead. Resolving a WLED host name takes at most 1.5 s, and so does

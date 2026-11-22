@@ -250,6 +250,8 @@ pub struct FakeOutputSettings {
     pub write_delay_ms: u64,
     /// `idle` takes this long after recording the call.
     pub idle_delay_ms: u64,
+    /// `idle` in `Native` takes this much longer.
+    pub native_idle_delay_ms: u64,
 }
 
 /// Registers kind `"fake"`.
@@ -331,7 +333,11 @@ impl LedOutput for FakeOutput {
         self.log
             .record(format!("output.idle:{}:{mode:?}", self.settings.name));
         assert!(!self.settings.panic_idle, "fake output panics in idle");
-        thread::sleep(Duration::from_millis(self.settings.idle_delay_ms));
+        let native = match mode {
+            IdleMode::Native => self.settings.native_idle_delay_ms,
+            IdleMode::Off => 0,
+        };
+        thread::sleep(Duration::from_millis(self.settings.idle_delay_ms + native));
         if self.settings.fail_idle {
             return Err(Error::other("fake output cannot idle"));
         }

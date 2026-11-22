@@ -2059,6 +2059,10 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "futures",
+ "prysm-capture-device",
+ "prysm-capture-file",
+ "prysm-capture-remote",
+ "prysm-output-wled",
  "prysm-ports",
  "prysm-runtime",
  "prysm-settings-file",

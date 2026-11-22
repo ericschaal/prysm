@@ -7,14 +7,13 @@ publish.workspace = true
 description = "Production host: device or remote capture into WLED, controlled from the web portal"
 
 [dependencies]
-prysm-host.workspace = true
+prysm-host = { workspace = true, features = ["desktop"] }
+
+[dev-dependencies]
 prysm-runtime.workspace = true
 prysm-capture-device.workspace = true
 prysm-capture-file.workspace = true
-prysm-capture-remote.workspace = true
 prysm-output-wled.workspace = true
-
-[dev-dependencies]
 # The system tests stream as the TV does, also through the testkit's TLS proxy.
 prysm-capture-remote = { workspace = true, features = ["testkit"] }
 prysm-core.workspace = true

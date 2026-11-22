@@ -259,10 +259,11 @@ export interface components {
          */
         Pattern: "gray_192" | "red" | "yellow" | "green" | "cyan" | "blue" | "magenta" | "blue_pair" | "red_pair" | "green_pair" | "coast" | "garden" | "dusk" | "review_grid";
         /**
-         * @description Where a faulted session stopped making progress.
+         * @description Where a faulted session stopped making progress, or `source_unreleased`:
+         *     it finished without confirming its source's release.
          * @enum {string}
          */
-        Phase: "running" | "closing_source" | "idling_output" | "finishing";
+        Phase: "running" | "closing_source" | "idling_output" | "finishing" | "source_unreleased";
         /** @description One server-sent event of the preview stream. */
         PreviewEvent: (components["schemas"]["PreviewFrame"] & {
             /** @enum {string} */

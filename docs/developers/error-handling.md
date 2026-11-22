@@ -10,7 +10,7 @@ Its variants are what callers match on; never match on message text.
 | `Adapter` | A device or adapter failed to open, read, write or idle; `section` says capture or output when known | `adapter` (502) |
 | `StaleRevision` | Settings were replaced from an old revision | `stale_revision` (409) |
 | `NotProcessed` | A calibration pattern while Screen sync is off | `not_processed` (409) |
-| `Faulted` | A session did not finish within its deadline; only shutdown is accepted | `faulted` (503) |
+| `Faulted` | A session did not finish within its deadline, or did not confirm its source's release (phase `source_unreleased`); only shutdown is accepted | `faulted` (503) |
 | `Panicked`, `Closed` | A runtime task panicked, or the engine stopped | `internal` (500), `unavailable` (503) |
 
 The full wire mapping is in the

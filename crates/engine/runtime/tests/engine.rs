@@ -504,10 +504,8 @@ async fn stuck_calls_in_sequence_share_one_shutdown_grace() {
             "{shutdown:?}"
         );
         assert!(matches!(saving.await.unwrap(), Err(Error::Adapter { .. })));
-        assert!(matches!(
-            starting.await.unwrap(),
-            Err(Error::Adapter { .. })
-        ));
+        // Still queued when shutdown was asked for: refused, never started.
+        assert!(matches!(starting.await.unwrap(), Err(Error::Closed)));
         assert_eq!(log.count("source.opening:a"), 0, "the open started");
     })
     .await;
@@ -607,6 +605,62 @@ async fn failing_surface_does_not_stop_lighting() {
     .await;
 }
 
+/// A surface that fails while the mailbox is full is still reported, and
+/// shutdown is not held up by the report.
+#[tokio::test]
+async fn a_surface_failure_while_the_mailbox_is_full_is_reported() {
+    within(async {
+        let log = CallLog::new();
+        let (full, filled) = tokio::sync::oneshot::channel();
+        let flooding = {
+            let log = log.clone();
+            move |engine: EngineHandle, _shutdown: Shutdown| async move {
+                // A save the store holds for a second keeps the engine busy
+                // while tried processing fills the mailbox behind it.
+                let saving = engine.clone();
+                let revision = revision(&engine);
+                tokio::spawn(
+                    async move { saving.replace_settings(revision, named("a", "a")).await },
+                );
+                assert!(log.wait_for("store.saving", 1).await);
+                for _ in 0..24 {
+                    let trying = engine.clone();
+                    tokio::spawn(async move { trying.try_processing(Processing::default()).await });
+                }
+                for _ in 0..10 {
+                    tokio::task::yield_now().await;
+                }
+                let _ = full.send(engine.snapshot());
+                Err(Error::other("surface broke"))
+            }
+        };
+        let store = SlowStore {
+            saved: MemoryStore::with(named("a", "a")),
+            log: log.clone(),
+        };
+        let (snapshots, snapshot) = tokio::sync::oneshot::channel();
+        Prysm::builder(store)
+            .source(FakeSources(log.clone()))
+            .output(FakeOutputs(log.clone()))
+            .surface(flooding)
+            .stop_deadline(STUCK * 3)
+            .run(async {
+                let snapshot = filled.await.unwrap();
+                // Shutdown is asked for while the report waits for room.
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                let _ = snapshots.send(snapshot);
+            })
+            .await
+            .unwrap();
+
+        let snapshot = snapshot.await.unwrap();
+        let failures = snapshot.borrow().surface_failures.clone();
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert_eq!(failures[0].to_string(), "surface broke");
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn quiet_source_rewrites_last_colors() {
     within(async {
@@ -662,11 +716,11 @@ async fn unconfirmed_source_release_faults_the_engine() {
         assert_eq!(log.count("output.idle:o:Off"), 1);
         assert_eq!(
             handle.snapshot().borrow().session,
-            SessionState::Faulted(SessionPhase::ClosingSource)
+            SessionState::Faulted(SessionPhase::SourceUnreleased)
         );
         assert!(matches!(
             handle.set_target(LightingTarget::Processed).await,
-            Err(Error::Faulted(SessionPhase::ClosingSource))
+            Err(Error::Faulted(SessionPhase::SourceUnreleased))
         ));
         assert!(engine.shutdown().await.is_err());
     })
@@ -855,7 +909,8 @@ async fn an_ended_source_stops_cleanly_turns_lighting_off_and_idles_the_output()
         assert!(before(&log, "output.write:a", "source.close:a"));
         assert!(before(&log, "source.close:a", "output.idle:a:Off"));
 
-        // Off: a settings change does not replay the source.
+        // Off: a settings change does not replay the source. A start would
+        // have opened it before the save returned.
         let current = revision(&handle);
         let mut changed = handle.snapshot().borrow().settings.clone();
         changed.processing.brightness_percent =
@@ -1080,11 +1135,9 @@ async fn a_source_without_frames_never_takes_the_output() {
         })
         .await;
         assert_eq!(waiting.session, SessionState::Running);
-        // The first input report covers a whole sampling window (about a
-        // second) without a frame: the window this proves nothing opened in.
-        assert_eq!(log.count("output.open:o"), 0, "{:?}", log.events());
 
-        // Off leaves an untouched output untouched.
+        // Off leaves an untouched output untouched, and the whole session
+        // never opened it.
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert_eq!(log.events(), ["source.open:s", "source.close:s"]);
         engine.shutdown().await.unwrap();
@@ -1274,6 +1327,8 @@ async fn behind_within(handle: &EngineHandle, wanted: Behind, seconds: u64) -> b
 }
 
 /// Lights that take longer to write than the source takes to send the next.
+/// The one end-to-end check of `behind`: which step is named, and when a
+/// slow source is not behind, is tested on the windows in `meter.rs`.
 #[tokio::test]
 async fn a_slow_output_is_named_after_a_few_seconds() {
     within(async {
@@ -1297,39 +1352,6 @@ async fn a_slow_output_is_named_after_a_few_seconds() {
         let (handle, engine, _) = start(&log, slow, DEADLINE).await;
         handle.set_target(LightingTarget::Processed).await.unwrap();
         assert!(behind_within(&handle, Behind::Output, 8).await);
-        engine.shutdown().await.unwrap();
-    })
-    .await;
-}
-
-/// A source that sends few frames (here every 60 ms, with a 20 ms write)
-/// leaves the loop idle between them: Prysm keeps up, however slow each
-/// frame is.
-#[tokio::test]
-async fn a_slow_source_is_not_falling_behind() {
-    within(async {
-        let log = CallLog::new();
-        let sparse = settings(
-            FakeSourceSettings {
-                name: "a".into(),
-                frame_interval_ms: 60,
-                ..Default::default()
-            },
-            FakeOutputSettings {
-                name: "a".into(),
-                write_delay_ms: 20,
-                ..Default::default()
-            },
-        );
-        let (handle, engine, _) = start(&log, sparse, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
-        snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
-        // Five windows: well past the grace, still keeping up.
-        assert!(!behind_within(&handle, Behind::Output, 5).await);
-        assert_eq!(
-            handle.snapshot().borrow().input.unwrap().behind,
-            Behind::None
-        );
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -1497,7 +1519,7 @@ async fn a_source_panicking_while_closing_still_idles_the_output_and_faults_the_
         // The source's release is unconfirmed: nothing may reopen it.
         assert_eq!(
             handle.snapshot().borrow().session,
-            SessionState::Faulted(SessionPhase::ClosingSource)
+            SessionState::Faulted(SessionPhase::SourceUnreleased)
         );
         assert!(engine.shutdown().await.is_err());
     })
@@ -1563,6 +1585,238 @@ async fn device_native_asked_while_a_session_ends_on_its_own_still_reaches_nativ
             .unwrap();
         assert!(before(&log, "output.idle:o:Off", "output.idle:o:Native"));
         assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// A session whose source fails after two frames and whose output takes
+/// 500 ms to idle: a command that arrives while it is idling `Off` meets a
+/// session that ended on its own before the stop.
+fn failing_slowly(output: &str) -> Settings {
+    settings(
+        FakeSourceSettings {
+            name: "s".into(),
+            fail_after: Some(2),
+            ..Default::default()
+        },
+        FakeOutputSettings {
+            name: output.into(),
+            idle_delay_ms: 500,
+            ..Default::default()
+        },
+    )
+}
+
+/// Off asked while the session ends on its own: the command did what it was
+/// asked, so it succeeds, as it does when the end is handled first.
+#[tokio::test]
+async fn off_asked_while_a_session_fails_on_its_own_succeeds() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, _) = start(&log, failing_slowly("o"), DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.idle:o:Off", 1).await);
+
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Stopped);
+        assert_eq!(snapshot.target, LightingTarget::Off);
+        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        assert_eq!(log.count("output.idle:o:Off"), 1, "idled once");
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// A restart that meets a session failing on its own starts the new session
+/// and reports no failure of the old one beside it.
+#[tokio::test]
+async fn a_restart_while_a_session_fails_on_its_own_reports_only_the_new_session() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, _) = start(&log, failing_slowly("o"), DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.idle:o:Off", 1).await);
+
+        handle
+            .replace_settings(revision(&handle), named("s2", "o2"))
+            .await
+            .unwrap();
+        assert!(before(&log, "output.idle:o:Off", "source.open:s2"));
+        assert!(log.wait_for("output.write:o2", 1).await);
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Running);
+        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        engine.shutdown().await.unwrap();
+        assert_eq!(log.count("output.idle:o2:Off"), 1);
+    })
+    .await;
+}
+
+/// A restart that meets a source that ended on its own: lighting is complete,
+/// as when the end is handled first, so the new settings start nothing.
+#[tokio::test]
+async fn a_restart_while_the_source_ends_on_its_own_turns_lighting_off() {
+    within(async {
+        let log = CallLog::new();
+        let ending = settings(
+            FakeSourceSettings {
+                name: "s".into(),
+                end_after: Some(2),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "o".into(),
+                idle_delay_ms: 500,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, ending, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.idle:o:Off", 1).await);
+
+        handle
+            .replace_settings(revision(&handle), named("s2", "o"))
+            .await
+            .unwrap();
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.target, LightingTarget::Off);
+        assert_eq!(snapshot.session, SessionState::Stopped);
+        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        assert_eq!(log.count("source.open:s2"), 0, "nothing restarted");
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// The lights' own effects asked while the session fails on its own: they
+/// get them, and the reply is the effects', not the old failure.
+#[tokio::test]
+async fn device_native_asked_while_a_session_fails_on_its_own_reaches_native() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, _) = start(&log, failing_slowly("o"), DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.idle:o:Off", 1).await);
+
+        handle
+            .set_target(LightingTarget::DeviceNative)
+            .await
+            .unwrap();
+        assert!(before(&log, "output.idle:o:Off", "output.idle:o:Native"));
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Native);
+        assert_eq!(snapshot.target, LightingTarget::DeviceNative);
+        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// The effects asked after an own end, from lights that cannot idle: the
+/// reply is that failure, and the lights are not claimed to show them.
+#[tokio::test]
+async fn a_failing_idle_after_an_own_end_is_the_reply() {
+    within(async {
+        let log = CallLog::new();
+        let unreachable = settings(
+            FakeSourceSettings {
+                name: "s".into(),
+                fail_after: Some(2),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "o".into(),
+                idle_delay_ms: 500,
+                fail_idle: true,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, unreachable, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.idle:o:Off", 1).await);
+
+        let error = handle
+            .set_target(LightingTarget::DeviceNative)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "fake output cannot idle");
+        assert_eq!(log.count("output.idle:o:Native"), 1);
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Stopped);
+        assert_eq!(snapshot.target, LightingTarget::DeviceNative);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// A request still queued when shutdown is asked for is refused: it would
+/// only start what shutdown stops.
+#[tokio::test]
+async fn shutdown_refuses_the_requests_queued_behind_it() {
+    within(async {
+        let log = CallLog::new();
+        let store = SlowStore {
+            saved: MemoryStore::with(named("a", "a")),
+            log: log.clone(),
+        };
+        // Long enough that the slow save finishes instead of being abandoned.
+        let (handle, engine) = Engine::start(registry(&log), Box::new(store), STUCK * 3)
+            .await
+            .unwrap();
+        let saving = tokio::spawn({
+            let handle = handle.clone();
+            let revision = revision(&handle);
+            async move { handle.replace_settings(revision, named("a", "a")).await }
+        });
+        assert!(log.wait_for("store.saving", 1).await);
+        let starting = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.set_target(LightingTarget::Processed).await }
+        });
+        tokio::task::yield_now().await;
+
+        engine.shutdown().await.unwrap();
+        assert!(saving.await.unwrap().is_ok(), "the save in progress ends");
+        assert!(matches!(starting.await.unwrap(), Err(Error::Closed)));
+        assert_eq!(log.count("source.open:a"), 0, "{:?}", log.events());
+    })
+    .await;
+}
+
+/// An output that panics while being put in its own effects did not reach
+/// them: the state does not claim it did.
+#[tokio::test]
+async fn a_native_idle_that_panics_leaves_the_session_stopped() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, _) = start(&log, named("s", "a"), DEADLINE).await;
+        handle
+            .set_target(LightingTarget::DeviceNative)
+            .await
+            .unwrap();
+        assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+
+        let panicking = settings(
+            FakeSourceSettings {
+                name: "s".into(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "b".into(),
+                panic_idle: true,
+                ..Default::default()
+            },
+        );
+        handle
+            .replace_settings(revision(&handle), panicking)
+            .await
+            .unwrap();
+        assert_eq!(log.count("output.idle:b:Native"), 1);
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Stopped);
+        assert!(matches!(snapshot.failure, Some(Error::Panicked(_))));
         engine.shutdown().await.unwrap();
     })
     .await;

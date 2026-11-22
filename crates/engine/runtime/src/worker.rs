@@ -34,7 +34,7 @@ impl Flags {
         &self,
         source: &mut dyn FrameSource,
         mut each: impl FnMut(Option<Frame>) -> Result<()>,
-    ) -> Pumped {
+    ) -> Exit {
         self.set_phase(SessionPhase::Running);
         let pumped = guarded("session loop", || {
             while !self.stop.load(Ordering::Acquire) {
@@ -45,12 +45,12 @@ impl Flags {
                 {
                     Pull::Frame(frame) => each(Some(frame))?,
                     Pull::Idle => each(None)?,
-                    Pull::Ended => return Ok(Pumped::Ended),
+                    Pull::Ended => return Ok(Exit::Ended),
                 }
             }
-            Ok(Pumped::Stopped)
+            Ok(Exit::Stopped)
         });
-        pumped.unwrap_or_else(Pumped::Failed)
+        pumped.unwrap_or_else(Exit::Failed)
     }
 }
 
@@ -61,21 +61,13 @@ pub(crate) fn guarded<T>(what: &'static str, call: impl FnOnce() -> Result<T>) -
 }
 
 /// Why a pump loop returned.
-pub(crate) enum Pumped {
-    /// The stop flag was set.
+#[derive(Debug)]
+pub(crate) enum Exit {
+    /// The stop flag was set: the thread was asked to stop.
     Stopped,
     /// The source reported [`Pull::Ended`].
     Ended,
     Failed(Error),
-}
-
-impl Pumped {
-    pub(crate) fn failure(self) -> Option<Error> {
-        match self {
-            Self::Failed(error) => Some(error),
-            Self::Stopped | Self::Ended => None,
-        }
-    }
 }
 
 /// The worker's hold on the shared flags: dropping it requests stop, so a

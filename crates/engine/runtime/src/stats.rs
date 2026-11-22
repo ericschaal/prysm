@@ -174,6 +174,38 @@ mod tests {
         assert_eq!(stats.read(), totals.counters);
     }
 
+    /// A source that sends few frames: the wait before each frame is in its
+    /// cycle but not in its busy span, so the loop shows slack however slow
+    /// each frame is.
+    #[test]
+    fn the_wait_between_sparse_frames_counts_into_the_cycle() {
+        let stats = Stats::default();
+        let start = Instant::now();
+        let mut previous_done = None;
+        for frame in 0..3 {
+            // A frame every 60 ms, done 20 ms after it arrives.
+            let received = start + ms(60) * frame;
+            let written = received + ms(20);
+            stats.frame(FrameTimes {
+                previous_done,
+                received,
+                captured: None,
+                processed: received + ms(5),
+                written: Some(written),
+            });
+            previous_done = Some(written);
+        }
+        let totals = stats.totals();
+        assert_eq!(totals.counters.flushed.total, ms(60), "busy 20 ms a frame");
+        // The first frame waited for nothing; each later one 40 ms.
+        // so `meter`'s verdict sees 60 of 140 ms busy: slack.
+        assert_eq!(totals.cycles.total, ms(20) + 2 * ms(60));
+    }
+
+    const fn ms(value: u64) -> Duration {
+        Duration::from_millis(value)
+    }
+
     #[test]
     fn writes_and_opens_are_counted() {
         let stats = Stats::default();

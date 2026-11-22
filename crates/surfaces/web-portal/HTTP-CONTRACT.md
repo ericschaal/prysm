@@ -71,7 +71,7 @@ into `@prysm/contracts/application`.
 `State` is `{ version, target, session, input?, device, calibration?, settings, revision, failure?, surface_failures }`.
 `version` is the Prysm product version (`1.0.0`, `1.0.0-rc.1`); `revision` only counts settings replacements.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
-`{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
+`{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" | "source_unreleased" }`: a session stuck in that step past its deadline, or (`source_unreleased`) one whose source did not confirm its release.
 `settings` is the settings file without its `format` number, which belongs to the file alone: a `settings` body carrying `format` is refused as an unknown field (`400`). Shape: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
 `processing.style.kind` is `natural`, `calm`, `vivid`, `game` or `custom`; a built-in style is stored by name only, and `custom` applies `processing.custom_style` (all seven knobs, required with `custom`, kept while another style is chosen). The built-in styles' values are not sent: the portal is built with them (`@prysm/contracts/constants`), and the [settings file](../../adapters/settings-file/README.md) describes the fields.
 A calibration's `correction` is `{ warmth, tint, midtones, red, green, blue }`, each primary `{ hue, strength }`, every control -100 to 100 and 0 when omitted ([settings file](../../adapters/settings-file/README.md)).

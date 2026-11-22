@@ -1,5 +1,7 @@
 use crate::surface::Surfaces;
 use crate::{Engine, EngineHandle, Surface};
+use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use prysm_ports::{Error, OutputFactory, Registry, Result, SettingsStore, SourceFactory};
 use std::future::Future;
 use std::time::Duration;
@@ -87,14 +89,26 @@ impl Builder {
             Engine::start(self.registry, self.store, self.stop_deadline).await?;
         let owner = owner.shutdown_grace(self.shutdown_grace.unwrap_or(self.stop_deadline));
         let mut surfaces = Surfaces::spawn(self.surfaces, &engine);
+        // Reports waiting for room in the engine's mailbox, so a full one
+        // holds up neither the watch for shutdown nor the next failure.
+        let mut reports = FuturesUnordered::new();
         tokio::pin!(shutdown);
         loop {
             tokio::select! {
                 () = &mut shutdown => break,
-                failure = surfaces.failure() => engine.report_surface_failure(failure).await,
+                failure = surfaces.failure() => {
+                    let engine = engine.clone();
+                    reports.push(async move { engine.report_surface_failure(failure).await });
+                }
+                Some(()) = reports.next() => {}
             }
         }
         surfaces.request_shutdown();
+        // The waiting reports reach the snapshot before the engine ends. Its
+        // shutdown grace runs from here, and queued requests are refused,
+        // so waiting for room is bounded by that grace.
+        owner.begin_shutdown();
+        reports.collect::<()>().await;
         let result = owner.shutdown().await;
         surfaces.finish(self.stop_deadline).await;
         result
