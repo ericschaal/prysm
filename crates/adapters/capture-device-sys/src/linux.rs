@@ -449,17 +449,18 @@ pub(crate) fn run(
             });
             match dequeued.map_err(|error| stream_failed(error, CAPTURING))? {
                 Dequeued::Buffer(Ok(frame)) => {
-                    interruptions.dequeued();
+                    interruptions.answered();
                     rejections.accepted();
                     stats.record(started, frame.len(), Some(pool.stats()));
                     sink.frame(frame);
                 }
                 Dequeued::Buffer(Err(reason)) => {
-                    interruptions.dequeued();
+                    interruptions.answered();
                     stats.failure();
                     rejections.rejected(reason, Instant::now())?;
                 }
                 Dequeued::Stalled => {
+                    interruptions.answered();
                     stats.failure();
                     rejections.stalled();
                     restart(&mut stream, sink)?;

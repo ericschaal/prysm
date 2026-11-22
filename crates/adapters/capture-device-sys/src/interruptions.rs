@@ -3,8 +3,10 @@
 //! problems like signal loss". The driver may have taken a buffer it does not
 //! name, or stopped capturing, so the stream is restarted (STREAMOFF returns
 //! every buffer, STREAMON after queueing them all again). A run of them that
-//! lasts [`INTERRUPTED_FOR`] without a buffer between ends capture with the
-//! last error, so a dead device does not restart forever.
+//! lasts [`INTERRUPTED_FOR`] with no buffer and no stall between ends capture
+//! with the last error, so a dead device does not restart forever. A stall
+//! ends a run as a buffer does: a source that is off stalls for as long as it
+//! is off, and capture waits for it.
 use std::time::{Duration, Instant};
 
 /// How long dequeues may keep failing before capture fails: long enough for
@@ -21,8 +23,9 @@ pub(crate) struct Interruptions {
 }
 
 impl Interruptions {
-    /// A buffer was dequeued, usable or not: the device is streaming again.
-    pub(crate) fn dequeued(&mut self) {
+    /// A buffer was dequeued, usable or not, or the device stalled: it
+    /// answers without an error again.
+    pub(crate) fn answered(&mut self) {
         self.since = None;
     }
 
@@ -52,11 +55,11 @@ mod tests {
     }
 
     #[test]
-    fn a_dequeued_buffer_ends_the_run() {
+    fn a_buffer_or_a_stall_ends_the_run() {
         let start = Instant::now();
         let mut interruptions = Interruptions::default();
         assert!(interruptions.interrupted(start));
-        interruptions.dequeued();
+        interruptions.answered();
         let later = start + INTERRUPTED_FOR * 10;
         assert!(interruptions.interrupted(later), "a new run starts");
         assert!(!interruptions.interrupted(later + INTERRUPTED_FOR));

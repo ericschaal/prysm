@@ -132,6 +132,8 @@ impl Delegate {
     /// Foundation code that called it; instead it is caught here and becomes
     /// the capture's failure, with the panic's message as its cause.
     fn guarded(&self, method: &'static str, body: impl FnOnce()) {
+        // Unwind safe: what a panic leaves half-changed is behind the frame
+        // lock, which it poisons and nothing reads again.
         let Err(payload) = panic::catch_unwind(AssertUnwindSafe(body)) else {
             return;
         };
@@ -211,8 +213,8 @@ impl Delegate {
 
 /// Runs from the class's `dealloc`, called by Objective-C, so nothing here or
 /// in the ivars' drops may panic: removing an observer does not, and the
-/// ivars hold only buffers, counters and a clone of the sink's `Arc` that
-/// [`run`]'s caller outlives.
+/// ivars hold only buffers, the recorded error, counters (whose drop logs
+/// them) and a clone of the sink's `Arc` that [`run`]'s caller outlives.
 impl Drop for Delegate {
     fn drop(&mut self) {
         // SAFETY: self is the live observer registered by observe_failure.
@@ -300,6 +302,12 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer, pool: &mut FramePool) -
         tracing::error!("Unexpected planar YUYV pixel buffer");
         return None;
     }
+    // Without extended pixels the base address, pixel (0, 0), is the first
+    // byte of the buffer's data, so the data size bounds the rows.
+    if pixel_buffer.get_extended_pixels() != (0, 0, 0, 0) {
+        tracing::error!("Unexpected YUYV pixel buffer with extended pixels");
+        return None;
+    }
     let width = pixel_buffer.get_width();
     let height = pixel_buffer.get_height();
     let stride = pixel_buffer.get_bytes_per_row();
@@ -335,8 +343,8 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer, pool: &mut FramePool) -
         )
         .ok()?;
     if stride == row_size {
-        // SAFETY: `base` points at the locked plane of `data_size >= size`
-        // bytes, and `size` is at most `isize::MAX` (both checked above);
+        // SAFETY: `base` is the first byte of the locked plane's
+        // `data_size >= size` bytes (no extended pixels), and `size` is at most `isize::MAX` (both checked above);
         // without padding, `size` is `height * row_size`, the frame's length.
         frame
             .as_mut_slice()
@@ -362,7 +370,7 @@ struct BaseAddressLock<'a>(&'a CVPixelBuffer);
 impl<'a> BaseAddressLock<'a> {
     fn new(pixel_buffer: &'a CVPixelBuffer) -> Option<Self> {
         (pixel_buffer.lock_base_address(kCVPixelBufferLock_ReadOnly) == kCVReturnSuccess)
-            .then_some(Self(pixel_buffer))
+            .then(|| Self(pixel_buffer))
     }
 }
 
