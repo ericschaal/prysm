@@ -47,8 +47,8 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 - An exit is handled once the worker's last events are read, at most 1 s
   after it is reaped (a process it left behind can hold the pipe).
 - An exit while running is published as a failure: the exit's description,
-  then the last cause or report; an `encoder` or `version` report keeps its
-  kind, anything else is `other`.
+  then the last cause or report; an `encoder`, `version` or `replaced`
+  report keeps its kind, anything else is `other`.
 - Each status names its package (`"flavor": "full"` or `"slim"`) and has only
   that package's fields; a status of the other package breaks the link. A
   worker whose run ends with an error says why (`failed`, also before its
@@ -86,9 +86,13 @@ and seeds `settings.json` with `capture.kind = "webos"` when missing.
 
 Slim worker: connects to the receiver at most once a second, resolving a host
 name at each attempt; follows the receiver's stream request (size, rate,
-menus, encoding); closes capture while the receiver has paused the stream. An
-encoder failure is reported with `failure.kind` `encoder` and refused until the
-desktop asks for another encoding; nothing falls back on its own. Wire
+menus, encoding); closes capture while the receiver has stopped the stream
+(lighting off). An encoder failure is reported with `failure.kind` `encoder`
+and refused until the desktop asks for another encoding; nothing falls back on
+its own. When another TV takes the stream over, the worker releases capture
+and encoder, reports `failure.kind` `replaced` and connects no more until
+capture is stopped and started again in the TV app (which restarts the
+worker), so two TVs never take the stream from each other in turn. Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
 ## Luna API

@@ -50,8 +50,9 @@ while lighting runs, and asks the sender for the stream its settings describe
 takes the one Prysm address (`http://host:8787`, or `https://` behind a
 reverse proxy), reconnects every second (resolving a host name at each
 attempt), reports that it is waiting meanwhile, captures and encodes as
-requested, and stops capturing while lighting is off (the receiver paused the
-stream). It needs the portal: under `--no-portal` nothing receives. A sender that cannot produce the request (its
+requested, and stops capturing while lighting is off (the receiver closes the
+stream as stopped). A second TV that connects takes the stream over; the
+first stops sending until capture is started again on it. It needs the portal: under `--no-portal` nothing receives. A sender that cannot produce the request (its
 encoder failed) refuses it, and lighting stops with its reason. While lighting runs, the state's
 `input` gives the measured frame rate and whether frames are arriving; while
 none arrive lighting is waiting for video and the output is left to its own

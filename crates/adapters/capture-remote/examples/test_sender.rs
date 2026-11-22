@@ -7,19 +7,22 @@
 //!     [--offer JSON]
 //! ```
 //!
-//! Like the TV it connects again after each connection ends, every 100 ms
-//! while the portal answers `503` (no remote source receives: lighting off).
+//! It connects again after each connection ends, however it ended (unlike
+//! the TV, which stops once replaced), every 100 ms while the portal answers
+//! `503` (no remote source receives: lighting off).
 //! `--refuse REASON` refuses every connection with `REASON`, as a TV whose
 //! capture is busy does: each refusal fails the receiving source, and a
 //! source opened again (lighting retried) is refused too. `--stop-after N`
 //! exits after `N` frames. Each connection prints one line to stdout
 //! (`connected WxH`, `refused` once Prysm has ended the refused connection),
 //! so a test can wait for it. Runs until killed otherwise. `--offer` announces
-//! that [`Offer`] (`{ "raw": [Mode, ...] }`) instead of every request the
-//! portal accepts in every encoding, as a TV with fewer encoders does.
-use prysm_capture_remote::{Offer, RemoteSender};
+//! an [`Offer`] of those encodings' modes (`{ "raw": [Mode, ...] }`) instead
+//! of every request the portal accepts in every encoding, as a TV with fewer
+//! encoders does.
+use prysm_capture_remote::{Offer, RemoteSender, StreamEncoding};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::FrameSink;
+use prysm_ports::{FrameSink, Mode};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::net::ToSocketAddrs;
 use std::process::ExitCode;
@@ -57,7 +60,9 @@ fn options() -> Result<Options, String> {
             "--stop-after" => stop_after = Some(number(args.next(), "--stop-after")?),
             "--offer" => {
                 let json = args.next().ok_or("--offer takes JSON")?;
-                offer = serde_json::from_str(&json).map_err(|error| format!("--offer: {error}"))?;
+                let encodings: BTreeMap<StreamEncoding, Vec<Mode>> =
+                    serde_json::from_str(&json).map_err(|error| format!("--offer: {error}"))?;
+                offer = Offer::new(encodings);
             }
             _ if url.is_none() => {
                 url = Some(arg.parse().map_err(|error| format!("{arg}: {error}"))?);

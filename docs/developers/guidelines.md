@@ -17,7 +17,10 @@ Releases: [releasing](releasing.md).
   state machines ([decision](decisions/2026-11-12-one-runtime-plain-adapters.md)).
 - Keep application, serialisation and runtime code out of `prysm-core`.
 - Preserve typed validation (`deny_unknown_fields`, ranges, field paths) and
-  [error causes](error-handling.md).
+  [error causes](error-handling.md). Settings are strict; wire messages
+  between separately installed peers are tolerant: they ignore unknown
+  fields and message types, and keep their own types apart from the
+  settings types ([decision](decisions/2026-11-22-strict-settings-tolerant-wire.md)).
 - Keep engine commands ordered; let frames be replaced, never queued.
 - Preserve the session's [shutdown order](architecture.md#shutdown-ordering)
   (stop, close source, idle output, join) and output idle compensation on

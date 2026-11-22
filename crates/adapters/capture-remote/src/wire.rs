@@ -1,12 +1,16 @@
 //! What travels over the capture stream's WebSocket (see the crate README).
 //! The protocol version is the WebSocket subprotocol, agreed at the
-//! upgrade. Text messages carry JSON: the receiver's request and controls,
-//! the sender's refusal. Binary messages are frames: a short header, then
-//! the payload, the message's length being the payload's.
-use crate::request::{StreamEncoding, StreamRequest};
+//! upgrade. Text messages carry JSON: the receiver's request and keyframe
+//! requests, the sender's refusal. Binary messages are frames: a short
+//! header, then the payload, the message's length being the payload's.
+//!
+//! Messages are read tolerantly: unknown fields and message types are
+//! ignored, so a peer of the same version may add them.
+use crate::request::{RemoteSettings, StreamEncoding};
 use prysm_core::{FrameError, PixelFormat, YuvRange, YuvStandardMatrix};
-use prysm_ports::{CAPTURE_VERSION, ValidationError};
-use serde::{Deserialize, Serialize};
+use prysm_ports::{CAPTURE_PROTOCOL_PREFIX, CAPTURE_VERSION, ValidationError};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt;
 
 /// The frame header: format, range and matrix codes, flags, width and height
 /// (big-endian `u16`).
@@ -21,17 +25,30 @@ mod at {
     pub const WIDTH: Range<usize> = 4..6;
     pub const HEIGHT: Range<usize> = 6..8;
 }
-/// Largest accepted width or height.
-pub(crate) const MAX_DIMENSION: u32 = 4096;
-/// Largest accepted payload: one 1080p RGB frame.
-pub(crate) const MAX_PAYLOAD_BYTES: usize = 1920 * 1080 * 3;
+/// Widest frame or request.
+pub(crate) const MAX_WIDTH: u32 = 1920;
+/// Tallest frame or request.
+pub(crate) const MAX_HEIGHT: u32 = 1080;
+/// Highest requested frame rate; the lowest is 1.
+pub(crate) const MAX_FPS: u32 = 60;
+/// Largest payload: the largest raw frame (RGB at the largest size) or the
+/// largest H.264 access unit, whichever is larger.
+pub(crate) const MAX_PAYLOAD_BYTES: usize = {
+    let raw = MAX_WIDTH as usize * MAX_HEIGHT as usize * 3;
+    if raw > prysm_h264::MAX_ACCESS_UNIT_BYTES {
+        raw
+    } else {
+        prysm_h264::MAX_ACCESS_UNIT_BYTES
+    }
+};
 /// Longest refusal reason, in bytes of UTF-8.
 pub(crate) const MAX_REASON_BYTES: usize = 1024;
-/// Longest text message: a request, a control or a refusal.
+/// Longest text message: a request, a keyframe request or a refusal.
 pub(crate) const MAX_TEXT_BYTES: usize = 4 * 1024;
 
 /// Frame header flag: the first picture of an H.264 encoder session (SPS,
-/// PPS and IDR); the receiver decodes it with fresh state.
+/// PPS and IDR); the receiver decodes it with fresh state. Senders write the
+/// other bits as 0; receivers ignore them.
 const KEYFRAME: u8 = 1;
 
 /// How a stream's frame payloads are encoded, fixed per connection by the
@@ -55,36 +72,110 @@ impl From<StreamEncoding> for Encoding {
 }
 
 /// The receiver's text messages: its request (the first message), then
-/// controls at any time: `{"type":"request","width":320,...}`,
-/// `{"type":"pause"}`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// keyframe requests: `{"type":"request","width":320,...}`,
+/// `{"type":"keyframe"}`. A type this end does not know is
+/// [`Command::Unknown`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Command {
-    Request(StreamRequest),
-    /// Frames are not wanted (lighting stopped): stop encoding and sending.
-    Pause,
-    /// Frames are wanted again; the next H.264 picture starts a new session.
-    Resume,
+    Request(RequestMessage),
     /// The receiver cannot decode: start a new H.264 session (a keyframe).
     Keyframe,
+    #[serde(other, skip_serializing)]
+    Unknown,
 }
 
-/// What a sender's refusal names as the cause.
+/// The request as it travels: [`RemoteSettings`]' fields, every one
+/// required. An encoding this end does not know is `None`, refused as an
+/// invalid `encoding`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RequestMessage {
+    width: u32,
+    height: u32,
+    fps: u32,
+    include_ui: bool,
+    #[serde(deserialize_with = "known")]
+    encoding: Option<StreamEncoding>,
+}
+
+/// A value this end knows, or `None` for one it does not.
+fn known<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<StreamEncoding>, D::Error> {
+    Ok(String::deserialize(deserializer)?.parse().ok())
+}
+
+impl From<RemoteSettings> for RequestMessage {
+    fn from(settings: RemoteSettings) -> Self {
+        let RemoteSettings {
+            width,
+            height,
+            fps,
+            include_ui,
+            encoding,
+        } = settings;
+        Self {
+            width,
+            height,
+            fps,
+            include_ui,
+            encoding: Some(encoding),
+        }
+    }
+}
+
+impl TryFrom<RequestMessage> for RemoteSettings {
+    type Error = ValidationError;
+
+    /// The settings the message asks for, validated.
+    fn try_from(message: RequestMessage) -> Result<Self, ValidationError> {
+        let RequestMessage {
+            width,
+            height,
+            fps,
+            include_ui,
+            encoding,
+        } = message;
+        let encoding = encoding.ok_or_else(|| {
+            ValidationError::new("encoding", "expected h264_hardware, h264_software or raw")
+        })?;
+        let settings = Self {
+            width,
+            height,
+            fps,
+            include_ui,
+            encoding,
+        };
+        settings.validate()?;
+        Ok(settings)
+    }
+}
+
+/// What a sender's refusal names as the cause; a cause this end does not
+/// know is read as [`Refused::Request`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Refused {
-    /// The request as a whole.
-    Request,
     /// The requested encoding: its encoder cannot start or failed.
     Encoding,
+    /// The request as a whole.
+    #[serde(other)]
+    Request,
 }
 
-/// The sender's text message when it cannot produce the request,
-/// `{"refused":"encoding","reason":"..."}`; it closes the connection after.
+/// The sender's text messages: `{"type":"refused","cause":"encoding",
+/// "reason":"..."}`, after which it closes the connection. A type this end
+/// does not know is [`SenderMessage::Unknown`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum SenderMessage {
+    Refused(Refusal),
+    #[serde(other, skip_serializing)]
+    Unknown,
+}
+
+/// The sender cannot produce the request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Refusal {
-    pub(crate) refused: Refused,
+    pub(crate) cause: Refused,
     /// In the sender's words; at most [`MAX_REASON_BYTES`].
     pub(crate) reason: String,
 }
@@ -92,25 +183,65 @@ pub(crate) struct Refusal {
 impl Refusal {
     /// A refusal for `reason`, cut at a character boundary to
     /// [`MAX_REASON_BYTES`].
-    pub(crate) fn new(refused: Refused, reason: &str) -> Self {
+    pub(crate) fn new(cause: Refused, reason: &str) -> Self {
         let mut end = reason.len().min(MAX_REASON_BYTES);
         while !reason.is_char_boundary(end) {
             end -= 1;
         }
         Self {
-            refused,
+            cause,
             reason: reason[..end].to_owned(),
         }
     }
 }
 
+/// Why the receiver ended a stream, as the WebSocket close code it sent.
+/// Any other close, or none, is a dropped connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Close {
+    /// The receiving source closed (lighting stopped, or its capture
+    /// settings changed): code 4000. The sender releases its capture and
+    /// encoder until a receiver takes a connection again.
+    Stopped,
+    /// Another sender's connection replaced this one: code 4001. The sender
+    /// stops until its user starts it again, so two senders never take the
+    /// stream from each other in turn.
+    Replaced,
+}
+
+impl Close {
+    pub(crate) const fn code(self) -> u16 {
+        match self {
+            Self::Stopped => 4000,
+            Self::Replaced => 4001,
+        }
+    }
+
+    pub(crate) fn from_code(code: u16) -> Option<Self> {
+        [Self::Stopped, Self::Replaced]
+            .into_iter()
+            .find(|close| close.code() == code)
+    }
+}
+
+impl fmt::Display for Close {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Stopped => "Prysm stopped receiving",
+            Self::Replaced => "another sender replaced this one at Prysm",
+        })
+    }
+}
+
 /// Why a stream or frame cannot be encoded, or was rejected.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum WireError {
-    /// The two ends speak different protocol versions; update both.
-    /// `theirs` is `None` when the peer did not name a version.
+    /// The two ends speak different protocol versions; the older one needs
+    /// updating. `theirs` is the highest version the peer named, `None`
+    /// when it named none.
     #[error(
-        "the capture stream versions differ (Prysm: {}, this end: {ours}); update both",
+        "the capture stream versions differ (Prysm: {}, this end: {ours}); update the older one",
         theirs.map_or_else(|| "unknown".to_owned(), |theirs| theirs.to_string())
     )]
     Version { ours: u8, theirs: Option<u8> },
@@ -135,19 +266,18 @@ pub enum WireError {
     /// The sender cannot produce the requested stream, in its own words.
     #[error("{0}")]
     Refused(String),
-    #[error("the peer closed the stream")]
-    Closed,
+    /// The peer closed the stream, saying why when it is a [`Close`].
+    #[error("{}", .0.map_or_else(|| "the peer closed the stream".to_owned(), |close| close.to_string()))]
+    Closed(Option<Close>),
     #[error("a frame of {0} bytes is shorter than its {HEADER_LEN}-byte header")]
     Short(usize),
-    #[error("invalid frame header flags {0:#04x}")]
-    Flags(u8),
     #[error("unknown pixel format code {format}/{range}/{matrix}")]
     FormatCode { format: u8, range: u8, matrix: u8 },
     #[error("unsupported pixel format `{0}`")]
     Format(PixelFormat),
     #[error("`{0}` in an H.264 stream (limited-range BT.709 NV12 only)")]
     NotH264(PixelFormat),
-    #[error("frame {width}x{height} is outside 1..={MAX_DIMENSION}")]
+    #[error("frame {width}x{height} is outside 1x1 to {MAX_WIDTH}x{MAX_HEIGHT}")]
     Dimensions { width: u32, height: u32 },
     #[error("payload of {0} bytes exceeds {MAX_PAYLOAD_BYTES}")]
     TooLarge(usize),
@@ -159,13 +289,22 @@ pub enum WireError {
     Geometry(#[source] FrameError),
 }
 
-/// The version mismatch with a peer that speaks the subprotocol `theirs`.
+/// The version mismatch with a peer that names the subprotocols `theirs`
+/// (a comma-separated list, as a `426` gives it).
 pub(crate) fn version_error(theirs: Option<&str>) -> WireError {
     WireError::Version {
         ours: CAPTURE_VERSION,
-        theirs: theirs
-            .and_then(|protocol| protocol.strip_prefix("prysm-capture.v"))
-            .and_then(|version| version.parse().ok()),
+        theirs: theirs.and_then(|list| {
+            list.split(',')
+                .filter_map(|protocol| {
+                    protocol
+                        .trim()
+                        .strip_prefix(CAPTURE_PROTOCOL_PREFIX)?
+                        .parse()
+                        .ok()
+                })
+                .max()
+        }),
     }
 }
 
@@ -174,32 +313,29 @@ pub(crate) fn encode_command(command: &Command) -> String {
     serde_json::to_string(command).expect("commands serialize")
 }
 
-/// A command from its text message; a request is validated.
+/// A command from its text message.
 pub(crate) fn decode_command(text: &str) -> Result<Command, WireError> {
-    let command: Command =
-        serde_json::from_str(text).map_err(|error| WireError::Json(error.to_string()))?;
-    if let Command::Request(request) = command {
-        request.validate().map_err(WireError::Request)?;
-    }
-    Ok(command)
+    serde_json::from_str(text).map_err(|error| WireError::Json(error.to_string()))
 }
 
-/// A refusal, as its text message.
-pub(crate) fn encode_refusal(refusal: &Refusal) -> String {
-    serde_json::to_string(refusal).expect("refusals serialize")
+/// A sender's message, as its text message.
+pub(crate) fn encode_sender_message(message: &SenderMessage) -> String {
+    serde_json::to_string(message).expect("sender messages serialize")
 }
 
-/// A refusal from its text message.
-pub(crate) fn decode_refusal(text: &str) -> Result<Refusal, WireError> {
-    let refusal: Refusal =
+/// A sender's message from its text message; a refusal's reason is bounded.
+pub(crate) fn decode_sender_message(text: &str) -> Result<SenderMessage, WireError> {
+    let message: SenderMessage =
         serde_json::from_str(text).map_err(|error| WireError::Json(error.to_string()))?;
-    if refusal.reason.len() > MAX_REASON_BYTES {
+    if let SenderMessage::Refused(refusal) = &message
+        && refusal.reason.len() > MAX_REASON_BYTES
+    {
         return Err(WireError::Json(format!(
             "a reason of {} bytes, more than {MAX_REASON_BYTES}",
             refusal.reason.len()
         )));
     }
-    Ok(refusal)
+    Ok(message)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -232,7 +368,7 @@ impl Header {
             Encoding::Raw | Encoding::H264 => 0,
         };
         let (format, range, matrix) = format_code(self.format)?;
-        // Within MAX_DIMENSION, checked above; an error rather than a clamp.
+        // Within the largest size, checked above; an error rather than a clamp.
         let dimension = |value: u32| {
             u16::try_from(value).map_err(|_| WireError::Dimensions {
                 width: self.width,
@@ -250,11 +386,12 @@ impl Header {
     }
 
     /// Raw: exactly the frame's size. H.264: limited-range BT.709 NV12 and
-    /// an access unit of 1 to [`MAX_PAYLOAD_BYTES`]. Both: dimensions 1 to
-    /// [`MAX_DIMENSION`].
+    /// an access unit of 1 to [`MAX_PAYLOAD_BYTES`]. Both: 1x1 to
+    /// [`MAX_WIDTH`]x[`MAX_HEIGHT`], within which every raw frame fits the
+    /// payload limit.
     fn check_payload(&self, encoding: Encoding, len: usize) -> Result<(), WireError> {
         let Self { width, height, .. } = *self;
-        if !(1..=MAX_DIMENSION).contains(&width) || !(1..=MAX_DIMENSION).contains(&height) {
+        if !(1..=MAX_WIDTH).contains(&width) || !(1..=MAX_HEIGHT).contains(&height) {
             return Err(WireError::Dimensions { width, height });
         }
         let raw = self
@@ -262,9 +399,6 @@ impl Header {
             .expected_size(width, height)
             .map_err(WireError::Geometry)?
             .ok_or(WireError::Format(self.format))?;
-        if raw > MAX_PAYLOAD_BYTES {
-            return Err(WireError::TooLarge(raw));
-        }
         match encoding {
             Encoding::Raw => {
                 if len != raw {
@@ -291,7 +425,8 @@ impl Header {
 }
 
 /// Parse one frame message of a stream in `encoding`, checking everything
-/// before the caller allocates for it.
+/// before the caller allocates for it. Flags other than an H.264 stream's
+/// keyframe are ignored.
 pub(crate) fn decode_frame(
     message: &[u8],
     encoding: Encoding,
@@ -299,14 +434,6 @@ pub(crate) fn decode_frame(
     let (head, payload) = message
         .split_first_chunk::<HEADER_LEN>()
         .ok_or(WireError::Short(message.len()))?;
-    let flags = head[at::FLAGS];
-    let allowed = match encoding {
-        Encoding::Raw => 0,
-        Encoding::H264 => KEYFRAME,
-    };
-    if flags & !allowed != 0 {
-        return Err(WireError::Flags(flags));
-    }
     let dimension = |range: std::ops::Range<usize>| {
         u32::from(u16::from_be_bytes([
             head[range.start],
@@ -317,7 +444,7 @@ pub(crate) fn decode_frame(
         width: dimension(at::WIDTH),
         height: dimension(at::HEIGHT),
         format: parse_format(head[at::FORMAT], head[at::RANGE], head[at::MATRIX])?,
-        keyframe: flags & KEYFRAME != 0,
+        keyframe: encoding == Encoding::H264 && head[at::FLAGS] & KEYFRAME != 0,
     };
     header.check_payload(encoding, payload.len())?;
     Ok(FrameMessage { header, payload })
@@ -453,36 +580,46 @@ mod tests {
             &[1, 2, 3, 4, 5, 6],
         );
         assert_eq!(bytes, [1, 0, 0, 0, 0, 2, 0, 1, 1, 2, 3, 4, 5, 6]);
+        // The largest raw frame fits.
+        let largest = header(MAX_WIDTH, MAX_HEIGHT, PixelFormat::RGB24);
+        let len = PixelFormat::RGB24
+            .expected_size(MAX_WIDTH, MAX_HEIGHT)
+            .unwrap()
+            .unwrap();
+        assert!(len <= MAX_PAYLOAD_BYTES);
+        largest.encode(Encoding::Raw, len).unwrap();
     }
 
     #[test]
     fn unsendable_frames_are_rejected() {
-        for (format, width) in [
-            (PixelFormat::MJPEG, 2),
+        for (format, width, height) in [
+            (PixelFormat::MJPEG, 2, 2),
             (
                 PixelFormat::YUYV {
                     range: YuvRange::Full,
                     matrix: YuvStandardMatrix::Custom(0.2, 0.1),
                 },
                 2,
+                2,
             ),
-            (NV12, 3),
-            (PixelFormat::RGB24, 0),
-            (PixelFormat::RGB24, MAX_DIMENSION + 1),
+            (NV12, 3, 2),
+            (PixelFormat::RGB24, 0, 2),
+            (PixelFormat::RGB24, MAX_WIDTH + 1, 2),
+            (PixelFormat::RGB24, 2, MAX_HEIGHT + 1),
         ] {
-            let header = header(width, 2, format);
-            let len = format.expected_size(width, 2).ok().flatten().unwrap_or(0);
+            let header = header(width, height, format);
+            let len = format
+                .expected_size(width, height)
+                .ok()
+                .flatten()
+                .unwrap_or(0);
             assert!(
                 header.encode(Encoding::Raw, len).is_err(),
-                "{format:?} {width}"
+                "{format:?} {width}x{height}"
             );
         }
-        // Within each dimension limit but over the payload limit.
-        assert!(matches!(
-            header(4096, 4096, PixelFormat::RGB24).encode(Encoding::Raw, 4096 * 4096 * 3),
-            Err(WireError::TooLarge(_))
-        ));
-        // A raw payload of another size, H.264 of other pixels or empty.
+        // A raw payload of another size, H.264 of other pixels, empty or
+        // over the payload limit.
         assert_eq!(
             header(2, 1, PixelFormat::RGB24).encode(Encoding::Raw, 5),
             Err(WireError::Length {
@@ -498,6 +635,10 @@ mod tests {
             header(16, 16, NV12).encode(Encoding::H264, 0),
             Err(WireError::Empty)
         );
+        assert_eq!(
+            header(16, 16, NV12).encode(Encoding::H264, MAX_PAYLOAD_BYTES + 1),
+            Err(WireError::TooLarge(MAX_PAYLOAD_BYTES + 1))
+        );
     }
 
     #[test]
@@ -510,19 +651,18 @@ mod tests {
         };
         assert!(matches!(with(0, &[9]), Err(WireError::FormatCode { .. })));
         assert!(matches!(with(1, &[1]), Err(WireError::FormatCode { .. })));
-        assert!(matches!(with(3, &[1]), Err(WireError::Flags(1))));
         assert!(matches!(
             with(4, &[0, 0]),
             Err(WireError::Dimensions { width: 0, .. })
         ));
+        // One past the largest size, from the header alone.
         assert!(matches!(
-            with(4, &[0x10, 0x01]),
-            Err(WireError::Dimensions { .. })
+            with(4, &[0x07, 0x81]),
+            Err(WireError::Dimensions { width: 1921, .. })
         ));
-        // 4096x4096 RGB is over the payload limit, from the header alone.
         assert!(matches!(
-            with(4, &[0x10, 0x00, 0x10, 0x00]),
-            Err(WireError::TooLarge(_))
+            with(6, &[0x04, 0x39]),
+            Err(WireError::Dimensions { height: 1081, .. })
         ));
         // The payload is the rest of the message: one byte short or long.
         assert_eq!(
@@ -552,32 +692,34 @@ mod tests {
     }
 
     #[test]
+    fn unknown_flag_bits_are_ignored() {
+        let mut raw = message(&header(4, 2, PixelFormat::RGB24), Encoding::Raw, &[0; 24]);
+        raw[at::FLAGS] = 0xff;
+        assert_eq!(
+            decode_frame(&raw, Encoding::Raw).unwrap().header,
+            header(4, 2, PixelFormat::RGB24),
+            "no keyframe in a raw stream"
+        );
+        let mut h264 = message(&header(16, 16, NV12), Encoding::H264, &[0; 7]);
+        h264[at::FLAGS] = 0xfe;
+        assert!(!decode_frame(&h264, Encoding::H264).unwrap().header.keyframe);
+        h264[at::FLAGS] = 0xff;
+        assert!(decode_frame(&h264, Encoding::H264).unwrap().header.keyframe);
+    }
+
+    #[test]
     fn h264_frames_carry_the_keyframe_flag_and_any_length() {
         let key = Header {
             keyframe: true,
             ..header(640, 280, NV12)
         };
         let bytes = message(&key, Encoding::H264, &[0; 1234]);
+        assert_eq!(bytes[at::FLAGS], KEYFRAME);
         let got = decode_frame(&bytes, Encoding::H264).unwrap();
         assert_eq!((got.header, got.payload.len()), (key, 1234));
         let plain = header(640, 280, NV12);
         let bytes = message(&plain, Encoding::H264, &[0; 7]);
         assert_eq!(decode_frame(&bytes, Encoding::H264).unwrap().header, plain);
-        // The keyframe flag is not a raw flag.
-        let mut flagged = message(&key, Encoding::H264, &[0; 7]);
-        assert!(matches!(
-            decode_frame(&flagged, Encoding::Raw),
-            Err(WireError::Flags(1))
-        ));
-        flagged[3] = 2;
-        assert!(matches!(
-            decode_frame(&flagged, Encoding::H264),
-            Err(WireError::Flags(2))
-        ));
-        assert_eq!(
-            decode_frame(&flagged[..HEADER_LEN], Encoding::H264),
-            Err(WireError::Flags(2))
-        );
         let empty = message(&key, Encoding::H264, &[0; 7]);
         assert_eq!(
             decode_frame(&empty[..HEADER_LEN], Encoding::H264),
@@ -591,38 +733,42 @@ mod tests {
         );
     }
 
+    const SOFTWARE: RemoteSettings = RemoteSettings {
+        width: 640,
+        height: 280,
+        fps: 25,
+        include_ui: false,
+        encoding: StreamEncoding::H264Software,
+    };
+
+    /// The request a command carries, as settings.
+    fn settings(text: &str) -> Result<RemoteSettings, ValidationError> {
+        match decode_command(text) {
+            Ok(Command::Request(request)) => RemoteSettings::try_from(request),
+            other => panic!("{text}: {other:?}"),
+        }
+    }
+
     #[test]
-    fn commands_are_tagged_json_and_requests_are_validated() {
-        let request = StreamRequest {
-            width: 640,
-            height: 280,
-            fps: 25,
-            include_ui: false,
-            encoding: StreamEncoding::H264Software,
-        };
-        let text = encode_command(&Command::Request(request));
+    fn commands_are_tagged_json_and_requests_are_complete() {
+        let text = encode_command(&Command::Request(SOFTWARE.into()));
         assert_eq!(
             text,
             r#"{"type":"request","width":640,"height":280,"fps":25,"include_ui":false,"encoding":"h264_software"}"#
         );
-        assert_eq!(decode_command(&text), Ok(Command::Request(request)));
-        for (command, text) in [
-            (Command::Pause, r#"{"type":"pause"}"#),
-            (Command::Resume, r#"{"type":"resume"}"#),
-            (Command::Keyframe, r#"{"type":"keyframe"}"#),
-        ] {
-            assert_eq!(encode_command(&command), text);
-            assert_eq!(decode_command(text), Ok(command));
-        }
-        // Defaults fill a partial request; unknown fields and types are refused.
+        assert_eq!(settings(&text), Ok(SOFTWARE));
+        assert_eq!(encode_command(&Command::Keyframe), r#"{"type":"keyframe"}"#);
         assert_eq!(
-            decode_command(r#"{"type":"request"}"#),
-            Ok(Command::Request(StreamRequest::default()))
+            decode_command(r#"{"type":"keyframe"}"#),
+            Ok(Command::Keyframe)
         );
+        // Every field is required; a request that is not JSON or not a
+        // request fails to decode.
         for bad in [
-            r#"{"type":"request","listen":"0.0.0.0:7380"}"#,
-            r#"{"type":"jump"}"#,
-            r#"{"type":"request","encoding":"lz4"}"#,
+            r#"{"type":"request"}"#,
+            r#"{"type":"request","width":640,"height":280,"fps":25,"include_ui":false}"#,
+            r#"{"type":"request","width":"640","height":280,"fps":25,"include_ui":false,"encoding":"raw"}"#,
+            r#"{"width":640}"#,
             "not json",
         ] {
             assert!(
@@ -630,53 +776,141 @@ mod tests {
                 "{bad}"
             );
         }
-        assert!(matches!(
-            decode_command(r#"{"type":"request","width":321}"#),
-            Err(WireError::Request(invalid)) if invalid.field == "width"
-        ));
+        // Validated as the settings are.
+        assert_eq!(
+            settings(r#"{"type":"request","width":321,"height":280,"fps":25,"include_ui":false,"encoding":"raw"}"#)
+                .unwrap_err()
+                .field,
+            "width"
+        );
+    }
+
+    /// Unknown fields and message types are ignored; an unknown encoding is
+    /// an invalid `encoding`, not a message that fails to decode.
+    #[test]
+    fn commands_tolerate_what_this_end_does_not_know() {
+        assert_eq!(
+            settings(
+                r#"{"type":"request","width":640,"height":280,"fps":25,"include_ui":false,"encoding":"h264_software","hdr":true}"#
+            ),
+            Ok(SOFTWARE)
+        );
+        assert_eq!(
+            decode_command(r#"{"type":"keyframe","reason":"lost"}"#),
+            Ok(Command::Keyframe)
+        );
+        for unknown in [
+            r#"{"type":"jump"}"#,
+            r#"{"type":"pause"}"#,
+            r#"{"type":"jump","x":1}"#,
+        ] {
+            assert_eq!(decode_command(unknown), Ok(Command::Unknown), "{unknown}");
+        }
+        assert_eq!(
+            settings(
+                r#"{"type":"request","width":640,"height":280,"fps":25,"include_ui":false,"encoding":"av1"}"#
+            ),
+            Err(ValidationError::new(
+                "encoding",
+                "expected h264_hardware, h264_software or raw"
+            ))
+        );
     }
 
     #[test]
     fn refusals_carry_a_bounded_reason_and_a_typed_cause() {
         let refusal = Refusal::new(Refused::Encoding, "hardware H.264 encoder cannot start");
-        let text = encode_refusal(&refusal);
+        let text = encode_sender_message(&SenderMessage::Refused(refusal.clone()));
         assert_eq!(
             text,
-            r#"{"refused":"encoding","reason":"hardware H.264 encoder cannot start"}"#
+            r#"{"type":"refused","cause":"encoding","reason":"hardware H.264 encoder cannot start"}"#
         );
-        assert_eq!(decode_refusal(&text), Ok(refusal));
+        assert_eq!(
+            decode_sender_message(&text),
+            Ok(SenderMessage::Refused(refusal))
+        );
         // Cut at a character boundary.
         let long = "é".repeat(MAX_REASON_BYTES);
         let cut = Refusal::new(Refused::Request, &long);
         assert_eq!(cut.reason.len(), MAX_REASON_BYTES);
-        assert!(decode_refusal(&encode_refusal(&cut)).is_ok());
+        assert!(
+            decode_sender_message(&encode_sender_message(&SenderMessage::Refused(cut))).is_ok()
+        );
         for bad in [
-            r#"{"refused":"other","reason":"x"}"#,
-            r#"{"refused":"request","reason":"x","extra":1}"#,
-            r#"{"reason":"x"}"#,
+            r#"{"type":"refused","reason":"x"}"#,
+            r#"{"type":"refused","cause":"request"}"#,
+            r#"{"cause":"request","reason":"x"}"#,
+            "not json",
         ] {
             assert!(
-                matches!(decode_refusal(bad), Err(WireError::Json(_))),
+                matches!(decode_sender_message(bad), Err(WireError::Json(_))),
                 "{bad}"
             );
         }
         let oversized = format!(
-            r#"{{"refused":"request","reason":"{}"}}"#,
+            r#"{{"type":"refused","cause":"request","reason":"{}"}}"#,
             "x".repeat(MAX_REASON_BYTES + 1)
         );
         assert!(matches!(
-            decode_refusal(&oversized),
+            decode_sender_message(&oversized),
             Err(WireError::Json(_))
         ));
     }
 
+    /// An unknown cause is read as `request`, an unknown type or field is
+    /// ignored.
     #[test]
-    fn versions_are_read_from_the_subprotocol() {
+    fn sender_messages_tolerate_what_this_end_does_not_know() {
+        assert_eq!(
+            decode_sender_message(r#"{"type":"refused","cause":"thermal","reason":"x","code":7}"#),
+            Ok(SenderMessage::Refused(Refusal::new(Refused::Request, "x")))
+        );
+        assert_eq!(
+            decode_sender_message(r#"{"type":"stats","sent":10}"#),
+            Ok(SenderMessage::Unknown)
+        );
+        // Known causes keep their names.
+        assert_eq!(
+            serde_json::to_string(&Refused::Request).unwrap(),
+            r#""request""#
+        );
+    }
+
+    #[test]
+    fn close_codes_are_typed() {
+        for close in [Close::Stopped, Close::Replaced] {
+            assert_eq!(Close::from_code(close.code()), Some(close));
+        }
+        assert_eq!(Close::Stopped.code(), 4000);
+        assert_eq!(Close::Replaced.code(), 4001);
+        assert_eq!(Close::from_code(1000), None);
+        assert_eq!(
+            WireError::Closed(None).to_string(),
+            "the peer closed the stream"
+        );
+        assert_eq!(
+            WireError::Closed(Some(Close::Replaced)).to_string(),
+            "another sender replaced this one at Prysm"
+        );
+    }
+
+    #[test]
+    fn versions_are_read_from_the_subprotocols() {
         assert_eq!(
             version_error(Some("prysm-capture.v3")),
             WireError::Version {
                 ours: CAPTURE_VERSION,
                 theirs: Some(3)
+            }
+        );
+        // A list names the highest; unknown entries are skipped.
+        assert_eq!(
+            version_error(Some(
+                "prysm-capture.v7, chat,prysm-capture.v9 ,prysm-capture.v8"
+            )),
+            WireError::Version {
+                ours: CAPTURE_VERSION,
+                theirs: Some(9)
             }
         );
         assert_eq!(
@@ -689,7 +923,7 @@ mod tests {
         assert_eq!(
             version_error(None).to_string(),
             format!(
-                "the capture stream versions differ (Prysm: unknown, this end: {CAPTURE_VERSION}); update both"
+                "the capture stream versions differ (Prysm: unknown, this end: {CAPTURE_VERSION}); update the older one"
             )
         );
     }

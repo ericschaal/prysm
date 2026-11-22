@@ -10,11 +10,15 @@ pub const CAPTURE_STREAM_PATH: &str = "/api/v1/capture/stream";
 
 /// The capture stream's protocol version, agreed as the WebSocket
 /// subprotocol [`CAPTURE_PROTOCOL`] at the upgrade.
-pub const CAPTURE_VERSION: u8 = 5;
+pub const CAPTURE_VERSION: u8 = 6;
+
+/// What precedes the version in a capture stream subprotocol.
+pub const CAPTURE_PROTOCOL_PREFIX: &str = "prysm-capture.v";
 
 /// The WebSocket subprotocol of the capture stream: both ends offer and
-/// accept only this, the portal refuses any other (`426`).
-pub const CAPTURE_PROTOCOL: &str = "prysm-capture.v5";
+/// accept only this, the portal refuses any other (`426`, listing the
+/// versions it speaks).
+pub const CAPTURE_PROTOCOL: &str = "prysm-capture.v6";
 
 /// The upgrade request header in which a capture host says what it can
 /// deliver, in the source's own format; the surface [announces](Handoff::announce)
@@ -181,7 +185,7 @@ mod tests {
     fn the_protocol_names_the_version() {
         assert_eq!(
             CAPTURE_PROTOCOL,
-            format!("prysm-capture.v{CAPTURE_VERSION}")
+            format!("{CAPTURE_PROTOCOL_PREFIX}{CAPTURE_VERSION}")
         );
     }
 

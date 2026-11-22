@@ -43,8 +43,10 @@ pub enum VideoSchema {
 /// the receiver is told, and another encoding chosen in its portal may work.
 /// `receiver` (slim): the receiver is unavailable (not lighting, unreachable,
 /// or its name does not resolve); the worker keeps reconnecting. `version`
-/// (slim): Prysm speaks another capture stream version; both need the same
-/// release, and the worker retries every 10 s. `other`: anything else.
+/// (slim): Prysm speaks another capture stream version; the older one needs
+/// updating, and the worker retries every 10 s. `replaced` (slim): another
+/// TV took over the stream at Prysm; this one stopped sending until capture
+/// is started again. `other`: anything else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = FailureKind)]
 #[serde(rename_all = "snake_case")]
@@ -52,6 +54,7 @@ pub enum FailureKindSchema {
     Encoder,
     Receiver,
     Version,
+    Replaced,
     Other,
 }
 
@@ -205,6 +208,7 @@ mod tests {
             FailureKind::Encoder,
             FailureKind::Receiver,
             FailureKind::Version,
+            FailureKind::Replaced,
             FailureKind::Other,
         ] {
             same_shape::<FailureKind, FailureKindSchema>(&kind);

@@ -192,7 +192,18 @@ export function runDemo(
             failure: {
               kind: 'version',
               message:
-                'the capture stream versions differ (Prysm: 5, this end: 4); update both',
+                'the capture stream versions differ (Prysm: 7, this end: 6); update the older one',
+            },
+            capturing: false,
+            fps: null,
+          },
+          'TV: another TV took over': {
+            enabled: true,
+            worker: { phase: 'running' },
+            failure: {
+              kind: 'replaced',
+              message:
+                'the stream to ws://prysm.local:8787/api/v1/capture/stream failed: another sender replaced this one at Prysm',
             },
             capturing: false,
             fps: null,

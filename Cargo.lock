@@ -1944,6 +1944,7 @@ dependencies = [
  "prysm-h264",
  "prysm-ports",
  "prysm-runtime",
+ "prysm-version",
  "rustls",
  "rustls-native-certs",
  "serde",

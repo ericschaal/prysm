@@ -2,7 +2,7 @@
 //! schemas by the frontend contract tests.
 use prysm_capture_device::{DeviceSettings, DeviceSource};
 use prysm_capture_file::{FileSettings, FileSource};
-use prysm_capture_remote::{RemoteReceiver, StreamEncoding, StreamRequest};
+use prysm_capture_remote::{RemoteReceiver, RemoteSettings, StreamEncoding};
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
@@ -382,10 +382,10 @@ fn adapter_sections() -> Value {
             ),
         ],
         "RemoteReceiverSettings": [
-            AdapterSettings::new(RemoteReceiver::KIND, &StreamRequest::default()),
+            AdapterSettings::new(RemoteReceiver::KIND, &RemoteSettings::default()),
             AdapterSettings::new(
                 RemoteReceiver::KIND,
-                &StreamRequest {
+                &RemoteSettings {
                     width: 640,
                     height: 280,
                     fps: 25,

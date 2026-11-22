@@ -1,5 +1,6 @@
-//! What a receiver asks its sender for: the stream's shape and encoding. The
-//! receiver's settings hold it; the hello reply carries it to the sender.
+//! The receiver's settings: what it asks its sender for, the stream's shape
+//! and encoding. Its request message carries them to the sender.
+use crate::wire::{MAX_FPS, MAX_HEIGHT, MAX_WIDTH};
 use prysm_h264::{Backend, EncoderSettings};
 use prysm_ports::ValidationError;
 use serde::{Deserialize, Serialize};
@@ -65,7 +66,7 @@ impl FromStr for StreamEncoding {
     }
 }
 
-/// The stream a receiver asks for, and the settings of kind `"remote"`:
+/// The settings of kind `"remote"`, and the stream a receiver asks for:
 /// `{ "kind": "remote", "width": 320, "height": 180, "fps": 30,
 /// "include_ui": true, "encoding": "h264_hardware" }`, every field optional.
 /// The sender captures at this size, rate and menu blending and encodes with
@@ -76,7 +77,7 @@ impl FromStr for StreamEncoding {
 #[serde(default, deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "schema", schema(as = RemoteReceiverSettings))]
-pub struct StreamRequest {
+pub struct RemoteSettings {
     /// Requested picture width: even, 2 to 1920; the sender's offer says
     /// what its capture and encoder deliver.
     #[cfg_attr(
@@ -104,7 +105,7 @@ pub struct StreamRequest {
     pub encoding: StreamEncoding,
 }
 
-impl Default for StreamRequest {
+impl Default for RemoteSettings {
     fn default() -> Self {
         Self {
             width: 320,
@@ -116,7 +117,7 @@ impl Default for StreamRequest {
     }
 }
 
-impl StreamRequest {
+impl RemoteSettings {
     /// Rejects what the protocol never carries, without asking a sender.
     ///
     /// # Errors
@@ -132,10 +133,13 @@ impl StreamRequest {
                 ))
             }
         };
-        even("width", self.width, 1920)?;
-        even("height", self.height, 1080)?;
-        if !(1..=60).contains(&self.fps) {
-            return Err(ValidationError::new("fps", "must be 1 to 60"));
+        even("width", self.width, MAX_WIDTH)?;
+        even("height", self.height, MAX_HEIGHT)?;
+        if !(1..=MAX_FPS).contains(&self.fps) {
+            return Err(ValidationError::new(
+                "fps",
+                format!("must be 1 to {MAX_FPS}"),
+            ));
         }
         Ok(())
     }
@@ -149,7 +153,7 @@ impl StreamRequest {
     }
 }
 
-impl fmt::Display for StreamRequest {
+impl fmt::Display for RemoteSettings {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -169,7 +173,7 @@ mod tests {
 
     #[test]
     fn defaults_validate_and_limits_are_enforced() {
-        let request = StreamRequest::default();
+        let request = RemoteSettings::default();
         request.validate().unwrap();
         assert_eq!(
             request.to_string(),
@@ -177,32 +181,32 @@ mod tests {
         );
         for (bad, field) in [
             (
-                StreamRequest {
+                RemoteSettings {
                     width: 321,
                     ..request
                 },
                 "width",
             ),
             (
-                StreamRequest {
+                RemoteSettings {
                     width: 1922,
                     ..request
                 },
                 "width",
             ),
             (
-                StreamRequest {
+                RemoteSettings {
                     height: 0,
                     ..request
                 },
                 "height",
             ),
-            (StreamRequest { fps: 61, ..request }, "fps"),
+            (RemoteSettings { fps: 61, ..request }, "fps"),
         ] {
             assert_eq!(bad.validate().unwrap_err().field, field, "{bad:?}");
         }
         // Sizes encoders refuse are the sender's offer's to refuse.
-        StreamRequest {
+        RemoteSettings {
             width: 8,
             height: 2,
             ..request
@@ -221,9 +225,9 @@ mod tests {
             );
         }
         assert!("lz4".parse::<StreamEncoding>().is_err());
-        let request = |encoding| StreamRequest {
+        let request = |encoding| RemoteSettings {
             encoding,
-            ..StreamRequest::default()
+            ..RemoteSettings::default()
         };
         assert_eq!(
             request(StreamEncoding::H264Hardware).encoder(),
@@ -280,7 +284,7 @@ mod schema_tests {
 
     #[test]
     fn schema_matches_serde_shape() {
-        let settings = StreamRequest::default();
+        let settings = RemoteSettings::default();
         let schema = same_shape(&settings);
         assert!(
             schema
@@ -298,6 +302,17 @@ mod schema_tests {
             assert_eq!(schema["properties"][field]["default"], default, "{field}");
             assert_eq!(serde_json::to_value(settings).unwrap()[field], default);
         }
-        assert_eq!(schema["properties"]["fps"]["maximum"], json!(60));
+        // The schema's bounds are the protocol's.
+        for (field, maximum) in [
+            ("width", crate::wire::MAX_WIDTH),
+            ("height", crate::wire::MAX_HEIGHT),
+            ("fps", crate::wire::MAX_FPS),
+        ] {
+            assert_eq!(
+                schema["properties"][field]["maximum"],
+                json!(maximum),
+                "{field}"
+            );
+        }
     }
 }

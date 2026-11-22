@@ -13,7 +13,8 @@ use prysm_protocol::FailureKind;
 
 /// Answer a WebSocket upgrade with `101` and this protocol version's
 /// subprotocol, and hand the connection over once hyper releases it. `426`,
-/// naming the version spoken here, when the sender offers another; `503`
+/// listing the versions spoken here (this one), when the sender offers
+/// none of them; `503`
 /// while no source receives (lighting off, or the capture is not `remote`).
 /// A sender of this version's offer header is announced first, so a refused
 /// attempt still tells the source what the sender can deliver.
@@ -33,7 +34,7 @@ pub(crate) fn upgrade(
         let mut refused = failure(
             StatusCode::UPGRADE_REQUIRED,
             FailureKind::BadRequest,
-            "the sender speaks another capture stream version; update both",
+            "the sender speaks another capture stream version; update the older one",
         );
         refused.headers_mut().insert(
             header::SEC_WEBSOCKET_PROTOCOL,

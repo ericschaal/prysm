@@ -2,9 +2,10 @@
 //! `send`, encoded as the receiver requested.
 use crate::link::{self, Inbound, Link, LinkError, Outbound};
 use crate::offer::Offer;
-use crate::request::StreamRequest;
+use crate::request::RemoteSettings;
 use crate::wire::{
-    self, Command, Encoding, HEADER_LEN, Header, MAX_TEXT_BYTES, Refusal, Refused, WireError,
+    self, Command, Encoding, HEADER_LEN, Header, MAX_TEXT_BYTES, Refusal, Refused, SenderMessage,
+    WireError,
 };
 use bytes::{Bytes, BytesMut};
 use prysm_core::Frame;
@@ -13,7 +14,7 @@ use prysm_ports::{CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, Error, FrameSink, Resu
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderValue, StatusCode, Uri, header};
 use tungstenite::stream::MaybeTlsStream;
@@ -29,11 +30,13 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// the caller drops it and connects a new one.
 #[derive(Debug, thiserror::Error)]
 pub enum SendError {
-    /// The requested encoder could not start or failed. The receiver was
-    /// told (see [`RemoteSender::refuse_encoding`]).
+    /// This end cannot produce the request: the requested encoder could not
+    /// start or failed, or a frame does not fit the stream. The receiver
+    /// was told (see [`RemoteSender::refuse_encoding`]).
     #[error(transparent)]
-    Encoder(Error),
-    /// The connection to the receiver failed.
+    Refused(Error),
+    /// The connection to the receiver failed or was closed; a
+    /// [`WireError::Closed`] cause says why the receiver closed it.
     #[error(transparent)]
     Connection(#[from] Error),
 }
@@ -41,21 +44,19 @@ pub enum SendError {
 impl From<SendError> for Error {
     fn from(error: SendError) -> Self {
         match error {
-            SendError::Encoder(error) | SendError::Connection(error) => error,
+            SendError::Refused(error) | SendError::Connection(error) => error,
         }
     }
 }
 
 /// Sends frames to a [`RemoteSource`](crate::RemoteSource) through Prysm's
-/// portal, as its [`StreamRequest`] says. Any failure is final: the caller
+/// portal, as its [`RemoteSettings`] say. Any failure is final: the caller
 /// drops the sender and connects a new one. [`RemoteSender::deliver`] tells
-/// an encoder failure from a connection failure; [`FrameSink::send`] does not.
+/// a refusal from a connection failure; [`FrameSink::send`] does not.
 ///
-/// The receiver can pause the stream (frames are dropped unencoded until it
-/// resumes) and ask for a keyframe; each `send` and `tick` first applies
-/// those requests, without waiting for any. A pause, resume or keyframe
-/// request starts a new H.264 encoder session, so the next picture is a
-/// keyframe, and a pause releases a hardware encoder.
+/// The receiver can ask for a keyframe, which starts a new H.264 encoder
+/// session; each `send` and `tick` first reads the receiver's messages,
+/// without waiting for any, and so learns when the receiver closes.
 pub struct RemoteSender {
     /// Reads never wait (the socket is non-blocking once connected);
     /// writes wait out a full send buffer within the write timeout.
@@ -65,9 +66,8 @@ pub struct RemoteSender {
     socket: TcpStream,
     /// The capture stream's URL, for messages.
     url: Uri,
-    request: StreamRequest,
+    request: RemoteSettings,
     stream: Stream,
-    paused: bool,
     message: Outgoing,
 }
 
@@ -120,7 +120,6 @@ impl std::fmt::Debug for RemoteSender {
         f.debug_struct("RemoteSender")
             .field("url", &self.url)
             .field("request", &self.request)
-            .field("paused", &self.paused)
             .finish_non_exhaustive()
     }
 }
@@ -132,7 +131,9 @@ impl RemoteSender {
     /// it bounds the lookup), with this end's protocol version as the
     /// subprotocol and `offer` in the [`CAPTURE_OFFER_HEADER`] (Prysm keeps
     /// it even when it refuses the stream); then read the receiver's
-    /// request. The requested encoder opens at the first frame.
+    /// request. A request this end cannot parse, that fails validation or
+    /// that `offer` excludes is refused to the receiver. The requested
+    /// encoder opens at the first frame.
     ///
     /// # Errors
     /// Prysm is unreachable, failed TLS verification, has no receiving
@@ -148,9 +149,19 @@ impl RemoteSender {
             .map_err(failed)?;
         let handle = socket.try_clone().map_err(failed)?;
         let mut link = upgrade(url, socket, offer)?;
-        let request = read_request(&mut link)
-            .map_err(|error| error.context(format!("{url} sent no request")))?;
-        // From here the link's reads never wait: controls are polled per frame.
+        let request = read_request(&mut link, &handle)
+            .and_then(|request| {
+                offer.check(&request).map_err(WireError::Request)?;
+                Ok(request)
+            })
+            .map_err(|error| {
+                if let LinkError::Wire(WireError::Json(_) | WireError::Request(_)) = &error {
+                    refuse(&mut link, Refused::Request, &chain(&error));
+                }
+                error.context(format!("{url} sent no valid request"))
+            })?;
+        // From here the link's reads never wait: the receiver's messages are
+        // read before each frame.
         handle
             .set_nonblocking(true)
             .map_err(|error| Error::adapter(format!("cannot configure {url}"), error))?;
@@ -167,34 +178,25 @@ impl RemoteSender {
             url: url.clone(),
             request,
             stream,
-            paused: false,
             message: Outgoing::default(),
         })
     }
 
     /// What the receiver asked for; frames should match its size.
     #[must_use]
-    pub fn request(&self) -> StreamRequest {
+    pub fn request(&self) -> RemoteSettings {
         self.request
     }
 
-    /// The receiver does not want frames; `send` drops them.
-    #[must_use]
-    pub fn paused(&self) -> bool {
-        self.paused
-    }
-
-    /// Apply the receiver's pending control messages, then send one frame,
-    /// encoded as requested; dropped while paused.
+    /// Read the receiver's pending messages, then send one frame, encoded
+    /// as requested.
     ///
     /// # Errors
-    /// [`SendError::Encoder`] when the requested encoder cannot start or
-    /// failed (the receiver is told), else [`SendError::Connection`].
+    /// [`SendError::Refused`] when the requested encoder cannot start or
+    /// failed, or the frame does not fit the stream (the receiver is told),
+    /// else [`SendError::Connection`].
     pub fn deliver(&mut self, frame: &Frame) -> Result<(), SendError> {
-        self.apply_pending_controls()?;
-        if self.paused {
-            return Ok(());
-        }
+        self.read_pending()?;
         let payload = self.message.start();
         let keyframe = match &mut self.stream {
             Stream::Raw => {
@@ -206,9 +208,7 @@ impl RemoteSender {
                     Ok(Picture::Appended { keyframe }) => keyframe,
                     Ok(Picture::Skipped) => return Ok(()),
                     Err(error) => {
-                        let error = Error::adapter("cannot encode frame", error);
-                        self.refuse_encoding(&chain(&error));
-                        return Err(SendError::Encoder(error));
+                        return Err(self.refused(Error::adapter("cannot encode frame", error)));
                     }
                 }
             }
@@ -219,12 +219,12 @@ impl RemoteSender {
             format: frame.format(),
             keyframe,
         };
-        let message = self
-            .message
-            .finish(&header, self.request.encoding.into())
-            .map_err(|error| Error::adapter("cannot send frame", error))?;
+        let message = match self.message.finish(&header, self.request.encoding.into()) {
+            Ok(message) => message,
+            Err(error) => return Err(self.refused(Error::adapter("cannot send frame", error))),
+        };
         self.send_message(Outbound::Binary(message))
-            .map_err(|error| self.failed(error))?;
+            .map_err(|error| self.failed_send(error))?;
         Ok(())
     }
 
@@ -242,42 +242,46 @@ impl RemoteSender {
         self.refuse_with(reason, Refused::Encoding);
     }
 
-    fn refuse_with(&mut self, reason: &str, refused: Refused) {
-        let refusal = wire::encode_refusal(&Refusal::new(refused, reason));
-        let _ = self.send_message(Outbound::Text(refusal));
-        self.link.close();
+    fn refuse_with(&mut self, reason: &str, cause: Refused) {
+        // Within the write timeout, rather than giving up on a full buffer.
+        let _ = self.set_blocking(true);
+        refuse(&mut self.link, cause, reason);
     }
 
-    /// Apply the receiver's control messages that arrived, without waiting.
-    fn apply_pending_controls(&mut self) -> Result<()> {
+    /// Refuse the request for `error`, naming the encoding of an H.264
+    /// stream (its encoder produced the frame) and the request otherwise.
+    fn refused(&mut self, error: Error) -> SendError {
+        let cause = match self.stream {
+            Stream::H264 { .. } => Refused::Encoding,
+            Stream::Raw => Refused::Request,
+        };
+        self.refuse_with(&chain(&error), cause);
+        SendError::Refused(error)
+    }
+
+    /// Read the receiver's messages that arrived, without waiting. A
+    /// keyframe request starts a new encoder session; a second request is
+    /// out of turn.
+    fn read_pending(&mut self) -> Result<()> {
         while let Some(message) = self.link.receive().map_err(|error| self.failed(error))? {
             let command = match message {
                 Inbound::Text(text) => wire::decode_command(&text),
                 Inbound::Binary(_) => Err(WireError::Unexpected),
             }
             .map_err(|error| self.failed(error.into()))?;
-            self.apply_control(command)
-                .map_err(|error| self.failed(error.into()))?;
-        }
-        Ok(())
-    }
-
-    /// Pause, resume or ask for a keyframe; each starts a new encoder session
-    /// (a pause also releases a hardware encoder). A second request is out of
-    /// turn.
-    fn apply_control(&mut self, command: Command) -> Result<(), WireError> {
-        self.paused = match command {
-            Command::Pause => true,
-            Command::Resume => false,
-            Command::Keyframe => self.paused,
-            Command::Request(_) => return Err(WireError::Unexpected),
-        };
-        if let Stream::H264 {
-            encoder: Some(encoder),
-            ..
-        } = &mut self.stream
-        {
-            encoder.restart();
+            match command {
+                Command::Keyframe => {
+                    if let Stream::H264 {
+                        encoder: Some(encoder),
+                        ..
+                    } = &mut self.stream
+                    {
+                        encoder.restart();
+                    }
+                }
+                Command::Unknown => {}
+                Command::Request(_) => return Err(self.failed(WireError::Unexpected.into())),
+            }
         }
         Ok(())
     }
@@ -302,6 +306,20 @@ impl RemoteSender {
             .map_err(|error| LinkError::Socket(error.into()))
     }
 
+    /// A write failed. A receiver that closes the connection races the
+    /// write, so a close it sent first, if one arrived, is the cause.
+    fn failed_send(&mut self, error: LinkError) -> Error {
+        loop {
+            match self.link.receive() {
+                Ok(Some(_)) => {}
+                Err(closed @ LinkError::Wire(WireError::Closed(Some(_)))) => {
+                    return self.failed(closed);
+                }
+                Ok(None) | Err(_) => return self.failed(error),
+            }
+        }
+    }
+
     fn failed(&self, error: LinkError) -> Error {
         error.context(format!("the stream to {} failed", self.url))
     }
@@ -312,10 +330,10 @@ impl FrameSink for RemoteSender {
         Ok(self.deliver(frame)?)
     }
 
-    /// No frame to send: apply the receiver's pending control messages, so
-    /// a sender whose capture is stopped while paused learns of the resume.
+    /// No frame to send: read the receiver's pending messages, so a sender
+    /// whose capture is stopped still learns that the receiver closed.
     fn tick(&mut self) -> Result<()> {
-        self.apply_pending_controls()
+        self.read_pending()
     }
 }
 
@@ -362,13 +380,13 @@ fn upgrade(url: &Uri, socket: TcpStream, offer: &Offer) -> Result<Link<MaybeTlsS
         }
         _ => None,
     };
-    // A request or a control is the longest message this end reads.
+    // A request is the longest message this end reads.
     let config = Some(link::config(MAX_TEXT_BYTES));
     match tungstenite::client_tls_with_config(request, socket, config, connector) {
         Ok((socket, _)) => Ok(Link::new(socket)),
         Err(HandshakeError::Failure(tungstenite::Error::Http(response))) => {
             let status = response.status();
-            // The portal names the version it speaks with its refusal.
+            // The portal lists the versions it speaks with its refusal.
             let error = if status == StatusCode::UPGRADE_REQUIRED {
                 let theirs = response.headers().get(header::SEC_WEBSOCKET_PROTOCOL);
                 wire::version_error(theirs.and_then(|value| value.to_str().ok()))
@@ -420,20 +438,46 @@ fn authorities() -> Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>> {
 #[error("the system has no certificate authorities")]
 struct NoAuthorities(#[source] Option<rustls_native_certs::Error>);
 
-/// The receiver's first message: its request. A peer that closes or stays
-/// silent sent none.
-fn read_request<S: Read + Write>(link: &mut Link<S>) -> Result<StreamRequest, LinkError> {
-    let text = match link.receive() {
-        Ok(Some(Inbound::Text(text))) => text,
-        Ok(Some(Inbound::Binary(_))) => return Err(WireError::Unexpected.into()),
-        Ok(None) | Err(LinkError::Wire(WireError::Closed)) => {
+/// Tell the receiver that this end cannot produce its request, and close
+/// the connection. Best effort, within the socket's write timeout.
+fn refuse<S: Read + Write>(link: &mut Link<S>, cause: Refused, reason: &str) {
+    let refusal = SenderMessage::Refused(Refusal::new(cause, reason));
+    let _ = link.send(Outbound::Text(wire::encode_sender_message(&refusal)));
+    link.close(None);
+}
+
+/// The receiver's first message, its request, within [`CONNECT_TIMEOUT`]
+/// (`socket` is the link's, its read timeout set to the time left).
+/// Messages of types this end does not know are skipped. A peer that closes
+/// or stays silent sent none.
+fn read_request<S: Read + Write>(
+    link: &mut Link<S>,
+    socket: &TcpStream,
+) -> Result<RemoteSettings, LinkError> {
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
             return Err(WireError::NoRequest.into());
         }
-        Err(error) => return Err(error),
-    };
-    match wire::decode_command(&text)? {
-        Command::Request(request) => Ok(request),
-        Command::Pause | Command::Resume | Command::Keyframe => Err(WireError::NoRequest.into()),
+        socket
+            .set_read_timeout(Some(left))
+            .map_err(|error| LinkError::Socket(error.into()))?;
+        let text = match link.receive() {
+            Ok(Some(Inbound::Text(text))) => text,
+            Ok(Some(Inbound::Binary(_))) => return Err(WireError::Unexpected.into()),
+            Ok(None) => continue,
+            Err(LinkError::Wire(WireError::Closed(_))) => return Err(WireError::NoRequest.into()),
+            Err(error) => return Err(error),
+        };
+        match wire::decode_command(&text)? {
+            Command::Request(request) => {
+                return RemoteSettings::try_from(request)
+                    .map_err(|error| WireError::Request(error).into());
+            }
+            Command::Unknown => {}
+            Command::Keyframe => return Err(WireError::Unexpected.into()),
+        }
     }
 }
 
