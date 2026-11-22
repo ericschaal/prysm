@@ -159,10 +159,10 @@ export function LightCard({
     target: LightingTarget;
     kind: LightingSituation['kind'];
   } | null>(null);
-  const error =
-    refusal && refusal.target === target && refusal.kind === lighting.kind
-      ? refusal.failure
-      : null;
+  // Gone once the lights change, also when they change back.
+  if (refusal && (refusal.target !== target || refusal.kind !== lighting.kind))
+    setRefusal(null);
+  const error = refusal?.failure ?? null;
   const [remembered, setRemembered] = useState(storedMode);
   if (target !== 'off' && target !== remembered) setRemembered(target);
   useEffect(() => {

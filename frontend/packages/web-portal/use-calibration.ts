@@ -231,7 +231,13 @@ export function useCalibration({
         renamed,
         live.value.active_calibration,
       );
-      if (!(await live.commit(value))) {
+      const saved = await live.commit(value);
+      // Not saved, or deleted elsewhere meanwhile (the page then says so):
+      // nothing is finished.
+      const kept = saved?.calibrations?.some(
+        (calibration) => calibration.id === draft.id,
+      );
+      if (!kept) {
         dispatch({ type: 'closingFailed' });
         return;
       }

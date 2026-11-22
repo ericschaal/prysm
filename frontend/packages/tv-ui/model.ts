@@ -131,10 +131,9 @@ export interface PortalFacts {
   lighting?: LightingSituation;
 }
 
-/** The target a situation was asked for; faulted, the supervisor's own. */
+/** The target a running or starting situation was asked for. */
 function targetOf(
-  lighting: LightingSituation,
-  supervisor: LightingTarget,
+  lighting: Exclude<LightingSituation, { kind: 'faulted' | 'failed' }>,
 ): LightingTarget {
   switch (lighting.kind) {
     case 'off':
@@ -143,11 +142,8 @@ function targetOf(
       return 'processed';
     case 'effects':
       return 'device_native';
-    case 'failed':
     case 'starting':
       return lighting.target;
-    case 'faulted':
-      return supervisor;
   }
 }
 
@@ -250,40 +246,41 @@ export function tvStatus(
     title = 'Waiting for video';
     description = 'Choose an input or play something on the TV.';
   } else if (state.flavor === 'full') {
-    // The supervisor hears of a change made in the portal a moment later.
     const lighting = portal?.lighting;
-    const target = lighting
-      ? targetOf(lighting, state.lighting)
-      : state.lighting;
-    // Without the portal's measure yet, the TV's own word.
-    const flowing = lighting
-      ? lighting.kind === 'sync' && (lighting.input?.receiving ?? capturing)
-      : capturing;
     if (lighting?.kind === 'faulted') {
-      title = stopped;
+      title = 'Prysm stopped responding';
       description = 'Restart Prysm to recover.';
       attention = true;
     } else if (lighting?.kind === 'failed') {
       // The lights card says what failed; its modes try again.
-      title = stopped;
+      title =
+        lighting.target === 'device_native' ? 'WLED effects stopped' : stopped;
       description = 'Try again, or choose another mode.';
       attention = true;
-    } else if (target === 'off') {
-      title = 'Lights off';
-      description = 'Choose Screen sync: the lights follow the picture.';
-    } else if (target === 'device_native') {
-      title = 'WLED effects on';
-      description = 'Your lights run their own effects.';
-    } else if (flowing) {
-      title = 'Screen sync on';
-      description = 'Your lights follow the picture.';
-    } else if (fullPortal(state) && phase === 'running') {
-      // Lighting is on but no frames arrive: the lights are released to WLED.
-      title = 'Waiting for video';
-      description = 'Screen sync starts when a picture arrives.';
     } else {
-      title = 'Starting screen sync…';
-      description = 'This takes a few seconds.';
+      // The supervisor hears of a change made in the portal a moment later.
+      const target = lighting ? targetOf(lighting) : state.lighting;
+      // Without the portal's measure yet, the TV's own word.
+      const flowing = lighting
+        ? lighting.kind === 'sync' && (lighting.input?.receiving ?? capturing)
+        : capturing;
+      if (target === 'off') {
+        title = 'Lights off';
+        description = 'Choose Screen sync: the lights follow the picture.';
+      } else if (target === 'device_native') {
+        title = 'WLED effects on';
+        description = 'Your lights run their own effects.';
+      } else if (flowing) {
+        title = 'Screen sync on';
+        description = 'Your lights follow the picture.';
+      } else if (fullPortal(state) && phase === 'running') {
+        // Lighting is on but no frames arrive: the lights are released to WLED.
+        title = 'Waiting for video';
+        description = 'Screen sync starts when a picture arrives.';
+      } else {
+        title = 'Starting screen sync…';
+        description = 'This takes a few seconds.';
+      }
     }
   } else if (!state.preferences.instance) {
     title = 'Set up this TV';

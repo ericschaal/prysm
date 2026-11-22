@@ -298,3 +298,23 @@ test('a refused click is said only until the lights change', async () => {
     await portal.unmount();
   }
 });
+
+test('an old refused click does not come back when the lights do', async () => {
+  // Hidden only while the lights differed: back as they were, it showed again.
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    fixture.failNext({ kind: 'busy', message: 'busy' });
+    await press($('[data-power]'));
+    assert(shown());
+    await act(async () =>
+      fixture.publish({ target: 'processed', session: { state: 'running' } }),
+    );
+    await act(async () =>
+      fixture.publish({ target: 'off', session: { state: 'stopped' } }),
+    );
+    assert.equal(shown(), false);
+  } finally {
+    await portal.unmount();
+  }
+});

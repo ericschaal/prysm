@@ -202,7 +202,13 @@ function StartScreen({
     <>
       <div className="card-heading">
         <p className="eyebrow">Calibrate colours</p>
-        <button type="button" className="quiet" onClick={leave}>
+        {/* While starting, the start must finish or undo itself first. */}
+        <button
+          type="button"
+          className="quiet"
+          disabled={starting}
+          onClick={leave}
+        >
           Leave
         </button>
       </div>

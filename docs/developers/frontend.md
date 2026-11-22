@@ -80,7 +80,7 @@ situation, and `describeSituation` gives its words.
 `useLiveProcessing` saves the processing section from the Picture panel, the
 light card, Calibrations and Calibrate. Saves never overlap: each waits for
 the one before it and is sent against the revision that one returned, so
-`commit(value)` resolves `true` only once `value` itself is saved. A save
+`commit(value)` resolves only once `value` itself is saved, with what was saved (or `null`). A save
 refused as stale is moved onto the newer settings, each calibration on its
 own: one changed here keeps this page's version, one changed elsewhere the
 other's, one deleted on either side is gone.

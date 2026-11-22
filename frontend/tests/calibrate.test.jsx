@@ -803,6 +803,65 @@ test('a failed save at Finish keeps the wizard open with its buttons', async () 
   }
 });
 
+test('Leave waits while Start is under way', async () => {
+  // Leaving then left the pattern on the TV and the draft saved and active.
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    const release = fixture.holdPatterns();
+    await act(async () => button('Start').click());
+    assert.equal(button('Leave').disabled, true);
+    release();
+    await act(async () => sleep(5));
+    assert.equal(heading(), questions.white);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('Finish does not claim a calibration deleted elsewhere meanwhile', async () => {
+  // The rename was dropped onto the other phone's deletion, and Finish said
+  // the calibration was saved and active.
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    await press(button('Start'));
+    for (let screen = 1; screen <= screenOf('blue'); screen++)
+      await press(button('Looks right'));
+    const release = fixture.holdSaves();
+    await edit(draftField('blue.hue'), 5);
+    while (heading() !== questions.review) await press(button('Looks right'));
+    // The slider's save is on its way; Finish waits for it.
+    await settle();
+    await edit(field('calibration.name'), 'Movie night');
+    await press(button('Finish'));
+    // Another phone deletes the draft meanwhile.
+    await act(async () => {
+      const { settings, revision } = fixture.snapshot();
+      const rest = { ...settings.processing };
+      delete rest.calibrations;
+      delete rest.active_calibration;
+      fixture.publish({
+        settings: { ...settings, processing: rest },
+        revision: revision + 1,
+      });
+      await sleep(0);
+    });
+    release();
+    await settle();
+    assert.notEqual(heading(), 'Calibration finished');
+    assert(
+      text().includes(
+        'This calibration was deleted elsewhere. Cancel to finish.',
+      ),
+    );
+    assert.notEqual(patterns(fixture).at(-1), 'calibration:end');
+    assert.equal(processing(fixture).calibrations, undefined);
+  } finally {
+    await portal.unmount();
+  }
+});
+
 /* ---- The wizard's state ---- */
 
 const place = (screen, returnTo = null, uncorrected = false) => ({

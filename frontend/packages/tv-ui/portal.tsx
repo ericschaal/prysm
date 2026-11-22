@@ -48,12 +48,13 @@ export function LightingCard({
     target: LightingTarget | undefined;
     kind: LightingSituation['kind'] | undefined;
   } | null>(null);
-  const error =
+  // Gone once the lights change, also when they change back.
+  if (
     refusal &&
-    refusal.target === snapshot?.target &&
-    refusal.kind === lighting?.kind
-      ? refusal.text
-      : '';
+    (refusal.target !== snapshot?.target || refusal.kind !== lighting?.kind)
+  )
+    setRefusal(null);
+  const error = refusal?.text ?? '';
 
   async function choose(target: LightingTarget) {
     const at = { target: snapshot?.target, kind: lighting?.kind };

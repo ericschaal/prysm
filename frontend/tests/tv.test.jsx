@@ -1604,7 +1604,7 @@ test('the title and the lights card agree on what the lights do', async (t) => {
   assert.equal(tv.text('status-title'), 'Lights off');
 });
 
-test('the full status follows the portal: its failure and a faulted session', () => {
+test('the full status follows the portal: its failure, named by mode, and a faulted session', () => {
   const full = tvState('full', {
     lighting: 'processed',
     worker: { phase: 'running' },
@@ -1630,19 +1630,34 @@ test('the full status follows the portal: its failure and a faulted session', ()
     ['Screen sync stopped', 'Try again, or choose another mode.', true, 'none'],
     'the modes try again; the service has nothing to restart',
   );
-  const faulted = tvStatus(
-    true,
-    full,
-    draft,
-    facts({
-      target: 'processed',
-      session: { state: 'faulted', phase: 'finishing' },
-    }),
+  // Effects that did not start are named as effects, not as screen sync.
+  assert.equal(
+    tvStatus(
+      true,
+      full,
+      draft,
+      facts({
+        target: 'device_native',
+        session: { state: 'stopped' },
+        failure: { kind: 'adapter', message: 'x' },
+      }),
+    ).title,
+    'WLED effects stopped',
   );
-  assert.deepEqual(
-    [faulted.title, faulted.description, faulted.attention],
-    ['Screen sync stopped', 'Restart Prysm to recover.', true],
-  );
+  // Faulted, whatever the target: Prysm itself stopped.
+  for (const target of ['processed', 'off']) {
+    const faulted = tvStatus(
+      true,
+      full,
+      draft,
+      facts({ target, session: { state: 'faulted', phase: 'finishing' } }),
+    );
+    assert.deepEqual(
+      [faulted.title, faulted.description, faulted.attention],
+      ['Prysm stopped responding', 'Restart Prysm to recover.', true],
+      target,
+    );
+  }
   const waiting = tvStatus(
     true,
     full,
@@ -1679,6 +1694,12 @@ test('a refused press is said until the lights change', async (t) => {
   );
   await settle();
   assert.equal(tv.text('lighting-status'), 'Screen sync is running.');
+  // Back as they were when it was refused: the old error stays gone.
+  await act(async () =>
+    tv.application.publish({ target: 'off', session: { state: 'stopped' } }),
+  );
+  await settle();
+  assert.equal(tv.text('lighting-status'), 'Lights are off.');
 });
 
 test('a service newer than the app is shown, not offered setup', async (t) => {

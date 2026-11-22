@@ -6,9 +6,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { act, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { rebased, useLiveProcessing } from '@prysm/web-portal';
 import { fakeApplicationPort } from '../testkit/application';
-import { mountDom } from './dom';
+import {
+  processingDelayMs,
+  rebased,
+  useLiveProcessing,
+} from '@prysm/web-portal';
+import { mountDom, sleep } from './dom';
 
 /** Renders the hook over `fixture`; `live()` is its latest result. */
 async function mountLive(fixture) {
@@ -53,7 +57,7 @@ const brightness = (fixture) =>
   fixture.snapshot().settings.processing.brightness_percent;
 
 test('a commit asked for while a save is on its way resolves once its own value is saved', async () => {
-  // It shared the save on its way: `true` came back with the earlier value
+  // It shared the save on its way: it resolved with the earlier value
   // saved, and its own followed later, unawaited.
   const fixture = fakeApplicationPort({});
   const probe = await mountLive(fixture);
@@ -71,13 +75,13 @@ test('a commit asked for while a save is on its way resolves once its own value 
       second = probe
         .live()
         .commit({ ...probe.live().value, brightness_percent: 60 })
-        .then((saved) => [saved, brightness(fixture)]);
+        .then((saved) => [saved?.brightness_percent, brightness(fixture)]);
     });
     await act(async () => {
       release();
-      assert.equal(await first, true);
+      assert.equal((await first)?.brightness_percent, 40);
       // Read the moment it resolves: nothing may land after it.
-      assert.deepEqual(await second, [true, 60]);
+      assert.deepEqual(await second, [60, 60]);
     });
     assert.equal(brightness(fixture), 60);
     assert.equal(
@@ -103,7 +107,10 @@ test('a queued save goes against the revision the save before it returned', asyn
         probe.live().commit({ ...value, brightness_percent: 20 }),
       ]);
     });
-    assert.deepEqual(results, [true, true]);
+    assert.deepEqual(
+      results.map((saved) => saved?.brightness_percent),
+      [30, 20],
+    );
     assert.equal(brightness(fixture), 20);
     assert.equal(fixture.snapshot().revision, 9);
   } finally {
@@ -182,4 +189,46 @@ test('a stale draft is rebased one calibration at a time', () => {
     rebased(controls([movie], 'movie'), base, controls([], undefined)),
     controls([], undefined),
   );
+});
+
+test('a save after a failed one answers its error, so later changes save again', async () => {
+  // The failed control kept "Not saved." and every later change waited
+  // for it to be edited.
+  const fixture = fakeApplicationPort({});
+  const probe = await mountLive(fixture);
+  try {
+    fixture.failNext({ kind: 'unavailable', message: 'no answer' });
+    await act(async () => {
+      await probe
+        .live()
+        .commit(
+          { ...probe.live().value, brightness_percent: 40 },
+          'processing.brightness_percent',
+        );
+    });
+    assert.equal(probe.live().state, 'failed');
+    // Another control is saved at once (as Delete on Calibrations is).
+    await act(async () => {
+      await probe
+        .live()
+        .commit(
+          { ...probe.live().value, remove_black_bars: true },
+          'processing.remove_black_bars',
+        );
+    });
+    assert.notEqual(probe.live().state, 'failed');
+    assert.deepEqual(probe.live().scope.errors, {});
+    // A change after it saves by itself.
+    await act(async () =>
+      probe.live().replace({ ...probe.live().value, sample_density: 64 }),
+    );
+    await act(async () => sleep(processingDelayMs + 100));
+    assert.equal(
+      fixture.snapshot().settings.processing.sample_density,
+      64,
+      'saved after the usual wait',
+    );
+  } finally {
+    await probe.unmount();
+  }
 });

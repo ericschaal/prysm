@@ -240,8 +240,9 @@ interface FailedSave {
  * value={scope}`.
  *
  * Saves never overlap: each waits for the one before it and is sent against
- * the revision that one returned, so `commit(value)` resolves `true` only
- * once `value` itself is saved.
+ * the revision that one returned, so `commit(value)` resolves only once
+ * `value` itself is saved, with what was saved: `value`, moved onto any
+ * change made elsewhere meanwhile.
  *
  * A save refused because the settings changed elsewhere is not lost: once
  * the newer settings arrive, the user's changes are moved onto them and
@@ -317,13 +318,20 @@ export function useLiveProcessing({
    * save goes against the returned one.
    */
   const lastSave = useRef<{ sentAt: number; savedAs: number } | null>(null);
-  /** Save `edited` after the saves before it; resolves with whether it was saved. */
-  function apply(edited: ProcessingControls): Promise<boolean> {
+  /**
+   * Save `edited` after the saves before it; resolves with what was saved
+   * (`edited`, moved onto changes made elsewhere), or `null`.
+   */
+  function apply(
+    edited: ProcessingControls,
+  ): Promise<ProcessingControls | null> {
     const run = queue.current.then(() => send(edited));
     queue.current = run;
     return run;
   }
-  async function send(edited: ProcessingControls): Promise<boolean> {
+  async function send(
+    edited: ProcessingControls,
+  ): Promise<ProcessingControls | null> {
     const current = latest.current;
     const last = lastSave.current;
     const expected =
@@ -345,14 +353,16 @@ export function useLiveProcessing({
       const next = await save(expected, whole(value));
       lastSave.current = { sentAt: current.revision, savedAs: next };
       current.draft.saved(value, next);
+      // The whole section is saved: what a failed save marked is answered.
+      errors.clearServer();
       setFailed(null);
-      return true;
+      return value;
     } catch (error) {
       const reason = failureOf(error);
       // Saved again once the newer settings arrive.
       if (reason.kind === 'stale_revision') {
         setStaleAt(expected);
-        return false;
+        return null;
       }
       const invalid = reason.kind === 'invalid';
       const at = (invalid && reason.field) || changedRef.current;
@@ -362,7 +372,7 @@ export function useLiveProcessing({
         message: saveProblem(reason),
         retryAt: at && !invalid ? at : null,
       });
-      return false;
+      return null;
     } finally {
       setBusy(false);
     }
@@ -422,7 +432,7 @@ export function useLiveProcessing({
     replace,
     /**
      * Change the draft and save it after the saves on their way; resolves
-     * with whether `next` itself was saved.
+     * with what was saved of `next` (see `apply`), or `null`.
      */
     commit: (next: ProcessingControls, path?: string) => {
       replace(next, path);
