@@ -1,7 +1,7 @@
 //! The built `prysm-webos-slim` binary on the development host, where the LG
 //! backend refuses to start: argv, the wait for Prysm and the failure exit
 //! code after a final `failed` event.
-use prysm_capture_remote::StreamRequest;
+use prysm_capture_remote::RemoteSettings;
 use prysm_capture_remote::testkit::Portal;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -103,7 +103,7 @@ fn an_unreachable_receiver_is_a_reported_wait() {
 #[test]
 fn capture_off_the_tv_fails_with_its_cause() {
     let portal = Portal::start();
-    let receiver = portal.source(StreamRequest::default());
+    let receiver = portal.source(RemoteSettings::default());
     let mut child = spawn(&format!("http://{}", portal.addr));
     let stdin = child.stdin.take();
     let failed = events(&mut child, |event| event["type"] == "failed");

@@ -1,7 +1,10 @@
 //! H.264 streams on loopback over WebSocket with the software encoder: round
-//! trip, recovery, pause/resume and refusal. Every wait is bounded.
+//! trip, recovery, keyframe requests, the stopped close and refusal. Every
+//! wait is bounded.
 use prysm_capture_remote::testkit::{BOUND, Portal};
-use prysm_capture_remote::{RemoteSender, RemoteSource, StreamEncoding, StreamRequest, WireError};
+use prysm_capture_remote::{
+    Close, RemoteSender, RemoteSettings, RemoteSource, StreamEncoding, WireError,
+};
 use prysm_core::Frame;
 use prysm_h264::{Backend, Encoder, EncoderSettings, FORMAT, H264Error};
 use prysm_ports::{FrameSink, FrameSource};
@@ -12,7 +15,7 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 /// Software H.264; frames carry their own size, so the tests use several.
-const SOFTWARE: StreamRequest = StreamRequest {
+const SOFTWARE: RemoteSettings = RemoteSettings {
     width: 640,
     height: 280,
     fps: 30,
@@ -33,7 +36,7 @@ fn nv12_message(keyframe: bool, width: u16, height: u16, payload: &[u8]) -> Vec<
 }
 
 /// A portal with a source receiving `request`.
-fn open(request: StreamRequest) -> (Portal, RemoteSource) {
+fn open(request: RemoteSettings) -> (Portal, RemoteSource) {
     let portal = Portal::start();
     let source = portal.source(request);
     (portal, source)
@@ -285,14 +288,28 @@ fn a_stream_must_start_with_a_keyframe() {
     Box::new(source).close().unwrap();
 }
 
-/// A keyframe that does not decode ends the connection; the receiver keeps
-/// listening for the sender's next one.
+/// A keyframe that does not decode fails the source with the decoder's
+/// error: the sender would send the same on every connection.
 #[test]
-fn a_broken_keyframe_drops_the_connection() {
+fn a_broken_keyframe_fails_the_source() {
     let (portal, mut source) = open(SOFTWARE);
     let mut client = Client::connect(&portal);
     let broken = nv12_message(true, 64, 32, b"\x00\x00\x01\x65\x00");
     client.socket.send(Message::binary(broken)).unwrap();
+    let deadline = Instant::now() + BOUND;
+    let error = loop {
+        assert!(Instant::now() < deadline, "the source never failed");
+        match source.next_frame(Duration::from_millis(20)) {
+            Err(error) => break error,
+            Ok(pull) => assert!(pull.is_idle(), "a frame was produced"),
+        }
+    };
+    assert!(cause::<H264Error>(&error).is_some(), "{error}");
+    assert_eq!(
+        prysm_ports::Error::to_string(&error),
+        "the sender's stream (640x280 at 30 fps with menus as h264_software) does not decode"
+    );
+    // The connection ends too.
     loop {
         match client.socket.read() {
             Ok(_) => {}
@@ -307,13 +324,11 @@ fn a_broken_keyframe_drops_the_connection() {
             Err(_) => break,
         }
     }
-    let mut sender = portal.connect().unwrap();
-    round_trip(&mut sender, &mut source, &picture(64, 32, 0));
     Box::new(source).close().unwrap();
 }
 
 /// A fake receiver that records frame headers' keyframe flags and sends
-/// control bytes on request.
+/// commands on request.
 struct Recorder {
     socket: WebSocket<TcpStream>,
 }
@@ -328,13 +343,6 @@ impl Recorder {
         frame[3] == 1
     }
 
-    fn nothing_for(&mut self, wait: Duration) -> bool {
-        self.socket.get_ref().set_read_timeout(Some(wait)).unwrap();
-        let quiet = self.socket.read().is_err();
-        self.socket.get_ref().set_read_timeout(Some(BOUND)).unwrap();
-        quiet
-    }
-
     fn command(&mut self, command: &str) {
         self.socket.send(Message::text(command)).unwrap();
         // Let it arrive before the sender's next poll.
@@ -343,7 +351,7 @@ impl Recorder {
 }
 
 #[test]
-fn pause_stops_sending_and_resume_starts_with_a_keyframe() {
+fn a_keyframe_request_starts_a_new_session_and_unknown_types_are_ignored() {
     let (addr, receiver) = fake_receiver();
     let mut sender = connect(addr);
     let mut recorder = Recorder {
@@ -356,26 +364,19 @@ fn pause_stops_sending_and_resume_starts_with_a_keyframe() {
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!recorder.frame());
 
-    recorder.command(r#"{"type":"pause"}"#);
-    for _ in 0..3 {
-        sender.send(&next.next().unwrap()).unwrap();
-        assert!(sender.paused());
-    }
-    assert!(recorder.nothing_for(Duration::from_millis(150)));
-
-    recorder.command(r#"{"type":"resume"}"#);
-    sender.send(&next.next().unwrap()).unwrap();
-    assert!(!sender.paused());
-    assert!(recorder.frame(), "resume starts a new session");
-    sender.send(&next.next().unwrap()).unwrap();
-    assert!(!recorder.frame());
-
     recorder.command(r#"{"type":"keyframe"}"#);
     sender.send(&next.next().unwrap()).unwrap();
     assert!(recorder.frame());
+    sender.send(&next.next().unwrap()).unwrap();
+    assert!(!recorder.frame());
 
-    // An unknown control byte fails the connection.
-    recorder.command(r#"{"type":"jump"}"#);
+    // A type this end does not know changes nothing.
+    recorder.command(r#"{"type":"pause"}"#);
+    sender.send(&next.next().unwrap()).unwrap();
+    assert!(!recorder.frame());
+
+    // Text that is not a command fails the connection.
+    recorder.command("jump");
     let error = sender.send(&next.next().unwrap()).unwrap_err();
     assert!(
         matches!(cause::<WireError>(&error), Some(WireError::Json(_))),
@@ -383,9 +384,9 @@ fn pause_stops_sending_and_resume_starts_with_a_keyframe() {
     );
 }
 
-/// Closing the source (lighting off) pauses the sender, then ends the stream.
+/// Closing the source (lighting off) ends the stream with the stopped code.
 #[test]
-fn close_pauses_the_sender_before_ending_the_stream() {
+fn close_stops_the_sender() {
     let (portal, mut source) = open(SOFTWARE);
     let mut sender = portal.connect().unwrap();
     round_trip(&mut sender, &mut source, &picture(64, 32, 0));
@@ -393,13 +394,15 @@ fn close_pauses_the_sender_before_ending_the_stream() {
     let deadline = Instant::now() + BOUND;
     let error = loop {
         assert!(Instant::now() < deadline, "the sender never noticed");
-        if let Err(error) = sender.send(&picture(64, 32, 1)) {
+        if let Err(error) = sender.tick() {
             break error;
         }
         thread::sleep(Duration::from_millis(10));
     };
-    assert!(sender.paused(), "{error}");
-    assert_eq!(cause::<WireError>(&error), Some(&WireError::Closed));
+    assert_eq!(
+        cause::<WireError>(&error),
+        Some(&WireError::Closed(Some(Close::Stopped)))
+    );
 }
 
 /// The requested hardware encoder is not available (any desktop): the send
@@ -407,7 +410,7 @@ fn close_pauses_the_sender_before_ending_the_stream() {
 /// receiver's source fails with the sender's reason.
 #[test]
 fn an_unavailable_hardware_encoder_is_refused_without_switching() {
-    let (portal, mut source) = open(StreamRequest {
+    let (portal, mut source) = open(RemoteSettings {
         encoding: StreamEncoding::H264Hardware,
         ..SOFTWARE
     });

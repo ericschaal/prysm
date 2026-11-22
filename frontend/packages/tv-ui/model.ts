@@ -199,9 +199,15 @@ export function tvStatus(
     attention = true;
   } else if (failed && !full && kind === 'version') {
     // Prysm and this app speak different stream versions; the TV keeps
-    // checking (every 10 s), so updating either side is enough.
-    title = 'Update Prysm and TV app';
-    description = 'Both need the same release.';
+    // checking (every 10 s), so updating the older side is enough.
+    title = 'Update Prysm or TV app';
+    description = 'Update the older of Prysm and this app.';
+    attention = true;
+  } else if (failed && !full && kind === 'replaced') {
+    // Another TV took the stream over; this one stopped until capture is
+    // started again, so the two never take it from each other in turn.
+    title = 'Another TV took over';
+    description = 'Stop and start capture to send from this TV.';
     attention = true;
   } else if (failed) {
     title = stopped;

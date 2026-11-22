@@ -20,11 +20,14 @@ export interface components {
          *     the receiver is told, and another encoding chosen in its portal may work.
          *     `receiver` (slim): the receiver is unavailable (not lighting, unreachable,
          *     or its name does not resolve); the worker keeps reconnecting. `version`
-         *     (slim): Prysm speaks another capture stream version; both need the same
-         *     release, and the worker retries every 10 s. `other`: anything else.
+         *     (slim): Prysm speaks another capture stream version; the older one needs
+         *     updating, and the worker retries every 10 s. `replaced` (slim): another
+         *     TV took over the stream at Prysm; this one stopped sending until the
+         *     worker restarts (capture stopped and started, the TV waking, or a new
+         *     Prysm address). `other`: anything else.
          * @enum {string}
          */
-        FailureKind: "encoder" | "receiver" | "version" | "other";
+        FailureKind: "encoder" | "receiver" | "version" | "replaced" | "other";
         /** @description The full package's worker process, as `{ "phase": … }`. */
         FullWorker: {
             /** @enum {string} */
@@ -144,9 +147,9 @@ export interface components {
              */
             fps?: number;
             /**
-             * @description The receiver paused the stream because its lighting is off; the
-             *     TV capture is stopped until the receiver asks again. Not a
-             *     failure.
+             * @description The receiver stopped the stream because its lighting is off; the
+             *     TV capture is released until a receiver takes a connection
+             *     again. Not a failure.
              */
             paused: boolean;
             /** @enum {string} */

@@ -10,6 +10,7 @@
 | Demand-driven, bounded preview and colour streams | Observation cannot stall lighting. |
 | Supervised TV worker process | A hung vendor capture call is recovered only by killing its process. |
 | [Two TV packages, explicit stream encoding](2026-11-12-two-tv-packages.md) | No in-app mode switch; an encoder failure is reported, not hidden by a fallback. |
+| [Strict settings, tolerant wire messages](2026-11-22-strict-settings-tolerant-wire.md) | A typo in a settings file is caught; a TV and a desktop of different minor releases still work together. |
 | Portal on the LAN without a password; foreign origins refused | Simple LAN use; protects against other web pages, not against the network ([access](../../../crates/surfaces/web-portal/HTTP-CONTRACT.md#access)). |
 
 Earlier choices that no longer apply: the Host allowlist (`PRYSM_ALLOWED_HOSTS`),
