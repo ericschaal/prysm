@@ -2,6 +2,7 @@ use super::*;
 use crate::source::{Deadlines, FileFrames, STDERR_TAIL, ffmpeg};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Pull, Registry, Settings, chain};
+use prysm_testkit::within;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -15,11 +16,6 @@ const TEST: Deadlines = Deadlines {
 /// An 8×4 RGB24 frame is 96 bytes.
 const WIDTH: u32 = 8;
 const HEIGHT: u32 = 4;
-
-/// Run `work` on its own thread; fail the test instead of hanging.
-fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
-    prysm_testkit::within(LIMIT, work)
-}
 
 /// A fake decoder: a shell script writing raw frames to stdout.
 fn fake(script: &str) -> Command {
@@ -65,7 +61,7 @@ fn alive(pid: u32) -> bool {
 
 #[test]
 fn frames_have_the_requested_size_and_format_then_playback_finishes() {
-    within(|| {
+    within(LIMIT, || {
         let script = format!("{}; {}", frame_of('A'), frame_of('B'));
         let mut frames = spawn(&script);
         for fill in *b"AB" {
@@ -84,7 +80,7 @@ fn frames_have_the_requested_size_and_format_then_playback_finishes() {
 
 #[test]
 fn released_buffers_are_reused() {
-    within(|| {
+    within(LIMIT, || {
         let script = format!("{}; {}", frame_of('A'), frame_of('B'));
         let mut frames = spawn(&script);
         let first = next(&mut frames).unwrap();
@@ -98,7 +94,7 @@ fn released_buffers_are_reused() {
 
 #[test]
 fn frames_are_delivered_as_the_decoder_paces_them() {
-    within(|| {
+    within(LIMIT, || {
         let script = format!("{}; sleep 0.3; {}", frame_of('A'), frame_of('B'));
         let mut frames = spawn(&script);
         next(&mut frames).unwrap();
@@ -113,7 +109,7 @@ fn frames_are_delivered_as_the_decoder_paces_them() {
 
 #[test]
 fn timeout_returns_idle() {
-    within(|| {
+    within(LIMIT, || {
         let mut frames = spawn("exec sleep 30");
         let started = Instant::now();
         assert!(matches!(frames.next_frame(SHORT), Ok(Pull::Idle)));
@@ -128,7 +124,7 @@ fn timeout_returns_idle() {
 
 #[test]
 fn failure_reports_exit_status_and_a_bounded_stderr_tail() {
-    within(|| {
+    within(LIMIT, || {
         let script = "echo 'first line' >&2; i=0; while [ $i -lt 400 ]; do echo \"noise $i\" >&2; \
                       i=$((i+1)); done; echo 'clip.mkv: Invalid data found' >&2; exit 1";
         let mut frames = spawn(script);
@@ -158,7 +154,7 @@ fn failure_reports_exit_status_and_a_bounded_stderr_tail() {
 
 #[test]
 fn output_ending_mid_frame_is_a_failure() {
-    within(|| {
+    within(LIMIT, || {
         let mut frames = spawn("head -c 50 /dev/zero; echo 'truncated' >&2");
         let error = next(&mut frames).unwrap_err();
         assert_eq!(
@@ -172,7 +168,7 @@ fn output_ending_mid_frame_is_a_failure() {
 
 #[test]
 fn stall_mid_frame_is_a_failure_and_close_still_reaps() {
-    within(|| {
+    within(LIMIT, || {
         let mut frames = spawn("head -c 50 /dev/zero; exec sleep 30");
         let pid = frames.pid();
         let error = next(&mut frames).unwrap_err();
@@ -210,7 +206,7 @@ fn missing_binary_names_the_requirement() {
 
 #[test]
 fn close_kills_and_reaps_within_the_bound() {
-    within(|| {
+    within(LIMIT, || {
         let frames = spawn("exec sleep 30");
         let pid = frames.pid();
         assert!(alive(pid));
@@ -224,7 +220,7 @@ fn close_kills_and_reaps_within_the_bound() {
 
 #[test]
 fn drop_kills_and_reaps() {
-    within(|| {
+    within(LIMIT, || {
         let frames = spawn("exec sleep 30");
         let pid = frames.pid();
         drop(frames);
@@ -378,7 +374,7 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
     let mut settings = FileSettings::new(clip.to_str().unwrap());
     settings.width = 32;
     settings.height = 18;
-    let played = within(move || {
+    let played = within(LIMIT, move || {
         let mut source = FileSource.open(&settings).unwrap();
         let mut count = 0;
         let mut first_at = None;
@@ -409,7 +405,7 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
     settings.width = 32;
     settings.height = 18;
     settings.repeat = true;
-    let repeated = within(move || {
+    let repeated = within(LIMIT, move || {
         let mut source = FileSource.open(&settings).unwrap();
         let mut count = 0;
         while count < 7 {
@@ -427,7 +423,7 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
     let invalid = dir.path().join("invalid.mkv");
     std::fs::write(&invalid, b"invalid video data").unwrap();
     let settings = FileSettings::new(invalid.to_str().unwrap());
-    let error = within(move || {
+    let error = within(LIMIT, move || {
         let mut source = FileSource.open(&settings).unwrap();
         loop {
             if let Err(error) = source.next_frame(SHORT) {

@@ -7,13 +7,8 @@ use std::time::Duration;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_prysm-webos");
 
-/// The worker's exit code; it is killed if it has not exited within ten
-/// seconds.
-fn exit_code(child: &mut std::process::Child) -> Option<i32> {
-    wait_child(child, Duration::from_secs(10))
-        .expect("the worker did not exit")
-        .code()
-}
+/// How long the worker may take to exit; it is killed then.
+const EXIT: Duration = Duration::from_secs(10);
 
 #[test]
 fn bad_arguments_exit_with_usage() {
@@ -58,7 +53,12 @@ fn reports_status_and_stops_on_stdin_eof() {
     );
 
     drop(child.stdin.take());
-    assert_eq!(exit_code(&mut child), Some(0));
+    assert_eq!(
+        wait_child(&mut child, EXIT)
+            .expect("the worker exits")
+            .code(),
+        Some(0)
+    );
 }
 
 #[test]
@@ -70,5 +70,10 @@ fn a_garbage_command_fails_the_worker() {
     events.read_line(&mut line).unwrap();
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"{\"type\":\"reboot\"}\n").unwrap();
-    assert_eq!(exit_code(&mut child), Some(1));
+    assert_eq!(
+        wait_child(&mut child, EXIT)
+            .expect("the worker exits")
+            .code(),
+        Some(1)
+    );
 }

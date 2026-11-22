@@ -59,13 +59,8 @@ fn events(child: &mut Child, until: impl Fn(&serde_json::Value) -> bool) -> serd
     }
 }
 
-/// The worker's exit code; it is killed if it has not exited within 20
-/// seconds.
-fn exit_code(child: &mut Child) -> Option<i32> {
-    wait_child(child, Duration::from_secs(20))
-        .expect("the worker did not exit")
-        .code()
-}
+/// How long the worker may take to exit; it is killed then.
+const EXIT: Duration = Duration::from_secs(20);
 
 /// The receiver listens only while its host is lighting, so an unreachable
 /// one is a reported wait: nothing is captured, the worker keeps running
@@ -90,7 +85,12 @@ fn an_unreachable_receiver_is_a_reported_wait() {
         "{status}"
     );
     drop(child.stdin.take());
-    assert_eq!(exit_code(&mut child), Some(0));
+    assert_eq!(
+        wait_child(&mut child, EXIT)
+            .expect("the worker exits")
+            .code(),
+        Some(0)
+    );
 }
 
 /// Once a receiver sends its request, the capture opens; off the TV that
@@ -106,7 +106,12 @@ fn capture_off_the_tv_fails_with_its_cause() {
         failed["cause"].as_str().unwrap().contains("webOS"),
         "{failed}"
     );
-    assert_eq!(exit_code(&mut child), Some(1));
+    assert_eq!(
+        wait_child(&mut child, EXIT)
+            .expect("the worker exits")
+            .code(),
+        Some(1)
+    );
     drop(stdin);
     drop(receiver);
 }

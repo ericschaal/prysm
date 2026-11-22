@@ -3,6 +3,7 @@ use crate::source::{Capture, CaptureResult, Check, Deadlines, DeviceFrames};
 use prysm_capture_device_sys::{CaptureError, CaptureSink};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
+use prysm_testkit::{eventually, within};
 use std::error::Error as _;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -19,29 +20,6 @@ fn frame(value: u8) -> Frame {
     Frame::fill(value, 8, 4, PixelFormat::RGB24).unwrap()
 }
 
-/// Run `work` on its own thread; fail the test instead of hanging.
-fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
-    within_for(LIMIT, work)
-}
-
-fn within_for<T: Send + 'static>(limit: Duration, work: impl FnOnce() -> T + Send + 'static) -> T {
-    let (done, result) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = done.send(work());
-    });
-    result
-        .recv_timeout(limit)
-        .expect("capture made no progress")
-}
-
-fn eventually(condition: impl Fn() -> bool) {
-    let deadline = Instant::now() + LIMIT;
-    while !condition() {
-        assert!(Instant::now() < deadline, "condition not reached");
-        thread::sleep(Duration::from_millis(1));
-    }
-}
-
 /// The native capture's side of the seam: the test drives its sink and
 /// decides how it returns. Dropping it ends capture cleanly.
 struct Native {
@@ -51,8 +29,9 @@ struct Native {
 
 impl Native {
     fn sink(&self) -> Arc<dyn CaptureSink> {
-        eventually(|| self.sink.lock().unwrap().is_some());
-        self.sink.lock().unwrap().clone().unwrap()
+        eventually("the capture's sink", LIMIT, || {
+            self.sink.lock().unwrap().clone()
+        })
     }
 
     fn ready(&self) {
@@ -68,7 +47,9 @@ impl Native {
     }
 
     fn wait_stopped(&self) {
-        eventually(|| self.stop_requested());
+        eventually("the stop request", LIMIT, || {
+            self.stop_requested().then_some(())
+        });
     }
 
     /// Capture returns `result`.
@@ -232,7 +213,9 @@ fn open_timeout_reports_unconfirmed_release() {
         ready: SHORT,
         release: SHORT,
     };
-    let Err(error) = within(move || DeviceFrames::start(admitted(), capture, deadlines)) else {
+    let Err(error) = within(LIMIT, move || {
+        DeviceFrames::start(admitted(), capture, deadlines)
+    }) else {
         panic!("open must time out");
     };
     assert!(native.stop_requested());
@@ -265,7 +248,9 @@ fn a_format_check_that_never_returns_is_bounded_by_the_ready_wait() {
         ready: SHORT,
         release: SHORT,
     };
-    let Err(error) = within(move || DeviceFrames::start(check, capture, deadlines)) else {
+    let Err(error) = within(LIMIT, move || {
+        DeviceFrames::start(check, capture, deadlines)
+    }) else {
         panic!("open must time out");
     };
     let text = chain(&error);
@@ -484,7 +469,7 @@ fn real_backend_missing_device_fails_without_hanging() {
     // A backend that does not fail at once is bounded by the adapter's own
     // deadlines: waiting for activation, then for release.
     let Deadlines { ready, release } = Deadlines::DEVICE;
-    let Err(error) = within_for(ready + release + LIMIT, move || {
+    let Err(error) = within(ready + release + LIMIT, move || {
         DeviceSource.open(&settings)
     }) else {
         panic!("a missing device must not open");
@@ -497,7 +482,7 @@ fn real_backend_missing_device_fails_without_hanging() {
 /// enumeration can take seconds (macOS with a Continuity camera).
 #[test]
 fn candidates_fill_a_valid_path() {
-    let found = within_for(Duration::from_secs(30), || {
+    let found = within(Duration::from_secs(30), || {
         let mut registry = Registry::default();
         registry.add_source(DeviceSource);
         registry.candidates(prysm_ports::Section::Capture, "device")

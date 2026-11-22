@@ -85,7 +85,10 @@ impl EngineLink {
             }
             retry.observe(&snapshot, Instant::now());
             let retry_at = retry.at;
+            // In this order when several are ready: a retry due with the
+            // heartbeat is applied before the heartbeat's status is sent.
             tokio::select! {
+                biased;
                 () = shutdown.requested() => return Ok(()),
                 command = commands.next() => match command {
                     // The link closed; the stop reason is already recorded.
@@ -98,14 +101,14 @@ impl EngineLink {
                     }
                 },
                 changed = snapshots.changed() => if changed.is_err() { return Ok(()) },
+                () = wait(retry_at) => {
+                    retry.cancel();
+                    apply(&engine, snapshot.target).await;
+                }
                 // The heartbeat: the status again, with the current portal URL.
                 () = sleep_until(beat) => {
                     portal = (self.portal_url)();
                     sent = None;
-                }
-                () = wait(retry_at) => {
-                    retry.cancel();
-                    apply(&engine, snapshot.target).await;
                 }
             }
         }

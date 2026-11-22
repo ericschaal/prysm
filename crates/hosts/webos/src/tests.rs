@@ -39,6 +39,23 @@ fn start_with_portal(
     initial: LightingTarget,
     portal: &Arc<Mutex<Option<String>>>,
 ) -> (Peer, VideoSignal, CallLog, Running) {
+    start_timed(
+        settings,
+        initial,
+        portal,
+        Duration::from_millis(50),
+        FIRST_RETRY,
+    )
+}
+
+/// The same, with this heartbeat and first retry delay.
+fn start_timed(
+    settings: Settings,
+    initial: LightingTarget,
+    portal: &Arc<Mutex<Option<String>>>,
+    heartbeat: Duration,
+    first_retry: Duration,
+) -> (Peer, VideoSignal, CallLog, Running) {
     let (link, peer) = Link::memory();
     let feed = VideoSignal::default();
     let log = CallLog::new();
@@ -50,7 +67,7 @@ fn start_with_portal(
         initial,
         Box::new(move || portal.lock().unwrap().clone()),
     )
-    .with_timing(Duration::from_millis(50), FIRST_RETRY);
+    .with_timing(heartbeat, first_retry);
     let (sources, outputs) = (FakeSources(log.clone()), FakeOutputs(log.clone()));
     let task = tokio::spawn(async move {
         let result = Prysm::builder(MemoryStore::with(settings))
@@ -183,6 +200,65 @@ async fn a_failed_session_is_retried_and_reported() {
         status(e).is_some_and(|s| s.target == LightingTarget::Off)
     })
     .await;
+    peer.close();
+    task.await.unwrap().0.unwrap();
+}
+
+/// Advance tokio's clock by `by` while no adapter call is in flight (the
+/// fakes run on real threads, so time stays paused only for the jump), and
+/// return once the link has sent the heartbeat that follows: a status with
+/// the portal URL `marker`, which only a heartbeat after the jump reads.
+/// Anything the jump made due ran before it (the link handles a due retry
+/// before the heartbeat).
+async fn advance(peer: &mut Peer, portal: &Arc<Mutex<Option<String>>>, by: Duration, marker: &str) {
+    *portal.lock().unwrap() = Some(marker.to_owned());
+    tokio::time::pause();
+    tokio::time::advance(by).await;
+    tokio::time::resume();
+    peer.wait_for("the heartbeat after the jump", |e| {
+        status(e).is_some_and(|s| s.portal.as_deref() == Some(marker))
+    })
+    .await;
+}
+
+/// The link's own loop retries a failed session once its first delay has
+/// passed, then waits twice as long, and retries nothing once lighting is
+/// off. The first delay and the heartbeat are 10 s (short of
+/// `Backoff::HEALTHY`, so the jumps do not count as a healthy run), so
+/// nothing is due until the test moves the clock.
+#[tokio::test]
+async fn the_link_retries_after_the_delay_and_not_after_off() {
+    const FIRST: Duration = Duration::from_secs(10);
+    let settings = source(&FakeSourceSettings {
+        fail_open: true,
+        ..FakeSourceSettings::default()
+    });
+    let portal = Arc::new(Mutex::new(Some(PORTAL.to_owned())));
+    let opens = |log: &CallLog| log.count("source.open_failed:");
+    let (mut peer, _feed, log, task) =
+        start_timed(settings, LightingTarget::Processed, &portal, FIRST, FIRST);
+    peer.wait_for("a status with a failure", |e| {
+        status(e).is_some_and(|s| s.failure.is_some())
+    })
+    .await;
+    assert_eq!(opens(&log), 1);
+
+    // The first delay passes: one retry, which fails too.
+    advance(&mut peer, &portal, FIRST, "http://10.0.0.3:8787/").await;
+    assert_eq!(opens(&log), 2, "retried once after the first delay");
+    // Another 10 s is short of the doubled delay.
+    advance(&mut peer, &portal, FIRST, "http://10.0.0.4:8787/").await;
+    assert_eq!(opens(&log), 2, "retried before the doubled delay");
+
+    peer.send(Command::Lighting {
+        target: LightingTarget::Off,
+    });
+    peer.wait_for("a status with lighting off", |e| {
+        status(e).is_some_and(|s| s.target == LightingTarget::Off)
+    })
+    .await;
+    advance(&mut peer, &portal, FIRST * 4, "http://10.0.0.5:8787/").await;
+    assert_eq!(opens(&log), 2, "retried after lighting was turned off");
     peer.close();
     task.await.unwrap().0.unwrap();
 }

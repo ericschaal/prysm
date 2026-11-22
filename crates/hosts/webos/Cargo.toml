@@ -24,7 +24,7 @@ prysm-testkit.workspace = true
 prysm-runtime = { workspace = true, features = ["testkit"] }
 serde_json.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["time", "rt", "macros"] }
+tokio = { workspace = true, features = ["time", "rt", "macros", "test-util"] }
 
 [lints]
 workspace = true
