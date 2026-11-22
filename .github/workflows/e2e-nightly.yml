@@ -98,8 +98,10 @@ jobs:
         with:
           key: fuzz
           workspaces: fuzz -> target
+      # With stable: its locked dependencies do not build on the nightly,
+      # which only the targets need.
       - name: cargo-fuzz
-        run: cargo install cargo-fuzz --locked --version 0.13.1
+        run: RUSTUP_TOOLCHAIN=stable cargo install cargo-fuzz --locked --version 0.13.1
       # cargo fuzz has no --locked: this fails on a stale fuzz/Cargo.lock.
       - name: Fetch crates
         run: cargo fetch --locked --manifest-path fuzz/Cargo.toml
