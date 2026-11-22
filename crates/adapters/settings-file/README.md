@@ -166,10 +166,18 @@ file's permissions, which needs the file readable. When the copy fails too,
 the file is renamed aside instead: then the path holds no file until the new
 one is renamed over it, and a crash in between leaves it so (the next start
 is unconfigured, with no failure shown, the old file kept beside). If that
-rename fails, the file is moved back. If all three fail, the save fails
+rename fails, the file is moved back; if moving it back fails too, the save
+fails saying so, with the name the file is now only under, and the path
+holds no file. If all three fail, the save fails
 naming each cause and nothing changes. If the file is gone by then, nothing
 is set aside. None of these is fatal, since a save keeps the file and a restart
 would fix none of them; only a panicking store stops start-up.
+
+The tests drive these fallbacks through a hook that refuses the hard link.
+The real Linux case was checked once in Docker: as a non-root user, with a
+root-owned `0600` settings file in a directory the user may write, a save
+kept the file as `settings.json.unreadable-…` and wrote the new one; making
+another user's file needs root, so no test does it.
 
 `save` replaces only a regular file (or a link to one): a directory, socket
 or device at the path is refused (`it is not a regular file`) and left alone.

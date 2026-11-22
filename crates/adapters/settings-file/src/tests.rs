@@ -623,28 +623,47 @@ fn without_a_hard_link_or_a_copy_the_unreadable_file_is_moved_aside() {
     assert_eq!(store.load().unwrap(), Some(sample()));
 }
 
-/// A settings file another user owns and keeps to itself (root's, after a
-/// `sudo` run), in a directory this user may write: on Linux it can be
-/// neither hard-linked (`fs.protected_hardlinks`) nor copied, so the save
-/// moves it aside. Needs that set-up, which a test cannot make without root:
-/// `PRYSM_TEST_FOREIGN_SETTINGS` names such a file; without it, nothing is
-/// tested.
-#[cfg(target_os = "linux")]
+/// A file moved aside that cannot be moved back after a failed rename: the
+/// save says where it now is, typed.
+#[cfg(unix)]
 #[test]
-fn a_foreign_unreadable_file_is_moved_aside() {
-    let Some(path) = std::env::var_os("PRYSM_TEST_FOREIGN_SETTINGS") else {
-        eprintln!("skipped: PRYSM_TEST_FOREIGN_SETTINGS is not set");
+fn a_file_moved_aside_that_cannot_go_back_is_named_in_the_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, "{ not json").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(&path).is_ok() {
+        // Running as root: permissions do not apply, nothing to test.
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI runs tests as a user that permissions apply to"
+        );
+        eprintln!("skipped: permissions do not apply to this user");
         return;
-    };
-    let path = Path::new(&path);
-    let directory = path.parent().unwrap();
-    let mut store = SettingsFile::new(path);
-    assert!(store.load().is_err(), "it may not be read");
-    store.save(&sample()).unwrap();
-    assert_eq!(store.load().unwrap(), Some(sample()));
-    let kept = entries(directory)
+    }
+    // The rename fails, and leaves something at the path the file cannot
+    // be moved back over.
+    let mut store = SettingsFile::new(&path)
+        .with_link(no_link)
+        .with_replace(|_, path| {
+            fs::create_dir(path)?;
+            fs::write(path.join("in the way"), "")?;
+            Err(std::io::Error::other("disk full"))
+        });
+    assert!(store.load().is_err());
+    let error = store.save(&sample()).unwrap_err();
+    let left = error.cause::<super::LeftAside>().expect("typed");
+    let message = left.to_string();
+    assert!(
+        message.starts_with("disk full; the file it could not read is now only at "),
+        "{message}"
+    );
+    let aside: Vec<_> = entries(directory.path())
         .into_iter()
-        .filter(|name| name.contains(".unreadable-"))
-        .count();
-    assert_eq!(kept, 1);
+        .filter(|name| name.starts_with("settings.json.unreadable-"))
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert!(message.contains(&aside[0]), "{message}");
 }

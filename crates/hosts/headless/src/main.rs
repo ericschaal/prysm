@@ -14,9 +14,7 @@ const PROGRAM: Program = Program {
 };
 
 // A stop with the device source ends before the stop deadline.
-const _: () = assert!(prysm_host::stops_in_time(
-    prysm_capture_device::RELEASE_LIMIT
-));
+const _: () = assert!(prysm_host::stops_in_time(prysm_capture_device::STOP));
 
 fn main() -> ExitCode {
     // A capture-only TV streams to the portal, which hands it to the remote source.

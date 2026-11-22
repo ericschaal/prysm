@@ -470,9 +470,11 @@ impl Lighting {
 
     /// What a session's end leaves, from what its thread reported.
     fn left_by(end: &SessionEnd) -> Self {
-        match end.left {
+        match &end.left {
             _ if end.released.is_err() => Self::UNRELEASED,
             Ok(IdleMode::Native) => Self::Native,
+            // An idle after the join that did not return in time.
+            Err(Error::Faulted(phase)) => Self::Faulted(*phase),
             Ok(IdleMode::Off) | Err(_) => Self::Stopped,
         }
     }
@@ -646,7 +648,7 @@ impl Core {
             .stop(IdleMode::Off, self.stop_deadline)
             .await
         {
-            Ok(Stop::AsAsked(end) | Stop::OnItsOwn { end, .. }) => Ok(end),
+            Ok(Stop::AsAsked(end) | Stop::OnItsOwn(end)) => Ok(end),
             Err(error) => Err(error),
         };
         let _ = self.ended(end);
@@ -926,17 +928,8 @@ impl Core {
                 self.set_lighting(Lighting::left_by(&end));
                 end.result()
             }
-            Ok(Stop::OnItsOwn { end, idled }) => {
-                let ended = self.ended(Ok(end));
-                if matches!(self.lighting, Lighting::Stopped) {
-                    match &idled {
-                        Err(Error::Faulted(phase)) => self.set_lighting(Lighting::Faulted(*phase)),
-                        Ok(()) if mode == IdleMode::Native => self.set_lighting(Lighting::Native),
-                        _ => {}
-                    }
-                }
-                ended.and(idled)
-            }
+            // What the output was left in is the end's, idled again or not.
+            Ok(Stop::OnItsOwn(end)) => self.ended(Ok(end)),
         }
     }
 

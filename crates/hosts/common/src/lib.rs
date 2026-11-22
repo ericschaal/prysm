@@ -34,21 +34,32 @@ pub use desktop::{desktop_adapters, stops_in_time};
 mod desktop {
     use prysm_capture_file::FileSource;
     use prysm_capture_remote::RemoteReceiver;
-    use prysm_output_wled::{STOP_WAIT, Wled};
-    use prysm_ports::{Handoff, SourceFactory};
-    use prysm_runtime::{Builder, NullOutput, STOP_DEADLINE};
-    use std::time::Duration;
+    use prysm_output_wled::{IDLE_LIMIT, STOP_WAIT, Wled};
+    use prysm_ports::{Handoff, SourceFactory, SourceStop};
+    use prysm_runtime::{Builder, NullOutput, STOP_DEADLINE, TICK};
 
-    /// Whether a stop of a session with a source released within `release`
-    /// and a WLED output ends within the desktop hosts' stop deadline,
-    /// whatever it meets (see [`STOP_WAIT`]). A host asserts it for the
-    /// device source it registers.
+    /// Whether a stop of a session with `source` and a WLED output ends
+    /// within the desktop hosts' stop deadline, whatever it meets: the pull
+    /// in flight (its timeout, [`TICK`], then what `source` says), the
+    /// output opened after a frame it returned and the idle after the close
+    /// (all within [`STOP_WAIT`]), or the idle alone after a pull that ended
+    /// the source. A host asserts it for the device source it registers.
     #[must_use]
-    pub const fn stops_in_time(release: Duration) -> bool {
-        release.saturating_add(STOP_WAIT).as_millis() < STOP_DEADLINE.as_millis()
+    pub const fn stops_in_time(source: SourceStop) -> bool {
+        let after_frame = source.frame.saturating_add(STOP_WAIT);
+        let after_end = source.end.saturating_add(IDLE_LIMIT);
+        let output = if after_frame.as_millis() > after_end.as_millis() {
+            after_frame
+        } else {
+            after_end
+        };
+        TICK.saturating_add(output)
+            .saturating_add(source.close)
+            .as_millis()
+            < STOP_DEADLINE.as_millis()
     }
-    const _: () = assert!(stops_in_time(prysm_capture_file::RELEASE_LIMIT));
-    const _: () = assert!(stops_in_time(prysm_capture_remote::RELEASE_LIMIT));
+    const _: () = assert!(stops_in_time(prysm_capture_file::STOP));
+    const _: () = assert!(stops_in_time(prysm_capture_remote::STOP));
 
     /// What both desktop hosts register: sources `device` (the factory
     /// given, `DeviceSource` in the hosts), `file` and `remote`, outputs

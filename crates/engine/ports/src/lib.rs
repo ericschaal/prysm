@@ -18,7 +18,8 @@ mod snapshot;
 mod style;
 
 pub use adapter::{
-    DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull, SettingsStore,
+    DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull,
+    SettingsStore, SourceStop,
 };
 pub use calibration::{CalibrationPattern, Pattern};
 pub use calibrations::{

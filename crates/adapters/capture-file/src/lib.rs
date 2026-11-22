@@ -23,8 +23,17 @@ mod source;
 pub use players::kill_remaining;
 pub use settings::FileSettings;
 
-/// The longest a file source's `close` takes: FFmpeg killed and reaped.
-pub const RELEASE_LIMIT: std::time::Duration = source::Deadlines::FFMPEG.reap;
+/// What a file source's stop waits for. A pull in flight, once its timeout
+/// found output: the rest of a frame within `stall`; or, when the file ends
+/// (mid-frame, at worst at the end of that wait), FFmpeg's exit within
+/// `exit` too. Then `close` kills and reaps FFmpeg within `reap`.
+pub const STOP: prysm_ports::SourceStop = prysm_ports::SourceStop {
+    frame: source::Deadlines::FFMPEG.stall,
+    end: source::Deadlines::FFMPEG
+        .stall
+        .saturating_add(source::Deadlines::FFMPEG.exit),
+    close: source::Deadlines::FFMPEG.reap,
+};
 
 use prysm_ports::{
     Error, FrameSource, Modes, Result, SourceFactory, ValidationError, capture_size,

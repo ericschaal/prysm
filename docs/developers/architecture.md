@@ -188,15 +188,20 @@ open has one, `OPEN_LIMIT` (3 s): resolution and live mode by its first
 state checks never block the session thread: their connect, request and
 reply each go on without waiting, at every frame.
 
-A stop waits for the source's release plus at most `STOP_WAIT` (4.5 s) for
-WLED: an open in flight and an idle, or two idles (a release to the
-device's effects in flight, or, without the release, a session idling
-`Off` on its own when the stop asked for its effects: the thread reads the
-stop's mode after closing the source). The desktop hosts assert that each
-of their sources' release limits plus `STOP_WAIT` fits their 10 s stop
-deadline. The TV's does not fit: its release limit is 4 s and its stop
-deadline 6 s, and these stops exceed it, so the engine then faults and only
-a restart recovers:
+A stop waits for the pull in flight, the source's close, and at most
+`STOP_WAIT` (4.5 s) for WLED: an open in flight (also one that follows the
+frame the pull returned) and an idle, or two idles (a release to the
+device's effects in flight, or, without the release, a session idling `Off`
+on its own when the stop asked for its effects: the thread reads the stop's
+mode after closing the source). A pull returns within its timeout (`TICK`,
+50 ms) for the `device`, `remote` and `webos` sources; a `file` pull that
+found output may take the rest of a frame (2 s), and at the end of the file
+FFmpeg's exit too (2 s more), so each source states what its stop takes
+(`SourceStop`). The desktop hosts assert, for each source they register,
+that this and WLED's share fit their 10 s stop deadline (`file`, the
+longest: 0.05 s + 2 s + 4.5 s + 3 s = 9.55 s). The TV's does not fit: its
+release limit is 4 s and its stop deadline 6 s, and these stops exceed it,
+so the engine then faults and only a restart recovers:
 
 - an open in flight that fails: 3 s, then 4 s and 1.5 s, 8.5 s;
 - an open in flight that succeeds: 1.5 s + 4 s + 1.5 s, 7 s;

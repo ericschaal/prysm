@@ -26,10 +26,10 @@ pub const IDLE_LIMIT: Duration = http::TIMEOUT;
 /// failed, switching the device off again within [`IDLE_LIMIT`].
 pub const OPEN_LIMIT: Duration = http::TIMEOUT.saturating_add(IDLE_LIMIT);
 
-/// The most a session's stop waits for WLED beside its source's release.
-/// Every stop ends in time only if a host's stop deadline exceeds its
-/// source's release limit plus this: the desktop hosts assert it; on the
-/// TV it does not hold (see `docs/developers/architecture.md`). The
+/// The most a session's stop waits for WLED beside its source's pull in
+/// flight and close (`prysm_ports::SourceStop`). Every stop ends in time
+/// only if a host's stop deadline covers both: the desktop hosts assert it;
+/// on the TV it does not hold (see `docs/developers/architecture.md`). The
 /// longest of what the stop meets:
 ///
 /// - an open in flight (up to [`OPEN_LIMIT`]), then after the close the

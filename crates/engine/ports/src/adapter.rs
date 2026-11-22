@@ -39,6 +39,21 @@ impl From<Option<Frame>> for Pull {
     }
 }
 
+/// How long a source can keep a session's stop waiting, beyond the timeout
+/// the pull in flight was given: what a host's stop deadline must cover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceStop {
+    /// A pull in flight that returns a frame, after its timeout (the rest
+    /// of a frame that began); the frame is then written, which may open
+    /// the output, before the loop sees the stop.
+    pub frame: Duration,
+    /// A pull in flight that ends the source (its end or a failure), after
+    /// its timeout; nothing is opened after it.
+    pub end: Duration,
+    /// `close`, releasing what the source holds.
+    pub close: Duration,
+}
+
 /// A capture device or remote frame receiver.
 pub trait FrameSource: Send {
     /// Wait up to `timeout` for the next frame. `Err` is a failure; a source

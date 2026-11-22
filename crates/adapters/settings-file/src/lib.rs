@@ -337,6 +337,20 @@ enum Aside {
     Moved(PathBuf),
 }
 
+/// A save whose rename failed after the file a load could not read was
+/// moved aside, and that could not be moved back: the path now holds no
+/// file, and the old one is only at `aside`.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "{replace}; the file it could not read is now only at {}: moving it back failed: {back}",
+    aside.display()
+)]
+pub struct LeftAside {
+    replace: io::Error,
+    aside: PathBuf,
+    back: io::Error,
+}
+
 /// Why the file a load could not read could not be kept: each way's cause.
 #[derive(Debug, thiserror::Error)]
 #[error("a hard link failed: {link}; a copy failed: {copy}; a rename failed: {rename}")]
@@ -404,16 +418,20 @@ impl SettingsStore for SettingsFile {
         // The rename is the commit point. A failure leaves the unreadable
         // file at its path: its second name is removed, or a file moved
         // aside goes back.
-        if let Err(error) = (self.replace)(temporary, &self.path) {
-            if let Some(Aside::Moved(aside)) = &aside
-                && let Err(back) = fs::rename(aside, &self.path)
+        if let Err(replace) = (self.replace)(temporary, &self.path) {
+            if let Some(Aside::Moved(aside)) = aside
+                && let Err(back) = fs::rename(&aside, &self.path)
             {
-                tracing::warn!(
-                    "the settings file it could not read stays as {}: {back}",
-                    aside.display()
-                );
+                return Err(self.failed(
+                    "replace",
+                    LeftAside {
+                        replace,
+                        aside,
+                        back,
+                    },
+                ));
             }
-            return Err(self.failed("replace", error));
+            return Err(self.failed("replace", replace));
         }
         self.unread = false;
         match aside {

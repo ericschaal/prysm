@@ -23,8 +23,14 @@ const RELEASE: Duration = POLL_INTERVAL
     .saturating_add(WRITE_TIMEOUT.saturating_mul(4))
     .saturating_add(CLOSE_LINGER);
 
-/// The longest a remote source's `close` takes: [`RELEASE`].
-pub const RELEASE_LIMIT: Duration = RELEASE;
+/// What a remote source's stop waits for: its pulls return within their
+/// timeout (frames come from its receive thread), then `close` releases
+/// within [`RELEASE`].
+pub const STOP: prysm_ports::SourceStop = prysm_ports::SourceStop {
+    frame: Duration::ZERO,
+    end: Duration::ZERO,
+    close: RELEASE,
+};
 
 /// Registers kind `"remote"`, its settings the [`RemoteSettings`]: frames a
 /// [`RemoteSender`](crate::RemoteSender) streams to the portal's capture
