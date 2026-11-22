@@ -6,6 +6,7 @@ import {
   failureOf,
   lightingSituation,
   plainFailure,
+  situationFailure,
   type ApplicationSnapshot,
   type LightingSituation,
   type LightingTarget,
@@ -93,6 +94,8 @@ export function LightingCard({
     attention = true;
   } else if (snapshot && lighting) {
     said = describeSituation(lighting, effects ?? 'Device effects').sentence;
+    // Said also with the lights off: settings that could not be applied.
+    const failure = situationFailure(lighting);
     const kind = (snapshot.settings.capture as { kind?: string } | undefined)
       ?.kind;
     if (lighting.kind === 'faulted') {
@@ -100,9 +103,9 @@ export function LightingCard({
       attention = true;
     } else if (!snapshot.settings.output) {
       message = 'Set up your lights in the web portal first.';
-    } else if (lighting.kind === 'failed') {
+    } else if (failure) {
       message = plainFailure(
-        lighting.failure,
+        failure,
         snapshot.target,
         effects ?? 'Device effects',
       );

@@ -156,13 +156,15 @@ export function LightCard({
    */
   const [refusal, setRefusal] = useState<{
     failure: Failure;
+    /** What the click asked for. */
+    asked: LightingTarget;
     target: LightingTarget;
     kind: LightingSituation['kind'];
   } | null>(null);
   // Gone once the lights change, also when they change back.
   if (refusal && (refusal.target !== target || refusal.kind !== lighting.kind))
     setRefusal(null);
-  const error = refusal?.failure ?? null;
+  const error = refusal && { failure: refusal.failure, asked: refusal.asked };
   const [remembered, setRemembered] = useState(storedMode);
   if (target !== 'off' && target !== remembered) setRemembered(target);
   useEffect(() => {
@@ -178,7 +180,7 @@ export function LightCard({
     try {
       await setTarget(next);
     } catch (reason) {
-      setRefusal({ failure: failureOf(reason), ...at });
+      setRefusal({ failure: failureOf(reason), asked: next, ...at });
     } finally {
       setPending(null);
     }

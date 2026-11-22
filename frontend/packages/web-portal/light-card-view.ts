@@ -6,6 +6,7 @@ import {
   describeOutputIssue,
   describeSituation,
   plainFailure,
+  situationFailure,
   type Failure,
   type LightingMode,
   type LightingSituation,
@@ -110,8 +111,11 @@ export interface LightCardFacts {
 export interface LightCardMemory {
   /** The mode the power button turns on, kept in this browser. */
   remembered: LightingMode;
-  /** The failure of a refused click, while the lights are as they were then. */
-  error: Failure | null;
+  /**
+   * A refused click, while the lights are as they were then: its failure
+   * and the target it asked for.
+   */
+  error: { failure: Failure; asked: LightingTarget } | null;
   /** The light is up: running, or starting after it ran. */
   lit: boolean;
   /** The pause that has lasted long enough to name. */
@@ -179,8 +183,12 @@ export function lightCardView(
 
   /** What went wrong: the latest command's own failure, else the state's. */
   // Faulted, the status says what to do instead.
-  const failure = lighting.kind === 'failed' ? lighting.failure : null;
-  const problem = faulted ? null : (error ?? failure);
+  const failure = situationFailure(lighting);
+  // A refused click is said by what it asked for; the state's by its target.
+  let problem: { failure: Failure; target: LightingTarget } | null = null;
+  if (!faulted && error)
+    problem = { failure: error.failure, target: error.asked };
+  else if (!faulted && failure) problem = { failure, target };
   // The card's one line of words, only when it says what the card does not.
   const showing =
     lit && lighting.kind === 'sync' && !!lighting.input?.receiving;
@@ -190,8 +198,8 @@ export function lightCardView(
   if (problem)
     info = {
       tone: 'problem',
-      text: plainFailure(problem, target, effects),
-      details: problem.message,
+      text: plainFailure(problem.failure, problem.target, effects),
+      details: problem.failure.message,
       retry: lighting.kind === 'failed',
     };
   else if (faulted) info = { tone: 'problem', text: status, retry: false };

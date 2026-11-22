@@ -79,6 +79,8 @@ export type LightingMode = Exclude<LightingTarget, 'off'>;
  *
  * - `faulted`: the session stopped responding; nothing works until a restart.
  * - `off`: the lights were asked off (the session may still be stopping).
+ *   With the lights off a failure still stays said: settings that could not
+ *   be applied at the start, or a switch off that failed.
  * - `failed`: the mode asked for did not start; `at` is the side that
  *   failed, when known. After a failed start from effects the session stays
  *   `native`: the failure still wins.
@@ -90,7 +92,7 @@ export type LightingMode = Exclude<LightingTarget, 'off'>;
  */
 export type LightingSituation =
   | { kind: 'faulted'; phase: Phase }
-  | { kind: 'off' }
+  | { kind: 'off'; failure: Failure | null }
   | {
       kind: 'failed';
       target: LightingMode;
@@ -114,7 +116,7 @@ export function lightingSituation({
 }): LightingSituation {
   if (session.state === 'faulted')
     return { kind: 'faulted', phase: session.phase };
-  if (target === 'off') return { kind: 'off' };
+  if (target === 'off') return { kind: 'off', failure: failure ?? null };
   if (failure) {
     // Which side failed: typed for adapter failures, else the setting named.
     const field = failure.field?.split('.')[0];
@@ -126,6 +128,13 @@ export function lightingSituation({
   if (target === 'device_native' && session.state === 'native')
     return { kind: 'effects' };
   return { kind: 'starting', target };
+}
+
+/** The failure a situation says, whether the lights are on or off. */
+export function situationFailure(situation: LightingSituation): Failure | null {
+  return situation.kind === 'failed' || situation.kind === 'off'
+    ? situation.failure
+    : null;
 }
 
 /**
@@ -191,6 +200,10 @@ export function plainFailure(
       return 'Prysm is busy. Try again in a moment.';
     case 'adapter':
     case 'invalid':
+      if (target === 'off')
+        return failure.kind === 'adapter'
+          ? 'The lights could not be switched off.'
+          : 'Prysm can’t use these settings.';
       return target === 'device_native'
         ? `${effects} could not start.`
         : 'Screen sync could not start.';

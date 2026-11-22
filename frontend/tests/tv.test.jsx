@@ -1676,6 +1676,34 @@ test('the full status follows the portal: its failure, named by mode, and a faul
   );
 });
 
+test('the TV lights card says a failure with the lights off', async (t) => {
+  // It was dropped while the target was off: nothing said why.
+  for (const flavor of ['full', 'slim']) {
+    const tv = await mountTv(t, {
+      flavor,
+      supervisor:
+        flavor === 'slim'
+          ? { preferences: { instance: 'http://192.168.1.20:8787' } }
+          : undefined,
+    });
+    await act(async () =>
+      tv.application.publish({
+        failure: { kind: 'adapter', section: 'output', message: 'no answer' },
+        session: { state: 'stopped' },
+      }),
+    );
+    await settle();
+    assert.equal(tv.application.snapshot().target, 'off');
+    assert.equal(tv.text('lighting-status'), 'The lights are not responding.');
+    assert.match(
+      document.querySelector('.card.lighting').className,
+      /attention/,
+    );
+    if (flavor === 'full') assert.equal(tv.text('status-title'), 'Lights off');
+    await tv.unmount();
+  }
+});
+
 test('a refused press is said until the lights change', async (t) => {
   // It stayed, over the live state, until the next press.
   const tv = await mountTv(t, { flavor: 'full' });

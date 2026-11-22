@@ -9,6 +9,8 @@ import {
   describeOutputIssue,
   describeSituation,
   lightingSituation,
+  plainFailure,
+  situationFailure,
 } from '@prysm/application-client';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import {
@@ -57,6 +59,12 @@ test('every target, session and failure has one lighting situation', () => {
       ...(failed ? { failure } : {}),
     });
     assert.equal(situation.kind, kind, `${target} ${state} ${failed}`);
+    // A failure is never dropped: off, it is still said.
+    assert.equal(
+      situationFailure(situation),
+      failed && kind !== 'faulted' ? failure : null,
+      `${target} ${state} ${failed} keeps its failure`,
+    );
   }
   const input = { fps: 30, receiving: true };
   assert.deepEqual(
@@ -214,14 +222,16 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   });
   // A refused click with nothing failed in the state: said, without Try again.
   const refused = lightCardView(
-    facts({ kind: 'off' }, { target: 'off' }),
-    memory({ error: { kind: 'busy', message: 'busy' } }),
+    facts({ kind: 'off', failure: null }, { target: 'off' }),
+    memory({
+      error: { failure: { kind: 'busy', message: 'busy' }, asked: 'processed' },
+    }),
   );
   assert.equal(refused.info.text, 'Prysm is busy. Try again in a moment.');
   assert.equal(refused.info.retry, false);
   // Off: the chosen mode is the remembered one, if it can run.
   const off = lightCardView(
-    facts({ kind: 'off' }, { target: 'off' }),
+    facts({ kind: 'off', failure: null }, { target: 'off' }),
     memory({ remembered: 'device_native' }),
   );
   assert.deepEqual(
@@ -230,7 +240,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   );
   assert.equal(off.ownEffects, true);
   const noEffects = lightCardView(
-    facts({ kind: 'off' }, { target: 'off', output: {} }),
+    facts({ kind: 'off', failure: null }, { target: 'off', output: {} }),
     memory({ remembered: 'device_native' }),
   );
   assert.equal(noEffects.mode, 'processed');
@@ -242,8 +252,10 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     'warning',
   );
   assert.equal(
-    lightCardView(facts({ kind: 'off' }, { ...issue, target: 'off' }), memory())
-      .info,
+    lightCardView(
+      facts({ kind: 'off', failure: null }, { ...issue, target: 'off' }),
+      memory(),
+    ).info,
     null,
   );
 });
@@ -314,6 +326,84 @@ test('an old refused click does not come back when the lights do', async () => {
       fixture.publish({ target: 'off', session: { state: 'stopped' } }),
     );
     assert.equal(shown(), false);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('with the lights off a failure is still said, as off', () => {
+  // Settings that do not apply at the start, or a switch off that failed:
+  // the failure was dropped, and nothing said why.
+  const lost = { kind: 'adapter', section: 'output', message: 'no answer' };
+  const off = lightingSituation({
+    target: 'off',
+    session: session('stopped'),
+    failure: lost,
+  });
+  assert.deepEqual(off, { kind: 'off', failure: lost });
+  assert.equal(
+    describeSituation(off, 'WLED effects').headline,
+    'Lights are off',
+  );
+  assert.equal(
+    plainFailure(lost, 'off', 'WLED effects'),
+    'The lights are not responding.',
+  );
+  assert.equal(
+    plainFailure({ kind: 'adapter', message: 'x' }, 'off', 'WLED effects'),
+    'The lights could not be switched off.',
+  );
+  assert.equal(
+    plainFailure({ kind: 'invalid', message: 'x' }, 'off', 'WLED effects'),
+    'Prysm can’t use these settings.',
+  );
+  // The card: off, with the problem and its details, and no Try again (it
+  // could only switch off again).
+  const view = lightCardView(facts(off, { target: 'off' }), memory());
+  assert.deepEqual(
+    [view.word, view.calm, view.status],
+    ['Off', '', 'Lights are off'],
+  );
+  assert.deepEqual(view.info, {
+    tone: 'problem',
+    text: 'The lights are not responding.',
+    details: 'no answer',
+    retry: false,
+  });
+  // A refused click is said by what it asked for.
+  const refused = lightCardView(
+    facts({ kind: 'off', failure: null }, { target: 'off' }),
+    memory({
+      error: { failure: { kind: 'adapter', message: 'x' }, asked: 'processed' },
+    }),
+  );
+  assert.equal(refused.info.text, 'Screen sync could not start.');
+});
+
+test('the light card shows a failure with the lights off, without Try again', async () => {
+  // It was hidden while the target was off.
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await act(async () =>
+      fixture.publish({
+        failure: { kind: 'adapter', section: 'output', message: 'no answer' },
+        session: { state: 'stopped' },
+      }),
+    );
+    assert.equal(fixture.snapshot().target, 'off');
+    assert(shown());
+    assert.equal(
+      $('.light-info > div > p').textContent,
+      'The lights are not responding.',
+    );
+    assert.equal($('.light-word [data-shown="true"]').textContent, 'Off');
+    assert.equal($('.lighting-status').textContent, 'Lights are off');
+    assert(
+      ![...document.querySelectorAll('.light-card button')].some(
+        (item) => item.textContent === 'Try again',
+      ),
+    );
   } finally {
     await portal.unmount();
   }
