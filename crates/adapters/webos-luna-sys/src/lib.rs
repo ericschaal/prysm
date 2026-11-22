@@ -12,15 +12,22 @@
 //! crate builds anywhere. Off a webOS TV [`run`] refuses with
 //! [`Error::Unsupported`] before touching any library.
 //!
+//! - [`load_once`]: load a vendor library and its entry points once per
+//!   process, never to unload them; LS2 and GLib here, VTCapture and HAL GAL
+//!   in `prysm-capture-webos-sys`.
+//!
 //! Safety contract kept by this crate, never by its callers: callback state
 //! lives in one shared allocation registered with LS2 and freed only after
 //! `LSUnregister`; callbacks run only on the thread inside [`run`]; a panic in
-//! a callback or a failed unregister aborts instead of unwinding into C or
-//! freeing memory LS2 may still use.
+//! a callback, or a failed unregister of a service with callbacks, aborts
+//! instead of unwinding into C or freeing memory LS2 may still use. No
+//! library is ever unloaded.
 mod check;
+mod library;
 mod service;
 
 pub use check::check_registration;
+pub use library::{Loaded, load_once};
 pub use service::{Bus, Config, Handler, Request, Response, run};
 
 #[allow(
@@ -51,8 +58,6 @@ pub(crate) mod generated {
                     LSRegisterCategory: m::category,
                     LSCategorySetData: m::category_data,
                     LSUnregister: m::unregister,
-                    LSMessageRef: m::message_ref,
-                    LSMessageUnref: m::message_ref,
                     LSMessageGetApplicationID: m::application_id,
                     LSMessageGetSenderServiceName: m::sender_service,
                     LSMessageGetMethod: m::method,
@@ -63,7 +68,6 @@ pub(crate) mod generated {
                     LSCallCancel: m::cancel,
                     LSSubscriptionProcess: m::subscribe,
                     LSSubscriptionReply: m::publish,
-                    LSSubscriptionGetHandleSubscribersCount: m::subscribers,
                 }
             }
         }
@@ -94,8 +98,36 @@ pub(crate) mod generated {
 }
 
 /// The TV's libraries.
-pub(crate) const LUNA_LIBRARY: &str = "/usr/lib/libluna-service2.so.3";
-pub(crate) const GLIB_LIBRARY: &str = "/usr/lib/libglib-2.0.so.0";
+const LUNA_LIBRARY: &str = "/usr/lib/libluna-service2.so.3";
+const GLIB_LIBRARY: &str = "/usr/lib/libglib-2.0.so.0";
+
+/// LS2's entry points, loaded on first use for the life of the process.
+fn luna() -> Result<&'static generated::luna::Luna, Error> {
+    static LUNA: std::sync::Mutex<Loaded<generated::luna::Luna>> =
+        std::sync::Mutex::new(Loaded::Nothing);
+    load_once(&LUNA, &[LUNA_LIBRARY], |_| {
+        // SAFETY: signatures generated from the matching TV SDK. The table
+        // opens a second handle to the library `load_once` keeps loaded, so a
+        // missing symbol closes only that handle, never the library.
+        unsafe { generated::luna::Luna::new(LUNA_LIBRARY) }.map_err(|source| Error::Load {
+            library: LUNA_LIBRARY.into(),
+            source,
+        })
+    })
+}
+
+/// GLib's entry points, loaded on first use for the life of the process.
+fn glib() -> Result<&'static generated::glib::Glib, Error> {
+    static GLIB: std::sync::Mutex<Loaded<generated::glib::Glib>> =
+        std::sync::Mutex::new(Loaded::Nothing);
+    load_once(&GLIB, &[GLIB_LIBRARY], |_| {
+        // SAFETY: as for `luna`.
+        unsafe { generated::glib::Glib::new(GLIB_LIBRARY) }.map_err(|source| Error::Load {
+            library: GLIB_LIBRARY.into(),
+            source,
+        })
+    })
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -107,6 +139,13 @@ pub enum Error {
         #[source]
         source: libloading::Error,
     },
+    /// LS2 refused to register `name`: the caller's role does not allow it.
+    #[error("Luna denied the registration of {name}: {message}")]
+    Denied { name: String, message: String },
+    /// LS2 could not remove `name` after registering it, so it may stay
+    /// registered for the life of this process.
+    #[error("Luna could not unregister {name}: {message}")]
+    Unremoved { name: String, message: String },
     /// An LS2 call failed; the text is LS2's own message.
     #[error("{operation}: {message}")]
     Luna {

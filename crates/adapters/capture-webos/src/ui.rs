@@ -22,15 +22,14 @@ pub(crate) struct Nv12Converter {
 }
 
 impl Nv12Converter {
-    /// Convert a `width`×`height` plane of premultiplied BGRA rows `pitch`
-    /// bytes apart into packed NV12 (`output`: Y plane, then interleaved
-    /// CbCr). Premultiplied colour over black is the colour itself, so alpha
-    /// is not read: a transparent plane is black. Chroma averages each 2×2
-    /// block.
+    /// Convert a `width`×`height` plane of premultiplied BGRA rows into packed
+    /// NV12 (`output`: Y plane, then interleaved CbCr). `read_row(y, row)`
+    /// fills `row` with row `y`'s `width * 4` bytes. Premultiplied colour over
+    /// black is the colour itself, so alpha is not read: a transparent plane
+    /// is black. Chroma averages each 2×2 block.
     pub(crate) fn convert(
         &mut self,
-        pixels: &[u8],
-        pitch: usize,
+        mut read_row: impl FnMut(usize, &mut [u8]) -> Result<()>,
         width: usize,
         height: usize,
         output: &mut [u8],
@@ -38,9 +37,6 @@ impl Nv12Converter {
         let row_bytes = width * 4;
         if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
             return Err(Error::other("TV UI plane size is not even"));
-        }
-        if pitch < row_bytes || pixels.len() < pitch * (height - 1) + row_bytes {
-            return Err(Error::other("TV UI plane is shorter than its geometry"));
         }
         if output.len() != width * height * 3 / 2 {
             return Err(Error::other("NV12 output has the wrong size"));
@@ -52,8 +48,7 @@ impl Nv12Converter {
             self.sums.fill([0; 3]);
             for y in [pair * 2, pair * 2 + 1] {
                 // The one read of this row of the mapping.
-                self.row
-                    .copy_from_slice(&pixels[y * pitch..y * pitch + row_bytes]);
+                read_row(y, &mut self.row)?;
                 let luma = &mut luma[y * width..(y + 1) * width];
                 for (x, (pixel, luma)) in self.row.as_chunks::<4>().0.iter().zip(luma).enumerate() {
                     let rgb = [pixel[2], pixel[1], pixel[0]].map(i32::from);
@@ -87,7 +82,7 @@ mod tests {
         let pixels = bgra.repeat(4);
         let mut output = [0; 6];
         Nv12Converter::default()
-            .convert(&pixels, 8, 2, 2, &mut output)
+            .convert(rows(&pixels, 8), 2, 2, &mut output)
             .unwrap();
         assert!(output[..4].iter().all(|&y| y == output[0]));
         [output[0], output[4], output[5]]
@@ -128,24 +123,48 @@ mod tests {
         .concat();
         let mut output = [0; 12];
         let mut converter = Nv12Converter::default();
-        converter.convert(&pixels, 20, 4, 2, &mut output).unwrap();
+        converter
+            .convert(rows(&pixels, 20), 4, 2, &mut output)
+            .unwrap();
         assert_eq!(&output[..8], &[235, 235, 16, 16, 235, 235, 63, 63]);
         assert_eq!(&output[8..10], &[128, 128], "white block");
         // Half red: Cb, Cr halfway between neutral and red's.
         assert_eq!(&output[10..], &[115, 184], "black over red block");
 
         // Reused scratch carries nothing over.
-        converter.convert(&pixels, 20, 4, 2, &mut output).unwrap();
+        converter
+            .convert(rows(&pixels, 20), 4, 2, &mut output)
+            .unwrap();
         assert_eq!(&output[10..], &[115, 184]);
     }
 
     #[test]
-    fn bad_geometry_is_an_error_not_a_panic() {
+    fn bad_geometry_or_a_failed_read_is_an_error_not_a_panic() {
         let mut converter = Nv12Converter::default();
         let mut output = [0; 6];
-        assert!(converter.convert(&[0; 15], 8, 2, 2, &mut output).is_err());
-        assert!(converter.convert(&[0; 16], 4, 2, 2, &mut output).is_err());
-        assert!(converter.convert(&[0; 12], 4, 1, 3, &mut output).is_err());
-        assert!(converter.convert(&[0; 16], 8, 2, 2, &mut [0; 5]).is_err());
+        let short = converter.convert(rows(&[0; 15], 8), 2, 2, &mut output);
+        assert_eq!(short.unwrap_err().to_string(), "short test plane");
+        assert!(
+            converter
+                .convert(rows(&[0; 12], 4), 1, 3, &mut output)
+                .is_err()
+        );
+        assert!(
+            converter
+                .convert(rows(&[0; 16], 8), 2, 2, &mut [0; 5])
+                .is_err()
+        );
+    }
+
+    /// Rows of `pixels`, `pitch` bytes apart, as a frame reads them.
+    fn rows(pixels: &[u8], pitch: usize) -> impl FnMut(usize, &mut [u8]) -> Result<()> + '_ {
+        move |y, row| {
+            let start = y * pitch;
+            let source = pixels
+                .get(start..start + row.len())
+                .ok_or_else(|| Error::other("short test plane"))?;
+            row.copy_from_slice(source);
+            Ok(())
+        }
     }
 }

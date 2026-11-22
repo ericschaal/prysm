@@ -26,7 +26,7 @@ const BINDINGS: [(&str, &str, &str, &str); 2] = [
     (
         "luna",
         "luna-service2/lunaservice.h",
-        "LSError(Init|Free)|LS(Register|RegisterCategory|CategorySetData|Unregister|GmainAttach|MessageGetPayload|MessageGetMethod|MessageGetApplicationID|MessageGetSenderServiceName|MessageRef|MessageUnref|MessageReply|SubscriptionProcess|SubscriptionReply|SubscriptionGetHandleSubscribersCount|Call|CallCancel)",
+        "LSError(Init|Free)|LS(Register|RegisterCategory|CategorySetData|Unregister|GmainAttach|MessageGetPayload|MessageGetMethod|MessageGetApplicationID|MessageGetSenderServiceName|MessageReply|SubscriptionProcess|SubscriptionReply|Call|CallCancel)",
         "Luna",
     ),
     (

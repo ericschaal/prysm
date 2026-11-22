@@ -22,7 +22,9 @@ fn copy(
     data: &[u8],
     (width, height, format, stride, corrupted): (u32, u32, PixelFormat, usize, bool),
 ) -> Option<Frame> {
-    let frame = pool.copy_from_strided(data, width, height, format, stride, corrupted);
+    let frame = pool
+        .copy_from_strided(data, width, height, format, stride, corrupted)
+        .ok();
     // Bytes per stored row and stored rows, both NV12 planes counted.
     let geometry = match format.expected_size(width, height) {
         Ok(_) => Some(match format {

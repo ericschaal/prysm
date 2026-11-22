@@ -27,22 +27,37 @@ pub(crate) enum Acquired {
 #[derive(Debug)]
 pub(crate) struct Fault {
     pub error: Error,
+    pub recovery: Recovery,
+}
+
+/// Whether a native fault can heal in this process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Recovery {
     /// Retrying in this process cannot succeed: a video fault ends the
     /// source, a TV UI fault disables UI capture for the session.
-    pub fatal: bool,
+    Never,
+    /// The tap is reopened later.
+    Reopen,
+    /// The video tap is reopened later, but [`Limits::unchecked`] of these in
+    /// a row end the source: the Luna registration check failed in a way it
+    /// cannot tell from a denial worded differently.
+    Bounded,
 }
 
 impl Fault {
     /// A failure that cannot heal in this process.
     pub(crate) fn fatal(error: Error) -> Self {
-        Self { error, fatal: true }
+        Self {
+            error,
+            recovery: Recovery::Never,
+        }
     }
 
     /// A failure after which the tap is reopened.
     pub(crate) fn recoverable(error: Error) -> Self {
         Self {
             error,
-            fatal: false,
+            recovery: Recovery::Reopen,
         }
     }
 }
@@ -82,6 +97,9 @@ pub(crate) struct Limits {
     /// driver lock held until a reboot) would block that long every time.
     pub ui_retry: Duration,
     pub ui_retry_max: Duration,
+    /// Video opens in a row with a [`Recovery::Bounded`] fault before the
+    /// source fails with the last one: about half a minute at `retry`.
+    pub unchecked: u32,
     /// How long `close` waits for certified release. Below the TV hosts'
     /// 6 s stop deadline, so the adapter reports first, which is below the
     /// supervisor's 8 s TERM-to-KILL window.
@@ -98,6 +116,7 @@ impl Limits {
         retry: Duration::from_secs(1),
         ui_retry: Duration::from_secs(5),
         ui_retry_max: Duration::from_secs(60),
+        unchecked: 30,
         release: Duration::from_secs(4),
         poll: Duration::from_millis(100),
     };

@@ -1,7 +1,7 @@
 //! Development-host tests through the native seam: no SDK, no hardware, every
 //! wait bounded.
 use super::*;
-use crate::source::{Acquired, Backend, Fault, Limits, Tap};
+use crate::source::{Acquired, Backend, Fault, Limits, Recovery, Tap};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
 use std::collections::VecDeque;
@@ -19,9 +19,18 @@ const TEST: Limits = Limits {
     retry: Duration::from_millis(5),
     ui_retry: Duration::from_millis(5),
     ui_retry_max: Duration::from_millis(20),
+    unchecked: 3,
     release: Duration::from_secs(2),
     poll: Duration::from_millis(5),
 };
+
+fn recovery(fatal: bool) -> Recovery {
+    if fatal {
+        Recovery::Never
+    } else {
+        Recovery::Reopen
+    }
+}
 
 fn frame(value: u8) -> Frame {
     Frame::fill(value, 8, 4, PixelFormat::RGB24).unwrap()
@@ -64,7 +73,9 @@ struct Script {
     /// Consumed one per acquisition; then `idle` repeats.
     steps: VecDeque<Step>,
     idle: Step,
-    open_fails: Option<bool>,
+    open_fails: Option<Recovery>,
+    /// Faults of the next opens, one per open, before `open_fails` applies.
+    open_faults: VecDeque<Recovery>,
     hang: Option<&'static str>,
     release_fails: bool,
     opens: usize,
@@ -109,6 +120,7 @@ impl Driver {
                 steps: VecDeque::new(),
                 idle: Step::Pending,
                 open_fails: None,
+                open_faults: VecDeque::new(),
                 hang: None,
                 release_fails: false,
                 opens: 0,
@@ -185,10 +197,10 @@ impl Backend for Driver {
         let mut script = self.enter("open");
         script.opens += 1;
         script.record("open");
-        if let Some(fatal) = script.open_fails {
+        if let Some(recovery) = script.open_faults.pop_front().or(script.open_fails) {
             return Err(Fault {
                 error: Error::other("driver refused"),
-                fatal,
+                recovery,
             });
         }
         script.opened();
@@ -207,7 +219,7 @@ impl Backend for Driver {
                     "cannot open webOS UI capture",
                     std::io::Error::other("HAL_GAL_Init failed with status -1"),
                 ),
-                fatal,
+                recovery: recovery(fatal),
             });
         }
         script.opened();
@@ -224,7 +236,7 @@ impl Tap for FakeUiTap {
         if script.ui_fails || std::mem::take(&mut script.ui_fail_once) {
             return Err(Fault {
                 error: Error::other("HAL_GAL_CaptureFrameBuffer failed with status -1"),
-                fatal: false,
+                recovery: Recovery::Reopen,
             });
         }
         Ok(Acquired::Frame(ui_frame(script.ui_value)))
@@ -255,7 +267,7 @@ impl Tap for FakeTap {
                     "webOS video interrupted",
                     std::io::Error::other("status 12"),
                 ),
-                fatal,
+                recovery: recovery(fatal),
             }),
         }
     }
@@ -468,7 +480,7 @@ fn recoverable_failure_reopens_without_an_error() {
     assert_eq!(driver.count(|s| s.opens), 2);
     assert_eq!(driver.count(|s| s.releases), 1);
 
-    driver.with(|s| s.open_fails = Some(false));
+    driver.with(|s| s.open_fails = Some(Recovery::Reopen));
     video.reset();
     eventually(|| driver.count(|s| s.opens) >= 4);
     assert!(
@@ -498,7 +510,7 @@ fn fatal_failure_propagates_with_its_cause_and_release_is_certified() {
 fn fatal_open_failure_propagates() {
     let driver = Driver::new();
     let video = VideoSignal::default();
-    driver.with(|s| s.open_fails = Some(true));
+    driver.with(|s| s.open_fails = Some(Recovery::Never));
     let mut frames = start(&driver, &video);
     assert_eq!(failure(&mut frames).to_string(), "driver refused");
     closes_cleanly(frames);
@@ -754,14 +766,19 @@ fn only_a_missing_ui_library_or_device_is_permanent() {
         path: "/dev/gfx",
         source: std::io::Error::from(kind),
     };
-    assert!(backend::ui_open_fault(device(std::io::ErrorKind::NotFound)).fatal);
-    assert!(!backend::ui_open_fault(device(std::io::ErrorKind::OutOfMemory)).fatal);
+    let fatal = |fault: Fault| fault.recovery == Recovery::Never;
+    assert!(fatal(backend::ui_open_fault(device(
+        std::io::ErrorKind::NotFound
+    ))));
+    assert!(!fatal(backend::ui_open_fault(device(
+        std::io::ErrorKind::OutOfMemory
+    ))));
     let status = sys::Error::Status {
         operation: "HAL_GAL_Init",
         code: -1,
     };
     let fault = backend::ui_open_fault(status);
-    assert!(!fault.fatal);
+    assert_eq!(fault.recovery, Recovery::Reopen);
     assert_eq!(
         chain(&fault.error),
         "cannot open webOS UI capture: HAL_GAL_Init failed with status -1"
@@ -771,7 +788,72 @@ fn only_a_missing_ui_library_or_device_is_permanent() {
     }
     let load = sys::UiCapture::open(320, 180).err().unwrap();
     assert!(matches!(load, sys::Error::Load { .. }), "{load}");
-    assert!(backend::ui_open_fault(load).fatal);
+    assert!(fatal(backend::ui_open_fault(load)));
+}
+
+#[test]
+fn only_an_unrecognised_registration_failure_is_bounded() {
+    use prysm_capture_webos_sys as sys;
+    use prysm_webos_luna_sys::Error as Luna;
+    let luna = |error| backend::fault("cannot open webOS video capture", error).recovery;
+    let message = || "failed".to_owned();
+    assert_eq!(
+        luna(sys::Error::from(Luna::Luna {
+            operation: "LSRegister",
+            message: message(),
+        })),
+        Recovery::Bounded
+    );
+    assert_eq!(
+        luna(sys::Error::from(Luna::Denied {
+            name: "a".into(),
+            message: message(),
+        })),
+        Recovery::Never
+    );
+    assert_eq!(
+        luna(sys::Error::Status {
+            operation: "vtCapture_process",
+            code: 1,
+        }),
+        Recovery::Reopen
+    );
+}
+
+#[test]
+fn a_run_of_unrecognised_registration_failures_ends_the_source_with_its_cause() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    driver.with(|s| s.open_fails = Some(Recovery::Bounded));
+    let mut frames = start(&driver, &video);
+    let error = failure(&mut frames);
+    assert_eq!(
+        chain(&error),
+        format!(
+            "the Luna registration check failed {} times in a row: driver refused",
+            TEST.unchecked
+        )
+    );
+    assert_eq!(driver.count(|s| s.opens), TEST.unchecked as usize);
+    closes_cleanly(frames);
+}
+
+#[test]
+fn any_other_open_outcome_starts_the_registration_count_again() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    let bounded = TEST.unchecked as usize - 1;
+    driver.with(|s| {
+        s.open_faults = std::iter::repeat_n(Recovery::Bounded, bounded)
+            .chain([Recovery::Reopen])
+            .chain(std::iter::repeat_n(Recovery::Bounded, bounded))
+            .collect();
+        s.idle = Step::Frame(7);
+    });
+    let mut frames = start(&driver, &video);
+    assert_eq!(next(&mut frames).as_slice(), frame(7).as_slice());
+    assert_eq!(driver.count(|s| s.opens), bounded * 2 + 2);
+    closes_cleanly(frames);
 }
 
 #[test]

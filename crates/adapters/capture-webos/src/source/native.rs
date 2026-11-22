@@ -1,7 +1,7 @@
 //! The native thread: owns the backend and its tap, follows the video signal,
 //! paces acquisition, retries recoverable interruptions and publishes through
 //! its [`Worker`].
-use super::{Acquired, Backend, Fault, Limits, Tap};
+use super::{Acquired, Backend, Fault, Limits, Recovery, Tap};
 use crate::{Readiness, Video, VideoSignal, WebosSettings};
 use prysm_ports::{Error, Result, Worker, chain};
 use std::time::{Duration, Instant};
@@ -41,6 +41,11 @@ pub(super) struct Native<B> {
     retry_at: Instant,
     not_ready_since: Option<Instant>,
     pending_since: Option<Instant>,
+    /// A video fault was logged since the last video frame or the start of
+    /// this video period.
+    video_failing: bool,
+    /// [`Recovery::Bounded`] video faults in a row.
+    unchecked: u32,
 }
 
 impl<B: Backend> Native<B> {
@@ -63,6 +68,8 @@ impl<B: Backend> Native<B> {
             retry_at: Instant::now(),
             not_ready_since: None,
             pending_since: None,
+            video_failing: false,
+            unchecked: 0,
         }
     }
 
@@ -94,6 +101,10 @@ impl<B: Backend> Native<B> {
             if kind != self.kind || current != generation {
                 generation = current;
                 self.kind = kind;
+                // A new period: its first video failure is news again, and
+                // its registration failures count from zero.
+                self.video_failing = false;
+                self.unchecked = 0;
                 self.release_tap()?;
                 self.retry_at = Instant::now();
             }
@@ -144,7 +155,12 @@ impl<B: Backend> Native<B> {
                     Kind::Ui => worker.watch("UI open", || self.backend.open_ui(&self.settings)),
                 };
                 match opened {
-                    Ok(tap) => &mut self.tap.insert((kind, tap)).1,
+                    Ok(tap) => {
+                        if kind == Kind::Video {
+                            self.unchecked = 0;
+                        }
+                        &mut self.tap.insert((kind, tap)).1
+                    }
                     Err(fault) => return self.recover(kind, fault),
                 }
             }
@@ -164,6 +180,9 @@ impl<B: Backend> Native<B> {
             Ok(Acquired::Frame(frame)) => {
                 self.not_ready_since = None;
                 self.pending_since = None;
+                if kind == Kind::Video {
+                    self.video_failing = false;
+                }
                 // The first frame, or the first after failures, ends the
                 // backoff and is reported once.
                 if kind == Kind::Ui && self.ui != UiSupport::Works {
@@ -203,43 +222,64 @@ impl<B: Backend> Native<B> {
         Ok(())
     }
 
-    /// Fatal video faults end the source; others release the tap and retry
-    /// later. UI faults never end the source: a fatal one, or one after the
-    /// longest wait, marks UI capture unsupported, reported once and not
-    /// retried (lighting then idles without video, as with `include_ui`
-    /// off); others retry with a backoff that a frame resets, so a long
-    /// session without video regains the TV UI after a transient failure.
+    /// Fatal video faults end the source, and so does the
+    /// [`Limits::unchecked`]th [`Recovery::Bounded`] one in a row; others
+    /// release the tap and retry later. UI faults never end the source: a
+    /// fatal one, or one after the longest wait, marks UI capture
+    /// unsupported, reported once and not retried (lighting then idles
+    /// without video, as with `include_ui` off); others retry with a backoff
+    /// that a frame resets, so a long session without video regains the TV
+    /// UI after a transient failure.
     fn recover(&mut self, kind: Kind, fault: Fault) -> Result<()> {
-        let wait = match kind {
-            Kind::Video if fault.fatal => return Err(fault.error),
-            Kind::Video => self.limits.retry,
-            Kind::Ui => {
+        let wait = match (kind, fault.recovery) {
+            (Kind::Video, Recovery::Never) => return Err(fault.error),
+            (Kind::Video, Recovery::Bounded) if self.unchecked + 1 >= self.limits.unchecked => {
+                return Err(Error::adapter(
+                    format!(
+                        "the Luna registration check failed {} times in a row",
+                        self.limits.unchecked
+                    ),
+                    fault.error,
+                ));
+            }
+            (Kind::Video, recovery) => {
+                // In a row: any other outcome starts the count again.
+                self.unchecked = if recovery == Recovery::Bounded {
+                    self.unchecked + 1
+                } else {
+                    0
+                };
+                let wait = self.limits.retry;
+                Self::retrying(
+                    &fault.error,
+                    "webOS video capture",
+                    !self.video_failing,
+                    wait,
+                );
+                self.video_failing = true;
+                wait
+            }
+            (Kind::Ui, recovery) => {
                 let previous = match self.ui {
                     UiSupport::Failing(wait) => Some(wait),
                     _ => None,
                 };
-                let next = if fault.fatal {
+                let next = if recovery == Recovery::Never {
                     None
                 } else {
                     self.limits.ui_backoff(previous)
                 };
-                let error = chain(&fault.error);
                 match next {
                     None => {
                         self.ui = UiSupport::Unsupported;
                         tracing::warn!(
-                            %error,
+                            error = %chain(&fault.error),
                             "TV UI capture is unsupported; no frames while there is no video"
                         );
                         self.limits.retry
                     }
                     Some(wait) => {
-                        // Only the first failure of a streak is news.
-                        if previous.is_none() {
-                            tracing::warn!(%error, retry_in = ?wait, "TV UI capture failed; retrying");
-                        } else {
-                            tracing::debug!(%error, retry_in = ?wait, "TV UI capture failed; retrying");
-                        }
+                        Self::retrying(&fault.error, "TV UI capture", previous.is_none(), wait);
                         self.ui = UiSupport::Failing(wait);
                         wait
                     }
@@ -249,6 +289,18 @@ impl<B: Backend> Native<B> {
         self.release_tap()?;
         self.retry_at = Instant::now() + wait;
         Ok(())
+    }
+
+    /// Logs that `tap` failed with `error` and is retried in `wait`: the
+    /// `first` failure of a streak as a warning, the rest at debug, since
+    /// only the first is news.
+    fn retrying(error: &Error, tap: &str, first: bool, wait: Duration) {
+        let error = chain(error);
+        if first {
+            tracing::warn!(%error, retry_in = ?wait, "{tap} failed; retrying");
+        } else {
+            tracing::debug!(%error, retry_in = ?wait, "{tap} failed; retrying");
+        }
     }
 
     fn release_tap(&mut self) -> Result<()> {

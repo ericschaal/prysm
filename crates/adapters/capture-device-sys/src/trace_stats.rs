@@ -65,14 +65,11 @@ impl TraceStats {
         self.pool = pool;
         self.report_if_due(now);
     }
-    /// Count a failed operation. Returns true for the first failure in this window.
-    /// Callers can use this to avoid repeating the same warning every frame.
-    pub(crate) fn failure(&mut self) -> bool {
+    /// Count a failed operation.
+    pub(crate) fn failure(&mut self) {
         self.report_if_due(Instant::now());
-        let first = self.window.failures == 0;
         self.window.failures += 1;
         self.total_failures += 1;
-        first
     }
     fn report_if_due(&mut self, now: Instant) {
         if now.saturating_duration_since(self.since) >= INTERVAL {
@@ -153,8 +150,9 @@ mod tests {
             stats.report_if_due(stats.since + INTERVAL);
             assert_eq!(stats.window.frames, 0);
             assert_eq!(stats.total_frames, 1);
-            assert!(stats.failure());
-            assert!(!stats.failure());
+            stats.failure();
+            stats.failure();
+            assert_eq!(stats.window.failures, 2);
             drop(stats);
         });
         let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
@@ -188,10 +186,12 @@ mod tests {
             assert!(stats.start().is_none());
             stats.record(stats.start(), 100, None);
             assert_eq!(stats.total_frames, 0);
-            assert!(stats.failure());
-            assert!(!stats.failure());
+            stats.failure();
+            stats.failure();
             stats.report_if_due(stats.since + INTERVAL);
-            assert!(stats.failure());
+            assert_eq!(stats.window.failures, 0, "the window was reported");
+            stats.failure();
+            assert_eq!(stats.total_failures, 3);
         });
         assert!(capture.0.lock().unwrap().is_empty());
     }
