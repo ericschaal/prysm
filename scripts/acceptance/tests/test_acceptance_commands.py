@@ -1,7 +1,7 @@
 """The acceptance runner's allow-list and its transport."""
 
-from pathlib import Path
 import os
+from pathlib import Path
 import re
 import socket
 import subprocess
