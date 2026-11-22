@@ -1,8 +1,9 @@
 use crate::feeds::{ColorsWatch, Feeds, PreviewWatch};
 use crate::leds::OpenOutput;
 use crate::meter::Meter;
-use crate::session::{Session, SessionEnd};
+use crate::session::{Session, SessionEnd, Stop};
 use crate::stats::{Counters, Stats};
+use crate::worker::Exit;
 use prysm_core::Config;
 use prysm_ports::{
     AdapterSettings, CalibrationPattern, Candidate, DeviceReport, Error, IdleMode, Input,
@@ -19,6 +20,14 @@ use tokio::time::Instant;
 type Reply<T> = oneshot::Sender<Result<T>>;
 
 enum Command {
+    Request(Request),
+    SurfaceFailed(Error),
+    Shutdown(Reply<()>),
+}
+
+/// What a client asks of the lighting or the settings; refused unhandled
+/// once the engine is faulted or shutting down (see [`Core::refusal`]).
+enum Request {
     SetTarget(LightingTarget, Reply<()>),
     ReplaceSettings {
         expected: Revision,
@@ -27,8 +36,22 @@ enum Command {
     },
     SetCalibration(Option<CalibrationPattern>, Reply<()>),
     TryProcessing(Box<Processing>, Reply<()>),
-    SurfaceFailed(Error),
-    Shutdown(Reply<()>),
+}
+
+impl Request {
+    /// Answer with `error` without acting.
+    fn refuse(self, error: Error) {
+        match self {
+            Self::SetTarget(_, reply)
+            | Self::SetCalibration(_, reply)
+            | Self::TryProcessing(_, reply) => {
+                let _ = reply.send(Err(error));
+            }
+            Self::ReplaceSettings { reply, .. } => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
 }
 
 /// A calibration pattern nobody has set again for this long is cleared, so a
@@ -56,7 +79,7 @@ impl EngineHandle {
     /// # Errors
     /// Missing adapter settings, open failure, or a faulted or stopped engine.
     pub async fn set_target(&self, target: LightingTarget) -> Result<()> {
-        self.call(|reply| Command::SetTarget(target, reply)).await
+        self.call(|reply| Request::SetTarget(target, reply)).await
     }
 
     /// Validate, persist, then apply. Returns the new revision once persisted;
@@ -69,7 +92,7 @@ impl EngineHandle {
         expected: Revision,
         settings: Settings,
     ) -> Result<Revision> {
-        self.call(|reply| Command::ReplaceSettings {
+        self.call(|reply| Request::ReplaceSettings {
             expected,
             settings: Box::new(settings),
             reply,
@@ -86,7 +109,7 @@ impl EngineHandle {
     /// A pattern while the target is not `Processed` (field `target`), or a
     /// faulted or stopped engine.
     pub async fn set_calibration(&self, calibration: Option<CalibrationPattern>) -> Result<()> {
-        self.call(|reply| Command::SetCalibration(calibration, reply))
+        self.call(|reply| Request::SetCalibration(calibration, reply))
             .await
     }
 
@@ -100,7 +123,7 @@ impl EngineHandle {
     /// # Errors
     /// Invalid processing, or a faulted or stopped engine.
     pub async fn try_processing(&self, processing: Processing) -> Result<()> {
-        self.call(|reply| Command::TryProcessing(Box::new(processing), reply))
+        self.call(|reply| Request::TryProcessing(Box::new(processing), reply))
             .await
     }
 
@@ -171,14 +194,15 @@ impl EngineHandle {
         self.feeds.colors.watchers()
     }
 
+    /// Report a failed surface, once the mailbox has room.
     pub(crate) async fn report_surface_failure(&self, error: Error) {
         let _ = self.commands.send(Command::SurfaceFailed(error)).await;
     }
 
-    async fn call<T>(&self, command: impl FnOnce(Reply<T>) -> Command) -> Result<T> {
+    async fn call<T>(&self, request: impl FnOnce(Reply<T>) -> Request) -> Result<T> {
         let (reply, result) = oneshot::channel();
         self.commands
-            .send(command(reply))
+            .send(Command::Request(request(reply)))
             .await
             .map_err(|_| Error::Closed)?;
         result.await.map_err(|_| Error::Closed)?
@@ -227,7 +251,7 @@ impl Engine {
         let core = Core {
             registry: registry.clone(),
             store,
-            running: None,
+            lighting: Lighting::Stopped,
             calibration_expires: None,
             trial: None,
             feeds: feeds.clone(),
@@ -263,16 +287,17 @@ impl Engine {
     }
 
     /// Stop the session (output idles `Off`), join it and end the task.
+    /// Requests still queued, and any sent from now on, are refused with
+    /// [`Error::Closed`] in their order, so none starts what shutdown stops.
     /// Blocking adapter or settings calls still running when the shutdown
-    /// grace has passed since this call are abandoned and left running on
-    /// their threads; later ones fail at once.
+    /// grace has passed since this call (or [`Self::begin_shutdown`]) are
+    /// abandoned and left running on their threads; later ones fail at once.
     ///
     /// # Errors
     /// The engine is faulted, stopping the session failed, or a blocking
     /// call was abandoned.
     pub async fn shutdown(self) -> Result<()> {
-        self.abandon_at
-            .send_replace(Some(Instant::now() + self.shutdown_grace));
+        self.begin_shutdown();
         let (reply, result) = oneshot::channel();
         let sent = self.commands.send(Command::Shutdown(reply)).await;
         let result = match sent {
@@ -281,6 +306,20 @@ impl Engine {
         };
         let _ = self.task.await;
         result
+    }
+
+    /// What [`Self::shutdown`] starts with: from the first call, queued
+    /// requests are refused and the shutdown grace runs; the engine still
+    /// takes commands such as surface failures until the shutdown itself.
+    pub(crate) fn begin_shutdown(&self) {
+        let at = Instant::now() + self.shutdown_grace;
+        self.abandon_at.send_if_modified(|abandon_at| {
+            let first = abandon_at.is_none();
+            if first {
+                *abandon_at = Some(at);
+            }
+            first
+        });
     }
 }
 
@@ -291,19 +330,52 @@ fn first_revision() -> Revision {
     Revision(RandomState::new().hash_one(0_u8) >> 12)
 }
 
-/// A source whose release is unconfirmed may still hold its device, so no new
-/// session can be trusted to open it: only a process restart recovers.
-const UNRELEASED: SessionState = SessionState::Faulted(SessionPhase::ClosingSource);
+/// What the lights are doing. The one truth for whether a session runs:
+/// [`Core::set_lighting`] publishes it.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the engine holds exactly one, never moved per frame"
+)]
+enum Lighting {
+    /// No session; the output (if any was touched) is idle.
+    Stopped,
+    /// The output was put in its own effects, without a session.
+    Native,
+    Running(Running),
+    /// Only shutdown is accepted, and only a process restart recovers.
+    Faulted(SessionPhase),
+}
 
-/// The state a session's end leaves, from what its thread reported.
-fn left_by(end: &Result<SessionEnd>) -> SessionState {
-    match end {
-        Err(Error::Faulted(phase)) => SessionState::Faulted(*phase),
-        // The thread died without reporting, so its source may still be held.
-        Err(_) => UNRELEASED,
-        Ok(end) if end.released.is_err() => UNRELEASED,
-        Ok(end) if end.idle == IdleMode::Native && end.idled.is_ok() => SessionState::Native,
-        Ok(_) => SessionState::Stopped,
+impl Lighting {
+    fn state(&self) -> SessionState {
+        match self {
+            Self::Stopped => SessionState::Stopped,
+            Self::Native => SessionState::Native,
+            Self::Running(_) => SessionState::Running,
+            Self::Faulted(phase) => SessionState::Faulted(*phase),
+        }
+    }
+
+    /// A source whose release is unconfirmed may still hold its device, so
+    /// no new session can be trusted to open it.
+    const UNRELEASED: Self = Self::Faulted(SessionPhase::SourceUnreleased);
+
+    /// What a session's end leaves, from what its thread reported.
+    fn left_by(end: &SessionEnd) -> Self {
+        match end.left {
+            _ if end.released.is_err() => Self::UNRELEASED,
+            Ok(IdleMode::Native) => Self::Native,
+            Ok(IdleMode::Off) | Err(_) => Self::Stopped,
+        }
+    }
+
+    /// What a session thread that did not report its end leaves.
+    fn failed(error: &Error) -> Self {
+        match error {
+            Error::Faulted(phase) => Self::Faulted(*phase),
+            // The thread died without reporting, so its source may still be held.
+            _ => Self::UNRELEASED,
+        }
     }
 }
 
@@ -345,7 +417,7 @@ impl Running {
 struct Core {
     registry: Registry,
     store: Store,
-    running: Option<Running>,
+    lighting: Lighting,
     /// When the snapshot's calibration is cleared; present exactly while it is.
     calibration_expires: Option<Instant>,
     /// Processing being tried instead of the saved one, and when it ends.
@@ -406,7 +478,7 @@ impl Core {
         loop {
             let command = tokio::select! {
                 command = inbox.recv() => command,
-                event = next(&mut self.running) => {
+                event = next(&mut self.lighting) => {
                     match event {
                         Event::Ended(end) => self.session_ended(end).await,
                         Event::Measure => self.measure(),
@@ -434,53 +506,105 @@ impl Core {
                 Some(Command::SurfaceFailed(error)) => {
                     self.state.send_modify(|s| s.surface_failures.push(error));
                 }
-                Some(Command::SetTarget(target, reply)) => {
-                    let _ = reply.send(self.set_target(target).await);
-                }
-                Some(Command::SetCalibration(calibration, reply)) => {
-                    let _ = reply.send(self.set_calibration(calibration));
-                }
-                Some(Command::TryProcessing(processing, reply)) => {
-                    let _ = reply.send(self.try_processing(*processing));
-                }
-                Some(Command::ReplaceSettings {
-                    expected,
-                    settings,
-                    reply,
-                }) => {
-                    let _ = reply.send(self.replace_settings(expected, *settings).await);
+                Some(Command::Request(request)) => {
+                    self.settle().await;
+                    match self.refusal() {
+                        Some(error) => request.refuse(error),
+                        None => self.handle(request).await,
+                    }
                 }
             }
         }
     }
 
-    /// Refuse commands once a session is faulted: only a restart recovers.
-    ///
-    /// # Errors
-    /// [`Error::Faulted`] with the phase the session got stuck in.
-    fn faulted(&self) -> Result<()> {
-        match self.state.borrow().session {
-            SessionState::Faulted(phase) => Err(Error::Faulted(phase)),
-            _ => Ok(()),
+    /// Handle the end of a session whose loop already ended on its own, as
+    /// if the end had come before what is being handled now: a request or
+    /// shutdown then meets what the end left, whichever arrived first. A
+    /// session still running when the request arrives is the request's.
+    async fn settle(&mut self) {
+        if !matches!(&self.lighting, Lighting::Running(running) if running.session.has_ended()) {
+            return;
+        }
+        let Some(running) = self.take_running() else {
+            return;
+        };
+        // The thread is releasing what it holds: wait for it within the
+        // stop deadline. `Off` is the mode it leaves the output in.
+        let end = match running
+            .session
+            .stop(IdleMode::Off, self.stop_deadline)
+            .await
+        {
+            Ok(Stop::AsAsked(end) | Stop::OnItsOwn { end, .. }) => Ok(end),
+            Err(error) => Err(error),
+        };
+        let _ = self.ended(end);
+    }
+
+    /// Why requests are refused unhandled: the engine is faulted, and only a
+    /// restart recovers; or shutdown was asked for, and a request still
+    /// queued would start what it stops.
+    fn refusal(&self) -> Option<Error> {
+        if let Lighting::Faulted(phase) = self.lighting {
+            return Some(Error::Faulted(phase));
+        }
+        self.abandon_at.borrow().is_some().then_some(Error::Closed)
+    }
+
+    async fn handle(&mut self, request: Request) {
+        match request {
+            Request::SetTarget(target, reply) => {
+                let _ = reply.send(self.set_target(target).await);
+            }
+            Request::SetCalibration(calibration, reply) => {
+                let _ = reply.send(self.set_calibration(calibration));
+            }
+            Request::TryProcessing(processing, reply) => {
+                let _ = reply.send(self.try_processing(*processing));
+            }
+            Request::ReplaceSettings {
+                expected,
+                settings,
+                reply,
+            } => {
+                let _ = reply.send(self.replace_settings(expected, *settings).await);
+            }
         }
     }
 
-    /// What the session is doing. `running` is the one truth for whether a
-    /// session runs: [`Self::start`] sets both it and the published
-    /// `Running`, and [`Self::stop`] and [`Self::session_ended`] clear both;
-    /// otherwise the snapshot says why none runs.
-    fn session(&self) -> SessionState {
-        let published = self.state.borrow().session;
-        debug_assert_eq!(
-            self.running.is_some(),
-            published == SessionState::Running,
-            "running and the published session state disagree"
-        );
-        published
+    /// The only writer of the snapshot's `session`. It also resets `input`
+    /// and `device`, which [`Self::measure`] updates while a session runs.
+    fn set_lighting(&mut self, lighting: Lighting) {
+        self.set_lighting_and(lighting, |_| {});
+    }
+
+    /// [`Self::set_lighting`], publishing `change` in the same snapshot.
+    fn set_lighting_and(&mut self, lighting: Lighting, change: impl FnOnce(&mut Snapshot)) {
+        let session = lighting.state();
+        let input = matches!(lighting, Lighting::Running(_)).then(Input::default);
+        self.lighting = lighting;
+        self.state.send_modify(|s| {
+            s.session = session;
+            s.input = input;
+            s.device = DeviceReport::default();
+            change(s);
+        });
+    }
+
+    /// The running session, taken out of the lighting, which is left
+    /// `Stopped` (unpublished) until the caller sets what the end leaves.
+    fn take_running(&mut self) -> Option<Running> {
+        match std::mem::replace(&mut self.lighting, Lighting::Stopped) {
+            Lighting::Running(running) => Some(running),
+            other => {
+                self.lighting = other;
+                None
+            }
+        }
     }
 
     fn measure(&mut self) {
-        let Some(running) = &mut self.running else {
+        let Lighting::Running(running) = &mut self.lighting else {
             return;
         };
         let input = Some(running.meter.sample(&self.stats));
@@ -493,32 +617,41 @@ impl Core {
         });
     }
 
-    /// The session stopped on its own: a failure, or its source ended. An
-    /// ended source is completion: the target becomes `Off`, so lighting does
-    /// not restart (a file would replay) until asked again.
+    /// The session ended on its own and reported it.
     async fn session_ended(&mut self, end: Result<SessionEnd>) {
-        if let Some(running) = self.running.take() {
+        if let Some(running) = self.take_running() {
             running.session.join().await;
         }
-        let session = left_by(&end);
-        let ended = end.as_ref().is_ok_and(|end| end.ended);
-        let failure = end.and_then(SessionEnd::result).err();
-        self.state.send_modify(|s| {
-            s.session = session;
-            s.input = None;
-            s.device = DeviceReport::default();
+        let _ = self.ended(end);
+    }
+
+    /// A session ended on its own: a failure, or its source ended; seen when
+    /// it ended, or by a stop that came after. Publish what it left and its
+    /// failure, and return that failure. An ended source is completion: a
+    /// `Processed` target becomes `Off`, so lighting does not restart (a
+    /// file would replay) until asked again; any other target was set by a
+    /// command, and stands.
+    fn ended(&mut self, end: Result<SessionEnd>) -> Result<()> {
+        let (lighting, ended) = match &end {
+            Ok(end) => (Lighting::left_by(end), matches!(end.exit, Exit::Ended)),
+            Err(error) => (Lighting::failed(error), false),
+        };
+        let result = end.and_then(SessionEnd::result);
+        let failure = result.as_ref().err().cloned();
+        let complete = ended && self.state.borrow().target == LightingTarget::Processed;
+        self.set_lighting_and(lighting, |s| {
             s.failure = failure;
-            if ended {
+            if complete {
                 s.target = LightingTarget::Off;
             }
         });
-        if ended {
+        if complete {
             self.calibrate(None);
         }
+        result
     }
 
     async fn set_target(&mut self, target: LightingTarget) -> Result<()> {
-        self.faulted()?;
         self.state.send_modify(|s| s.target = target);
         if target != LightingTarget::Processed {
             self.calibrate(None);
@@ -533,7 +666,6 @@ impl Core {
         expected: Revision,
         settings: Settings,
     ) -> Result<Revision> {
-        self.faulted()?;
         let current = self.state.borrow().revision;
         if expected != current {
             return Err(Error::StaleRevision { expected, current });
@@ -561,7 +693,7 @@ impl Core {
                 s.revision = revision;
             });
         };
-        if self.session() == SessionState::Running && !adapters_changed {
+        if matches!(self.lighting, Lighting::Running(_)) && !adapters_changed {
             // Same adapters: the running session takes the new processing.
             self.reconfigure(install);
         } else {
@@ -579,15 +711,21 @@ impl Core {
     /// again (it may be another device).
     async fn reconcile(&mut self, restart: bool, output_changed: bool) -> Result<()> {
         let target = self.state.borrow().target;
-        match (target, self.session()) {
+        match (target, self.lighting.state()) {
+            // Requests are refused before they get here (see
+            // `Self::refusal`); this keeps the match total.
             (_, SessionState::Faulted(phase)) => Err(Error::Faulted(phase)),
             (LightingTarget::Processed, SessionState::Running) if restart => {
                 // Same path as Off followed by Processed. The new session
                 // starts even when idling the old output failed (that device
                 // may be the one being replaced), but not over a source whose
-                // release is unconfirmed.
+                // release is unconfirmed, nor after a source that had ended
+                // on its own: that turned the target `Off`.
                 let stopped = self.stop(IdleMode::Off).await;
-                if self.session() != SessionState::Stopped {
+                let target = self.state.borrow().target;
+                if target != LightingTarget::Processed
+                    || !matches!(self.lighting, Lighting::Stopped)
+                {
                     return stopped;
                 }
                 let started = self.start().await;
@@ -645,45 +783,50 @@ impl Core {
                     .await
                     .and_then(|closed| closed);
                 if released.is_err() {
-                    self.state.send_modify(|s| s.session = UNRELEASED);
+                    self.set_lighting(Lighting::UNRELEASED);
                 }
                 return Err(error);
             }
         };
-        self.running = Some(Running {
+        self.set_lighting(Lighting::Running(Running {
             session,
             meter: Meter::new(&self.stats),
-        });
-        self.state.send_modify(|s| {
-            s.session = SessionState::Running;
-            s.input = Some(Input::default());
-        });
+        }));
         Ok(())
     }
 
-    /// Stop the running session, if one runs (see [`Self::session`]):
-    /// without one there is nothing to stop and the state stays as it is.
+    /// Stop the running session, if one runs: without one there is nothing
+    /// to stop and the lighting stays as it is. A session that ended on its
+    /// own after the request began (one that had ended before was settled
+    /// first, see [`Self::settle`]) ended while being stopped: its end is
+    /// published ([`Self::ended`]) and the reply is its failures in order,
+    /// then the output's in `mode`. An unconfirmed release wins the state,
+    /// then an idle that did not return in time.
     async fn stop(&mut self, mode: IdleMode) -> Result<()> {
-        let Some(running) = self.running.take() else {
+        let Some(running) = self.take_running() else {
             return Ok(());
         };
-        let end = running.session.stop(mode, self.stop_deadline).await;
-        let state = left_by(&end);
-        // A session that ended on its own just before the stop was left in
-        // the default mode instead: put the output in `mode` now.
-        let missed =
-            state == SessionState::Stopped && end.as_ref().is_ok_and(|end| end.idle != mode);
-        self.state.send_modify(|s| {
-            s.session = state;
-            s.input = None;
-            s.device = DeviceReport::default();
-        });
-        let result = end.and_then(SessionEnd::result);
-        if missed {
-            let idled = self.idle_output(mode).await;
-            return result.and(idled);
+        match running.session.stop(mode, self.stop_deadline).await {
+            Err(error) => {
+                self.set_lighting(Lighting::failed(&error));
+                Err(error)
+            }
+            Ok(Stop::AsAsked(end)) => {
+                self.set_lighting(Lighting::left_by(&end));
+                end.result()
+            }
+            Ok(Stop::OnItsOwn { end, idled }) => {
+                let ended = self.ended(Ok(end));
+                if matches!(self.lighting, Lighting::Stopped) {
+                    match &idled {
+                        Err(Error::Faulted(phase)) => self.set_lighting(Lighting::Faulted(*phase)),
+                        Ok(()) if mode == IdleMode::Native => self.set_lighting(Lighting::Native),
+                        _ => {}
+                    }
+                }
+                ended.and(idled)
+            }
         }
-        result
     }
 
     /// DeviceNative has no session: open the output only to put it in `mode`.
@@ -696,20 +839,18 @@ impl Core {
         let result = match output {
             Ok(output) => self
                 .run_blocking(move || registry.open_output(&output)?.idle(mode))
-                .await?
-                .map_err(|error| error.in_section(Section::Output)),
+                .await
+                .and_then(|idled| idled.map_err(|error| error.in_section(Section::Output))),
             Err(error) => Err(error),
         };
-        let state = match (&result, mode) {
-            (Ok(()), IdleMode::Native) => SessionState::Native,
-            _ => SessionState::Stopped,
-        };
-        self.state.send_modify(|s| s.session = state);
+        self.set_lighting(match (&result, mode) {
+            (Ok(()), IdleMode::Native) => Lighting::Native,
+            _ => Lighting::Stopped,
+        });
         result
     }
 
     fn set_calibration(&mut self, calibration: Option<CalibrationPattern>) -> Result<()> {
-        self.faulted()?;
         if calibration.is_some() && self.state.borrow().target != LightingTarget::Processed {
             return Err(Error::NotProcessed);
         }
@@ -718,7 +859,6 @@ impl Core {
     }
 
     fn try_processing(&mut self, processing: Processing) -> Result<()> {
-        self.faulted()?;
         processing.validate()?;
         self.reconfigure(|core| core.trial = Some((processing, Instant::now() + TRIAL_TIMEOUT)));
         Ok(())
@@ -740,14 +880,14 @@ impl Core {
     /// Apply `change`, then give a running session the config that follows
     /// if it differs. Without a session there is nothing to compare.
     fn reconfigure(&mut self, change: impl FnOnce(&mut Self)) {
-        if self.running.is_none() {
+        if !matches!(self.lighting, Lighting::Running(_)) {
             change(self);
             return;
         }
         let before = self.config();
         change(self);
         let after = self.config();
-        if let Some(running) = &self.running
+        if let Lighting::Running(running) = &self.lighting
             && after != before
         {
             running.session.configure(after);
@@ -780,10 +920,13 @@ impl Core {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
+        self.settle().await;
         // Calibration ends at shutdown even on a faulted engine: the last
         // snapshot shows no pattern that nothing is showing any more.
         self.calibrate(None);
-        self.faulted()?;
+        if let Lighting::Faulted(phase) = self.lighting {
+            return Err(Error::Faulted(phase));
+        }
         let stopped = self.stop(IdleMode::Off).await;
         let result = stopped.and(self.abandoned.take().map_or(Ok(()), Err));
         self.record(&result);
@@ -804,9 +947,9 @@ async fn expiry(at: Option<Instant>) {
     }
 }
 
-async fn next(running: &mut Option<Running>) -> Event {
-    match running {
-        Some(running) => running.next().await,
-        None => std::future::pending().await,
+async fn next(lighting: &mut Lighting) -> Event {
+    match lighting {
+        Lighting::Running(running) => running.next().await,
+        Lighting::Stopped | Lighting::Native | Lighting::Faulted(_) => std::future::pending().await,
     }
 }

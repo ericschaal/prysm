@@ -75,13 +75,129 @@ impl Leds {
 
     /// Leave the output in `mode`: idle it if held; otherwise open it only
     /// when it may be in another mode. An untouched output stays untouched
-    /// for `Off`, the state lighting started from.
-    pub(crate) fn finish(mut self, mode: IdleMode, open: &mut OpenOutput) -> Result<()> {
+    /// for `Off`, the state lighting started from. Afterwards the output is
+    /// `Left(mode)`, or `Unknown` if that failed, so it can be finished
+    /// again in another mode.
+    pub(crate) fn finish(&mut self, mode: IdleMode, open: &mut OpenOutput) -> Result<()> {
         match self {
             Self::Held(_) => self.release(mode),
-            Self::Left(left) if left == mode => Ok(()),
+            Self::Left(left) if *left == mode => Ok(()),
             Self::Untouched if mode == IdleMode::Off => Ok(()),
-            Self::Untouched | Self::Left(_) | Self::Unknown => open()?.idle(mode),
+            Self::Untouched | Self::Left(_) | Self::Unknown => {
+                *self = Self::Unknown;
+                open()?.idle(mode)?;
+                *self = Self::Left(mode);
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prysm_ports::{Error, LedOutput};
+    use std::sync::{Arc, Mutex};
+
+    type Calls = Arc<Mutex<Vec<String>>>;
+
+    struct Output {
+        calls: Calls,
+        fail_idle: bool,
+    }
+
+    impl LedOutput for Output {
+        fn write(&mut self, _: &EdgeColors) -> Result<()> {
+            Ok(())
+        }
+
+        fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {
+            self.calls.lock().unwrap().push(format!("idle:{mode:?}"));
+            if self.fail_idle {
+                return Err(Error::other("cannot idle"));
+            }
+            Ok(())
+        }
+    }
+
+    /// The state before `finish`, built with outputs recording into `calls`.
+    #[derive(Debug, Clone, Copy)]
+    enum Before {
+        Untouched,
+        Held,
+        LeftOff,
+        LeftNative,
+        Unknown,
+    }
+
+    fn leds(from: Before, calls: &Calls, fail_idle: bool) -> Leds {
+        match from {
+            Before::Untouched => Leds::Untouched,
+            Before::Held => Leds::Held(Box::new(Output {
+                calls: calls.clone(),
+                fail_idle,
+            })),
+            Before::LeftOff => Leds::Left(IdleMode::Off),
+            Before::LeftNative => Leds::Left(IdleMode::Native),
+            Before::Unknown => Leds::Unknown,
+        }
+    }
+
+    fn state(leds: &Leds) -> String {
+        match leds {
+            Leds::Untouched => "untouched".into(),
+            Leds::Held(_) => "held".into(),
+            Leds::Left(mode) => format!("left {mode:?}"),
+            Leds::Unknown => "unknown".into(),
+        }
+    }
+
+    /// Every state against every mode, with outputs that idle and outputs
+    /// that cannot: the calls made and the state left.
+    #[test]
+    fn finish_leaves_every_state_in_the_asked_mode() {
+        use IdleMode::{Native, Off};
+        #[rustfmt::skip]
+        let cases: [(Before, IdleMode, bool, &[&str], &str); 20] = [
+            (Before::Untouched, Off, false, &[], "untouched"),
+            (Before::Untouched, Native, false, &["open", "idle:Native"], "left Native"),
+            (Before::Held, Off, false, &["idle:Off"], "left Off"),
+            (Before::Held, Native, false, &["idle:Native"], "left Native"),
+            (Before::LeftOff, Off, false, &[], "left Off"),
+            (Before::LeftOff, Native, false, &["open", "idle:Native"], "left Native"),
+            (Before::LeftNative, Off, false, &["open", "idle:Off"], "left Off"),
+            (Before::LeftNative, Native, false, &[], "left Native"),
+            (Before::Unknown, Off, false, &["open", "idle:Off"], "left Off"),
+            (Before::Unknown, Native, false, &["open", "idle:Native"], "left Native"),
+            (Before::Untouched, Off, true, &[], "untouched"),
+            (Before::Untouched, Native, true, &["open", "idle:Native"], "unknown"),
+            (Before::Held, Off, true, &["idle:Off"], "unknown"),
+            (Before::Held, Native, true, &["idle:Native"], "unknown"),
+            (Before::LeftOff, Off, true, &[], "left Off"),
+            (Before::LeftOff, Native, true, &["open", "idle:Native"], "unknown"),
+            (Before::LeftNative, Off, true, &["open", "idle:Off"], "unknown"),
+            (Before::LeftNative, Native, true, &[], "left Native"),
+            (Before::Unknown, Off, true, &["open", "idle:Off"], "unknown"),
+            (Before::Unknown, Native, true, &["open", "idle:Native"], "unknown"),
+        ];
+        for (from, mode, fail_idle, calls, left) in cases {
+            let made = Calls::default();
+            let mut leds = leds(from, &made, fail_idle);
+            let mut open: OpenOutput = Box::new({
+                let made = made.clone();
+                move || {
+                    made.lock().unwrap().push("open".into());
+                    Ok(Box::new(Output {
+                        calls: made.clone(),
+                        fail_idle,
+                    }) as Box<dyn LedOutput>)
+                }
+            });
+            let finished = leds.finish(mode, &mut open);
+            let case = (from, mode, fail_idle);
+            assert_eq!(*made.lock().unwrap(), calls, "{case:?}");
+            assert_eq!(state(&leds), left, "{case:?}");
+            assert_eq!(finished.is_ok(), left != "unknown", "{case:?}");
         }
     }
 }

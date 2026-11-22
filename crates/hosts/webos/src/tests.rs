@@ -233,11 +233,11 @@ async fn an_unconfirmed_release_faults_the_worker() {
     let Event::Faulted { cause } = fault else {
         unreachable!()
     };
-    assert!(cause.contains("closing the source"), "{cause}");
+    assert!(cause.contains("confirming the source's release"), "{cause}");
     let (result, stop) = task.await.unwrap();
     assert!(matches!(
         result,
-        Err(Error::Faulted(SessionPhase::ClosingSource))
+        Err(Error::Faulted(SessionPhase::SourceUnreleased))
     ));
     assert!(matches!(stop, Some(Stop::Faulted(_))));
     assert_eq!(

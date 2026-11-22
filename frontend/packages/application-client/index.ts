@@ -63,6 +63,7 @@ const phases: Record<Phase, string> = {
   closing_source: 'closing the capture source',
   idling_output: 'idling the lights',
   finishing: 'finishing',
+  source_unreleased: 'confirming the capture source was released',
 };
 
 /**

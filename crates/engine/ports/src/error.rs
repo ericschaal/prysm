@@ -47,7 +47,8 @@ pub enum Error {
     /// `Processed`: patterns are shown through processed lighting.
     #[error("calibration patterns need lighting on: set the target to processed first")]
     NotProcessed,
-    /// A session did not stop within its deadline; only shutdown is accepted.
+    /// A session did not stop within its deadline, or did not confirm its
+    /// source's release; only shutdown is accepted.
     #[error("runtime is faulted: session did not finish {0}")]
     Faulted(SessionPhase),
     #[error("{0} panicked")]

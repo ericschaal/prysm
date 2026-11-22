@@ -1,7 +1,7 @@
 //! What a session shows its viewers: the latest preview and the colors last
 //! written, each published only while someone watches.
+use crate::slot::LatestSlot;
 use prysm_core::{EdgeColors, Frame, Viewport};
-use prysm_ports::LatestSlot;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 

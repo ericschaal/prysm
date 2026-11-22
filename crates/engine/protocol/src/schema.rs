@@ -439,7 +439,8 @@ pub enum ModesSchema {
 }
 
 // Mirrors `prysm_ports::SessionPhase`.
-/// Where a faulted session stopped making progress.
+/// Where a faulted session stopped making progress, or `source_unreleased`:
+/// it finished without confirming its source's release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = Phase)]
 #[serde(rename_all = "snake_case")]
@@ -448,6 +449,7 @@ pub enum PhaseSchema {
     ClosingSource,
     IdlingOutput,
     Finishing,
+    SourceUnreleased,
 }
 
 /// A capture section, `{ "kind": "...", ...fields }`. Replaced by the
@@ -803,6 +805,7 @@ mod tests {
             SessionPhase::ClosingSource,
             SessionPhase::IdlingOutput,
             SessionPhase::Finishing,
+            SessionPhase::SourceUnreleased,
         ] {
             same_shape::<SessionPhase, PhaseSchema>(&phase);
         }

@@ -14,7 +14,6 @@ mod owner;
 mod registry;
 mod resolve;
 mod settings;
-mod slot;
 mod snapshot;
 mod style;
 
@@ -36,7 +35,6 @@ pub use owner::{OwnerThread, Worker};
 pub use registry::{Candidate, OutputFactory, Registry, SourceFactory};
 pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
-pub use slot::LatestSlot;
 pub use snapshot::{
     Behind, DeviceReport, Input, Latency, LightingTarget, SessionPhase, SessionState, Snapshot,
 };

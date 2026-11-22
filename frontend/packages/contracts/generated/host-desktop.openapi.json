@@ -655,12 +655,13 @@
         "type": "string"
       },
       "Phase": {
-        "description": "Where a faulted session stopped making progress.",
+        "description": "Where a faulted session stopped making progress, or `source_unreleased`:\nit finished without confirming its source's release.",
         "enum": [
           "running",
           "closing_source",
           "idling_output",
-          "finishing"
+          "finishing",
+          "source_unreleased"
         ],
         "type": "string"
       },
@@ -989,7 +990,7 @@
             "type": "object"
           },
           {
-            "description": "A session did not stop in time; only a restart recovers.",
+            "description": "A session did not stop in time, or did not confirm its source's\nrelease; only a restart recovers.",
             "properties": {
               "phase": {
                 "$ref": "#/components/schemas/Phase"

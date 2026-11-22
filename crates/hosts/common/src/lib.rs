@@ -8,27 +8,55 @@
 //! const PROGRAM: Program = Program { name: "prysm-headless", about: ABOUT, full_screen: false };
 //!
 //! fn main() -> ExitCode {
+//!     let (adapters, tv_stream) = prysm_host::desktop_adapters();
 //!     prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
 //!         prysm
 //!             .surface(host.status())
 //!             .surface(host.start())
-//!             .surface(host.portal(assets::HEADLESS)?)
+//!             .surface(host.portal(assets::HEADLESS)?.capture_stream(tv_stream))
 //!             .run(host.signals()?)
 //!             .await
 //!     })
 //! }
-//!
-//! fn adapters(prysm: Builder) -> Builder {
-//!     prysm.source(DeviceSource).output(Wled::default())
-//! }
 //! ```
 //!
 //! `--check-settings` is handled here: the settings file is validated against
-//! the host's adapters and the run closure is never called.
+//! the host's adapters and the run closure is never called. Feature
+//! `desktop` adds [`desktop_adapters`].
 mod args;
 pub mod assets;
 
 use args::{Options, parse};
+#[cfg(feature = "desktop")]
+pub use desktop::desktop_adapters;
+
+#[cfg(feature = "desktop")]
+mod desktop {
+    use prysm_capture_device::DeviceSource;
+    use prysm_capture_file::FileSource;
+    use prysm_capture_remote::RemoteReceiver;
+    use prysm_output_wled::Wled;
+    use prysm_ports::Handoff;
+    use prysm_runtime::{Builder, NullOutput};
+
+    /// What both desktop hosts register: sources `device`, `file` and
+    /// `remote`, outputs `wled` and `null`. Also the hand-off through which
+    /// the portal gives a capture-only TV's stream to the `remote` source
+    /// ([`Portal::capture_stream`](crate::Portal::capture_stream)).
+    pub fn desktop_adapters() -> (impl FnOnce(Builder) -> Builder, Handoff) {
+        let remote = RemoteReceiver::default();
+        let tv_stream = remote.incoming();
+        let adapters = move |prysm: Builder| {
+            prysm
+                .source(DeviceSource)
+                .source(FileSource)
+                .source(remote)
+                .output(Wled::default())
+                .output(NullOutput)
+        };
+        (adapters, tv_stream)
+    }
+}
 
 use futures::future::BoxFuture;
 use prysm_ports::{

@@ -6,12 +6,26 @@ license.workspace = true
 publish.workspace = true
 description = "Shared by the hosts: the embedded portal bundles; for the desktop hosts arguments, logging, portal, signals, status"
 
+[features]
+# `desktop_adapters`: the adapters both desktop hosts register, kept out of
+# the TV worker, which uses this crate only for its portal bundle.
+desktop = [
+    "dep:prysm-capture-device",
+    "dep:prysm-capture-file",
+    "dep:prysm-capture-remote",
+    "dep:prysm-output-wled",
+]
+
 [dependencies]
 prysm-ports.workspace = true
 prysm-runtime = { workspace = true, features = ["logging"] }
 prysm-settings-file.workspace = true
 prysm-version.workspace = true
 prysm-web-portal.workspace = true
+prysm-capture-device = { workspace = true, optional = true }
+prysm-capture-file = { workspace = true, optional = true }
+prysm-capture-remote = { workspace = true, optional = true }
+prysm-output-wled = { workspace = true, optional = true }
 clap.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["rt", "signal"] }

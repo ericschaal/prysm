@@ -44,6 +44,10 @@ pub trait FrameSource: Send {
     /// Wait up to `timeout` for the next frame. `Err` is a failure; a source
     /// that has nothing more to give returns [`Pull::Ended`], and keeps
     /// returning it.
+    ///
+    /// The frame returned is the newest one: a frame that arrives before the
+    /// last was taken replaces it, never queues behind it (see
+    /// [`OwnerThread`](crate::OwnerThread)).
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull>;
     /// Release native resources. Returning `Ok` certifies release.
     fn close(self: Box<Self>) -> Result<()>;

@@ -37,7 +37,8 @@ pub enum SessionState {
     Running,
     /// The output was put in its native idle mode.
     Native,
-    /// A session did not stop in time. Only shutdown is accepted.
+    /// A session did not stop in time, or its source's release is
+    /// unconfirmed. Only shutdown is accepted.
     Faulted(SessionPhase),
 }
 
@@ -53,7 +54,9 @@ impl fmt::Display for SessionState {
     }
 }
 
-/// Where a session thread is; reported when it fails to stop in time.
+/// Where a session thread is when it fails to stop in time, or
+/// [`SourceUnreleased`](Self::SourceUnreleased) when it finished without
+/// confirming its source's release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionPhase {
@@ -61,6 +64,10 @@ pub enum SessionPhase {
     ClosingSource,
     IdlingOutput,
     Finishing,
+    /// The source's close failed or panicked, or the thread died before
+    /// reporting it: the source may still hold its device, so no new session
+    /// can be trusted to open it.
+    SourceUnreleased,
 }
 
 impl fmt::Display for SessionPhase {
@@ -70,6 +77,7 @@ impl fmt::Display for SessionPhase {
             Self::ClosingSource => "closing the source",
             Self::IdlingOutput => "idling the output",
             Self::Finishing => "finishing",
+            Self::SourceUnreleased => "confirming the source's release",
         })
     }
 }
@@ -205,6 +213,10 @@ mod tests {
         assert_eq!(
             SessionState::Faulted(SessionPhase::ClosingSource).to_string(),
             "faulted while closing the source"
+        );
+        assert_eq!(
+            SessionState::Faulted(SessionPhase::SourceUnreleased).to_string(),
+            "faulted while confirming the source's release"
         );
     }
 }
