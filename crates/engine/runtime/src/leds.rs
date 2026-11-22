@@ -3,7 +3,8 @@
 use crate::stats::Stats;
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    AdapterSettings, DeviceReport, Hangup, IdleMode, LedOutput, OpenFailure, Registry, Result,
+    AdapterSettings, DeviceReport, Error, Hangup, IdleMode, LedOutput, OpenFailure, Registry,
+    Result,
 };
 use std::time::Instant;
 
@@ -30,6 +31,17 @@ impl Configured {
     }
 }
 
+/// Whether the cut of `stop` ended the output call that failed with
+/// `error`: the session's stop, not a failure, which the loop sees next;
+/// the end then leaves the output in the stop's mode.
+fn ended(error: &Error, stop: &Hangup) -> bool {
+    let ended = stop.is_cut();
+    if ended {
+        tracing::debug!(error = %prysm_ports::chain(error), "the stop ended the output's call");
+    }
+    ended
+}
+
 pub(crate) enum Leds {
     /// Never opened by this session.
     Untouched,
@@ -43,9 +55,10 @@ pub(crate) enum Leds {
 
 impl Leds {
     /// Write `colors`, opening the output first if it is not held; the
-    /// open ends when `stop` is cut. The write starts at `ready` (or when
-    /// the output finished opening) and its time and outcome are counted.
-    /// Returns when the write returned.
+    /// open ends when `stop` is cut, and is then not a failure: `None`, the
+    /// state saying what the open left. The write starts at `ready` (or
+    /// when the output finished opening) and its time and outcome are
+    /// counted. Returns when the write returned.
     pub(crate) fn write(
         &mut self,
         colors: &EdgeColors,
@@ -53,17 +66,23 @@ impl Leds {
         output: &Configured,
         stats: &Stats,
         stop: &Hangup,
-    ) -> Result<Instant> {
+    ) -> Result<Option<Instant>> {
         let began = if self.is_held() {
             ready
         } else {
             *self = Self::Held(match output.open(stop) {
                 Ok(held) => held,
-                // Nothing reached the device: it is as this state says.
-                Err(OpenFailure::Untouched(error)) => return Err(error),
-                Err(OpenFailure::Touched(error)) => {
-                    *self = Self::Unknown;
-                    return Err(error);
+                Err(failure) => {
+                    if let OpenFailure::Touched(_) = failure {
+                        *self = Self::Unknown;
+                    }
+                    // Else nothing reached the device: it is as this state says.
+                    let error = failure.into_error();
+                    return if ended(&error, stop) {
+                        Ok(None)
+                    } else {
+                        Err(error)
+                    };
                 }
             });
             stats.output_opened();
@@ -75,7 +94,7 @@ impl Leds {
         let wrote = held.write(colors);
         let written = Instant::now();
         stats.output_write(written - began, wrote.is_ok());
-        wrote.map(|()| written)
+        wrote.map(|()| Some(written))
     }
 
     pub(crate) fn is_held(&self) -> bool {
@@ -91,12 +110,18 @@ impl Leds {
     }
 
     /// Idle a held output in `mode` and close it; the idle ends when `stop`
-    /// is cut, the output then `Unknown`.
+    /// is cut, and is then not a failure, the output `Unknown`.
     pub(crate) fn release(&mut self, mode: IdleMode, stop: &Hangup) -> Result<()> {
         let Self::Held(output) = std::mem::replace(self, Self::Unknown) else {
             return Ok(());
         };
-        output.idle(mode, stop)?;
+        if let Err(error) = output.idle(mode, stop) {
+            return if ended(&error, stop) {
+                Ok(())
+            } else {
+                Err(error)
+            };
+        }
         *self = Self::Left(mode);
         Ok(())
     }

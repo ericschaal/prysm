@@ -247,8 +247,11 @@ impl RemoteSender {
         hangup: &Hangup,
         deadline: Instant,
     ) -> Result<Self> {
-        let failed = |error| Error::adapter(format!("cannot connect to {url}"), error);
-        let (stream, registration) = hangup.connect(address, deadline).map_err(failed)?;
+        let failed =
+            |error: std::io::Error| Error::adapter(format!("cannot connect to {url}"), error);
+        let (stream, registration) = hangup
+            .connect(address, deadline)
+            .map_err(|error| Error::adapter(format!("cannot connect to {url}"), error))?;
         stream.set_nodelay(true).map_err(failed)?;
         let handle = stream.try_clone().map_err(failed)?;
         let socket = Socket {
@@ -780,11 +783,9 @@ mod tests {
     }
 
     /// A cut ends a connect whose SYN is never answered (the listener's
-    /// accept queue is full, so Linux drops the SYN) at once: its socket is
-    /// connecting before any cut can reach it. Only on Linux: macOS
-    /// sometimes completes such a connect (seen in CI), and the cut then
-    /// ends a later wait.
-    #[cfg(target_os = "linux")]
+    /// accept queue is full, so Linux and macOS drop the SYN) at once: its
+    /// socket is connecting before any cut can reach it.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn a_cut_ends_a_connect_whose_syn_is_not_answered() {
         let listener =
@@ -812,8 +813,12 @@ mod tests {
             connecting.join().unwrap().unwrap_err()
         });
         assert!(stopped(&error), "{}", chain(&error));
-        // Only the connect's wait: no upgrade was ever written.
-        assert_eq!(hangup.waits(), 1, "the connect never completed");
+        // Only the connect's wait: no upgrade was ever written. Not on
+        // macOS, which sometimes completes such a connect (seen in CI): the
+        // cut then ends the upgrade's read instead, as asserted above.
+        if cfg!(target_os = "linux") {
+            assert_eq!(hangup.waits(), 1, "the connect never completed");
+        }
     }
 
     /// A cut ends a send blocked on a full send buffer (the receiver reads

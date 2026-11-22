@@ -22,6 +22,17 @@ pub struct Hangup(Arc<Mutex<Lines>>);
 #[error("ended by a stop")]
 pub struct Stopping;
 
+/// Why a call that a [`Hangup`] can end failed: the cut ended it, whatever
+/// the socket or the lookup said, or it failed on its own.
+#[derive(Debug, thiserror::Error)]
+pub enum CallError {
+    /// [`Error::cause`](crate::Error::cause) finds the [`Stopping`].
+    #[error("call ended")]
+    Stopped(#[from] Stopping),
+    #[error(transparent)]
+    Failed(#[from] io::Error),
+}
+
 /// What a [`Hangup`] cuts, by registration number.
 #[derive(Debug, Default)]
 struct Lines {
@@ -78,9 +89,28 @@ impl Hangup {
     /// once, and the shutdown then ends every read and write on it.
     ///
     /// # Errors
-    /// The connect failed, was cut ([`Stopping`] once cut before it began),
-    /// or did not end by `deadline` ([`io::ErrorKind::TimedOut`]).
+    /// [`CallError::Stopped`] once cut, before or during the connect; else
+    /// the connect failed or did not end by `deadline`
+    /// ([`io::ErrorKind::TimedOut`]).
     pub fn connect(
+        &self,
+        address: SocketAddr,
+        deadline: Instant,
+    ) -> Result<(TcpStream, Registration), CallError> {
+        self.try_connect(address, deadline)
+            .map_err(|error| self.ended(error))
+    }
+
+    /// The cut, once it came, else `error`.
+    pub(crate) fn ended(&self, error: io::Error) -> CallError {
+        if self.is_cut() {
+            Stopping.into()
+        } else {
+            error.into()
+        }
+    }
+
+    fn try_connect(
         &self,
         address: SocketAddr,
         deadline: Instant,
@@ -93,8 +123,9 @@ impl Hangup {
         socket.set_nonblocking(true)?;
         let registration = {
             let mut lines = self.lines();
+            // Reported as the cut by `connect`.
             if lines.cut {
-                return Err(io::Error::other(Stopping));
+                return Err(io::ErrorKind::NotConnected.into());
             }
             match socket.connect(&address.into()) {
                 Ok(()) => {}
@@ -249,12 +280,7 @@ mod tests {
                 Instant::now() + Duration::from_secs(60),
             )
             .unwrap_err();
-        assert!(
-            error
-                .get_ref()
-                .is_some_and(|inner| inner.downcast_ref::<Stopping>().is_some()),
-            "{error}"
-        );
+        assert!(matches!(error, CallError::Stopped(Stopping)), "{error}");
     }
 
     /// Registrations end with their calls: a cut after them wakes nothing.

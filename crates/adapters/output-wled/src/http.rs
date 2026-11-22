@@ -2,7 +2,7 @@
 //! call, done by a [`Deadline`] or a cut of its [`Hangup`], whichever comes
 //! first: no retries, no keep-alive, no proxy. [`get`] and [`read_response`]
 //! also serve the state checks, which never block.
-use prysm_ports::{Hangup, Stopping};
+use prysm_ports::{CallError, Hangup, Stopping};
 use serde_json::Value;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -65,7 +65,7 @@ const MAX_RESPONSE: usize = 20 * 1024;
 pub enum RequestError {
     /// Nothing reached the device.
     #[error("cannot connect")]
-    Connect(#[source] io::Error),
+    Connect(#[source] CallError),
     #[error("request failed")]
     Io(#[from] io::Error),
     #[error("malformed HTTP response: {0}")]
@@ -162,7 +162,8 @@ pub fn get(path: &str, host: &str) -> String {
 /// Connect to `device`, send `request` and read the whole response, all by
 /// `deadline`: a peer that answers a byte at a time cannot extend it. A cut
 /// of `stop` ends it at once: a connect not made yet fails as
-/// [`RequestError::Connect`], anything later as [`RequestError::Stopped`].
+/// [`RequestError::Connect`] (with [`CallError::Stopped`]), anything later as
+/// [`RequestError::Stopped`].
 fn exchange(
     device: SocketAddr,
     request: &str,

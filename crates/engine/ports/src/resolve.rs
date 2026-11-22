@@ -1,6 +1,6 @@
 //! Host name lookup with a deadline, for adapters that resolve a configured
 //! name each time they connect.
-use crate::{Hangup, Stopping};
+use crate::{CallError, Hangup, Stopping};
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::panic::catch_unwind;
@@ -93,11 +93,11 @@ impl Resolver {
     /// once when `hangup` is cut.
     ///
     /// # Errors
-    /// The lookup failed, gave no answer within `wait`
-    /// ([`io::ErrorKind::TimedOut`]; it stays pending), `hangup` was cut
-    /// (a [`Stopping`] error; it stays pending), or its thread could not be
-    /// spawned or panicked.
-    pub fn resolve(&mut self, wait: Duration, hangup: &Hangup) -> io::Result<SocketAddr> {
+    /// [`CallError::Stopped`] once `hangup` is cut (the lookup stays
+    /// pending); else the lookup failed, gave no answer within `wait`
+    /// ([`io::ErrorKind::TimedOut`]; it stays pending), or its thread could
+    /// not be spawned or panicked.
+    pub fn resolve(&mut self, wait: Duration, hangup: &Hangup) -> Result<SocketAddr, CallError> {
         let pending = match self.pending.take() {
             Some(pending) => pending,
             None => self.start()?,
@@ -108,21 +108,21 @@ impl Resolver {
             let _ = wake.send(Looked::Cut);
         });
         let ended = match registered {
-            None => Err(io::Error::other(Stopping)),
+            None => Err(Stopping.into()),
             Some(_registration) => loop {
                 hangup.waiting();
                 let left = deadline.map_or(wait, |at| at.saturating_duration_since(Instant::now()));
                 match pending.answers.recv_timeout(left) {
-                    Ok(Looked::Found(found)) => return found,
+                    Ok(Looked::Found(found)) => return Ok(found?),
                     // The cut of an earlier wait, which ended before it came.
                     Ok(Looked::Cut) if !hangup.is_cut() => {}
-                    Ok(Looked::Cut) => break Err(io::Error::other(Stopping)),
+                    Ok(Looked::Cut) => break Err(Stopping.into()),
                     Err(RecvTimeoutError::Timeout) => {
-                        break Err(io::Error::new(io::ErrorKind::TimedOut, "no answer yet"));
+                        break Err(io::Error::new(io::ErrorKind::TimedOut, "no answer yet").into());
                     }
                     // This end holds a sender: the channel never closes.
                     Err(RecvTimeoutError::Disconnected) => {
-                        break Err(io::Error::other("the lookup channel closed"));
+                        break Err(io::Error::other("the lookup channel closed").into());
                     }
                 }
             },
@@ -151,6 +151,7 @@ impl Resolver {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Condvar, Mutex};
 
     const WAIT: Duration = Duration::from_secs(5);
 
@@ -177,7 +178,10 @@ mod tests {
     fn a_failed_lookup_keeps_its_cause() {
         let mut missing = Resolver::new("nowhere.example", 80)
             .with_lookup(|_, _| Err(io::Error::new(io::ErrorKind::NotFound, "no such host")));
-        let error = missing.resolve(WAIT, &Hangup::default()).unwrap_err();
+        let CallError::Failed(error) = missing.resolve(WAIT, &Hangup::default()).unwrap_err()
+        else {
+            panic!("nothing cut it");
+        };
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
         assert_eq!(error.to_string(), "no such host");
     }
@@ -197,7 +201,10 @@ mod tests {
             .resolve(Duration::from_millis(20), &Hangup::default())
             .unwrap_err();
         assert!(started.elapsed() < Duration::from_millis(250), "bounded");
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            matches!(&error, CallError::Failed(error) if error.kind() == io::ErrorKind::TimedOut),
+            "{error}"
+        );
         assert_eq!(
             slow.resolve(WAIT, &Hangup::default()).unwrap(),
             "10.0.0.2:7380".parse().unwrap()
@@ -205,14 +212,20 @@ mod tests {
         assert_eq!(CALLS.load(Ordering::SeqCst), 1, "one lookup at a time");
     }
 
-    /// A cut ends a wait for a slow lookup at once, and every wait after
-    /// it; the lookup is kept, and a wait without a cut takes its answer.
+    /// A cut ends a wait for a lookup that has not answered, and every wait
+    /// after it; the lookup is kept, and a wait without a cut takes its
+    /// answer once it comes.
     #[test]
     fn a_cut_ends_the_wait_and_keeps_the_lookup() {
         static CALLS: AtomicU32 = AtomicU32::new(0);
-        let mut slow = Resolver::new("prysm.local", 7380).with_lookup(|_, port| {
+        // Opened by the test once the cut waits are done.
+        static GATE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+        let mut held = Resolver::new("prysm.local", 7380).with_lookup(|_, port| {
             CALLS.fetch_add(1, Ordering::SeqCst);
-            thread::sleep(Duration::from_millis(300));
+            let (open, opened) = &GATE;
+            let _open = opened
+                .wait_while(open.lock().unwrap(), |open| !*open)
+                .unwrap();
             Ok(SocketAddr::from(([10, 0, 0, 2], port)))
         });
         let hangup = Hangup::default();
@@ -220,21 +233,16 @@ mod tests {
             let hangup = hangup.clone();
             thread::spawn(move || hangup.cut())
         };
-        let started = Instant::now();
-        let error = slow.resolve(Duration::from_secs(60), &hangup).unwrap_err();
-        assert!(started.elapsed() < Duration::from_millis(250), "at the cut");
-        assert!(
-            error.get_ref().is_some_and(|inner| inner.is::<Stopping>()),
-            "{error}"
-        );
+        // The lookup cannot answer, so only the cut ends these waits.
+        let error = held.resolve(Duration::from_secs(60), &hangup).unwrap_err();
+        assert!(matches!(error, CallError::Stopped(Stopping)), "{error}");
         cutting.join().unwrap();
-        let again = slow.resolve(Duration::from_secs(60), &hangup).unwrap_err();
-        assert!(
-            again.get_ref().is_some_and(|inner| inner.is::<Stopping>()),
-            "{again}"
-        );
+        let again = held.resolve(Duration::from_secs(60), &hangup).unwrap_err();
+        assert!(matches!(again, CallError::Stopped(Stopping)), "{again}");
+        *GATE.0.lock().unwrap() = true;
+        GATE.1.notify_all();
         assert_eq!(
-            slow.resolve(WAIT, &Hangup::default()).unwrap(),
+            held.resolve(WAIT, &Hangup::default()).unwrap(),
             "10.0.0.2:7380".parse().unwrap()
         );
         assert_eq!(CALLS.load(Ordering::SeqCst), 1, "one lookup at a time");

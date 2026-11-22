@@ -271,6 +271,9 @@ pub struct FakeOutputSettings {
     pub name: String,
     /// Fail `write` after this many writes.
     pub fail_after: Option<u32>,
+    /// With `fail_after`: record `output.failing:<name>`, then wait for
+    /// this event in the log before failing.
+    pub fail_at: Option<String>,
     pub fail_open: bool,
     /// `idle` fails after recording the call, like an unreachable device.
     pub fail_idle: bool,
@@ -397,6 +400,11 @@ impl LedOutput for FakeOutput {
             std::thread::sleep(Duration::from_millis(self.settings.write_delay_ms));
         }
         if self.settings.fail_after.is_some_and(|n| self.writes >= n) {
+            if let Some(gate) = &self.settings.fail_at {
+                self.log
+                    .record(format!("output.failing:{}", self.settings.name));
+                self.log.block_until(gate);
+            }
             return Err(Error::other("fake output failed"));
         }
         self.writes += 1;

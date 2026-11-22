@@ -738,7 +738,13 @@ fn unresolvable_host_fails_open_naming_the_host() {
     else {
         panic!("expected an adapter error with a source: {error:?}");
     };
-    assert!(source.downcast_ref::<io::Error>().is_some(), "{source:?}");
+    assert!(
+        matches!(
+            source.downcast_ref::<prysm_ports::CallError>(),
+            Some(prysm_ports::CallError::Failed(_))
+        ),
+        "{source:?}"
+    );
 }
 
 /// A name whose lookup hangs fails each open at the deadline, and the
@@ -1510,9 +1516,6 @@ fn an_open_output_encodes_for_wled_gamma() {
     }
 }
 
-/// Long enough that a call the cut did not end would still wait at the
-/// test's bound.
-const LONG: Duration = Duration::from_secs(60);
 /// The bound of a call the cut ends.
 const AT_ONCE: Duration = Duration::from_secs(1);
 
@@ -1584,8 +1587,14 @@ fn an_open_after_the_cut_reaches_nothing() {
 /// A cut ends an open waiting for its name to resolve at once.
 #[test]
 fn a_cut_ends_an_open_waiting_for_its_name() {
+    // Opened once the test is done, so the lookup thread ends with it.
+    static GATE: (std::sync::Mutex<bool>, std::sync::Condvar) =
+        (std::sync::Mutex::new(false), std::sync::Condvar::new());
     let wled = Wled::default().with_lookup(|_, _| {
-        thread::sleep(LONG);
+        let (open, opened) = &GATE;
+        let _open = opened
+            .wait_while(open.lock().unwrap(), |open| !*open)
+            .unwrap();
         Err(io::Error::other("too late"))
     });
     let settings = WledSettings {
@@ -1597,6 +1606,8 @@ fn a_cut_ends_an_open_waiting_for_its_name() {
         panic!("nothing reached it");
     };
     assert!(stopped(&error), "{}", prysm_ports::chain(&error));
+    *GATE.0.lock().unwrap() = true;
+    GATE.1.notify_all();
 }
 
 /// A cut ends a held output's idle waiting for its reply at once.

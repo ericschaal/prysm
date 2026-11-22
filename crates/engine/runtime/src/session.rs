@@ -101,19 +101,6 @@ fn lights(error: Error) -> Error {
     error.in_section(Section::Output)
 }
 
-/// The output's call, or `None` when the session's stop ended it (its
-/// [`Hangup`] cut): the loop then sees the stop, and the end leaves the
-/// output in the stop's mode, whatever the call left it in.
-fn unless_stopped<T>(call: Result<T>, stop: &Hangup) -> Result<Option<T>> {
-    match call {
-        Err(error) if stop.is_cut() => {
-            tracing::debug!(error = %prysm_ports::chain(&error), "the stop ended the output's call");
-            Ok(None)
-        }
-        call => call.map(Some).map_err(lights),
-    }
-}
-
 /// Leave the output in `mode`, a panic reported as the failure.
 fn idle(leds: &mut Leds, mode: IdleMode, output: &Configured) -> Result<IdleMode> {
     guarded("idling the output", || leds.finish(mode, output))
@@ -184,9 +171,10 @@ impl SessionLoop {
             received,
             captured,
             processed,
-            written: write.as_ref().ok().copied(),
+            written: write.as_ref().ok().copied().flatten(),
         });
-        let Some(written) = unless_stopped(write, stop)? else {
+        // `None`: the stop ended the open.
+        let Some(written) = write.map_err(lights)? else {
             return Ok(());
         };
         let observed = self.leds.report();
@@ -207,16 +195,19 @@ impl SessionLoop {
             self.report(DeviceReport::default());
             // The device shows its own state now, not these colors.
             self.feeds.clear_colors();
-            return unless_stopped(self.leds.release(RELEASE, stop), stop).map(drop);
+            return self.leds.release(RELEASE, stop).map_err(lights);
         }
         if let Some((colors, written)) = &mut self.last
             && now - *written >= REFRESH
         {
             // Held: nothing is opened, so nothing for the stop to end.
-            *written = self
+            if let Some(rewritten) = self
                 .leds
                 .write(colors, now, &self.output, &self.stats, stop)
-                .map_err(lights)?;
+                .map_err(lights)?
+            {
+                *written = rewritten;
+            }
             let observed = self.leds.report();
             self.report(observed);
         }
@@ -569,6 +560,33 @@ mod tests {
             log.record("test.fail");
         });
         stopped
+    }
+
+    /// A write that fails once a stop was asked is the session's failure,
+    /// not the stop: the cut ends only an open or a release, and a write
+    /// never waits for it.
+    #[tokio::test]
+    async fn a_write_failing_after_a_stop_was_asked_is_reported() {
+        let log = CallLog::new();
+        let failing = FakeOutputSettings {
+            fail_after: Some(1),
+            fail_at: Some("test.fail".into()),
+            ..Default::default()
+        };
+        let session = started(&log, FakeSourceSettings::default(), failing);
+        assert!(log.wait_for("output.failing:o", 1).await);
+        let (stopped, ()) = tokio::join!(session.stop(IdleMode::Off, DEADLINE), async {
+            log.record("test.fail");
+        });
+        let Stop::OnItsOwn(end) = stopped.unwrap() else {
+            panic!("it failed on its own");
+        };
+        let Exit::Failed(failure) = &end.exit else {
+            panic!("the write failed: {:?}", end.exit);
+        };
+        assert_eq!(failure.to_string(), "fake output failed");
+        assert_eq!(failure.section(), Some(Section::Output));
+        assert!(matches!(end.left, Ok(IdleMode::Off)));
     }
 
     /// A session that fails on its own after a stop asked for another mode

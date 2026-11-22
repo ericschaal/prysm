@@ -1,5 +1,5 @@
 //! The device address: `host[:port]`, parsed at validation and resolved at open.
-use prysm_ports::{Error, Hangup, Lookup, Resolver, Result, Stopping};
+use prysm_ports::{Error, Hangup, Lookup, Resolver, Result};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Mutex, PoisonError};
@@ -184,7 +184,7 @@ impl Names {
     ///
     /// # Errors
     /// [`Error::Adapter`] when the name does not resolve in time (or the
-    /// cut came first, a [`Stopping`] cause) or resolves only to a
+    /// cut came first, a [`prysm_ports::Stopping`] cause) or resolves only to a
     /// non-unicast address.
     pub(crate) fn resolve(
         &self,
@@ -207,12 +207,7 @@ impl Names {
         let ip = resolver
             .resolve(wait, stop)
             .map_err(|source| {
-                let context = format!("cannot resolve WLED host {}", address.host);
-                if stop.is_cut() {
-                    Error::adapter(context, Stopping)
-                } else {
-                    Error::adapter(context, source)
-                }
+                Error::adapter(format!("cannot resolve WLED host {}", address.host), source)
             })?
             .ip();
         if !is_unicast(ip) {
