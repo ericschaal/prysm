@@ -9,8 +9,8 @@ the run: `close` always purges
 the package and fails when `deb.leftovers` still finds anything, which it
 reports and leaves for a person. In between the runner copies the package
 into its run directory (as the binary cell does), installs it with apt-get
-and adds a runtime drop-in, the package's documented override, so the unit's
-own command also gets `--listen LISTEN --metrics`. It restarts the unit and
+and adds a runtime drop-in that replaces the unit's command with its own
+command plus `--listen LISTEN --metrics`. It restarts the unit and
 gives Prysm its settings through the portal, as a person does, so Prysm
 writes them into the state directory of the unit's dynamic user itself. The
 unit is started and stopped with systemctl; its exit status comes from
@@ -27,6 +27,7 @@ import email
 import io
 from pathlib import Path
 import tarfile
+import tempfile
 
 from prysm_acceptance import commands, installed
 from prysm_acceptance.commands import UnitAction
@@ -55,6 +56,10 @@ from prysm_acceptance.transport import Result, Transport
 
 # Where the installed unit's Prysm listens: its default address, as the package runs it without a drop-in.
 UNIT_LISTEN = '0.0.0.0:8787'
+# An administrator's unit and drop-ins, which `apt-get purge` leaves.
+_ADMIN_UNIT_PATHS = frozenset(
+    ('/etc/systemd/system/prysm-headless.service', '/etc/systemd/system/prysm-headless.service.d')
+)
 
 
 def deb_control(path: Path) -> dict[str, str]:
@@ -110,12 +115,14 @@ class DebPrysm:
         return leftovers(self.transport.run(commands.deb_leftovers(self.target)).stdout)
 
     def backup(self, found: list[str]) -> Backup:
-        """The settings and target of the Prysm the unit runs. Refused while an administrator's unit or drop-in
-        under /etc is there: the purge would leave it."""
-        kept = [path for path in found if path.startswith('/etc/')]
+        """The settings and target of the Prysm the unit runs, and the options file as it is (None: absent), which
+        the purge deletes. Refused while an administrator's unit or drop-in under /etc/systemd/system is there: the
+        purge would leave it. The unit's enablement link goes with the purge and comes back with the install."""
+        kept = [path for path in found if path in _ADMIN_UNIT_PATHS]
         if kept:
             raise RuntimeError(f'{", ".join(kept)} on {self.target} would outlive the purge: remove it there first')
         state = Prysm(self.url).state()
+        options = self.options()
         return {
             'target': self.name,
             'host': self.target,
@@ -123,23 +130,57 @@ class DebPrysm:
             'found': found,
             'portal': {'url': self.url, 'settings': state['settings'], 'target': state['target']},
             'luna': None,
-            'files': {},
+            'files': {commands.DEB_OPTIONS: options},
         }
 
     def remove(self) -> list[str]:
         self.transport.run(commands.deb_purge(self.target))
         return self.found()
 
+    def options(self) -> str | None:
+        """The options file's text; None when it is absent."""
+        text = self.transport.run(commands.deb_options(self.target)).stdout
+        return None if text == '__absent__\n' else text
+
     def restore(self, backup: Backup) -> list[str]:
-        """The settings, then the lighting target, into the reinstalled package's Prysm."""
+        """The options file as backed up (written or removed, then the unit restarted, when it differs), then the
+        settings and the lighting target, into the reinstalled package's Prysm."""
         portal = backup['portal']
         if portal is None:
             raise RuntimeError('the backup holds no settings')
+        if commands.DEB_OPTIONS not in backup['files']:
+            raise RuntimeError(f'the backup holds no {commands.DEB_OPTIONS}')
+        done = [self._restore_options(backup['files'][commands.DEB_OPTIONS])]
         prysm = Prysm(self.url)
         reply = prysm.replace_settings(portal['settings'])
         if reply.status != 200:
             raise RuntimeError(f'PUT {self.url}/api/v1/settings: HTTP {reply.status} {reply.body[:300]!r}')
-        return [f'settings into {self.url}', installed.lighting(prysm, portal['target'])]
+        return [*done, f'settings into {self.url}', installed.lighting(prysm, portal['target'])]
+
+    def _restore_options(self, text: str | None, seconds: float = 30) -> str:
+        """`text` into the options file (None: removed), and the unit restarted so it reads it; left as it is when
+        it already holds `text`."""
+        if self.options() == text:
+            return f'{commands.DEB_OPTIONS} as backed up: left as it is'
+        if text is None:
+            self.transport.run(commands.deb_options_remove(self.target))
+        else:
+            with tempfile.TemporaryDirectory() as directory:
+                local = Path(directory) / 'options'
+                local.write_text(text)
+                self.transport.run(commands.deb_options_write(self.target, local))
+        self.transport.run(commands.deb_systemctl(self.target, UnitAction.RESTART))
+
+        def active() -> bool:
+            unit = unit_properties(self.transport.run(commands.deb_unit(self.target)).stdout)
+            if unit.get('ActiveState') == 'failed':
+                raise RuntimeError(f'{commands.DEB_UNIT} failed on {self.target} after the options file was restored')
+            return unit.get('ActiveState') == 'active'
+
+        if wait_for_state(self.url, seconds, 0.5, active) is None:
+            raise RuntimeError(f'{commands.DEB_UNIT} did not answer at {self.url} within {seconds} s')
+        state = 'removed' if text is None else 'written'
+        return f'{commands.DEB_OPTIONS} {state} as backed up, {commands.DEB_UNIT} restarted'
 
 
 class SshDeb:

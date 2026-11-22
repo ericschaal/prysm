@@ -49,17 +49,25 @@ the file up before upgrades with
 Restarting leaves the lights off; stopping the service turns them off.
 
 To add options, such as starting Screen sync at boot (`--start`) or allowing
-the slim TV app (`--allow-origin null`), run `sudo systemctl edit prysm-headless`
-and add:
+the slim TV app (`--allow-origin null`), set `OPTIONS` in
+`/etc/default/prysm-headless` with `sudo nano /etc/default/prysm-headless`:
 
-```ini
-[Service]
-ExecStart=
-ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json --start
+```sh
+OPTIONS="--start --allow-origin null"
 ```
 
-Then run `sudo systemctl restart prysm-headless`. See all options with
-`prysm-headless --help`.
+Then run `sudo systemctl restart prysm-headless`. The file lists examples, and
+`prysm-headless --help` lists every option. The service passes each word of
+`OPTIONS` to Prysm as one argument after the settings file. Quotes inside
+`OPTIONS` are not interpreted, so no option value may contain a space.
+
+The options file is the package's configuration file (a Debian *conffile*).
+An upgrade keeps your edits. If the new version also changes the file, apt
+asks which one to keep; keeping yours is safe. Put options in this file, not
+in a `systemctl edit` drop-in: a drop-in that replaces `ExecStart` overrides
+the package's command and keeps overriding it after upgrades. If you have
+such a drop-in (`systemctl cat prysm-headless` shows it), move its options to
+`OPTIONS`, then run `sudo systemctl revert prysm-headless` to delete it.
 
 The service can open video devices (`/dev/video*`) and the network, nothing
 else. The slim TV sends its picture to the portal's port (8787), so that is
@@ -68,5 +76,6 @@ the only port to allow in a firewall.
 ## Remove
 
 `sudo apt remove prysm-headless` stops and disables the service and keeps the
-settings. `sudo apt purge prysm-headless` also deletes the settings
-(`/var/lib/prysm` and `/var/lib/private/prysm`), leaving nothing behind.
+settings and the options file. `sudo apt purge prysm-headless` also deletes
+the settings (`/var/lib/prysm` and `/var/lib/private/prysm`) and
+`/etc/default/prysm-headless`, leaving nothing behind.

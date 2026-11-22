@@ -1,0 +1,15 @@
+# Options for the prysm-headless service, read when it starts. The unit runs
+#   /usr/bin/prysm-headless /var/lib/prysm/settings.json $OPTIONS
+# with the words of OPTIONS as further arguments. Quotes inside OPTIONS are not
+# interpreted, so no option value may contain a space. Edit this file, then run
+# `sudo systemctl restart prysm-headless`. `prysm-headless --help` lists every
+# option. An upgrade keeps this file as you edited it.
+#
+# Examples:
+#   start Screen sync when the service starts:
+#     OPTIONS="--start"
+#   allow the slim TV app, which controls Prysm from the origin `null`:
+#     OPTIONS="--allow-origin null"
+#   both:
+#     OPTIONS="--start --allow-origin null"
+OPTIONS=
