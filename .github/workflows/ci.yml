@@ -40,15 +40,21 @@
 #   headers, lints the SDK-only TV crates and runs `dist tv-full tv-slim`
 #   (build-ipk.sh links against the sysroot and checks the binaries with
 #   ipk.py).
-# - `miri`: interprets webos-luna-sys's ownership and callback tests on the
-#   x86-64 and armv7 targets, with a pinned nightly (its mock swaps dlopen for
-#   a placeholder library under Miri).
+# - `miri`: interprets webos-luna-sys's ownership and callback tests, the
+#   frame pools, strided copies and frame sizes on the x86-64 and armv7
+#   targets, with a pinned nightly (luna's mock swaps dlopen for a
+#   placeholder library under Miri); on x86-64 also capture-webos-sys's
+#   plane copy and HAL GAL lifecycle and prysm-ports' capture owner and slot.
+# - `sanitizer (address)`, `sanitizer (thread)`: the tests of the unsafe,
+#   threaded and frame pool crates under AddressSanitizer (with
+#   LeakSanitizer) and ThreadSanitizer, with Miri's nightly.
 # - `docker` (amd64, arm64): `dist image-<arch> linux-<arch> deb-<arch>`, then
 #   smoke-tests the image archive, checks both compose files, and installs and
 #   purges the .deb. xtask passes XTASK_BUILDX_ARGS to buildx for the layer
 #   cache.
 #
-# Not here: on-TV tests (native-smoke.py) need a TV.
+# Not here: on-TV tests (native-smoke.py) need a TV; the fuzz targets
+# (fuzz/) run in the nightly workflow.
 name: CI
 on:
   # A branch gets its results from its pull request (a draft one will do).
@@ -108,6 +114,10 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       - name: Script, TV package and acceptance runner checks, repository links
         run: cargo xtask check scripts
+      # The nightly workflow runs them; this keeps them and fuzz/Cargo.lock
+      # building against each pull request's crates.
+      - name: Fuzz targets compile
+        run: cargo check --locked --manifest-path fuzz/Cargo.toml
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
@@ -390,6 +400,86 @@ jobs:
         run: >-
           cargo miri test --locked -p prysm-capture-webos-sys --lib --
           vtcapture::tests::planes_are_copied_through_their_pointer_within_bounds
+      # HAL GAL through its Rust fakes, up to the mapping: only the tests that
+      # never reach dlopen or a file-backed mmap, which Miri cannot run. A
+      # missing /dev/gfx is an error from `open` (isolation) rather than an
+      # abort.
+      - name: Interpret the HAL GAL surface lifecycle
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        env:
+          MIRIFLAGS: -Zmiri-isolation-error=warn-nobacktrace
+        run: >-
+          cargo miri test --locked -p prysm-capture-webos-sys --lib --
+          halgal::tests::failed_creation_destroys_nothing
+          halgal::tests::missing_device_destroys_the_created_surface
+          halgal::tests::an_unexpected_surface_is_rejected
+      # On both targets, as armv7's usize is 32 bits. Only the frame tests:
+      # the colour tests take minutes under Miri.
+      - name: Interpret frame pools, strided copies and frame sizes
+        run: >-
+          cargo miri test --locked -p prysm-core --target ${{ matrix.target }}
+          --lib --test frame_limits -- frame:: expected_size_matches
+      # The capture owner and the newest-frame slot: threads, locks and
+      # condition variables, checked for data races. Not the rest of the
+      # crate: its handoff tests open sockets and its calibration tests
+      # compare floats exactly, which Miri's float rounding breaks.
+      - name: Interpret the capture owner and frame slot
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: >-
+          cargo miri test --locked -p prysm-ports --lib -- owner:: slot::
+
+  # AddressSanitizer and ThreadSanitizer over the tests of the crates with
+  # unsafe code (the capture -sys crates, the Luna wrapper), the capture
+  # adapters' host tests (their worker threads, the capture stream's
+  # sockets), the concurrency (ports, runtime) and frame pools (core). Every pull
+  # request: they guard the changes that bring unsafe or threaded code, and
+  # take minutes beside the `rust` jobs. Miri's pinned nightly; std is
+  # rebuilt instrumented (-Zbuild-std), which ThreadSanitizer needs, and
+  # `--target` keeps build scripts and proc-macros uninstrumented. The C++
+  # bridge (capture-webos-sys/native), OpenH264 and ring are built by `cc`
+  # without sanitizer flags, so neither sanitizer sees inside them.
+  sanitizers:
+    name: sanitizer (${{ matrix.sanitizer }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-11-01
+      RUSTFLAGS: -Zsanitizer=${{ matrix.sanitizer }}
+      # A panic's backtrace takes seconds to symbolize in these builds, longer
+      # than the watchdogs of the tests that panic on purpose.
+      RUST_BACKTRACE: '0'
+      # LeakSanitizer is part of AddressSanitizer on Linux and stays on.
+      ASAN_OPTIONS: hard_rss_limit_mb=4096
+      TSAN_OPTIONS: hard_rss_limit_mb=4096
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Pinned nightly with the standard library's source
+        # prysm-capture-device-sys -> v4l2-sys-mit generates its bindings with bindgen.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libclang-dev
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rust-src --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: sanitizer-${{ matrix.sanitizer }}
+      # Library and integration tests, not doctests (rustdoc would need the
+      # flags too). Not the engine test that processes 4K frames against the
+      # clock: an instrumented build is too slow for its bounds.
+      - name: Tests under the ${{ matrix.sanitizer }} sanitizer
+        run: >-
+          cargo test --locked -Zbuild-std --target x86_64-unknown-linux-gnu
+          --lib --tests
+          -p prysm-core -p prysm-ports -p prysm-runtime
+          -p prysm-capture-webos-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
+          -p prysm-capture-webos -p prysm-capture-device -p prysm-capture-remote
+          -p prysm-capture-file
+          -- --skip a_slow_processing_step_is_named_after_a_few_seconds
 
   webos-ipk:
     # The SDK below is built for aarch64 hosts.

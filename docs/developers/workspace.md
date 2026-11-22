@@ -18,6 +18,7 @@ The implementation before 1.0 is in the tag `pre-1.0-consolidation`.
 | `crates/surfaces/` | [`tui`](../../crates/surfaces/tui/src/lib.rs), [`web-portal`](../../crates/surfaces/web-portal/HTTP-CONTRACT.md) | Ways in and out of a running engine |
 | `crates/hosts/` | [`headless`](../../crates/hosts/headless/src/main.rs), [`tui`](../../crates/hosts/tui/src/main.rs), [`common`](../../crates/hosts/common/src/lib.rs) (`prysm-host`); TV: [`webos`](../../crates/hosts/webos/src/main.rs), [`webos-slim`](../../crates/hosts/webos-slim/src/main.rs), [`webos-service`](../../crates/hosts/webos-service/src/lib.rs) | Executables: a builder list plus process options; the TV workers and their supervisor ([design](../plans/prysm-v1-webos-supervisor.md)) |
 | `crates/tools/` | [`export-contracts`](../../crates/tools/export-contracts/src/main.rs), [`xtask`](../../crates/tools/xtask/src/main.rs) | OpenAPI documents for frontend codegen; `cargo xtask`, the build entry point ([develop](README.md#build-and-run)) |
+| `fuzz/` | [cargo-fuzz targets](../../fuzz/Cargo.toml), their own Cargo workspace | Nightly fuzzing of the size checks and the capture stream's decoders ([run them](debugging.md#fuzzing)) |
 | `frontend/` | npm workspace | Portal and TV bundles; see its [README](../../frontend/README.md) |
 
 Contracts: [ownership and generation](contracts.md), [portal HTTP](../../crates/surfaces/web-portal/HTTP-CONTRACT.md),

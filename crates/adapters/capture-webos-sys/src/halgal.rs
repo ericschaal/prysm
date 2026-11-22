@@ -318,6 +318,71 @@ fn map(device: &Path, offset: u32, length: usize) -> Result<Mapping, Error> {
     })
 }
 
+/// The fuzz target `halgal_surface` in `fuzz/` (feature `fuzzing`, never
+/// shipped): [`UiCapture::check`] on any surface HAL could hand back, read
+/// from 16 bytes, against the same rules worked out in `u64`. `check` accepts
+/// exactly the surfaces whose every row lies inside a mapping of at most
+/// 64 MiB, and returns that mapping's length.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_surface_check(data: &[u8]) {
+    unsafe extern "C" fn init() -> c_int {
+        0
+    }
+    unsafe extern "C" fn create(_: u32, _: u32, _: u32, _: *mut Surface) -> c_int {
+        0
+    }
+    unsafe extern "C" fn call(_: *mut Surface) -> c_int {
+        0
+    }
+    // Never called: the capture below has no surface or mapping to release.
+    static NO_HAL: HalApi = HalApi {
+        init,
+        create,
+        destroy: call,
+        capture: call,
+    };
+    let Some(bytes) = data.first_chunk::<16>() else {
+        return;
+    };
+    let field = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+    let (width, height) = (field(0), field(2));
+    let mut surface = Surface::empty();
+    surface.pitch = field(4);
+    surface.bpp = field(6);
+    surface.width = field(8);
+    surface.height = field(10);
+    surface.property = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+    let capture = UiCapture {
+        api: &NO_HAL,
+        surface: Box::new(surface),
+        created: false,
+        mapping: None,
+        released: true,
+    };
+    let s = &capture.surface;
+    let (pitch, rows, row) = (u64::from(s.pitch), u64::from(height), u64::from(width) * 4);
+    let length = match s.property {
+        0 => pitch * rows,
+        bytes => u64::from(bytes),
+    };
+    let valid = (s.width, s.height) == (width, height)
+        && width != 0
+        && height != 0
+        && s.bpp == 32
+        && pitch >= row
+        && length >= pitch * (rows - 1) + row
+        && length <= 64 * 1024 * 1024;
+    match capture.check(width, height) {
+        Ok(got) => {
+            assert!(valid, "accepted {width}x{height} from {data:?}");
+            assert_eq!(got as u64, length, "{data:?}");
+        }
+        Err(Error::Invalid(_)) => assert!(!valid, "refused {width}x{height} from {data:?}"),
+        Err(error) => panic!("{error} from {data:?}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

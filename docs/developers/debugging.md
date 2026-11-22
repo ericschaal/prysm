@@ -50,6 +50,65 @@ the TV app's **View diagnostics**).
 
 For rates and timing over time, enable [metrics](monitoring.md).
 
+## Memory safety and fuzzing
+
+CI checks the unsafe, threaded and parsing code with tools that need a
+nightly Rust: the one [ci.yml](../../.github/workflows/ci.yml) pins for Miri.
+Install it once, with cargo-fuzz for the fuzz targets:
+
+```sh
+rustup toolchain install nightly-2026-11-01 --component miri,rust-src
+cargo install cargo-fuzz --locked --version 0.13.1
+```
+
+### Miri
+
+The `miri` job's steps name the tests Miri can run: Miri cannot call C, so a
+test that reaches `dlopen`, the C++ bridge, a socket or a file-backed `mmap`
+stops the whole run. For example:
+
+```sh
+cargo +nightly-2026-11-01 miri test -p prysm-core --lib --test frame_limits -- frame:: expected_size_matches
+cargo +nightly-2026-11-01 miri test -p prysm-core --test frame_limits --target armv7-unknown-linux-gnueabi
+```
+
+The second checks the frame sizes with the TV's 32-bit `usize`.
+
+### Sanitizers
+
+The `sanitizer` jobs run the tests of the unsafe and threaded crates under
+AddressSanitizer and ThreadSanitizer. Use your host's triple
+(`x86_64-unknown-linux-gnu` in CI; `aarch64-apple-darwin` on a Mac, which has
+no LeakSanitizer). The job's step lists every crate; these are the unsafe
+ones:
+
+```sh
+RUSTFLAGS=-Zsanitizer=address cargo +nightly-2026-11-01 test -Zbuild-std \
+  --target x86_64-unknown-linux-gnu --lib --tests \
+  -p prysm-capture-webos-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
+```
+
+`-Zsanitizer=thread` for ThreadSanitizer. Code built by `cc` (the C++
+bridge, OpenH264, ring) is not instrumented.
+
+### Fuzzing
+
+[fuzz/](../../fuzz/Cargo.toml) is its own workspace with one target per
+decoder or size check; the nightly workflow runs each for ten minutes. Each
+target asserts what the code promises, not only that it does not panic. Run
+one for a minute, bounded in memory:
+
+```sh
+cd fuzz
+cargo +nightly-2026-11-01 fuzz list
+mkdir -p corpus/frame_header
+cargo +nightly-2026-11-01 fuzz run frame_header corpus/frame_header seeds/frame_header -- -max_total_time=60 -rss_limit_mb=2048
+```
+
+A crash is saved under `fuzz/artifacts/TARGET/`; CI prints its bytes and
+keeps it as an artifact. Replay it with
+`cargo +nightly-2026-11-01 fuzz run TARGET PATH`.
+
 ## Hardware checks
 
 No run of these against Prysm 1.x is recorded yet (the only recorded 1.x

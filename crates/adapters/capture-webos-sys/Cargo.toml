@@ -16,6 +16,10 @@ prysm-webos-luna-sys.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+[features]
+# The surface check's entry for the fuzz targets in fuzz/; never shipped.
+fuzzing = []
+
 [build-dependencies]
 cc = "1"
 

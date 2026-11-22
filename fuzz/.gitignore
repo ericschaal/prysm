@@ -1,0 +1,6 @@
+# cargo fuzz's working files: the corpus it grows, crashes and coverage.
+# The seeds in seeds/ are committed.
+target/
+corpus/
+artifacts/
+coverage/

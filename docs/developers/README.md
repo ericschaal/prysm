@@ -114,8 +114,10 @@ cargo xtask check frontend scripts
 Only the `frontend` group installs the npm packages and needs Node.js;
 `scripts` needs `uv` (`cargo xtask doctor` checks both). Not included: shellcheck and
 actionlint (CI's `quality` job runs them), `cargo deny check` (`supply-chain`,
-with [deny.toml](../../deny.toml)), the end-to-end tests, and the
-armv7 and Miri jobs; CI's IPK and Docker jobs build with `cargo xtask dist`
+with [deny.toml](../../deny.toml)), the end-to-end tests, the
+armv7 job, and the Miri and sanitizer jobs and the nightly fuzzing (each needs
+a nightly Rust; see [memory safety and fuzzing](debugging.md#memory-safety-and-fuzzing)
+to run them locally); CI's IPK and Docker jobs build with `cargo xtask dist`
 ([packaging](packaging.md#artifacts-in-dist)). In a full run, the contracts are checked before the
 typecheck, so stale contracts fail as such, and the bundle is built before the
 frontend tests and Rust, so the TV tests read it and the hosts embed the real
