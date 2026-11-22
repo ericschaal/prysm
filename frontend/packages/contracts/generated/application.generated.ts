@@ -343,7 +343,14 @@ export interface components {
              */
             custom_style?: components["schemas"]["StyleValues"];
             remove_black_bars: boolean;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description Samples per 1000 px of edge, measured on the picture scaled down to
+             *     640x360: the same value gives the same samples at any capture size.
+             *     At most one sample per sampling-grid cell along an edge (128 along the
+             *     longer side): density 200 reaches it for 16:9 pictures of 640x360 or
+             *     more, a higher one for squarer or smaller pictures.
+             */
             sample_density: number;
             style: components["schemas"]["ChosenStyle"];
         };

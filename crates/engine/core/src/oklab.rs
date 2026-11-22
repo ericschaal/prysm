@@ -36,9 +36,10 @@ impl Oklab {
         }
     }
 
-    /// Converts back to linear sRGB. A mix of two displayable colours in
-    /// Oklab can fall just outside the sRGB gamut; negative light cannot be
-    /// shown, so each channel is clamped to zero.
+    /// Converts back to linear sRGB, the inverse the tests check
+    /// [`Self::from_linear`] against. A colour just outside the sRGB gamut
+    /// would need negative light, so each channel is clamped to zero.
+    #[cfg(test)]
     #[must_use]
     #[allow(
         clippy::excessive_precision,

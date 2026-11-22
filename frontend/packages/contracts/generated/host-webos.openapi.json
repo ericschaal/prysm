@@ -589,7 +589,7 @@
             "type": "object"
           },
           {
-            "description": "The latest frame cannot be shown, such as an undecoded MJPEG frame.",
+            "description": "The latest frame cannot be shown, such as an empty frame.",
             "properties": {
               "message": {
                 "type": "string"
@@ -755,6 +755,7 @@
             "type": "boolean"
           },
           "sample_density": {
+            "description": "Samples per 1000 px of edge, measured on the picture scaled down to\n640x360: the same value gives the same samples at any capture size.\nAt most one sample per sampling-grid cell along an edge (128 along the\nlonger side): density 200 reaches it for 16:9 pictures of 640x360 or\nmore, a higher one for squarer or smaller pictures.",
             "format": "int32",
             "maximum": 1024,
             "minimum": 1,

@@ -9,15 +9,12 @@ use std::fmt;
 pub enum SampleError {
     /// The frame has no pixels.
     Empty,
-    /// The frame is compressed (MJPEG).
-    Compressed,
 }
 
 impl From<SampleError> for &'static str {
     fn from(error: SampleError) -> Self {
         match error {
             SampleError::Empty => "the frame is empty",
-            SampleError::Compressed => "MJPEG frames cannot be previewed",
         }
     }
 }
@@ -36,7 +33,7 @@ impl std::error::Error for SampleError {}
 /// frame are black.
 ///
 /// # Errors
-/// [`SampleError`]: the frame is empty, or compressed.
+/// [`SampleError`]: the frame is empty.
 pub fn sample_rgb(
     frame: &Frame,
     area: Viewport,
@@ -45,9 +42,6 @@ pub fn sample_rgb(
 ) -> Result<Vec<[u8; 3]>, SampleError> {
     if frame.width() == 0 || frame.height() == 0 {
         return Err(SampleError::Empty);
-    }
-    if frame.format() == PixelFormat::MJPEG {
-        return Err(SampleError::Compressed);
     }
     let (nv12, yuyv) = (Nv12View::new(frame), YuyvView::new(frame));
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
@@ -90,7 +84,7 @@ fn pixel(frame: &Frame, x: u32, y: u32) -> [u8; 3] {
             }
         }
         // Sampled through their views by the caller.
-        PixelFormat::YUYV { .. } | PixelFormat::NV12 { .. } | PixelFormat::MJPEG => [0; 3],
+        PixelFormat::YUYV { .. } | PixelFormat::NV12 { .. } => [0; 3],
     }
 }
 
@@ -256,16 +250,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_and_compressed_frames_are_errors() {
+    fn empty_frames_are_errors() {
         let empty = Frame::dummy(0, 2).unwrap();
         assert_eq!(
             sample_rgb(&empty, full(&empty), 1, 1),
             Err(SampleError::Empty)
-        );
-        let jpeg = Frame::new(vec![1, 2, 3], 4, 2, PixelFormat::MJPEG).unwrap();
-        assert_eq!(
-            sample_rgb(&jpeg, full(&jpeg), 1, 1),
-            Err(SampleError::Compressed)
         );
     }
 }

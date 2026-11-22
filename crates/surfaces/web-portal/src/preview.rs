@@ -340,10 +340,10 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_frames_are_unavailable() {
-        let jpeg = Frame::new(vec![1, 2, 3], 4, 2, PixelFormat::MJPEG).unwrap();
+    fn empty_frames_are_unavailable() {
+        let empty = Frame::dummy(0, 2).unwrap();
         assert!(matches!(
-            event(&preview(jpeg)),
+            event(&preview(empty)),
             PreviewEvent::Unavailable { .. }
         ));
     }

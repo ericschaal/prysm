@@ -33,7 +33,7 @@ pub fn frame(data: &[u8]) {
     match encoding {
         Encoding::Raw => assert_eq!(
             header.format.expected_size(header.width, header.height),
-            Ok(Some(decoded.payload.len())),
+            Ok(decoded.payload.len()),
             "{header:?}"
         ),
         Encoding::H264 => {

@@ -72,7 +72,12 @@ dark-scene glow, colour correction, brightness) and writes `EdgeColors` to the o
 replace untaken frames instead of queueing them, so latency does not build up.
 Processing assumes sRGB; the file source tone-maps HDR before it. YUYV and
 NV12 are sampled in place at full precision; a capture card that names no
-YCbCr matrix gets BT.709 from 720 lines up and BT.601 below. The WLED output
+YCbCr matrix gets BT.709 from 720 lines up and BT.601 below. A picture above
+640x360 is sampled as its copy scaled down to 640x360: it is read on a lattice
+of every nth pixel and row, and its grid and its sample counts (the sample
+density's samples per 1000 px) are those of the copy, so the cost and the
+detail are the same at any capture size. An edge gets at most one sample per
+grid cell along it, at most 128 along the longer side. The WLED output
 encodes the linear colours for the gamma WLED applies, read from its
 configuration (sRGB until read; see [`observe.rs`](../../crates/adapters/output-wled/src/observe.rs)).
 Unless the output's `dither` is off, it dithers each LED between the two

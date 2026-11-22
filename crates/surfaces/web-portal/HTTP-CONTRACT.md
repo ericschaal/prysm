@@ -252,7 +252,7 @@ the per-edge counts.
 | --- | --- | --- |
 | `frame` | `sequence, source_width, source_height, width, height, viewport, colors, jpeg` | A frame the stream has not sent yet |
 | `idle` | — | No session runs (lighting `off`, `device_native`, stopped after a failure, faulted) or it has not processed a frame yet |
-| `unavailable` | `message` | The latest frame cannot be shown (an MJPEG frame); its colors are not sent |
+| `unavailable` | `message` | The latest frame cannot be shown (an empty frame); its colors are not sent |
 
 - `jpeg` is a base64 baseline JPEG (quality 75) of the whole captured frame,
   scaled (nearest pixel) to at most 480 pixels on its longer side, never

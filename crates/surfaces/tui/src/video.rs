@@ -170,12 +170,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_or_unsupported_frames_are_preview_errors() {
+    fn empty_frames_are_preview_errors() {
         let frame = Frame::dummy(4, 2).unwrap();
         assert!(sample(&frame, 0, 2).is_err());
         assert!(sample(&Frame::dummy(0, 2).unwrap(), 4, 2).is_err());
-        let jpeg = Frame::new(vec![1, 2, 3], 4, 2, PixelFormat::MJPEG).unwrap();
-        assert!(sample(&jpeg, 4, 2).is_err());
     }
 
     #[test]

@@ -150,13 +150,20 @@ impl ColorCorrection {
         })
     }
 
+    /// Whether this is the default correction, which changes nothing.
+    #[must_use]
+    pub fn is_identity(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// Correct the shared peak before the matrix, preserving black and hue
     /// under the tone curve. The curve fixes 0 and 1 and is strictly
     /// monotonic. The result is clipped to 0–1, where a strengthened primary
     /// leaves the LEDs' gamut.
+    /// The identity leaves every colour exactly as it is.
     #[must_use]
     pub fn apply(&self, color: LinearColor) -> LinearColor {
-        if *self == Self::default() {
+        if self.is_identity() {
             return color;
         }
         let peak = color.r.max(color.g).max(color.b);

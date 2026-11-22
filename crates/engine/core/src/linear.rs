@@ -118,7 +118,7 @@ impl LinearColor {
     /// the lights can show; zero leaves it exactly as it is.
     #[must_use]
     pub fn boost_saturation(self, boost: crate::SaturationBoostPercent) -> Self {
-        if boost.0 == 0 {
+        if boost.is_neutral() {
             return self;
         }
         self.scale_chroma(1.0 + boost.as_ratio())
@@ -130,7 +130,7 @@ impl LinearColor {
     #[must_use]
     pub fn with_dark_floor(self, floor: crate::DarkFloorPercent) -> Self {
         let lift = floor.as_ratio() - self.luminance();
-        if floor.0 == 0 || lift <= 0.0 {
+        if floor.is_neutral() || lift <= 0.0 {
             return self;
         }
         // A deep blue can leave no room for all of the white; the gamut limit

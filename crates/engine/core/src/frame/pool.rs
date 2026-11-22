@@ -75,9 +75,7 @@ impl FramePool {
         height: u32,
         format: PixelFormat,
     ) -> Result<FrameWriter<'_>, FrameError> {
-        let size = format
-            .expected_size(width, height)?
-            .ok_or(FrameError::VariableSizeFormat)?;
+        let size = format.expected_size(width, height)?;
         let index = self.buffers.iter_mut().position(|slot| {
             slot.as_mut()
                 .is_none_or(|data| Arc::get_mut(data).is_some())
@@ -130,7 +128,7 @@ impl FramePool {
         if corrupted || width == 0 || height == 0 {
             return None;
         }
-        format.expected_size(width, height).ok()??;
+        format.expected_size(width, height).ok()?;
         // NV12's chroma plane follows the luma rows at the same stride.
         let (row_size, rows) = format.rows(width, height)?;
         let required = stride.checked_mul(rows - 1)?.checked_add(row_size)?;
@@ -258,7 +256,6 @@ mod tests {
             pool.acquire(u32::MAX, u32::MAX, PixelFormat::RGB24)
                 .is_err()
         );
-        assert!(pool.acquire(2, 2, PixelFormat::MJPEG).is_err());
         let format = PixelFormat::YUYV {
             range: YuvRange::Full,
             matrix: YuvStandardMatrix::Bt709,

@@ -278,7 +278,7 @@
       "type": "idle"
     },
     {
-      "message": "MJPEG frames cannot be previewed",
+      "message": "the frame is empty",
       "type": "unavailable"
     },
     {

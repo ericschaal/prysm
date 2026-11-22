@@ -8,12 +8,11 @@ use prysm_core::{Frame, FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
 /// A format from one byte, as `pixel_format_size` reads it.
 fn format(code: u8) -> PixelFormat {
     let (range, matrix) = (YuvRange::Limited, YuvStandardMatrix::Bt709);
-    match code % 5 {
+    match code % 4 {
         0 => PixelFormat::RGB24,
         1 => PixelFormat::BGR24,
         2 => PixelFormat::YUYV { range, matrix },
-        3 => PixelFormat::NV12 { range, matrix },
-        _ => PixelFormat::MJPEG,
+        _ => PixelFormat::NV12 { range, matrix },
     }
 }
 
@@ -26,7 +25,7 @@ fn copy(
     let frame = pool.copy_from_strided(data, width, height, format, stride, corrupted);
     // Bytes per stored row and stored rows, both NV12 planes counted.
     let geometry = match format.expected_size(width, height) {
-        Ok(Some(_)) => Some(match format {
+        Ok(_) => Some(match format {
             PixelFormat::NV12 { .. } => (width as usize, (height + height / 2) as usize),
             PixelFormat::YUYV { .. } => (width as usize * 2, height as usize),
             _ => (width as usize * 3, height as usize),
@@ -49,7 +48,7 @@ fn copy(
         (width, height, format)
     );
     assert_eq!(
-        Ok(Some(frame.len())),
+        Ok(frame.len()),
         format.expected_size(width, height),
         "{context}"
     );
