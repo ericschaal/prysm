@@ -732,11 +732,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   );
   assert.deepEqual(
     [versions.title, versions.description, versions.attention],
-    [
-      'Update Prysm or TV app',
-      'Update the older of Prysm and this app.',
-      true,
-    ],
+    ['Update Prysm or TV app', 'Update the older of Prysm and this app.', true],
   );
   // Another TV took the stream over: this one stopped until capture is
   // started again, which the button offers.
@@ -750,12 +746,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     }),
   );
   assert.deepEqual(
-    [
-      replaced.title,
-      replaced.description,
-      replaced.attention,
-      replaced.action,
-    ],
+    [replaced.title, replaced.description, replaced.attention, replaced.action],
     [
       'Another TV took over',
       'Stop and start capture to send from this TV.',
@@ -1039,10 +1030,7 @@ test('every state keeps the same slots, plain words and focus on a control', asy
       if (name === 'version')
         assert.deepEqual(
           [tv.text('status-title'), tv.text('status-description')],
-          [
-            'Update Prysm or TV app',
-            'Update the older of Prysm and this app.',
-          ],
+          ['Update Prysm or TV app', 'Update the older of Prysm and this app.'],
           'another stream version asks for an update, not for Prysm to run',
         );
       // No programmer words outside Diagnostics.
