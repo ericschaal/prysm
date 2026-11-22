@@ -124,7 +124,7 @@ device.commands.configureProcessing(0, {
 // each package has only its own fields.
 const tvState: TvState = {
   flavor: 'slim',
-  preferences: { instance: 'http://192.168.1.20:8787' },
+  preferences: { prysm_address: 'http://192.168.1.20:8787' },
   enabled: true,
   power: 'active',
   video: 'available',

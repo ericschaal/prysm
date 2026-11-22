@@ -35,9 +35,10 @@ On the Rust side every UI is a runtime surface over one `EngineHandle`; see the
   [Luna client](../../frontend/packages/webos-platform/index.ts) of the supervisor
   (generated `luna` types; `getState` subscription, `setPreferences`,
   `setTarget` (full), `setEnabled` (slim), `uninstall`, and set-up through the Homebrew Channel's `exec`
-  of `setup.sh`) and an HTTP client factory for the Prysm that drives the
+  of `setup.sh`; a refused call carries the service's `errorKind`, read as
+  `unknown` when newer or absent, and the UI shows its `errorText`) and an HTTP client factory for the Prysm that drives the
   lights (lighting modes and calibration). Full: the TV's own portal over loopback (`http://127.0.0.1:` and the
-  port of the address the full worker reports as its `portal`). Slim: `preferences.instance`, the computer's portal, which
+  port of the address the full worker reports as its `portal`). Slim: `preferences.prysm_address`, the computer's portal, which
   must allow the app's origin (`--allow-origin null`; a `file://` app sends
   `Origin: null`); the UI says so when that portal answers but refuses, and
   warns when a saved address has no portal that answers. The slim UI fills

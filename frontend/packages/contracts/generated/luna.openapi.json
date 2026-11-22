@@ -16,10 +16,29 @@
         ],
         "type": "object"
       },
+      "ErrorKind": {
+        "description": "Why a call failed: the error reply's `errorKind`. `too_large`: the\npayload exceeds 4096 bytes. `unknown_method`: no such method.\n`forbidden`: only the TV app may change Prysm. `removing`: the service is\nbeing removed. `invalid_request`: the payload is not the method's request.\n`wrong_package`: the other package's method (`setTarget` on slim,\n`setEnabled` on full). `invalid_preferences`: a preference the installed\npackage does not have. `save_failed`: the preferences could not be saved.\n`internal`: the service could not read the call or send its reply. Open:\nan app reads a kind it does not know as a refusal and shows `errorText`.",
+        "enum": [
+          "too_large",
+          "unknown_method",
+          "forbidden",
+          "removing",
+          "invalid_request",
+          "wrong_package",
+          "invalid_preferences",
+          "save_failed",
+          "internal"
+        ],
+        "type": "string"
+      },
       "ErrorReply": {
-        "description": "Any failed call.",
+        "description": "Any failed call. LS2's own replies (for example for a method that is not\nregistered) carry no `errorKind`; an app reads that as an unknown kind.",
         "properties": {
+          "errorKind": {
+            "$ref": "#/components/schemas/ErrorKind"
+          },
           "errorText": {
+            "description": "What failed, for people.",
             "type": "string"
           },
           "returnValue": {
@@ -31,18 +50,20 @@
         },
         "required": [
           "returnValue",
+          "errorKind",
           "errorText"
         ],
         "type": "object"
       },
       "FailureKind": {
-        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the encoder the receiver requested could not start or failed;\nthe receiver is told, and another encoding chosen in its portal may work.\n`receiver` (slim): the receiver is unavailable (not lighting, unreachable,\nor its name does not resolve); the worker keeps reconnecting. `version`\n(slim): Prysm speaks another capture stream version; the older one needs\nupdating, and the worker keeps reconnecting. `replaced` (slim): another\nTV took over the stream at Prysm; this one stopped sending until the\nworker restarts (capture stopped and started, the TV waking, or a new\nPrysm address). `receiver_failed` (slim): Prysm's receiving source failed\nwith this TV's stream (a refusal, a keyframe that does not decode, no\ndecoder), and Prysm shows why; the worker released the capture and keeps\nreconnecting. `other`: anything else.",
+        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the encoder the receiver requested could not start or failed;\nthe receiver is told, and another encoding chosen in its portal may work.\n`receiver` (slim): the receiver is unavailable (not lighting, unreachable,\nor its name does not resolve); the worker keeps reconnecting. `version`\n(slim): Prysm speaks another capture stream version; the older one needs\nupdating, and the worker keeps reconnecting. `replaced` (slim): another\nTV took over the stream at Prysm; this one stopped sending until the\nworker restarts (capture stopped and started, the TV waking, or a new\nPrysm address). `receiver_failed` (slim): Prysm's receiving source failed\nwith this TV's stream (a refusal, a keyframe that does not decode, no\ndecoder), and Prysm shows why; the worker released the capture and keeps\nreconnecting. `preferences`: the TV's saved preferences could not be\nread; the service runs with the defaults and keeps the file until the app\nsaves preferences. `other`: anything else. Open: an app reads a kind it\ndoes not know as `other`.",
         "enum": [
           "encoder",
           "receiver",
           "version",
           "replaced",
           "receiver_failed",
+          "preferences",
           "other"
         ],
         "type": "string"
@@ -221,13 +242,13 @@
       },
       "Preferences": {
         "additionalProperties": false,
-        "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional, an unset one absent). Fields marked \"Slim only\" must stay unset\nin the full package.",
+        "description": "The installed package's preferences: the `setPreferences` request\n(complete, every field optional, an unset one absent) and the published\n`preferences`. Fields marked \"Slim only\" must stay unset in the full\npackage. The file is [`PreferencesFile`].",
         "properties": {
           "autostart": {
             "description": "Start when the service starts: the full package starts screen sync,\nthe slim package streams to its receiver.",
             "type": "boolean"
           },
-          "instance": {
+          "prysm_address": {
             "description": "Slim only: the headless Prysm's address, such as\n`http://192.168.1.20:8787` or `https://prysm.example.com` (through a\nreverse proxy). The TV streams its picture there, and the TV app\nlinks to its portal. Only the syntax is checked when saved; the TV\nresolves a host name at every connection attempt, and one that does\nnot resolve is reported as the receiver wait.",
             "example": "http://192.168.1.20:8787",
             "maxLength": 256,

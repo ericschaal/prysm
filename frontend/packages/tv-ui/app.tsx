@@ -124,7 +124,7 @@ function RetryBar({ retry }: { retry: Retry }) {
 }
 
 /** The warning when no portal that allows this app answers at a saved address. */
-function instanceWarning(reach: 'refused' | 'unreachable') {
+function addressWarning(reach: 'refused' | 'unreachable') {
   return reach === 'refused'
     ? 'Saved. Prysm answers there but doesn’t take commands from the TV; capture still works. The TV guide shows how to allow it.'
     : 'Saved. No Prysm answers at that address yet. Check that Prysm is running and the address is right.';
@@ -148,7 +148,7 @@ export function TvApp({
   const { state, draft, online } = tv;
   // The full package's portal on this TV, as its worker reports it.
   const ownPortal = state && fullPortal(state);
-  const baseUrl = slim ? draft.instance : localPortal(ownPortal);
+  const baseUrl = slim ? draft.prysm_address : localPortal(ownPortal);
   // Its own connection: a lost TV service subscription does not end it.
   const portal = usePortal(baseUrl, portalOptions, visible);
   const { snapshot } = portal;
@@ -165,7 +165,7 @@ export function TvApp({
   });
   // Capture, lights and the slim stream encoding are set up only in this
   // portal, never in this UI.
-  const portalAddress = slim ? draft.instance : ownPortal;
+  const portalAddress = slim ? draft.prysm_address : ownPortal;
   const elapsed = useElapsed(tv.countdown ? tv.stateAt : null);
   const status = tvStatus(
     online,
@@ -203,13 +203,13 @@ export function TvApp({
    * Save a Prysm address (slim) and check it: a warning replaces the notice
    * when no portal that allows this app answers there.
    */
-  async function setInstance(instance: string | null) {
+  async function setPrysmAddress(address: string | null) {
     checkRef.current += 1;
     const check = checkRef.current;
-    if (!(await tv.set({ instance })) || !instance) return;
-    const reach = await checkPortal(instance, portalOptions);
+    if (!(await tv.set({ prysm_address: address })) || !address) return;
+    const reach = await checkPortal(address, portalOptions);
     if (reach !== 'ok' && check === checkRef.current)
-      say(instanceWarning(reach), true);
+      say(addressWarning(reach), true);
   }
 
   function primary() {
@@ -221,7 +221,7 @@ export function TvApp({
       case 'disable':
         return void tv.enable(false);
       case 'address':
-        return nav.openDialog('instance');
+        return nav.openDialog('prysm-address');
       case 'enable':
         return void tv.enable(true);
     }
@@ -268,7 +268,7 @@ export function TvApp({
     patterns,
     portal,
     state,
-    draft.instance,
+    draft.prysm_address,
   );
 
   // A change applies at once; while one is sent the others wait (the
@@ -397,11 +397,13 @@ export function TvApp({
               <div className="setting-list">
                 {slim ? (
                   <SettingRow
-                    id="instance"
+                    id="prysm-address"
                     label="Prysm address"
-                    value={draft.instance ? shown(draft.instance) : 'Add'}
+                    value={
+                      draft.prysm_address ? shown(draft.prysm_address) : 'Add'
+                    }
                     disabled={disabled}
-                    open={() => nav.openDialog('instance')}
+                    open={() => nav.openDialog('prysm-address')}
                   />
                 ) : null}
                 <SwitchRow
@@ -459,7 +461,7 @@ export function TvApp({
           modal={nav.modal}
           tv={tv}
           slim={slim}
-          setInstance={(instance) => void setInstance(instance)}
+          setPrysmAddress={(address) => void setPrysmAddress(address)}
           closeDialog={nav.closeDialog}
           openDialog={nav.openDialog}
           dismiss={nav.dismiss}

@@ -32,7 +32,7 @@ const tvProps = (flavor, fixture, supervisor) => ({
   portal: { client: () => fixture.client, supported: true },
   onExit: () => {},
 });
-const slimPreferences = { instance: 'http://192.0.2.20:8787' };
+const slimPreferences = { prysm_address: 'http://192.0.2.20:8787' };
 
 test('TV assemblies show their package: Luna for the TV, HTTP for the lights', async () => {
   for (const flavor of ['full', 'slim']) {
@@ -64,13 +64,16 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
           .textContent,
         flavor === 'full'
           ? '192.168.1.5:8787'
-          : slimPreferences.instance.replace('http://', ''),
+          : slimPreferences.prysm_address.replace('http://', ''),
       );
       assert(
         !document.getElementById('capture'),
         'capture is set in the portal only',
       );
-      assert.equal(!!document.getElementById('instance'), flavor === 'slim');
+      assert.equal(
+        !!document.getElementById('prysm-address'),
+        flavor === 'slim',
+      );
       await act(async () =>
         document.getElementById('mode-screen_sync').click(),
       );

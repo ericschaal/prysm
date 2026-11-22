@@ -109,7 +109,7 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   still not reaped 8 s after its KILL). Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.
 - A worker runs while the TV is on (active or screen saver) and, for slim,
-  while capture is enabled and `instance` is set. Video is reported
+  while capture is enabled and `prysm_address` is set. Video is reported
   unavailable unless the TV is active.
 - The intent (full: lighting target; slim: enabled) is kept with the boot ID
   in `resume.json`: a service restart in the same boot resumes it, a reboot
@@ -213,12 +213,34 @@ newer `target` or worker `phase` as `unknown` (never off or stopped; a phase
 shows "Updating…" with no start or stop), a newer `failure.kind` as
 `other`, a newer slim `link.state` as starting, a newer `link.encoding` as
 sent, and a newer `flavor` as a state it cannot show. Requests stay closed:
-the service refuses a value it does not know. Preferences hold only `autostart` and, for slim, `instance`
-(the desktop Prysm's portal address, where frames go). An absent value (no
-failure, `fps`, `portal` or `instance`) is omitted, never `null`,
-here and in the worker's status lines. Picture settings live in a
-portal, never in Luna. Types: generated `@prysm/contracts/luna` from
+the service refuses a value it does not know. Preferences hold only
+`autostart` and, for slim, `prysm_address` (the desktop Prysm's portal
+address, where frames go). An absent value (no failure, `fps`, `portal` or
+`prysm_address`) is omitted, never `null`, here and in the worker's status
+lines. Picture settings live in a portal, never in Luna. Types: generated
+`@prysm/contracts/luna` from
 [schema.rs](../../crates/hosts/webos-service/src/schema.rs).
+
+A failed call replies `{ "returnValue": false, "errorKind": …, "errorText": … }`.
+`errorKind` is `too_large` (payload over 4096 bytes), `unknown_method`,
+`forbidden` (only the TV app may change Prysm), `removing` (the service is
+being removed), `invalid_request` (not the method's request),
+`wrong_package` (the other package's lighting method),
+`invalid_preferences` (a preference the package does not have),
+`save_failed` or `internal` (the service could not read the call or send
+its reply). It is open: the app reads a kind it does not know, and LS2's own
+replies without one, as `unknown`, and shows `errorText` either way. It is
+not `errorCode`, which LS2's own replies use for a number.
+
+`tv.json` is shared by both packages (they install as the same app) and
+read tolerantly: each package reads the fields it owns, and keeps every
+other field as read (full keeps slim's `prysm_address`; a newer version's
+fields stay too). `setPreferences` replaces only the installed package's
+fields and writes the rest back with them. A file that cannot be read (not a
+regular file, too large, not JSON, a field of the wrong type, or for slim an
+invalid address) is reported as `failure.kind` `preferences`, the defaults
+apply, and the file is left as it is until the next `setPreferences`
+replaces it. Any other current failure is shown first.
 
 The TV app sets the service up through the Homebrew Channel's `exec` of
 `setup.sh`, because the service does not exist yet at that point.

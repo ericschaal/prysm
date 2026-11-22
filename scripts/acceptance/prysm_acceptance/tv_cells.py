@@ -127,7 +127,7 @@ def _receiver_seam(cell: TvCell, config: Config, run: transport.Transport, out_d
     return host.LocalBinary(run, binary, f'0.0.0.0:{port}', out_dir, config.wled)
 
 
-def _instance(seam: Host, tv_host: str) -> str:
+def _prysm_address(seam: Host, tv_host: str) -> str:
     """The receiver as the TV reaches it: this computer's address towards the TV, or the Linux target's."""
     url = urlsplit(seam.url)
     if isinstance(seam, host.LocalBinary):
@@ -444,7 +444,7 @@ def _prysm_plan(cell: TvCell, config: Config) -> list[str]:
             commands.tv_set_preferences(ssh, False, 'http://192.0.2.20:18787'),
             commands.tv_set_enabled(ssh, True),
         ),
-        '(instance: the receiver as the TV reaches it, shown as http://192.0.2.20:18787)',
+        '(prysm_address: the receiver as the TV reaches it, shown as http://192.0.2.20:18787)',
     ]
 
 
@@ -463,7 +463,7 @@ def prysm(
     at 30 fps without the UI; each check asks for its own).
 
     Full: the TV's own portal, at the address getState reports. Slim: the receiver started with the remote
-    capture, and the TV pointed at it (`instance`) and enabled; the receiver is stopped and removed at the end."""
+    capture, and the TV pointed at it (`prysm_address`) and enabled; the receiver is stopped and removed at the end."""
     if receiver is None:
         portal = target.tv.wait_portal()
         reply = portal.replace_settings(_settings_document(config, capture(cell.flavour, *CAPTURE)))
@@ -474,10 +474,10 @@ def prysm(
     try:
         bench.log(receiver.deliver())
         receiver.start(_settings_document(config, capture(cell.flavour, *CAPTURE)))
-        instance = _instance(receiver, _tv_host(config))
-        target.tv.set_preferences({'autostart': False, 'instance': instance})
+        address = _prysm_address(receiver, _tv_host(config))
+        target.tv.set_preferences({'autostart': False, 'prysm_address': address})
         target.tv.call(commands.tv_set_enabled(target.tv.target, True))
-        bench.log(f'The TV streams to {instance}')
+        bench.log(f'The TV streams to {address}')
         yield Prysm(receiver.url)
     finally:
         with uninterrupted():

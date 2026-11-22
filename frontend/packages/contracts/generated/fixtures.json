@@ -922,6 +922,18 @@
       }
     }
   ],
+  "luna/ErrorReply": [
+    {
+      "errorKind": "wrong_package",
+      "errorText": "setTarget is only for the full package",
+      "returnValue": false
+    },
+    {
+      "errorKind": "internal",
+      "errorText": "the service is busy",
+      "returnValue": false
+    }
+  ],
   "luna/GetStateRequest": [
     {
       "subscribe": true
@@ -933,7 +945,7 @@
     },
     {
       "autostart": true,
-      "instance": "http://192.168.1.20:8787"
+      "prysm_address": "http://192.168.1.20:8787"
     }
   ],
   "luna/SetEnabledRequest": [
@@ -1029,7 +1041,7 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "instance": "http://192.168.1.20:8787"
+        "prysm_address": "http://192.168.1.20:8787"
       },
       "video": "unknown",
       "worker": {
@@ -1044,7 +1056,7 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "instance": "http://192.168.1.20:8787"
+        "prysm_address": "http://192.168.1.20:8787"
       },
       "video": "unknown",
       "worker": {
@@ -1062,7 +1074,7 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "instance": "http://192.168.1.20:8787"
+        "prysm_address": "http://192.168.1.20:8787"
       },
       "video": "unknown",
       "worker": {
@@ -1076,7 +1088,7 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "instance": "http://192.168.1.20:8787"
+        "prysm_address": "http://192.168.1.20:8787"
       },
       "video": "unknown",
       "worker": {
@@ -1116,7 +1128,7 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "instance": "http://192.168.1.20:8787"
+        "prysm_address": "http://192.168.1.20:8787"
       },
       "returnValue": true,
       "video": "unknown",

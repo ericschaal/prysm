@@ -4,7 +4,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { openTv, press, pressUntil, type Flavor } from './remote';
 
 const start = { full: 'mode-off', slim: 'primary' } as const;
-const settingsTop = { full: 'autostart', slim: 'instance' } as const;
+const settingsTop = { full: 'autostart', slim: 'prysm-address' } as const;
 
 const title = (page: Page) => page.locator('#dialog-title');
 const modal = (page: Page) => page.locator('#modal');
@@ -82,15 +82,15 @@ test('slim: Back closes Prysm address and returns to the control that opened it'
   await expect(page.locator('#primary')).toHaveText('Add Prysm address');
   await press(page, 'Enter');
   await expect(title(page)).toHaveText('Prysm address');
-  await expect(page.locator('#instance-input')).toBeFocused();
+  await expect(page.locator('#prysm-address-input')).toBeFocused();
   await press(page, 'Back');
   await expect(modal(page)).toHaveCount(0);
   await expect(page.locator('#primary')).toBeFocused();
   await press(page, 'ArrowRight');
-  await expect(page.locator('#instance')).toBeFocused();
+  await expect(page.locator('#prysm-address')).toBeFocused();
   await press(page, 'Enter');
   await expect(title(page)).toHaveText('Prysm address');
   await press(page, 'Back');
   await expect(modal(page)).toHaveCount(0);
-  await expect(page.locator('#instance')).toBeFocused();
+  await expect(page.locator('#prysm-address')).toBeFocused();
 });

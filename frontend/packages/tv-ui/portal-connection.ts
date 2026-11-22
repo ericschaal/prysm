@@ -1,6 +1,7 @@
 /**
  * The Prysm that drives the lights, over its HTTP API: the full package's own
- * portal on this TV, or the slim package's remote Prysm (`preferences.instance`).
+ * portal on this TV, or the slim package's remote Prysm
+ * (`preferences.prysm_address`).
  */
 import {
   useCallback,

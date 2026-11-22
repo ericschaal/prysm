@@ -157,9 +157,11 @@ test('the Luna document covers both flavors with one State', () => {
   );
   const reply = validate('luna/StateReply');
   assert.equal(reply({ ...states[0], returnValue: false }), false);
+  const error = validate('luna/ErrorReply');
   assert(
-    validate('luna/ErrorReply')({ returnValue: false, errorText: 'denied' }),
+    error({ returnValue: false, errorKind: 'forbidden', errorText: 'denied' }),
   );
+  assert.equal(error({ returnValue: false, errorText: 'denied' }), false);
   assert.equal(validate('luna/SetEnabledRequest')({}), false);
   // Requests are closed: a target this version does not know is refused.
   assert(validate('luna/SetTargetRequest')({ target: 'effects' }));
