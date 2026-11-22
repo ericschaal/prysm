@@ -1,6 +1,8 @@
 //! One blocking `POST /json/state` (or, for discovery, `GET /json/info`) per
-//! call, done by a [`Deadline`]: no retries, no keep-alive, no proxy. [`get`]
-//! and [`read_response`] also serve the state checks, which never block.
+//! call, done by a [`Deadline`] or a cut of its [`Hangup`], whichever comes
+//! first: no retries, no keep-alive, no proxy. [`get`] and [`read_response`]
+//! also serve the state checks, which never block.
+use prysm_ports::{Hangup, Stopping};
 use serde_json::Value;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -81,6 +83,10 @@ pub enum RequestError {
     Unacknowledged,
     #[error("no complete response within {0:?}")]
     TimedOut(Duration),
+    /// The [`Hangup`] was cut after the connection was made: the request
+    /// may have reached the device.
+    #[error("request not completed")]
+    Stopped(#[from] Stopping),
 }
 
 /// A complete HTTP response.
@@ -104,14 +110,15 @@ impl Response {
     }
 }
 
-/// Send `state` to `device` by `deadline`, naming `host` (the configured
-/// `host[:port]`) in the `Host` header, and require WLED's
-/// `{"success":true}` reply.
+/// Send `state` to `device` by `deadline`, or until `stop` is cut, naming
+/// `host` (the configured `host[:port]`) in the `Host` header, and require
+/// WLED's `{"success":true}` reply.
 pub fn post_state(
     device: SocketAddr,
     host: &str,
     state: &Value,
     deadline: Deadline,
+    stop: &Hangup,
 ) -> Result<(), RequestError> {
     let body = state.to_string();
     let request = format!(
@@ -119,7 +126,7 @@ pub fn post_state(
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    let body = exchange(device, &request, deadline)?.success()?;
+    let body = exchange(device, &request, deadline, stop)?.success()?;
     let reply: Value = serde_json::from_slice(&body)?;
     if let Some(error) = reply.get("error") {
         return Err(RequestError::Rejected(error.to_string()));
@@ -138,6 +145,7 @@ pub fn get_json(device: SocketAddr, path: &str, timeout: Duration) -> Result<Val
         device,
         &get(path, &device.to_string()),
         Deadline::after(timeout),
+        &Hangup::default(),
     )?
     .success()?;
     Ok(serde_json::from_slice(&body)?)
@@ -152,19 +160,29 @@ pub fn get(path: &str, host: &str) -> String {
 }
 
 /// Connect to `device`, send `request` and read the whole response, all by
-/// `deadline`: a peer that answers a byte at a time cannot extend it.
+/// `deadline`: a peer that answers a byte at a time cannot extend it. A cut
+/// of `stop` ends it at once: a connect not made yet fails as
+/// [`RequestError::Connect`], anything later as [`RequestError::Stopped`].
 fn exchange(
     device: SocketAddr,
     request: &str,
     deadline: Deadline,
+    stop: &Hangup,
 ) -> Result<Response, RequestError> {
-    let stream =
-        TcpStream::connect_timeout(&device, deadline.left()?).map_err(RequestError::Connect)?;
+    deadline.left()?;
+    let (stream, _cut) = stop
+        .connect(device, deadline.at)
+        .map_err(RequestError::Connect)?;
     let mut stream = Bounded { stream, deadline };
     let response = stream
         .write_all(request.as_bytes())
         .map_err(RequestError::from)
         .and_then(|()| read_response(&mut stream, &mut Vec::new(), MAX_RESPONSE));
+    // A read the cut ended returns no more data, which can pass for the
+    // end of a response.
+    if stop.is_cut() {
+        return Err(Stopping.into());
+    }
     let timed_out = RequestError::TimedOut(deadline.budget);
     match response {
         Ok(Some(response)) => Ok(response),

@@ -21,45 +21,58 @@
 //! ```
 //!
 //! `--check-settings` is handled here: the settings file is validated against
-//! the host's adapters and the run closure is never called. Feature
-//! `desktop` adds [`desktop_adapters`]. Unix only, as the hosts are.
+//! the host's adapters and the run closure is never called. For every host
+//! with a WLED output, [`stops_in_time`]. Feature `desktop` adds
+//! [`desktop_adapters`] and the desktop hosts' `STOP_DEADLINE`. Unix only,
+//! as the hosts are.
 mod args;
 pub mod assets;
 
 use args::{Options, parse};
 #[cfg(feature = "desktop")]
-pub use desktop::{desktop_adapters, stops_in_time};
+pub use desktop::desktop_adapters;
+/// The desktop hosts' stop deadline: the runtime's own.
+#[cfg(feature = "desktop")]
+pub use prysm_runtime::STOP_DEADLINE;
+
+use prysm_output_wled::{IDLE_LIMIT, STOP_WAIT};
+use prysm_ports::SourceStop;
+use prysm_runtime::TICK;
+use std::time::Duration;
+
+/// Whether every stop of a session with `source` and a WLED output ends
+/// within `deadline`, whatever it meets. An open or an idle of the output in
+/// flight ends at once when the stop comes, so a stop waits for the pull in
+/// flight (its timeout, [`TICK`], then the rest of a frame or of an end, as
+/// `source` says), the source's close and the stop's idle
+/// ([`IDLE_LIMIT`]); or, after the session ended on its own and while it
+/// idles `Off`, two idles ([`STOP_WAIT`]). Every host with a WLED output
+/// asserts it for each source it registers.
+#[must_use]
+pub const fn stops_in_time(source: SourceStop, deadline: Duration) -> bool {
+    let pull = if source.frame.as_millis() > source.end.as_millis() {
+        source.frame
+    } else {
+        source.end
+    };
+    let closing = TICK
+        .saturating_add(pull)
+        .saturating_add(source.close)
+        .saturating_add(IDLE_LIMIT);
+    closing.as_millis() < deadline.as_millis() && STOP_WAIT.as_millis() < deadline.as_millis()
+}
 
 #[cfg(feature = "desktop")]
 mod desktop {
+    use super::stops_in_time;
     use prysm_capture_file::FileSource;
     use prysm_capture_remote::RemoteReceiver;
-    use prysm_output_wled::{IDLE_LIMIT, STOP_WAIT, Wled};
-    use prysm_ports::{Handoff, SourceFactory, SourceStop};
-    use prysm_runtime::{Builder, NullOutput, STOP_DEADLINE, TICK};
+    use prysm_output_wled::Wled;
+    use prysm_ports::{Handoff, SourceFactory};
+    use prysm_runtime::{Builder, NullOutput, STOP_DEADLINE};
 
-    /// Whether a stop of a session with `source` and a WLED output ends
-    /// within the desktop hosts' stop deadline, whatever it meets: the pull
-    /// in flight (its timeout, [`TICK`], then what `source` says), the
-    /// output opened after a frame it returned and the idle after the close
-    /// (all within [`STOP_WAIT`]), or the idle alone after a pull that ended
-    /// the source. A host asserts it for the device source it registers.
-    #[must_use]
-    pub const fn stops_in_time(source: SourceStop) -> bool {
-        let after_frame = source.frame.saturating_add(STOP_WAIT);
-        let after_end = source.end.saturating_add(IDLE_LIMIT);
-        let output = if after_frame.as_millis() > after_end.as_millis() {
-            after_frame
-        } else {
-            after_end
-        };
-        TICK.saturating_add(output)
-            .saturating_add(source.close)
-            .as_millis()
-            < STOP_DEADLINE.as_millis()
-    }
-    const _: () = assert!(stops_in_time(prysm_capture_file::STOP));
-    const _: () = assert!(stops_in_time(prysm_capture_remote::STOP));
+    const _: () = assert!(stops_in_time(prysm_capture_file::STOP, STOP_DEADLINE));
+    const _: () = assert!(stops_in_time(prysm_capture_remote::STOP, STOP_DEADLINE));
 
     /// What both desktop hosts register: sources `device` (the factory
     /// given, `DeviceSource` in the hosts), `file` and `remote`, outputs

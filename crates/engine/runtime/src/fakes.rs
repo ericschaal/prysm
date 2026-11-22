@@ -4,8 +4,9 @@ use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
     AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, FrameSink, FrameSource,
-    IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure, OutputFactory, OutputIssue,
-    Pull, Result, Settings, SettingsStore, SourceFactory, Span, ValidationError,
+    Hangup, IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure, OutputFactory,
+    OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory, Span, Stopping,
+    ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -290,6 +291,36 @@ pub struct FakeOutputSettings {
     pub idle_delay_ms: u64,
     /// `idle` in `Native` takes this much longer.
     pub native_idle_delay_ms: u64,
+    /// `open` records `output.opening:<name>` and waits for the session's
+    /// stop to cut it, then ends as this says.
+    pub open_until_stop: Option<AtStop>,
+    /// The held output's `idle` in `Native` (a release after a quiet
+    /// spell), after recording the call, waits for the session's stop to
+    /// cut it, then fails.
+    pub release_until_stop: bool,
+}
+
+/// How a fake open that waits for the stop ends at the cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AtStop {
+    /// It fails before anything reached the device.
+    Untouched,
+    /// It fails after a request may have reached it.
+    Touched,
+    /// It opens: the stop came as it finished.
+    Opened,
+}
+
+/// Longer than any test waits: a fake waiting for a cut that never comes
+/// fails the test by its bound, not by this.
+const UNTIL_STOP: Duration = Duration::from_secs(60);
+
+/// The failure of a fake call the stop ended, recorded as
+/// `output.<call>_stopped:<name>`.
+fn stopped(log: &CallLog, call: &str, name: &str) -> Error {
+    log.record(format!("output.{call}_stopped:{name}"));
+    Error::adapter(format!("fake output's {call} ended"), Stopping)
 }
 
 /// Registers kind `"fake"`.
@@ -307,7 +338,21 @@ impl OutputFactory for FakeOutputs {
     }
 
     /// `fail_open` fails before anything reaches the fake device.
-    fn open(&self, settings: &FakeOutputSettings) -> Result<Box<dyn LedOutput>, OpenFailure> {
+    fn open(
+        &self,
+        settings: &FakeOutputSettings,
+        stop: &Hangup,
+    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
+        if let Some(at_stop) = settings.open_until_stop {
+            self.0.record(format!("output.opening:{}", settings.name));
+            let _ = stop.wait(UNTIL_STOP);
+            let failed = || stopped(&self.0, "open", &settings.name);
+            match at_stop {
+                AtStop::Untouched => return Err(OpenFailure::Untouched(failed())),
+                AtStop::Touched => return Err(OpenFailure::Touched(failed())),
+                AtStop::Opened => {}
+            }
+        }
         if settings.fail_open {
             self.0
                 .record(format!("output.open_failed:{}", settings.name));
@@ -377,7 +422,13 @@ impl LedOutput for FakeOutput {
         }
     }
 
-    fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {
+    fn idle(self: Box<Self>, mode: IdleMode, stop: &Hangup) -> Result<()> {
+        if self.settings.release_until_stop && mode == IdleMode::Native {
+            self.log
+                .record(format!("output.idle:{}:{mode:?}", self.settings.name));
+            let _ = stop.wait(UNTIL_STOP);
+            return Err(stopped(&self.log, "idle", &self.settings.name));
+        }
         idle(&self.log, &self.settings, mode)
     }
 }

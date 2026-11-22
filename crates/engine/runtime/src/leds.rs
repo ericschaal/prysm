@@ -3,7 +3,7 @@
 use crate::stats::Stats;
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    AdapterSettings, DeviceReport, IdleMode, LedOutput, OpenFailure, Registry, Result,
+    AdapterSettings, DeviceReport, Hangup, IdleMode, LedOutput, OpenFailure, Registry, Result,
 };
 use std::time::Instant;
 
@@ -21,8 +21,8 @@ impl Configured {
         Self { registry, settings }
     }
 
-    fn open(&self) -> Result<Box<dyn LedOutput>, OpenFailure> {
-        self.registry.open_output(&self.settings)
+    fn open(&self, stop: &Hangup) -> Result<Box<dyn LedOutput>, OpenFailure> {
+        self.registry.open_output(&self.settings, stop)
     }
 
     fn idle(&self, mode: IdleMode) -> Result<()> {
@@ -42,20 +42,22 @@ pub(crate) enum Leds {
 }
 
 impl Leds {
-    /// Write `colors`, opening the output first if it is not held. The write
-    /// starts at `ready` (or when the output finished opening) and its time
-    /// and outcome are counted. Returns when the write returned.
+    /// Write `colors`, opening the output first if it is not held; the
+    /// open ends when `stop` is cut. The write starts at `ready` (or when
+    /// the output finished opening) and its time and outcome are counted.
+    /// Returns when the write returned.
     pub(crate) fn write(
         &mut self,
         colors: &EdgeColors,
         ready: Instant,
         output: &Configured,
         stats: &Stats,
+        stop: &Hangup,
     ) -> Result<Instant> {
         let began = if self.is_held() {
             ready
         } else {
-            *self = Self::Held(match output.open() {
+            *self = Self::Held(match output.open(stop) {
                 Ok(held) => held,
                 // Nothing reached the device: it is as this state says.
                 Err(OpenFailure::Untouched(error)) => return Err(error),
@@ -88,12 +90,13 @@ impl Leds {
         }
     }
 
-    /// Idle a held output in `mode` and close it.
-    pub(crate) fn release(&mut self, mode: IdleMode) -> Result<()> {
+    /// Idle a held output in `mode` and close it; the idle ends when `stop`
+    /// is cut, the output then `Unknown`.
+    pub(crate) fn release(&mut self, mode: IdleMode, stop: &Hangup) -> Result<()> {
         let Self::Held(output) = std::mem::replace(self, Self::Unknown) else {
             return Ok(());
         };
-        output.idle(mode)?;
+        output.idle(mode, stop)?;
         *self = Self::Left(mode);
         Ok(())
     }
@@ -102,10 +105,11 @@ impl Leds {
     /// `mode` without opening it, only when it may be in another mode. An
     /// untouched output stays untouched for `Off`, the state lighting
     /// started from. Afterwards the output is `Left(mode)`, or `Unknown` if
-    /// that failed, so it can be finished again in another mode.
+    /// that failed, so it can be finished again in another mode. Nothing
+    /// cuts it: this is the stop's own idle.
     pub(crate) fn finish(&mut self, mode: IdleMode, output: &Configured) -> Result<()> {
         match self {
-            Self::Held(_) => self.release(mode),
+            Self::Held(_) => self.release(mode, &Hangup::default()),
             Self::Left(left) if *left == mode => Ok(()),
             Self::Untouched if mode == IdleMode::Off => Ok(()),
             Self::Untouched | Self::Left(_) | Self::Unknown => {
@@ -166,7 +170,7 @@ mod tests {
             Ok(())
         }
 
-        fn open(&self, fails: &Fails) -> Result<Box<dyn LedOutput>, OpenFailure> {
+        fn open(&self, fails: &Fails, _: &Hangup) -> Result<Box<dyn LedOutput>, OpenFailure> {
             self.0.lock().unwrap().push("open".into());
             let failed = || Error::other("cannot open");
             match fails.opens {
@@ -195,7 +199,7 @@ mod tests {
             Ok(())
         }
 
-        fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {
+        fn idle(self: Box<Self>, mode: IdleMode, _: &Hangup) -> Result<()> {
             Recorder::idled(&self.calls, format!("idle:{mode:?}"), self.fails)
         }
     }
@@ -213,7 +217,7 @@ mod tests {
     fn leds(from: Before, output: &Configured) -> Leds {
         match from {
             Before::Untouched => Leds::Untouched,
-            Before::Held => Leds::Held(output.open().unwrap()),
+            Before::Held => Leds::Held(output.open(&Hangup::default()).unwrap()),
             Before::LeftOff => Leds::Left(IdleMode::Off),
             Before::LeftNative => Leds::Left(IdleMode::Native),
             Before::Unknown => Leds::Unknown,
@@ -308,7 +312,13 @@ mod tests {
             );
             let mut leds = leds(from, &output);
             let stats = Stats::default();
-            let wrote = leds.write(&EdgeColors::default(), Instant::now(), &output, &stats);
+            let wrote = leds.write(
+                &EdgeColors::default(),
+                Instant::now(),
+                &output,
+                &stats,
+                &Hangup::default(),
+            );
             let case = (from, opens);
             assert!(wrote.is_err(), "{case:?}");
             assert_eq!(state(&leds), after, "{case:?}");

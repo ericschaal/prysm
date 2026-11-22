@@ -1,7 +1,8 @@
-//! The dedicated thread shared by `Session` and `Forwarder`: a stop flag, a
-//! reported phase, and a completion the async side can await with a deadline.
+//! The dedicated thread shared by `Session` and `Forwarder`: a stop flag
+//! with the [`Hangup`] it cuts, a reported phase, and a completion the async
+//! side can await with a deadline.
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, Pull, Result, Section, SessionPhase};
+use prysm_ports::{Error, FrameSource, Hangup, Pull, Result, Section, SessionPhase};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
@@ -15,12 +16,21 @@ pub const TICK: Duration = Duration::from_millis(50);
 #[derive(Default)]
 pub(crate) struct Flags {
     stop: AtomicBool,
+    /// Cut with the stop, after the flag is set: a blocking call it ends
+    /// returns to a loop that sees the stop.
+    stopping: Hangup,
     phase: Mutex<Option<SessionPhase>>,
 }
 
 impl Flags {
     fn request_stop(&self) {
         self.stop.store(true, Ordering::Release);
+        self.stopping.cut();
+    }
+
+    /// Cut when the thread is asked to stop: the calls given it end then.
+    pub(crate) fn stopping(&self) -> &Hangup {
+        &self.stopping
     }
 
     pub(crate) fn set_phase(&self, phase: SessionPhase) {

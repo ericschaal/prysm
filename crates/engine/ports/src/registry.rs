@@ -1,6 +1,6 @@
 use crate::{
-    AdapterSettings, Error, FrameSource, IdleMode, LedOutput, Modes, Result, Section, Settings,
-    ValidationError,
+    AdapterSettings, Error, FrameSource, Hangup, IdleMode, LedOutput, Modes, Result, Section,
+    Settings, ValidationError,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
@@ -60,10 +60,18 @@ pub trait OutputFactory: Send + Sync + 'static {
     /// field is relative to the section, such as `address`: the registry
     /// names the section.
     fn validate(&self, settings: &Self::Settings) -> Result<(), ValidationError>;
+    /// Ends at once when `stop` is cut: a session cuts it when it is asked
+    /// to stop, so its stop never waits for an open.
+    ///
     /// # Errors
-    /// Device or I/O failure, saying whether the device may have taken a
-    /// request on the way ([`OpenFailure`]).
-    fn open(&self, settings: &Self::Settings) -> Result<Box<dyn LedOutput>, OpenFailure>;
+    /// Device or I/O failure, or the cut (a [`Stopping`](crate::Stopping)
+    /// cause), saying whether the device may have taken a request on the
+    /// way ([`OpenFailure`]).
+    fn open(
+        &self,
+        settings: &Self::Settings,
+        stop: &Hangup,
+    ) -> Result<Box<dyn LedOutput>, OpenFailure>;
     /// Put the device in `mode` without taking it over: what opening it and
     /// idling at once leaves, for a device nobody holds (lights turned off
     /// after a released session, or the device's own effects without one).
@@ -73,9 +81,10 @@ pub trait OutputFactory: Send + Sync + 'static {
     /// # Errors
     /// Device or I/O failure.
     fn idle(&self, settings: &Self::Settings, mode: IdleMode) -> Result<()> {
-        self.open(settings)
+        let never = Hangup::default();
+        self.open(settings, &never)
             .map_err(OpenFailure::into_error)?
-            .idle(mode)
+            .idle(mode, &never)
     }
     /// What this kind finds to choose from, such as devices on the network.
     /// See [`Candidate`]; the default finds nothing.
@@ -215,17 +224,20 @@ impl Registry {
             .map_err(|error| within(section, error))
     }
 
+    /// Ends at once when `stop` is cut; see [`OutputFactory::open`].
+    ///
     /// # Errors
     /// Unknown kind or invalid settings (the device untouched), or the
     /// factory's open failure.
     pub fn open_output(
         &self,
         settings: &AdapterSettings,
+        stop: &Hangup,
     ) -> Result<Box<dyn LedOutput>, OpenFailure> {
         let section = Section::Output;
         find(&self.outputs, section, &settings.kind)
             .map_err(OpenFailure::Untouched)?
-            .open(settings)
+            .open(settings, stop)
             .map_err(|failure| failure.map(|error| within(section, error)))
     }
 
@@ -288,17 +300,22 @@ fn find<'a, F: ?Sized>(
     })
 }
 
-trait Erased<T: ?Sized, E>: Send + Sync {
+trait Erased: Send + Sync {
     fn validate(&self, settings: &AdapterSettings) -> Result<()>;
-    fn open(&self, settings: &AdapterSettings) -> Result<Box<T>, E>;
     fn candidates(&self) -> Vec<Candidate>;
 }
 
-trait ErasedSource: Erased<dyn FrameSource, Error> {
+trait ErasedSource: Erased {
+    fn open(&self, settings: &AdapterSettings) -> Result<Box<dyn FrameSource>>;
     fn modes(&self, settings: &AdapterSettings) -> Result<Modes>;
 }
 
-trait ErasedOutput: Erased<dyn LedOutput, OpenFailure> {
+trait ErasedOutput: Erased {
+    fn open(
+        &self,
+        settings: &AdapterSettings,
+        stop: &Hangup,
+    ) -> Result<Box<dyn LedOutput>, OpenFailure>;
     fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()>;
 }
 
@@ -312,14 +329,9 @@ fn decode<S: DeserializeOwned>(settings: &AdapterSettings) -> Result<S> {
 struct Source<F>(F);
 struct Output<F>(F);
 
-impl<F: SourceFactory> Erased<dyn FrameSource, Error> for Source<F> {
+impl<F: SourceFactory> Erased for Source<F> {
     fn validate(&self, settings: &AdapterSettings) -> Result<()> {
         Ok(self.0.validate(&decode(settings)?)?)
-    }
-    fn open(&self, settings: &AdapterSettings) -> Result<Box<dyn FrameSource>> {
-        let typed = decode(settings)?;
-        self.0.validate(&typed)?;
-        self.0.open(&typed)
     }
     fn candidates(&self) -> Vec<Candidate> {
         self.0.candidates()
@@ -327,31 +339,40 @@ impl<F: SourceFactory> Erased<dyn FrameSource, Error> for Source<F> {
 }
 
 impl<F: SourceFactory> ErasedSource for Source<F> {
+    fn open(&self, settings: &AdapterSettings) -> Result<Box<dyn FrameSource>> {
+        let typed = decode(settings)?;
+        self.0.validate(&typed)?;
+        self.0.open(&typed)
+    }
     fn modes(&self, settings: &AdapterSettings) -> Result<Modes> {
         Ok(self.0.modes(&decode(settings)?))
     }
 }
 
-impl<F: OutputFactory> ErasedOutput for Output<F> {
-    fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()> {
-        let typed = decode(settings)?;
-        self.0.validate(&typed)?;
-        self.0.idle(&typed, mode)
-    }
-}
-
-impl<F: OutputFactory> Erased<dyn LedOutput, OpenFailure> for Output<F> {
+impl<F: OutputFactory> Erased for Output<F> {
     fn validate(&self, settings: &AdapterSettings) -> Result<()> {
         Ok(self.0.validate(&decode(settings)?)?)
     }
-    fn open(&self, settings: &AdapterSettings) -> Result<Box<dyn LedOutput>, OpenFailure> {
+    fn candidates(&self) -> Vec<Candidate> {
+        self.0.candidates()
+    }
+}
+
+impl<F: OutputFactory> ErasedOutput for Output<F> {
+    fn open(
+        &self,
+        settings: &AdapterSettings,
+        stop: &Hangup,
+    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
         let typed = decode(settings).map_err(OpenFailure::Untouched)?;
         self.0
             .validate(&typed)
             .map_err(|invalid| OpenFailure::Untouched(invalid.into()))?;
-        self.0.open(&typed)
+        self.0.open(&typed, stop)
     }
-    fn candidates(&self) -> Vec<Candidate> {
-        self.0.candidates()
+    fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()> {
+        let typed = decode(settings)?;
+        self.0.validate(&typed)?;
+        self.0.idle(&typed, mode)
     }
 }

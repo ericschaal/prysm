@@ -34,6 +34,15 @@ pub use settings::{MODE, WebosSettings};
 pub use source::{RELEASE, WebosFrames};
 pub use video::{Readiness, Video, VideoSignal};
 
+/// What a webOS source's stop waits for: its pulls return within their
+/// timeout (frames come from its native thread), then `close` waits for the
+/// certified release within [`RELEASE`].
+pub const STOP: prysm_ports::SourceStop = prysm_ports::SourceStop {
+    frame: std::time::Duration::ZERO,
+    end: std::time::Duration::ZERO,
+    close: RELEASE,
+};
+
 use prysm_ports::{FrameSource, Modes, Result, SourceFactory, ValidationError};
 
 /// Whether `failure` (a source's) means no TV capture can succeed again in

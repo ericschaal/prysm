@@ -6,9 +6,17 @@ license.workspace = true
 publish.workspace = true
 description = "Blocking adapter ports, settings and snapshot types for the Prysm runtime"
 
+[features]
+# `Hangup::waits`, so a test cuts only a call that waits.
+testkit = []
+
 [dependencies]
 prysm-core.workspace = true
 thiserror.workspace = true
+# A socket registered before it connects, so a `Hangup` can shut it down.
+socket2.workspace = true
+# poll(2) for that connect.
+nix = { workspace = true, features = ["poll"] }
 serde.workspace = true
 serde_json.workspace = true
 

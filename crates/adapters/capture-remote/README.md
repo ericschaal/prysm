@@ -55,11 +55,12 @@ neither has a listener of its own:
   the receiver's close code. `refuse(reason)` and `refuse_encoding(reason)`
   refuse the request for the caller's own reasons. Nothing switches encoder
   or encoding on its own. `RemoteSender::connect_until(…, &hangup)` connects
-  the same way; `Hangup::cut` then shuts its socket down, which ends a
-  connect (the socket is connecting before a cut can reach it), read or
-  write in progress at once, and fails every later `connect_until` with
-  that `Hangup`. Every call the cut ends fails with the cause `Stopping`. A
-  host cuts it when it stops.
+  the same way, given a `prysm_ports::Hangup` (the type a session also
+  cuts to end its output's calls); `Hangup::cut` then shuts its socket
+  down, which ends a connect (the socket is connecting before a cut can
+  reach it), read or write in progress at once, and fails every later
+  `connect_until` with that `Hangup`. Every call the cut ends fails with
+  the cause `prysm_ports::Stopping`. A host cuts it when it stops.
 
 A new request needs a new connection: the engine reopens the source when the
 capture settings change, which closes the connection as *stopped*, and the

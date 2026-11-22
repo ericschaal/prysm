@@ -1941,7 +1941,6 @@ name = "prysm-capture-remote"
 version = "0.0.0"
 dependencies = [
  "bytes",
- "nix",
  "prysm-capture-remote",
  "prysm-core",
  "prysm-h264",
@@ -2096,9 +2095,11 @@ dependencies = [
 name = "prysm-ports"
 version = "0.0.0"
 dependencies = [
+ "nix",
  "prysm-core",
  "serde",
  "serde_json",
+ "socket2",
  "thiserror 2.0.21",
 ]
 

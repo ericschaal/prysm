@@ -1,4 +1,4 @@
-use crate::{DeviceReport, Result, Settings, ValidationError};
+use crate::{DeviceReport, Hangup, Result, Settings, ValidationError};
 use prysm_core::{EdgeColors, Frame};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -44,8 +44,9 @@ impl From<Option<Frame>> for Pull {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceStop {
     /// A pull in flight that returns a frame, after its timeout (the rest
-    /// of a frame that began); the frame is then written, which may open
-    /// the output, before the loop sees the stop.
+    /// of a frame that began); the frame is then written before the loop
+    /// sees the stop (an open it needs ends at once: see
+    /// [`OutputFactory::open`](crate::OutputFactory::open)).
     pub frame: Duration,
     /// A pull in flight that ends the source (its end or a failure), after
     /// its timeout; nothing is opened after it.
@@ -82,8 +83,13 @@ impl<T: FrameSource + ?Sized> FrameSource for Box<T> {
 /// An LED driver.
 pub trait LedOutput: Send {
     fn write(&mut self, colors: &EdgeColors) -> Result<()>;
-    /// Called once after the last `write`; also the failure-compensation path.
-    fn idle(self: Box<Self>, mode: IdleMode) -> Result<()>;
+    /// Called once after the last `write`; also the failure-compensation
+    /// path. Ends at once when `stop` is cut, failing with a
+    /// [`Stopping`](crate::Stopping) cause; the device is then in no known
+    /// mode. A session cuts it when it is asked to stop while it releases
+    /// the output after a quiet spell; its own idle at the end gets one it
+    /// never cuts.
+    fn idle(self: Box<Self>, mode: IdleMode, stop: &Hangup) -> Result<()>;
     /// What the device says about itself, as far as it last said (see
     /// [`DeviceReport`]); empty while the output cannot tell. Called on the
     /// session thread after every `write`, so it returns within
