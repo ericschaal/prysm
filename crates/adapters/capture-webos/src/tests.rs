@@ -74,6 +74,8 @@ struct Script {
     steps: VecDeque<Step>,
     idle: Step,
     open_fails: Option<Recovery>,
+    /// Faults of the next opens, one per open, before `open_fails` applies.
+    open_faults: VecDeque<Recovery>,
     hang: Option<&'static str>,
     release_fails: bool,
     opens: usize,
@@ -118,6 +120,7 @@ impl Driver {
                 steps: VecDeque::new(),
                 idle: Step::Pending,
                 open_fails: None,
+                open_faults: VecDeque::new(),
                 hang: None,
                 release_fails: false,
                 opens: 0,
@@ -194,7 +197,7 @@ impl Backend for Driver {
         let mut script = self.enter("open");
         script.opens += 1;
         script.record("open");
-        if let Some(recovery) = script.open_fails {
+        if let Some(recovery) = script.open_faults.pop_front().or(script.open_fails) {
             return Err(Fault {
                 error: Error::other("driver refused"),
                 recovery,
@@ -832,6 +835,24 @@ fn a_run_of_unrecognised_registration_failures_ends_the_source_with_its_cause() 
         )
     );
     assert_eq!(driver.count(|s| s.opens), TEST.unchecked as usize);
+    closes_cleanly(frames);
+}
+
+#[test]
+fn any_other_open_outcome_starts_the_registration_count_again() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    let bounded = TEST.unchecked as usize - 1;
+    driver.with(|s| {
+        s.open_faults = std::iter::repeat_n(Recovery::Bounded, bounded)
+            .chain([Recovery::Reopen])
+            .chain(std::iter::repeat_n(Recovery::Bounded, bounded))
+            .collect();
+        s.idle = Step::Frame(7);
+    });
+    let mut frames = start(&driver, &video);
+    assert_eq!(next(&mut frames).as_slice(), frame(7).as_slice());
+    assert_eq!(driver.count(|s| s.opens), bounded * 2 + 2);
     closes_cleanly(frames);
 }
 

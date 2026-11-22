@@ -41,9 +41,10 @@ pub(super) struct Native<B> {
     retry_at: Instant,
     not_ready_since: Option<Instant>,
     pending_since: Option<Instant>,
-    /// A video fault was logged since the last video frame.
+    /// A video fault was logged since the last video frame or the start of
+    /// this video period.
     video_failing: bool,
-    /// [`Recovery::Bounded`] faults since the last video open.
+    /// [`Recovery::Bounded`] video faults in a row.
     unchecked: u32,
 }
 
@@ -100,6 +101,8 @@ impl<B: Backend> Native<B> {
             if kind != self.kind || current != generation {
                 generation = current;
                 self.kind = kind;
+                // A new period: its first video failure is news again.
+                self.video_failing = false;
                 self.release_tap()?;
                 self.retry_at = Instant::now();
             }
@@ -238,9 +241,12 @@ impl<B: Backend> Native<B> {
                 ));
             }
             (Kind::Video, recovery) => {
-                if recovery == Recovery::Bounded {
-                    self.unchecked += 1;
-                }
+                // In a row: any other outcome starts the count again.
+                self.unchecked = if recovery == Recovery::Bounded {
+                    self.unchecked + 1
+                } else {
+                    0
+                };
                 let wait = self.limits.retry;
                 Self::retrying(
                     &fault.error,

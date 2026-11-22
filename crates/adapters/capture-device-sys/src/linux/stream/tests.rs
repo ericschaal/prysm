@@ -96,6 +96,32 @@ fn driver<'a>(
     }
 }
 
+#[test]
+fn each_request_has_its_own_code_and_structure() {
+    use v4l2::vidioc::{
+        VIDIOC_DQBUF, VIDIOC_QBUF, VIDIOC_QUERYBUF, VIDIOC_REQBUFS, VIDIOC_STREAMOFF,
+        VIDIOC_STREAMON,
+    };
+    let mut kind = 0;
+    let kind_at = std::ptr::from_mut(&mut kind).cast::<c_void>();
+    let mut info = buffer(0);
+    let info_at = std::ptr::from_mut(&mut info).cast::<c_void>();
+    let mut request = requested(0);
+    let request_at = std::ptr::from_mut(&mut request).cast::<c_void>();
+    let got = raw(Request::Reqbufs(&mut request), &mut kind);
+    assert_eq!(got, (VIDIOC_REQBUFS, request_at));
+    let got = raw(Request::Querybuf(&mut info), &mut kind);
+    assert_eq!(got, (VIDIOC_QUERYBUF, info_at));
+    let got = raw(Request::Qbuf(&mut info), &mut kind);
+    assert_eq!(got, (VIDIOC_QBUF, info_at));
+    let got = raw(Request::Dqbuf(&mut info), &mut kind);
+    assert_eq!(got, (VIDIOC_DQBUF, info_at));
+    let got = raw(Request::StreamOn, &mut kind);
+    assert_eq!(got, (VIDIOC_STREAMON, kind_at));
+    let got = raw(Request::StreamOff, &mut kind);
+    assert_eq!(got, (VIDIOC_STREAMOFF, kind_at));
+}
+
 /// A poll that finds a buffer ready.
 fn ready(_: i32) -> io::Result<i32> {
     Ok(1)

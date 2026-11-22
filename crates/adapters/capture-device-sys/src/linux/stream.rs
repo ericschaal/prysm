@@ -154,25 +154,31 @@ fn requested(count: u32) -> v4l2_requestbuffers {
 
 /// The kernel's ioctl on `handle`'s device, for as long as it is borrowed.
 fn kernel(handle: &Handle) -> impl FnMut(Request<'_>) -> io::Result<()> + '_ {
+    move |request| {
+        let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        let (code, value) = raw(request, &mut kind);
+        // SAFETY: `raw` pairs each request code with a pointer to the live
+        // structure it takes (`kind`, the buffer type, for STREAMON and
+        // STREAMOFF), so the kernel reads and writes only within it; the fd is
+        // open while `handle` is borrowed.
+        unsafe { v4l2::ioctl(handle.fd(), code, value) }
+    }
+}
+
+/// `request`'s ioctl code and the structure it takes; `kind` (the buffer
+/// type) for STREAMON and STREAMOFF.
+fn raw<'a>(request: Request<'a>, kind: &'a mut u32) -> (v4l2::vidioc::_IOC_TYPE, *mut c_void) {
     use v4l2::vidioc::{
         VIDIOC_DQBUF, VIDIOC_QBUF, VIDIOC_QUERYBUF, VIDIOC_REQBUFS, VIDIOC_STREAMOFF,
         VIDIOC_STREAMON,
     };
-    move |request| {
-        let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        let (code, value): (_, *mut c_void) = match request {
-            Request::Reqbufs(value) => (VIDIOC_REQBUFS, std::ptr::from_mut(value).cast()),
-            Request::Querybuf(value) => (VIDIOC_QUERYBUF, std::ptr::from_mut(value).cast()),
-            Request::Qbuf(value) => (VIDIOC_QBUF, std::ptr::from_mut(value).cast()),
-            Request::Dqbuf(value) => (VIDIOC_DQBUF, std::ptr::from_mut(value).cast()),
-            Request::StreamOn => (VIDIOC_STREAMON, std::ptr::from_mut(&mut kind).cast()),
-            Request::StreamOff => (VIDIOC_STREAMOFF, std::ptr::from_mut(&mut kind).cast()),
-        };
-        // SAFETY: each request code is paired above with a pointer to the
-        // live structure it takes (the buffer type, a `u32`, for STREAMON and
-        // STREAMOFF), so the kernel reads and writes only within it; the fd is
-        // open while `handle` is borrowed.
-        unsafe { v4l2::ioctl(handle.fd(), code, value) }
+    match request {
+        Request::Reqbufs(value) => (VIDIOC_REQBUFS, std::ptr::from_mut(value).cast()),
+        Request::Querybuf(value) => (VIDIOC_QUERYBUF, std::ptr::from_mut(value).cast()),
+        Request::Qbuf(value) => (VIDIOC_QBUF, std::ptr::from_mut(value).cast()),
+        Request::Dqbuf(value) => (VIDIOC_DQBUF, std::ptr::from_mut(value).cast()),
+        Request::StreamOn => (VIDIOC_STREAMON, std::ptr::from_mut(kind).cast()),
+        Request::StreamOff => (VIDIOC_STREAMOFF, std::ptr::from_mut(kind).cast()),
     }
 }
 
