@@ -48,7 +48,13 @@ pub struct Options {
     #[arg(long, default_value_t = 90, value_parser = clap::value_parser!(u32).range(1..=10_000))]
     frames: u32,
     /// Encoder bitrate in bit/s
-    #[arg(long, default_value_t = prysm_h264::DEFAULT_BITRATE)]
+    #[arg(
+        long,
+        default_value_t = prysm_h264::DEFAULT_BITRATE,
+        value_parser = clap::value_parser!(u32).range(
+            i64::from(*prysm_h264::BITRATE.start())..=i64::from(*prysm_h264::BITRATE.end())
+        )
+    )]
     bitrate: u32,
     /// Then stream the pictures to this Prysm (http:// or https://)
     #[arg(long, value_name = "URL")]
