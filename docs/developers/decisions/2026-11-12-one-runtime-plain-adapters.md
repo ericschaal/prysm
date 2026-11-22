@@ -13,9 +13,23 @@ over its newest frame.
 
 Why: in the earlier design every component was its own actor, adapters
 carried most of the complexity, and a host could not choose a source at run
-time. Shutdown ordering is now the structure of the session function, and a
+time. Shutdown ordering is the structure of the session function, and a
 session that misses its deadline is one `Faulted` state.
 
+Also decided with it:
+
+- Ports are blocking and run on the session thread; an async adapter would
+  need a runtime handle of its own.
+- Adapter settings go through a registry of kinds, not a per-host enum, so
+  a new adapter edits no shared type (at the cost of exhaustive matching).
+- An LED-count change is an output change: it restarts the session instead
+  of changing the processor's geometry in place.
+
+Given up: per-operation tracking and observation streams that resynchronise;
+fine-grained cleanup states (a hung stop is `Faulted` and needs a restart);
+static dispatch on control paths (one boxed call per frame is noise next to
+capture and processing). Output writes share the session thread, so a
+blocking write delays the next frame; DDP over UDP does not block.
+
 Replaces: the one-executable application with its controller, operation IDs
-and cleanup-pending states. Design:
-[simplified runtime](../../plans/prysm-v1-simplified-runtime.md).
+and cleanup-pending states. How it is built: [architecture](../architecture.md).

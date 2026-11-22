@@ -19,7 +19,7 @@ prysm-capture-device.workspace = true
 prysm-capture-file.workspace = true
 prysm-capture-remote.workspace = true
 prysm-output-wled.workspace = true
-prysm-version.workspace = true
+prysm-testkit.workspace = true
 tempfile.workspace = true
 
 [lints]

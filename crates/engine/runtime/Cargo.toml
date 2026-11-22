@@ -29,6 +29,7 @@ tracing-subscriber = { workspace = true, optional = true }
 # Enables the fakes for this crate's integration tests and examples.
 prysm-runtime = { path = ".", features = ["testkit", "logging"] }
 prysm-core = { workspace = true, features = ["testkit"] }
+prysm-testkit.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "macros", "test-util"] }
 
 [lints]

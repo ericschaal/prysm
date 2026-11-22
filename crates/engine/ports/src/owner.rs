@@ -380,13 +380,17 @@ mod tests {
     #[test]
     fn close_is_bounded_and_names_the_hung_call() {
         let (hang, hung) = std::sync::mpsc::channel::<()>();
+        let (enter, entered) = std::sync::mpsc::channel();
         let owner = OwnerThread::spawn("prysm-test-owner", "test thread", SHORT, move |worker| {
-            worker.watch("release", || hung.recv().ok());
+            worker.watch("release", || {
+                enter.send(()).unwrap();
+                hung.recv().ok()
+            });
             Ok(())
         })
         .unwrap()
         .with_watchdog(SHORT);
-        thread::sleep(SHORT * 2);
+        entered.recv_timeout(LIMIT).unwrap();
         let error = owner.close().unwrap_err().to_string();
         assert!(error.contains("release is unconfirmed"), "{error}");
         assert!(error.contains("native release has run"), "{error}");
@@ -396,13 +400,18 @@ mod tests {
     #[test]
     fn watchdog_fails_a_hung_call() {
         let (hang, hung) = std::sync::mpsc::channel::<()>();
+        let (enter, entered) = std::sync::mpsc::channel();
         let mut owner = spawn(move |worker| {
-            worker.watch("acquire", || hung.recv().ok());
+            worker.watch("acquire", || {
+                enter.send(()).unwrap();
+                hung.recv().ok()
+            });
             Ok(())
         })
         .with_watchdog(SHORT);
-        thread::sleep(SHORT * 2);
-        let error = owner.next_frame(Duration::ZERO).unwrap_err().to_string();
+        entered.recv_timeout(LIMIT).unwrap();
+        // Waits on the thread for past the watchdog, then checks it.
+        let error = owner.next_frame(SHORT * 2).unwrap_err().to_string();
         assert!(
             error.contains("native acquire in the test thread exceeded"),
             "{error}"

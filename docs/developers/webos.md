@@ -1,8 +1,8 @@
 # LG TV: processes, lifecycle and files
 
 Installation for users: [LG TV](../users/webos.md). Building packages:
-[packaging](packaging.md#webos). Design and state machine:
-[webOS supervisor plan](../plans/prysm-v1-webos-supervisor.md).
+[packaging](packaging.md#webos). Why two packages and a supervisor:
+[decision](decisions/2026-11-12-two-tv-packages.md).
 
 > **Not yet verified on hardware.** The supervisor, both workers and setup are
 > tested on the development host and, for the TV crates, under qemu. The only
@@ -41,7 +41,13 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   (`--prysm`).
 - Commands go to the worker's stdin; events come back on its original stdout,
   one JSON object per line (at most 4 KiB, unknown fields rejected). Vendor
-  output is redirected to stderr, which carries logs.
+  output is redirected to stderr, which carries logs. The commands are
+  `video` (unavailable unless the TV is active), `reset_video` (input, app or
+  picture mode changed) and `lighting` (full only; a slim worker takes it as
+  protocol misuse); the events `status`, `failed` and `faulted`. The worker
+  exits 0 when stopped (SIGTERM, stdin closed), 1 failed, 2 for bad
+  arguments, 3 faulted (a hung or unconfirmed native resource). Types:
+  [webos-link](../../crates/engine/webos-link/src/lib.rs).
 - The worker reports status on every change and every 5 s; 15 s of silence is
   a hang. Stop sends TERM, then KILL 8 s later; a worker still not reaped 8 s
   after its KILL is let go and taken as killed, so a stop always ends.
@@ -127,6 +133,41 @@ carries the uplink as one `link` tagged by `state`: `starting`, `sending`
 once `sending` or `paused`. All rules are one transition function
 ([`Report::next`](../../crates/hosts/webos-slim/src/link.rs)). Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
+
+## Supervisor state machine
+
+Every rule above is one sans-IO machine,
+[`Machine::handle(Input, now) -> Vec<Effect>`](../../crates/hosts/webos-service/src/machine.rs):
+inputs are TV power and video, preferences (already validated and
+persisted), enable, worker events, logs and exits, a broken event stream, a
+failed spawn, a tick and shutdown; effects are `Spawn`, `Send`, `Terminate`,
+`Kill`, `Abandon` (let go of a worker not reaped after its kill) and
+`Publish`. Its phases are idle, running, stopping and retrying. A worker is
+spawned only from idle, and only a reaped (or let-go) exit leaves running or
+stopping, so a worker is always reaped before the next one starts. Time is an
+argument, so its tests are tables without sleeps.
+
+- A worker event line that does not decode, is too long or is cut off breaks
+  the link: the supervisor stops the worker as failed.
+- After the TV app turns the full worker's lighting on or off, worker
+  reports older than 2 s (`ECHO`) do not change the published target back.
+- While a failed worker waits to restart, the state says the whole seconds
+  left, rounded up, as of when it was sent; the app counts down from when it
+  received it, so no clock is shared.
+- The slim worker's forwarder reports an unconfirmed capture release as a
+  failure (exit 1), not a fault; either way the process is restarted.
+
+The driver ([service.rs](../../crates/hosts/webos-service/src/service.rs))
+runs it on the GLib thread: requests and subscription replies arrive as
+callbacks, and a 100 ms timer drains worker output, reaps, ticks the machine
+and renews a subscription that has had no good reply for 5 s. Its seams:
+
+| Seam | On the TV | In tests |
+| --- | --- | --- |
+| `Bus` | [luna.rs](../../crates/hosts/webos-service/src/luna.rs) over `prysm-webos-luna-sys` | a recording bus |
+| `Launcher`, `Worker` | `ProcessLauncher`: pipes, reader threads, signals, reaping | scripted fakes; `sh` scripts as workers |
+| `PreferencesStore` | `FileStore` | `MemoryStore` (feature `testkit`) |
+| `Installer` | `FsInstaller`: manifests, boot hook, bounded `ls-control` and `luna-send` | a temporary root with script stubs |
 
 ## Luna API
 

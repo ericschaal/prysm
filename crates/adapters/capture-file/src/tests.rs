@@ -3,8 +3,6 @@ use crate::source::{Deadlines, FileFrames, STDERR_TAIL, ffmpeg};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Pull, Registry, Settings, chain};
 use std::process::Command;
-use std::sync::mpsc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 const LIMIT: Duration = Duration::from_secs(10);
@@ -20,13 +18,7 @@ const HEIGHT: u32 = 4;
 
 /// Run `work` on its own thread; fail the test instead of hanging.
 fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
-    let (done, result) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = done.send(work());
-    });
-    result
-        .recv_timeout(LIMIT)
-        .expect("playback made no progress")
+    prysm_testkit::within(LIMIT, work)
 }
 
 /// A fake decoder: a shell script writing raw frames to stdout.
@@ -390,9 +382,7 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
         let mut source = FileSource.open(&settings).unwrap();
         let mut count = 0;
         let mut first_at = None;
-        let deadline = Instant::now() + LIMIT;
         loop {
-            assert!(Instant::now() < deadline);
             match source.next_frame(SHORT).unwrap() {
                 Pull::Frame(frame) => {
                     assert_eq!((frame.width(), frame.height()), (32, 18));
@@ -422,9 +412,7 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
     let repeated = within(move || {
         let mut source = FileSource.open(&settings).unwrap();
         let mut count = 0;
-        let deadline = Instant::now() + LIMIT;
         while count < 7 {
-            assert!(Instant::now() < deadline);
             match source.next_frame(SHORT).unwrap() {
                 Pull::Frame(_) => count += 1,
                 Pull::Idle => {}
@@ -441,9 +429,7 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
     let settings = FileSettings::new(invalid.to_str().unwrap());
     let error = within(move || {
         let mut source = FileSource.open(&settings).unwrap();
-        let deadline = Instant::now() + LIMIT;
         loop {
-            assert!(Instant::now() < deadline);
             if let Err(error) = source.next_frame(SHORT) {
                 source.close().unwrap();
                 return chain(&error);

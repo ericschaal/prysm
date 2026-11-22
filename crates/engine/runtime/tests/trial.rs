@@ -10,16 +10,13 @@ use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
 use prysm_runtime::{Engine, EngineHandle, TRIAL_TIMEOUT};
-use std::future::Future;
+use prysm_testkit::{eventually_async, within_async};
 use std::time::Duration;
 
 const DEADLINE: Duration = Duration::from_secs(2);
 
-async fn within<T>(test: impl Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(20), test)
-        .await
-        .expect("test timed out")
-}
+/// How long a test may take.
+const LIMIT: Duration = Duration::from_secs(20);
 
 /// Gray frames, no smoothing, full brightness.
 fn settings() -> Settings {
@@ -70,25 +67,17 @@ async fn start(store: &MemoryStore) -> (EngineHandle, Engine) {
 
 /// Wait up to five seconds (real time) for the preview's green to satisfy `done`.
 async fn wait_for_green(handle: &EngineHandle, what: &str, done: impl Fn(f32) -> bool) -> f32 {
-    let _viewer = handle.preview();
-    let mut seen = None;
-    for _ in 0..1000 {
-        if let Some(latest) = handle.preview().latest() {
-            let green = latest.colors.top.sample_at(0.5).g;
-            if done(green) {
-                return green;
-            }
-            seen = Some(green);
-        }
-        std::thread::sleep(Duration::from_millis(5));
-        tokio::task::yield_now().await;
-    }
-    panic!("preview never became {what}; last green {seen:?}");
+    let preview = handle.preview();
+    eventually_async(what, Duration::from_secs(5), || {
+        let green = preview.latest()?.colors.top.sample_at(0.5).g;
+        done(green).then_some(green)
+    })
+    .await
 }
 
 #[tokio::test]
 async fn a_trial_lights_without_saving_and_a_save_ends_it() {
-    within(async {
+    within_async(LIMIT, async {
         let store = MemoryStore::with(settings());
         let (handle, engine) = start(&store).await;
         handle.set_target(LightingTarget::Processed).await.unwrap();
@@ -118,7 +107,7 @@ async fn a_trial_lights_without_saving_and_a_save_ends_it() {
 
 #[tokio::test]
 async fn a_trial_is_validated_like_settings() {
-    within(async {
+    within_async(LIMIT, async {
         let store = MemoryStore::with(settings());
         let (handle, engine) = start(&store).await;
         let error = handle.try_processing(brightness(101)).await.unwrap_err();
@@ -130,7 +119,7 @@ async fn a_trial_is_validated_like_settings() {
     .await;
 }
 
-/// Not under [`within`]: its deadline would expire with the paused clock.
+/// Not under [`within_async`]: its deadline would expire with the paused clock.
 #[tokio::test]
 async fn a_trial_nobody_saves_expires() {
     let store = MemoryStore::with(settings());

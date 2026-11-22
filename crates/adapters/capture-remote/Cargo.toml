@@ -32,6 +32,7 @@ rustls-native-certs.workspace = true
 utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
+prysm-testkit.workspace = true
 prysm-capture-remote = { path = ".", features = ["testkit"] }
 prysm-runtime = { workspace = true, features = ["testkit"] }
 serde_json.workspace = true

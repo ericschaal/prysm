@@ -110,6 +110,13 @@ impl RemoteSource {
         )?;
         Ok(Self { thread })
     }
+
+    /// The frame received and not yet taken, for tests that wait for one.
+    #[cfg(feature = "testkit")]
+    #[must_use]
+    pub fn pending_frame(&self) -> Option<prysm_core::Frame> {
+        self.thread.peek()
+    }
 }
 
 impl FrameSource for RemoteSource {

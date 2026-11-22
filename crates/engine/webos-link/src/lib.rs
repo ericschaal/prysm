@@ -1,6 +1,6 @@
 //! The contract between the webOS supervisor (`prysm-webos-service`) and its
-//! worker (`prysm-webos` or `prysm-webos-slim`). Design:
-//! `docs/plans/prysm-v1-webos-supervisor.md`.
+//! worker (`prysm-webos` or `prysm-webos-slim`). How they use it:
+//! `docs/developers/webos.md`.
 //!
 //! - Start: typed argv ([`FullArgs`], [`SlimArgs`]), built without a shell.
 //! - Supervisor → worker: [`Command`] lines on the worker's stdin.

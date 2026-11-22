@@ -35,11 +35,6 @@ impl Shutdown {
         // A dropped sender also means shutdown.
         let _ = self.0.clone().wait_for(|requested| *requested).await;
     }
-
-    #[must_use]
-    pub fn is_requested(&self) -> bool {
-        *self.0.borrow()
-    }
 }
 
 /// Running surfaces of one host.

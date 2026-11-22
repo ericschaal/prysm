@@ -184,6 +184,7 @@ mod tests {
             .args([
                 "--exact",
                 "logging::tests::child_process_logs",
+                "--ignored",
                 "--nocapture",
             ])
             .env(CHILD, "1")
@@ -205,7 +206,10 @@ mod tests {
         assert!(!stderr.contains("filtered"), "{stderr}");
     }
 
+    /// The child half of [`installed_subscriber_writes_to_stderr_only`]: it
+    /// installs the process-wide subscriber, so it runs only there.
     #[test]
+    #[ignore = "run by installed_subscriber_writes_to_stderr_only in a child process"]
     fn child_process_logs() {
         if std::env::var_os(CHILD).is_none() {
             return;

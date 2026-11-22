@@ -1,6 +1,6 @@
 //! Both ends on loopback over WebSocket, through a stand-in for the portal's
 //! upgrade and hand-over. Every wait is bounded.
-use prysm_capture_remote::testkit::{BOUND, Portal};
+use prysm_capture_remote::testkit::{BOUND, Portal, failure, receive};
 use prysm_capture_remote::{
     Close, Offer, RemoteReceiver, RemoteSender, RemoteSettings, RemoteSource, SendError,
     StreamEncoding, WireError,
@@ -9,6 +9,7 @@ use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{FrameSink, FrameSource, Mode, Modes, SourceFactory, Span};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
+use prysm_testkit::eventually;
 use std::error::Error as _;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -39,20 +40,6 @@ fn frame(seed: u8, width: u32, height: u32) -> Frame {
     let len = (width * height * 3) as usize;
     let data = (0..len).map(|i| seed.wrapping_add(i as u8)).collect();
     Frame::new(data, width, height, PixelFormat::RGB24).unwrap()
-}
-
-fn receive(source: &mut RemoteSource) -> Frame {
-    let deadline = Instant::now() + BOUND;
-    while Instant::now() < deadline {
-        if let Some(frame) = source
-            .next_frame(Duration::from_millis(50))
-            .unwrap()
-            .into_frame()
-        {
-            return frame;
-        }
-    }
-    panic!("no frame within {BOUND:?}");
 }
 
 type Client = WebSocket<MaybeTlsStream<TcpStream>>;
@@ -179,14 +166,13 @@ fn a_slow_consumer_sees_only_the_newest_frame() {
     for seed in 1..=20 {
         sender.send(&frame(seed, 8, 4)).unwrap();
     }
-    thread::sleep(Duration::from_millis(200));
-
-    let mut seen = Vec::new();
-    while seen.last() != Some(&20) {
-        seen.push(receive(&mut source).as_slice()[0]);
-    }
-    assert!(seen.len() < 20, "frames were queued: {seen:?}");
-    assert!(seen.is_sorted(), "frames out of order: {seen:?}");
+    // Untaken, each frame replaced the one before.
+    eventually("the receiver to hold the last frame", BOUND, || {
+        source
+            .pending_frame()
+            .filter(|frame| frame.as_slice()[0] == 20)
+    });
+    assert_eq!(receive(&mut source).as_slice()[0], 20, "frames were queued");
     assert!(
         source
             .next_frame(Duration::from_millis(100))
@@ -236,14 +222,7 @@ fn a_second_sender_replaces_the_first() {
     let mut second = portal.connect().unwrap();
     second.send(&frame(4, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 4);
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "the replaced sender kept going");
-        if let Err(error) = sender.tick() {
-            break error;
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
+    let error = eventually("the replaced sender to stop", BOUND, || sender.tick().err());
     assert_eq!(
         wire_cause(&error),
         WireError::Closed(Some(Close::Replaced)),
@@ -364,14 +343,7 @@ fn unknown_messages_fields_and_flags_are_ignored() {
             r#"{"type":"refused","cause":"thermal","reason":"too hot","celsius":90}"#,
         ))
         .unwrap();
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "the refusal never arrived");
-        match source.next_frame(Duration::from_millis(50)) {
-            Err(error) => break error,
-            Ok(pull) => assert!(pull.is_idle()),
-        }
-    };
+    let error = failure(&mut source);
     assert_eq!(wire_cause(&error), WireError::Refused("too hot".into()));
     Box::new(source).close().unwrap();
 }
@@ -621,14 +593,7 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
         let (portal, mut source) = open();
         let mut sender = portal.connect().unwrap();
         refuse(&mut sender);
-        let deadline = Instant::now() + BOUND;
-        let error = loop {
-            assert!(Instant::now() < deadline, "the refusal never arrived");
-            match source.next_frame(Duration::from_millis(50)) {
-                Err(error) => break error,
-                Ok(pull) => assert!(pull.is_idle()),
-            }
-        };
+        let error = failure(&mut source);
         assert!(
             source.next_frame(Duration::ZERO).is_err(),
             "the failure stays"
@@ -728,14 +693,7 @@ fn a_sender_that_does_not_offer_the_request_fails_the_source_unasked() {
             .is_some_and(|cause| cause.to_string().contains("request")),
         "{error}"
     );
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "the source never failed");
-        match source.next_frame(Duration::from_millis(50)) {
-            Err(error) => break error,
-            Ok(pull) => assert!(pull.is_idle()),
-        }
-    };
+    let error = failure(&mut source);
     let prysm_ports::Error::Invalid(invalid) = &error else {
         panic!("{error:?}");
     };
@@ -756,14 +714,9 @@ fn close_is_prompt_stops_receiving_and_fails_the_sender() {
     receive(&mut source);
     // A sender that reads, as the TV does at every frame or tick.
     let reading = thread::spawn(move || {
-        let deadline = Instant::now() + BOUND;
-        loop {
-            assert!(Instant::now() < deadline, "sender never noticed the close");
-            if let Err(error) = sender.tick() {
-                return error;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
+        eventually("the sender to notice the close", BOUND, || {
+            sender.tick().err()
+        })
     });
 
     let started = Instant::now();
@@ -841,14 +794,9 @@ fn idle_reads_the_close_of_a_stopped_receiver() {
     sender.tick().unwrap();
 
     Box::new(source).close().unwrap();
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "sender never noticed the close");
-        if let Err(error) = sender.tick() {
-            break error;
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
+    let error = eventually("the sender to notice the close", BOUND, || {
+        sender.tick().err()
+    });
     assert_eq!(
         wire_cause(&error),
         WireError::Closed(Some(Close::Stopped)),

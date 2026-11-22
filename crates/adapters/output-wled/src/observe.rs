@@ -40,12 +40,12 @@ use std::time::{Duration, Instant};
 pub const EVERY: Duration = Duration::from_secs(1);
 /// After a check without a usable answer the next waits this many times
 /// [`EVERY`].
-const BACKOFF: u32 = 5;
+pub(crate) const BACKOFF: u32 = 5;
 /// Longest the caller's thread waits, for the TCP connect (and the request
 /// write, which fits an empty send buffer).
 const CONNECT: Duration = Duration::from_millis(200);
 /// How long a reply may take; it is read without waiting meanwhile.
-const REPLY: Duration = Duration::from_secs(1);
+pub(crate) const REPLY: Duration = Duration::from_secs(1);
 /// `/json/si` grows with segments and usermods; WLED's own WebSocket limit.
 const MAX_REPLY: usize = 64 * 1024;
 /// Every this many checks one reads the configuration instead of the state
@@ -98,13 +98,13 @@ struct Pending {
 }
 
 impl Observer {
-    /// The first check is `every` from now, once colours have reached WLED.
-    pub fn new(device: SocketAddr, host: &str, every: Duration) -> Self {
+    /// The first check is `every` after `now`, once colours have reached WLED.
+    pub fn new(device: SocketAddr, host: &str, every: Duration, now: Instant) -> Self {
         Self {
             device,
             host: host.to_owned(),
             every,
-            next: Instant::now() + every,
+            next: now + every,
             checks: 0,
             config_every: Some(CONFIG_EVERY),
             pending: None,
@@ -155,9 +155,9 @@ impl Observer {
             .map_or(Transfer::Srgb, Transfer::Gamma)
     }
 
-    /// Advance the check without waiting for WLED; the latest finding.
-    pub fn poll(&mut self) -> Option<OutputIssue> {
-        let now = Instant::now();
+    /// Advance the check to `now` without waiting for WLED: send the one
+    /// due, or read the reply in flight; the latest finding.
+    pub fn poll(&mut self, now: Instant) -> Option<OutputIssue> {
         if let Some(pending) = &mut self.pending {
             let body = match pending.read() {
                 Ok(None) if now < pending.deadline => return self.issue,

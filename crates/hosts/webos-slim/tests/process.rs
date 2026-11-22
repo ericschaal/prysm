@@ -3,6 +3,7 @@
 //! code after a final `failed` event.
 use prysm_capture_remote::RemoteSettings;
 use prysm_capture_remote::testkit::Portal;
+use prysm_testkit::wait_child;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
@@ -58,18 +59,12 @@ fn events(child: &mut Child, until: impl Fn(&serde_json::Value) -> bool) -> serd
     }
 }
 
-fn wait(child: &mut Child) -> Option<i32> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            return status.code();
-        }
-        if Instant::now() > deadline {
-            child.kill().unwrap();
-            panic!("the worker did not exit");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+/// The worker's exit code; it is killed if it has not exited within 20
+/// seconds.
+fn exit_code(child: &mut Child) -> Option<i32> {
+    wait_child(child, Duration::from_secs(20))
+        .expect("the worker did not exit")
+        .code()
 }
 
 /// The receiver listens only while its host is lighting, so an unreachable
@@ -95,7 +90,7 @@ fn an_unreachable_receiver_is_a_reported_wait() {
         "{status}"
     );
     drop(child.stdin.take());
-    assert_eq!(wait(&mut child), Some(0));
+    assert_eq!(exit_code(&mut child), Some(0));
 }
 
 /// Once a receiver sends its request, the capture opens; off the TV that
@@ -111,7 +106,7 @@ fn capture_off_the_tv_fails_with_its_cause() {
         failed["cause"].as_str().unwrap().contains("webOS"),
         "{failed}"
     );
-    assert_eq!(wait(&mut child), Some(1));
+    assert_eq!(exit_code(&mut child), Some(1));
     drop(stdin);
     drop(receiver);
 }

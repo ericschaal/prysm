@@ -84,7 +84,7 @@ impl OutputFactory for Wled {
         let device = SocketAddr::new(ip, address.port);
         let host = address.to_string();
         let output = WledOutput {
-            observer: Observer::new(device, &host, self.check_every),
+            observer: Observer::new(device, &host, self.check_every, Instant::now()),
             device,
             host,
             label,
@@ -192,7 +192,7 @@ impl LedOutput for WledOutput {
     }
 
     fn observe(&mut self) -> Option<OutputIssue> {
-        self.observer.poll()
+        self.observer.poll(Instant::now())
     }
 
     fn brightness(&self) -> Option<DeviceBrightness> {

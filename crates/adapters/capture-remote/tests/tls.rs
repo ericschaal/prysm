@@ -5,13 +5,12 @@
 //! pointing at one authority: one that did not sign the proxy's certificate
 //! (`in_other_ca_process`), then the test CA that did (`in_test_ca_process`).
 use prysm_capture_remote::testkit::{
-    BOUND, Portal, in_other_ca_process, in_test_ca_process, tls_proxy,
+    BOUND, Portal, in_other_ca_process, in_test_ca_process, receive, tls_proxy,
 };
 use prysm_capture_remote::{Close, RemoteSender, RemoteSettings, StreamEncoding, WireError};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{FrameSink, FrameSource};
-use std::thread;
-use std::time::{Duration, Instant};
+use prysm_testkit::eventually;
 
 const RAW: RemoteSettings = RemoteSettings {
     width: 320,
@@ -56,31 +55,14 @@ fn wss_through_a_tls_terminating_proxy() {
     let data: Vec<u8> = (0..320 * 180 * 3).map(|i| i as u8).collect();
     let frame = Frame::new(data, 320, 180, PixelFormat::RGB24).unwrap();
     sender.send(&frame).unwrap();
-    let deadline = Instant::now() + BOUND;
-    let got = loop {
-        assert!(Instant::now() < deadline, "no frame through the proxy");
-        if let Some(got) = source
-            .next_frame(Duration::from_millis(50))
-            .unwrap()
-            .into_frame()
-        {
-            break got;
-        }
-    };
+    let got = receive(&mut source);
     assert_eq!(got.as_slice(), frame.as_slice());
 
     // Lighting off: the stopped close arrives through TLS as well.
     Box::new(source).close().unwrap();
-    let error = loop {
-        assert!(
-            Instant::now() < deadline,
-            "the sender never noticed the close"
-        );
-        if let Err(error) = sender.tick() {
-            break error;
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
+    let error = eventually("the sender to notice the close", BOUND, || {
+        sender.tick().err()
+    });
     let prysm_ports::Error::Adapter {
         source: Some(cause),
         ..

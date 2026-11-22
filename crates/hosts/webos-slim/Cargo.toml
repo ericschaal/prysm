@@ -21,6 +21,7 @@ futures.workspace = true
 tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
+prysm-testkit.workspace = true
 tungstenite.workspace = true
 prysm-capture-remote = { workspace = true, features = ["testkit"] }
 prysm-runtime = { workspace = true, features = ["testkit"] }

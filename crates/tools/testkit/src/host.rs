@@ -1,7 +1,7 @@
-//! Launches a built host binary for the hosts' integration tests, which
-//! include this file with `#[path]`. Every wait is bounded.
-#![allow(dead_code)]
-
+//! Launches a built desktop host binary (`prysm-headless`, `prysm-tui`) for
+//! the hosts' integration tests, and talks to its portal. Every wait is
+//! bounded.
+use crate::wait_child;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -89,16 +89,8 @@ impl Host {
             .status()
             .unwrap();
         assert!(killed.success());
-        let deadline = Instant::now() + TIMEOUT;
-        let status = loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
-                break status;
-            }
-            if Instant::now() > deadline {
-                let _ = self.child.kill();
-                panic!("host did not exit after SIGTERM; stderr {:#?}", self.stderr);
-            }
-            std::thread::sleep(Duration::from_millis(20));
+        let Some(status) = wait_child(&mut self.child, TIMEOUT) else {
+            panic!("host did not exit after SIGTERM; stderr {:#?}", self.stderr);
         };
         while let Ok(line) = self.lines.recv_timeout(TIMEOUT) {
             self.stderr.push(line);

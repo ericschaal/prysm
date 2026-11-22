@@ -4,9 +4,10 @@
 //! TLS-terminating proxy with a test certificate, for `wss://`.
 use crate::wire::{MAX_FPS, MAX_HEIGHT, MAX_WIDTH};
 use crate::{Offer, RemoteSender, RemoteSettings, RemoteSource, StreamEncoding};
+use prysm_core::Frame;
 use prysm_ports::{
-    Accepted, Answer, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Handoff, Mode,
-    Result, Span,
+    Accepted, Answer, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Error,
+    FrameSource, Handoff, Mode, Result, Span,
 };
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -15,7 +16,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tungstenite::WebSocket;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderValue, Uri};
@@ -35,6 +36,46 @@ pub fn offer() -> Offer {
         span(1, MAX_FPS, 1),
     );
     Offer::new(StreamEncoding::ALL.map(|encoding| (encoding, vec![any])))
+}
+
+/// How long one pull of [`receive`] and [`failure`] waits for the source.
+const PULL: Duration = Duration::from_millis(20);
+
+/// The next frame `source` produces within `within`, past idle pulls.
+///
+/// # Panics
+/// The source failed.
+pub fn try_receive(source: &mut RemoteSource, within: Duration) -> Option<Frame> {
+    let deadline = Instant::now() + within;
+    while Instant::now() < deadline {
+        if let Some(frame) = source.next_frame(PULL).unwrap().into_frame() {
+            return Some(frame);
+        }
+    }
+    None
+}
+
+/// The next frame `source` produces, past idle pulls.
+///
+/// # Panics
+/// None within [`BOUND`], or the source failed.
+pub fn receive(source: &mut RemoteSource) -> Frame {
+    try_receive(source, BOUND).unwrap_or_else(|| panic!("no frame within {BOUND:?}"))
+}
+
+/// The failure `source` ends with, past idle pulls.
+///
+/// # Panics
+/// It produced a frame first, or did not fail within [`BOUND`].
+pub fn failure(source: &mut RemoteSource) -> Error {
+    let deadline = Instant::now() + BOUND;
+    loop {
+        assert!(Instant::now() < deadline, "the source never failed");
+        match source.next_frame(PULL) {
+            Err(error) => return error,
+            Ok(pull) => assert!(pull.is_idle(), "a frame came first"),
+        }
+    }
 }
 
 /// A stand-in for the portal on an ephemeral loopback port.
@@ -124,8 +165,9 @@ impl Portal {
 }
 
 /// Read the request head and answer it as the portal does
-/// ([`Handoff::answer`]): `426` for another version, `503` while no source
-/// receives, else `101` with the subprotocol, handing the socket over with
+/// ([`Handoff::answer`]): `400` without a WebSocket key, `426` for another
+/// version, `503` while no source receives, each with the portal's failure
+/// body; else `101` with the subprotocol, then hand the socket over with
 /// what was read past the head and the sender's offer.
 fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
     socket.set_read_timeout(Some(BOUND)).unwrap();
@@ -149,22 +191,36 @@ fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
         })
     };
     let Some(key) = field("sec-websocket-key") else {
-        let _ = socket.write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n");
+        refuse(
+            &mut socket,
+            "400 Bad Request",
+            "",
+            "bad_request",
+            "expected a WebSocket upgrade",
+        );
         return;
     };
     let protocols = field("sec-websocket-protocol");
     let offer = match handoff.answer(protocols.as_deref(), field(CAPTURE_OFFER_HEADER).as_deref()) {
         Answer::Upgrade { offer } => offer,
         Answer::Version => {
-            let refused = format!(
-                "HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: {CAPTURE_PROTOCOL}\r\ncontent-length: 0\r\n\r\n"
+            refuse(
+                &mut socket,
+                "426 Upgrade Required",
+                &format!("sec-websocket-protocol: {CAPTURE_PROTOCOL}\r\n"),
+                "bad_request",
+                "the sender speaks another capture stream version; update the older one",
             );
-            let _ = socket.write_all(refused.as_bytes());
             return;
         }
         Answer::Unavailable => {
-            let _ =
-                socket.write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n");
+            refuse(
+                &mut socket,
+                "503 Service Unavailable",
+                "",
+                "unavailable",
+                "no source receives the capture stream: lighting is off or the capture is not `remote`",
+            );
             return;
         }
     };
@@ -181,6 +237,17 @@ fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
         buffered: read[end..].to_vec(),
         offer,
     });
+}
+
+/// Refuse an upgrade with `status`, `headers` (whole lines) and the
+/// portal's JSON failure body of `kind` and `message`.
+fn refuse(socket: &mut TcpStream, status: &str, headers: &str, kind: &str, message: &str) {
+    let body = serde_json::json!({ "kind": kind, "message": message }).to_string();
+    let reply = format!(
+        "HTTP/1.1 {status}\r\n{headers}content-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = socket.write_all(reply.as_bytes());
 }
 
 /// Accept an upgrade on `stream` speaking this version: a peer other than the

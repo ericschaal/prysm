@@ -121,43 +121,8 @@ impl WledSettings {
 #[cfg(all(test, feature = "schema"))]
 mod schema_tests {
     use super::*;
-    use serde::de::DeserializeOwned;
-    use serde_json::{Map, Value, json};
-    use std::collections::BTreeSet;
-    use utoipa::ToSchema;
-
-    /// The schema lists exactly the serialized fields, requires exactly those
-    /// serde cannot default, and rejects unknown fields as serde does.
-    fn same_shape<T: ToSchema + Serialize + DeserializeOwned>(full: &T) -> Value {
-        let schema = serde_json::to_value(T::schema()).unwrap();
-        let properties = schema["properties"].as_object().unwrap();
-        let required: Vec<String> =
-            serde_json::from_value(schema["required"].clone()).unwrap_or_default();
-        let Value::Object(fields) = serde_json::to_value(full).unwrap() else {
-            panic!("settings serialize as an object");
-        };
-        let keys = |map: &Map<String, Value>| map.keys().cloned().collect::<BTreeSet<_>>();
-        assert_eq!(keys(&fields), keys(properties));
-        let minimal: Map<String, Value> = fields
-            .iter()
-            .filter(|(key, _)| required.contains(key))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
-        serde_json::from_value::<T>(minimal.clone().into()).unwrap();
-        for key in &required {
-            let mut missing = minimal.clone();
-            missing.remove(key);
-            assert!(
-                serde_json::from_value::<T>(missing.into()).is_err(),
-                "{key}"
-            );
-        }
-        assert_eq!(schema["additionalProperties"], json!(false));
-        let mut unknown = fields;
-        unknown.insert("unknown".into(), json!(1));
-        assert!(serde_json::from_value::<T>(unknown.into()).is_err());
-        schema
-    }
+    use prysm_testkit::assert_schema_matches_serde;
+    use serde_json::json;
 
     #[test]
     fn schema_matches_serde_shape() {
@@ -172,7 +137,7 @@ mod schema_tests {
             leds,
             dither: false,
         };
-        let schema = same_shape(&settings);
+        let schema = assert_schema_matches_serde(&settings);
         assert_eq!(schema["required"], json!(["address", "leds"]));
         assert_eq!(schema["properties"]["dither"]["default"], json!(true));
         let omitted: WledSettings =
@@ -189,7 +154,7 @@ mod schema_tests {
             };
             assert_eq!(settings.validate(), Ok(()), "{example}");
         }
-        let schema = same_shape(&leds);
+        let schema = assert_schema_matches_serde(&leds);
         assert_eq!(schema.get("required"), None);
         assert_eq!(schema["properties"]["top"]["maximum"], json!(16384));
     }

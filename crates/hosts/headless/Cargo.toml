@@ -20,7 +20,7 @@ prysm-core.workspace = true
 prysm-ports.workspace = true
 prysm-settings-file.workspace = true
 serde.workspace = true
-prysm-version.workspace = true
+prysm-testkit.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 

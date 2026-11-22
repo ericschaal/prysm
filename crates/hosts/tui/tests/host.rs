@@ -1,9 +1,6 @@
 //! The built `prysm-tui` binary without a terminal: the preview fails cleanly
 //! while lighting and the portal keep running.
-#[path = "../../common/tests/launch/mod.rs"]
-mod launch;
 
-use launch::{Host, check_arguments, check_settings, get, null_settings, put_target};
 use prysm_capture_device::DeviceSource;
 use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
@@ -11,6 +8,7 @@ use prysm_output_wled::Wled;
 use prysm_ports::{Registry, SettingsStore};
 use prysm_runtime::NullOutput;
 use prysm_settings_file::SettingsFile;
+use prysm_testkit::host::{Host, check_arguments, check_settings, get, null_settings, put_target};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_prysm-tui");
 

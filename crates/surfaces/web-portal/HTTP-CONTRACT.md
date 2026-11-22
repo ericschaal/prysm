@@ -1,7 +1,7 @@
 # Portal HTTP contract
 
 The web portal is a [`Surface`](../../engine/runtime/src/surface.rs) of the
-[simplified runtime](../../../docs/plans/prysm-v1-simplified-runtime.md). It
+runtime ([architecture](../../../docs/developers/architecture.md)). It
 serves the host's frontend bundle and a small JSON API over plain HTTP/1.1 on
 any address, typically the LAN, without authentication.
 Every API call maps to one `EngineHandle` call; the portal keeps no state of its
@@ -511,7 +511,7 @@ returns; nothing is detached.
 
 ## Tests
 
-[`tests/http.rs`](tests/http.rs) runs the portal on loopback against an engine
+[`tests/http/`](tests/http/main.rs), one file per subject, runs the portal on loopback against an engine
 with `prysm-runtime`'s fake adapters: construction validation, foreign origins
 refused before the engine runs (commands, stream, preflight), same-origin and
 origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, calibration (refused unless processed, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), processing trial (applied without saving or a revision change, validated, exact fields, origin policy), adapter failure (502),

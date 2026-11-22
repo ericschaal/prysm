@@ -7,7 +7,7 @@ engine, output or portal.
 On the TV, Luna belongs to the supervisor (`prysm-webos-service`, Luna
 `io.github.ericschaal.prysm.service`, both packages), not to the workers: it owns power and
 video, the TV preferences and the worker process, and the TV UI calls it for
-state, preferences and enable/disable ([Luna API](../plans/prysm-v1-webos-supervisor.md#6-luna-api),
+state, preferences and enable/disable ([Luna API](webos.md#luna-api),
 generated types `@prysm/contracts/luna`). The workers talk only to the
 supervisor over stdio and have no Luna surface.
 
@@ -18,7 +18,7 @@ supervisor over stdio and have no Luna surface.
 | `prysm-webos-slim` worker (a `Forwarder`) | supervisor over Luna; the remote headless portal over HTTP | None on the TV | Remote engine |
 
 On the Rust side every UI is a runtime surface over one `EngineHandle`; see the
-[simplified runtime](../plans/prysm-v1-simplified-runtime.md) and the
+[architecture](architecture.md#adapters-surfaces-and-hosts) and the
 [portal HTTP contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md).
 
 ## Frontend wiring

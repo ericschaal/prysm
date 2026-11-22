@@ -66,47 +66,13 @@ impl FileSettings {
 #[cfg(all(test, feature = "schema"))]
 mod schema_tests {
     use super::*;
-    use serde::de::DeserializeOwned;
-    use serde_json::{Map, Value, json};
-    use std::collections::BTreeSet;
+    use prysm_testkit::assert_schema_matches_serde;
+    use serde_json::json;
     use utoipa::ToSchema;
-
-    /// The schema lists exactly the serialized fields, requires exactly those
-    /// serde cannot default, and rejects unknown fields as serde does.
-    fn same_shape<T: ToSchema + Serialize + DeserializeOwned>(full: &T) -> Value {
-        let schema = serde_json::to_value(T::schema()).unwrap();
-        let properties = schema["properties"].as_object().unwrap();
-        let required: Vec<String> =
-            serde_json::from_value(schema["required"].clone()).unwrap_or_default();
-        let Value::Object(fields) = serde_json::to_value(full).unwrap() else {
-            panic!("settings serialize as an object");
-        };
-        let keys = |map: &Map<String, Value>| map.keys().cloned().collect::<BTreeSet<_>>();
-        assert_eq!(keys(&fields), keys(properties));
-        let minimal: Map<String, Value> = fields
-            .iter()
-            .filter(|(key, _)| required.contains(key))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
-        serde_json::from_value::<T>(minimal.clone().into()).unwrap();
-        for key in &required {
-            let mut missing = minimal.clone();
-            missing.remove(key);
-            assert!(
-                serde_json::from_value::<T>(missing.into()).is_err(),
-                "{key}"
-            );
-        }
-        assert_eq!(schema["additionalProperties"], json!(false));
-        let mut unknown = fields;
-        unknown.insert("unknown".into(), json!(1));
-        assert!(serde_json::from_value::<T>(unknown.into()).is_err());
-        schema
-    }
 
     #[test]
     fn schema_matches_serde_shape() {
-        let schema = same_shape(&FileSettings::new("/tmp/clip.mkv"));
+        let schema = assert_schema_matches_serde(&FileSettings::new("/tmp/clip.mkv"));
         assert_eq!(schema["required"], json!(["path"]));
         assert_eq!(schema["properties"]["width"]["default"], json!(640));
         assert_eq!(schema["properties"]["height"]["maximum"], json!(2160));
