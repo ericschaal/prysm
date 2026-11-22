@@ -205,8 +205,7 @@ impl Refusal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Close {
     /// The receiving source closed (lighting stopped, or its capture
-    /// settings changed) or failed (the sender's refusal, a keyframe that
-    /// does not decode), possibly before it sent the request: code 4000.
+    /// settings changed), possibly before it sent the request: code 4000.
     /// The sender releases its capture and encoder until a receiver takes a
     /// connection again.
     Stopped,
@@ -214,6 +213,11 @@ pub enum Close {
     /// stops until its user starts it again, so two senders never take the
     /// stream from each other in turn.
     Replaced,
+    /// The receiving source failed after it sent the request (the sender
+    /// refused it, its H.264 keyframe does not decode, or no decoder
+    /// starts): code 4002. Prysm shows why; the sender releases its capture
+    /// and encoder until a receiver takes a connection again.
+    Failed,
 }
 
 impl Close {
@@ -221,11 +225,12 @@ impl Close {
         match self {
             Self::Stopped => 4000,
             Self::Replaced => 4001,
+            Self::Failed => 4002,
         }
     }
 
     pub(crate) fn from_code(code: u16) -> Option<Self> {
-        [Self::Stopped, Self::Replaced]
+        [Self::Stopped, Self::Replaced, Self::Failed]
             .into_iter()
             .find(|close| close.code() == code)
     }
@@ -236,6 +241,7 @@ impl fmt::Display for Close {
         f.write_str(match self {
             Self::Stopped => "Prysm stopped receiving",
             Self::Replaced => "another sender replaced this one at Prysm",
+            Self::Failed => "Prysm stopped receiving after a failure, which it shows",
         })
     }
 }
@@ -890,11 +896,14 @@ mod tests {
 
     #[test]
     fn close_codes_are_typed() {
-        for close in [Close::Stopped, Close::Replaced] {
-            assert_eq!(Close::from_code(close.code()), Some(close));
+        for (close, code) in [
+            (Close::Stopped, 4000),
+            (Close::Replaced, 4001),
+            (Close::Failed, 4002),
+        ] {
+            assert_eq!(close.code(), code);
+            assert_eq!(Close::from_code(code), Some(close));
         }
-        assert_eq!(Close::Stopped.code(), 4000);
-        assert_eq!(Close::Replaced.code(), 4001);
         assert_eq!(Close::from_code(1000), None);
         assert_eq!(
             WireError::Closed(None).to_string(),

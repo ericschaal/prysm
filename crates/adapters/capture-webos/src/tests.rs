@@ -20,7 +20,6 @@ const TEST: Limits = Limits {
     retry: Duration::from_millis(5),
     ui_retry: Duration::from_millis(5),
     ui_retry_max: Duration::from_millis(20),
-    unchecked: 3,
     release: Duration::from_secs(2),
     poll: Duration::from_millis(5),
 };
@@ -57,8 +56,6 @@ struct Script {
     steps: VecDeque<Step>,
     idle: Step,
     open_fails: Option<Recovery>,
-    /// Faults of the next opens, one per open, before `open_fails` applies.
-    open_faults: VecDeque<Recovery>,
     hang: Option<&'static str>,
     release_fails: bool,
     opens: usize,
@@ -107,7 +104,6 @@ impl Driver {
                 steps: VecDeque::new(),
                 idle: Step::Pending,
                 open_fails: None,
-                open_faults: VecDeque::new(),
                 hang: None,
                 release_fails: false,
                 opens: 0,
@@ -186,7 +182,7 @@ impl Backend for Driver {
         let mut script = self.enter("open");
         script.opens += 1;
         script.record("open");
-        if let Some(recovery) = script.open_faults.pop_front().or(script.open_fails) {
+        if let Some(recovery) = script.open_fails {
             return Err(Fault {
                 error: Error::other("driver refused"),
                 recovery,
@@ -469,6 +465,29 @@ fn stalled_producer_restarts_the_tap() {
     );
     driver.push([Step::Frame(2)]);
     assert_eq!(next(&mut frames).as_slice(), &[2; 96]);
+    closes_cleanly(frames);
+}
+
+/// A stall already waited `pending`: the tap reopens at once, not after
+/// `retry`, so frames can resume before the session releases the lights.
+#[test]
+fn a_stalled_tap_reopens_without_the_retry_wait() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    driver.push([Step::Frame(1)]);
+    let limits = Limits {
+        pending: Duration::from_millis(50),
+        retry: Duration::from_secs(60),
+        ..TEST
+    };
+    let mut frames = start_with(&driver, &video, limits);
+    assert_eq!(next(&mut frames).as_slice(), &[1; 96]);
+    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
+        (driver.count(|s| s.releases) == 1).then_some(())
+    });
+    driver.push([Step::Frame(2)]);
+    assert_eq!(next(&mut frames).as_slice(), &[2; 96]);
+    assert_eq!(driver.count(|s| s.opens), 2);
     closes_cleanly(frames);
 }
 
@@ -840,69 +859,95 @@ fn only_a_missing_ui_library_or_device_is_permanent() {
     assert!(fatal(backend::ui_open_fault(load)));
 }
 
+/// Only a failed driver creation or a name left registered needs a new
+/// process; every other failure leaves the host free to open a new source.
 #[test]
-fn only_an_unrecognised_registration_failure_is_bounded() {
+fn only_a_failed_create_or_a_stuck_name_needs_a_new_process() {
     use prysm_capture_webos_sys as sys;
     use prysm_webos_luna_sys::Error as Luna;
-    let luna = |error| backend::fault("cannot open webOS video capture", error).recovery;
+    let status = || sys::Error::Status {
+        operation: "vtCapture_init",
+        code: 11,
+    };
     let message = || "failed".to_owned();
+    for (error, restart) in [
+        (sys::Error::Create(Box::new(status())), true),
+        (
+            sys::Error::from(Luna::Unremoved {
+                name: "a".into(),
+                message: message(),
+            }),
+            true,
+        ),
+        (
+            sys::Error::from(Luna::Denied {
+                name: "a".into(),
+                message: message(),
+            }),
+            false,
+        ),
+        (
+            sys::Error::from(Luna::Luna {
+                operation: "LSRegister",
+                message: message(),
+            }),
+            false,
+        ),
+        (status(), false),
+    ] {
+        let failure = backend::fault("cannot open webOS video capture", error).error;
+        assert_eq!(needs_new_process(&failure), restart, "{}", chain(&failure));
+    }
+    assert!(!needs_new_process(&Error::other("anything else")));
+}
+
+/// Any failed Luna registration check ends video capture at once, whatever
+/// LS2 answered; the cause still says which failure it was.
+#[test]
+fn every_failed_registration_check_is_fatal_and_names_its_cause() {
+    use prysm_capture_webos_sys as sys;
+    use prysm_webos_luna_sys::Error as Luna;
+    let open = |error| backend::fault("cannot open webOS video capture", error);
+    let message = || "failed".to_owned();
+    for (error, cause) in [
+        (
+            Luna::Luna {
+                operation: "LSRegister",
+                message: message(),
+            },
+            "the capture registration could not be checked",
+        ),
+        (
+            Luna::Denied {
+                name: "a".into(),
+                message: message(),
+            },
+            "the capture registration is not allowed",
+        ),
+        (
+            Luna::Unremoved {
+                name: "a".into(),
+                message: message(),
+            },
+            "a capture client name stays registered",
+        ),
+    ] {
+        let fault = open(sys::Error::from(error));
+        assert_eq!(fault.recovery, Recovery::Never, "{}", chain(&fault.error));
+        assert!(
+            chain(&fault.error).starts_with(&format!("cannot open webOS video capture: {cause}")),
+            "{}",
+            chain(&fault.error)
+        );
+    }
     assert_eq!(
-        luna(sys::Error::from(Luna::Luna {
-            operation: "LSRegister",
-            message: message(),
-        })),
-        Recovery::Bounded
-    );
-    assert_eq!(
-        luna(sys::Error::from(Luna::Denied {
-            name: "a".into(),
-            message: message(),
-        })),
-        Recovery::Never
-    );
-    assert_eq!(
-        luna(sys::Error::Status {
+        open(sys::Error::Status {
             operation: "vtCapture_process",
             code: 1,
-        }),
+        })
+        .recovery,
         Recovery::Reopen
     );
-}
-
-#[test]
-fn a_run_of_unrecognised_registration_failures_ends_the_source_with_its_cause() {
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    driver.with(|s| s.open_fails = Some(Recovery::Bounded));
-    let mut frames = start(&driver, &video);
-    let error = failure(&mut frames);
-    assert_eq!(
-        chain(&error),
-        format!(
-            "the Luna registration check failed {} times in a row: driver refused",
-            TEST.unchecked
-        )
-    );
-    assert_eq!(driver.count(|s| s.opens), TEST.unchecked as usize);
-    closes_cleanly(frames);
-}
-
-#[test]
-fn any_other_open_outcome_starts_the_registration_count_again() {
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    let bounded = TEST.unchecked as usize - 1;
-    driver.with(|s| {
-        s.open_faults = std::iter::repeat_n(Recovery::Bounded, bounded)
-            .chain([Recovery::Reopen])
-            .chain(std::iter::repeat_n(Recovery::Bounded, bounded))
-            .collect();
-        s.idle = Step::Frame(7);
-    });
-    let mut frames = start(&driver, &video);
-    assert_eq!(next(&mut frames).as_slice(), frame(7).as_slice());
-    assert_eq!(driver.count(|s| s.opens), bounded * 2 + 2);
-    closes_cleanly(frames);
 }
 
 #[test]
@@ -1086,8 +1131,8 @@ fn production_limits_fit_the_runtime_deadlines() {
     let tv = Limits::TV;
     assert_eq!(tv.watchdog, Duration::from_secs(5));
     assert_eq!(tv.preparation, Duration::from_secs(10));
-    // Below the forwarder's 5 s and the engine's 10 s stop deadlines.
-    assert!(tv.release < Duration::from_secs(5));
+    // The TV hosts assert their stop deadlines against it.
+    assert_eq!(tv.release, RELEASE);
 }
 
 // ---- Real backend on the development host -------------------------------

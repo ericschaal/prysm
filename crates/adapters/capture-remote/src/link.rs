@@ -58,6 +58,11 @@ impl<S: Read + Write> Link<S> {
         Self { socket }
     }
 
+    /// The stream under the WebSocket.
+    pub(crate) fn socket_mut(&mut self) -> &mut S {
+        self.socket.get_mut()
+    }
+
     /// The next message; `None` when none arrived within the socket's read
     /// timeout (or, non-blocking, none is waiting).
     ///

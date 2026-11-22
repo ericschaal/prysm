@@ -1,5 +1,5 @@
 use crate::capture::{RequestedCapture, settings};
-use crate::link::{ForwarderLink, Uplink, Upstream, VERSION_RECONNECT, slim_encoding};
+use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
 use crate::resolve::Resolver;
 use prysm_capture_remote::testkit::Portal;
 use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError, StreamEncoding};
@@ -8,7 +8,7 @@ use prysm_core::Frame;
 use prysm_ports::{Error, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
-use prysm_webos_link::worker::{Link, Peer, Stop};
+use prysm_webos_link::worker::{Link, Peer, Stop, StopHandle};
 use prysm_webos_link::{Command, Event, LightingTarget, SlimStatus, Video, WorkerStatus};
 use prysm_webos_link::{FailureKind, SlimEncoding, SlimLink};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -86,9 +86,8 @@ impl Opened {
     }
 }
 
-/// The worker, with `connect` opening its uplink (retried every 20 ms, or
-/// every [`VERSION_RECONNECT`] after a version mismatch) and `opened` the
-/// capture.
+/// The worker, with `connect` opening its uplink (retried every 20 ms) and
+/// `opened` the capture.
 fn start<S: Upstream + 'static>(
     opened: &Opened,
     connect: impl FnMut() -> Result<S> + Send + 'static,
@@ -97,8 +96,8 @@ fn start<S: Upstream + 'static>(
     let feed = VideoSignal::default();
     let stop = link.stop.clone();
     let (sink, flow) = Uplink::new(connect);
-    let sink = sink.retry_every(Duration::from_millis(20), VERSION_RECONNECT);
-    let source = RequestedCapture::new(flow.clone(), {
+    let sink = sink.retry_every(Duration::from_millis(20));
+    let source = RequestedCapture::new(flow.clone(), StopHandle::default(), {
         let opened = opened.clone();
         move |shape| opened.open(shape)
     });
@@ -420,8 +419,7 @@ async fn a_prysm_of_another_version_is_reported_as_such() {
         reason.contains("Prysm: 9") && reason.contains("update the older one"),
         "{reason}"
     );
-    // The slow retry itself is `link::tests::attempts_follow_the_state`.
-    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(attempts.load(Ordering::SeqCst) >= 1);
     assert!(!task.is_finished(), "the worker keeps running");
     peer.close();
     let (result, _) = task.await.unwrap();
@@ -912,7 +910,7 @@ fn a_version_mismatch_outlasts_an_unreachable_receiver() {
         Ok(Fake::new(&log, RAW, 0)),
     ];
     let (uplink, flow) = Uplink::new(move || answers.pop().expect("an answer"));
-    let mut uplink = uplink.retry_every(Duration::ZERO, Duration::ZERO);
+    let mut uplink = uplink.retry_every(Duration::ZERO);
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), Some(RAW));
     // The receiver drops; Prysm comes back updated, then goes away.
@@ -921,6 +919,58 @@ fn a_version_mismatch_outlasts_an_unreachable_receiver() {
     assert_eq!(flow.wanted(), None);
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), None, "the capture reopened");
+}
+
+/// A capture that does nothing, and asks the worker to stop when it is
+/// closed: the stop arrives while it is released.
+struct StopsWhileClosing(StopHandle);
+
+impl FrameSource for StopsWhileClosing {
+    fn next_frame(&mut self, _timeout: Duration) -> Result<Pull> {
+        Ok(Pull::Idle)
+    }
+
+    fn close(self: Box<Self>) -> Result<()> {
+        self.0.request(Stop::Requested("SIGTERM"));
+        Ok(())
+    }
+}
+
+/// The receiver asks for another shape, and the stop comes while the old
+/// capture is released: the new one is never opened, so the stop costs one
+/// release, not two.
+#[test]
+fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
+    use prysm_ports::FrameSink;
+    let log = CallLog::new();
+    // Popped from the end: RAW first, then SOFTWARE.
+    let mut answers = vec![
+        Ok(Fake::new(&log, SOFTWARE, 0)),
+        Ok(Fake::new(&log, RAW, 0)),
+    ];
+    let (uplink, flow) = Uplink::new(move || answers.pop().expect("an answer"));
+    let mut uplink = uplink.retry_every(Duration::ZERO);
+    let stop = StopHandle::default();
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let mut source = RequestedCapture::new(flow.clone(), stop.clone(), {
+        let (opened, stop) = (opened.clone(), stop.clone());
+        move |shape| {
+            opened.lock().unwrap().push(shape);
+            Ok(Box::new(StopsWhileClosing(stop.clone())) as Box<dyn FrameSource>)
+        }
+    });
+    uplink.tick().unwrap();
+    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert_eq!(*opened.lock().unwrap(), [settings(&RAW)]);
+    // The receiver drops, then asks for another shape.
+    uplink.send(&crate::check::picture(16, 16, 1)).unwrap();
+    uplink.tick().unwrap();
+    assert_eq!(flow.wanted(), Some(SOFTWARE));
+    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(stop.reason().is_some());
+    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert_eq!(*opened.lock().unwrap(), [settings(&RAW)], "nothing opened");
+    Box::new(source).close().unwrap();
 }
 
 #[test]

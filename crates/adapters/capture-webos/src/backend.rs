@@ -10,8 +10,9 @@ use prysm_ports::{Error, Result};
 use std::fs::File;
 use std::path::Path;
 
-/// Shared with the earlier capturer (`io.prysm.capture`) so the two never open
-/// the tap together.
+/// Held by the worker that owns the TV capture, so a successive worker (or
+/// one still finishing after its supervisor let it go) never opens a tap
+/// while another holds one.
 const LOCK: &str = "/tmp/prysm-capture.lock";
 
 /// Take the exclusive capture lock. Held until the backend is dropped, which
@@ -61,16 +62,14 @@ impl Lg {
     }
 }
 
-/// A native fault: fatal as the driver says, bounded when the Luna
-/// registration check failed in a way it cannot tell from a denial.
+/// A native fault, fatal as [`sys::Error::is_fatal`] says.
 pub(crate) fn fault(context: &str, error: sys::Error) -> Fault {
-    let recovery = match &error {
-        error if error.is_fatal() => Recovery::Never,
-        sys::Error::Luna(_) => Recovery::Bounded,
-        _ => Recovery::Reopen,
-    };
     Fault {
-        recovery,
+        recovery: if error.is_fatal() {
+            Recovery::Never
+        } else {
+            Recovery::Reopen
+        },
         error: Error::adapter(context, error),
     }
 }

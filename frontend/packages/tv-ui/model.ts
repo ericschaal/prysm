@@ -219,7 +219,7 @@ export function tvStatus(
     attention = true;
   } else if (failed && !full && kind === 'version') {
     // Prysm and this app speak different stream versions; the TV keeps
-    // checking (every 10 s), so updating the older side is enough.
+    // checking (every second), so updating the older side is enough.
     title = 'Update Prysm or TV app';
     description = 'Update the older of Prysm and this app.';
     attention = true;
@@ -228,6 +228,12 @@ export function tvStatus(
     // started again, so the two never take it from each other in turn.
     title = 'Another TV took over';
     description = 'Stop and start capture to send from this TV.';
+    attention = true;
+  } else if (failed && !full && kind === 'receiver_failed') {
+    // Prysm's lighting failed with this TV's stream (no decoder, a broken
+    // keyframe); the TV keeps trying, and Prysm's portal says why.
+    title = 'Prysm stopped receiving';
+    description = 'Its web portal on your computer says why.';
     attention = true;
   } else if (failed) {
     title = stopped;

@@ -613,7 +613,8 @@ fn an_exit_keeps_the_workers_last_failure() {
 }
 
 /// A slim worker that dies after a report: the exit is a failure with the
-/// report's kind, except that a receiver wait (no reason to exit) is `other`.
+/// report's kind, except that a receiver wait or a failed receiver (no
+/// reason for the worker to exit) is `other`.
 #[test]
 fn an_exit_keeps_an_actionable_kind_but_not_a_receiver_wait() {
     for (reported, published) in [
@@ -621,6 +622,7 @@ fn an_exit_keeps_an_actionable_kind_but_not_a_receiver_wait() {
         (FailureKind::Encoder, FailureKind::Encoder),
         (FailureKind::Version, FailureKind::Version),
         (FailureKind::Replaced, FailureKind::Replaced),
+        (FailureKind::ReceiverFailed, FailureKind::Other),
         (FailureKind::Other, FailureKind::Other),
     ] {
         let mut m = slim(Preferences {

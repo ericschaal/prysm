@@ -54,9 +54,10 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | Waiting for video | Play video or use an active HDMI input. The Home screen may give no picture. |
 | Screen sync stopped, Capture stopped | The TV tries again by itself and counts down. If it repeats, the reason is under **Service options → View diagnostics**. Stop other capture apps. |
 | Slim: Waiting for Prysm | Check the **Prysm address** (the one you open the portal with), that Prysm on the computer has the **LG TV on your network** source with its lights on, and, behind a reverse proxy, that it passes WebSockets on `/api/v1/capture/stream` without a login. |
-| Slim: Update Prysm or TV app | Prysm on the computer and the TV app send the picture in different ways. Update the older of the two; the TV checks again every 10 seconds, so there is no need to restart it. |
+| Slim: Update Prysm or TV app | Prysm on the computer and the TV app send the picture in different ways. Update the older of the two; the TV checks again every second, so there is no need to restart it. |
 | Slim: Another TV took over | Another TV sends its picture to the same Prysm, so this one stopped. It sends again when you choose **Stop capture**, then **Start capture**, when the TV wakes from standby, or when you change the Prysm address. |
 | Slim: Paused by Prysm | Normal while the computer's lights are off. Turn on Screen sync. |
+| Slim: Prysm stopped receiving | Prysm on the computer could not use the TV's picture (for example, no H.264 decoder starts there). Its web portal says why; choose another encoding for the video source there, or turn Screen sync on again. The TV keeps trying. |
 | Slim: the TV app cannot reach or control Prysm ("doesn't take commands from the TV") | Check **Prysm address**. Start the computer's Prysm with `--allow-origin null`. |
 | Slim: Encoding not supported | Choose **Software H.264** or **Uncompressed** for the video source in the portal. |
 | Full: no portal address on the TV | The TV has no network address yet. Check its network connection. |

@@ -38,10 +38,6 @@ pub(crate) enum Recovery {
     Never,
     /// The tap is reopened later.
     Reopen,
-    /// The video tap is reopened later, but [`Limits::unchecked`] of these in
-    /// a row end the source: the Luna registration check failed in a way it
-    /// cannot tell from a denial worded differently.
-    Bounded,
 }
 
 impl Fault {
@@ -78,6 +74,11 @@ pub(crate) trait Backend: Send + 'static {
     fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault>;
 }
 
+/// How long closing a [`WebosFrames`] waits for the driver's certified
+/// release before it reports the release unconfirmed. The TV hosts' stop
+/// deadlines are set above it, so the adapter reports first.
+pub const RELEASE: Duration = Duration::from_secs(4);
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Limits {
     /// Longest a single native call may run before the source fails.
@@ -91,18 +92,15 @@ pub(crate) struct Limits {
     pub retry: Duration,
     /// Delay before reopening the TV UI tap after its first failure since a
     /// frame; it doubles with each further failure up to `ui_retry_max`,
-    /// and a failure after that wait is the last. Slower than `retry`, and
-    /// bounded: a failing UI open can block for as long as `release`, so a
-    /// close during one is unconfirmed, and a tap that never opens (its
-    /// driver lock held until a reboot) would block that long every time.
+    /// and a failure after that wait is the last. Bounded because a UI tap
+    /// can fail for good: on the bench TV, a worker that died with the UI
+    /// tap open left the graphics driver's lock held, and every later UI
+    /// open failed until a reboot (commit 4fa820eb). That a UI open fails
+    /// transiently, which the retries are for, or blocks while it fails,
+    /// has not been observed.
     pub ui_retry: Duration,
     pub ui_retry_max: Duration,
-    /// Video opens in a row with a [`Recovery::Bounded`] fault before the
-    /// source fails with the last one: about half a minute at `retry`.
-    pub unchecked: u32,
-    /// How long `close` waits for certified release. Below the TV hosts'
-    /// 6 s stop deadline, so the adapter reports first, which is below the
-    /// supervisor's 8 s TERM-to-KILL window.
+    /// How long `close` waits for certified release ([`RELEASE`]).
     pub release: Duration,
     /// How often an idle native thread rechecks the video signal.
     pub poll: Duration,
@@ -116,8 +114,7 @@ impl Limits {
         retry: Duration::from_secs(1),
         ui_retry: Duration::from_secs(5),
         ui_retry_max: Duration::from_secs(60),
-        unchecked: 30,
-        release: Duration::from_secs(4),
+        release: RELEASE,
         poll: Duration::from_millis(100),
     };
 

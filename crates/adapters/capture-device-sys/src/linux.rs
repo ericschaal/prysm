@@ -1,5 +1,5 @@
 use crate::formats::Rates;
-use crate::health::{Event, Health, PAUSE, Verdict, stall_timeout};
+use crate::health::{Event, Health, Verdict, stall_timeout};
 use crate::{
     CaptureError, CaptureSink, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
 };
@@ -367,7 +367,7 @@ fn restart(stream: &mut Stream) -> Result<()> {
         .map_err(|error| failed(error, "failed to restart capture stream"))
 }
 
-/// Carries out `verdict`: restarts (each after [`PAUSE`]) for as long as
+/// Carries out `verdict`: restarts (each after its pause) for as long as
 /// `health` says so, where a failed `restart` is one more interruption, and
 /// a device gone ends capture. `Ok(true)` to capture on, `Ok(false)` when
 /// `sink` stops meanwhile.
@@ -382,8 +382,8 @@ fn settle(
         verdict = match verdict {
             Verdict::Continue => return Ok(true),
             Verdict::Fail(error) => return Err(error),
-            Verdict::Restart if sink.should_stop(PAUSE) => return Ok(false),
-            Verdict::Restart => match restart() {
+            Verdict::Restart { pause } if sink.should_stop(pause) => return Ok(false),
+            Verdict::Restart { .. } => match restart() {
                 Ok(()) => Verdict::Continue,
                 Err(error @ CaptureError::Disconnected { .. }) => Verdict::Fail(error),
                 Err(error) => health.on(Event::Interrupted(error), now()),
@@ -481,6 +481,7 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::health::PAUSE;
     use v4l::v4l_sys::*;
 
     #[test]
@@ -555,6 +556,46 @@ mod tests {
             prysm_ports::chain(&error),
             "failed to restart capture stream: Device or resource busy (os error 16)"
         );
+    }
+
+    /// A sink that never stops and records how long each check would wait.
+    #[derive(Default)]
+    struct Waits(std::sync::Mutex<Vec<Duration>>);
+
+    impl CaptureSink for Waits {
+        fn ready(&self) {}
+        fn frame(&self, _: crate::Frame) {}
+        fn should_stop(&self, wait: Duration) -> bool {
+            self.0.lock().unwrap().push(wait);
+            false
+        }
+    }
+
+    /// A stall already waited, so its restart does not pause; an
+    /// interruption's does, so a failing device does not spin.
+    #[test]
+    fn only_an_interruption_pauses_before_its_restart() {
+        let now = Instant::now();
+        let interruption = || Event::Interrupted(CaptureError::Backend(anyhow::anyhow!("EIO")));
+        for (event, pause) in [(Event::Stalled, Duration::ZERO), (interruption(), PAUSE)] {
+            let mut health = Health::new(NonZeroU32::new(30).unwrap());
+            let verdict = health.on(event, now);
+            let sink = Waits::default();
+            let restarts = std::cell::Cell::new(0);
+            let result = settle(
+                verdict,
+                &mut health,
+                &sink,
+                || {
+                    restarts.set(restarts.get() + 1);
+                    Ok(())
+                },
+                || now,
+            );
+            assert!(result.unwrap(), "capturing again");
+            assert_eq!(restarts.get(), 1);
+            assert_eq!(*sink.0.lock().unwrap(), [pause]);
+        }
     }
 
     #[test]

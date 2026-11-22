@@ -172,6 +172,7 @@ const failureKinds: Record<FailureKind, true> = {
   receiver: true,
   version: true,
   replaced: true,
+  receiver_failed: true,
   other: true,
 };
 const targets: Record<LightingTarget, true> = {

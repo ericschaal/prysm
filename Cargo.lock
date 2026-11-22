@@ -1941,6 +1941,7 @@ name = "prysm-capture-remote"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "nix",
  "prysm-capture-remote",
  "prysm-core",
  "prysm-h264",
@@ -1952,6 +1953,7 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "socket2",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -2226,6 +2228,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-capture-webos",
+ "prysm-capture-webos-sys",
  "prysm-host",
  "prysm-output-wled",
  "prysm-ports",

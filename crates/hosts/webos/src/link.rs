@@ -16,8 +16,10 @@ pub type PortalUrl = Box<dyn Fn() -> Option<String> + Send>;
 /// `Surface<EngineHandle>`: applies the initial target, then turns link
 /// commands into video signals and targets, reports every snapshot change
 /// (and a heartbeat) as status (the last one before a fault too),
-/// re-applies a non-Off target after a session failure with [`Backoff`], and
-/// stops the worker on a faulted session. The portal URL is looked up again
+/// re-applies a non-Off target after a session failure with [`Backoff`],
+/// stops the worker on a faulted session, and fails it (for the supervisor
+/// to start a new one) on a capture failure no source in this process can
+/// recover from ([`needs_restart`]). The portal URL is looked up again
 /// at every heartbeat, so a new LAN address is reported within one.
 pub struct EngineLink {
     link: Link,
@@ -84,6 +86,13 @@ impl EngineLink {
                     cause: cause.clone(),
                 });
                 stop.request(Stop::Faulted(cause));
+                return Ok(());
+            }
+            if let Some(cause) = needs_restart(&snapshot) {
+                events.send(&Event::Failed {
+                    cause: cause.clone(),
+                });
+                stop.request(Stop::Failed(cause));
                 return Ok(());
             }
             retry.observe(&snapshot, now);
@@ -218,6 +227,16 @@ impl Retry {
     }
 }
 
+/// Why the worker must restart to capture again, when its session ended with
+/// a capture failure no source in this process can recover from: the
+/// worker then fails (exit 1), and the supervisor starts a new one after its
+/// backoff instead of this worker retrying in place.
+fn needs_restart(snapshot: &Snapshot) -> Option<String> {
+    let failure = snapshot.failure.as_ref()?;
+    (snapshot.session == SessionState::Stopped && prysm_capture_webos::needs_new_process(failure))
+        .then(|| chain(failure))
+}
+
 /// A non-Off target whose session ended with a failure that a retry can fix.
 /// Invalid or missing settings wait for the user instead.
 fn wants_retry(snapshot: &Snapshot) -> bool {
@@ -273,6 +292,38 @@ mod tests {
                 LightingTarget::Processed,
                 Error::Invalid(ValidationError::new("output", "missing")),
             ),
+        }
+    }
+
+    /// Only a stopped session whose capture cannot recover in this process
+    /// restarts the worker; a running one, or any other failure, does not.
+    #[test]
+    fn only_an_unrecoverable_capture_failure_restarts_the_worker() {
+        use prysm_capture_webos_sys as sys;
+        let unrecoverable = || {
+            Error::adapter(
+                "cannot open webOS video capture",
+                sys::Error::Create(Box::new(sys::Error::Exception("bad_alloc".into()))),
+            )
+        };
+        let stopped = Snapshot {
+            target: LightingTarget::Processed,
+            failure: Some(unrecoverable()),
+            ..Snapshot::default()
+        };
+        assert_eq!(
+            needs_restart(&stopped).as_deref(),
+            Some(
+                "cannot open webOS video capture: vtCapture_create failed: vtcapture exception: bad_alloc"
+            )
+        );
+        let running = Snapshot {
+            session: SessionState::Running,
+            ..stopped
+        };
+        assert_eq!(needs_restart(&running), None);
+        for seen in [Seen::Off, Seen::Running, Seen::Failed, Seen::Invalid] {
+            assert_eq!(needs_restart(&snapshot(seen)), None, "{seen:?}");
         }
     }
 

@@ -20,7 +20,9 @@
 //!   ends the session: later calls return [`Error::Failed`], and
 //!   `prysm-h264` opens a new pipeline.
 //! - `rvenc` output goes straight to `appsink` (no `h264parse`, which added a
-//!   frame of latency on the TV). Output wait 1 s, EOS wait 500 ms on drop.
+//!   frame of latency on the TV). Output wait [`OUTPUT_WAIT`], end-of-stream
+//!   wait [`END_OF_STREAM_WAIT`] on drop; the PLAYING and NULL state
+//!   transitions have no limit.
 //!
 //! Only 32-bit ARM Linux (the TV) builds the pipeline and links GStreamer and
 //! GLib; on every other target [`Pipeline::new`] fails with
@@ -36,6 +38,14 @@ mod session;
 #[cfg(all(target_os = "linux", target_arch = "arm"))]
 pub use gst::Pipeline;
 pub use layout::{BITRATE, FPS, MAX_HEIGHT, MAX_OUTPUT_BYTES, MAX_WIDTH, PITCH, copy_nv12, pitch};
+
+/// How long [`Pipeline::encode`] waits for a picture's access unit.
+pub const OUTPUT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How long dropping a [`Pipeline`] waits for its end of stream, before the
+/// pipeline is set to NULL. That transition, like the one to PLAYING in
+/// [`Pipeline::new`], has no limit of its own.
+pub const END_OF_STREAM_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Why the hardware encoder cannot start or encode.
 #[derive(Debug, thiserror::Error)]

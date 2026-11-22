@@ -29,9 +29,12 @@ There is no login or token. Anyone who can reach the port can read the state
 and control the lights. The portal refuses requests from web pages of other
 sites by their `Origin` header, unless the host was started with
 `--allow-origin ORIGIN` (`null` for the slim TV app, `*` for any). `Host` is
-not checked, so DNS rebinding is not prevented. The full TV worker allows any
-origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
-`--listen`.
+not checked, so DNS rebinding is not prevented. The full TV worker allows
+`null`, the origin of its `file://` TV app. Allowing `null` stops ordinary
+pages of other sites, but not a deliberate attacker: any site can put its
+script in a sandboxed frame, whose origin is `null` too. Keep the portal on
+a trusted LAN, or bind it to
+`127.0.0.1` with `--listen`.
 
 ## Settings ownership
 
