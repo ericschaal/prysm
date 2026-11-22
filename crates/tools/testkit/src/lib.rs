@@ -37,6 +37,30 @@ pub fn eventually<T>(what: &str, limit: Duration, mut probe: impl FnMut() -> Opt
     }
 }
 
+/// The first `Ok` that `probe` returns, looking every few milliseconds; an
+/// `Err` is what it saw instead.
+///
+/// # Panics
+/// `probe` returned `Err` for `limit`; the message names `what` and shows
+/// the last one.
+pub fn eventually_or<T, Seen: std::fmt::Debug>(
+    what: &str,
+    limit: Duration,
+    mut probe: impl FnMut() -> Result<T, Seen>,
+) -> T {
+    let deadline = Instant::now() + limit;
+    loop {
+        match probe() {
+            Ok(found) => return found,
+            Err(seen) => assert!(
+                Instant::now() < deadline,
+                "{what}: not within {limit:?}; last saw {seen:#?}"
+            ),
+        }
+        thread::sleep(POLL);
+    }
+}
+
 /// [`eventually`] for async tests: it sleeps on the runtime between looks.
 ///
 /// # Panics

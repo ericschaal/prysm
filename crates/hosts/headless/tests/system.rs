@@ -67,9 +67,9 @@ fn state(port: u16) -> Value {
 
 /// The state once `ready` holds, read from the host's portal.
 fn wait_for_state(port: u16, what: &str, ready: impl Fn(&Value) -> bool) -> Value {
-    prysm_testkit::eventually(what, TIMEOUT, || {
+    prysm_testkit::eventually_or(what, TIMEOUT, || {
         let state = state(port);
-        ready(&state).then_some(state)
+        if ready(&state) { Ok(state) } else { Err(state) }
     })
 }
 

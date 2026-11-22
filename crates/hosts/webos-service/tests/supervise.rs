@@ -61,9 +61,13 @@ fn until(
     done: impl Fn(&Published, bool) -> bool,
 ) {
     // Ticks on the real clock: the worker is a real process.
-    prysm_testkit::eventually("the supervisor's state", Duration::from_secs(10), || {
+    prysm_testkit::eventually_or("the supervisor's state", Duration::from_secs(10), || {
         let running = service.tick(bus, Instant::now());
-        done(bus, running).then_some(())
+        if done(bus, running) {
+            Ok(())
+        } else {
+            Err((running, bus.0.last().cloned()))
+        }
     });
 }
 

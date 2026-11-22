@@ -15,9 +15,13 @@ fn sh(script: &str) -> ProcessWorker {
 /// Collect outputs until `done` holds for them.
 fn collect(worker: &mut ProcessWorker, done: impl Fn(&[Output]) -> bool) -> Vec<Output> {
     let mut seen = Vec::new();
-    eventually("the worker's outputs", LIMIT, || {
+    prysm_testkit::eventually_or("the worker's outputs", LIMIT, || {
         seen.extend(worker.drain());
-        done(&seen).then_some(())
+        if done(&seen) {
+            Ok(())
+        } else {
+            Err(format!("{seen:?}"))
+        }
     });
     seen
 }
