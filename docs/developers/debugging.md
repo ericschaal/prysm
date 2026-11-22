@@ -33,7 +33,7 @@
   portal shows the received rate and the preview; a TV of another stream
   version reports the failure kind `version` (the TV app says "Update Prysm
   and TV app"; the reason in its diagnostics names both versions) and
-  retries every 10 s.
+  retries every second.
 
 ## Logs
 

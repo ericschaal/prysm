@@ -16,10 +16,12 @@
 //! graphics plane through HAL GAL (`libhalgal`, `/dev/gfx`) at a small fixed
 //! size (the configured size clamped to 256–320 × 144–180) and converts it to
 //! the same limited-range BT.709 NV12. The two taps never run together: a
-//! change of video availability releases one before the other opens. If the
-//! UI tap fails to open or to deliver its first frame, it is logged once as
-//! unsupported and the source idles without video, as with `include_ui` off.
-//! A transparent plane is delivered as black.
+//! change of video availability releases one before the other opens. A UI
+//! tap that cannot work in this process (no library, symbol or `/dev/gfx`)
+//! is logged once as unsupported, and the source idles without video, as
+//! with `include_ui` off; other UI failures are retried with a bounded
+//! backoff that a frame resets, then end the same way. A transparent plane
+//! is delivered as black.
 //!
 //! All `unsafe` FFI is in `prysm-capture-webos-sys`.
 mod backend;
@@ -29,7 +31,7 @@ mod ui;
 mod video;
 
 pub use settings::{MODE, WebosSettings};
-pub use source::WebosFrames;
+pub use source::{RELEASE, WebosFrames};
 pub use video::{Readiness, Video, VideoSignal};
 
 use prysm_ports::{FrameSource, Modes, Result, SourceFactory, ValidationError};

@@ -1,5 +1,5 @@
 use crate::capture::{RequestedCapture, settings};
-use crate::link::{ForwarderLink, Uplink, Upstream, VERSION_RECONNECT, slim_encoding};
+use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
 use crate::resolve::Resolver;
 use prysm_capture_remote::testkit::Portal;
 use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError, StreamEncoding};
@@ -86,9 +86,8 @@ impl Opened {
     }
 }
 
-/// The worker, with `connect` opening its uplink (retried every 20 ms, or
-/// every [`VERSION_RECONNECT`] after a version mismatch) and `opened` the
-/// capture.
+/// The worker, with `connect` opening its uplink (retried every 20 ms) and
+/// `opened` the capture.
 fn start<S: Upstream + 'static>(
     opened: &Opened,
     connect: impl FnMut() -> Result<S> + Send + 'static,
@@ -97,7 +96,7 @@ fn start<S: Upstream + 'static>(
     let feed = VideoSignal::default();
     let stop = link.stop.clone();
     let (sink, flow) = Uplink::new(connect);
-    let sink = sink.retry_every(Duration::from_millis(20), VERSION_RECONNECT);
+    let sink = sink.retry_every(Duration::from_millis(20));
     let source = RequestedCapture::new(flow.clone(), {
         let opened = opened.clone();
         move |shape| opened.open(shape)
@@ -420,8 +419,7 @@ async fn a_prysm_of_another_version_is_reported_as_such() {
         reason.contains("Prysm: 9") && reason.contains("update the older one"),
         "{reason}"
     );
-    // The slow retry itself is `link::tests::attempts_follow_the_state`.
-    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(attempts.load(Ordering::SeqCst) >= 1);
     assert!(!task.is_finished(), "the worker keeps running");
     peer.close();
     let (result, _) = task.await.unwrap();
@@ -912,7 +910,7 @@ fn a_version_mismatch_outlasts_an_unreachable_receiver() {
         Ok(Fake::new(&log, RAW, 0)),
     ];
     let (uplink, flow) = Uplink::new(move || answers.pop().expect("an answer"));
-    let mut uplink = uplink.retry_every(Duration::ZERO, Duration::ZERO);
+    let mut uplink = uplink.retry_every(Duration::ZERO);
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), Some(RAW));
     // The receiver drops; Prysm comes back updated, then goes away.

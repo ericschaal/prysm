@@ -51,7 +51,8 @@ pub enum Error {
     /// later check in this process fails.
     #[error("a capture client name stays registered")]
     Registered(#[source] prysm_webos_luna_sys::Error),
-    /// The registration check failed for another reason; a retry may pass.
+    /// The registration check failed for another reason. LS2 has no typed
+    /// denial, so this may be one worded differently: it is fatal too.
     #[error("the capture registration could not be checked")]
     Luna(#[source] prysm_webos_luna_sys::Error),
     /// Driver creation failed; it can leave live threads and stale globals, so
@@ -77,12 +78,13 @@ pub enum Error {
 }
 
 impl Error {
-    /// Retrying in this process cannot succeed.
+    /// Capture is not retried in this process: driver creation failed, or
+    /// the registration check failed in any way.
     #[must_use]
     pub fn is_fatal(&self) -> bool {
         matches!(
             self,
-            Self::Create(_) | Self::Permission(_) | Self::Registered(_)
+            Self::Create(_) | Self::Permission(_) | Self::Registered(_) | Self::Luna(_)
         )
     }
 }
@@ -498,7 +500,7 @@ impl VtCapture {
     ///
     /// # Errors
     /// A native failure; the tap is then failed: later calls return
-    /// [`Error::Invalid`], and the caller releases it and reopens.
+    /// [`Error::Failed`], and the caller releases it and reopens.
     pub fn acquire(&mut self) -> Result<Acquired<'_>, Error> {
         Ok(match self.step(Self::next)? {
             Next::Frame {
@@ -919,7 +921,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_denied_or_stuck_name_is_fatal() {
+    fn every_failed_registration_check_is_fatal() {
         use prysm_webos_luna_sys::Error as Luna;
         let denied = Error::from(Luna::Denied {
             name: "com.webos.rm.client.prysm.1".into(),
@@ -944,7 +946,7 @@ mod tests {
         ] {
             let error = Error::from(other);
             assert!(
-                matches!(error, Error::Luna(_)) && !error.is_fatal(),
+                matches!(error, Error::Luna(_)) && error.is_fatal(),
                 "{error}"
             );
         }

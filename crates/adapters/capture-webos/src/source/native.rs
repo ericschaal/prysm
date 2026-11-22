@@ -36,10 +36,32 @@ impl UiSupport {
         };
         match recovery {
             Recovery::Never => Self::Unsupported,
-            Recovery::Reopen | Recovery::Bounded => limits
+            Recovery::Reopen => limits
                 .ui_backoff(previous)
                 .map_or(Self::Unsupported, Self::Failing),
         }
+    }
+}
+
+/// When a video tap reopens after a recoverable fault. The TV UI tap follows
+/// its own backoff ([`Limits::ui_backoff`]) either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reopen {
+    /// At once: the fault is a stall, which already waited
+    /// [`Limits::pending`], so a reopen cannot spin.
+    AtOnce,
+    /// After [`Limits::retry`], so a tap that fails at once is not reopened
+    /// in a tight loop.
+    AfterRetry,
+}
+
+/// After a video fault: how long until the tap reopens, or `None` when the
+/// source fails.
+fn video_wait(recovery: Recovery, reopen: Reopen, limits: &Limits) -> Option<Duration> {
+    match (recovery, reopen) {
+        (Recovery::Never, _) => None,
+        (Recovery::Reopen, Reopen::AtOnce) => Some(Duration::ZERO),
+        (Recovery::Reopen, Reopen::AfterRetry) => Some(limits.retry),
     }
 }
 
@@ -50,19 +72,6 @@ fn wanted(video: Video, include_ui: bool, ui: UiSupport) -> Option<Kind> {
         Video::Available | Video::Unknown => Some(Kind::Video),
         Video::Unavailable if include_ui && ui != UiSupport::Unsupported => Some(Kind::Ui),
         Video::Unavailable => None,
-    }
-}
-
-/// After a video fault, with `unchecked` [`Recovery::Bounded`] faults in a
-/// row before it: the new count when the tap is reopened, or `None` when
-/// the source fails (a fatal fault, or the [`Limits::unchecked`]th bounded
-/// one in a row). Any other outcome starts the count again.
-fn video_fault(unchecked: u32, recovery: Recovery, limits: &Limits) -> Option<u32> {
-    match recovery {
-        Recovery::Never => None,
-        Recovery::Bounded if unchecked + 1 >= limits.unchecked => None,
-        Recovery::Bounded => Some(unchecked + 1),
-        Recovery::Reopen => Some(0),
     }
 }
 
@@ -85,8 +94,6 @@ pub(super) struct Native<B> {
     /// A video fault was logged since the last video frame or the start of
     /// this video period.
     video_failing: bool,
-    /// [`Recovery::Bounded`] video faults in a row.
-    unchecked: u32,
 }
 
 impl<B: Backend> Native<B> {
@@ -110,7 +117,6 @@ impl<B: Backend> Native<B> {
             not_ready_since: None,
             pending_since: None,
             video_failing: false,
-            unchecked: 0,
         }
     }
 
@@ -142,10 +148,8 @@ impl<B: Backend> Native<B> {
             if kind != self.kind || current != generation {
                 generation = current;
                 self.kind = kind;
-                // A new period: its first video failure is news again, and
-                // its registration failures count from zero.
+                // A new period: its first video failure is news again.
                 self.video_failing = false;
-                self.unchecked = 0;
                 self.release_tap()?;
                 self.retry_at = Instant::now();
             }
@@ -190,12 +194,7 @@ impl<B: Backend> Native<B> {
                     Kind::Ui => worker.watch("UI open", || self.backend.open_ui(&self.settings)),
                 };
                 match opened {
-                    Ok(tap) => {
-                        if kind == Kind::Video {
-                            self.unchecked = 0;
-                        }
-                        &mut self.tap.insert((kind, tap)).1
-                    }
+                    Ok(tap) => &mut self.tap.insert((kind, tap)).1,
                     Err(fault) => return self.recover(kind, fault),
                 }
             }
@@ -234,13 +233,11 @@ impl<B: Backend> Native<B> {
             Ok(Acquired::Pending) => {
                 let since = *self.pending_since.get_or_insert(now);
                 if now.duration_since(since) >= self.limits.pending {
-                    return self.recover(
-                        kind,
-                        Fault::recoverable(Error::other(format!(
-                            "webOS video produced no frame for {:?}",
-                            self.limits.pending
-                        ))),
-                    );
+                    let stalled = Fault::recoverable(Error::other(format!(
+                        "webOS video produced no frame for {:?}",
+                        self.limits.pending
+                    )));
+                    return self.recover_after(kind, stalled, Reopen::AtOnce);
                 }
             }
             Ok(Acquired::NotReady) => {
@@ -258,32 +255,24 @@ impl<B: Backend> Native<B> {
         Ok(())
     }
 
-    /// Fatal video faults end the source, and so does the
-    /// [`Limits::unchecked`]th [`Recovery::Bounded`] one in a row; others
-    /// release the tap and retry later. UI faults never end the source: a
+    /// Fatal video faults end the source; others release the tap and retry
+    /// later. UI faults never end the source: a
     /// fatal one, or one after the longest wait, marks UI capture
     /// unsupported, reported once and not retried (lighting then idles
     /// without video, as with `include_ui` off); others retry with a backoff
     /// that a frame resets, so a long session without video regains the TV
     /// UI after a transient failure.
     fn recover(&mut self, kind: Kind, fault: Fault) -> Result<()> {
+        self.recover_after(kind, fault, Reopen::AfterRetry)
+    }
+
+    /// [`Self::recover`], with a video tap reopened as `reopen` says.
+    fn recover_after(&mut self, kind: Kind, fault: Fault, reopen: Reopen) -> Result<()> {
         let wait = match kind {
             Kind::Video => {
-                let Some(unchecked) = video_fault(self.unchecked, fault.recovery, &self.limits)
-                else {
-                    return Err(match fault.recovery {
-                        Recovery::Bounded => Error::adapter(
-                            format!(
-                                "the Luna registration check failed {} times in a row",
-                                self.limits.unchecked
-                            ),
-                            fault.error,
-                        ),
-                        Recovery::Never | Recovery::Reopen => fault.error,
-                    });
+                let Some(wait) = video_wait(fault.recovery, reopen, &self.limits) else {
+                    return Err(fault.error);
                 };
-                self.unchecked = unchecked;
-                let wait = self.limits.retry;
                 Self::retrying(
                     &fault.error,
                     "webOS video capture",
@@ -352,10 +341,9 @@ mod tests {
     const LIMITS: Limits = Limits {
         ui_retry: Duration::from_secs(5),
         ui_retry_max: Duration::from_secs(20),
-        unchecked: 3,
         ..Limits::TV
     };
-    const RECOVERIES: [Recovery; 3] = [Recovery::Never, Recovery::Reopen, Recovery::Bounded];
+    const RECOVERIES: [Recovery; 2] = [Recovery::Never, Recovery::Reopen];
 
     fn secs(seconds: u64) -> Duration {
         Duration::from_secs(seconds)
@@ -374,14 +362,14 @@ mod tests {
             Failing(secs(20)),
             Unsupported,
         ];
-        // Per state: after a `Never`, `Reopen` and `Bounded` fault.
+        // Per state: after a `Never` and a `Reopen` fault.
         let expected = [
-            [Unsupported, Failing(secs(5)), Failing(secs(5))],
-            [Unsupported, Failing(secs(5)), Failing(secs(5))],
-            [Unsupported, Failing(secs(10)), Failing(secs(10))],
-            [Unsupported, Failing(secs(20)), Failing(secs(20))],
-            [Unsupported, Unsupported, Unsupported],
-            [Unsupported, Failing(secs(5)), Failing(secs(5))],
+            [Unsupported, Failing(secs(5))],
+            [Unsupported, Failing(secs(5))],
+            [Unsupported, Failing(secs(10))],
+            [Unsupported, Failing(secs(20))],
+            [Unsupported, Unsupported],
+            [Unsupported, Failing(secs(5))],
         ];
         for (state, after) in states.into_iter().zip(expected) {
             for (recovery, wanted) in RECOVERIES.into_iter().zip(after) {
@@ -391,6 +379,24 @@ mod tests {
                     "{state:?} meets {recovery:?}"
                 );
             }
+        }
+    }
+
+    /// Every video fault's recovery meets every reopen: a fatal fault ends
+    /// the source, a stall reopens at once, any other after `retry`.
+    #[test]
+    fn every_video_fault_meets_every_reopen() {
+        for (recovery, reopen, wait) in [
+            (Recovery::Never, Reopen::AtOnce, None),
+            (Recovery::Never, Reopen::AfterRetry, None),
+            (Recovery::Reopen, Reopen::AtOnce, Some(Duration::ZERO)),
+            (Recovery::Reopen, Reopen::AfterRetry, Some(LIMITS.retry)),
+        ] {
+            assert_eq!(
+                video_wait(recovery, reopen, &LIMITS),
+                wait,
+                "{recovery:?} x {reopen:?}"
+            );
         }
     }
 
@@ -408,26 +414,6 @@ mod tests {
                     wanted(Video::Unavailable, include_ui, ui),
                     ui_tap,
                     "{ui:?}, include_ui {include_ui}"
-                );
-            }
-        }
-    }
-
-    /// Bounded faults in a row end the source at the third; a reopenable
-    /// one starts the count again; a fatal one ends it at once.
-    #[test]
-    fn every_video_fault_count_meets_every_fault() {
-        let cases = [
-            (0, [None, Some(0), Some(1)]),
-            (1, [None, Some(0), Some(2)]),
-            (2, [None, Some(0), None]),
-        ];
-        for (unchecked, after) in cases {
-            for (recovery, wanted) in RECOVERIES.into_iter().zip(after) {
-                assert_eq!(
-                    video_fault(unchecked, recovery, &LIMITS),
-                    wanted,
-                    "{unchecked} in a row meets {recovery:?}"
                 );
             }
         }

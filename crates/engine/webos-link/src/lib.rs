@@ -144,7 +144,7 @@ pub enum SlimLink {
     /// The receiver is unavailable (kind [`FailureKind::Receiver`]); the
     /// worker keeps reconnecting.
     Waiting { failure: WorkerFailure },
-    /// The encoder, version or replaced failure.
+    /// The encoder, version, replaced or receiver-failed failure.
     Failed { failure: WorkerFailure },
 }
 
@@ -245,13 +245,18 @@ pub enum FailureKind {
     /// reconnecting.
     Receiver,
     /// Slim: Prysm speaks another capture stream version than this TV app;
-    /// the older one needs updating. The worker retries slowly, so an update
-    /// on either side is picked up without restarting it.
+    /// the older one needs updating. The worker keeps reconnecting, so an
+    /// update on either side is picked up without restarting it.
     Version,
     /// Slim: another sender (another TV) took over the stream at Prysm. The
     /// worker released the capture and connects no more until it restarts
     /// (capture stopped and started, the TV waking, or a new Prysm address).
     Replaced,
+    /// Slim: Prysm's receiving source failed with this TV's stream (it
+    /// refused the request, a keyframe did not decode, or Prysm has no
+    /// decoder); Prysm shows why. The worker released the capture and keeps
+    /// reconnecting, so the next lighting start on the computer gets through.
+    ReceiverFailed,
     /// Anything else.
     Other,
 }

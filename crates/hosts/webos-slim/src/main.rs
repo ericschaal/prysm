@@ -46,10 +46,18 @@ enum Check {
     CheckEncoder(check::Options),
 }
 
-/// Above the capture adapter's 4 s release limit, below the supervisor's 8 s
-/// TERM-to-KILL window. The forwarder has no engine, so no blocking call
-/// waits before the stop and no shutdown grace adds to it.
-const STOP_DEADLINE: Duration = Duration::from_secs(6);
+/// Below the supervisor's 8 s TERM-to-KILL window. The forwarder has no
+/// engine, so no shutdown grace adds to it; but a stop can find the
+/// forwarder thread in a connect, which (with its host name lookup) ends
+/// before the capture is released, and the release must end within it too.
+const STOP_DEADLINE: Duration = Duration::from_secs(7);
+const _: () = assert!(
+    resolve::RESOLVE_WAIT.as_millis()
+        + prysm_capture_remote::CONNECT_DEADLINE.as_millis()
+        + prysm_capture_webos::RELEASE.as_millis()
+        < STOP_DEADLINE.as_millis(),
+    "a stop during a connect must still release the capture in time"
+);
 const _: () = assert!(
     STOP_DEADLINE.as_millis() < KILL_AFTER.as_millis(),
     "the stop must end before the supervisor's SIGKILL"

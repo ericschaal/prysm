@@ -2,6 +2,7 @@
 //! `send`, encoded as the receiver requested.
 use crate::link::{self, Link, LinkError, Message};
 use crate::offer::Offer;
+use crate::receive;
 use crate::request::RemoteSettings;
 use crate::wire::{
     self, Encoding, FromReceiver, HEADER_LEN, Header, MAX_TEXT_BYTES, Refusal, RefusalCause,
@@ -20,11 +21,61 @@ use tungstenite::http::{HeaderValue, StatusCode, Uri, header};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Connector, HandshakeError};
 
-/// How long `connect` waits for the connection, the upgrade (and TLS), and
-/// then for the receiver's request.
-pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long [`RemoteSender::connect`] waits on the network in all: for the
+/// connection, the upgrade (with TLS) and the receiver's request, however
+/// slowly the receiver answers. The request can wait for the receiver to
+/// close a connection this one replaces (its close write, its linger and one
+/// read); 200 ms more leave room for the connection and the upgrade.
+pub const CONNECT_DEADLINE: Duration = receive::WRITE_TIMEOUT
+    .saturating_add(receive::CLOSE_LINGER)
+    .saturating_add(receive::POLL_INTERVAL)
+    .saturating_add(Duration::from_millis(200));
 /// How long one `send` may block on a receiver that stopped reading.
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The link's socket. While a deadline is set (during the connect), every
+/// read and write waits at most until then, so a peer that answers a byte
+/// at a time cannot stretch the connect.
+struct Socket {
+    stream: TcpStream,
+    deadline: Option<Instant>,
+}
+
+impl Socket {
+    /// Bound the next blocking call by the deadline, if one is set, through
+    /// `set` (the read or the write timeout).
+    fn bound(
+        &self,
+        set: fn(&TcpStream, Option<Duration>) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        let Some(deadline) = self.deadline else {
+            return Ok(());
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        set(&self.stream, Some(left))
+    }
+}
+
+impl Read for Socket {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.bound(TcpStream::set_read_timeout)?;
+        self.stream.read(buf)
+    }
+}
+
+impl Write for Socket {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.bound(TcpStream::set_write_timeout)?;
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
+}
 
 /// Why [`RemoteSender::deliver`] failed. Either way the sender is finished:
 /// the caller drops it and connects a new one.
@@ -60,7 +111,7 @@ impl From<SendError> for Error {
 pub struct RemoteSender {
     /// Reads never wait (the socket is non-blocking once connected);
     /// writes wait out a full send buffer within the write timeout.
-    link: Link<MaybeTlsStream<TcpStream>>,
+    link: Link<MaybeTlsStream<Socket>>,
     /// A second handle on the link's socket, TLS or not, to switch it
     /// between non-blocking and blocking.
     socket: TcpStream,
@@ -139,18 +190,29 @@ impl RemoteSender {
     /// Prysm is unreachable, failed TLS verification, has no receiving
     /// source ([`WireError::Unavailable`] `503`), speaks another version
     /// ([`WireError::Version`]), sent no valid request, or closed the
-    /// stream with a code before it ([`WireError::Closed`]).
+    /// stream with a code before it ([`WireError::Closed`]), all within
+    /// [`CONNECT_DEADLINE`].
     pub fn connect(url: &Uri, address: SocketAddr, offer: &Offer) -> Result<Self> {
+        Self::connect_by(url, address, offer, Instant::now() + CONNECT_DEADLINE)
+    }
+
+    fn connect_by(
+        url: &Uri,
+        address: SocketAddr,
+        offer: &Offer,
+        deadline: Instant,
+    ) -> Result<Self> {
         let failed = |error| Error::adapter(format!("cannot connect to {url}"), error);
-        let socket = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(failed)?;
-        socket
-            .set_write_timeout(Some(WRITE_TIMEOUT))
-            .and_then(|()| socket.set_read_timeout(Some(CONNECT_TIMEOUT)))
-            .and_then(|()| socket.set_nodelay(true))
-            .map_err(failed)?;
-        let handle = socket.try_clone().map_err(failed)?;
+        let left = deadline.saturating_duration_since(Instant::now());
+        let stream = TcpStream::connect_timeout(&address, left).map_err(failed)?;
+        stream.set_nodelay(true).map_err(failed)?;
+        let handle = stream.try_clone().map_err(failed)?;
+        let socket = Socket {
+            stream,
+            deadline: Some(deadline),
+        };
         let mut link = upgrade(url, socket, offer)?;
-        let request = read_request(&mut link, &handle)
+        let request = read_request(&mut link, deadline)
             .and_then(|request| {
                 offer.check(&request).map_err(WireError::Request)?;
                 Ok(request)
@@ -161,10 +223,18 @@ impl RemoteSender {
                 }
                 error.context(format!("{url} sent no valid request"))
             })?;
-        // From here the link's reads never wait: the receiver's messages are
-        // read before each frame.
+        // From here the link's reads never wait (the receiver's messages are
+        // read before each frame), and a write waits out a full send buffer
+        // for at most the write timeout.
+        let socket = match link.socket_mut() {
+            MaybeTlsStream::Plain(socket) => socket,
+            MaybeTlsStream::Rustls(tls) => &mut tls.sock,
+            _ => unreachable!("`upgrade` opens plain or rustls streams only"),
+        };
+        socket.deadline = None;
         handle
-            .set_nonblocking(true)
+            .set_write_timeout(Some(WRITE_TIMEOUT))
+            .and_then(|()| handle.set_nonblocking(true))
             .map_err(|error| Error::adapter(format!("cannot configure {url}"), error))?;
         let stream = match request.encoder() {
             None => Stream::Raw,
@@ -360,8 +430,8 @@ fn append_picture(
 }
 
 /// Upgrade `socket` to a WebSocket at `url` with this end's subprotocol and
-/// `offer`, with TLS first for `wss://`.
-fn upgrade(url: &Uri, socket: TcpStream, offer: &Offer) -> Result<Link<MaybeTlsStream<TcpStream>>> {
+/// `offer`, with TLS first for `wss://`, by `socket`'s deadline.
+fn upgrade(url: &Uri, socket: Socket, offer: &Offer) -> Result<Link<MaybeTlsStream<Socket>>> {
     let mut request = url
         .into_client_request()
         .map_err(|error| Error::adapter(format!("invalid capture stream URL {url}"), error))?;
@@ -383,20 +453,30 @@ fn upgrade(url: &Uri, socket: TcpStream, offer: &Offer) -> Result<Link<MaybeTlsS
     };
     // A request is the longest message this end reads.
     let config = Some(link::config(MAX_TEXT_BYTES));
-    match tungstenite::client_tls_with_config(request, socket, config, connector) {
-        Ok((socket, _)) => Ok(Link::new(socket)),
-        Err(HandshakeError::Failure(tungstenite::Error::Http(response))) => {
-            let status = response.status();
-            // The portal lists the versions it speaks with its refusal.
-            let error = if status == StatusCode::UPGRADE_REQUIRED {
-                let theirs = response.headers().get(header::SEC_WEBSOCKET_PROTOCOL);
-                wire::version_error(theirs.and_then(|value| value.to_str().ok()))
-            } else {
-                WireError::Unavailable(status.as_u16())
-            };
-            Err(Error::adapter(format!("{url} did not open"), error))
-        }
-        Err(error) => Err(Error::adapter(format!("cannot open {url}"), error)),
+    let mut handshake = tungstenite::client_tls_with_config(request, socket, config, connector);
+    loop {
+        return match handshake {
+            Ok((socket, _)) => Ok(Link::new(socket)),
+            // A wait reached the deadline; the next call fails with it.
+            Err(HandshakeError::Interrupted(waiting)) => {
+                handshake = waiting.handshake();
+                continue;
+            }
+            Err(HandshakeError::Failure(tungstenite::Error::Http(response))) => {
+                let status = response.status();
+                // The portal lists the versions it speaks with its refusal.
+                let error = if status == StatusCode::UPGRADE_REQUIRED {
+                    let theirs = response.headers().get(header::SEC_WEBSOCKET_PROTOCOL);
+                    wire::version_error(theirs.and_then(|value| value.to_str().ok()))
+                } else {
+                    WireError::Unavailable(status.as_u16())
+                };
+                Err(Error::adapter(format!("{url} did not open"), error))
+            }
+            Err(HandshakeError::Failure(error)) => {
+                Err(Error::adapter(format!("cannot open {url}"), error))
+            }
+        };
     }
 }
 
@@ -447,24 +527,19 @@ fn refuse<S: Read + Write>(link: &mut Link<S>, cause: RefusalCause, reason: &str
     let _ = link.close(None);
 }
 
-/// The receiver's first message, its request, within [`CONNECT_TIMEOUT`]
-/// (`socket` is the link's, its read timeout set to the time left).
-/// Messages of types this end does not know are skipped. A peer that closes
-/// without a [`Close`](crate::Close) code, or stays silent, sent none; one
-/// that closes with one fails with it (a receiver stopped before it asked).
+/// The receiver's first message, its request, by `deadline` (which the
+/// link's socket also bounds each read by). Messages of types this end does
+/// not know are skipped. A peer that closes without a
+/// [`Close`](crate::Close) code, or stays silent, sent none; one that
+/// closes with one fails with it (a receiver stopped before it asked).
 fn read_request<S: Read + Write>(
     link: &mut Link<S>,
-    socket: &TcpStream,
+    deadline: Instant,
 ) -> Result<RemoteSettings, LinkError> {
-    let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
+        if Instant::now() >= deadline {
             return Err(WireError::NoRequest.into());
         }
-        socket
-            .set_read_timeout(Some(left))
-            .map_err(|error| LinkError::Socket(error.into()))?;
         let text = match link.receive() {
             Ok(Some(Message::Text(text))) => text,
             Ok(Some(Message::Binary(_))) => return Err(WireError::Unexpected.into()),
@@ -508,6 +583,70 @@ mod tests {
         }
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
+        }
+    }
+
+    /// A receiver that answers forever, a little at a time: `upgraded`
+    /// completes the upgrade first and then sends pings instead of the
+    /// request; otherwise it drips the upgrade's answer byte by byte.
+    #[expect(
+        clippy::result_large_err,
+        reason = "tungstenite's upgrade callback returns its error response"
+    )]
+    fn dripping(upgraded: bool) -> SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let drip = Duration::from_millis(20);
+            if upgraded {
+                let answer =
+                    |_: &tungstenite::handshake::server::Request,
+                     mut response: tungstenite::handshake::server::Response| {
+                        response.headers_mut().insert(
+                            header::SEC_WEBSOCKET_PROTOCOL,
+                            HeaderValue::from_static(CAPTURE_PROTOCOL),
+                        );
+                        Ok(response)
+                    };
+                let mut socket = tungstenite::accept_hdr(socket, answer).unwrap();
+                while socket
+                    .send(tungstenite::Message::Ping(Bytes::new()))
+                    .is_ok()
+                {
+                    std::thread::sleep(drip);
+                }
+            } else {
+                let mut request = [0; 2048];
+                let _ = socket.read(&mut request);
+                while socket.write_all(b"X").is_ok() {
+                    std::thread::sleep(drip);
+                }
+            }
+        });
+        address
+    }
+
+    /// However slowly the receiver answers, the connect ends by its deadline.
+    #[test]
+    fn a_receiver_that_drips_cannot_hold_up_the_connect() {
+        for upgraded in [false, true] {
+            let address = dripping(upgraded);
+            let url: Uri = format!("ws://{address}/api/v1/capture/stream")
+                .parse()
+                .unwrap();
+            let deadline = Duration::from_millis(200);
+            let started = Instant::now();
+            let failed = prysm_testkit::within(Duration::from_secs(10), move || {
+                let offer = crate::testkit::offer();
+                RemoteSender::connect_by(&url, address, &offer, started + deadline).is_err()
+            });
+            assert!(failed, "upgraded {upgraded}");
+            assert!(
+                started.elapsed() < deadline + Duration::from_secs(2),
+                "upgraded {upgraded}: {:?}",
+                started.elapsed()
+            );
         }
     }
 

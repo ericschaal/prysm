@@ -4,7 +4,8 @@
 //! - A frame ends any run of trouble.
 //! - A stall (no buffer within [`stall_timeout`]) ends any run too, so a source
 //!   that is off, and yields a bad buffer now and then, stays "waiting for
-//!   video" instead of failing. V4L2 restarts its stream after a stall.
+//!   video" instead of failing. V4L2 restarts its stream after a stall, at
+//!   once: the stall already waited.
 //! - Unusable buffers in a row are dropped quietly until the run has lasted
 //!   [`GRACE`] and held that long's worth of buffers at the configured rate;
 //!   then capture fails with [`CaptureError::Unusable`], so a stream does not
@@ -38,9 +39,8 @@ const GRACE_SECONDS: u32 = 3;
 /// fails: long enough for a signal to come back.
 const GRACE: Duration = Duration::from_secs(GRACE_SECONDS as u64);
 
-/// The pause before each restart, so a device that fails at once is not
-/// restarted in a tight loop.
-#[cfg(any(target_os = "linux", test))]
+/// The pause before a restart after an interruption, so a device that fails
+/// at once is not restarted in a tight loop.
 pub(crate) const PAUSE: Duration = Duration::from_millis(100);
 
 /// How long capture waits for a buffer before it counts a stall: a second,
@@ -71,8 +71,15 @@ pub(crate) enum Event {
 pub(crate) enum Verdict {
     /// Wait for the next buffer.
     Continue,
-    /// Restart the stream, then wait for the next buffer.
-    Restart,
+    /// Restart the stream after `pause` ([`PAUSE`] after an interruption,
+    /// none after a stall), then wait for the next buffer.
+    Restart {
+        #[cfg_attr(
+            not(target_os = "linux"),
+            allow(dead_code, reason = "only a V4L2 stream restarts")
+        )]
+        pause: Duration,
+    },
     /// Stop capturing with this error.
     Fail(CaptureError),
 }
@@ -113,7 +120,12 @@ impl Health {
         let lasted = |since: Instant| now.saturating_duration_since(since) >= GRACE;
         let (run, verdict) = match (self.run, event) {
             (_, Event::Frame) => (Run::Clean, Verdict::Continue),
-            (_, Event::Stalled) => (Run::Clean, Verdict::Restart),
+            (_, Event::Stalled) => (
+                Run::Clean,
+                Verdict::Restart {
+                    pause: Duration::ZERO,
+                },
+            ),
             // An unusable buffer after an interruption is not the device
             // recovering: the interruption run and its clock go on, under
             // the bounds of a run of unusable buffers.
@@ -155,7 +167,7 @@ impl Health {
                     Verdict::Fail(error)
                 } else {
                     tracing::warn!(error = %prysm_ports::chain(&error), "Capture interrupted; restarting the stream");
-                    Verdict::Restart
+                    Verdict::Restart { pause: PAUSE }
                 };
                 (Run::Interrupted { since, rejected }, verdict)
             }
@@ -178,7 +190,10 @@ mod tests {
     #[derive(Debug, PartialEq)]
     enum Kind {
         Continue,
+        /// After [`PAUSE`].
         Restart,
+        /// Without a pause.
+        RestartNow,
         Unusable,
         Interrupted,
     }
@@ -186,7 +201,11 @@ mod tests {
     fn kind(verdict: &Verdict) -> Kind {
         match verdict {
             Verdict::Continue => Kind::Continue,
-            Verdict::Restart => Kind::Restart,
+            Verdict::Restart { pause } if pause.is_zero() => Kind::RestartNow,
+            Verdict::Restart { pause } => {
+                assert_eq!(*pause, PAUSE);
+                Kind::Restart
+            }
             Verdict::Fail(CaptureError::Unusable { .. }) => Kind::Unusable,
             Verdict::Fail(_) => Kind::Interrupted,
         }
@@ -247,7 +266,7 @@ mod tests {
             ("stalled", || Event::Stalled),
             ("interrupted", interrupted),
         ];
-        use Kind::{Continue, Interrupted, Restart, Unusable};
+        use Kind::{Continue, Interrupted, Restart, RestartNow, Unusable};
         let clean = Run::Clean;
         let rejecting = |since, count| Run::Rejecting { since, count };
         // Rows follow `runs`, columns `events`.
@@ -255,43 +274,43 @@ mod tests {
             [
                 (clean, Continue),
                 (rejecting(now, 1), Continue),
-                (clean, Restart),
+                (clean, RestartNow),
                 (interrupting(now, 0), Restart),
             ],
             [
                 (clean, Continue),
                 (rejecting(young, LIMIT + 1), Continue),
-                (clean, Restart),
+                (clean, RestartNow),
                 (interrupting(now, 0), Restart),
             ],
             [
                 (clean, Continue),
                 (rejecting(old, LIMIT - 1), Continue),
-                (clean, Restart),
+                (clean, RestartNow),
                 (interrupting(now, 0), Restart),
             ],
             [
                 (clean, Continue),
                 (rejecting(old, LIMIT), Unusable),
-                (clean, Restart),
+                (clean, RestartNow),
                 (interrupting(now, 0), Restart),
             ],
             [
                 (clean, Continue),
                 (interrupting(young, LIMIT), Continue),
-                (clean, Restart),
+                (clean, RestartNow),
                 (interrupting(young, LIMIT - 1), Restart),
             ],
             [
                 (clean, Continue),
                 (interrupting(old, LIMIT), Unusable),
-                (clean, Restart),
+                (clean, RestartNow),
                 (interrupting(old, LIMIT - 1), Interrupted),
             ],
             [
                 (clean, Continue),
                 (interrupting(old, 1), Continue),
-                (clean, Restart),
+                (clean, RestartNow),
                 (interrupting(old, 0), Interrupted),
             ],
         ];

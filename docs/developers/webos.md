@@ -84,18 +84,18 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 - Without video the capture takes the TV UI. A missing `libhalgal` (or one
   of its symbols) or `/dev/gfx` turns that off until the worker restarts;
   any other UI failure is retried after 5, 10, 20, 40 and 60 s (a frame
-  resets the wait), and one after that turns it off too: a failing open
-  can block for seconds, and a stop during one is reported as an
-  unconfirmed release. The first failure of a run logs a warning, the rest debug
+  resets the wait), and one after that turns it off too: a UI tap can fail
+  for good (a worker that died with it open left the graphics driver's
+  lock held until a reboot). A transient UI failure, which the retries are
+  for, has not been observed. The first failure of a run logs a warning, the rest debug
   ([native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
 - Before each video tap opens, the worker registers its two capture client
-  names with Luna and removes them again. A name its role does not allow
-  ("Invalid permissions") or a name Luna cannot remove again ends video
-  capture until the worker restarts. Any other Luna failure there is retried
-  like a failed open, but 30 of them in a row (about half a minute) also end
-  video capture, with the last Luna error as the cause, so a denial worded
-  differently still surfaces. As for every video failure, the first of a run
-  logs a warning and the rest debug. After a failed driver call a tap
+  names with Luna and removes them again. Any failure of that check ends
+  video capture until the worker restarts; the cause says whether a name was
+  denied ("Invalid permissions"), stayed registered, or Luna failed
+  otherwise (LS2 has no typed denial, so that may be a denial worded
+  differently). Other video failures are retried; the first of a run logs a
+  warning and the rest debug. After a failed driver call a tap
   accepts nothing but its release
   ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs),
   [native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
@@ -113,24 +113,30 @@ Full worker: re-applies a non-off target after a session failure (same
 backoff), advertises its LAN portal URL (looked up again at every heartbeat),
 and seeds `settings.json` with `capture.kind = "webos"` when missing.
 
-Slim worker: connects to the receiver at most once a second (every 10 s while
-Prysm speaks another capture stream version), resolving a host name at each
+Slim worker: connects to the receiver at most once a second, also while
+Prysm speaks another capture stream version, resolving a host name at each
 attempt; follows the receiver's stream request (size, rate,
 menus, encoding); closes capture while the receiver has stopped the stream
 (lighting off). An encoder failure is reported with `failure.kind` `encoder`
 and refused until the desktop asks for another encoding; nothing falls back on
-its own. When another TV takes the stream over, the worker releases capture
+its own. A receiver whose source failed with the stream (it refused the
+request, a keyframe did not decode, or it has no decoder; close code 4002) is
+reported with `failure.kind` `receiver_failed`. When another TV takes the
+stream over, the worker releases capture
 and encoder, reports `failure.kind` `replaced` and connects no more until the
 worker restarts (capture stopped and started, the TV waking, or a new Prysm
 address), so two TVs never take the stream from each other in turn. A
-stopped stream, an encoder failure or another version stays the news while
-the receiver is unreachable. In all three the capture is closed, and
-connection attempts go on, so a receiver that asks again (lighting on, an
-update, another encoding) reopens it. Its status
+stopped stream, an encoder failure, a failed receiver or another version
+stays the news while the receiver is unreachable. In all four the capture is
+closed, and connection attempts go on, so a receiver that asks again
+(lighting on, an update, another encoding) reopens it. Its status
 carries the uplink as one `link` tagged by `state`: `starting`, `sending`
 (`encoding`, `fps`), `paused`, `waiting` (the receiver wait) or `failed`
-(the encoder, version or replaced failure); the supervisor counts it as up
-once `sending` or `paused`. All rules are one transition function
+(the encoder, version, replaced or receiver-failed failure); the supervisor
+counts it as up once `sending` or `paused`. A connect ends within 2.75 s
+(0.5 s for the host name, 2.25 s on the network), so a stop during one still
+releases the capture (4 s) within the slim worker's 7 s stop deadline, below
+the supervisor's 8 s KILL. All rules are one transition function
 ([`Report::next`](../../crates/hosts/webos-slim/src/link.rs)). Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
