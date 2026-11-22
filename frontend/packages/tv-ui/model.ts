@@ -214,7 +214,9 @@ export function tvStatus(
   // situation is known it says what the failure means (off with a switch
   // off that failed is still off). Before the portal answers, the failure
   // is said only for a mode, so lights that are off never flicker as
-  // stopped. A restart being retried is the supervisor's own.
+  // stopped; Luna does not say whose failure it is, so one of the
+  // supervisor's own waits for the portal too. A restart being retried is
+  // the supervisor's own.
   const lighting = full ? portal?.lighting : undefined;
   const asksMode =
     state.flavor === 'full' &&

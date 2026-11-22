@@ -763,12 +763,12 @@ impl Core {
             Ok(end) => (Lighting::left_by(end), matches!(end.exit, Exit::Ended)),
             Err(error) => (Lighting::failed(error), false),
         };
-        // The result is the loop's failure: a release that also failed (why
-        // the source is unreleased) is said only here.
-        if let Some(release) = end.as_ref().ok().and_then(hidden_release) {
+        // The result is the first failure: a release or an idle that failed
+        // after it is said only here.
+        for later in end.iter().flat_map(hidden) {
             tracing::warn!(
-                error = %prysm_ports::chain(release),
-                "the source of a session that failed on its own was not released"
+                error = %prysm_ports::chain(later),
+                "a session that had already failed also failed to end cleanly"
             );
         }
         let result = end.and_then(SessionEnd::result);
@@ -1161,13 +1161,19 @@ fn unpublished<'a>(
     }
 }
 
-/// The release failure a session end's result does not carry: the loop's
-/// own failure comes first ([`SessionEnd::result`]).
-fn hidden_release(end: &SessionEnd) -> Option<&Error> {
-    match (&end.exit, &end.released) {
-        (Exit::Failed(_), Err(release)) => Some(release),
-        _ => None,
-    }
+/// The failures a session end's result does not carry: every one after the
+/// first ([`SessionEnd::result`]). A fault is not one: the state carries
+/// its phase.
+fn hidden(end: &SessionEnd) -> impl Iterator<Item = &Error> {
+    let exit = match &end.exit {
+        Exit::Failed(failure) => Some(failure),
+        Exit::Stopped | Exit::Ended => None,
+    };
+    exit.into_iter()
+        .chain(end.released.as_ref().err())
+        .chain(end.left.as_ref().err())
+        .skip(1)
+        .filter(|error| !matches!(error, Error::Faulted(_)))
 }
 
 /// Log what [`unpublished`] finds, so a fault's cause is never lost.
@@ -1207,32 +1213,45 @@ mod tests {
         Error::other("cannot idle").in_section(Section::Output)
     }
 
-    /// A release failure behind the loop's own failure is found, once; any
-    /// other end has none to add.
+    /// Every failure after a session end's first is found, in order; the
+    /// first is the result, and a fault is in the state.
     #[test]
-    fn a_release_failure_behind_a_loop_failure_is_found() {
-        let end = |exit: Exit, released: Result<()>| SessionEnd {
+    fn failures_behind_a_session_ends_first_are_found() {
+        let end = |exit: Exit, released: Result<()>, left: Result<IdleMode>| SessionEnd {
             exit,
             released,
-            left: Ok(IdleMode::Off),
+            left,
         };
         let release = || Err(Error::other("cannot close"));
+        let idle = || Err(failure());
         let failed = || Exit::Failed(Error::other("source failed"));
-        let found = |end: &SessionEnd| hidden_release(end).map(ToString::to_string);
+        let found = |end: &SessionEnd| hidden(end).map(ToString::to_string).collect::<Vec<_>>();
+        let none: [&str; 0] = [];
         assert_eq!(
-            found(&end(failed(), release())).as_deref(),
-            Some("cannot close")
+            found(&end(failed(), release(), idle())),
+            ["cannot close", "cannot idle"]
         );
-        assert_eq!(found(&end(failed(), Ok(()))), None);
+        assert_eq!(found(&end(failed(), Ok(()), idle())), ["cannot idle"]);
+        assert_eq!(found(&end(failed(), Ok(()), Ok(IdleMode::Off))), none);
         assert_eq!(
-            found(&end(Exit::Stopped, release())),
-            None,
-            "it is the result"
+            found(&end(Exit::Stopped, release(), idle())),
+            ["cannot idle"]
         );
+        for exit in [Exit::Stopped, Exit::Ended] {
+            assert_eq!(
+                found(&end(exit, release(), Ok(IdleMode::Off))),
+                none,
+                "it is the result"
+            );
+        }
         assert_eq!(
-            found(&end(Exit::Ended, release())),
-            None,
-            "it is the result"
+            found(&end(
+                failed(),
+                Ok(()),
+                Err(Error::Faulted(SessionPhase::IdlingOutput))
+            )),
+            none,
+            "a fault is in the state"
         );
     }
 
