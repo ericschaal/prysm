@@ -16,7 +16,7 @@ use std::fmt;
 /// (big-endian `u16`).
 pub(crate) const HEADER_LEN: usize = 8;
 /// Where each header field is.
-mod at {
+pub(crate) mod at {
     use std::ops::Range;
     pub const FORMAT: usize = 0;
     pub const RANGE: usize = 1;
@@ -49,7 +49,7 @@ pub(crate) const MAX_TEXT_BYTES: usize = 4 * 1024;
 /// Frame header flag: the first picture of an H.264 encoder session (SPS,
 /// PPS and IDR); the receiver decodes it with fresh state. Senders write the
 /// other bits as 0; receivers ignore them.
-const KEYFRAME: u8 = 1;
+pub(crate) const KEYFRAME: u8 = 1;
 
 /// How a stream's frame payloads are encoded, fixed per connection by the
 /// request.

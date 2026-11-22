@@ -6,13 +6,9 @@
 use crate::offer::Offer;
 use crate::request::{RemoteSettings, StreamEncoding};
 use crate::wire::{
-    self, Encoding, FromReceiver, FromSender, MAX_HEIGHT, MAX_PAYLOAD_BYTES, MAX_REASON_BYTES,
-    MAX_WIDTH, Refusal, RefusalCause, ToReceiver, ToSender,
+    self, Encoding, FromReceiver, FromSender, KEYFRAME, MAX_HEIGHT, MAX_PAYLOAD_BYTES,
+    MAX_REASON_BYTES, MAX_WIDTH, Refusal, RefusalCause, ToReceiver, ToSender, at,
 };
-
-/// The flags byte of the frame header: decoding keeps only an H.264 stream's
-/// keyframe bit, so re-encoding writes the others as 0.
-const FLAGS: usize = 3;
 
 /// A frame message; the first byte picks the stream's encoding. An accepted
 /// frame is within the limits, its payload fits its header, and its header
@@ -50,11 +46,11 @@ pub fn frame(data: &[u8]) {
         .expect("an accepted header encodes");
     let mut expected = [0; wire::HEADER_LEN];
     expected.copy_from_slice(&message[..wire::HEADER_LEN]);
-    expected[FLAGS] = u8::from(header.keyframe);
+    expected[at::FLAGS] = if header.keyframe { KEYFRAME } else { 0 };
     assert_eq!(encoded, expected, "{header:?}");
     assert_eq!(
         header.keyframe,
-        encoding == Encoding::H264 && message[FLAGS] & 1 != 0
+        encoding == Encoding::H264 && message[at::FLAGS] & KEYFRAME != 0
     );
 }
 

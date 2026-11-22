@@ -77,9 +77,10 @@ The second checks the frame sizes with the TV's 32-bit `usize`.
 ### Sanitizers
 
 The `sanitizer` jobs run the tests of the unsafe and threaded crates under
-AddressSanitizer and ThreadSanitizer. On Linux, with your host's triple
-(`aarch64-apple-darwin` on a Mac, which has no LeakSanitizer); the job's
-step lists every crate, these are the unsafe ones:
+AddressSanitizer and ThreadSanitizer. Use your host's triple
+(`x86_64-unknown-linux-gnu` in CI; `aarch64-apple-darwin` on a Mac, which has
+no LeakSanitizer). The job's step lists every crate; these are the unsafe
+ones:
 
 ```sh
 RUSTFLAGS=-Zsanitizer=address cargo +nightly-2026-11-01 test -Zbuild-std \
@@ -100,6 +101,7 @@ one for a minute, bounded in memory:
 ```sh
 cd fuzz
 cargo +nightly-2026-11-01 fuzz list
+mkdir -p corpus/frame_header
 cargo +nightly-2026-11-01 fuzz run frame_header corpus/frame_header seeds/frame_header -- -max_total_time=60 -rss_limit_mb=2048
 ```
 

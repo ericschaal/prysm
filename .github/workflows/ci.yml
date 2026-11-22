@@ -114,6 +114,10 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       - name: Script, TV package and acceptance runner checks, repository links
         run: cargo xtask check scripts
+      # The nightly workflow runs them; this keeps them and fuzz/Cargo.lock
+      # building against each pull request's crates.
+      - name: Fuzz targets compile
+        run: cargo check --locked --manifest-path fuzz/Cargo.toml
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
@@ -445,6 +449,9 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: nightly-2026-11-01
       RUSTFLAGS: -Zsanitizer=${{ matrix.sanitizer }}
+      # A panic's backtrace takes seconds to symbolize in these builds, longer
+      # than the watchdogs of the tests that panic on purpose.
+      RUST_BACKTRACE: '0'
       # LeakSanitizer is part of AddressSanitizer on Linux and stays on.
       ASAN_OPTIONS: hard_rss_limit_mb=4096
       TSAN_OPTIONS: hard_rss_limit_mb=4096
