@@ -1855,6 +1855,14 @@ test('the full status follows the portal: its failure, named by mode, and a faul
       target,
     );
   }
+  // Saved preferences that cannot be read wait for a faulted Prysm.
+  const faultedUnreadable = tvStatus(
+    true,
+    { ...full, failure: { kind: 'preferences', message: 'x' } },
+    draft,
+    facts({ target: 'off', session: { state: 'faulted', message: 'x' } }),
+  );
+  assert.equal(faultedUnreadable.title, 'Prysm stopped responding');
   // Newer than this app: said, never read as off.
   for (const snapshot of [
     { target: 'unknown', session: { state: 'stopped' } },

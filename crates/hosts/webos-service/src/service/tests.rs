@@ -5,7 +5,7 @@ use crate::identity::APP_ID;
 use crate::install::InstallError;
 use crate::launcher::Output;
 use crate::machine::Exit;
-use crate::preferences::MemoryStore;
+use crate::preferences::{MemoryStore, StoreError};
 use prysm_webos_link::{Command, Event, FullStatus, WorkerStatus};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -337,6 +337,85 @@ fn full_keeps_the_fields_it_does_not_own() {
 /// An unreadable `tv.json` is reported as the `preferences` failure, the
 /// defaults are used, and the file stays as it is until preferences are
 /// saved.
+/// A store whose file cannot be read and cannot be replaced.
+#[derive(Default)]
+struct Broken {
+    saves: u32,
+}
+
+impl PreferencesStore for Broken {
+    fn load(&mut self) -> Result<Option<PreferencesFile>, StoreError> {
+        Err(StoreError::Read {
+            path: "/state/tv.json".into(),
+            source: io::Error::other("unreadable"),
+        })
+    }
+    fn save(&mut self, _: &PreferencesFile) -> Result<(), StoreError> {
+        self.saves += 1;
+        Err(StoreError::Save {
+            path: "/state/tv.json".into(),
+            source: io::Error::other("read-only"),
+        })
+    }
+    fn resume(&mut self) -> Option<LightingTarget> {
+        None
+    }
+    fn remember(&mut self, _: LightingTarget) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
+/// A save that fails is `save_failed`; nothing it would have saved is
+/// applied, so the unreadable file is still the failure.
+#[test]
+fn a_failed_save_changes_nothing() {
+    let mut service = Service::new(
+        config(),
+        FakeLauncher::default(),
+        Broken::default(),
+        FakeInstaller::default(),
+        Instant::now(),
+    );
+    let mut bus = FakeBus::default();
+    let mut call = |method: &str, payload: &str| -> Value {
+        let reply = service.request(&mut bus, method, APP_ID, payload, Instant::now());
+        serde_json::from_str(&reply.payload).unwrap()
+    };
+    let refused = call("setPreferences", r#"{"autostart":true}"#);
+    assert_eq!(refused["returnValue"], false);
+    assert_eq!(refused["errorKind"], "save_failed");
+    assert!(
+        refused["errorText"].as_str().unwrap().contains("read-only"),
+        "{refused}"
+    );
+    let state = call("getState", "{}");
+    assert_eq!(state["failure"]["kind"], "preferences", "{state}");
+    assert_eq!(
+        state["preferences"],
+        serde_json::json!({ "autostart": false })
+    );
+    assert_eq!(service.store.saves, 1);
+    assert_eq!(service.file, PreferencesFile::default());
+    assert_eq!(service.machine().preferences(), &Preferences::default());
+}
+
+/// No `tv.json` yet: the defaults, and no failure.
+#[test]
+fn a_missing_preferences_file_is_no_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = Service::new(
+        slim_config(),
+        FakeLauncher::default(),
+        crate::preferences::FileStore::new(dir.path().join("tv.json"))
+            .with_boot_id(dir.path().join("no-boot-id")),
+        FakeInstaller::default(),
+        Instant::now(),
+    );
+    let state = service.machine().state(Instant::now());
+    assert_eq!(state.failure, None);
+    assert_eq!(state.preferences, Preferences::default());
+}
+
 #[test]
 fn unreadable_preferences_are_reported_and_kept_until_saved() {
     let dir = tempfile::tempdir().unwrap();

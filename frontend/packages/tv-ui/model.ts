@@ -236,10 +236,6 @@ export function tvStatus(
   if (phase === 'stopping') {
     title = full ? 'Restarting Prysm…' : 'Stopping capture…';
     description = 'This takes a moment.';
-  } else if (unreadable) {
-    title = 'Couldn’t read settings';
-    description = 'Change a setting below to save new ones.';
-    attention = true;
   } else if (failed && !full && kind === 'encoder') {
     // The encoding is Prysm's setting, so the fix is in its portal.
     title = 'Encoding not supported';
@@ -289,6 +285,12 @@ export function tvStatus(
     if (lighting.target === 'effects') title = 'WLED effects stopped';
     else title = lighting.fromEffects ? 'Screen sync could not start' : stopped;
     description = 'Try again, or choose another mode.';
+    attention = true;
+  } else if (unreadable) {
+    // After every failure of the lights or the worker, which need the
+    // user first; before power and video, which do not.
+    title = 'Couldn’t read settings';
+    description = 'Change a setting below to save new ones.';
     attention = true;
   } else if (enabled && state.power !== 'active') {
     title =
