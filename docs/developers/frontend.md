@@ -71,9 +71,11 @@ has one reading.
 Anything else malformed ends the stream or the reply (`Invalid state
 event.`, `invalid_reply`). What the lights are doing is decided once, by
 `lightingSituation` (`application-client`): faulted, off, failed, screen sync,
-effects or starting, in that order; off keeps a failure (settings that could not be applied, a switch off that failed), so it is still said. The light card, the setup path, the TV's
-lights card and the full package's status headline all show that one
-situation, and `describeSituation` gives its words.
+effects or starting, in that order. Off keeps a failure (settings that could
+not be applied, a switch off that failed): the light card and the TV's lights
+card say it, while the setup path, the section pages and the full package's
+status headline read off as off. All of them read that one situation, and
+`describeSituation` gives its words.
 
 ## Saving from a page
 

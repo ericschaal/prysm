@@ -357,6 +357,16 @@ test('with the lights off a failure is still said, as off', () => {
     plainFailure({ kind: 'invalid', message: 'x' }, 'off', 'WLED effects'),
     'Prysm can’t use these settings.',
   );
+  // As the engine reports saved settings that do not validate: the field
+  // names its section, and no device was asked.
+  assert.equal(
+    plainFailure(
+      { kind: 'invalid', message: 'x', field: 'output.address' },
+      'off',
+      'WLED effects',
+    ),
+    'Prysm can’t use these settings.',
+  );
   // The card: off, with the problem and its details, and no Try again (it
   // could only switch off again).
   const view = lightCardView(facts(off, { target: 'off' }), memory());

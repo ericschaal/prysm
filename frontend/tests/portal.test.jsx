@@ -661,13 +661,12 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
     assert.equal(note(), 'Starting…');
     assert(!text().includes('WLED effects are on'));
 
-    // Off with a failure: the engine clears a failure when the lights go
-    // off, so this one is the switch off itself. It is said, with no retry.
+    // Off with a failure of the switch off itself: said, with no retry.
     await act(async () =>
       fixture.publish({
         target: 'off',
         session: { state: 'stopped' },
-        failure,
+        failure: { kind: 'adapter', message: 'WLED refused the connection' },
       }),
     );
     assert.equal(word(), 'Off');

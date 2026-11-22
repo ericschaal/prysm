@@ -188,6 +188,10 @@ export function plainFailure(
   target: LightingTarget,
   effects: string,
 ) {
+  // Settings that do not validate name a section's field, yet no device
+  // was asked: with the lights off that is all there is to say.
+  if (failure.kind === 'invalid' && target === 'off')
+    return 'Prysm can’t use these settings.';
   const section = failure.section ?? failure.field?.split('.')[0];
   if (section === 'capture') return 'The video source is not working.';
   if (section === 'output') return 'The lights are not responding.';
@@ -200,10 +204,7 @@ export function plainFailure(
       return 'Prysm is busy. Try again in a moment.';
     case 'adapter':
     case 'invalid':
-      if (target === 'off')
-        return failure.kind === 'adapter'
-          ? 'The lights could not be switched off.'
-          : 'Prysm can’t use these settings.';
+      if (target === 'off') return 'The lights could not be switched off.';
       return target === 'device_native'
         ? `${effects} could not start.`
         : 'Screen sync could not start.';
