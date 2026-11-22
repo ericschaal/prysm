@@ -23,15 +23,16 @@ pub fn check_registration(names: &[String]) -> Result<(), Error> {
 pub(crate) fn check_with(api: &Luna, names: &[String]) -> Result<(), Error> {
     for name in names {
         let name = CString::new(name.as_str()).map_err(|_| Error::Nul)?;
+        // Initialized before registering, so no fallible step lies between a
+        // registration and its removal.
+        let mut unregister_error = LunaError::new(api)?;
         let mut handle = ptr::null_mut();
         check(api, "LSRegister", |error| {
             // SAFETY: live name, initialized error and a writable local handle; no callbacks.
             unsafe { api.LSRegister(name.as_ptr(), &raw mut handle, error) }
         })?;
-        // Reuse a fresh error so no fallible step can strand a registered handle.
-        let mut error = LunaError::new(api)?;
         // SAFETY: a successful registration owns `handle`; unregister before unloading.
-        let unregistered = unsafe { api.LSUnregister(handle, error.raw()) };
+        let unregistered = unsafe { api.LSUnregister(handle, unregister_error.raw()) };
         if !unregistered {
             // The library may still own live resources; never unload or retry this state.
             std::process::abort();
@@ -48,40 +49,35 @@ mod tests {
     #[test]
     fn denial_frees_errors_and_every_successful_registration_is_removed() {
         let names = ["a.1".to_owned(), "b.1".to_owned()];
+        // Each name: the unregister error, the register error, register,
+        // free the register error, then unregister and free its error.
+        let registered = |name| {
+            vec![
+                "init".to_owned(),
+                "init".to_owned(),
+                format!("register {name}"),
+                "free".to_owned(),
+            ]
+        };
+        let unregistered = || vec!["unregister".to_owned(), "free".to_owned()];
+        let denied = |name| [registered(name), vec!["free".to_owned()]].concat();
         for (deny, ok, expected) in [
-            (Some("a.1"), false, vec!["init", "register a.1", "free"]),
+            (Some("a.1"), false, denied("a.1")),
             (
                 Some("b.1"),
                 false,
-                vec![
-                    "init",
-                    "register a.1",
-                    "free",
-                    "init",
-                    "unregister",
-                    "free",
-                    "init",
-                    "register b.1",
-                    "free",
-                ],
+                [registered("a.1"), unregistered(), denied("b.1")].concat(),
             ),
             (
                 None,
                 true,
-                vec![
-                    "init",
-                    "register a.1",
-                    "free",
-                    "init",
-                    "unregister",
-                    "free",
-                    "init",
-                    "register b.1",
-                    "free",
-                    "init",
-                    "unregister",
-                    "free",
-                ],
+                [
+                    registered("a.1"),
+                    unregistered(),
+                    registered("b.1"),
+                    unregistered(),
+                ]
+                .concat(),
             ),
         ] {
             mock::reset();

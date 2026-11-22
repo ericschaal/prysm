@@ -239,7 +239,6 @@ mod tests {
     /// WLED 16 driving one LED, written from its source apart from the
     /// levels above: the gamma table, then `color_fade(c, bri, true)` over
     /// the whole LED.
-    #[allow(clippy::cast_possible_truncation, reason = "as WLED's C does")]
     fn wled(bytes: [u8; 3], gamma: f32, bri: u8) -> [u8; 3] {
         let table = |byte: u8| ((f32::from(byte) / 255.0).powf(gamma) * 255.0 + 0.5) as u8;
         let channels = bytes.map(table);

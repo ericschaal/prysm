@@ -1,6 +1,5 @@
 //! Stand-ins for every LS2 and GLib function, recording calls per thread, so
 //! the wrapper's ownership and ordering run on the development host.
-#![allow(clippy::missing_safety_doc)]
 use crate::generated::glib::{
     GDestroyNotify, GMainContext, GSource, GSourceFunc, gboolean, gpointer, guint,
 };

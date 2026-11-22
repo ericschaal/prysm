@@ -515,13 +515,11 @@ mod tests {
                 .chunks_exact(cells.len())
                 .map(|row| {
                     let sum = |channel: fn(&LinearColor) -> f32| {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let value = cells
+                        cells
                             .iter()
                             .zip(row)
                             .map(|(cell, w)| f64::from(channel(cell)) * f64::from(*w))
-                            .sum::<f64>() as f32;
-                        value
+                            .sum::<f64>() as f32
                     };
                     LinearColor::new(sum(|c| c.r), sum(|c| c.g), sum(|c| c.b))
                 })
@@ -615,7 +613,6 @@ mod tests {
                     count += 1.0;
                 }
             }
-            #[allow(clippy::cast_possible_truncation)]
             let expected = sum.map(|channel| (channel / count) as f32);
             assert_eq!([actual.r, actual.g, actual.b], expected);
         }

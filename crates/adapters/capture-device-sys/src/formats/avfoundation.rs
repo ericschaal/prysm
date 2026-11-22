@@ -40,7 +40,6 @@ impl Rates {
         let high = (max / (1.0 - STRETCH)).floor().min(f64::from(MAX_FPS));
         if low <= high {
             // Both are whole numbers from 1 to MAX_FPS here.
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             self.0.extend(low as u32..=high as u32);
         }
     }
