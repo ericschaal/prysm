@@ -1,6 +1,13 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { failureOf, same } from '@prysm/application-client';
-import type { Processing } from '@prysm/contracts/application';
+import type { Calibration, Processing } from '@prysm/contracts/application';
 import { useDraft } from './draft';
 import type { SaveState } from './save-state';
 import {
@@ -158,7 +165,8 @@ export function withCalibrations<T extends object>(
  * `draft`, moved onto `saved`: every control the user changed since `base`
  * keeps the user's value, every other one takes the saved value. A change
  * made on another device to a different control is kept; to the same one,
- * the user's own (shown) value wins.
+ * the user's own (shown) value wins. Each calibration counts as a control of
+ * its own (see {@link rebasedCalibrations}).
  */
 export function rebased(
   saved: ProcessingControls,
@@ -169,11 +177,50 @@ export function rebased(
   const mine = draft as Record<string, unknown>;
   const before = base as Record<string, unknown>;
   for (const key of new Set([...Object.keys(mine), ...Object.keys(before)])) {
-    if (same(mine[key], before[key])) continue;
+    if (key === 'calibrations' || same(mine[key], before[key])) continue;
     if (key in mine) next[key] = mine[key];
     else delete next[key];
   }
+  const calibrations = rebasedCalibrations(
+    saved.calibrations ?? [],
+    base.calibrations ?? [],
+    draft.calibrations ?? [],
+  );
+  if (calibrations.length) next.calibrations = calibrations;
+  else delete next.calibrations;
   return next as unknown as ProcessingControls;
+}
+
+/**
+ * `draft`'s calibrations moved onto `saved`'s, one calibration at a time by
+ * its `id`: one the user changed keeps the user's version, one the user
+ * added is appended, one deleted on either side is gone, and every other
+ * one is as saved, in the saved order.
+ */
+export function rebasedCalibrations(
+  saved: readonly Calibration[],
+  base: readonly Calibration[],
+  draft: readonly Calibration[],
+): Calibration[] {
+  const before = new Map(
+    base.map((calibration) => [calibration.id, calibration]),
+  );
+  const mine = new Map(
+    draft.map((calibration) => [calibration.id, calibration]),
+  );
+  const kept = saved.flatMap((theirs) => {
+    const original = before.get(theirs.id);
+    const edited = mine.get(theirs.id);
+    if (!original) return [edited ?? theirs];
+    if (!edited) return [];
+    return [same(edited, original) ? theirs : edited];
+  });
+  const added = draft.filter(
+    (calibration) =>
+      !before.has(calibration.id) &&
+      !saved.some((theirs) => theirs.id === calibration.id),
+  );
+  return [...kept, ...added];
 }
 
 /** A save that failed, shown until the draft changes or it is retried. */
@@ -191,6 +238,10 @@ interface FailedSave {
  * Shared by the Picture panel, the light card and the calibration wizard, so
  * all save the same way. Render the fields inside `FieldScopeProvider
  * value={scope}`.
+ *
+ * Saves never overlap: each waits for the one before it and is sent against
+ * the revision that one returned, so `commit(value)` resolves `true` only
+ * once `value` itself is saved.
  *
  * A save refused because the settings changed elsewhere is not lost: once
  * the newer settings arrive, the user's changes are moved onto them and
@@ -244,36 +295,46 @@ export function useLiveProcessing({
     invalid ||
     (failed !== null && same(failed.value, draft.draft));
 
+  /**
+   * The latest render's state, for a save that waited for the one before it:
+   * the values of the render that asked for it are older by then.
+   */
+  const latest = useRef({ processing, revision, saved, draft });
+  useLayoutEffect(() => {
+    latest.current = { processing, revision, saved, draft };
+  });
   // `value` decides the calibrations: an absent one was removed.
   const whole = (value: ProcessingControls): Processing => ({
-    ...withCalibrations(processing, undefined, undefined),
+    ...withCalibrations(latest.current.processing, undefined, undefined),
     ...value,
   });
 
+  /** The end of the queue of saves; it never rejects. */
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
   /**
-   * The save on its way, if any; it resolves with whether it was saved. Saves never overlap: one asked for meanwhile
-   * (a quick second tap) waits for it, then the newest value is saved
-   * against the revision it returned, at once.
+   * The last save: the revision the state showed when it was sent, and the
+   * revision it returned. Until the state shows another revision, the next
+   * save goes against the returned one.
    */
-  const inFlight = useRef<Promise<boolean> | null>(null);
-  const again = useRef(false);
+  const lastSave = useRef<{ sentAt: number; savedAs: number } | null>(null);
+  /** Save `edited` after the saves before it; resolves with whether it was saved. */
   function apply(edited: ProcessingControls): Promise<boolean> {
-    if (inFlight.current) {
-      again.current = true;
-      return inFlight.current;
-    }
-    const run = send(edited).finally(() => {
-      inFlight.current = null;
-    });
-    inFlight.current = run;
+    const run = queue.current.then(() => send(edited));
+    queue.current = run;
     return run;
   }
   async function send(edited: ProcessingControls): Promise<boolean> {
+    const current = latest.current;
+    const last = lastSave.current;
+    const expected =
+      last && last.sentAt === current.revision
+        ? last.savedAs
+        : current.revision;
     let value = edited;
     // Changed elsewhere since the draft began: keep both changes.
-    if (draft.conflicted && draft.base) {
-      value = rebased(saved, draft.base, edited);
-      draft.rebase(value);
+    if (current.draft.conflicted && current.draft.base) {
+      value = rebased(current.saved, current.draft.base, edited);
+      current.draft.rebase(value);
     }
     setBusy(true);
     setStaleAt(null);
@@ -281,15 +342,16 @@ export function useLiveProcessing({
       // A trial still on its way must not land after the save.
       await trials.settle();
       setTried(false);
-      const next = await save(revision, whole(value));
-      draft.saved(value, next);
+      const next = await save(expected, whole(value));
+      lastSave.current = { sentAt: current.revision, savedAs: next };
+      current.draft.saved(value, next);
       setFailed(null);
       return true;
     } catch (error) {
       const reason = failureOf(error);
       // Saved again once the newer settings arrive.
       if (reason.kind === 'stale_revision') {
-        setStaleAt(revision);
+        setStaleAt(expected);
         return false;
       }
       const invalid = reason.kind === 'invalid';
@@ -306,22 +368,16 @@ export function useLiveProcessing({
     }
   }
   // Debounce: every change restarts the wait. A new revision (another section
-  // saved meanwhile) also restarts it, so `apply` sends the current one.
+  // saved meanwhile) also restarts it.
   const applyLater = useEffectEvent((value: ProcessingControls) => {
-    again.current = false;
     void apply(value);
   });
   // A held slider saves on release instead. Values tried on the lights are
-  // saved too, even when they ended where they started, to end the trial. A
-  // save asked for while another was on its way goes without the wait.
+  // saved too, even when they ended where they started, to end the trial.
   const pending = draft.dirty || tried;
   useEffect(() => {
-    if (!pending) again.current = false;
     if (!pending || blocked || held) return;
-    const timer = setTimeout(
-      () => applyLater(draft.draft),
-      again.current ? 0 : processingDelayMs,
-    );
+    const timer = setTimeout(() => applyLater(draft.draft), processingDelayMs);
     return () => clearTimeout(timer);
   }, [draft.draft, pending, blocked, held, revision]);
 
@@ -364,11 +420,18 @@ export function useLiveProcessing({
     retry: retry?.run,
     scope,
     replace,
-    /** Change the draft and apply it now (pending changes included). */
+    /**
+     * Change the draft and save it after the saves on their way; resolves
+     * with whether `next` itself was saved.
+     */
     commit: (next: ProcessingControls, path?: string) => {
       replace(next, path);
       return apply(next);
     },
+    /** The draft as the latest render shows it, for a change made after a wait. */
+    current: () => latest.current.draft.draft,
+    /** Discard the draft for the saved section as the latest render shows it. */
+    reload: () => latest.current.draft.reload(),
     /**
      * A slider: `press` when the pointer or a key goes down on it, `slide`
      * for each value (tried on the lights, throttled), `release` when it

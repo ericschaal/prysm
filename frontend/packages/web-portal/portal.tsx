@@ -1,5 +1,8 @@
-import type { ApplicationSnapshot } from '@prysm/application-client';
-import { plainFailure } from '@prysm/application-client';
+import {
+  lightingSituation,
+  plainFailure,
+  type LightingSituation,
+} from '@prysm/application-client';
 import { useEffect, useRef, useState } from 'react';
 import {
   createHashRouter,
@@ -62,33 +65,34 @@ import './flows.css';
  */
 export const connectionGraceMs = 1000;
 
-type Snapshot = ApplicationSnapshot<AdapterSection, AdapterSection>;
-
-/** What the signal path is doing, from the state alone. */
-function pathOf(snapshot: Snapshot): PathState {
-  const { target, session, failure, input } = snapshot;
-  if (session.state === 'faulted') return { kind: 'failed', at: null };
-  if (target !== 'off' && failure) {
-    // Which side failed: typed for adapter failures, else the setting named.
-    const field = failure.field?.split('.')[0];
-    const named = field === 'capture' || field === 'output' ? field : null;
-    return { kind: 'failed', at: failure.section ?? named };
+/** What the signal path is doing, by what the lights are doing. */
+function pathOf(lighting: LightingSituation): PathState {
+  switch (lighting.kind) {
+    case 'faulted':
+      return { kind: 'failed', at: null };
+    case 'failed':
+      return { kind: 'failed', at: lighting.at };
+    case 'sync': {
+      const { input } = lighting;
+      return input?.receiving
+        ? {
+            kind: 'flowing',
+            fps: input.fps,
+            latency: input.latency && {
+              captureMs: input.latency.capture_ms,
+              outputMs: input.latency.output_ms,
+            },
+            behind: input.behind,
+          }
+        : { kind: 'waiting' };
+    }
+    case 'effects':
+      return { kind: 'effects' };
+    // The path shows a start as off until the session runs.
+    case 'starting':
+    case 'off':
+      return { kind: 'off' };
   }
-  if (target === 'processed' && session.state === 'running')
-    return input?.receiving
-      ? {
-          kind: 'flowing',
-          fps: input.fps,
-          latency: input.latency && {
-            captureMs: input.latency.capture_ms,
-            outputMs: input.latency.output_ms,
-          },
-          behind: input.behind,
-        }
-      : { kind: 'waiting' };
-  if (target === 'device_native' && session.state === 'native')
-    return { kind: 'effects' };
-  return { kind: 'off' };
 }
 
 /**
@@ -154,7 +158,8 @@ function PortalFrame() {
       </ChromeContext>
     );
 
-  const path = pathOf(snapshot);
+  const lighting = lightingSituation(snapshot);
+  const path = pathOf(lighting);
   const { commands } = application;
   const portal: Portal = {
     host,
@@ -162,6 +167,7 @@ function PortalFrame() {
     online,
     commands,
     dispatch,
+    lighting,
     path,
     problemAt: (section) =>
       path.kind === 'failed' && path.at === section && snapshot.failure

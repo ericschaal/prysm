@@ -1,4 +1,5 @@
-/** Pure rules of the TV UI: addresses, drafts and the status card. */
+/** Pure rules of the TV UI: addresses, drafts, the status card and the screen. */
+import type { LightingSituation } from '@prysm/application-client';
 import {
   captureFps,
   fullPortal,
@@ -6,6 +7,7 @@ import {
   isEnabled,
   isPaused,
   slimEncoding,
+  type Flavor,
   type LightingTarget,
   type Preferences,
   type SlimEncoding,
@@ -26,7 +28,10 @@ const encodingNames: Record<SlimEncoding, string> = {
   raw: 'Uncompressed',
 };
 
-/** The short name of an encoding, as the status card shows it. */
+/**
+ * The short name of an encoding, as the status card shows it; one newer than
+ * this app (the service passes it on) is shown as the service names it.
+ */
 export function encodingName(encoding: SlimEncoding): string {
   return encodingNames[encoding] || encoding;
 }
@@ -120,11 +125,30 @@ export interface PortalFacts {
   /** Where people open the portal, if known. */
   address: string | null;
   /**
-   * What the lights do by the portal's own state (its target, and whether
-   * frames reach a running session): the full package's headline follows
-   * it, so it never disagrees with the lights card.
+   * What the lights do by the portal's own state: the full package's
+   * headline follows it, so it never disagrees with the lights card.
    */
-  lighting?: { target: LightingTarget; receiving: boolean };
+  lighting?: LightingSituation;
+}
+
+/** The target a situation was asked for; faulted, the supervisor's own. */
+function targetOf(
+  lighting: LightingSituation,
+  supervisor: LightingTarget,
+): LightingTarget {
+  switch (lighting.kind) {
+    case 'off':
+      return 'off';
+    case 'sync':
+      return 'processed';
+    case 'effects':
+      return 'device_native';
+    case 'failed':
+    case 'starting':
+      return lighting.target;
+    case 'faulted':
+      return supervisor;
+  }
 }
 
 /**
@@ -227,9 +251,24 @@ export function tvStatus(
     description = 'Choose an input or play something on the TV.';
   } else if (state.flavor === 'full') {
     // The supervisor hears of a change made in the portal a moment later.
-    const target: LightingTarget = portal?.lighting?.target ?? state.lighting;
-    const flowing = portal?.lighting?.receiving ?? capturing;
-    if (target === 'off') {
+    const lighting = portal?.lighting;
+    const target = lighting
+      ? targetOf(lighting, state.lighting)
+      : state.lighting;
+    // Without the portal's measure yet, the TV's own word.
+    const flowing = lighting
+      ? lighting.kind === 'sync' && (lighting.input?.receiving ?? capturing)
+      : capturing;
+    if (lighting?.kind === 'faulted') {
+      title = stopped;
+      description = 'Restart Prysm to recover.';
+      attention = true;
+    } else if (lighting?.kind === 'failed') {
+      // The lights card says what failed; its modes try again.
+      title = stopped;
+      description = 'Try again, or choose another mode.';
+      attention = true;
+    } else if (target === 'off') {
       title = 'Lights off';
       description = 'Choose Screen sync: the lights follow the picture.';
     } else if (target === 'device_native') {
@@ -306,6 +345,89 @@ export function tvStatus(
     ready:
       capturing && state.power === 'active' && state.video !== 'unavailable',
     setupLights,
+  };
+}
+
+/** The main screen around the status card, from the status and what the app knows. */
+export interface TvScreen {
+  title: string;
+  description: string;
+  attention: boolean;
+  /** The quiet line under the detail: a restart's countdown, or the capture rate. */
+  meta: string;
+  /** The primary button is shown, with this label. */
+  showPrimary: boolean;
+  label: string;
+  /** It waits: it keeps focus (a disabled button would drop it) and OK does nothing. */
+  waiting: boolean;
+  /** The app and its TV service are different packages: nothing to press. */
+  mismatch: boolean;
+  /** The portal's QR code takes the place of the lights card: set up lights first. */
+  setupFirst: boolean;
+  /** The portal address panel beside the settings. */
+  portalPanel: boolean;
+}
+
+/**
+ * The main screen: the status card's words, its one line of meta and its
+ * button, and which panels show. `retryLeft` is the countdown to a restart
+ * (see {@link retrySeconds}), `null` when none is shown; `changing` is a
+ * command on its way.
+ */
+export function tvScreen({
+  flavor,
+  status,
+  state,
+  changing,
+  portalAddress,
+  retryLeft,
+}: {
+  flavor: Flavor;
+  status: TvStatus;
+  state: State | null;
+  changing: boolean;
+  portalAddress: string | null;
+  retryLeft: number | null;
+}): TvScreen {
+  const slim = flavor === 'slim';
+  const mismatch = !!state && state.flavor !== flavor;
+  // One quiet line under the detail, always kept: the countdown to a
+  // restart, or while frames flow their rate (and the slim encoding).
+  let meta = '';
+  if (retryLeft !== null)
+    meta = retryLeft ? `Trying again in ${retryLeft} s` : 'Trying again now…';
+  else if (state && isCapturing(state) && !mismatch) {
+    const encoding = slimEncoding(state);
+    meta = [captureRate(state), encoding ? encodingName(encoding) : null]
+      .filter(Boolean)
+      .join(' · ');
+  }
+  // Full: no button while there is nothing for the service to do; the
+  // lighting modes are the one way to choose what the lights do. Its place
+  // under the status lines (where slim has its button) stays reserved, so the
+  // lights card never moves when it comes (Try again, Set up service). Slim
+  // keeps its button while capture stops ("Please wait…"). Full: never only
+  // because a setting is being saved, or a "Please wait…" button would fill
+  // the empty place for the length of the call.
+  const showPrimary =
+    status.action !== 'none' || (slim && (changing || !!status.label));
+  const setupFirst = status.setupLights && !mismatch && !!portalAddress;
+  return {
+    title: mismatch ? 'Reinstall Prysm' : status.title,
+    description: mismatch
+      ? 'The app and its TV service don’t match.'
+      : status.description,
+    attention: status.attention || mismatch,
+    meta,
+    showPrimary,
+    label: changing ? 'Please wait…' : status.label,
+    waiting: changing || status.action === 'none',
+    mismatch,
+    setupFirst,
+    // The full package's portal address arrives with the worker; its panel
+    // keeps its place meanwhile, empty (nothing to scan yet), so Settings
+    // does not move down.
+    portalPanel: !setupFirst && (!!portalAddress || !state || !slim),
   };
 }
 

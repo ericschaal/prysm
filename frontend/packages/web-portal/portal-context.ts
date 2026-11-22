@@ -3,6 +3,7 @@ import type { Processing } from '@prysm/contracts/application';
 import type {
   ApplicationSnapshot,
   CaptureModesClient,
+  LightingSituation,
   ColorsClient,
   DiscoveryClient,
   PreviewClient,
@@ -101,6 +102,8 @@ export interface Portal {
   online: boolean;
   commands: ApplicationRuntime<Section, Section>['commands'];
   dispatch: ReturnType<typeof useApplicationDispatch<Section, Section>>;
+  /** What the lights are doing, decided once for every page. */
+  lighting: LightingSituation;
   path: PathState;
   /** The live problem of one side, in plain words; `null` while it works. */
   problemAt: (section: 'capture' | 'output') => string | null;

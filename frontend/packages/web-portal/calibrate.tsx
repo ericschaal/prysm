@@ -1,462 +1,87 @@
 import {
   useEffect,
-  useEffectEvent,
   useId,
-  useReducer,
   useRef,
-  useState,
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import type { LightingTarget } from '@prysm/application-client';
+import type { Calibration } from '@prysm/contracts/application';
 import {
-  failureOf,
-  same,
-  type CalibrationPattern,
-  type LightingTarget,
-  type Pattern,
-} from '@prysm/application-client';
-import type {
-  Calibration,
-  CorrectionControls,
-  Processing,
-} from '@prysm/contracts/application';
-import {
-  initialWizard,
   screenOf,
   screens,
-  wizardReducer,
-  type Adjustable,
-  type Place,
+  type Calibrating,
+  type Closing,
   type Screen,
-  type Section,
-  type WizardAction,
+  type WizardPhase,
 } from './calibrate-wizard';
+import {
+  fixLabels,
+  hueGuidance,
+  needsTv,
+  patternLabels,
+  primaryOf,
+  resetOf,
+  sectionOrder,
+  sections,
+  strengthGuidance,
+  tvInstruction,
+  whiteEnds,
+  whiteGuidance,
+  wordsOf,
+} from './calibrate-copy';
 import { nameProblem } from './checks';
 import { RangeField, SelectField, TextField } from './fields';
 import { FieldScopeProvider, focusField, type FieldScope } from './form';
 import {
-  throttled,
-  useLiveProcessing,
-  withCalibrations,
-} from './live-processing';
-import {
   correctionLimits,
-  freeName,
-  newCalibrationId,
-  noCorrection,
   calibrationLimits,
-  primaries,
   primaryLimits,
   endsLabel,
   signed,
   strengthEnds,
+  noCorrection,
   type Primary,
 } from './calibration-model';
+import {
+  useCalibration,
+  type CalibrateProps,
+  type CalibrationView,
+} from './use-calibration';
 
-/** What the TV shows for each pattern. */
-const patternLabels: Record<Pattern, string> = {
-  gray_192: 'light grey',
-  red: 'red',
-  yellow: 'yellow',
-  green: 'green',
-  cyan: 'cyan',
-  blue: 'blue',
-  magenta: 'magenta',
-  blue_pair: 'blue, moderate left, vivid right',
-  red_pair: 'red, moderate left, vivid right',
-  green_pair: 'green, moderate left, vivid right',
-  coast: 'peach left, teal right',
-  garden: 'rose left, sage right',
-  dusk: 'amber left, violet right',
-  review_grid: 'a grid of colours',
+/** The page each phase shows: starting stays on the start, ending on the last screen. */
+const pageOf: Record<WizardPhase['kind'], 'start' | 'calibrating' | 'done'> = {
+  start: 'start',
+  starting: 'start',
+  calibrating: 'calibrating',
+  ending: 'calibrating',
+  done: 'done',
 };
-
-/** Each section's name in the progress bar. */
-const sections: Record<Section, string> = {
-  white: 'White',
-  red: 'Red',
-  green: 'Green',
-  blue: 'Blue',
-  checks: 'Checks',
-  review: 'Review',
-};
-const sectionOrder = Object.keys(sections) as Section[];
-
-const primaryOf = (section: Section) =>
-  primaries.find((primary) => primary.name === section);
-
-/** A screen's one question and how to answer it. */
-function wordsOf(screen: Screen): { title: string; lead: string } {
-  const primary = primaryOf(screen.section);
-  if (primary) {
-    const colour = primary.label.toLowerCase();
-    return {
-      title: `Does the ${colour} on the wall match the screen?`,
-      lead: 'Compare each half of the TV with the wall behind it.',
-    };
-  }
-  switch (screen.section) {
-    case 'white':
-      return {
-        title: 'Does the wall look as neutral as the screen?',
-        lead: 'Compare only the colour, not the brightness. Small changes are enough.',
-      };
-    case 'checks': {
-      const fixes = screen.fixes ?? [];
-      // A mixed scene can be off anywhere; a secondary in its two primaries.
-      if (fixes.includes('white'))
-        return {
-          title: 'Do both colours on the wall match the screen?',
-          lead: 'Compare each side of the wall with the same side of the TV. If one looks off, adjust white or its closest colour.',
-        };
-      const colour = patternLabels[screen.pattern];
-      return {
-        title: `Does the ${colour} on the wall match the screen?`,
-        lead: `${colour[0]!.toUpperCase()}${colour.slice(1)} mixes ${fixes.join(' and ')}. If it looks off on the wall, adjust one of them.`,
-      };
-    }
-    default:
-      return {
-        title: 'Name your calibration',
-        lead: 'Check the glow around the whole screen. When it looks right, name it and finish.',
-      };
-  }
-}
-
-/** This screen's own controls back to 0, and whether any is not; `null` without controls. */
-function resetOf(
-  section: Section,
-  values: CorrectionControls,
-): { to: Partial<CorrectionControls>; changed: boolean } | null {
-  if (section === 'white')
-    return {
-      to: { warmth: 0, tint: 0 },
-      changed: values.warmth !== 0 || values.tint !== 0,
-    };
-  const primary = primaryOf(section);
-  if (!primary) return null;
-  const { hue, strength } = values[primary.name];
-  return {
-    to: { [primary.name]: noCorrection[primary.name] },
-    changed: hue !== 0 || strength !== 0,
-  };
-}
-
-/** “More orange” → “orange”: the colour a slider's end adds. */
-const leaning = (end: string) => end.replace(/^More /, '').toLowerCase();
-
-/** What to do with a slider, from what the wall shows: one line under it. */
-const hueGuidance = ([start, end]: readonly [string, string]) =>
-  `Too ${leaning(end)}? Toward ${leaning(start)}. Too ${leaning(start)}? Toward ${leaning(end)}.`;
-/** White's sliders, named by their ends like the colours': warmth adds red and takes blue, tint takes green. */
-const whiteEnds = {
-  warmth: ['Cooler', 'Warmer'],
-  tint: ['More green', 'More pink'],
-} as const;
-const whiteGuidance = {
-  warmth: 'Too blue? Toward warmer. Too yellow? Toward cooler.',
-  tint: hueGuidance(whiteEnds.tint),
-} as const;
-const strengthGuidance = `Too vivid? Toward ${leaning(strengthEnds[0])}. Too pale? Toward ${leaning(strengthEnds[1])}.`;
-
-/** A check's link back to what it is made of. */
-const fixLabels: Record<Adjustable, string> = {
-  white: 'Adjust white',
-  red: 'Adjust red',
-  green: 'Adjust green',
-  blue: 'Adjust blue',
-};
-
-const tvInstruction = 'Open Prysm on the TV and choose Calibrate.';
-const needsTv = `The TV needs to show the patterns with screen sync on. ${tvInstruction}`;
-
-/** Why the TV did not show a pattern. */
-function tvProblem(error: unknown) {
-  const reason = failureOf(error);
-  return reason.kind === 'not_processed'
-    ? needsTv
-    : `The TV pattern did not change: ${reason.message}`;
-}
-
-/** A pattern asked of the TV, and the wizard's place with it. */
-interface Wanted {
-  pattern: Pattern;
-  place: Place;
-}
-
-/** What waits for the save on its way: the last change must be in first. */
-type Closing = 'finish' | 'discard' | 'leave';
-
-export interface CalibrateProps {
-  processing: Processing;
-  revision: number;
-  target: LightingTarget;
-  /** The pattern the TV shows, absent while not calibrating. */
-  shown: CalibrationPattern | undefined;
-  disabled: boolean;
-  save: (expected: number, processing: Processing) => Promise<number>;
-  /** Light with a processing section unsaved, while a slider is held. */
-  tryProcessing: (processing: Processing) => Promise<unknown>;
-  setCalibration: (pattern: CalibrationPattern | null) => Promise<unknown>;
-  /** Go back to the portal's main page. */
-  leave: () => void;
-}
 
 /**
  * The Calibrate page, used on a phone while the TV shows patterns: a guided
  * walk through white, red, green and blue, then checks, on a draft
  * calibration. The draft is an ordinary calibration, created and made active at the
  * start and saved live like the Picture panel; Finish names it, Cancel
- * deletes it and makes the previous calibration active again.
+ * deletes it and makes the previous calibration active again. The work is
+ * {@link useCalibration}'s; this renders it.
  */
-export function CalibrateWizard({
-  processing,
-  revision,
-  target,
-  shown,
-  disabled,
-  save,
-  tryProcessing,
-  setCalibration,
-  leave,
-}: CalibrateProps) {
-  const live = useLiveProcessing({
-    processing,
-    revision,
-    disabled,
-    save,
-    tryProcessing,
-  });
-  const calibrations = live.value.calibrations ?? [];
-  const [state, dispatch] = useReducer(wizardReducer, initialWizard);
-  const { phase, busy, problem } = state;
-  if (shown && !state.seen) dispatch({ type: 'patternSeen' });
+export function CalibrateWizard(props: CalibrateProps) {
+  const { target, disabled, leave } = props;
+  const wizard = useCalibration(props);
+  const { state, live, view, ended } = wizard;
+  const { phase, problem } = state;
   const headingRef = useRef<HTMLHeadingElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const headingId = useId();
-  /** The TV's patterns: one request at a time, the newest waiting one next. */
-  const [patterns] = useState(() => throttled<Wanted>(0));
-  /** The pattern asked for last; an older one's answer no longer decides. */
-  const newestRef = useRef<Wanted | null>(null);
-  /** The draft's correction at the start: unchanged, Cancel needs no question. */
-  const startedWithRef = useRef<CorrectionControls | null>(null);
-  /** Cancel asks before discarding changes. */
-  const [confirming, setConfirming] = useState(false);
-  /** Finish, Cancel or Leave was tapped and is under way. */
-  const [closing, setClosing] = useState<Closing | null>(null);
-
-  const calibrating = phase.kind === 'calibrating' ? phase : null;
-  const draftIndex = calibrating
-    ? calibrations.findIndex(
-        (calibration) => calibration.id === calibrating.draftId,
-      )
-    : -1;
-  const draft = draftIndex >= 0 ? calibrations[draftIndex] : undefined;
-  const screen = calibrating?.screen ?? 0;
-  const ended = !!calibrating && state.seen && !shown && !busy;
-  const locked = disabled || busy || live.saving;
+  const page = pageOf[phase.kind];
+  const screen = view?.place.screen ?? 0;
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
     // Each screen opens at its top, where its progress and question are,
     // also after scrolling down to the last one's controls.
     if (window.scrollY > 0) window.scrollTo({ top: 0 });
-  }, [phase.kind, screen, ended]);
-
-  /**
-   * Go to `to` (the current screen when absent), opened from the check
-   * `returnTo`, at once; the TV shows `pattern` after the request on its way.
-   */
-  function request(
-    pattern: Pattern,
-    to: { screen?: number; returnTo?: number; uncorrected?: boolean } = {},
-  ) {
-    const moved = to.screen !== undefined;
-    const wanted: Wanted = {
-      pattern,
-      place: {
-        screen: to.screen ?? screen,
-        returnTo: moved
-          ? (to.returnTo ?? null)
-          : (calibrating?.returnTo ?? null),
-        uncorrected: to.uncorrected ?? false,
-      },
-    };
-    newestRef.current = wanted;
-    dispatch({ type: 'requestSent', ...to });
-    patterns.push(wanted, send);
-  }
-  async function send(wanted: Wanted) {
-    try {
-      await setCalibration({
-        pattern: wanted.pattern,
-        uncorrected: wanted.place.uncorrected,
-      });
-      dispatch(
-        newestRef.current === wanted
-          ? { type: 'patternShown' }
-          : { type: 'patternShown', more: wanted.place },
-      );
-    } catch (error) {
-      // A newer request decides what the TV shows.
-      if (newestRef.current === wanted)
-        dispatch({ type: 'requestFailed', problem: tvProblem(error) });
-    }
-  }
-  async function start(from: string) {
-    dispatch({ type: 'patternRequested' });
-    dispatch({ type: 'requestSent' });
-    try {
-      await setCalibration({
-        pattern: screens[0]!.pattern,
-        uncorrected: false,
-      });
-    } catch (error) {
-      dispatch({ type: 'requestFailed', problem: tvProblem(error) });
-      return;
-    }
-    dispatch({ type: 'patternShown' });
-    const source = calibrations.find((calibration) => calibration.id === from);
-    const id = newCalibrationId(
-      calibrations.map((calibration) => calibration.id),
-    );
-    const calibration = {
-      id,
-      name: freeName(
-        source ? `${source.name} calibrated` : 'Calibrated',
-        calibrations,
-      ),
-      correction: source ? source.correction : noCorrection,
-    };
-    const previous = live.value.active_calibration;
-    if (
-      await live.commit(
-        withCalibrations(live.value, [...calibrations, calibration], id),
-      )
-    ) {
-      startedWithRef.current = calibration.correction;
-      dispatch({ type: 'started', draftId: id, previous });
-    }
-  }
-  async function end(title: string, message: string) {
-    dispatch({ type: 'ending' });
-    // A pattern still on its way must not show after the end.
-    newestRef.current = null;
-    await patterns.settle();
-    try {
-      await setCalibration(null);
-    } catch {
-      // The engine ends it by itself after ten minutes.
-    }
-    dispatch({ type: 'ended', title, message });
-  }
-  function correct(change: Partial<CorrectionControls>) {
-    if (!draft) return;
-    const next = {
-      ...draft,
-      correction: { ...draft.correction, ...change },
-    };
-    // The lights follow a held slider at once; its release saves.
-    live.slider.slide(
-      withCalibrations(
-        live.value,
-        calibrations.map((calibration, at) =>
-          at === draftIndex ? next : calibration,
-        ),
-        live.value.active_calibration,
-      ),
-    );
-  }
-
-  /** Save a change still waiting for its delay, then leave. */
-  async function flush() {
-    if (live.dirty && !(await live.commit(live.value))) return false;
-    leave();
-    return true;
-  }
-  function finish() {
-    if (!draft) return;
-    const typed = (calibrating?.name ?? draft.name).trim();
-    if (nameProblem(typed, calibrationLimits.name)) {
-      // The field says what is wrong, in its own note.
-      focusField(sectionRef.current, 'calibration.name');
-      return;
-    }
-    setClosing('finish');
-  }
-  async function complete() {
-    if (!draft) return false;
-    const typed = (calibrating?.name ?? draft.name).trim();
-    const others = calibrations.filter(
-      (calibration) => calibration.id !== draft.id,
-    );
-    const final = freeName(typed, others);
-    if (final !== draft.name || live.dirty) {
-      const renamed = calibrations.map((calibration) =>
-        calibration.id === draft.id
-          ? { ...calibration, name: final }
-          : calibration,
-      );
-      if (
-        !(await live.commit(
-          withCalibrations(live.value, renamed, live.value.active_calibration),
-        ))
-      )
-        return false;
-    }
-    await end('Calibration finished', `“${final}” is saved and active.`);
-    return true;
-  }
-  function cancel() {
-    // Something would be lost: a slider moved or a name typed since the start.
-    const adjusted =
-      !!draft &&
-      ((startedWithRef.current !== null &&
-        !same(draft.correction, startedWithRef.current)) ||
-        (calibrating?.name != null && calibrating.name.trim() !== draft.name));
-    if (adjusted) setConfirming(true);
-    else setClosing('discard');
-  }
-  async function discard() {
-    if (!calibrating) return false;
-    const rest = calibrations.filter(
-      (calibration) => calibration.id !== calibrating.draftId,
-    );
-    const back = rest.some(
-      (calibration) => calibration.id === calibrating.previous,
-    )
-      ? calibrating.previous
-      : undefined;
-    if (!(await live.commit(withCalibrations(live.value, rest, back))))
-      return false;
-    await end(
-      'Calibration cancelled',
-      'The new calibration was deleted; your colours are as before.',
-    );
-    return true;
-  }
-
-  /**
-   * Finish, Cancel and Leave run once no save is on its way: a save asked
-   * for meanwhile would only wait for that one, so the tap waits here
-   * instead and runs with the settings that save returned.
-   */
-  const ready = closing !== null && !live.saving;
-  const runningRef = useRef(false);
-  const runClosing = useEffectEvent((how: Closing) => {
-    if (runningRef.current) return;
-    runningRef.current = true;
-    let run = flush;
-    if (how === 'finish') run = complete;
-    else if (how === 'discard') run = discard;
-    void run().then((done) => {
-      runningRef.current = false;
-      // Not done (a save failed and says why): the buttons work again.
-      if (!done) setClosing(null);
-    });
-  });
-  useEffect(() => {
-    if (ready && closing) runClosing(closing);
-  }, [ready, closing]);
+  }, [page, screen, ended]);
 
   const notices = (
     <>
@@ -475,7 +100,7 @@ export function CalibrateWizard({
   const heading = (title: string) => (
     // Keyed by screen so each screen's heading enters with its own transition.
     <h2
-      key={`${phase.kind}-${screen}-${ended}`}
+      key={`${page}-${screen}-${ended}`}
       id={headingId}
       ref={headingRef}
       tabIndex={-1}
@@ -502,53 +127,37 @@ export function CalibrateWizard({
         </div>
       </>
     );
-  else if (phase.kind === 'start')
+  else if (phase.kind === 'start' || phase.kind === 'starting')
     content = (
       <StartScreen
         heading={heading}
         notices={notices}
-        calibrations={calibrations}
+        calibrations={wizard.calibrations}
         from={phase.from}
-        choose={(from) => dispatch({ type: 'sourceChosen', from })}
+        choose={wizard.choose}
         scope={live.scope}
         target={target}
-        locked={locked}
-        starting={busy || live.saving}
-        start={() => void start(phase.from)}
+        locked={disabled || phase.kind === 'starting'}
+        starting={phase.kind === 'starting'}
+        start={() => void wizard.start()}
         leave={leave}
       />
     );
   else
     content = (
       <StepScreen
+        wizard={wizard}
+        view={phase.kind === 'ending' ? phase.last : phase}
         heading={heading}
         notices={notices}
-        current={screens[phase.screen] ?? screens[0]!}
-        screen={phase.screen}
-        returnTo={phase.returnTo}
-        draft={draft}
-        path={`processing.calibrations[${draftIndex}].correction`}
-        name={phase.name}
-        ended={ended}
         target={target}
-        pending={busy}
-        uncorrected={state.uncorrected}
         disabled={disabled}
-        closing={closing}
-        live={live}
-        dispatch={dispatch}
-        correct={correct}
-        request={request}
-        resume={() => {
-          dispatch({ type: 'patternRequested' });
-          request(screens[phase.screen]!.pattern);
+        finish={() => {
+          // The field says what is wrong, in its own note.
+          if (wizard.nameProblem)
+            focusField(sectionRef.current, 'calibration.name');
+          else void wizard.finish();
         }}
-        finish={finish}
-        cancel={cancel}
-        confirming={confirming}
-        keep={() => setConfirming(false)}
-        discard={() => setClosing('discard')}
-        leave={() => setClosing('leave')}
       />
     );
   return (
@@ -733,83 +342,97 @@ function StepHeading({
   );
 }
 
-/** One pattern on the TV and its controls, or the notice that calibration ended. */
-function StepScreen({
-  heading,
-  notices,
-  current,
-  screen,
-  returnTo,
-  draft,
-  path,
-  name,
-  ended,
-  target,
-  pending,
-  uncorrected,
-  disabled,
-  closing,
-  live,
-  dispatch,
-  correct,
-  request,
-  resume,
-  finish,
-  cancel,
-  confirming,
-  keep,
-  discard,
-  leave,
-}: {
-  heading: (title: string) => ReactNode;
-  notices: ReactNode;
-  current: Screen;
-  screen: number;
-  /** The check this screen was opened from, to go back to. */
-  returnTo: number | null;
-  draft: Calibration | undefined;
-  /** The draft's correction in the processing section. */
-  path: string;
-  name: string | null;
-  ended: boolean;
-  target: LightingTarget;
-  /** The pattern is on its way to the TV. */
-  pending: boolean;
-  /** The TV shows (or is about to show) the pattern without the draft's correction. */
-  uncorrected: boolean;
-  /** The portal cannot take commands now. */
-  disabled: boolean;
-  /** Finish, Cancel or Leave is under way. */
-  closing: Closing | null;
-  live: {
-    scope: FieldScope;
-    generation: number;
-    /** A held slider lights its values at once and saves on release. */
-    slider: { press: () => void; release: () => void };
-  };
-  dispatch: (action: WizardAction) => void;
-  correct: (change: Partial<CorrectionControls>) => void;
-  /** Go there at once; the TV's pattern follows. */
-  request: (
-    pattern: Pattern,
-    to?: { screen?: number; returnTo?: number; uncorrected?: boolean },
-  ) => void;
-  resume: () => void;
-  finish: () => void;
-  cancel: () => void;
-  confirming: boolean;
-  keep: () => void;
-  discard: () => void;
-  leave: () => void;
-}) {
-  const words = wordsOf(current);
-  const fixesId = useId();
+/** Where the screen is in the walk: its section, and its place in a section of several. */
+function StepProgress({ current }: { current: Screen }) {
   const sectionIndex = sectionOrder.indexOf(current.section);
   const inSection = screens.filter((item) => item.section === current.section);
   const position = inSection.indexOf(current);
-  const values = draft ? draft.correction : noCorrection;
-  const go = (to: number, from?: number) =>
-    request(screens[to]!.pattern, { screen: to, returnTo: from });
+  return (
+    <ol className="setup-steps" aria-label="Calibration progress">
+      {sectionOrder.map((id, index) => (
+        <li
+          key={id}
+          className={index < sectionIndex ? 'done' : undefined}
+          aria-current={index === sectionIndex ? 'step' : undefined}
+        >
+          {sections[id]}
+          {index === sectionIndex && inSection.length > 1
+            ? ` · ${position + 1} of ${inSection.length}`
+            : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The TV no longer shows the patterns: the draft is kept, Resume or Leave. */
+function EndedNotice({
+  wizard,
+  closing,
+  heading,
+  notices,
+  target,
+  disabled,
+}: {
+  wizard: CalibrationView;
+  closing: Closing | null;
+  heading: (title: string) => ReactNode;
+  notices: ReactNode;
+  target: LightingTarget;
+  disabled: boolean;
+}) {
+  return (
+    <>
+      {heading('Calibration ended')}
+      <p className="notice warning" role="alert">
+        The TV no longer shows the patterns. Your changes so far are kept in “
+        {wizard.draft ? wizard.draft.name : 'your calibration'}”.
+        {target !== 'processed' ? ` ${tvInstruction}` : ''}
+      </p>
+      {notices}
+      <div className="actions">
+        <button
+          type="button"
+          disabled={closing !== null}
+          aria-busy={closing === 'leave' || undefined}
+          onClick={() => void wizard.leave()}
+        >
+          Leave
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={disabled || closing !== null}
+          onClick={wizard.resume}
+        >
+          Resume
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** The screen's sliders, its links back to what a check is made of, and the name. */
+function StepControls({
+  wizard,
+  view,
+  current,
+  disabled,
+}: {
+  wizard: CalibrationView;
+  view: Calibrating;
+  current: Screen;
+  disabled: boolean;
+}) {
+  const { draft, live, path } = wizard;
+  const fixesId = useId();
+  if (!draft)
+    return (
+      <p className="notice warning">
+        This calibration was deleted elsewhere. Cancel to finish.
+      </p>
+    );
+  const values = draft.correction;
   const range = (
     control: string,
     ends: readonly [string, string],
@@ -839,7 +462,7 @@ function StepScreen({
       whiteEnds[control],
       whiteGuidance[control],
       values[control],
-      (value) => correct({ [control]: value }),
+      (value) => wizard.correct({ [control]: value }, control),
       correctionLimits[control],
     );
   const primary = primaryOf(current.section);
@@ -853,63 +476,113 @@ function StepScreen({
       ends,
       control === 'hue' ? hueGuidance(ends) : strengthGuidance,
       values[name][control],
-      (value) => correct({ [name]: { ...values[name], [control]: value } }),
+      (value) =>
+        wizard.correct(
+          { [name]: { ...values[name], [control]: value } },
+          `${name}.${control}`,
+        ),
       primaryLimits[control],
     );
-  const reset = resetOf(current.section, values);
+  return (
+    <FieldScopeProvider value={live.scope}>
+      <div key={live.generation} className="calibrate-controls">
+        {current.section === 'white' ? (
+          <>
+            {slider('warmth')}
+            {slider('tint')}
+          </>
+        ) : null}
+        {primary ? (
+          <>
+            {primarySlider(primary.name, 'hue', primary.hue)}
+            {primarySlider(primary.name, 'strength', strengthEnds)}
+          </>
+        ) : null}
+        {current.fixes ? (
+          <div
+            className="calibrate-fixes"
+            role="group"
+            aria-labelledby={fixesId}
+          >
+            <p id={fixesId}>Not quite?</p>
+            {current.fixes.map((fix) => (
+              <button
+                key={fix}
+                type="button"
+                disabled={disabled}
+                onClick={() => wizard.go(screenOf(fix), view.place.screen)}
+              >
+                {fixLabels[fix]}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {current.section === 'review' ? (
+          <TextField
+            path="calibration.name"
+            label="Name"
+            help="A name you will recognise, such as Movie night or PS5."
+            value={view.name ?? draft.name}
+            required
+            check={(value) => nameProblem(value.trim(), calibrationLimits.name)}
+            onChange={wizard.name}
+          />
+        ) : null}
+      </div>
+    </FieldScopeProvider>
+  );
+}
+
+/** One pattern on the TV and its controls, or the notice that calibration ended. */
+function StepScreen({
+  wizard,
+  view,
+  heading,
+  notices,
+  target,
+  disabled,
+  finish,
+}: {
+  wizard: CalibrationView;
+  /** The calibrating screen, also while calibration is being ended. */
+  view: Calibrating;
+  heading: (title: string) => ReactNode;
+  notices: ReactNode;
+  target: LightingTarget;
+  /** The portal cannot take commands now. */
+  disabled: boolean;
+  finish: () => void;
+}) {
+  const { draft } = wizard;
+  const { place, closing } = view;
+  const { screen, returnTo, uncorrected } = place;
+  const current = screens[screen] ?? screens[0]!;
+  const words = wordsOf(current);
+  const reset = resetOf(
+    current.section,
+    draft ? draft.correction : noCorrection,
+  );
   const review = current.section === 'review';
   return (
     <>
       <StepHeading
-        confirming={confirming}
+        confirming={view.confirming}
         closing={closing}
         disabled={disabled}
-        cancel={cancel}
-        keep={keep}
-        discard={discard}
+        cancel={wizard.cancel}
+        keep={wizard.keep}
+        discard={() => void wizard.discard()}
       />
-      <ol className="setup-steps" aria-label="Calibration progress">
-        {sectionOrder.map((id, index) => (
-          <li
-            key={id}
-            className={index < sectionIndex ? 'done' : undefined}
-            aria-current={index === sectionIndex ? 'step' : undefined}
-          >
-            {sections[id]}
-            {index === sectionIndex && inSection.length > 1
-              ? ` · ${position + 1} of ${inSection.length}`
-              : null}
-          </li>
-        ))}
-      </ol>
-      {ended ? (
-        <>
-          {heading('Calibration ended')}
-          <p className="notice warning" role="alert">
-            The TV no longer shows the patterns. Your changes so far are kept in
-            “{draft ? draft.name : 'your calibration'}”.
-            {target !== 'processed' ? ` ${tvInstruction}` : ''}
-          </p>
-          {notices}
-          <div className="actions">
-            <button
-              type="button"
-              disabled={closing !== null}
-              aria-busy={closing === 'leave' || undefined}
-              onClick={leave}
-            >
-              Leave
-            </button>
-            <button
-              type="button"
-              className="primary"
-              disabled={disabled || closing !== null}
-              onClick={resume}
-            >
-              Resume
-            </button>
-          </div>
-        </>
+      <StepProgress current={current} />
+      {wizard.ended ? (
+        <EndedNotice
+          wizard={wizard}
+          closing={closing}
+          heading={heading}
+          notices={notices}
+          target={target}
+          disabled={disabled}
+        />
       ) : (
         <>
           {heading(words.title)}
@@ -918,67 +591,17 @@ function StepScreen({
             className="calibrate-pattern"
             data-pattern={current.pattern}
             role="status"
-            aria-busy={pending || undefined}
+            aria-busy={wizard.pending || undefined}
           >
             On your TV: {patternLabels[current.pattern]}
           </p>
           <p className="intro">{words.lead}</p>
-          {draft ? (
-            <FieldScopeProvider value={live.scope}>
-              <div key={live.generation} className="calibrate-controls">
-                {current.section === 'white' ? (
-                  <>
-                    {slider('warmth')}
-                    {slider('tint')}
-                  </>
-                ) : null}
-                {primary ? (
-                  <>
-                    {primarySlider(primary.name, 'hue', primary.hue)}
-                    {primarySlider(primary.name, 'strength', strengthEnds)}
-                  </>
-                ) : null}
-                {current.fixes ? (
-                  <div
-                    className="calibrate-fixes"
-                    role="group"
-                    aria-labelledby={fixesId}
-                  >
-                    <p id={fixesId}>Not quite?</p>
-                    {current.fixes.map((fix) => (
-                      <button
-                        key={fix}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => go(screenOf(fix), screen)}
-                      >
-                        {fixLabels[fix]}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                {review ? (
-                  <TextField
-                    path="calibration.name"
-                    label="Name"
-                    help="A name you will recognise, such as Movie night or PS5."
-                    value={name ?? draft.name}
-                    required
-                    check={(value) =>
-                      nameProblem(value.trim(), calibrationLimits.name)
-                    }
-                    onChange={(value) =>
-                      dispatch({ type: 'named', name: value })
-                    }
-                  />
-                ) : null}
-              </div>
-            </FieldScopeProvider>
-          ) : (
-            <p className="notice warning">
-              This calibration was deleted elsewhere. Cancel to finish.
-            </p>
-          )}
+          <StepControls
+            wizard={wizard}
+            view={view}
+            current={current}
+            disabled={disabled}
+          />
           {/* Compare and Reset in one row: used often, always in the same place. */}
           <div className="calibrate-tools">
             <button
@@ -986,9 +609,7 @@ function StepScreen({
               className="compare"
               aria-pressed={uncorrected}
               disabled={disabled}
-              onClick={() =>
-                request(current.pattern, { uncorrected: !uncorrected })
-              }
+              onClick={wizard.compare}
             >
               Show without correction
             </button>
@@ -997,7 +618,7 @@ function StepScreen({
                 type="button"
                 className="quiet"
                 disabled={disabled || !reset.changed}
-                onClick={() => correct(reset.to)}
+                onClick={() => wizard.correct(reset.to, reset.control)}
               >
                 Reset
               </button>
@@ -1009,7 +630,7 @@ function StepScreen({
               <button
                 type="button"
                 disabled={disabled}
-                onClick={() => go(screen - 1)}
+                onClick={() => wizard.go(screen - 1)}
               >
                 Back
               </button>
@@ -1029,7 +650,7 @@ function StepScreen({
                 type="button"
                 className="primary"
                 disabled={disabled}
-                onClick={() => go(returnTo ?? screen + 1)}
+                onClick={() => wizard.go(returnTo ?? screen + 1)}
               >
                 Looks right
               </button>

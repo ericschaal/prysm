@@ -4,6 +4,8 @@ import type {
   CaptureSettings,
   ColorsEvent,
   Failure,
+  FailureSection,
+  Input,
   LightingTarget,
   Mode,
   Modes,
@@ -35,7 +37,7 @@ export { same } from './same';
 /**
  * Why the lights are not showing screen sync, for people. Prysm keeps
  * sending and does not switch the lights back; they follow again as soon as
- * they take its colours.
+ * they take its colours. An issue newer than this page gets the general line.
  */
 export function describeOutputIssue(issue: OutputIssue): string {
   switch (issue) {
@@ -49,6 +51,8 @@ export function describeOutputIssue(issue: OutputIssue): string {
       return 'Another program is sending colours to the lights. Stop it to see screen sync alone.';
     case 'unreachable':
       return 'The lights do not answer. Check that they are powered and on the network.';
+    default:
+      return 'The lights are not showing screen sync.';
   }
 }
 export type {
@@ -66,37 +70,102 @@ const phases: Record<Phase, string> = {
   source_unreleased: 'confirming the capture source was released',
 };
 
+/** What the lights show while on: screen sync or the output's own effects. */
+export type LightingMode = Exclude<LightingTarget, 'off'>;
+
 /**
- * What the lights are doing, in words, from the requested target and the
- * session. `effects` names the output's own effects (`device_native`).
+ * What the lights are doing, decided once from the requested target, the
+ * session and the failure; every view of the lights shows this.
+ *
+ * - `faulted`: the session stopped responding; nothing works until a restart.
+ * - `off`: the lights were asked off (the session may still be stopping).
+ * - `failed`: the mode asked for did not start; `at` is the side that
+ *   failed, when known. After a failed start from effects the session stays
+ *   `native`: the failure still wins.
+ * - `sync`: screen sync runs; `input` says whether frames arrive, absent
+ *   until measured.
+ * - `effects`: the output's own effects run.
+ * - `starting`: the mode asked for is not running yet (also while switching
+ *   from the other one).
  */
-export function describeLighting({
+export type LightingSituation =
+  | { kind: 'faulted'; phase: Phase }
+  | { kind: 'off' }
+  | {
+      kind: 'failed';
+      target: LightingMode;
+      failure: Failure;
+      at: FailureSection | null;
+    }
+  | { kind: 'sync'; input: Input | undefined }
+  | { kind: 'effects' }
+  | { kind: 'starting'; target: LightingMode };
+
+export function lightingSituation({
   target,
   session,
   failure,
-  effects,
+  input,
 }: {
   target: LightingTarget;
   session: Session;
   failure?: Failure | null;
-  effects: string;
-}): string {
-  switch (session.state) {
-    case 'faulted':
-      return `Prysm stopped responding while ${phases[session.phase]}. Restart Prysm to recover.`;
-    case 'running':
-      return 'Screen sync is running.';
-    case 'native':
-      return `${effects} are on.`;
-    case 'stopped':
-      if (target === 'off') return 'Lights are off.';
-      if (failure)
-        return target === 'processed'
-          ? 'Screen sync stopped.'
-          : `${effects} could not start.`;
-      return target === 'processed'
-        ? 'Starting screen sync…'
-        : `Starting ${effects}…`;
+  input?: Input;
+}): LightingSituation {
+  if (session.state === 'faulted')
+    return { kind: 'faulted', phase: session.phase };
+  if (target === 'off') return { kind: 'off' };
+  if (failure) {
+    // Which side failed: typed for adapter failures, else the setting named.
+    const field = failure.field?.split('.')[0];
+    const named = field === 'capture' || field === 'output' ? field : null;
+    return { kind: 'failed', target, failure, at: failure.section ?? named };
+  }
+  if (target === 'processed' && session.state === 'running')
+    return { kind: 'sync', input };
+  if (target === 'device_native' && session.state === 'native')
+    return { kind: 'effects' };
+  return { kind: 'starting', target };
+}
+
+/**
+ * A situation in words: `headline` for a heading (no full stop), `sentence`
+ * to read out. `effects` names the output's own effects (`device_native`).
+ */
+export function describeSituation(
+  situation: LightingSituation,
+  effects: string,
+): { headline: string; sentence: string } {
+  const both = (words: string) => ({ headline: words, sentence: `${words}.` });
+  switch (situation.kind) {
+    case 'faulted': {
+      // A phase newer than this page is not named.
+      const doing = phases[situation.phase] as string | undefined;
+      const words = `Prysm stopped responding${doing ? ` while ${doing}` : ''}. Restart Prysm to recover.`;
+      return { headline: words, sentence: words };
+    }
+    case 'off':
+      return both('Lights are off');
+    case 'failed':
+      return both(
+        situation.target === 'processed'
+          ? 'Screen sync stopped'
+          : `${effects} could not start`,
+      );
+    case 'sync':
+      return {
+        headline: 'Lights follow your screen',
+        sentence: 'Screen sync is running.',
+      };
+    case 'effects':
+      return both(`${effects} are on`);
+    case 'starting': {
+      const words =
+        situation.target === 'processed'
+          ? 'Starting screen sync…'
+          : `Starting ${effects}…`;
+      return { headline: words, sentence: words };
+    }
   }
 }
 

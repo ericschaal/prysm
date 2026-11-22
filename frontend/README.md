@@ -206,8 +206,9 @@ supervisor in each of its states and play the phone's calibration part). See the
   - [Calibrate](packages/web-portal/calibrate.tsx): the page at
     `#/calibrate` ("New calibration" in Calibrations, which it
     returns to; Home's chip while there are no calibrations; the TV's QR code
-    points there, and leaving returns Home). Start creates a draft calibration (new, or a copy of
-    one) and makes it active; white (`gray_192`: warmth, tint), red, green
+    points there, and leaving returns Home). Start shows the first pattern, then creates a draft calibration (new, or a copy of
+    one) and makes it active; if that save fails, the pattern ends and nothing
+    is kept. White (`gray_192`: warmth, tint), red, green
     and blue (`red_pair`, `green_pair`, `blue_pair`: two sliders each, named
     by their ends), checks without sliders (`yellow`, `cyan`, `magenta`,
     `coast`, `garden`, `dusk`: "Looks right", or a link to a colour it is made
@@ -216,7 +217,11 @@ supervisor in each of its states and play the phone's calibration part). See the
     save live through `useLiveProcessing`, as the calibrations page does. Finish names
     it, Cancel deletes it and restores the previous active one;
     both end calibration. Without screen sync it says to choose Calibrate on
-    the TV; if calibration ends elsewhere it offers Resume and keeps the draft.
+    the TV; if calibration ends elsewhere it offers Resume and keeps the draft,
+    also after a Resume the TV refuses. Its state is one reducer
+    ([wizard](packages/web-portal/calibrate-wizard.ts)) behind one hook
+    ([useCalibration](packages/web-portal/use-calibration.ts)); its words are
+    in [calibrate-copy](packages/web-portal/calibrate-copy.ts).
   - [Devices](packages/web-portal/discovery.tsx): the video device editor
     asks the portal (`GET /api/v1/candidates/capture/device`) what is present
     as it opens, and lists the devices as rows to tick once it answers
@@ -334,7 +339,7 @@ supervisor in each of its states and play the phone's calibration part). See the
 
 | Section | When it is sent | Conflict check |
 | --- | --- | --- |
-| Picture (`processing`) | 400 ms after the last change; a slider where it is let go (tried on the lights while held); a calibration name when it is committed with Enter or by leaving the field. Saves never overlap: one asked for meanwhile follows at once. A refused value is not retried until edited | None asked: a refused stale save waits for the newer settings, puts the user's changed controls on them and saves again |
+| Picture (`processing`) | 400 ms after the last change; a slider where it is let go (tried on the lights while held); a calibration name when it is committed with Enter or by leaving the field. Saves never overlap: one asked for meanwhile follows the one on its way, against the revision it returned. A refused value is not retried until edited | None asked: a refused stale save waits for the newer settings, puts the user's changed controls (each calibration on its own) on them and saves again |
 | Video source, Lights (`capture`, `output`) | The editor's one button; Cancel discards the draft | The section must still match what the editor started from; otherwise the user chooses theirs or mine |
 
 Every save copies the latest observed settings, replaces one section and sends

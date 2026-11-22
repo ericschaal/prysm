@@ -135,10 +135,15 @@ export function useEachCaptureModes(
             () => ({ state: 'failed' }),
           )
         : Promise.resolve({ state: 'loading' });
+    /** Asks so far; only the newest one's answer is kept. */
+    let asks = 0;
     async function ask() {
       clearTimeout(timer);
+      asks += 1;
+      const mine = asks;
       const states = await Promise.all(asked.map(one));
-      if (controller.signal.aborted) return;
+      // A newer ask (a focus meanwhile) answers for the hardware as it is now.
+      if (controller.signal.aborted || mine !== asks) return;
       setAnswer({ key, states });
       // One timer, also when a focus asked meanwhile.
       clearTimeout(timer);

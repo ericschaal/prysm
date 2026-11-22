@@ -2,6 +2,7 @@ import type { Processing } from '@prysm/contracts/application';
 import type {
   ApplicationSnapshot,
   DiscoveryClient,
+  LightingSituation,
   LightingTarget,
 } from '@prysm/application-client';
 import { useRef, type ReactNode, type RefObject } from 'react';
@@ -98,8 +99,7 @@ export function HomeRoute() {
   // The glow takes the LEDs' colours while screen sync runs and is seen.
   const gridRef = useRef<HTMLDivElement>(null);
   const visible = usePageVisible();
-  const syncing =
-    snapshot.target === 'processed' && snapshot.session.state === 'running';
+  const syncing = portal.lighting.kind === 'sync';
   useLiveColors(host.colors, online && visible && syncing, gridRef);
   return (
     <Page className="portal-page home" title="Prysm" wide settingsLink>
@@ -113,6 +113,7 @@ export function HomeRoute() {
         hasColors={!!host.colors}
         gridRef={gridRef}
         online={online}
+        lighting={portal.lighting}
         path={portal.path}
         setTarget={(target) => dispatch(commands.setTarget(target))}
         save={portal.saveProcessing}
@@ -413,6 +414,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   hasColors,
   gridRef,
   online,
+  lighting,
   path,
   setTarget,
   save,
@@ -429,6 +431,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   hasColors: boolean;
   gridRef: RefObject<HTMLDivElement | null>;
   online: boolean;
+  lighting: LightingSituation;
   path: PathState;
   setTarget: (target: LightingTarget) => Promise<unknown>;
   save: (expected: number, processing: Processing) => Promise<number>;
@@ -437,7 +440,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   calibrate: () => void;
   go: (place: Place) => void;
 }) {
-  const { settings, revision, session } = snapshot;
+  const { settings, revision } = snapshot;
   const capture = settings.capture ?? null;
   const output = settings.output ?? null;
   const captureUi = capture ? adapterFor(captures, capture.kind) : undefined;
@@ -451,11 +454,9 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
     >
       <LightCard
         target={snapshot.target}
-        session={session}
-        failure={snapshot.failure ?? null}
+        lighting={lighting}
         device={snapshot.device}
         sentLedCount={edges ? ledCount(edges) : undefined}
-        input={snapshot.input}
         hasCapture={!!capture}
         hasOutput={!!output}
         output={output ? (outputUi?.lighting?.(output) ?? {}) : null}

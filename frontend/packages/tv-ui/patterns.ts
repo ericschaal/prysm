@@ -44,10 +44,13 @@ interface MediaWindow {
 const media = () => window as unknown as MediaWindow;
 
 const decoded = new Map<Pattern, Uint8Array<ArrayBuffer>>();
+/** One fragment of `pattern`; a pattern newer than this app plays the waiting one. */
 function fragment(pattern: Pattern): Uint8Array<ArrayBuffer> {
   let bytes = decoded.get(pattern);
   if (!bytes) {
-    bytes = Uint8Array.from(atob(fragments[pattern]), (c) => c.charCodeAt(0));
+    const clip =
+      (fragments[pattern] as string | undefined) ?? fragments[WAITING_PATTERN];
+    bytes = Uint8Array.from(atob(clip), (c) => c.charCodeAt(0));
     decoded.set(pattern, bytes);
   }
   return bytes;

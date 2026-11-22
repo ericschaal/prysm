@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { test } from 'node:test';
 import {
+  decodeColors,
+  decodePreview,
+  decodeState,
   httpApplicationClient,
   httpCaptureModesClient,
   httpDiscoveryClient,
@@ -98,6 +103,57 @@ test('a state without its device or version ends the stream as unavailable', asy
         error.failure.kind === 'unavailable',
     );
   }
+});
+
+const fixtures = JSON.parse(
+  readFileSync(
+    resolve(process.cwd(), 'packages/contracts/generated/fixtures.json'),
+    'utf8',
+  ),
+);
+
+test('every state, preview and colors event Rust sends decodes as it is', () => {
+  for (const [examples, decode] of [
+    [fixtures.State, decodeState],
+    [fixtures.PreviewEvent, decodePreview],
+    [fixtures.ColorsEvent, decodeColors],
+  ])
+    for (const example of examples)
+      assert.deepEqual(decode(example), { event: example });
+});
+
+test('a target or session state newer than the page is read as off or stopped', async () => {
+  // The whole state was refused, so an open page reconnected for ever.
+  const newer = state({ target: 'ambient', session: { state: 'dimming' } });
+  assert.deepEqual(decodeState(newer), {
+    event: { ...newer, target: 'off', session: { state: 'stopped' } },
+  });
+  // A faulted session's newer phase is kept; one without a phase is malformed.
+  const faulted = state({ session: { state: 'faulted', phase: 'cooling' } });
+  assert.deepEqual(decodeState(faulted), { event: faulted });
+  assert.equal(
+    decodeState(state({ session: { state: 'faulted' } })),
+    'invalid',
+  );
+  assert.equal(decodeState(state({ target: 3 })), 'invalid');
+  assert.equal(decodeState(state({ session: 'running' })), 'invalid');
+  // Events of a newer kind are skipped; a known kind must be whole.
+  assert.equal(decodePreview({ type: 'thumbnail' }), 'unknown');
+  assert.equal(decodePreview({ type: 'unavailable' }), 'invalid');
+  assert.equal(decodePreview({ kind: 'idle' }), 'invalid');
+  assert.equal(decodeColors({ type: 'dimmed' }), 'unknown');
+  assert.equal(decodeColors({ type: 'colors', top: [] }), 'invalid');
+
+  const client = httpApplicationClient({
+    fetch: async () =>
+      new Response(encode(`data: ${JSON.stringify(newer)}\n\n`), {
+        headers: { 'content-type': 'text/event-stream' },
+      }),
+  });
+  const observation = await client.observe(new AbortController().signal);
+  assert.equal(observation.initial.target, 'off');
+  assert.deepEqual(observation.initial.session, { state: 'stopped' });
+  observation.close();
 });
 
 test('commands use PUT with JSON bodies and return the runtime result', async () => {

@@ -313,11 +313,11 @@ const sse = (text) =>
     headers: { 'content-type': 'text/event-stream' },
   });
 
-test('the HTTP preview client follows the base URL, decodes events and reports busy', async () => {
+test('the HTTP preview client follows the base URL, decodes events, skips newer kinds and reports busy', async () => {
   const urls = [];
   const replies = [
     sse(
-      `:\n\ndata: ${JSON.stringify({ type: 'idle' })}\n\ndata: ${JSON.stringify(frame())}\r\n\r\n`,
+      `:\n\ndata: ${JSON.stringify({ type: 'idle' })}\n\ndata: ${JSON.stringify({ type: 'later' })}\n\ndata: ${JSON.stringify(frame())}\r\n\r\n`,
     ),
     new Response(
       JSON.stringify({ kind: 'busy', message: 'too many preview viewers' }),

@@ -15,6 +15,7 @@ import {
   type PreviewEvent,
   type Session,
 } from './index';
+import type { Phase } from '@prysm/contracts/application';
 
 const COMMAND_TIMEOUT_MS = 20_000;
 const EVENT_LIMIT = 2 * 1024 * 1024;
@@ -113,7 +114,7 @@ export function httpApplicationClient<C, O>({
         fetcher,
         `${api}/state/stream`,
         signal,
-        validState,
+        decodeState,
         'state',
       );
       try {
@@ -169,7 +170,7 @@ export function httpPreviewClient({
         fetcher,
         url,
         signal,
-        validPreview,
+        decodePreview,
         'preview',
       );
       return {
@@ -195,7 +196,7 @@ export function httpColorsClient({
         fetcher,
         url,
         signal,
-        validColors,
+        decodeColors,
         'colors',
       );
       return {
@@ -318,7 +319,7 @@ async function openEvents(
   fetcher: typeof fetch,
   url: string,
   signal: AbortSignal,
-  valid: (value: unknown) => boolean,
+  decode: (value: unknown) => Decoded<unknown>,
   name: string,
 ) {
   const abort = new AbortController();
@@ -343,7 +344,7 @@ async function openEvents(
       !response.body
     )
       throw failure('unavailable', `Invalid ${name} stream response.`);
-    events = decodeEvents(response.body, abort.signal, valid, name);
+    events = decodeEvents(response.body, abort.signal, decode, name);
     return { events, close };
   } catch (error) {
     close();
@@ -351,35 +352,74 @@ async function openEvents(
   }
 }
 
+/**
+ * An event as decoded: its value, `unknown` (a type newer than this page,
+ * skipped) or `invalid` (malformed, which ends the stream).
+ */
+export type Decoded<T> = { event: T } | 'unknown' | 'invalid';
+
+type Fields = Partial<Record<string, unknown>>;
+const isObject = (value: unknown): value is Fields =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
 /** Keyed by every value of the generated union, so the compiler keeps them in step. */
 const targets: Record<LightingTarget, true> = {
   off: true,
   processed: true,
   device_native: true,
 };
-const sessions: Record<Session['state'], true> = {
+type Running = Exclude<Session['state'], 'faulted'>;
+const sessions: Record<Running, true> = {
   stopped: true,
   running: true,
   native: true,
-  faulted: true,
 };
-const oneOf = (values: object, value: unknown) =>
-  typeof value === 'string' && Object.keys(values).includes(value);
+/** `raw` if it is one of `values`, else `fallback`: a value newer than this page. */
+function known<T extends string>(
+  values: Record<T, true>,
+  raw: string,
+  fallback: T,
+): T {
+  return Object.keys(values).includes(raw) ? (raw as T) : fallback;
+}
 
-function validState(value: unknown): boolean {
-  const state = value as Partial<ApplicationSnapshot<unknown, unknown>> | null;
-  return (
-    !!state &&
-    typeof state.version === 'string' &&
-    typeof state.revision === 'number' &&
-    oneOf(targets, state.target) &&
-    oneOf(sessions, state.session?.state) &&
-    typeof state.device === 'object' &&
-    state.device !== null &&
-    !!state.settings &&
-    typeof state.settings.processing === 'object' &&
-    Array.isArray(state.surface_failures)
-  );
+/**
+ * A state as this page reads it. Its structure is checked; a value newer
+ * than this page in a known field has one reading: an unknown target is
+ * `off`, an unknown session state `stopped`, and a faulted session's
+ * unknown phase is kept (it is not named). Fields not checked here reach
+ * the views as sent, and each has its own reading there.
+ */
+export function decodeState(
+  value: unknown,
+): Decoded<ApplicationSnapshot<unknown, unknown>> {
+  if (!isObject(value)) return 'invalid';
+  const { session, settings } = value;
+  if (
+    typeof value.version !== 'string' ||
+    typeof value.revision !== 'number' ||
+    typeof value.target !== 'string' ||
+    !isObject(session) ||
+    typeof session.state !== 'string' ||
+    !isObject(value.device) ||
+    !isObject(settings) ||
+    !isObject(settings.processing) ||
+    !Array.isArray(value.surface_failures)
+  )
+    return 'invalid';
+  let decoded: Session;
+  if (session.state !== 'faulted')
+    decoded = { state: known(sessions, session.state, 'stopped') };
+  else if (typeof session.phase === 'string')
+    decoded = { state: 'faulted', phase: session.phase as Phase };
+  else return 'invalid';
+  return {
+    event: {
+      ...(value as unknown as ApplicationSnapshot<unknown, unknown>),
+      target: known(targets, value.target, 'off'),
+      session: decoded,
+    },
+  };
 }
 
 const isInt = (value: unknown) => Number.isInteger(value);
@@ -392,46 +432,64 @@ const isColors = (value: unknown) =>
       color.every((byte) => isInt(byte) && byte >= 0 && byte <= 255),
   );
 
-function validPreview(value: unknown): boolean {
-  const event = value as Record<string, unknown> | null;
-  if (!event || typeof event !== 'object') return false;
-  if (event.type === 'idle') return true;
-  if (event.type === 'unavailable') return typeof event.message === 'string';
-  if (event.type !== 'frame') return false;
-  const frame = value as Partial<Extract<PreviewEvent, { type: 'frame' }>>;
-  const viewport = frame.viewport;
-  const colors = frame.colors;
-  return (
-    [
-      frame.sequence,
-      frame.width,
-      frame.height,
-      frame.source_width,
-      frame.source_height,
-    ].every((size) => isInt(size) && (size as number) >= 0) &&
-    typeof frame.jpeg === 'string' &&
-    !!viewport &&
-    [viewport.x, viewport.y, viewport.width, viewport.height].every(isInt) &&
-    !!colors &&
-    [colors.top, colors.right, colors.bottom, colors.left].every(isColors)
-  );
+/** A preview event; one of a type newer than this page is skipped. */
+export function decodePreview(value: unknown): Decoded<PreviewEvent> {
+  if (!isObject(value) || typeof value.type !== 'string') return 'invalid';
+  const event = value as unknown as PreviewEvent;
+  switch (value.type) {
+    case 'idle':
+      return { event };
+    case 'unavailable':
+      return typeof value.message === 'string' ? { event } : 'invalid';
+    case 'frame': {
+      const frame = value as unknown as Partial<
+        Extract<PreviewEvent, { type: 'frame' }>
+      >;
+      const viewport = frame.viewport;
+      const colors = frame.colors;
+      const valid =
+        [
+          frame.sequence,
+          frame.width,
+          frame.height,
+          frame.source_width,
+          frame.source_height,
+        ].every((size) => isInt(size) && (size as number) >= 0) &&
+        typeof frame.jpeg === 'string' &&
+        !!viewport &&
+        [viewport.x, viewport.y, viewport.width, viewport.height].every(
+          isInt,
+        ) &&
+        !!colors &&
+        [colors.top, colors.right, colors.bottom, colors.left].every(isColors);
+      return valid ? { event } : 'invalid';
+    }
+    default:
+      return 'unknown';
+  }
 }
 
-function validColors(value: unknown): boolean {
-  const event = value as Record<string, unknown> | null;
-  if (!event || typeof event !== 'object') return false;
-  if (event.type === 'idle') return true;
-  return (
-    event.type === 'colors' &&
-    [event.top, event.right, event.bottom, event.left].every(isColors)
-  );
+/** A colors event; one of a type newer than this page is skipped. */
+export function decodeColors(value: unknown): Decoded<ColorsEvent> {
+  if (!isObject(value) || typeof value.type !== 'string') return 'invalid';
+  const event = value as unknown as ColorsEvent;
+  switch (value.type) {
+    case 'idle':
+      return { event };
+    case 'colors':
+      return [value.top, value.right, value.bottom, value.left].every(isColors)
+        ? { event }
+        : 'invalid';
+    default:
+      return 'unknown';
+  }
 }
 
 /** Bounded SSE decoder; split UTF-8 chunks, CRLF and comment lines are handled. */
 async function* decodeEvents(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-  valid: (value: unknown) => boolean,
+  decode: (value: unknown) => Decoded<unknown>,
   name: string,
 ): AsyncGenerator<unknown> {
   const reader = body.getReader();
@@ -464,9 +522,10 @@ async function* decodeEvents(
         } catch {
           value = null;
         }
-        if (!valid(value))
+        const decoded = decode(value);
+        if (decoded === 'invalid')
           throw failure('unavailable', `Invalid ${name} event.`);
-        yield value;
+        if (decoded !== 'unknown') yield decoded.event;
       }
     }
   } finally {
