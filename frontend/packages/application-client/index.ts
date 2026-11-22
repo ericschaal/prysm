@@ -78,6 +78,14 @@ export type TargetReading = LightingTarget | 'unknown';
 export type SessionReading =
   Session | { state: 'unknown'; failure?: LightingFailure; message?: string };
 
+/**
+ * For the `default` of a switch that covers every value: the compiler
+ * refuses it while a value is left out.
+ */
+export function unreachable(value: never): never {
+  throw new Error(`Unexpected value: ${JSON.stringify(value)}`);
+}
+
 /** The failure `session` carries, if any. */
 function sessionFailure(session: SessionReading): LightingFailure | null {
   return 'failure' in session ? (session.failure ?? null) : null;
@@ -90,7 +98,9 @@ function sessionFailure(session: SessionReading): LightingFailure | null {
 function failureSide(
   failure: Failure | LightingFailure,
 ): FailureSection | null {
-  if ('section' in failure && failure.section) return failure.section;
+  // Only the sides this page knows: any other value reads as absent.
+  const typed = 'section' in failure ? failure.section : undefined;
+  if (typed === 'capture' || typed === 'output') return typed;
   const named = 'field' in failure ? failure.field?.split('.')[0] : undefined;
   return named === 'capture' || named === 'output' ? named : null;
 }
@@ -112,8 +122,8 @@ function failureSide(
  *   that do not validate.
  * - `failed`: the mode asked for is not running and the session says why;
  *   `at` is the side that failed, when known, and `effectsOn` says the
- *   lights' own effects still show (a start of screen sync that failed
- *   from them).
+ *   lights' own effects still show: a start of screen sync that failed
+ *   from them, for a reason that is not the lights themselves.
  * - `starting`: the mode asked for is not running yet (also while switching
  *   from the other one).
  */
@@ -159,14 +169,16 @@ export function lightingSituation({
   if (target === 'effects' && session.state === 'effects')
     return { kind: 'effects', failure: session.failure ?? null };
   const failure = sessionFailure(session);
-  if (failure)
+  if (failure) {
+    const at = failureSide(failure);
     return {
       kind: 'failed',
       target,
       failure,
-      at: failureSide(failure),
-      effectsOn: session.state === 'effects',
+      at,
+      effectsOn: session.state === 'effects' && at !== 'output',
     };
+  }
   return { kind: 'starting', target };
 }
 
@@ -180,8 +192,12 @@ export function situationFailure(
     case 'effects':
     case 'unknown':
       return situation.failure;
-    default:
+    case 'faulted':
+    case 'sync':
+    case 'starting':
       return null;
+    default:
+      return unreachable(situation);
   }
 }
 
@@ -203,9 +219,9 @@ export function describeSituation(
       };
     case 'unknown':
       return {
-        headline: 'Prysm is newer than this app',
+        headline: 'Prysm is newer than this page',
         sentence:
-          'Prysm is newer than this app. Update it to see what the lights do.',
+          'Prysm is newer than this page. Reload it to see what the lights do.',
       };
     case 'off':
       return both('Lights are off');
@@ -231,6 +247,8 @@ export function describeSituation(
           : `Starting ${effects}…`;
       return { headline: words, sentence: words };
     }
+    default:
+      return unreachable(situation);
   }
 }
 
@@ -251,6 +269,8 @@ export function plainFailure(
   const section = failureSide(failure);
   if (section === 'capture') return 'The video source is not working.';
   if (section === 'output') return 'The lights are not responding.';
+  // What a target newer than this page tried is not known.
+  if (target === 'unknown') return 'Something went wrong.';
   switch (failure.kind) {
     case 'unavailable':
       return 'A device is not available right now.';

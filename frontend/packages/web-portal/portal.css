@@ -1147,7 +1147,7 @@ fieldset > .field-note {
   color: var(--fg);
   transition: color var(--duration-light-on) var(--ease-light);
 }
-/* Off, On and Stopped share one cell and cross-fade: no snap, no shift. */
+/* Off, On, Stopped and Unknown share one cell and cross-fade: no snap, no shift. */
 .light-word {
   display: grid;
   /* Every word on one baseline, whatever its size. */

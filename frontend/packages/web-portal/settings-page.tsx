@@ -217,7 +217,7 @@ const targetLabels = {
 >;
 const sessionLabels = {
   stopped: 'Stopped',
-  screen_sync: 'Running',
+  screen_sync: 'Screen sync',
   effects: 'Showing the lights’ own effects',
   faulted: 'Stopped by a fault; restart Prysm',
   unknown: 'Unknown: Prysm is newer than this app',

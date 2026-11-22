@@ -198,9 +198,9 @@ test('each situation has one headline and one sentence', () => {
     sentence: 'Prysm stopped responding. Restart Prysm to recover.',
   });
   assert.deepEqual(words('unknown', 'stopped'), {
-    headline: 'Prysm is newer than this app',
+    headline: 'Prysm is newer than this page',
     sentence:
-      'Prysm is newer than this app. Update it to see what the lights do.',
+      'Prysm is newer than this page. Reload it to see what the lights do.',
   });
   assert.equal(
     describeOutputIssue('sleeping'),
@@ -240,18 +240,47 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   const newer = { kind: 'unknown', failure: null, message: null };
   assert.equal(moodOf(newer, true), 'unknown');
   const unknown = lightCardView(facts(newer, { target: 'unknown' }), memory());
+  // No mode is chosen, and Power switches the lights off.
   assert.deepEqual(
-    [unknown.word, unknown.on, unknown.status, unknown.info],
+    [unknown.word, unknown.on, unknown.chosen, unknown.status, unknown.info],
     [
       'Unknown',
-      false,
-      'Prysm is newer than this app',
+      true,
+      null,
+      'Prysm is newer than this page',
       {
         tone: 'note',
-        text: 'Update it to see what the lights do.',
+        text: 'Prysm is newer than this page. Reload it to see what the lights do.',
         details: undefined,
       },
     ],
+  );
+  // What a newer state carries is said with the note, its words under Details.
+  const carrying = lightCardView(
+    facts(
+      {
+        kind: 'unknown',
+        failure: { kind: 'adapter', section: 'output', message: 'gone' },
+        message: 'newer',
+      },
+      { target: 'unknown' },
+    ),
+    memory(),
+  );
+  assert.deepEqual(carrying.info, {
+    tone: 'note',
+    text: 'Prysm is newer than this page. Reload it to see what the lights do. The lights are not responding.',
+    details: 'gone newer',
+  });
+  assert.equal(
+    plainFailure({ kind: 'adapter', message: 'x' }, 'unknown', 'WLED effects'),
+    'Something went wrong.',
+    'what a newer target tried is not known',
+  );
+  // A known target chooses its tile.
+  assert.equal(
+    lightCardView(facts(sync, { target: 'effects' }), memory()).chosen,
+    'effects',
   );
   const faulted = lightCardView(facts({ kind: 'faulted', message }), memory());
   assert.deepEqual(
@@ -261,7 +290,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
       'Prysm stopped responding',
       {
         tone: 'problem',
-        text: 'Restart Prysm to recover.',
+        text: 'Prysm stopped responding. Restart Prysm to recover.',
         details: message,
         retry: false,
       },
@@ -277,6 +306,32 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     text: 'Prysm can’t use these settings.',
     details: invalid.message,
   });
+  // Another kind is said in its own words.
+  const effectsAdapter = lightCardView(
+    facts(
+      {
+        kind: 'effects',
+        failure: { kind: 'adapter', section: 'output', message: 'gone' },
+      },
+      { target: 'effects' },
+    ),
+    memory({ lit: true }),
+  );
+  assert.deepEqual(effectsAdapter.info, {
+    tone: 'problem',
+    text: 'The lights are not responding.',
+    details: 'gone',
+  });
+  // A start of screen sync that failed from the effects: they are still on.
+  const fromEffects = lightCardView(
+    facts({ ...failed, at: null, effectsOn: true }),
+    memory(),
+  );
+  assert.equal(
+    fromEffects.info.text,
+    'Screen sync could not start. WLED effects are still on.',
+  );
+  assert.equal(fromEffects.info.retry, true);
   assert.equal(
     moodOf({ kind: 'starting', target: 'screen_sync' }, true),
     'starting',

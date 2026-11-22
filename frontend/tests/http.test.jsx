@@ -168,6 +168,46 @@ test('a target or session state newer than the page is read as unknown, never of
     decodeState(state({ session: { state: 'stopped', failure: 'x' } })),
     'invalid',
   );
+  // A known state's failure is whole: `field` and `section` are text.
+  for (const broken of [
+    { kind: 'invalid', message: 'x', field: 3 },
+    { kind: 'adapter', message: 'x', section: false },
+    { kind: 'adapter' },
+  ])
+    assert.equal(
+      decodeState(state({ session: { state: 'stopped', failure: broken } })),
+      'invalid',
+      JSON.stringify(broken),
+    );
+  // A side this page does not know is absent; a newer kind is said by its
+  // side, else as internal.
+  const read = (failure) => {
+    const decoded = decodeState(
+      state({ session: { state: 'stopped', failure } }),
+    );
+    return decoded.event.session.failure;
+  };
+  assert.deepEqual(read({ kind: 'adapter', message: 'x', section: 'hdmi' }), {
+    kind: 'adapter',
+    message: 'x',
+  });
+  assert.deepEqual(
+    read({ kind: 'overheated', message: 'x', section: 'output' }),
+    {
+      kind: 'adapter',
+      message: 'x',
+      section: 'output',
+    },
+  );
+  assert.deepEqual(read({ kind: 'overheated', message: 'x' }), {
+    kind: 'internal',
+    message: 'x',
+  });
+  // A newer state with a malformed failure keeps the state, not the failure.
+  assert.deepEqual(
+    decodeState(state({ session: { state: 'dimming', failure: 'x' } })),
+    { event: state({ session: { state: 'unknown' } }) },
+  );
   assert.equal(decodeState(state({ target: 3 })), 'invalid');
   assert.equal(decodeState(state({ session: 'screen_sync' })), 'invalid');
   // Events of a newer kind are skipped; a known kind must be whole.

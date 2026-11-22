@@ -89,6 +89,9 @@ async function mountTv(t, options = {}) {
   // No reply yet: the screen before the service answers.
   if (options.hold) supervisor.hold();
   const application = fakeApplicationPort(options.portal ?? portals[flavor]);
+  // The full worker reports its engine's failure to the supervisor.
+  if (flavor === 'full')
+    t.after(application.watch((snapshot) => supervisor.report(snapshot)));
   const urls = [];
   const portal = {
     client: (url) => {
@@ -1223,6 +1226,8 @@ test('every state keeps the same slots, plain words and focus on a control', asy
             ],
           ]
         : []),
+      // A phase newer than this app: nothing to start or stop.
+      ['updating', { worker: { phase: 'unknown' }, failure: null }],
       ['stopping', { worker: { phase: 'stopping' }, failure: null }],
       ['back', { ...running, failure: null, capturing: true, fps: 30 }],
     ];
@@ -1270,6 +1275,14 @@ test('every state keeps the same slots, plain words and focus on a control', asy
       }
       if (name === 'stopping' && flavor === 'full')
         assert(!tv.el('primary'), 'no button while the service has no task');
+      if (name === 'updating') {
+        assert.equal(tv.text('status-title'), 'Updating…', label);
+        assert(!tv.el('primary'), `${label}: nothing to press`);
+        assert(
+          document.querySelector('.primary-slot'),
+          `${label}: the button's place is kept`,
+        );
+      }
       if (name === 'back')
         assert.equal(
           tv.focus(),
@@ -1655,7 +1668,59 @@ test('the full status follows the portal: its failure, named by mode, and a faul
   assert.deepEqual(
     [failed.title, failed.description, failed.attention, failed.action],
     ['Screen sync stopped', 'Try again, or choose another mode.', true, 'none'],
-    'the modes try again; the service has nothing to restart',
+    'before the worker reports it, nothing to restart',
+  );
+  // As on a TV: the worker reports its session's failure.
+  const reported = { ...full, failure: { kind: 'other', message: 'x' } };
+  const sessionFailure = { kind: 'adapter', message: 'x' };
+  assert.equal(
+    tvStatus(
+      true,
+      reported,
+      draft,
+      facts({
+        target: 'screen_sync',
+        session: { state: 'stopped', failure: sessionFailure },
+      }),
+    ).action,
+    'retry',
+  );
+  // A start of screen sync from the effects that failed leaves them on.
+  assert.equal(
+    tvStatus(
+      true,
+      reported,
+      draft,
+      facts({
+        target: 'screen_sync',
+        session: { state: 'effects', failure: sessionFailure },
+      }),
+    ).title,
+    'Screen sync could not start',
+  );
+  // The portal's situation says what the reported failure means: off with
+  // a switch off that failed is off, effects with invalid settings are on;
+  // neither is tried again.
+  for (const [target, session, title] of [
+    ['off', { state: 'stopped', failure: sessionFailure }, 'Lights off'],
+    [
+      'effects',
+      { state: 'effects', failure: { kind: 'invalid', message: 'x' } },
+      'WLED effects on',
+    ],
+  ]) {
+    const status = tvStatus(
+      true,
+      { ...reported, target },
+      draft,
+      facts({ target, session }),
+    );
+    assert.deepEqual([status.title, status.action], [title, 'none'], target);
+  }
+  // Only a mode is tried again: nothing for a target newer than the app.
+  assert.equal(
+    tvStatus(true, { ...reported, target: 'unknown' }, draft).action,
+    'none',
   );
   // Effects that did not start are named as effects, not as screen sync.
   assert.equal(
@@ -1701,7 +1766,10 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     const newer = tvStatus(true, full, draft, facts(snapshot));
     assert.deepEqual(
       [newer.title, newer.description],
-      ['Prysm is newer than this app', 'Update it to see what the lights do.'],
+      [
+        'Prysm is newer than this app',
+        'Update the app to see what the lights do.',
+      ],
       JSON.stringify(snapshot),
     );
   }
@@ -1722,6 +1790,22 @@ test('the full status follows the portal: its failure, named by mode, and a faul
       ['Updating…', 'none', ''],
       flavor,
     );
+    // A failure it reports is not hidden by the phase.
+    const failing = tvStatus(
+      true,
+      {
+        ...tvState(flavor, {}),
+        worker: { phase: 'unknown' },
+        failure: { kind: 'other', message: 'x' },
+      },
+      draft,
+    );
+    assert.equal(
+      failing.title,
+      flavor === 'full' ? 'Screen sync stopped' : 'Capture stopped',
+      flavor,
+    );
+    assert.equal(failing.action, 'none', `${flavor}: nothing to press`);
   }
   const waiting = tvStatus(
     true,
@@ -2283,13 +2367,19 @@ test('full: the TV portal is used over loopback and its address is shown', async
   assert.equal(tv.el('capture'), null, 'capture is set in the portal only');
   assert(!tv.el('primary'), 'the lighting modes are the one control');
   // After a failure the supervisor does not retry, the button restarts it.
-  await act(async () =>
-    tv.supervisor.publish({
+  // As on a TV: the engine's session failed, and the worker reports it.
+  await act(async () => {
+    tv.supervisor.publish({ target: 'screen_sync' });
+    tv.application.publish({
       target: 'screen_sync',
-      failure: { kind: 'other', message: 'capture failed' },
-    }),
-  );
+      session: {
+        state: 'stopped',
+        failure: { kind: 'adapter', message: 'capture failed' },
+      },
+    });
+  });
   await settle();
+  assert.equal(tv.supervisor.state().failure?.message, 'capture failed');
   assert.equal(tv.text('status-title'), 'Screen sync stopped');
   assert.equal(tv.text('primary'), 'Try again');
   await tv.click('primary');

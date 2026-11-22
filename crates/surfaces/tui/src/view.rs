@@ -104,13 +104,14 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(match input_label(snapshot) {
+                // Short, so the lights' issue fits beside it.
                 Some(input) => format!(
-                    "Target: {} · Session: {} · Input: {input}{issue}",
+                    "Target {} · now {} · Input: {input}{issue}",
                     snapshot.target.as_str(),
                     snapshot.session
                 ),
                 None => format!(
-                    "Target: {} · Session: {}{issue}",
+                    "Target {} · now {}{issue}",
                     snapshot.target.as_str(),
                     snapshot.session
                 ),
@@ -612,7 +613,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
         let text = draw(&mut terminal, &view);
         assert!(text.contains('▀'));
-        assert!(text.contains("Target: screen_sync · Session: screen_sync"));
+        assert!(
+            text.contains("Target screen_sync · now screen_sync"),
+            "{text}"
+        );
         assert!(text.contains("device → null · rev 4"));
     }
 
@@ -683,6 +687,38 @@ mod tests {
         assert!(!text.contains("Input"), "{text}");
     }
     #[test]
+    fn a_faulted_session_says_what_did_not_finish_at_every_size() {
+        let snapshot = Snapshot {
+            session: SessionState::Faulted(prysm_ports::SessionPhase::ClosingSource),
+            ..Snapshot::default()
+        };
+        let ui = Ui::default();
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        for (width, height) in [(100, 30), (70, 18)] {
+            let text = draw(
+                &mut Terminal::new(TestBackend::new(width, height)).unwrap(),
+                &view,
+            );
+            assert!(
+                text.contains("faulted while closing the source"),
+                "{width}x{height}: {text}"
+            );
+        }
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(
+            text.contains("Session did not finish; only shutdown is accepted"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn status_says_why_the_lights_do_not_show_prysm() {
         let mut snapshot = running();
         snapshot.device.issue = Some(prysm_ports::OutputIssue::Overridden);
@@ -699,6 +735,6 @@ mod tests {
         assert!(text.contains("Lights"), "{text}");
         assert!(text.contains("live override"), "{text}");
         let text = draw(&mut Terminal::new(TestBackend::new(70, 18)).unwrap(), &view);
-        assert!(text.contains("Lights: live override"), "{text}");
+        assert!(text.contains("Lights: live override is on"), "{text}");
     }
 }

@@ -1,5 +1,5 @@
 /** Pure rules of the TV UI: addresses, drafts, the status card and the screen. */
-import type { LightingSituation } from '@prysm/application-client';
+import { unreachable, type LightingSituation } from '@prysm/application-client';
 import {
   captureFps,
   fullPortal,
@@ -147,6 +147,8 @@ function targetOf(
       return 'effects';
     case 'starting':
       return lighting.target;
+    default:
+      return unreachable(lighting);
   }
 }
 
@@ -208,6 +210,12 @@ export function tvStatus(
   // Slim: Prysm is not receiving; the worker keeps trying, not a failure.
   const waiting = kind === 'receiver';
   const failed = !!state.failure && !waiting;
+  // Full: the worker reports its session's failure, so while the portal's
+  // situation is known it says what the failure means (off with a switch
+  // off that failed is still off); a restart being retried is the
+  // supervisor's own.
+  const lighting = full ? portal?.lighting : undefined;
+  const workerFailed = failed && (!lighting || phase === 'retrying');
   const stopped = full ? 'Screen sync stopped' : 'Capture stopped';
   let title: string;
   let description: string;
@@ -215,10 +223,6 @@ export function tvStatus(
   if (phase === 'stopping') {
     title = full ? 'Restarting Prysm…' : 'Stopping capture…';
     description = 'This takes a moment.';
-  } else if (phase === 'unknown') {
-    // The service is newer than this app, as during an update.
-    title = 'Updating…';
-    description = 'Update this app if this stays.';
   } else if (failed && !full && kind === 'encoder') {
     // The encoding is Prysm's setting, so the fix is in its portal.
     title = 'Encoding not supported';
@@ -242,13 +246,18 @@ export function tvStatus(
     title = 'Prysm stopped receiving';
     description = 'Its web portal on your computer says why.';
     attention = true;
-  } else if (failed) {
+  } else if (workerFailed) {
     title = stopped;
     if (phase === 'retrying')
       description = 'Something went wrong. Prysm tries again by itself.';
     else if (full) description = 'Try again, or choose another mode.';
     else description = 'Stop and start capture again to retry.';
     attention = true;
+  } else if (phase === 'unknown') {
+    // The service is newer than this app, as during an update; a failure
+    // it reports is said first.
+    title = 'Updating…';
+    description = 'Update this app if this stays.';
   } else if (enabled && state.power !== 'active') {
     title =
       state.power === 'screen_saver' ? 'Screen saver is on' : 'TV is asleep';
@@ -259,14 +268,14 @@ export function tvStatus(
     title = 'Waiting for video';
     description = 'Choose an input or play something on the TV.';
   } else if (state.flavor === 'full') {
-    const lighting = portal?.lighting;
     if (lighting?.kind === 'faulted') {
       title = 'Prysm stopped responding';
       description = 'Restart Prysm to recover.';
       attention = true;
     } else if (lighting?.kind === 'failed') {
       // The lights card says what failed; its modes try again.
-      title = lighting.target === 'effects' ? 'WLED effects stopped' : stopped;
+      if (lighting.target === 'effects') title = 'WLED effects stopped';
+      else title = lighting.effectsOn ? 'Screen sync could not start' : stopped;
       description = 'Try again, or choose another mode.';
       attention = true;
     } else if (
@@ -274,7 +283,7 @@ export function tvStatus(
       (!lighting && state.target === 'unknown')
     ) {
       title = 'Prysm is newer than this app';
-      description = 'Update it to see what the lights do.';
+      description = 'Update the app to see what the lights do.';
     } else {
       // The supervisor hears of a change made in the portal a moment later.
       const target = lighting ? targetOf(lighting) : state.target;
@@ -323,7 +332,7 @@ export function tvStatus(
   // Lights are set up in the portal (its first-run setup), never here.
   const linked = full || !!state.preferences.instance;
   const noLights = !!portal && !portal.lights && linked;
-  const setupLights = noLights && !failed && phase !== 'stopping';
+  const setupLights = noLights && !workerFailed && phase !== 'stopping';
   if (setupLights) {
     title = 'Set up your lights';
     description = 'You add them from your phone, in the web portal.';
@@ -339,7 +348,15 @@ export function tvStatus(
   } else if (phase === 'stopping') {
     if (!full) label = 'Please wait…';
   } else if (full) {
-    if (failed && phase !== 'retrying') {
+    // Again the target that failed: only a mode, and only while the
+    // portal's situation, when known, is that failure.
+    const mode = state.target === 'screen_sync' || state.target === 'effects';
+    if (
+      failed &&
+      phase !== 'retrying' &&
+      mode &&
+      (!lighting || lighting.kind === 'failed')
+    ) {
       label = 'Try again';
       action = 'retry';
     }

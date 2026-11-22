@@ -37,6 +37,8 @@ export function fakeApplicationPort<C, O>(initial: {
     surface_failures: [],
   };
   const subscribers = new Set<(value: ApplicationSnapshot<C, O>) => void>();
+  /** Told every state, as a worker on the same engine is (`watch`). */
+  const watchers = new Set<(value: ApplicationSnapshot<C, O>) => void>();
   const calls: string[] = [];
   /** Ends each open stream, as a lost connection does. */
   const streams = new Set<() => void>();
@@ -51,6 +53,7 @@ export function fakeApplicationPort<C, O>(initial: {
   function publish(change: Partial<ApplicationSnapshot<C, O>>) {
     snapshot = { ...snapshot, ...change };
     for (const changed of subscribers) changed(snapshot);
+    for (const watcher of watchers) watcher(snapshot);
   }
   /** As the engine: calibration ends when the target leaves `screen_sync`. */
   function clearCalibration() {
@@ -140,7 +143,15 @@ export function fakeApplicationPort<C, O>(initial: {
           field: missing,
           message: 'not configured',
         } as const;
-        publish({ target, session: { state: 'stopped', failure } });
+        // A start of screen sync from the effects leaves them on.
+        const fromEffects =
+          target === 'screen_sync' && snapshot.session.state === 'effects';
+        publish({
+          target,
+          session: fromEffects
+            ? { state: 'effects', failure }
+            : { state: 'stopped', failure },
+        });
         throw new ApplicationError(failure);
       }
       if (target !== 'screen_sync') clearCalibration();
@@ -175,6 +186,17 @@ export function fakeApplicationPort<C, O>(initial: {
     snapshot: () => snapshot,
     /** Simulate another client or the engine changing state. */
     publish,
+    /**
+     * Call `listener` with the current state and every later one, as the
+     * engine's own snapshot watch (the TV worker's); returns the unwatch.
+     */
+    watch: (listener: (value: ApplicationSnapshot<C, O>) => void) => {
+      watchers.add(listener);
+      listener(snapshot);
+      return () => {
+        watchers.delete(listener);
+      };
+    },
     /** Lose the connection: every open stream ends; the client reconnects. */
     drop: () => {
       for (const close of [...streams]) close();

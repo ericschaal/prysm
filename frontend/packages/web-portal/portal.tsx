@@ -1,6 +1,7 @@
 import {
   lightingSituation,
   plainFailure,
+  unreachable,
   type LightingSituation,
 } from '@prysm/application-client';
 import { useEffect, useRef, useState } from 'react';
@@ -94,6 +95,8 @@ function pathOf(lighting: LightingSituation): PathState {
     case 'off':
     case 'unknown':
       return { kind: 'off' };
+    default:
+      return unreachable(lighting);
   }
 }
 

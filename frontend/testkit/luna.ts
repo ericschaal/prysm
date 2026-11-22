@@ -5,6 +5,7 @@
  * no worker, power or timing, but the same replies, validation messages and
  * subscription.
  */
+import type { ApplicationSnapshot } from '@prysm/application-client';
 import {
   APP_ID,
   isEnabled,
@@ -368,6 +369,23 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     facts: (): Readonly<FakeFacts> => facts,
     /** Change what the supervisor reports, as a worker or power change would. */
     publish,
+    /**
+     * Full: what the running worker reports of its engine's state, as the
+     * real one does (`hosts/webos/src/link.rs`): the session's failure, or
+     * else the last surface failure, as an `other` failure. Its target is
+     * left to the commands, so the service lags as it does.
+     */
+    report(snapshot: ApplicationSnapshot<unknown, unknown>) {
+      if (facts.flavor !== 'full' || facts.worker.phase !== 'running') return;
+      const session =
+        'failure' in snapshot.session ? snapshot.session.failure : undefined;
+      const surfaces = snapshot.surface_failures;
+      const message =
+        session?.message ?? surfaces[surfaces.length - 1]?.message;
+      const failure: WorkerFailure | null =
+        message === undefined ? null : { kind: 'other', message };
+      if (failure?.message !== facts.failure?.message) publish({ failure });
+    },
     subscribers: () => subscribers.size,
     failNext(method: string, errorText: string) {
       failures.set(method, errorText);

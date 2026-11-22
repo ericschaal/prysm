@@ -490,7 +490,7 @@ test('the power button and the mode tiles set the target and show what the sessi
       }),
     );
     assert.equal($('.lighting-status').textContent, 'Prysm stopped responding');
-    assert.equal(info(), 'Restart Prysm to recover.');
+    assert.equal(info(), 'Prysm stopped responding. Restart Prysm to recover.');
     assert.equal(
       $('.light-details p').textContent,
       'The video source did not close in time.',
@@ -612,7 +612,10 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
       'error',
       'the warning lamp',
     );
-    assert.equal(info(), 'Screen sync could not start.');
+    assert.equal(
+      info(),
+      'Screen sync could not start. WLED effects are still on.',
+    );
     assert.match($('.light-details p').textContent, /does not support 640x360/);
     assert(button('Try again'));
     // A field names the section: said as the video source.
@@ -628,7 +631,10 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
         },
       }),
     );
-    assert.equal(info(), 'The video source is not working.');
+    assert.equal(
+      info(),
+      'The video source is not working. WLED effects are still on.',
+    );
     // Off clears it.
     await act(async () =>
       fixture.publish({
@@ -657,7 +663,10 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
     assert.equal($('.light-card').dataset.lit, 'false');
     assert.equal($('.light-frame').dataset.palette, 'error');
     assert.equal(power().getAttribute('aria-busy'), 'false', 'no busy ring');
-    assert.equal(info(), 'Screen sync could not start.');
+    assert.equal(
+      info(),
+      'Screen sync could not start. WLED effects are still on.',
+    );
     assert(button('Try again'));
   };
   try {
@@ -2706,7 +2715,10 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       $$('.path-stop').map((stop) => stop.dataset.failed),
       ['true', 'false', 'false'],
     );
-    assert.equal(info(), 'The video source is not working.');
+    assert.equal(
+      info(),
+      'The video source is not working. WLED effects are still on.',
+    );
     // The lights' side.
     await act(async () =>
       portal.fixture.publish({
@@ -3446,4 +3458,73 @@ test('the script that sets the theme before the page is drawn reads the same key
     'utf8',
   );
   assert(script.includes(`getItem('${themeStorageKey}')`));
+});
+
+test('a target or session state newer than the page chooses no mode, and Power switches off', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await act(async () =>
+      fixture.publish({ target: 'unknown', session: { state: 'stopped' } }),
+    );
+    assert(
+      $$('[role="radio"]').every(
+        (item) => item.getAttribute('aria-checked') === 'false',
+      ),
+      'no tile is chosen',
+    );
+    assert.equal($('.modes').dataset.mode, undefined, 'no outline');
+    assert.equal(word(), 'Unknown');
+    assert.equal(
+      info(),
+      'Prysm is newer than this page. Reload it to see what the lights do.',
+    );
+    assert.equal(power().getAttribute('aria-pressed'), 'true');
+    await press(power());
+    assert.deepEqual(
+      fixture.calls.filter((call) => call.startsWith('target:')).slice(-1),
+      ['target:off'],
+    );
+    // A known target with a newer session: the section pages say so, never
+    // "Starting…".
+    await act(async () =>
+      fixture.publish({
+        target: 'screen_sync',
+        session: { state: 'unknown' },
+      }),
+    );
+    await openEditor('Lights');
+    assert.equal(
+      now(),
+      'Prysm is newer than this page — Reload it to see what the lights do.',
+    );
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a faulted session says what did not finish on the section pages', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await act(async () =>
+      fixture.publish({
+        target: 'screen_sync',
+        session: {
+          state: 'faulted',
+          message: 'The video source did not close in time.',
+        },
+      }),
+    );
+    await openEditor('Video source');
+    assert.match(now(), /^No picture/);
+    assert(
+      document.body.textContent.includes(
+        'The video source did not close in time.',
+      ),
+      'the fault’s words under Details',
+    );
+  } finally {
+    await portal.unmount();
+  }
 });

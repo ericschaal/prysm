@@ -228,6 +228,7 @@ export function LightCard({
     on,
     reasons,
     mode,
+    chosen,
     powerReason,
     word,
     palette,
@@ -460,7 +461,7 @@ export function LightCard({
               className="modes"
               role="radiogroup"
               aria-label="Mode"
-              data-mode={mode}
+              data-mode={chosen ?? undefined}
               data-on={on}
             >
               {tiles.map((tile) => (
@@ -470,8 +471,9 @@ export function LightCard({
                   key={tile.value}
                   className="mode"
                   data-target={tile.value}
-                  aria-checked={mode === tile.value}
-                  tabIndex={mode === tile.value ? 0 : -1}
+                  aria-checked={chosen === tile.value}
+                  // With none chosen, the first one takes the focus.
+                  tabIndex={(chosen ?? tiles[0].value) === tile.value ? 0 : -1}
                   onKeyDown={arrow}
                   aria-busy={pending === tile.value}
                   aria-describedby={

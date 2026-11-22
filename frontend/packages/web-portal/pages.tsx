@@ -179,6 +179,7 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
       target: snapshot.target,
       path: portal.path,
       failure: situationFailure(portal.lighting),
+      situation: portal.lighting,
       input: snapshot.input,
       device: snapshot.device,
     },

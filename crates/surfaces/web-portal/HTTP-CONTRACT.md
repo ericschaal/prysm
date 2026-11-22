@@ -300,7 +300,7 @@ registers a preview viewer with the engine; with none, the session publishes
 no preview and nothing is encoded. Encoding runs off the async runtime, once
 per frame for all viewers. Lighting turning off or failing mid-stream sends
 `idle` and keeps the stream open; it ends when the portal shuts down or the
-client leaves. `idle` only means there is no image: why (off, native, failed,
+client leaves. `idle` only means there is no image: why (off, effects, failed,
 waiting for frames) is in the state stream. Streams with nothing new carry a `:` comment every 15 seconds.
 
 The portal's CSP blocks `data:` and `blob:` images, so a portal page decodes

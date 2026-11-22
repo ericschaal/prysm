@@ -315,7 +315,7 @@ class WebosTv:
         ]
 
     def backup(self, found: list[str]) -> Backup:
-        """getState (flavour, preferences, and the intent: full `lighting`, slim `enabled`), the full portal's
+        """getState (flavour, preferences, and the intent: full `target`, slim `enabled`), the full portal's
         settings and target, and the data files as they are. An installed Prysm whose service or portal does not
         answer cannot be backed up."""
         files = {name: self.read_data(name) for name in commands.DATA_FILES}

@@ -99,21 +99,36 @@ export function LightingCard({
     const failure = situationFailure(lighting);
     const kind = (snapshot.settings.capture as { kind?: string } | undefined)
       ?.kind;
-    if (lighting.kind === 'faulted' || lighting.kind === 'unknown') {
+    if (lighting.kind === 'faulted') {
       message = said;
-      attention = lighting.kind === 'faulted';
+      attention = true;
+    } else if (lighting.kind === 'unknown') {
+      // Newer than this app; what the state carries is still said.
+      const carried = failure
+        ? ` ${plainFailure(failure, 'unknown', effects ?? 'Device effects')}`
+        : '';
+      message = `Prysm is newer than this app. Update the app to see what the lights do.${carried}`;
+      attention = !!failure;
     } else if (!snapshot.settings.output) {
       message = 'Set up your lights in the web portal first.';
-    } else if (lighting.kind === 'effects' && failure) {
-      // With the effects on, a failure is settings that do not validate.
+    } else if (
+      lighting.kind === 'effects' &&
+      failure &&
+      failure.kind === 'invalid'
+    ) {
+      // With the effects on, settings that do not validate.
       message = 'Prysm can’t use these settings.';
       attention = true;
     } else if (failure) {
-      message = plainFailure(
+      const still =
+        lighting.kind === 'failed' && lighting.effectsOn
+          ? ` ${effects ?? 'Device effects'} are still on.`
+          : '';
+      message = `${plainFailure(
         failure,
         snapshot.target,
         effects ?? 'Device effects',
-      );
+      )}${still}`;
       attention = true;
     } else if (snapshot.device.issue && lighting.kind === 'sync') {
       message = describeOutputIssue(snapshot.device.issue);

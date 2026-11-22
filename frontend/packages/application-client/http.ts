@@ -9,6 +9,7 @@ import {
   type DiscoveryClient,
   type Failure,
   type LightingFailure,
+  unreachable,
   type LightingTarget,
   type Mode,
   type Modes,
@@ -392,6 +393,42 @@ function known<T extends string, F extends string>(
 }
 
 /**
+ * A session's failure as this page reads it, or `null` when malformed
+ * (`field` and `section` are text when present). A `section` other than
+ * `capture` or `output` reads as absent; a kind newer than this page is
+ * said by its side: `adapter` with a known section, else `internal`.
+ */
+function decodeFailure(value: unknown): LightingFailure | null {
+  if (!isObject(value)) return null;
+  const { kind, message, field, section } = value;
+  if (
+    typeof kind !== 'string' ||
+    typeof message !== 'string' ||
+    (field !== undefined && typeof field !== 'string') ||
+    (section !== undefined && typeof section !== 'string')
+  )
+    return null;
+  const side =
+    section === 'capture' || section === 'output' ? section : undefined;
+  switch (kind) {
+    case 'invalid':
+      return typeof field === 'string'
+        ? { kind: 'invalid', message, field }
+        : { kind: 'invalid', message };
+    case 'adapter':
+      return side
+        ? { kind: 'adapter', message, section: side }
+        : { kind: 'adapter', message };
+    case 'internal':
+      return { kind: 'internal', message };
+    default:
+      return side
+        ? { kind: 'adapter', message, section: side }
+        : { kind: 'internal', message };
+  }
+}
+
+/**
  * A state as this page reads it. Its structure is checked; a value newer
  * than this page in a known field has one reading: an unknown target, or
  * an unknown session state, is `unknown` (never off or stopped), and the
@@ -415,22 +452,18 @@ export function decodeState(
     !Array.isArray(value.surface_failures)
   )
     return 'invalid';
-  let carries: LightingFailure | undefined;
-  if (session.failure !== undefined) {
-    if (
-      !isObject(session.failure) ||
-      typeof session.failure.kind !== 'string' ||
-      typeof session.failure.message !== 'string'
-    )
-      return 'invalid';
-    carries = session.failure as unknown as LightingFailure;
-  }
+  const state = known(sessions, session.state, 'unknown');
+  const carries =
+    session.failure === undefined ? undefined : decodeFailure(session.failure);
+  // A known state's failure is whole; a newer state's malformed one is
+  // dropped, the state kept.
+  if (carries === null && state !== 'unknown') return 'invalid';
   const message =
     typeof session.message === 'string' ? session.message : undefined;
   // Absent stays absent: a value is omitted, never `undefined`.
   const carried = carries ? { failure: carries } : {};
   let decoded: SessionReading;
-  switch (known(sessions, session.state, 'unknown')) {
+  switch (state) {
     case 'stopped':
       decoded = { state: 'stopped', ...carried };
       break;
@@ -451,6 +484,8 @@ export function decodeState(
         ...(message === undefined ? {} : { message }),
       };
       break;
+    default:
+      return unreachable(state);
   }
   return {
     event: {

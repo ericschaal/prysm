@@ -2022,8 +2022,8 @@ fn every_phase_takes_every_input() {
     }
 }
 
-/// The full package's lighting inputs from each target, with the worker
-/// asleep (idle) or running: a target is kept and sent to a running worker,
+/// The full package's lighting inputs from each target, with the worker in
+/// each phase: a target is kept, and sent only to a running worker,
 /// and the slim package's `Enabled` changes nothing.
 #[test]
 fn every_full_target_takes_every_lighting_input() {
@@ -2036,21 +2036,34 @@ fn every_full_target_takes_every_lighting_input() {
         Enabled(true),
     ];
     let t0 = Instant::now();
+    // Where the worker is: only a running one is sent the target; in every
+    // other phase it is stored for the next worker.
+    let phases = ["idle", "running", "stopping", "retrying"];
     for from in LightingTarget::ALL {
-        for awake in [false, true] {
+        for phase in phases {
             for input in inputs.clone() {
                 let mut m = full();
                 let mut steps = vec![(0, Target(from), vec![])];
-                if awake {
+                if phase != "idle" {
                     steps.push((0, Pw(Active), vec![spawn_full(from), video(Video::Unknown)]));
                 }
+                match phase {
+                    "stopping" => steps.push((
+                        0,
+                        Pw(Asleep),
+                        vec![video(Video::Unavailable), Effect::Terminate],
+                    )),
+                    "retrying" => steps.push((0, Exited(Exit::Code(1)), vec![])),
+                    _ => {}
+                }
                 script(&mut m, t0, steps);
+                let running = phase == "running";
                 let (effects, intent) = match input {
-                    Target(target) if awake => (vec![send_target(target)], target),
+                    Target(target) if running => (vec![send_target(target)], target),
                     Target(target) => (vec![], target),
                     _ => (vec![], from),
                 };
-                let shown = format!("{from:?}, awake {awake}, {input:?}");
+                let shown = format!("{from:?}, {phase}, {input:?}");
                 let done: Vec<_> = m
                     .handle(input, t0 + Duration::from_millis(1))
                     .into_iter()

@@ -13,6 +13,17 @@ pub enum Flavor {
     Slim,
 }
 
+impl Flavor {
+    /// The serialized name, such as `full`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Slim => "slim",
+        }
+    }
+}
+
 /// TV power as `com.webos.service.tvpower` reports it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -222,6 +233,7 @@ mod tests {
                 json["flavor"],
                 serde_json::to_value(package.flavor()).unwrap()
             );
+            assert_eq!(json["flavor"], package.flavor().as_str());
         }
     }
 }

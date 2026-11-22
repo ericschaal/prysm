@@ -101,6 +101,9 @@ export function runDemo(
     return facts.flavor === 'full' ? facts.target : null;
   };
   let sent = targetOf();
+  // The full worker reports its engine's failure, as the real one does.
+  if (flavor === 'full')
+    application.watch((snapshot) => supervisor.report(snapshot));
   setInterval(() => {
     const facts = supervisor.facts();
     const capturing =

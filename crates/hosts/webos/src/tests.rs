@@ -326,6 +326,38 @@ async fn an_unconfirmed_release_faults_the_worker() {
     );
 }
 
+/// Lighting turned off by the app over a source that cannot confirm its
+/// release faults the worker the same way: the commanded path, not only a
+/// session's own end.
+#[tokio::test]
+async fn an_unconfirmed_release_on_a_commanded_stop_faults_the_worker() {
+    let settings = source(&FakeSourceSettings {
+        fail_close: true,
+        ..FakeSourceSettings::default()
+    });
+    let (mut peer, _feed, log, task) = start(settings, LightingTarget::ScreenSync);
+    assert!(log.wait_for("output.write:", 1).await);
+    peer.send(Command::Target {
+        target: LightingTarget::Off,
+    });
+    let fault = loop {
+        let event = peer.event().await.unwrap();
+        if matches!(event, Event::Faulted { .. }) {
+            break event;
+        }
+    };
+    let Event::Faulted { cause } = fault else {
+        unreachable!()
+    };
+    assert!(cause.contains("confirming the source's release"), "{cause}");
+    let (result, stop) = task.await.unwrap();
+    assert!(matches!(
+        result,
+        Err(Error::Faulted(SessionPhase::SourceUnreleased))
+    ));
+    assert!(matches!(stop, Some(Stop::Faulted(_))));
+}
+
 /// A new LAN address (a DHCP renewal) is advertised at the next heartbeat.
 #[tokio::test]
 async fn the_portal_url_follows_the_tvs_address() {

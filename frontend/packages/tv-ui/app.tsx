@@ -343,8 +343,9 @@ export function TvApp({
                   {screen.label}
                 </button>
               ) : null}
-              {/* Full without a task: the button's place, kept empty. */}
-              {screen.showPrimary || slim ? null : (
+              {/* No task (full; slim in a phase this app cannot read): the
+                  button's place, kept empty. */}
+              {screen.showPrimary ? null : (
                 <div className="primary-slot" aria-hidden="true" />
               )}
             </section>

@@ -77,13 +77,28 @@ malformed ends the stream or the reply (`Invalid state event.`,
 session state newer than the page), off, reached (`session.state` equals the
 target: screen sync or effects), failed (the session carries a failure),
 starting. Every pair lands on exactly one. Screen sync never carries a
-failure; effects carry one only for saved settings that do not validate (a
-note on the light card). Off keeps a stopped session's failure (settings
-that could not be applied, a switch off that failed): the light card and
-the TV's lights card say it, while the setup path, the section pages and the
-full package's status headline read off as off. A faulted session's
-`message` (what did not finish) is under Details. All of them read that one
-situation, and `describeSituation` gives its words.
+failure. An `effects` session carries one after a start of screen sync
+that failed from the effects (the situation is then failed, and the cards
+add that the effects are still on), or, with the effects as the target,
+for saved settings that do not validate (a note, "Prysm can’t use these
+settings."; another kind is said in its own words). Off keeps a stopped
+session's failure (settings that could not be applied, a switch off that
+failed): the light card and the TV's lights card say it, while the setup
+path and the section pages read off as off. Unknown keeps what it carries:
+the note says Prysm is newer, the failure's words follow it, and its
+message goes under Details; no mode tile is chosen, and Power switches the
+lights off. A faulted session's `message` (what did not finish) is under
+Details, on the light card and the section pages. All of them read that
+one situation, and `describeSituation` gives its words.
+
+The full TV package's status follows the portal's situation once it is
+known: the worker reports its session's failure to the supervisor, and the
+situation says what it means (off is off, effects showing are on). Try
+again is offered only for a failed mode (`screen_sync` or `effects`) and
+sends `setTarget off`, then that target again. Before the portal answers,
+or while the supervisor retries a worker, the supervisor's failure is the
+headline. A worker phase newer than the app shows "Updating…" unless a
+failure is reported.
 
 ## Saving from a page
 

@@ -35,6 +35,9 @@ enum Start {
     ScreenSyncFailed,
     /// Target `Effects` with an output that cannot idle.
     EffectsFailed,
+    /// Target `Off` after screen sync, with an output that cannot idle: the
+    /// lights may not be off.
+    OffFailed,
     /// A session whose source release is unconfirmed.
     Unreleased,
 }
@@ -257,7 +260,14 @@ const CASES: &[Row] = &[
         Failed,
     ),
     //
-    (Start::EffectsFailed, Target(Off), &[], STOPPED, Done),
+    // The lights' state is not known: off is asked of them.
+    (
+        Start::EffectsFailed,
+        Target(Off),
+        &["output.idle:o:Off"],
+        STOPPED,
+        Failed,
+    ),
     (
         Start::EffectsFailed,
         Target(ScreenSync),
@@ -294,6 +304,34 @@ const CASES: &[Row] = &[
         Done,
     ),
     //
+    // Off asked again switches the lights off again; a save that does
+    // nothing about them keeps saying they may not be off, and other
+    // lights end that.
+    (
+        Start::OffFailed,
+        Target(Off),
+        &["output.idle:o:Off"],
+        STOPPED,
+        Failed,
+    ),
+    (
+        Start::OffFailed,
+        Target(ScreenSync),
+        &["source.open:s", "output.open:o"],
+        SYNCING,
+        Done,
+    ),
+    (
+        Start::OffFailed,
+        Target(Effects),
+        &["output.idle:o:Native"],
+        STOPPED,
+        Failed,
+    ),
+    (Start::OffFailed, Process, &[], STOPPED, Failed),
+    (Start::OffFailed, Capture, &[], STOPPED, Failed),
+    (Start::OffFailed, Output, &[], STOPPED, Done),
+    //
     (Start::Unreleased, Target(Off), &[], UNRELEASED, Refused),
     (
         Start::Unreleased,
@@ -320,7 +358,7 @@ fn base(from: Start) -> Settings {
     match from {
         Start::Off | Start::ScreenSync | Start::Effects => {}
         Start::ScreenSyncFromEffects | Start::ScreenSyncFailed => source.fail_open = true,
-        Start::EffectsFailed => output.fail_idle = true,
+        Start::EffectsFailed | Start::OffFailed => output.fail_idle = true,
         Start::Unreleased => source.fail_close = true,
     }
     Settings {
@@ -379,6 +417,11 @@ async fn reach(from: Start, log: &CallLog) -> (EngineHandle, Engine) {
         }
         Start::ScreenSyncFailed => drop(set(ScreenSync).await.unwrap_err()),
         Start::EffectsFailed => drop(set(Effects).await.unwrap_err()),
+        Start::OffFailed => {
+            set(ScreenSync).await.unwrap();
+            assert!(log.wait_for("output.write:o", 1).await);
+            drop(set(Off).await.unwrap_err());
+        }
         Start::Unreleased => {
             set(ScreenSync).await.unwrap();
             assert!(log.wait_for("output.write:o", 1).await);
@@ -499,6 +542,7 @@ fn the_table_covers_every_cell() {
         Start::ScreenSyncFromEffects,
         Start::ScreenSyncFailed,
         Start::EffectsFailed,
+        Start::OffFailed,
         Start::Unreleased,
     ];
     let commands = [

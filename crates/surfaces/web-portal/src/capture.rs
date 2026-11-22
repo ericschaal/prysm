@@ -55,7 +55,14 @@ pub(crate) fn upgrade(
             return refused;
         }
         Answer::Unavailable => {
-            return failure(StatusCode::SERVICE_UNAVAILABLE, Failure::Unavailable { message: "no source receives the capture stream: lighting is off or the capture is not `remote`".into() });
+            let message = "no source receives the capture stream: \
+                           lighting is off or the capture is not `remote`";
+            return failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                Failure::Unavailable {
+                    message: message.into(),
+                },
+            );
         }
     };
     let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());

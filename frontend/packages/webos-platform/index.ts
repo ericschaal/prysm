@@ -65,11 +65,13 @@ export type Worker = State['worker'];
 export type SlimLink = Extract<SlimWorker, { phase: 'running' }>['link'];
 
 /**
- * Lighting is not off (full; a target newer than this app is not read as
- * off), or frames should flow (slim).
+ * A known mode is on (full: screen sync or effects; a target newer than
+ * this app is not counted as on), or frames should flow (slim).
  */
 export function isEnabled(state: State): boolean {
-  return state.flavor === 'full' ? state.target !== 'off' : state.enabled;
+  return state.flavor === 'full'
+    ? state.target === 'screen_sync' || state.target === 'effects'
+    : state.enabled;
 }
 
 /** Frames flow from a running worker (both packages report it). */

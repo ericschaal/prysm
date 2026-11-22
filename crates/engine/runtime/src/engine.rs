@@ -654,7 +654,8 @@ impl Core {
             Ok(Stop::AsAsked(end) | Stop::OnItsOwn(end)) => Ok(end),
             Err(error) => Err(error),
         };
-        let _ = self.ended(end);
+        let result = self.ended(end);
+        log_unpublished(&self.lighting, &result);
     }
 
     /// Why requests are refused unhandled: the engine is faulted, and only a
@@ -688,12 +689,11 @@ impl Core {
         }
     }
 
-    /// Publish `lighting`, keeping the failure published until the command
-    /// in progress records its own ([`Self::record`]) where the new state
-    /// can carry one.
+    /// Publish `lighting` without a failure: a command path, which then
+    /// records its own ([`Self::record`]), so no earlier failure is shown
+    /// beside the new state.
     fn set_lighting(&mut self, lighting: Lighting) {
-        let failure = self.state.borrow().session.failure().cloned();
-        self.set_lighting_and(lighting, failure, |_| {});
+        self.set_lighting_and(lighting, None, |_| {});
     }
 
     /// The only writer of the snapshot's `session`, with `failure` where it
@@ -748,7 +748,8 @@ impl Core {
         if let Some(running) = self.take_running() {
             running.session.join().await;
         }
-        let _ = self.ended(end);
+        let result = self.ended(end);
+        log_unpublished(&self.lighting, &result);
     }
 
     /// A session ended on its own: a failure, or its source ended; seen when
@@ -764,14 +765,6 @@ impl Core {
         };
         let result = end.and_then(SessionEnd::result);
         let failure = result.as_ref().err().cloned();
-        // A fault says only its phase: what failed before it is logged.
-        if let (Lighting::Faulted(phase), Some(error)) = (&lighting, &failure) {
-            tracing::warn!(
-                %phase,
-                error = %prysm_ports::chain(error),
-                "the session faulted after a failure"
-            );
-        }
         let complete = ended && self.state.borrow().target == LightingTarget::ScreenSync;
         self.set_lighting_and(lighting, failure, |s| {
             if complete {
@@ -789,9 +782,29 @@ impl Core {
         if target != LightingTarget::ScreenSync {
             self.calibrate(None);
         }
-        let result = self.reconcile(false, false).await;
+        let result = if target == LightingTarget::Off && self.off_may_not_be_off().is_some() {
+            // Asked again while the lights may not be off: switch them off
+            // again.
+            self.idle_output(IdleMode::Off).await
+        } else {
+            self.reconcile(false, false).await
+        };
         self.record(&result);
         result
+    }
+
+    /// No session, and the published failure is the output's: the lights
+    /// may not be off.
+    fn off_may_not_be_off(&self) -> Option<Error> {
+        if !matches!(self.lighting, Lighting::Stopped) {
+            return None;
+        }
+        self.state
+            .borrow()
+            .session
+            .failure()
+            .filter(|failure| failure.section() == Some(Section::Output))
+            .cloned()
     }
 
     async fn replace_settings(
@@ -882,6 +895,12 @@ impl Core {
             (LightingTarget::Effects, _) => self.idle_output(IdleMode::Native).await,
             (LightingTarget::Off, Lighting::ScreenSync(_)) => self.stop(IdleMode::Off).await,
             (LightingTarget::Off, Lighting::Effects) => self.idle_output(IdleMode::Off).await,
+            // A command that does nothing about the output keeps a failure
+            // that says the lights may not be off: it is still true. Other
+            // lights make it no longer so.
+            (LightingTarget::Off, Lighting::Stopped) if !output_changed => {
+                self.off_may_not_be_off().map_or(Ok(()), Err)
+            }
             (LightingTarget::Off, Lighting::Stopped) => Ok(()),
         }
     }
@@ -1068,16 +1087,15 @@ impl Core {
 
     /// Publish `result` as the session's failure. Without one, a store that
     /// could not be read, or saved settings that do not validate (loaded
-    /// that way), stay reported until replaced. A fault says its phase
-    /// itself, and a failure beside running screen sync explains nothing
-    /// shown: that one is logged.
+    /// that way), stay reported until replaced. A fault carries no failure,
+    /// so what ended in it is logged ([`unpublished`]). Running screen sync
+    /// is reached only by a command that succeeded.
     fn record(&self, result: &Result<()>) {
-        if let (Err(error), Lighting::ScreenSync(_)) = (result, &self.lighting) {
-            tracing::warn!(
-                error = %prysm_ports::chain(error),
-                "a failure that does not explain the lighting is not published"
-            );
-        }
+        debug_assert!(
+            !(result.is_err() && matches!(self.lighting, Lighting::ScreenSync(_))),
+            "a failure beside running screen sync: {result:?}"
+        );
+        log_unpublished(&self.lighting, result);
         self.state.send_modify(|s| {
             let failure = match result {
                 Err(error) => Some(error.clone()),
@@ -1121,6 +1139,31 @@ async fn next(lighting: &mut Lighting) -> Event {
     }
 }
 
+/// The error a fault leaves unpublished: what ended in it, when that is not
+/// the fault itself. A fault's state carries only its phase.
+fn unpublished<'a>(
+    lighting: &Lighting,
+    result: &'a Result<()>,
+) -> Option<(SessionPhase, &'a Error)> {
+    match (lighting, result) {
+        (Lighting::Faulted(phase), Err(error)) if !matches!(error, Error::Faulted(_)) => {
+            Some((*phase, error))
+        }
+        _ => None,
+    }
+}
+
+/// Log what [`unpublished`] finds, so a fault's cause is never lost.
+fn log_unpublished(lighting: &Lighting, result: &Result<()>) {
+    if let Some((phase, error)) = unpublished(lighting, result) {
+        tracing::warn!(
+            %phase,
+            error = %prysm_ports::chain(error),
+            "lighting faulted after this failure"
+        );
+    }
+}
+
 /// A session that ended on its own while being stopped for the lights' own
 /// effects: what it leaves, and the reply. The effects replace what the
 /// session ended with, so its failure is logged, not published; the reply
@@ -1145,6 +1188,34 @@ mod tests {
 
     fn failure() -> Error {
         Error::other("cannot idle").in_section(Section::Output)
+    }
+
+    /// What a fault leaves unpublished is logged; a failure a stopped or
+    /// effects state carries, a fault's own error and success are not.
+    #[test]
+    fn a_fault_logs_the_error_it_ended_in() {
+        use SessionPhase::{ClosingSource, SourceUnreleased};
+        let release = || Err(Error::other("cannot close").in_section(Section::Capture));
+        let cases: [(Lighting, Result<()>, Option<SessionPhase>); 6] = [
+            (Lighting::UNRELEASED, release(), Some(SourceUnreleased)),
+            (
+                Lighting::Faulted(ClosingSource),
+                Err(Error::Panicked("session thread")),
+                Some(ClosingSource),
+            ),
+            (
+                Lighting::UNRELEASED,
+                Err(Error::Faulted(SourceUnreleased)),
+                None,
+            ),
+            (Lighting::UNRELEASED, Ok(()), None),
+            (Lighting::Stopped, release(), None),
+            (Lighting::Effects, release(), None),
+        ];
+        for (lighting, result, logged) in cases {
+            let found = unpublished(&lighting, &result).map(|(phase, _)| phase);
+            assert_eq!(found, logged, "{result:?}");
+        }
     }
 
     /// Every way a session can end, against what it leaves, and against

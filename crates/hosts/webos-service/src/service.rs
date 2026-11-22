@@ -312,11 +312,10 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         if self.config.flavor == flavor {
             return Ok(());
         }
-        let package = match flavor {
-            Flavor::Full => "full",
-            Flavor::Slim => "slim",
-        };
-        Err(format!("{method} is only for the {package} package"))
+        Err(format!(
+            "{method} is only for the {} package",
+            flavor.as_str()
+        ))
     }
 
     /// A `tvpower` subscription reply.

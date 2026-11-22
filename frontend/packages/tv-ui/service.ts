@@ -288,16 +288,16 @@ export function useTvService(service: TvService, active: boolean) {
       ),
     /**
      * Full package: off and on again, as after a failure, back to the target
-     * that failed (screen sync when it was off, or newer than this app).
+     * that failed. Only a mode is tried again: nothing is sent for `off` or
+     * a target newer than this app.
      */
     retry: () =>
       run(
         async () => {
           const failed = state?.flavor === 'full' ? state.target : 'off';
+          if (failed !== 'screen_sync' && failed !== 'effects') return;
           await service.setTarget('off');
-          await service.setTarget(
-            failed === 'off' || failed === 'unknown' ? 'screen_sync' : failed,
-          );
+          await service.setTarget(failed);
         },
         '',
         'Couldn’t start.',

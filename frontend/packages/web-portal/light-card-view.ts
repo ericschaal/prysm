@@ -7,6 +7,7 @@ import {
   describeSituation,
   plainFailure,
   situationFailure,
+  unreachable,
   type Failure,
   type LightingFailure,
   type LightingMode,
@@ -56,6 +57,8 @@ export function moodOf(lighting: LightingSituation, configured: boolean): Mood {
       return 'starting';
     case 'off':
       return 'off';
+    default:
+      return unreachable(lighting);
   }
 }
 
@@ -138,6 +141,11 @@ export interface LightCardView {
   reasons: Record<LightingMode, string | null>;
   /** The chosen mode: the one on, else the one the power button turns on. */
   mode: LightingMode;
+  /**
+   * The mode tile shown as chosen: `mode`, or `null` while the target is
+   * newer than this page (no tile is checked).
+   */
+  chosen: LightingMode | null;
   /** Why the power button cannot work now, or `null`. */
   powerReason: string | null;
   word: Word;
@@ -166,8 +174,10 @@ export function lightCardView(
   const { target, lighting, device, output } = facts;
   const effects = output?.effects ?? 'Device effects';
   const faulted = lighting.kind === 'faulted';
-  // A target newer than this page turns no known mode on.
-  const on = target === 'screen_sync' || target === 'effects';
+  // A target newer than this page is no mode, yet the lights may be on:
+  // Power then switches them off.
+  const on = target !== 'off';
+  const known = target === 'screen_sync' || target === 'effects';
   const configured = facts.hasCapture && facts.hasOutput;
 
   const reasonOf = (unavailable: string | null) =>
@@ -176,7 +186,7 @@ export function lightCardView(
     screen_sync: reasonOf(missingSetup(facts.hasCapture, facts.hasOutput)),
     effects: reasonOf(missingEffects(facts.hasOutput, output?.effects)),
   };
-  let mode: LightingMode = on ? target : remembered;
+  let mode: LightingMode = known ? target : remembered;
   const other = mode === 'screen_sync' ? 'effects' : 'screen_sync';
   if (!on && reasons[mode] && !reasons[other]) mode = other;
   const powerReason = on ? reasonOf(null) : reasons[mode];
@@ -201,9 +211,20 @@ export function lightCardView(
   } | null = null;
   if (!faulted && error)
     problem = { failure: error.failure, target: error.asked };
-  // With the effects on, a failure is settings that do not validate: a note.
-  else if (!faulted && failure && lighting.kind !== 'effects')
+  // With the effects on, or a state newer than this page, the failure is
+  // said with what the lights do (below).
+  else if (
+    !faulted &&
+    failure &&
+    lighting.kind !== 'effects' &&
+    lighting.kind !== 'unknown'
+  )
     problem = { failure, target };
+  // A start of screen sync that failed from the effects leaves them on.
+  const stillOn =
+    lighting.kind === 'failed' && lighting.effectsOn
+      ? ` ${effects} are still on.`
+      : '';
   // The card's one line of words, only when it says what the card does not.
   const showing =
     lit && lighting.kind === 'sync' && !!lighting.input?.receiving;
@@ -213,30 +234,44 @@ export function lightCardView(
   if (problem)
     info = {
       tone: 'problem',
-      text: plainFailure(problem.failure, problem.target, effects),
+      text: `${plainFailure(problem.failure, problem.target, effects)}${stillOn}`,
       details: problem.failure.message,
       retry: lighting.kind === 'failed',
     };
   else if (lighting.kind === 'effects' && lighting.failure)
-    info = {
-      tone: 'note',
-      text: 'Prysm can’t use these settings.',
-      details: lighting.failure.message,
-    };
+    info =
+      lighting.failure.kind === 'invalid'
+        ? {
+            tone: 'note',
+            text: 'Prysm can’t use these settings.',
+            details: lighting.failure.message,
+          }
+        : {
+            tone: 'problem',
+            text: plainFailure(lighting.failure, target, effects),
+            details: lighting.failure.message,
+          };
   else if (faulted)
     info = {
       tone: 'problem',
-      text: 'Restart Prysm to recover.',
+      text: 'Prysm stopped responding. Restart Prysm to recover.',
       details: lighting.message,
       retry: false,
     };
-  else if (lighting.kind === 'unknown')
+  else if (lighting.kind === 'unknown') {
+    // The note stays; what the state carries goes with it.
+    const said = lighting.failure
+      ? ` ${plainFailure(lighting.failure, 'unknown', effects)}`
+      : '';
+    const details = [lighting.failure?.message, lighting.message]
+      .filter((text) => !!text)
+      .join(' ');
     info = {
       tone: 'note',
-      text: 'Update it to see what the lights do.',
-      details: lighting.message ?? undefined,
+      text: `Prysm is newer than this page. Reload it to see what the lights do.${said}`,
+      details: details || undefined,
     };
-  else if (device.issue && lighting.kind === 'sync')
+  } else if (device.issue && lighting.kind === 'sync')
     info = { tone: 'warning', text: describeOutputIssue(device.issue) };
   // While screen sync shows: LED counts that differ leave some LEDs dark or
   // some colours unshown, so they come first; then the lights' own
@@ -272,6 +307,7 @@ export function lightCardView(
     on,
     reasons,
     mode,
+    chosen: target === 'unknown' ? null : mode,
     powerReason,
     word,
     palette,
