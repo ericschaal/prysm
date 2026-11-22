@@ -64,3 +64,10 @@ export const captureDefaults = {
     "width": 640
   }
 } as const;
+
+export const processingMaxima = {
+  "brightness_ramp_seconds": 2,
+  "dark_floor_percent": 20,
+  "sample_density": 512,
+  "smoothing_seconds": 2
+} as const;

@@ -135,7 +135,9 @@ impl<'de> Visitor<'de> for SettingsObject {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> std::result::Result<Settings, A::Error> {
-        Settings::deserialize(value::MapAccessDeserializer::new(WithoutFormat(map)))
+        <Settings as Deserialize>::deserialize(value::MapAccessDeserializer::new(WithoutFormat(
+            map,
+        )))
     }
 }
 

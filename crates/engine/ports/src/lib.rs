@@ -9,6 +9,7 @@ mod calibrations;
 pub mod capture_size;
 mod error;
 mod handoff;
+mod map_only;
 mod modes;
 mod owner;
 mod registry;
@@ -42,3 +43,7 @@ pub use snapshot::{
     Behind, DeviceReport, Input, Latency, LightingTarget, SessionPhase, SessionState, Snapshot,
 };
 pub use style::{Style, StyleValues};
+
+/// For [`map_only!`] in other crates.
+#[doc(hidden)]
+pub use serde as __serde;

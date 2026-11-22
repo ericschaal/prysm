@@ -2108,6 +2108,7 @@ name = "prysm-processor"
 version = "0.0.0"
 dependencies = [
  "prysm-core",
+ "prysm-ports",
  "prysm-processor",
  "rayon",
  "tracing",

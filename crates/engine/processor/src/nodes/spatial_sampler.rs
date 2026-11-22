@@ -642,8 +642,7 @@ mod tests {
 
     #[test]
     fn a_4k_picture_at_the_most_detail_has_the_weights_of_640x360() {
-        // `prysm_ports::Processing::MAX_SAMPLE_DENSITY`.
-        let density = SampleDensity(1024);
+        let density = SampleDensity(usize::from(prysm_ports::Processing::MAX_SAMPLE_DENSITY));
         let mut large = Configured::new(density, 10);
         large.prepare(3840, 2160);
         let mut budget = Configured::new(density, 10);

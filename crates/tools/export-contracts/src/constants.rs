@@ -1,6 +1,6 @@
 //! Server-known values the frontends use as they are, so they keep no copy:
 //! generated into `@prysm/contracts/constants` as `export const` values.
-use prysm_ports::{Style, StyleValues};
+use prysm_ports::{Processing, Style, StyleValues};
 use prysm_protocol::schema::OpenApi;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -14,7 +14,20 @@ pub fn serialized(documents: &BTreeMap<&str, OpenApi>) -> serde_json::Result<Val
     Ok(json!({
         "builtInStyles": shortest(&built_in_styles())?,
         "captureDefaults": capture_defaults(documents)?,
+        "processingMaxima": processing_maxima(),
     }))
+}
+
+/// The most each processing control with a named limit takes, by field
+/// (`processing.sample_density`, the style values'): the portal's sliders end
+/// there.
+fn processing_maxima() -> Value {
+    json!({
+        "sample_density": Processing::MAX_SAMPLE_DENSITY,
+        "smoothing_seconds": StyleValues::MAX_SMOOTHING_SECONDS,
+        "brightness_ramp_seconds": StyleValues::MAX_BRIGHTNESS_RAMP_SECONDS,
+        "dark_floor_percent": StyleValues::MAX_DARK_FLOOR_PERCENT,
+    })
 }
 
 /// `value` read back from its text, so an `f32` keeps its shortest form
@@ -90,6 +103,22 @@ mod tests {
         }
         assert!(styles.get("custom").is_none());
         assert_eq!(styles["natural"]["smoothing_seconds"], json!(0.3));
+    }
+
+    #[test]
+    fn processing_maxima_are_published_as_the_schema_states_them() {
+        let published = serialized(&crate::documents().unwrap()).unwrap();
+        let document = serde_json::to_value(&crate::documents().unwrap()["application"]).unwrap();
+        let schemas = &document["components"]["schemas"];
+        for (field, maximum) in published["processingMaxima"].as_object().unwrap() {
+            let schema = if field == "sample_density" {
+                &schemas["Processing"]
+            } else {
+                &schemas["StyleValues"]
+            };
+            let stated = schema["properties"][field]["maximum"].as_f64();
+            assert_eq!(stated, maximum.as_f64(), "{field}");
+        }
     }
 
     /// Every capture kind a host registers, with the fields that have a

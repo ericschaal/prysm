@@ -430,7 +430,7 @@ lighting failure, in `State.session.failure`.
 
 | Status | `kind` | When |
 | --- | --- | --- |
-| 400 | `bad_request` | A body that is not JSON, or a problem outside the settings it carries: a top-level field unknown, missing or of the wrong type (`expected`, `settings` itself, `target`, a calibration pattern's fields, a `processing` or capture body of the wrong type as a whole) |
+| 400 | `bad_request` | A body that is not JSON (also a number JSON cannot hold, such as `1e999`, wherever it is), or a problem outside the settings it carries: a top-level field unknown, missing or of the wrong type (`expected`, `settings` itself, `target`, a calibration pattern's fields, a `processing` or capture body of the wrong type as a whole) |
 | 403 | `forbidden` | An `Origin` that is neither the portal's own nor allowed (`origin denied`) |
 | 404 | `not_found` | Unknown route or asset (and `/metrics` when disabled), a candidates path without `capture/<kind>` or `output/<kind>` |
 | 405 | `method_not_allowed` | Known API path (or enabled `/metrics`), wrong method |

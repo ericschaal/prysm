@@ -1,8 +1,11 @@
 use prysm_ports::ValidationError;
 use prysm_ports::capture_size::{
-    default_fps, default_height, default_width, validate_capture_size,
+    MAX_FPS, default_fps, default_height, default_width, validate_capture_size,
 };
 use serde::{Deserialize, Serialize};
+
+// `schema(...)` takes literals only: the rate's maximum below is spelled out.
+const _: () = assert!(MAX_FPS == 120);
 
 /// `{ "kind": "device", "path": "/dev/video0", "width": 640, "height": 360, "fps": 30 }`
 ///

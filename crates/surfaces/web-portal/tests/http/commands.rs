@@ -278,9 +278,11 @@ async fn a_processing_trial_applies_without_saving() {
         let (status, body) = put(style).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["field"], "processing.style.kind");
-        let (status, body) = put(json!(3)).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["kind"], "bad_request");
+        for whole in [json!(3), json!([])] {
+            let (status, body) = put(whole.clone()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{whole}");
+            assert_eq!(body["kind"], "bad_request");
+        }
 
         let get = portal
             .request(Method::GET, "/api/v1/processing/trial")
@@ -515,6 +517,13 @@ async fn invalid_settings_are_unprocessable_and_not_saved() {
                 calibrations,
                 "processing.calibrations[1].id",
             ),
+            (None, "processing", json!([]), "processing"),
+            (
+                Some("processing"),
+                "calibrations",
+                json!([{ "id": "a", "name": "A", "correction": [] }]),
+                "processing.calibrations[0].correction",
+            ),
             (None, "capture", json!({ "path": "x" }), "capture"),
             (None, "output", json!(3), "output"),
         ] {
@@ -550,6 +559,7 @@ async fn a_malformed_settings_request_is_a_bad_request() {
             json!({ "expected": initial, "settings": settings, "force": true }).to_string(),
             json!({ "settings": settings }).to_string(),
             json!({ "expected": initial, "settings": 3 }).to_string(),
+            json!({ "expected": initial, "settings": [] }).to_string(),
             json!([]).to_string(),
             "{".to_owned(),
             format!("{valid} {{}}"),

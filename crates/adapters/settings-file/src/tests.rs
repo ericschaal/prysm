@@ -135,6 +135,27 @@ fn unknown_field_is_rejected_with_its_name_and_the_path() {
     }
 }
 
+/// A section is an object: an array is not read as its defaults, by position.
+#[test]
+fn a_section_written_as_an_array_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    for text in [
+        r#"{ "format": 1, "processing": [] }"#,
+        r#"{ "format": 1, "processing": { "calibrations": [{ "id": "a", "name": "A", "correction": [] }] } }"#,
+        r#"{ "format": 1, "processing": [80] }"#,
+    ] {
+        fs::write(&path, text).unwrap();
+        let error = SettingsFile::new(&path).load().unwrap_err();
+        let message = full_message(&error);
+        assert!(
+            message.contains("invalid type: sequence"),
+            "{text}: {message}"
+        );
+        assert!(error.cause::<serde_json::Error>().is_some());
+    }
+}
+
 /// What `load` refuses for the file's format.
 fn format_error(text: &str) -> (FormatError, String) {
     let directory = tempfile::tempdir().unwrap();
