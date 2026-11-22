@@ -17,7 +17,7 @@ prysm-ports.workspace = true
 prysm-webos-link.workspace = true
 serde.workspace = true
 tracing.workspace = true
-nix = { version = "0.31", features = ["fs", "process", "signal", "user"] }
+nix = { version = "0.32", features = ["fs", "process", "signal", "user"] }
 # FFI lives in its own crate so this one stays under the workspace's `unsafe_code = "forbid"`.
 prysm-capture-webos-sys = { path = "../capture-webos-sys" }
 utoipa = { workspace = true, optional = true }
