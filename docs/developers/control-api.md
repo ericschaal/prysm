@@ -33,8 +33,11 @@ portal's own pages are those whose `Origin` is `http://` or `https://` plus
 the request's `Host`, so a reverse proxy that serves the portal over HTTPS
 and forwards `Host` needs no option; one that rewrites `Host` needs
 `--allow-origin https://prysm.example.com`. `Host` is not checked, so DNS
-rebinding is not prevented. The full TV worker allows any origin. Keep the
-portal on a trusted LAN, or bind it to `127.0.0.1` with `--listen`.
+rebinding is not prevented. The full TV worker allows `null`, the origin of
+its `file://` TV app. Allowing `null` stops ordinary pages of other sites,
+but not a deliberate attacker: any site can put its script in a sandboxed
+frame, whose origin is `null` too. Keep the portal on a trusted LAN, or bind
+it to `127.0.0.1` with `--listen`.
 
 Candidates and capture modes are lookups the portal runs off the engine's
 mailbox, each once at a time: who asks the same while it runs gets its
@@ -82,4 +85,5 @@ Prysm's colours; Prysm reports it and never changes it. `device.led_count`
 configured edges' total, and the portal warns while the two differ.
 
 On SIGINT or SIGTERM the host stops the session (output idled off), lets open
-requests finish for up to 5 s, and exits non-zero if shutdown failed.
+requests finish for up to 5 s, and exits non-zero if shutdown failed. A
+second SIGINT or SIGTERM meanwhile exits at once with code 130.

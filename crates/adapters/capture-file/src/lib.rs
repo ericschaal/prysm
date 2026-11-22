@@ -3,8 +3,11 @@
 //!
 //! - [`FileSource`]: the factory registered under kind `"file"`.
 //! - [`FileSettings`]: its human-editable settings and typed validation.
-//! - `source`: the running FFmpeg child; reads raw RGB24 frames from its
-//!   stdout and keeps a bounded tail of its stderr for failures.
+//! - `source`: the running FFmpeg child, in a process group of its own;
+//!   reads raw RGB24 frames from its stdout and keeps a bounded tail of its
+//!   stderr for failures. `close` and drop kill the group and reap it.
+//! - [`kill_remaining`]: for a host that exits without closing a session,
+//!   kills the FFmpeg children still running.
 //!
 //! Development only: requires FFmpeg 9+ on `PATH` (its `scale` filter maps HDR
 //! to sRGB), which neither the Docker image nor the Debian package ships. FFmpeg
@@ -13,9 +16,11 @@
 //! the session stops without a failure and lighting turns off; starting
 //! lighting again replays the file. With `repeat` FFmpeg loops the file and
 //! the source never ends.
+mod players;
 mod settings;
 mod source;
 
+pub use players::kill_remaining;
 pub use settings::FileSettings;
 
 /// The longest a file source's `close` takes: FFmpeg killed and reaped.

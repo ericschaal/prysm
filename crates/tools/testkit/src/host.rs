@@ -82,6 +82,11 @@ impl Host {
         address.rsplit(':').next().unwrap().parse().unwrap()
     }
 
+    /// The host's process ID, for signals of a test's own.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// SIGTERM, then wait for exit; collects the rest of stderr.
     pub fn terminate(mut self) -> (ExitStatus, Vec<String>) {
         let killed = Command::new("kill")

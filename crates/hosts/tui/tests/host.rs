@@ -2,11 +2,8 @@
 //! while lighting and the portal keep running.
 
 use prysm_capture_device::DeviceSource;
-use prysm_capture_file::FileSource;
-use prysm_capture_remote::RemoteReceiver;
-use prysm_output_wled::Wled;
-use prysm_ports::{Registry, SettingsStore};
-use prysm_runtime::NullOutput;
+use prysm_ports::SettingsStore;
+use prysm_runtime::Prysm;
 use prysm_settings_file::SettingsFile;
 use prysm_testkit::host::{Host, check_arguments, check_settings, get, null_settings, put_target};
 
@@ -48,21 +45,24 @@ fn without_a_terminal_lighting_and_portal_keep_running_until_sigterm() {
     assert!(status.success(), "{stderr:#?}");
 }
 
+/// Validated with the adapters the hosts register.
 #[test]
 fn example_settings_load_and_validate() {
-    let mut registry = Registry::default();
-    registry.add_source(DeviceSource);
-    registry.add_source(FileSource);
-    registry.add_source(RemoteReceiver::default());
-    registry.add_output(Wled::default());
-    registry.add_output(NullOutput);
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/settings.example.json");
-    let settings = SettingsFile::new(path).load().unwrap().unwrap();
-    registry.validate(&settings).unwrap();
+    let check = |path: &str| {
+        let (adapters, _) = prysm_host::desktop_adapters(DeviceSource);
+        adapters(Prysm::builder(SettingsFile::new(path)))
+            .check()
+            .unwrap();
+        SettingsFile::new(path).load().unwrap().unwrap()
+    };
+    let settings = check(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/settings.example.json"
+    ));
     assert_eq!(settings.output.unwrap().kind, "null");
-
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/settings.file.example.json");
-    let settings = SettingsFile::new(path).load().unwrap().unwrap();
-    registry.validate(&settings).unwrap();
+    let settings = check(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/settings.file.example.json"
+    ));
     assert_eq!(settings.capture.unwrap().kind, "file");
 }

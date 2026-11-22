@@ -54,7 +54,12 @@ neither has a listener of its own:
   to the receiver; else `Connection`, whose `WireError::Closed` cause names
   the receiver's close code. `refuse(reason)` and `refuse_encoding(reason)`
   refuse the request for the caller's own reasons. Nothing switches encoder
-  or encoding on its own.
+  or encoding on its own. `RemoteSender::connect_until(…, &hangup)` connects
+  the same way; `Hangup::cut` then shuts its socket down, which ends a
+  connect (the socket is connecting before a cut can reach it), read or
+  write in progress at once, and fails every later `connect_until` with
+  that `Hangup`. Every call the cut ends fails with the cause `Stopping`. A
+  host cuts it when it stops.
 
 A new request needs a new connection: the engine reopens the source when the
 capture settings change, which closes the connection as *stopped*, and the
@@ -98,7 +103,7 @@ it in `Sec-WebSocket-Protocol`, the portal answers `101` with it, or
 the sender offers none of them. The sender then fails with
 `WireError::Version { ours, theirs }` (`theirs` the highest version the
 `426` lists; `None` when it lists none); the slim TV worker shows it as a
-failure of kind `version` and retries every 10 s.
+failure of kind `version` and retries every second.
 
 **Versions.** The number rises only when a peer of the previous number can
 no longer work with this one: a field removed or its meaning changed, the
@@ -154,8 +159,8 @@ release with a refusal.
   settings' fields, every one required. It is fixed for the connection.
   Messages of other types may come before it and are skipped. A sender that
   gets a frame or a keyframe request first fails with `Unexpected`, one that
-  gets no request within 3 s, or a close without a code, with `NoRequest`,
-  one closed with a code first with `Closed`. One it cannot parse (`Json`), that fails
+  gets no request within the connect's deadline, or a close without a
+  code, with `NoRequest`, one closed with a code first with `Closed`. One it cannot parse (`Json`), that fails
   validation or that its offer excludes (`Request`) it refuses, cause
   `request`.
 - Receiver → sender, any time after: `{"type":"keyframe"}`, the next H.264
@@ -178,11 +183,17 @@ sender reads them as `WireError::Closed(Some(Close::…))`:
 
 | Code | `Close` | When | The slim TV |
 | --- | --- | --- | --- |
-| 4000 | `Stopped` | The source closed (lighting stopped, or the capture settings changed) or failed (the sender refused the request, its H.264 keyframe does not decode, or no decoder starts); also, before the request, a newer sender that connected while the source closed | Releases capture and encoder, shows *paused*, reconnects every second. Before the request it is a failed connect: the TV shows *waiting* (or keeps *paused*) and retries every second |
+| 4000 | `Stopped` | The source closed (lighting stopped, or the capture settings changed); also, before the request, a newer sender that connected while the source closed | Releases capture and encoder, shows *paused*, reconnects every second. Before the request it is a failed connect: the TV shows *waiting* (or keeps *paused*) and retries every second |
 | 4001 | `Replaced` | A newer sender's connection replaced this one | Releases capture and encoder, shows a failure of kind `replaced`, connects no more until the worker restarts (capture stopped and started, the TV waking, or a new Prysm address) |
+| 4002 | `Failed` | The source failed after its request: the sender refused it, its H.264 keyframe does not decode, or no decoder starts. The source's failure says why | Releases capture and encoder, shows a failure of kind `receiver_failed`, reconnects every second |
 
 Any other close, or none (a crash, the network), is a dropped connection:
-the slim TV keeps capturing and reconnects every second.
+the slim TV keeps capturing and reconnects every second. So a sender that
+predates a close code (4002 is the newest) reads it as a dropped connection:
+an older slim TV keeps its capture and encoder open after a 4002 and
+reconnects every second, where a 4000 had released them. It still works with
+this receiver (a close code is an addition, see **Versions**), so the
+version stays.
 
 **Binary messages** are frames only (sender → receiver): an 8-byte header,
 then the payload; the payload's length is the rest of the message.
@@ -245,12 +256,16 @@ every connection).
   a connection (up to about a second), connections handed over wait, and
   each replaces the one before it, which closes without a close code; its
   sender sees a dropped connection and reconnects.
-- **Timeouts.** Sender: 3 s for the connection and the upgrade (with TLS),
-  3 s for the request, 2 s per write (a receiver that stops reading fails
-  the send). Receiver: reads wake every 50 ms to check for `close` and newer
+- **Timeouts.** Sender: one deadline of 2.25 s for the connection, the
+  upgrade (with TLS) and the request, however slowly the receiver answers
+  ([`CONNECT_DEADLINE`](src/sender.rs): the receiver's 1 s close write, 1 s
+  linger and one 50 ms read for a connection the new one replaces, plus
+  200 ms); 2 s for each message sent, however many writes it takes (a
+  receiver that reads slowly or not at all fails the send).
+  Receiver: reads wake every 50 ms to check for `close` and newer
   connections; a quiet connection is kept open; 1 s per write. After
-  closing a connection it asked for frames as *stopped* or *replaced* it
-  reads and discards the sender's frames for up to 1 s, until the sender
+  closing a connection it asked for frames as *stopped*, *replaced* or
+  *failed* it reads and discards the sender's frames for up to 1 s, until the sender
   answers the close or the connection ends: closing a socket with unread
   frames resets the connection, which could lose the close code (through a
   TLS proxy, say). A `close` during the wait for a replaced sender closes

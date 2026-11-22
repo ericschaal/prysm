@@ -91,9 +91,8 @@ impl Leave {
         match self {
             Self::SenderGone(_) | Self::Malformed(_) => Ending::Drop,
             Self::Replaced(_) => Ending::CloseAndDrain(Close::Replaced),
-            // A failed source takes no other connection: the sender is told
-            // it stopped, not to reconnect at once.
-            Self::Stopped | Self::Failed(_) => Ending::CloseAndDrain(Close::Stopped),
+            Self::Stopped => Ending::CloseAndDrain(Close::Stopped),
+            Self::Failed(_) => Ending::CloseAndDrain(Close::Failed),
             Self::StoppedUnasked => Ending::Close(Some(Close::Stopped)),
             // The sender, still waiting for a request, fails with
             // `NoRequest`; it checks the request against its offer itself.
@@ -531,7 +530,7 @@ mod tests {
             ),
             (
                 Leave::Failed(failure()),
-                Ending::CloseAndDrain(Close::Stopped),
+                Ending::CloseAndDrain(Close::Failed),
                 Went::Fail,
             ),
             (

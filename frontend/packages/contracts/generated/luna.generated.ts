@@ -21,13 +21,16 @@ export interface components {
          *     `receiver` (slim): the receiver is unavailable (not lighting, unreachable,
          *     or its name does not resolve); the worker keeps reconnecting. `version`
          *     (slim): Prysm speaks another capture stream version; the older one needs
-         *     updating, and the worker retries every 10 s. `replaced` (slim): another
+         *     updating, and the worker keeps reconnecting. `replaced` (slim): another
          *     TV took over the stream at Prysm; this one stopped sending until the
          *     worker restarts (capture stopped and started, the TV waking, or a new
-         *     Prysm address). `other`: anything else.
+         *     Prysm address). `receiver_failed` (slim): Prysm's receiving source failed
+         *     with this TV's stream (a refusal, a keyframe that does not decode, no
+         *     decoder), and Prysm shows why; the worker released the capture and keeps
+         *     reconnecting. `other`: anything else.
          * @enum {string}
          */
-        FailureKind: "encoder" | "receiver" | "version" | "replaced" | "other";
+        FailureKind: "encoder" | "receiver" | "version" | "replaced" | "receiver_failed" | "other";
         /** @description The full package's worker process, as `{ "phase": … }`. */
         FullWorker: {
             /** @enum {string} */
@@ -134,8 +137,8 @@ export interface components {
          *     receiver stopped the stream because its lighting is off; the TV capture
          *     is released until a receiver takes a connection again, not a failure.
          *     `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
-         *     `failed`: the encoder, version or replaced failure. The state's own
-         *     `failure` is the one to show.
+         *     `failed`: the encoder, version, replaced or receiver-failed failure. The
+         *     state's own `failure` is the one to show.
          */
         SlimLink: {
             /** @enum {string} */

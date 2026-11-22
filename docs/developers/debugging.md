@@ -33,7 +33,7 @@
   portal shows the received rate and the preview; a TV of another stream
   version reports the failure kind `version` (the TV app says "Update Prysm
   and TV app"; the reason in its diagnostics names both versions) and
-  retries every 10 s.
+  retries every second.
 
 ## Logs
 
@@ -44,7 +44,9 @@ processing crates, filtered by `RUST_LOG` (default `warn,prysm=info`):
 RUST_LOG=debug cargo run -p prysm-headless -- settings.json
 ```
 
-While `prysm-tui` shows its preview, logs go only to `--log-file PATH`. The TV
+While `prysm-tui` shows its preview on the terminal stderr writes to, logs go
+only to `--log-file PATH`; a panic's message is printed once the terminal is
+restored. The TV
 workers log to stderr, which the supervisor keeps (the last 20 lines show in
 the TV app's **View diagnostics**).
 

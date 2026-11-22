@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 /// How long a source may block before the loop rechecks its stop flag.
-pub(crate) const TICK: Duration = Duration::from_millis(50);
+pub const TICK: Duration = Duration::from_millis(50);
 
 #[derive(Default)]
 pub(crate) struct Flags {

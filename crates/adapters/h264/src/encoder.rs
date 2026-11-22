@@ -213,10 +213,11 @@ impl Encoder {
                 && limits.height().contains(height)
         });
         let Some((y, uv)) = planes else {
-            return Err(H264Error::Input(format!(
-                "{width}x{height} {}",
-                frame.format()
-            )));
+            return Err(H264Error::Input {
+                width,
+                height,
+                format: frame.format(),
+            });
         };
         if self
             .session
@@ -266,9 +267,7 @@ impl Encoder {
         };
         let keyframe = !session.started;
         if keyframe && kind != FrameKind::Idr {
-            return Err(H264Error::Encoder(
-                "an encoder session must start with an IDR picture".into(),
-            ));
+            return Err(H264Error::StartedWithoutIdr);
         }
         session.started = true;
         Ok(Encoded::Picture { keyframe })
@@ -311,7 +310,11 @@ mod tests {
         let small = frame(14, 16, 0, (128, 128));
         assert!(matches!(
             Encoder::new(ok).unwrap().encode(&small),
-            Err(H264Error::Input(_))
+            Err(H264Error::Input {
+                width: 14,
+                height: 16,
+                ..
+            })
         ));
         for bitrate in [BITRATE.start() - 1, BITRATE.end() + 1] {
             assert!(matches!(
@@ -321,7 +324,7 @@ mod tests {
         }
         let mut encoder = Encoder::new(ok).unwrap();
         let rgb = Frame::new(vec![0; 32 * 32 * 3], 32, 32, prysm_core::PixelFormat::RGB24).unwrap();
-        assert!(matches!(encoder.encode(&rgb), Err(H264Error::Input(_))));
+        assert!(matches!(encoder.encode(&rgb), Err(H264Error::Input { .. })));
         let full = Frame::new(
             vec![0; 32 * 32 * 3 / 2],
             32,
@@ -332,7 +335,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(encoder.encode(&full), Err(H264Error::Input(_))));
+        assert!(matches!(
+            encoder.encode(&full),
+            Err(H264Error::Input { .. })
+        ));
     }
 
     #[cfg(not(feature = "hardware"))]
@@ -359,7 +365,7 @@ mod tests {
         let mut encoder = Encoder::new(EncoderSettings::new(Backend::Hardware, 30)).unwrap();
         assert!(matches!(
             encoder.encode(&frame(64, 32, 0, (128, 128))),
-            Err(H264Error::Input(_))
+            Err(H264Error::Input { .. })
         ));
         for _ in 0..2 {
             let error = encoder.encode(&frame(176, 144, 0, (128, 128))).unwrap_err();

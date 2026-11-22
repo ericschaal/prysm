@@ -8,6 +8,9 @@ pub const PITCH: usize = 192;
 pub const MAX_WIDTH: u32 = 1920;
 /// Tallest picture the encoder takes.
 pub const MAX_HEIGHT: u32 = 1080;
+/// Frame rates the encoder takes: `rvenc` programs 30 fps for any rate above
+/// 25 (research `webos-capture/2026-11-02-encoder-latency`, F-001).
+pub const FPS: RangeInclusive<u32> = 1..=30;
 /// Target bitrates the encoder takes, in bits per second.
 pub const BITRATE: RangeInclusive<u32> = 64_000..=100_000_000;
 /// Largest access unit accepted from the encoder.

@@ -25,6 +25,12 @@ mod software;
 
 pub use decoder::Decoder;
 pub use encoder::{Backend, Encoder, EncoderSettings, Picture};
+/// The hardware encoder's waits: for a picture's output, and for its end of
+/// stream when it closes.
+#[cfg(feature = "hardware")]
+pub use prysm_h264_rvenc_sys::{
+    END_OF_STREAM_WAIT as HARDWARE_END_OF_STREAM_WAIT, OUTPUT_WAIT as HARDWARE_OUTPUT_WAIT,
+};
 
 use prysm_core::{PixelFormat, YuvRange, YuvStandardMatrix};
 use std::ops::RangeInclusive;
@@ -51,8 +57,14 @@ pub(crate) enum FrameKind {
 /// Why H.264 encoding or decoding failed.
 #[derive(Debug, thiserror::Error)]
 pub enum H264Error {
-    #[error("H.264 needs limited-range BT.709 NV12 of a size its encoder takes, not {0}")]
-    Input(String),
+    #[error(
+        "H.264 needs limited-range BT.709 NV12 of a size its encoder takes, not {width}x{height} {format}"
+    )]
+    Input {
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+    },
     /// A target bitrate outside [`BITRATE`].
     #[error("a bitrate of {0} bit/s is outside {min} to {max}", min = BITRATE.start(), max = BITRATE.end())]
     Bitrate(u32),
@@ -78,9 +90,12 @@ pub enum H264Error {
     /// The decoder's destination is not a `width`x`height` NV12 buffer.
     #[error("the {len}-byte destination is not {width}x{height} NV12")]
     Destination { width: u32, height: u32, len: usize },
-    /// The encoder returned something a session cannot use.
-    #[error("the encoder misbehaved: {0}")]
-    Encoder(String),
+    /// The encoder began a session with a predicted picture.
+    #[error("the encoder misbehaved: an encoder session must start with an IDR picture")]
+    StartedWithoutIdr,
+    /// OpenH264 returned a frame type a session cannot carry.
+    #[error("the encoder misbehaved: unexpected OpenH264 frame type {0:?}")]
+    FrameType(openh264::encoder::FrameType),
     #[error("the access unit did not produce a picture")]
     NoPicture,
 }

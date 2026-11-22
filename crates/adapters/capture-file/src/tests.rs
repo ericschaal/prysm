@@ -1,8 +1,10 @@
 use super::*;
-use crate::source::{Deadlines, FileFrames, STDERR_TAIL, ffmpeg};
+use crate::players;
+use crate::source::{Deadlines, DecoderExit, Ended, FileFrames, STDERR_TAIL, ffmpeg};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Pull, Registry, Settings, chain};
 use prysm_testkit::within;
+use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -135,7 +137,12 @@ fn failure_reports_exit_status_and_a_bounded_stderr_tail() {
             frames.next_frame(SHORT).unwrap_err().to_string(),
             error.to_string()
         );
-        let exit = error.cause::<crate::source::DecoderExit>().unwrap();
+        let exit = error.cause::<DecoderExit>().unwrap();
+        assert!(
+            matches!(&exit.ended, Ended::Exited(status) if status.code() == Some(1)),
+            "{exit:?}"
+        );
+        assert_eq!(exit.partial, None);
         assert!(exit.stderr.starts_with('…'));
         let cause = exit.to_string();
         assert!(
@@ -162,6 +169,9 @@ fn output_ending_mid_frame_is_a_failure() {
             "cannot play video file `clip.mkv`: output ended mid-frame (50 of 96 bytes); \
              FFmpeg exited with exit status: 0; stderr: truncated"
         );
+        let exit = error.cause::<DecoderExit>().unwrap();
+        assert!(matches!(&exit.ended, Ended::Exited(status) if status.success()));
+        assert_eq!(exit.partial, Some((50, 96)));
         Box::new(frames).close().unwrap();
     });
 }
@@ -172,11 +182,121 @@ fn stall_mid_frame_is_a_failure_and_close_still_reaps() {
         let mut frames = spawn("head -c 50 /dev/zero; exec sleep 30");
         let pid = frames.pid();
         let error = next(&mut frames).unwrap_err();
+        assert_eq!(error.to_string(), "cannot play video file `clip.mkv`");
+        assert_eq!(
+            error.cause::<DecoderExit>().unwrap().ended,
+            Ended::Stalled {
+                filled: 50,
+                expected: 96,
+                within: TEST.stall
+            }
+        );
+        // Repeated by later calls, cause included.
+        let again = frames.next_frame(SHORT).unwrap_err();
+        assert!(again.cause::<DecoderExit>().is_some());
+        Box::new(frames).close().unwrap();
+        assert!(!alive(pid));
+    });
+}
+
+/// A process left behind by the decoder may hold stderr open after the
+/// decoder exited: playback still ends at the exit deadline, as finished.
+#[test]
+fn a_leftover_holding_stderr_does_not_hide_the_exit() {
+    within(LIMIT, || {
+        let deadlines = Deadlines {
+            exit: Duration::from_millis(300),
+            ..TEST
+        };
+        let script = format!("{}; exec >&-; sleep 3 & exit 0", frame_of('A'));
+        let mut frames =
+            FileFrames::spawn(fake(&script), WIDTH, HEIGHT, "clip.mkv", deadlines).unwrap();
+        next(&mut frames).unwrap();
+        assert!(pull(&mut frames).unwrap().is_none());
+        Box::new(frames).close().unwrap();
+    });
+}
+
+#[test]
+fn a_decoder_that_closes_its_output_but_does_not_exit_fails_at_the_deadline() {
+    within(LIMIT, || {
+        let deadlines = Deadlines {
+            exit: Duration::from_millis(300),
+            ..TEST
+        };
+        let mut frames = FileFrames::spawn(
+            fake("exec >&- 2>&-; exec sleep 30"),
+            WIDTH,
+            HEIGHT,
+            "clip.mkv",
+            deadlines,
+        )
+        .unwrap();
+        let pid = frames.pid();
+        let error = pull(&mut frames).unwrap_err();
+        let exit = error.cause::<DecoderExit>().unwrap();
+        assert_eq!(exit.ended, Ended::DidNotExit(deadlines.exit));
+        // Still listed, so the host can kill it; `close` does.
+        assert!(players::listed(pid));
+        Box::new(frames).close().unwrap();
+        assert!(!alive(pid));
+    });
+}
+
+#[test]
+fn the_decoder_runs_in_a_process_group_of_its_own() {
+    within(LIMIT, || {
+        let frames = spawn("exec sleep 30");
+        let pid = frames.pid();
+        let group = Command::new("ps")
+            .args(["-o", "pgid=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let group = String::from_utf8(group.stdout).unwrap();
+        assert_eq!(group.trim(), pid.to_string());
+        assert_ne!(pid, std::process::id());
+        // Listed for `kill_remaining` until it is killed.
+        assert!(players::listed(pid));
+        Box::new(frames).close().unwrap();
+        assert!(!players::listed(pid));
+    });
+}
+
+const KILL_CHILD: &str = "PRYSM_CAPTURE_FILE_KILL_CHILD";
+
+/// Runs [`kill_remaining_child`] alone in a child process: `kill_remaining`
+/// would also kill the decoders of tests running beside it.
+#[test]
+fn kill_remaining_kills_decoders_still_running() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::kill_remaining_child", "--ignored"])
+        .env(KILL_CHILD, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("1 passed"),
+        "the child test did not run: {stdout}"
+    );
+}
+
+#[test]
+#[ignore = "run by kill_remaining_kills_decoders_still_running in a child process"]
+fn kill_remaining_child() {
+    if std::env::var_os(KILL_CHILD).is_none() {
+        return;
+    }
+    within(LIMIT, || {
+        let mut frames = spawn("exec sleep 30");
+        let pid = frames.pid();
+        crate::kill_remaining();
+        assert!(!players::listed(pid));
+        let error = pull(&mut frames).unwrap_err();
+        let ended = &error.cause::<DecoderExit>().unwrap().ended;
         assert!(
-            error
-                .to_string()
-                .starts_with("FFmpeg stalled mid-frame playing `clip.mkv`: 50 of 96 bytes"),
-            "{error}"
+            matches!(ended, Ended::Exited(status) if status.signal() == Some(9)),
+            "{ended:?}"
         );
         Box::new(frames).close().unwrap();
         assert!(!alive(pid));

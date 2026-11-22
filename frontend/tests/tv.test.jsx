@@ -654,6 +654,7 @@ test('status card covers the supervisor states for both packages', () => {
       slim({ failure: { kind: 'encoder', message: 'x' } }),
       slim({ failure: { kind: 'version', message: 'x' } }),
       slim({ failure: { kind: 'replaced', message: 'x' } }),
+      slim({ failure: { kind: 'receiver_failed', message: 'x' } }),
       slim({ failure: { kind: 'other', message: 'x' } }),
       full({ lighting: 'off' }),
       full({ capturing: true }),
@@ -796,6 +797,29 @@ test('slim encoder failures point to the portal; waits, other failures and the f
       'Stop and start capture to send from this TV.',
       true,
       'disable',
+    ],
+  );
+  // Prysm's source failed with this TV's stream: not paused, not a lights
+  // off on the computer; its portal says why.
+  const receiverFailed = status(
+    slim({
+      failure: {
+        kind: 'receiver_failed',
+        message:
+          'the stream to ws://prysm.local:8787/api/v1/capture/stream failed: Prysm stopped receiving after a failure, which it shows',
+      },
+    }),
+  );
+  assert.deepEqual(
+    [
+      receiverFailed.title,
+      receiverFailed.description,
+      receiverFailed.attention,
+    ],
+    [
+      'Prysm stopped receiving',
+      'Its web portal on your computer says why.',
+      true,
     ],
   );
   const versionText = status(
