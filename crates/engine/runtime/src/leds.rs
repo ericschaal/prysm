@@ -2,7 +2,9 @@
 //! after a quiet spell, left in the stop's idle mode at the end.
 use crate::stats::Stats;
 use prysm_core::EdgeColors;
-use prysm_ports::{AdapterSettings, DeviceReport, IdleMode, LedOutput, Registry, Result};
+use prysm_ports::{
+    AdapterSettings, DeviceReport, IdleMode, LedOutput, OpenFailure, Registry, Result,
+};
 use std::time::Instant;
 
 /// The session's output as configured. Opened on the session thread at the
@@ -19,7 +21,7 @@ impl Configured {
         Self { registry, settings }
     }
 
-    fn open(&self) -> Result<Box<dyn LedOutput>> {
+    fn open(&self) -> Result<Box<dyn LedOutput>, OpenFailure> {
         self.registry.open_output(&self.settings)
     }
 
@@ -34,7 +36,8 @@ pub(crate) enum Leds {
     Held(Box<dyn LedOutput>),
     /// Idled in this mode and closed.
     Left(IdleMode),
-    /// A release failed: the device may be in any mode.
+    /// The device may be in any mode: a release failed, or an open that
+    /// may have reached it did.
     Unknown,
 }
 
@@ -52,10 +55,15 @@ impl Leds {
         let began = if self.is_held() {
             ready
         } else {
-            // An open that fails may have changed the device (WLED's turns
-            // it off again, or fails to): its mode is unknown then.
-            *self = Self::Unknown;
-            *self = Self::Held(output.open()?);
+            *self = Self::Held(match output.open() {
+                Ok(held) => held,
+                // Nothing reached the device: it is as this state says.
+                Err(OpenFailure::Untouched(error)) => return Err(error),
+                Err(OpenFailure::Touched(error)) => {
+                    *self = Self::Unknown;
+                    return Err(error);
+                }
+            });
             stats.output_opened();
             Instant::now()
         };
@@ -122,7 +130,18 @@ mod tests {
     #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
     struct Fails {
         idle: bool,
-        open: bool,
+        opens: Opens,
+    }
+
+    /// How the recorder's open goes.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+    enum Opens {
+        #[default]
+        Yes,
+        /// Fails before reaching the device.
+        Untouched,
+        /// Fails after a request may have reached it.
+        Touched,
     }
 
     /// Records opens, idles of what it opened (`idle:<mode>`), and modes set
@@ -147,10 +166,13 @@ mod tests {
             Ok(())
         }
 
-        fn open(&self, fails: &Fails) -> Result<Box<dyn LedOutput>> {
+        fn open(&self, fails: &Fails) -> Result<Box<dyn LedOutput>, OpenFailure> {
             self.0.lock().unwrap().push("open".into());
-            if fails.open {
-                return Err(Error::other("cannot open"));
+            let failed = || Error::other("cannot open");
+            match fails.opens {
+                Opens::Yes => {}
+                Opens::Untouched => return Err(OpenFailure::Untouched(failed())),
+                Opens::Touched => return Err(OpenFailure::Touched(failed())),
             }
             Ok(Box::new(Output {
                 calls: self.0.clone(),
@@ -246,7 +268,7 @@ mod tests {
                     Recorder::KIND,
                     &Fails {
                         idle: fail_idle,
-                        open: false,
+                        opens: Opens::Yes,
                     },
                 ),
             );
@@ -260,39 +282,39 @@ mod tests {
         }
     }
 
-    /// A failed open (WLED's turns the device off again, or may not) leaves
-    /// the device in no known mode, whatever it was left in before: the
-    /// end then sets the stop's mode instead of trusting the old one.
+    /// A failed open that may have reached the device (WLED's turns it off
+    /// again, or may not) leaves its mode unknown, whatever it was left in
+    /// before: the end then sets the stop's mode instead of trusting the
+    /// old one. One that reached nothing leaves the state as it was.
     #[test]
-    fn a_failed_open_leaves_the_mode_unknown() {
+    fn a_failed_open_says_what_it_left_the_device_in() {
         use IdleMode::{Native, Off};
-        for (from, mode) in [
-            (Before::Untouched, Off),
-            (Before::LeftOff, Off),
-            (Before::LeftNative, Native),
-        ] {
+        #[rustfmt::skip]
+        let cases: [(Before, Opens, IdleMode, &str, &[&str]); 6] = [
+            (Before::Untouched, Opens::Touched, Off, "unknown", &["set:Off"]),
+            (Before::LeftOff, Opens::Touched, Off, "unknown", &["set:Off"]),
+            (Before::LeftNative, Opens::Touched, Native, "unknown", &["set:Native"]),
+            (Before::Untouched, Opens::Untouched, Off, "untouched", &[]),
+            (Before::LeftOff, Opens::Untouched, Off, "left Off", &[]),
+            (Before::LeftNative, Opens::Untouched, Native, "left Native", &[]),
+        ];
+        for (from, opens, mode, after, calls) in cases {
             let made = Calls::default();
             let mut registry = Registry::default();
             registry.add_output(Recorder(made.clone()));
             let output = Configured::new(
                 registry,
-                AdapterSettings::new(
-                    Recorder::KIND,
-                    &Fails {
-                        idle: false,
-                        open: true,
-                    },
-                ),
+                AdapterSettings::new(Recorder::KIND, &Fails { idle: false, opens }),
             );
             let mut leds = leds(from, &output);
             let stats = Stats::default();
             let wrote = leds.write(&EdgeColors::default(), Instant::now(), &output, &stats);
-            assert!(wrote.is_err(), "{from:?}");
-            assert_eq!(state(&leds), "unknown", "{from:?}");
+            let case = (from, opens);
+            assert!(wrote.is_err(), "{case:?}");
+            assert_eq!(state(&leds), after, "{case:?}");
             made.lock().unwrap().clear();
             leds.finish(mode, &output).unwrap();
-            assert_eq!(*made.lock().unwrap(), [format!("set:{mode:?}")], "{from:?}");
-            assert_eq!(state(&leds), format!("left {mode:?}"), "{from:?}");
+            assert_eq!(*made.lock().unwrap(), calls, "{case:?}");
         }
     }
 }

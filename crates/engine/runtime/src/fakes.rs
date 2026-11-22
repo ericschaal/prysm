@@ -4,8 +4,8 @@ use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
     AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, FrameSink, FrameSource,
-    IdleMode, LedOutput, LightingTarget, Mode, Modes, OutputFactory, OutputIssue, Pull, Result,
-    Settings, SettingsStore, SourceFactory, Span, ValidationError,
+    IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure, OutputFactory, OutputIssue,
+    Pull, Result, Settings, SettingsStore, SourceFactory, Span, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -87,6 +87,8 @@ pub struct FakeSourceSettings {
     pub name: String,
     /// Fail `next_frame` after this many frames.
     pub fail_after: Option<u32>,
+    /// With `fail_after`: wait for this event in the log before failing.
+    pub fail_at: Option<String>,
     /// Produce no frames after this many (`Some(0)`: none at all), for
     /// `quiet_for_ms` or, when that is 0, for good.
     pub quiet_after: Option<u32>,
@@ -208,6 +210,9 @@ impl FakeSource {
 impl FrameSource for FakeSource {
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         if self.settings.fail_after.is_some_and(|n| self.frames >= n) {
+            if let Some(gate) = &self.settings.fail_at {
+                self.log.block_until(gate);
+            }
             return Err(Error::other("fake source failed"));
         }
         if self.settings.end_after.is_some_and(|n| self.frames >= n) {
@@ -298,11 +303,14 @@ impl OutputFactory for FakeOutputs {
         Ok(())
     }
 
-    fn open(&self, settings: &FakeOutputSettings) -> Result<Box<dyn LedOutput>> {
+    /// `fail_open` fails before anything reaches the fake device.
+    fn open(&self, settings: &FakeOutputSettings) -> Result<Box<dyn LedOutput>, OpenFailure> {
         if settings.fail_open {
             self.0
                 .record(format!("output.open_failed:{}", settings.name));
-            return Err(Error::other("fake output cannot open"));
+            return Err(OpenFailure::Untouched(Error::other(
+                "fake output cannot open",
+            )));
         }
         self.0.record(format!("output.open:{}", settings.name));
         Ok(Box::new(FakeOutput {

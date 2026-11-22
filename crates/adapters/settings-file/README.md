@@ -158,10 +158,17 @@ never leaves its path before the new one replaces it. Then the new file is
 renamed over the path as usual, owner-only rather than with the unreadable
 file's permissions, and the kept name is logged. If that rename fails, the
 second name is removed and the unreadable file is still where it was, so the
-failure shown still matches the disk. Where the filesystem has no hard
-links, the second name is a copy, which needs the file readable: a file
-Prysm may not read then cannot be set aside, and the save fails without
-changing anything. If the file is gone by then, nothing is set aside. None of these is fatal, since a save keeps the file and a restart
+failure shown still matches the disk. When the hard link fails for any
+reason but the file being gone (no hard links on the filesystem; on Linux
+`fs.protected_hardlinks`, for a file Prysm neither owns nor may write, such
+as one a `sudo` run left owned by root), the second name is a copy with the
+file's permissions, which needs the file readable. When the copy fails too,
+the file is renamed aside instead: then the path holds no file until the new
+one is renamed over it, and a crash in between leaves it so (the next start
+is unconfigured, with no failure shown, the old file kept beside). If that
+rename fails, the file is moved back. If all three fail, the save fails
+naming each cause and nothing changes. If the file is gone by then, nothing
+is set aside. None of these is fatal, since a save keeps the file and a restart
 would fix none of them; only a panicking store stops start-up.
 
 `save` replaces only a regular file (or a link to one): a directory, socket

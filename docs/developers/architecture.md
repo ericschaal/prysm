@@ -158,12 +158,15 @@ output's `idle` is the failure compensation: off for `off`, the device's own
 effects for `device_native`. After the join no frame is in flight.
 
 A session that ends on its own (a failure, or a source that ended) idles its
-output off. A request or shutdown that arrives after its loop ended is
-handled after that end, whichever the engine saw first: the same reply,
-state, failure and saved settings. A session that ends on its own while a
-request is stopping it ended while being stopped: the reply is its failures,
-then the output's in the stop's mode, which the session sets after the join
-through its own output (not over a source whose release is unconfirmed). An
+output off, or in a stop's mode once a stop has asked. A request or
+shutdown that arrives after its loop ended is handled after that end,
+whichever the engine saw first: the same reply, state, failure and saved
+settings. A session that ends on its own while a request is stopping it
+ended while being stopped: the reply is its failures, then the output's in
+the stop's mode. The thread idles in that mode itself when the stop asked
+before it idled; otherwise the session sets it after the join through its
+own output (not over a source whose release is unconfirmed): a second idle
+happens only when the thread idled before the stop asked. An
 ended source turns a `processed` target `off`, so lighting does not restart
 until asked again.
 
@@ -185,23 +188,22 @@ open has one, `OPEN_LIMIT` (3 s): resolution and live mode by its first
 state checks never block the session thread: their connect, request and
 reply each go on without waiting, at every frame.
 
-A stop waits for the source's close, then the output's idle, and, when it
-comes while the session opens WLED at a frame, for that open first. With
-each host's stop deadline and its source's release limit (none of these
-sums is asserted; the constants live in the hosts and capture adapters):
+A stop waits for the source's release plus at most `STOP_WAIT` (4.5 s) for
+WLED: an open in flight and an idle, or two idles (a release to the
+device's effects in flight, or, without the release, a session idling
+`Off` on its own when the stop asked for its effects: the thread reads the
+stop's mode after closing the source). The desktop hosts assert that each
+of their sources' release limits plus `STOP_WAIT` fits their 10 s stop
+deadline. The TV's does not fit: its release limit is 4 s and its stop
+deadline 6 s, and these stops exceed it, so the engine then faults and only
+a restart recovers:
 
-| Host and source | Stop deadline | Release | Close and idle | With an open in flight |
-| --- | --- | --- | --- | --- |
-| TV, `webos` | 6 s | 4 s | 5.5 s | 8.5 s: exceeds the stop deadline; the engine then faults |
-| Desktop, `device` | 10 s | 3 s | 4.5 s | 7.5 s |
-| Desktop, `file` | 10 s | 5 s (exit 2 s, reap 3 s) | 6.5 s | 9.5 s |
-| Desktop, `remote` | 10 s | 5.05 s | 6.55 s | 9.55 s |
+- an open in flight that fails: 3 s, then 4 s and 1.5 s, 8.5 s;
+- an open in flight that succeeds: 1.5 s + 4 s + 1.5 s, 7 s;
+- a release to the device's effects in flight, then a stop `Off`:
+  1.5 s + 4 s + 1.5 s, 7 s.
 
-Every other case fits its stop deadline. On the TV a stop that meets an
-open in flight exceeds it: the engine then faults and only a restart
-recovers. It would fit with a stop deadline above 8.5 s (with the 1 s
-shutdown grace, the supervisor's KILL after 8 s would then have to move
-above 9.5 s), or with an open that ends when the stop comes (then 5.5 s).
+A stop that meets none of them takes up to 4 s + 1.5 s, 5.5 s.
 
 As a backstop, shutdown gives the engine's blocking adapter and settings
 calls one shared grace (the stop deadline unless the host sets one; 1 s in

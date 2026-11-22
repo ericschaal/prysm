@@ -61,8 +61,9 @@ pub trait OutputFactory: Send + Sync + 'static {
     /// names the section.
     fn validate(&self, settings: &Self::Settings) -> Result<(), ValidationError>;
     /// # Errors
-    /// Device or I/O failure.
-    fn open(&self, settings: &Self::Settings) -> Result<Box<dyn LedOutput>>;
+    /// Device or I/O failure, saying whether the device may have taken a
+    /// request on the way ([`OpenFailure`]).
+    fn open(&self, settings: &Self::Settings) -> Result<Box<dyn LedOutput>, OpenFailure>;
     /// Put the device in `mode` without taking it over: what opening it and
     /// idling at once leaves, for a device nobody holds (lights turned off
     /// after a released session, or the device's own effects without one).
@@ -72,12 +73,42 @@ pub trait OutputFactory: Send + Sync + 'static {
     /// # Errors
     /// Device or I/O failure.
     fn idle(&self, settings: &Self::Settings, mode: IdleMode) -> Result<()> {
-        self.open(settings)?.idle(mode)
+        self.open(settings)
+            .map_err(OpenFailure::into_error)?
+            .idle(mode)
     }
     /// What this kind finds to choose from, such as devices on the network.
     /// See [`Candidate`]; the default finds nothing.
     fn candidates(&self) -> Vec<Candidate> {
         Vec::new()
+    }
+}
+
+/// Why an output did not open, and what that leaves its device in.
+#[derive(Debug, Clone)]
+pub enum OpenFailure {
+    /// Nothing reached the device (invalid settings, a name that does not
+    /// resolve, a local socket, a refused connection): it is as it was.
+    Untouched(Error),
+    /// The device may have taken a request: what it shows is unknown.
+    Touched(Error),
+}
+
+impl OpenFailure {
+    #[must_use]
+    pub fn into_error(self) -> Error {
+        match self {
+            Self::Untouched(error) | Self::Touched(error) => error,
+        }
+    }
+
+    /// The same failure with its error changed by `change`.
+    #[must_use]
+    pub fn map(self, change: impl FnOnce(Error) -> Error) -> Self {
+        match self {
+            Self::Untouched(error) => Self::Untouched(change(error)),
+            Self::Touched(error) => Self::Touched(change(error)),
+        }
     }
 }
 
@@ -185,12 +216,17 @@ impl Registry {
     }
 
     /// # Errors
-    /// Unknown kind, invalid settings or the factory's open failure.
-    pub fn open_output(&self, settings: &AdapterSettings) -> Result<Box<dyn LedOutput>> {
+    /// Unknown kind or invalid settings (the device untouched), or the
+    /// factory's open failure.
+    pub fn open_output(
+        &self,
+        settings: &AdapterSettings,
+    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
         let section = Section::Output;
-        find(&self.outputs, section, &settings.kind)?
+        find(&self.outputs, section, &settings.kind)
+            .map_err(OpenFailure::Untouched)?
             .open(settings)
-            .map_err(|error| within(section, error))
+            .map_err(|failure| failure.map(|error| within(section, error)))
     }
 
     /// Put the configured output in `mode` without opening it; see
@@ -252,17 +288,17 @@ fn find<'a, F: ?Sized>(
     })
 }
 
-trait Erased<T: ?Sized>: Send + Sync {
+trait Erased<T: ?Sized, E>: Send + Sync {
     fn validate(&self, settings: &AdapterSettings) -> Result<()>;
-    fn open(&self, settings: &AdapterSettings) -> Result<Box<T>>;
+    fn open(&self, settings: &AdapterSettings) -> Result<Box<T>, E>;
     fn candidates(&self) -> Vec<Candidate>;
 }
 
-trait ErasedSource: Erased<dyn FrameSource> {
+trait ErasedSource: Erased<dyn FrameSource, Error> {
     fn modes(&self, settings: &AdapterSettings) -> Result<Modes>;
 }
 
-trait ErasedOutput: Erased<dyn LedOutput> {
+trait ErasedOutput: Erased<dyn LedOutput, OpenFailure> {
     fn idle(&self, settings: &AdapterSettings, mode: IdleMode) -> Result<()>;
 }
 
@@ -276,7 +312,7 @@ fn decode<S: DeserializeOwned>(settings: &AdapterSettings) -> Result<S> {
 struct Source<F>(F);
 struct Output<F>(F);
 
-impl<F: SourceFactory> Erased<dyn FrameSource> for Source<F> {
+impl<F: SourceFactory> Erased<dyn FrameSource, Error> for Source<F> {
     fn validate(&self, settings: &AdapterSettings) -> Result<()> {
         Ok(self.0.validate(&decode(settings)?)?)
     }
@@ -304,13 +340,15 @@ impl<F: OutputFactory> ErasedOutput for Output<F> {
     }
 }
 
-impl<F: OutputFactory> Erased<dyn LedOutput> for Output<F> {
+impl<F: OutputFactory> Erased<dyn LedOutput, OpenFailure> for Output<F> {
     fn validate(&self, settings: &AdapterSettings) -> Result<()> {
         Ok(self.0.validate(&decode(settings)?)?)
     }
-    fn open(&self, settings: &AdapterSettings) -> Result<Box<dyn LedOutput>> {
-        let typed = decode(settings)?;
-        self.0.validate(&typed)?;
+    fn open(&self, settings: &AdapterSettings) -> Result<Box<dyn LedOutput>, OpenFailure> {
+        let typed = decode(settings).map_err(OpenFailure::Untouched)?;
+        self.0
+            .validate(&typed)
+            .map_err(|invalid| OpenFailure::Untouched(invalid.into()))?;
         self.0.open(&typed)
     }
     fn candidates(&self) -> Vec<Candidate> {

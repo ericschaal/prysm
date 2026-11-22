@@ -44,7 +44,7 @@ mod observe;
 mod output;
 mod settings;
 
-pub use output::{IDLE_LIMIT, OPEN_LIMIT, Wled};
+pub use output::{IDLE_LIMIT, OPEN_LIMIT, STOP_WAIT, Wled};
 pub use settings::{LedCounts, MAX_LEDS, WledSettings};
 
 #[cfg(test)]

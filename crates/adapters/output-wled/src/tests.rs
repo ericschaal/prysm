@@ -7,8 +7,8 @@ use crate::output::NotTurnedOff;
 use crate::{IDLE_LIMIT, LedCounts, MAX_LEDS, OPEN_LIMIT, Wled, WledSettings};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{
-    AdapterSettings, DeviceBrightness, Error, IdleMode, LedOutput, OutputFactory, OutputIssue,
-    Registry,
+    AdapterSettings, DeviceBrightness, Error, IdleMode, LedOutput, OpenFailure, OutputFactory,
+    OutputIssue, Registry,
 };
 use prysm_testkit::eventually;
 use serde_json::{Value, json};
@@ -163,7 +163,9 @@ impl Device {
     }
 
     fn open_with(&self, leds: LedCounts, dither: bool) -> Result<Box<dyn LedOutput>, Error> {
-        self.wled.open(&self.settings(leds, dither))
+        self.wled
+            .open(&self.settings(leds, dither))
+            .map_err(OpenFailure::into_error)
     }
 
     fn settings(&self, leds: LedCounts, dither: bool) -> WledSettings {
@@ -385,7 +387,12 @@ fn unreachable_device_fails_open_with_its_cause() {
         leds: one_each(),
         dither: true,
     };
-    let error = Wled::local(4048).open(&settings).err().unwrap();
+    let failure = Wled::local(4048).open(&settings).err().unwrap();
+    assert!(
+        matches!(failure, OpenFailure::Untouched(_)),
+        "nothing reached it"
+    );
+    let error = failure.into_error();
     assert!(error.to_string().contains("live mode"), "{error}");
     let cause = request_error(&error);
     assert!(matches!(cause, RequestError::Connect(_)), "{cause:?}");
@@ -411,7 +418,16 @@ fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
             Reply::Json(OK),
             Reply::Json(OK),
         ]);
-        let error = device.open(one_each()).err().unwrap();
+        let failure = device
+            .wled
+            .open(&device.settings(one_each(), true))
+            .err()
+            .unwrap();
+        assert!(
+            matches!(failure, OpenFailure::Touched(_)),
+            "it took a request"
+        );
+        let error = failure.into_error();
         let cause = request_error(&error);
         assert!(!matches!(cause, RequestError::Connect(_)), "{cause:?}");
         assert!(!error.to_string().contains("also failed"), "{error}");
@@ -690,9 +706,14 @@ fn unresolvable_host_fails_open_naming_the_host() {
         leds: one_each(),
         dither: true,
     };
-    let started = Instant::now();
-    let error = Wled::default().open(&settings).err().unwrap();
-    assert!(started.elapsed() < Duration::from_secs(3), "bounded");
+    let wled = Wled::default()
+        .with_lookup(|_, _| Err(io::Error::new(io::ErrorKind::NotFound, "no such host")));
+    let failure = wled.open(&settings).err().unwrap();
+    assert!(
+        matches!(failure, OpenFailure::Untouched(_)),
+        "nothing reached it"
+    );
+    let error = failure.into_error();
     assert!(
         error
             .to_string()
@@ -714,9 +735,15 @@ fn unresolvable_host_fails_open_naming_the_host() {
 #[test]
 fn a_hanging_lookup_is_bounded_and_not_repeated() {
     static CALLS: AtomicU32 = AtomicU32::new(0);
+    // Opened once the test is done, so the lookup thread ends with it.
+    static GATE: (std::sync::Mutex<bool>, std::sync::Condvar) =
+        (std::sync::Mutex::new(false), std::sync::Condvar::new());
     let wled = Wled::default().with_lookup(|_, _| {
         CALLS.fetch_add(1, Ordering::SeqCst);
-        thread::sleep(Duration::from_secs(60));
+        let (open, opened) = &GATE;
+        let _open = opened
+            .wait_while(open.lock().unwrap(), |open| !*open)
+            .unwrap();
         Err(io::Error::other("unreachable"))
     });
     let settings = WledSettings {
@@ -725,13 +752,15 @@ fn a_hanging_lookup_is_bounded_and_not_repeated() {
         dither: true,
     };
     for _ in 0..2 {
-        let error = wled.open(&settings).err().unwrap();
+        let error = wled.open(&settings).err().unwrap().into_error();
         assert_eq!(
             prysm_ports::chain(&error),
             "cannot resolve WLED host wled.local: no answer yet"
         );
     }
     assert_eq!(CALLS.load(Ordering::SeqCst), 1, "one lookup at a time");
+    *GATE.0.lock().unwrap() = true;
+    GATE.1.notify_all();
 }
 
 #[test]
@@ -1054,31 +1083,24 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
     let device = Device::new(vec![Reply::Json(OK), Reply::Json(OK), Reply::Hang]);
     let mut output = device.open(one_each()).unwrap();
     device.expect(&[release(), live()]);
-    let started = Instant::now();
-    let mut slowest = Duration::ZERO;
-    let mut frames = 0;
-    let issue = loop {
-        let call = Instant::now();
+    // The check is sent and its reply never comes; frames go on meanwhile.
+    // (That a check never waits, and ends at its deadline, the observer's
+    // own tests show with injected time.)
+    device.check_sent(|| {
         output.write(&EdgeColors::default()).unwrap();
-        let issue = output.report().issue;
-        slowest = slowest.max(call.elapsed());
         assert_eq!(device.rgb(), [0; 12], "every frame reaches WLED");
-        frames += 1;
-        if issue.is_some() {
-            break issue;
-        }
-        assert!(started.elapsed() < WAIT, "no verdict");
-        thread::sleep(Duration::from_millis(5));
-    };
-    assert_eq!(issue, Some(OutputIssue::Unreachable));
-    assert!(
-        started.elapsed() >= Duration::from_millis(900),
-        "waited for the reply"
-    );
-    // Loose bounds for loaded runners: what matters is that no call waits
-    // for the 1.5 s state request.
-    assert!(frames > 10, "{frames} frames");
-    assert!(slowest < Duration::from_millis(500), "{slowest:?}");
+        assert!(output.report().issue.is_none());
+    });
+    for _ in 0..20 {
+        output.write(&EdgeColors::default()).unwrap();
+        assert_eq!(device.rgb(), [0; 12], "every frame reaches WLED");
+        // No answer yet, or none by the deadline.
+        let issue = output.report().issue;
+        assert!(
+            matches!(issue, None | Some(OutputIssue::Unreachable)),
+            "{issue:?}"
+        );
+    }
 }
 
 #[test]
@@ -1098,9 +1120,10 @@ fn idle_abandons_a_check_in_flight_and_restores_the_device() {
         device.expect(&[release(), live()]);
         output.write(&EdgeColors::default()).unwrap();
         device.check_sent(|| assert_eq!(output.report().issue, None, "no answer yet"));
-        let started = Instant::now();
+        // The fixture answers one connection at a time: the idle's requests
+        // are answered only once the check's connection is closed, so an
+        // idle that waited for the check would time out instead.
         output.idle(mode).unwrap();
-        assert!(started.elapsed() < Duration::from_secs(1));
         device.expect(&[release(), state]);
     }
 }

@@ -35,9 +35,20 @@ mod desktop {
     use prysm_capture_device::DeviceSource;
     use prysm_capture_file::FileSource;
     use prysm_capture_remote::RemoteReceiver;
-    use prysm_output_wled::Wled;
+    use prysm_output_wled::{STOP_WAIT, Wled};
     use prysm_ports::Handoff;
-    use prysm_runtime::{Builder, NullOutput};
+    use prysm_runtime::{Builder, NullOutput, STOP_DEADLINE};
+    use std::time::Duration;
+
+    /// Whether a stop of a session with a source released within `release`
+    /// and a WLED output ends within the desktop hosts' stop deadline,
+    /// whatever it meets (see [`STOP_WAIT`]).
+    const fn stops_in_time(release: Duration) -> bool {
+        release.saturating_add(STOP_WAIT).as_millis() < STOP_DEADLINE.as_millis()
+    }
+    const _: () = assert!(stops_in_time(prysm_capture_device::RELEASE_LIMIT));
+    const _: () = assert!(stops_in_time(prysm_capture_file::RELEASE_LIMIT));
+    const _: () = assert!(stops_in_time(prysm_capture_remote::RELEASE_LIMIT));
 
     /// What both desktop hosts register: sources `device`, `file` and
     /// `remote`, outputs `wled` and `null`. Also the hand-off through which

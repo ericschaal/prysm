@@ -23,6 +23,9 @@ const RELEASE: Duration = POLL_INTERVAL
     .saturating_add(WRITE_TIMEOUT.saturating_mul(4))
     .saturating_add(CLOSE_LINGER);
 
+/// The longest a remote source's `close` takes: [`RELEASE`].
+pub const RELEASE_LIMIT: Duration = RELEASE;
+
 /// Registers kind `"remote"`, its settings the [`RemoteSettings`]: frames a
 /// [`RemoteSender`](crate::RemoteSender) streams to the portal's capture
 /// stream path. It owns the [`Handoff`] those connections come in through;

@@ -29,7 +29,7 @@ pub mod testkit;
 mod wire;
 
 pub use offer::Offer;
-pub use receiver::{RemoteReceiver, RemoteSource};
+pub use receiver::{RELEASE_LIMIT, RemoteReceiver, RemoteSource};
 pub use request::{RemoteSettings, StreamEncoding};
 pub use sender::{RemoteSender, SendError};
 pub use wire::{Close, WireError};

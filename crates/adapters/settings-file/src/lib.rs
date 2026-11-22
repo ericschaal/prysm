@@ -202,6 +202,8 @@ pub struct SettingsFile {
     sync_directory: fn(&Path) -> io::Result<()>,
     /// Renames the written temporary file over the path.
     replace: fn(tempfile::NamedTempFile, &Path) -> io::Result<()>,
+    /// Gives the file a second name.
+    link: fn(&Path, &Path) -> io::Result<()>,
 }
 
 impl SettingsFile {
@@ -213,7 +215,14 @@ impl SettingsFile {
             unread: false,
             sync_directory,
             replace,
+            link: |from, to| fs::hard_link(from, to),
         }
+    }
+
+    #[cfg(test)]
+    fn with_link(mut self, link: fn(&Path, &Path) -> io::Result<()>) -> Self {
+        self.link = link;
+        self
     }
 
     #[cfg(test)]
@@ -271,14 +280,19 @@ impl SettingsFile {
         })
     }
 
-    /// Give the file at the path a second name of its own beside it, and
-    /// return it; `None` when nothing is there any more. The file stays at
-    /// its path, so it is never missing: the save's rename then leaves it
-    /// under the new name only. The name is removed when the returned path
-    /// is dropped unkept, as after a failed rename. A hard link; where the
-    /// filesystem has none, a copy, which needs the file readable (else the
-    /// save fails and nothing changes).
-    fn set_aside(&self) -> io::Result<Option<tempfile::TempPath>> {
+    /// Keep the file at the path under a name of its own beside it; `None`
+    /// when nothing is there any more. In order of preference:
+    ///
+    /// - a hard link: the file stays at its path until the save's rename
+    ///   replaces it there;
+    /// - where a hard link fails (no hard links on the filesystem; on Linux
+    ///   `fs.protected_hardlinks` for a file this user neither owns nor may
+    ///   write), a copy with its permissions, which needs the file readable;
+    ///   the file stays at its path likewise;
+    /// - where both fail, a rename: until the save's rename the path holds
+    ///   nothing, and a crash in between leaves it so (the next start is
+    ///   then unconfigured, with no failure shown), the file kept beside.
+    fn set_aside(&self) -> std::result::Result<Option<Aside>, NotSetAside> {
         let mut prefix = self
             .path
             .file_name()
@@ -287,22 +301,49 @@ impl SettingsFile {
         prefix.push(UNREADABLE);
         let mut builder = tempfile::Builder::new();
         builder.prefix(&prefix);
+        let directory = self.directory();
         // A name nothing has: a hard link or a new file never replaces one.
-        let linked = builder.make_in(self.directory(), |aside| fs::hard_link(&self.path, aside));
-        let aside = match linked {
-            Ok(aside) => aside,
+        let link = match builder.make_in(directory, |aside| (self.link)(&self.path, aside)) {
+            Ok(aside) => return Ok(Some(Aside::Linked(aside.into_temp_path()))),
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(link) => builder
-                .make_in(self.directory(), |aside| copy_new(&self.path, aside))
-                .map_err(|copy| {
-                    io::Error::new(
-                        copy.kind(),
-                        format!("{copy}; a hard link failed too: {link}"),
-                    )
-                })?,
+            Err(link) => link,
         };
-        Ok(Some(aside.into_temp_path()))
+        let copy = match builder.make_in(directory, |aside| copy_new(&self.path, aside)) {
+            Ok(aside) => return Ok(Some(Aside::Linked(aside.into_temp_path()))),
+            Err(copy) => copy,
+        };
+        // A new file of its own, so the rename replaces nothing else.
+        let moved = builder
+            .tempfile_in(directory)
+            .map(tempfile::NamedTempFile::into_temp_path)
+            .and_then(|placeholder| {
+                fs::rename(&self.path, &placeholder)?;
+                placeholder.keep().map_err(|error| error.error)
+            });
+        match moved {
+            Ok(aside) => Ok(Some(Aside::Moved(aside))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(rename) => Err(NotSetAside { link, copy, rename }),
+        }
     }
+}
+
+/// Where the file a load could not read is kept.
+enum Aside {
+    /// A second name: the file is still at its path. Removed when dropped,
+    /// unless kept.
+    Linked(tempfile::TempPath),
+    /// Its only name: the path holds nothing until the save's rename.
+    Moved(PathBuf),
+}
+
+/// Why the file a load could not read could not be kept: each way's cause.
+#[derive(Debug, thiserror::Error)]
+#[error("a hard link failed: {link}; a copy failed: {copy}; a rename failed: {rename}")]
+pub struct NotSetAside {
+    link: io::Error,
+    copy: io::Error,
+    rename: io::Error,
 }
 
 impl SettingsStore for SettingsFile {
@@ -361,17 +402,39 @@ impl SettingsStore for SettingsFile {
             None
         };
         // The rename is the commit point. A failure leaves the unreadable
-        // file at its path, and its second name is removed.
-        (self.replace)(temporary, &self.path).map_err(|error| self.failed("replace", error))?;
+        // file at its path: its second name is removed, or a file moved
+        // aside goes back.
+        if let Err(error) = (self.replace)(temporary, &self.path) {
+            if let Some(Aside::Moved(aside)) = &aside
+                && let Err(back) = fs::rename(aside, &self.path)
+            {
+                tracing::warn!(
+                    "the settings file it could not read stays as {}: {back}",
+                    aside.display()
+                );
+            }
+            return Err(self.failed("replace", error));
+        }
         self.unread = false;
-        if let Some(aside) = aside {
-            let aside = aside
-                .keep()
-                .map_err(|error| self.failed("keep the unreadable", error.error))?;
-            tracing::warn!(
+        match aside {
+            None => {}
+            Some(Aside::Moved(aside)) => tracing::warn!(
                 "kept the settings file it could not read as {}",
                 aside.display()
-            );
+            ),
+            // Saved: a name that cannot be kept is logged, not a failure.
+            Some(Aside::Linked(aside)) => match aside.keep() {
+                Ok(aside) => tracing::warn!(
+                    "kept the settings file it could not read as {}",
+                    aside.display()
+                ),
+                Err(error) => tracing::warn!(
+                    "saved settings file {}, but could not keep the file it could not \
+                     read beside it: {}",
+                    self.path.display(),
+                    error.error
+                ),
+            },
         }
         if let Err(error) = (self.sync_directory)(self.directory()) {
             tracing::warn!(
@@ -399,8 +462,11 @@ fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
         .create_new(true)
         .open(to)?;
     let copied = fs::File::open(from)
-        .and_then(|mut source| io::copy(&mut source, &mut target))
-        .and_then(|_| target.sync_all());
+        .and_then(|mut source| {
+            io::copy(&mut source, &mut target)?;
+            target.set_permissions(source.metadata()?.permissions())
+        })
+        .and_then(|()| target.sync_all());
     if copied.is_err() {
         let _ = fs::remove_file(to);
     }

@@ -549,3 +549,102 @@ fn a_save_never_replaces_what_is_not_a_regular_file() {
     assert!(fs::symlink_metadata(&path).unwrap().file_type().is_socket());
     assert_eq!(entries(directory.path()), ["settings.json"]);
 }
+
+fn no_link(_: &Path, _: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+}
+
+/// Where a hard link fails, the unreadable file is kept as a copy with its
+/// permissions, and stays at its path until the save's rename.
+#[cfg(unix)]
+#[test]
+fn without_a_hard_link_the_unreadable_file_is_kept_as_a_copy() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, "{ not json").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    let mut store = SettingsFile::new(&path).with_link(no_link);
+    assert!(store.load().is_err());
+    store.save(&sample()).unwrap();
+    let aside = set_aside(directory.path());
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(aside[0].1, b"{ not json");
+    let mode = fs::metadata(directory.path().join(&aside[0].0))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o640);
+    assert_eq!(store.load().unwrap(), Some(sample()));
+}
+
+/// A file this user may neither link (Linux's `fs.protected_hardlinks`)
+/// nor read is moved aside, and moved back if the save's rename fails.
+#[cfg(unix)]
+#[test]
+fn without_a_hard_link_or_a_copy_the_unreadable_file_is_moved_aside() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, "{ not json").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(&path).is_ok() {
+        // Running as root: permissions do not apply, nothing to test.
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI runs tests as a user that permissions apply to"
+        );
+        eprintln!("skipped: permissions do not apply to this user");
+        return;
+    }
+    let size = |path: &Path| fs::symlink_metadata(path).unwrap().len();
+
+    // The save's rename fails: the file is back at its path.
+    let mut failing = SettingsFile::new(&path)
+        .with_link(no_link)
+        .with_replace(|_, _| Err(std::io::Error::other("disk full")));
+    assert!(failing.load().is_err());
+    assert!(failing.save(&sample()).is_err());
+    assert_eq!(entries(directory.path()), ["settings.json"]);
+    assert_eq!(size(&path), 10);
+
+    let mut store = SettingsFile::new(&path).with_link(no_link);
+    assert!(store.load().is_err());
+    store.save(&sample()).unwrap();
+    let names: Vec<_> = entries(directory.path())
+        .into_iter()
+        .filter(|name| name.starts_with("settings.json.unreadable-"))
+        .collect();
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert_eq!(size(&directory.path().join(&names[0])), 10);
+    assert_eq!(store.load().unwrap(), Some(sample()));
+}
+
+/// A settings file another user owns and keeps to itself (root's, after a
+/// `sudo` run), in a directory this user may write: on Linux it can be
+/// neither hard-linked (`fs.protected_hardlinks`) nor copied, so the save
+/// moves it aside. Needs that set-up, which a test cannot make without root:
+/// `PRYSM_TEST_FOREIGN_SETTINGS` names such a file; without it, nothing is
+/// tested.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_foreign_unreadable_file_is_moved_aside() {
+    let Some(path) = std::env::var_os("PRYSM_TEST_FOREIGN_SETTINGS") else {
+        eprintln!("skipped: PRYSM_TEST_FOREIGN_SETTINGS is not set");
+        return;
+    };
+    let path = Path::new(&path);
+    let directory = path.parent().unwrap();
+    let mut store = SettingsFile::new(path);
+    assert!(store.load().is_err(), "it may not be read");
+    store.save(&sample()).unwrap();
+    assert_eq!(store.load().unwrap(), Some(sample()));
+    let kept = entries(directory)
+        .into_iter()
+        .filter(|name| name.contains(".unreadable-"))
+        .count();
+    assert_eq!(kept, 1);
+}

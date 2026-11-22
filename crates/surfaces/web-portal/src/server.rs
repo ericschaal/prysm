@@ -192,18 +192,29 @@ async fn connection(socket: TcpStream, context: Arc<Context>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::sync::{mpsc, oneshot};
 
     /// Scripted accepts: each a connection that lasts until its sender is
     /// used or dropped, or an error; nothing more once the script is done.
-    struct Script(mpsc::UnboundedReceiver<io::Result<oneshot::Receiver<()>>>);
+    /// Each accept called is told on `calls`; none may come while `holding`
+    /// (the test's guard against accepting while exhausted).
+    struct Script {
+        accepts: mpsc::UnboundedReceiver<io::Result<oneshot::Receiver<()>>>,
+        calls: mpsc::UnboundedSender<()>,
+        holding: Arc<AtomicBool>,
+    }
 
     impl Incoming for Script {
         type Socket = oneshot::Receiver<()>;
 
         async fn accept(&mut self) -> io::Result<Self::Socket> {
-            match self.0.recv().await {
+            assert!(
+                !self.holding.load(Ordering::SeqCst),
+                "accepted while exhausted"
+            );
+            let _ = self.calls.send(());
+            match self.accepts.recv().await {
                 Some(accepted) => accepted,
                 None => std::future::pending().await,
             }
@@ -211,26 +222,30 @@ mod tests {
     }
 
     /// Out of descriptors with a connection open, the loop stops accepting
-    /// (the next connection waits in the script, and the loop does not spin:
-    /// the paused clock only moves once everything is idle), then accepts
-    /// again once that connection ends.
+    /// until that connection ends, then accepts again. A loop that accepted
+    /// meanwhile fails the script's guard; one that spun would never let the
+    /// test go on, which the time limit turns into a failure.
     #[cfg(unix)]
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn an_exhausted_listener_accepts_again_once_a_connection_ends() {
-        let (script, incoming) = mpsc::unbounded_channel();
-        let (end_first, first) = oneshot::channel();
-        let (_end_second, second) = oneshot::channel();
-        script.send(Ok(first)).unwrap();
-        script
-            .send(Err(io::Error::from_raw_os_error(libc::EMFILE)))
-            .unwrap();
-        script.send(Ok(second)).unwrap();
-        let served = Arc::new(AtomicUsize::new(0));
-        let (stop, stopped) = oneshot::channel::<()>();
-        let task = tokio::spawn({
-            let served = served.clone();
-            async move {
-                let mut incoming = Script(incoming);
+        prysm_testkit::within_async(Duration::from_secs(10), async {
+            let (script, accepts) = mpsc::unbounded_channel();
+            let (calls_tx, mut calls) = mpsc::unbounded_channel();
+            let (served_tx, mut served) = mpsc::unbounded_channel();
+            let holding = Arc::new(AtomicBool::new(false));
+            let (end_first, first) = oneshot::channel();
+            let (_end_second, second) = oneshot::channel();
+            script.send(Ok(first)).unwrap();
+            script
+                .send(Err(io::Error::from_raw_os_error(libc::EMFILE)))
+                .unwrap();
+            let (stop, stopped) = oneshot::channel::<()>();
+            let mut incoming = Script {
+                accepts,
+                calls: calls_tx,
+                holding: holding.clone(),
+            };
+            let task = tokio::spawn(async move {
                 let mut connections = JoinSet::new();
                 accept_until(
                     &mut incoming,
@@ -239,22 +254,32 @@ mod tests {
                         let _ = stopped.await;
                     },
                     |ends: oneshot::Receiver<()>| {
-                        served.fetch_add(1, Ordering::SeqCst);
+                        let _ = served_tx.send(());
                         async move {
                             let _ = ends.await;
                         }
                     },
                 )
                 .await
-            }
-        });
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        assert_eq!(served.load(Ordering::SeqCst), 1, "waits while exhausted");
-        end_first.send(()).unwrap();
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        assert_eq!(served.load(Ordering::SeqCst), 2, "accepts again");
-        stop.send(()).unwrap();
-        assert!(task.await.unwrap().is_ok());
+            });
+            // Accept 1 serves the first connection; accept 2 meets EMFILE,
+            // which the loop handles in the poll that got it.
+            calls.recv().await.unwrap();
+            served.recv().await.unwrap();
+            calls.recv().await.unwrap();
+            // Exhausted: another connection waits, and the loop runs once
+            // more without accepting it.
+            holding.store(true, Ordering::SeqCst);
+            script.send(Ok(second)).unwrap();
+            tokio::task::yield_now().await;
+            holding.store(false, Ordering::SeqCst);
+            end_first.send(()).unwrap();
+            calls.recv().await.unwrap();
+            served.recv().await.unwrap();
+            stop.send(()).unwrap();
+            assert!(task.await.unwrap().is_ok());
+        })
+        .await;
     }
 
     /// Out of descriptors with no connection open, nothing would wake it:
@@ -266,7 +291,12 @@ mod tests {
         script
             .send(Err(io::Error::from_raw_os_error(libc::EMFILE)))
             .unwrap();
-        let mut incoming = Script(incoming);
+        let (calls, _) = mpsc::unbounded_channel();
+        let mut incoming = Script {
+            accepts: incoming,
+            calls,
+            holding: Arc::default(),
+        };
         let failed = accept_until(
             &mut incoming,
             &mut JoinSet::new(),

@@ -321,6 +321,41 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
+    /// A deadline split for a last step: the first part ends that much
+    /// sooner and names what is left of the budget; the whole keeps both.
+    #[test]
+    fn an_earlier_deadline_ends_sooner_by_its_last_step() {
+        let start = Instant::now();
+        let whole = Deadline {
+            at: start + Duration::from_secs(3),
+            budget: Duration::from_secs(3),
+        };
+        let first = whole.earlier(Duration::from_secs(1));
+        assert_eq!(first.at, start + Duration::from_secs(2));
+        assert_eq!(first.budget, Duration::from_secs(2));
+        assert_eq!(whole.at, start + Duration::from_secs(3));
+        assert!(first.remaining() <= Duration::from_secs(2));
+    }
+
+    /// A passed deadline has nothing left, and says so with its budget: so
+    /// a second request under the deadline of a first that used it up is
+    /// not sent.
+    #[test]
+    fn a_passed_deadline_has_nothing_left() {
+        let passed = Deadline {
+            at: Instant::now(),
+            budget: Duration::from_secs(3),
+        };
+        assert_eq!(passed.remaining(), Duration::ZERO);
+        assert!(matches!(
+            passed.left(),
+            Err(RequestError::TimedOut(budget)) if budget == Duration::from_secs(3)
+        ));
+        let split = passed.earlier(Duration::from_secs(5));
+        assert_eq!(split.remaining(), Duration::ZERO);
+        assert_eq!(split.budget, Duration::ZERO);
+    }
+
     const LIMIT: Duration = Duration::from_millis(200);
     /// Far below [`LIMIT`], so each byte alone would reset a per-read timeout.
     const DRIP: Duration = Duration::from_millis(10);

@@ -18,6 +18,9 @@ mod source;
 
 pub use settings::FileSettings;
 
+/// The longest a file source's `close` takes: FFmpeg killed and reaped.
+pub const RELEASE_LIMIT: std::time::Duration = source::Deadlines::FFMPEG.reap;
+
 use prysm_ports::{
     Error, FrameSource, Modes, Result, SourceFactory, ValidationError, capture_size,
 };
