@@ -15,6 +15,9 @@
 //!   from the newest.
 //!
 //! The wire protocol is described in the crate README.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing;
 mod link;
 mod offer;
 mod receive;

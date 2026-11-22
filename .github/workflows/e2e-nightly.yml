@@ -1,9 +1,13 @@
-# The portal end-to-end tests (frontend/e2e) where pull requests do not run
-# them: WebKit on macOS, the closest to Safari that Playwright gets, and
-# Firefox. ci.yml's `e2e` job runs Chromium and WebKit on Linux for every push.
+# What pull requests do not run, because it takes too long for each one:
+# - `e2e-macos`: the portal end-to-end tests (frontend/e2e) in WebKit on
+#   macOS, the closest to Safari that Playwright gets, and Firefox. ci.yml's
+#   `e2e` job runs Chromium and WebKit on Linux for every push.
+# - `fuzz (<target>)`: each cargo-fuzz target in fuzz/ for ten minutes, from
+#   the corpus earlier nights grew. A run is only useful for minutes, and the
+#   build alone takes as long as a per-PR smoke run could.
 #
 # GitHub runs schedules only from the default branch's copy of this file.
-name: End-to-end nightly
+name: Nightly
 on:
   schedule:
     - cron: '23 3 * * *'
@@ -13,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-nightly-${{ github.ref }}
+  group: nightly-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -62,3 +66,74 @@ jobs:
           path: frontend/.e2e
           include-hidden-files: true
           retention-days: 7
+
+  # Seven runners in parallel rather than one for an hour. A failing target
+  # names its reproducer in the log and the summary, as bytes and as the
+  # command that replays it, and keeps it as an artifact.
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - pixel_format_size
+          - strided_copy
+          - halgal_surface
+          - frame_header
+          - from_receiver
+          - from_sender
+          - offer
+    env:
+      # ci.yml's Miri and sanitizer nightly; cargo-fuzz needs a nightly.
+      RUSTUP_TOOLCHAIN: nightly-2026-11-01
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pinned nightly
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rust-src --no-self-update
+      # Also keeps ~/.cargo/bin, so cargo-fuzz is built once per cache.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: fuzz
+          workspaces: fuzz -> target
+      - name: cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.13.1
+      # cargo fuzz has no --locked: this fails on a stale fuzz/Cargo.lock.
+      - name: Fetch crates
+        run: cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      # The corpus grows night by night; each run saves its own copy.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      # Debug assertions and AddressSanitizer (cargo fuzz's defaults). New
+      # inputs go to the first directory; seeds/ stays as committed.
+      - name: Fuzz for ten minutes
+        working-directory: fuzz
+        run: |
+          mkdir -p "corpus/$TARGET"
+          cargo fuzz run "$TARGET" "corpus/$TARGET" "seeds/$TARGET" -- \
+            -max_total_time=600 -rss_limit_mb=2048 -timeout=10
+      - name: Reproducer
+        if: failure()
+        working-directory: fuzz
+        run: |
+          for input in artifacts/"$TARGET"/*; do
+            [ -f "$input" ] || continue
+            {
+              echo "Reproducer fuzz/$input, as hex bytes:"
+              od -An -tx1 -v "$input"
+              echo "Replay: cd fuzz && cargo +$RUSTUP_TOOLCHAIN fuzz run $TARGET $input"
+              echo
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30

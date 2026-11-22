@@ -1,0 +1,74 @@
+# cargo-fuzz targets for the decoders and size checks that read untrusted or
+# vendor input (docs/developers/debugging.md, "Fuzzing"). Its own workspace, so
+# no build or check of the product compiles it; it needs a nightly Rust.
+[package]
+name = "prysm-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+prysm-core = { path = "../crates/engine/core" }
+prysm-capture-remote = { path = "../crates/adapters/capture-remote", features = ["fuzzing"] }
+prysm-capture-webos-sys = { path = "../crates/adapters/capture-webos-sys", features = ["fuzzing"] }
+
+[workspace]
+members = ["."]
+
+# Symbols for the stack traces of a crash.
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "pixel_format_size"
+path = "fuzz_targets/pixel_format_size.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strided_copy"
+path = "fuzz_targets/strided_copy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "halgal_surface"
+path = "fuzz_targets/halgal_surface.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frame_header"
+path = "fuzz_targets/frame_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "from_receiver"
+path = "fuzz_targets/from_receiver.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "from_sender"
+path = "fuzz_targets/from_sender.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "offer"
+path = "fuzz_targets/offer.rs"
+test = false
+doc = false
+bench = false

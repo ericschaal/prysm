@@ -22,5 +22,8 @@ mod ffi;
 mod halgal;
 mod vtcapture;
 
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub use halgal::fuzz_surface_check;
 pub use halgal::{UiCapture, UiFrame};
 pub use vtcapture::{Acquired, Error, Options, VideoFrame, VtCapture};
