@@ -792,9 +792,9 @@ mod tests {
     /// A receiver that answers forever, a little at a time: `upgraded`
     /// completes the upgrade first and then sends pings instead of the
     /// request; otherwise it drips the upgrade's answer byte by byte.
-    #[expect(
+    #[allow(
         clippy::result_large_err,
-        reason = "tungstenite's upgrade callback returns its error response"
+        reason = "tungstenite's upgrade callback returns its error response; small enough on 32-bit targets"
     )]
     fn dripping(upgraded: bool) -> SocketAddr {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
