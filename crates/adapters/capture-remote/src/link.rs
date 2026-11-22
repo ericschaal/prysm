@@ -1,22 +1,17 @@
 //! One WebSocket, either end: text messages (JSON commands and refusals)
-//! and binary messages (frames). The ends never see WebSocket types.
+//! and binary messages (frames). Of the WebSocket's types the ends see only
+//! its text, [`Utf8Bytes`], a string over [`Bytes`].
 use crate::wire::{Close, MAX_TEXT_BYTES, WireError};
 use bytes::Bytes;
 use std::io::{ErrorKind, Read, Write};
 use std::time::{Duration, Instant};
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::protocol::frame::CloseFrame;
-use tungstenite::{Message, WebSocket};
+use tungstenite::{Utf8Bytes, WebSocket};
 
-/// One message from the peer.
-pub(crate) enum Inbound {
-    Text(String),
-    Binary(Bytes),
-}
-
-/// One message to the peer.
-pub(crate) enum Outbound {
-    Text(String),
+/// One message, from the peer or to it.
+pub(crate) enum Message {
+    Text(Utf8Bytes),
     Binary(Bytes),
 }
 
@@ -68,20 +63,20 @@ impl<S: Read + Write> Link<S> {
     ///
     /// # Errors
     /// The peer closed the link, sent a text message longer than
-    /// [`MAX_TEXT_BYTES`], or the socket failed.
-    pub(crate) fn receive(&mut self) -> Result<Option<Inbound>, LinkError> {
+    /// [`MAX_TEXT_BYTES`] (read whole first, within the [`config`] limit),
+    /// or the socket failed.
+    pub(crate) fn receive(&mut self) -> Result<Option<Message>, LinkError> {
+        use tungstenite::Message as Ws;
         loop {
             match self.socket.read() {
-                Ok(Message::Text(text)) if text.len() > MAX_TEXT_BYTES => {
+                Ok(Ws::Text(text)) if text.len() > MAX_TEXT_BYTES => {
                     return Err(WireError::TextTooLarge(text.len()).into());
                 }
-                Ok(Message::Text(text)) => {
-                    return Ok(Some(Inbound::Text(text.as_str().to_owned())));
-                }
-                Ok(Message::Binary(message)) => return Ok(Some(Inbound::Binary(message))),
+                Ok(Ws::Text(text)) => return Ok(Some(Message::Text(text))),
+                Ok(Ws::Binary(message)) => return Ok(Some(Message::Binary(message))),
                 // Pongs are queued by the read and sent with the next write.
-                Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => {}
-                Ok(Message::Close(frame)) => {
+                Ok(Ws::Ping(_) | Ws::Pong(_) | Ws::Frame(_)) => {}
+                Ok(Ws::Close(frame)) => {
                     let close = frame.and_then(|frame| Close::from_code(frame.code.into()));
                     return Err(WireError::Closed(close).into());
                 }
@@ -107,10 +102,10 @@ impl<S: Read + Write> Link<S> {
     /// # Errors
     /// The socket failed or timed out; [`LinkError::would_block`] on a full
     /// non-blocking socket, after which [`Self::flush`] completes the send.
-    pub(crate) fn send(&mut self, message: Outbound) -> Result<(), LinkError> {
+    pub(crate) fn send(&mut self, message: Message) -> Result<(), LinkError> {
         let message = match message {
-            Outbound::Text(text) => Message::text(text),
-            Outbound::Binary(bytes) => Message::Binary(bytes),
+            Message::Text(text) => tungstenite::Message::Text(text),
+            Message::Binary(bytes) => tungstenite::Message::Binary(bytes),
         };
         Ok(self.socket.send(message)?)
     }
@@ -123,21 +118,24 @@ impl<S: Read + Write> Link<S> {
         Ok(self.socket.flush()?)
     }
 
-    /// Close the link, best effort, with `close`'s code if given.
-    pub(crate) fn close(&mut self, close: Option<Close>) {
+    /// Close the link, best effort, with `close`'s code if given: one write
+    /// and its flush. Whether the close went out; when it did not (the
+    /// peer is not reading, or the socket failed), it stays queued.
+    pub(crate) fn close(&mut self, close: Option<Close>) -> bool {
         let frame = close.map(|close| CloseFrame {
             code: close.code().into(),
             reason: "".into(),
         });
-        let _ = self.socket.close(frame);
-        let _ = self.socket.flush();
+        self.socket.close(frame).is_ok()
     }
 
-    /// After [`Self::close`]: read and discard what the peer still sends,
-    /// until it answers the close or the connection ends, for at most
-    /// `within` (reads wake at the socket's read timeout). Closing a socket
-    /// with unread input resets the connection, which can lose the close
-    /// before the peer reads it.
+    /// After a [`Self::close`] that went out: read and discard what the peer
+    /// still sends, until it answers the close or the connection ends, for
+    /// at most `within` plus one read timeout (reads wake at the socket's
+    /// read timeout; once the close went out, a read writes nothing).
+    /// Closing a socket with unread input resets the connection, which can
+    /// lose the close before the peer reads it. After a close that did not
+    /// go out, each read would retry it, blocking up to a write timeout.
     pub(crate) fn drain(&mut self, within: Duration) {
         let deadline = Instant::now() + within;
         while Instant::now() < deadline {
@@ -150,6 +148,47 @@ impl<S: Read + Write> Link<S> {
                     ) => {}
                 Err(_) => return,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+    use tungstenite::protocol::Role;
+
+    /// A peer with nothing to say that takes every write, or none.
+    struct Peer {
+        reading: bool,
+    }
+
+    impl Read for Peer {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(ErrorKind::WouldBlock.into())
+        }
+    }
+
+    impl Write for Peer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.reading {
+                Ok(bytes.len())
+            } else {
+                Err(ErrorKind::TimedOut.into())
+            }
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The receiver waits for an answer only after a close that went out:
+    /// one to a peer that is not reading says it did not.
+    #[test]
+    fn a_close_says_whether_it_went_out() {
+        for reading in [true, false] {
+            let socket = WebSocket::from_raw_socket(Peer { reading }, Role::Server, None);
+            assert_eq!(Link::new(socket).close(Some(Close::Stopped)), reading);
         }
     }
 }

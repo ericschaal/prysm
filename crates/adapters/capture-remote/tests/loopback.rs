@@ -252,6 +252,53 @@ fn a_second_sender_replaces_the_first() {
     Box::new(source).close().unwrap();
 }
 
+/// A source that closes while it waits for a replaced sender to answer the
+/// close tells the newer sender it stopped instead of asking it for frames.
+#[test]
+fn a_close_while_replacing_tells_the_newer_sender_it_stopped() {
+    let (portal, source) = open();
+    let replaced = greeted(&portal);
+    let mut newer = portal.client();
+    // The replaced sender's close arrives and stays unanswered: the receive
+    // thread waits for the answer.
+    let MaybeTlsStream::Plain(socket) = replaced.get_ref() else {
+        panic!("not plain TCP");
+    };
+    assert!(socket.peek(&mut [0; 1]).unwrap() > 0, "no close arrived");
+    Box::new(source).close().unwrap();
+    match newer.read() {
+        Ok(Message::Close(Some(frame))) => assert_eq!(u16::from(frame.code), 4000),
+        other => panic!("{other:?}"),
+    }
+    drop(replaced);
+}
+
+/// Each connection is checked against its own sender's offer: a sender that
+/// sends none is not checked against an earlier sender's.
+#[test]
+fn a_sender_without_an_offer_is_not_checked_against_another_senders() {
+    let portal = Portal::start();
+    let h264_only = Offer::new([(
+        StreamEncoding::H264Software,
+        vec![Mode::new(
+            Span::exactly(320),
+            Span::exactly(180),
+            Span::new(1, 30, 1).unwrap(),
+        )],
+    )]);
+    // Lighting is off: refused, with an offer that excludes raw.
+    let error = portal.connect_offering(&h264_only).unwrap_err();
+    assert_eq!(wire_cause(&error), WireError::Unavailable(503));
+    let mut source = portal.source(RAW);
+    // A client that sends no offer is asked, and streams.
+    let mut client = greeted(&portal);
+    client
+        .send(Message::binary(raw_frame([1, 0, 0, 0], 2, 2, &[9; 12])))
+        .unwrap();
+    assert_eq!(receive(&mut source).as_slice()[0], 9);
+    Box::new(source).close().unwrap();
+}
+
 #[test]
 fn malformed_and_oversized_messages_drop_only_that_connection() {
     let (portal, mut source) = open();
@@ -480,6 +527,36 @@ fn requests_this_end_cannot_take_are_refused() {
             assert!(answers.is_empty(), "{answers:?}");
         }
     }
+}
+
+/// A receiver that closes with a code before its request (it stopped) fails
+/// the connect with that close, not as a missing request.
+#[test]
+fn a_close_code_before_the_request_is_the_cause() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let peer = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(BOUND)).unwrap();
+        let mut socket = prysm_capture_remote::testkit::accept(stream);
+        let stopped = tungstenite::protocol::CloseFrame {
+            code: 4000.into(),
+            reason: "".into(),
+        };
+        socket.close(Some(stopped)).unwrap();
+        while socket.read().is_ok() {}
+    });
+    let url = format!("ws://{addr}/api/v1/capture/stream")
+        .parse()
+        .unwrap();
+    let error =
+        RemoteSender::connect(&url, addr, &prysm_capture_remote::testkit::offer()).unwrap_err();
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Closed(Some(Close::Stopped)),
+        "{error}"
+    );
+    peer.join().unwrap();
 }
 
 /// Messages of types this end does not know may precede the request.

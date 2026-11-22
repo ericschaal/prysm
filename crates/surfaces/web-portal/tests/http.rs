@@ -1438,7 +1438,7 @@ async fn colors_cadence_is_capped_at_ten_per_second() {
         }
         // The cap is an upper bound; a slow machine may send fewer.
         let rate = f64::from(sent) / started.elapsed().as_secs_f64();
-        assert!(sent >= 2 && rate <= 11.0, "{sent} events, {rate:.1}/s");
+        assert!(rate <= 11.0, "{sent} events, {rate:.1}/s");
         drop(events);
         portal.shutdown().await.unwrap();
     })

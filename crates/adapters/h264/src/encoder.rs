@@ -36,13 +36,14 @@ impl Backend {
     ///   1920×1080, the largest `prysm-h264-rvenc-sys` takes; at most 30 fps
     ///   because rvenc programs 30 fps for any rate above 25
     ///   (`webos-capture/2026-11-02-encoder-latency`, F-001).
-    /// - Software: from one macroblock (16×16) to what the receiver's
-    ///   decoder takes (Baseline up to 1920×1088), 1 to 60 fps.
+    /// - Software: from one macroblock (16×16) to 1920×1080, the largest
+    ///   frame the capture stream carries (its decoder takes the coded
+    ///   1920×1088), 1 to 60 fps.
     #[must_use]
     pub const fn limits(self) -> Mode {
         match self {
             Self::Hardware => Mode::new(span(176, 1920, 2), span(144, 1080, 2), span(1, 30, 1)),
-            Self::Software => Mode::new(span(16, 1920, 2), span(16, 1088, 2), span(1, 60, 1)),
+            Self::Software => Mode::new(span(16, 1920, 2), span(16, 1080, 2), span(1, 60, 1)),
         }
     }
 
@@ -382,6 +383,7 @@ mod tests {
         assert!(!hardware.contains(641, 360, 30));
         let software = Backend::Software.limits();
         assert!(software.contains(16, 16, 60) && !software.contains(14, 16, 30));
+        assert!(software.contains(1920, 1080, 60) && !software.contains(1920, 1082, 60));
         assert!(Backend::Software.available());
         assert_eq!(Backend::Hardware.available(), cfg!(feature = "hardware"));
     }

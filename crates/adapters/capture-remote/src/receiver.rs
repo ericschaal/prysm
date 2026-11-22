@@ -7,11 +7,20 @@ use prysm_ports::{
 };
 use std::time::Duration;
 
-/// How long `close` waits for the receive thread: it stops within a tick,
-/// then closes the connection (one write) and lingers for the answer. The
-/// close's own flush may take a second write.
+/// How long `close` waits for the receive thread, in the worst case (`W`
+/// the write timeout, `L` the linger, `P` the poll interval; a close is a
+/// write and its flush, `2W`; the linger follows only a close that went out
+/// and ends within `L + P`):
+///
+/// - receiving: the read wakes (`P`), close (`2W`), linger (`L + P`):
+///   `2W + L + 2P`, 3.1 s;
+/// - writing the request or a keyframe request: `W`, then as above
+///   without the first wake: `3W + L + P`, 4.05 s;
+/// - closing a replaced connection: its close (`2W`) and linger (`L + P`),
+///   then the newer connection's close, without a linger (`2W`):
+///   `4W + L + P`, 5.05 s, the longest.
 const RELEASE: Duration = POLL_INTERVAL
-    .saturating_add(WRITE_TIMEOUT.saturating_mul(2))
+    .saturating_add(WRITE_TIMEOUT.saturating_mul(4))
     .saturating_add(CLOSE_LINGER);
 
 /// Registers kind `"remote"`, its settings the [`RemoteSettings`]: frames a
@@ -74,8 +83,9 @@ fn offered(handoff: &Handoff) -> Option<Offer> {
 /// `capture.encoding` when the requested encoder is what failed, and an
 /// H.264 stream whose keyframe does not decode.
 ///
-/// Closing tells the connected sender that the stream stopped; a newer
-/// sender's connection tells the one it replaces.
+/// Closing, or failing after the sender was asked, tells the connected
+/// sender that the stream stopped; a newer sender's connection tells the one
+/// it replaces.
 #[derive(Debug)]
 pub struct RemoteSource {
     thread: OwnerThread,
