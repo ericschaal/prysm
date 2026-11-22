@@ -195,10 +195,9 @@ impl Screen {
         let flushed = backend.flush();
         let raw = disable_raw_mode();
         self.restored = true;
-        for message in panics::release() {
-            eprintln!("{message}");
-        }
+        // First, so the host writes again even if the terminal is gone.
         self.owner.send_replace(false);
+        panics::release().write_to(&mut io::stderr());
         resumed
             .and(style)
             .and(cursor)

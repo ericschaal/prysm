@@ -11,8 +11,8 @@ const ABOUT: &str = "Preview capture in the terminal, optionally driving WLED; u
 video played once through FFmpeg 9+ on PATH; see settings.file.example.json).
 Quit with q, or :quit. Without an interactive
 terminal the preview is unavailable and lighting and portal keep running.
-While the preview uses the terminal, status lines wait until it ends and log
-lines go only to --log-file.";
+While the preview uses the terminal and stderr is a terminal, status lines
+wait (then the net change is printed) and log lines go only to --log-file.";
 
 const PROGRAM: Program = Program {
     name: "prysm-tui",

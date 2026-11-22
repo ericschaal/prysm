@@ -71,14 +71,14 @@ use prysm_web_portal::{Access, FrontendAsset, WebPortal, lan_url};
 use std::fmt;
 use std::fs::OpenOptions;
 use std::future::Future;
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::process::ExitCode;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 
-/// The exit code after a second SIGINT or SIGTERM ended shutdown early:
-/// 128 + SIGINT, as shells report an interrupted command.
+/// The exit code after the host exited at once on a second SIGINT or
+/// SIGTERM, without finishing shutdown; the same for either signal.
 pub const INTERRUPTED: u8 = 130;
 
 /// What a host executable is.
@@ -135,7 +135,11 @@ where
             return ExitCode::FAILURE;
         }
     };
-    let status = Status { name, shown };
+    let status = Status {
+        name,
+        shown,
+        out: Out::Stderr,
+    };
     // Before the engine starts, so a signal that arrives meanwhile is not lost.
     let interrupts = match runtime.block_on(async { listen(status.clone()) }) {
         Ok(interrupts) => interrupts,
@@ -291,9 +295,10 @@ impl Host {
     }
 
     /// For a surface that draws on the whole terminal: it holds `true` while
-    /// it does. Meanwhile, if stderr is that terminal, status, signal and log
-    /// lines are not written to it; the status it missed is printed when the
-    /// surface lets go.
+    /// it does. Meanwhile, if stderr is a terminal (taken to be the same
+    /// one), status, signal and log lines are not written to it; when the
+    /// surface lets go, the status lines give the net change since the last
+    /// one printed, and the signal line follows.
     #[must_use]
     pub fn terminal(&self) -> watch::Sender<bool> {
         self.terminal.clone()
@@ -412,7 +417,7 @@ fn describe(access: &Access) -> String {
 }
 
 /// Whether a line may be written to stderr now: always, unless stderr is a
-/// terminal and a full-screen surface holds it ([`Host::terminal`]).
+/// terminal and a full-screen surface holds the terminal ([`Host::terminal`]).
 #[derive(Debug, Clone)]
 struct Shown(Option<watch::Receiver<bool>>);
 
@@ -448,12 +453,35 @@ impl Shown {
 pub struct Status {
     name: &'static str,
     shown: Shown,
+    out: Out,
+}
+
+/// Where status lines go.
+#[derive(Debug, Clone)]
+enum Out {
+    Stderr,
+    /// Each line, for tests.
+    #[cfg(test)]
+    Lines(tokio::sync::mpsc::UnboundedSender<String>),
 }
 
 impl Status {
     /// Before any surface runs, while nothing can hold the terminal.
     fn say(&self, line: &str) {
-        self.shown.write(|| eprintln!("{}: {line}", self.name));
+        self.shown.write(|| self.line(line));
+    }
+
+    /// One line, as is; a failed write is ignored (the terminal may be gone).
+    fn line(&self, line: &str) {
+        match &self.out {
+            Out::Stderr => {
+                let _ = writeln!(io::stderr(), "{}: {line}", self.name);
+            }
+            #[cfg(test)]
+            Out::Lines(lines) => {
+                let _ = lines.send(line.to_owned());
+            }
+        }
     }
 
     /// Once no full-screen surface holds the terminal.
@@ -467,7 +495,9 @@ impl Status {
         let mut taken = self.shown.0.clone();
         let mut seen = Seen::default();
         loop {
-            self.report(&mut seen, &snapshots.borrow_and_update().clone());
+            // Cloned first: the engine's snapshot is not held while stderr is written.
+            let snapshot = snapshots.borrow_and_update().clone();
+            self.report(&mut seen, &snapshot);
             let released = async {
                 match &mut taken {
                     Some(taken) => taken.changed().await,
@@ -482,16 +512,18 @@ impl Status {
         }
         // A full-screen surface lets go of the terminal as it stops.
         self.shown.released().await;
-        self.report(&mut seen, &snapshots.borrow().clone());
+        let snapshot = snapshots.borrow().clone();
+        self.report(&mut seen, &snapshot);
         Ok(())
     }
 
-    /// The changes since the last report, unless the terminal is taken: then
-    /// they wait in `seen`'s difference.
+    /// What changed since the last report, unless the terminal is taken:
+    /// then nothing is reported, and the next report gives the net change
+    /// (intermediate states are not replayed).
     fn report(&self, seen: &mut Seen, snapshot: &Snapshot) {
         self.shown.write(|| {
             for line in seen.update(snapshot) {
-                eprintln!("{}: {line}", self.name);
+                self.line(&line);
             }
         });
     }
@@ -602,7 +634,7 @@ mod tests {
     }
 
     #[test]
-    fn lines_wait_while_a_full_screen_surface_holds_the_terminal() {
+    fn nothing_is_written_while_a_full_screen_surface_holds_the_terminal() {
         let terminal = watch::Sender::new(false);
         let shown = Shown(Some(terminal.subscribe()));
         assert!(shown.write(|| {}));
@@ -616,6 +648,59 @@ mod tests {
         // A stderr that is not the terminal is always written.
         terminal.send_replace(true);
         assert!(Shown(None).write(|| {}));
+    }
+
+    /// While the terminal is taken nothing is printed; on release, and once
+    /// more after shutdown, the net change since the last line is.
+    #[tokio::test]
+    async fn status_missed_while_the_terminal_is_taken_is_printed_on_release() {
+        use prysm_runtime::fakes::{self, CallLog, FakeOutputs, FakeSources, MemoryStore};
+        use std::time::Duration;
+        let terminal = watch::Sender::new(true);
+        let (sent, mut lines) = tokio::sync::mpsc::unbounded_channel();
+        let status = Status {
+            name: "prysm-test",
+            shown: Shown(Some(terminal.subscribe())),
+            out: Out::Lines(sent),
+        };
+        let log = CallLog::new();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let driver = move |engine: EngineHandle, shutdown: Shutdown| async move {
+            let mut snapshot = engine.snapshot();
+            engine.set_target(LightingTarget::Processed).await?;
+            let running = |s: &Snapshot| s.session == SessionState::Running;
+            let _ = snapshot.wait_for(running).await;
+            // Taken: neither "target off" nor the way to running was printed.
+            assert!(lines.try_recv().is_err());
+            terminal.send_replace(false);
+            assert_eq!(
+                lines.recv().await.unwrap(),
+                "target processed, session running"
+            );
+            terminal.send_replace(true);
+            engine.set_target(LightingTarget::Off).await?;
+            let off = |s: &Snapshot| s.session == SessionState::Stopped;
+            let _ = snapshot.wait_for(off).await;
+            let _ = stop.send(());
+            shutdown.requested().await;
+            assert!(lines.try_recv().is_err());
+            // Released as a full-screen surface stops: the final report.
+            terminal.send_replace(false);
+            assert_eq!(lines.recv().await.unwrap(), "target off, session stopped");
+            Ok(())
+        };
+        let run = Prysm::builder(MemoryStore::with(fakes::settings()))
+            .source(FakeSources(log.clone()))
+            .output(FakeOutputs(log))
+            .surface(status)
+            .surface(driver)
+            .run(async {
+                let _ = stopped.await;
+            });
+        tokio::time::timeout(Duration::from_secs(10), run)
+            .await
+            .expect("host did not stop")
+            .unwrap();
     }
 
     #[test]

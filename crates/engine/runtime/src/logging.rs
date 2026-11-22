@@ -46,7 +46,10 @@ pub fn init(name: &'static str, logs: Logs) {
     let (filter, invalid) = filter(std::env::var("RUST_LOG").ok().as_deref());
     let installed = match logs {
         Logs::Stderr => subscriber(name, filter, io::stderr).try_init(),
-        Logs::SharedStderr { taken } => subscriber(name, filter, Shared(taken)).try_init(),
+        Logs::SharedStderr { taken } => {
+            let out = io::stderr;
+            subscriber(name, filter, Shared { taken, out }).try_init()
+        }
         Logs::File(file) => subscriber(name, filter, Mutex::new(file)).try_init(),
     };
     if let (Ok(()), Some(invalid)) = (installed, invalid) {
@@ -54,32 +57,41 @@ pub fn init(name: &'static str, logs: Logs) {
     }
 }
 
-/// [`Logs::SharedStderr`]'s writer.
-struct Shared(watch::Receiver<bool>);
+/// [`Logs::SharedStderr`]'s writer: `out` (stderr) unless `taken`.
+struct Shared<M> {
+    taken: watch::Receiver<bool>,
+    out: M,
+}
 
 /// Holds the borrow while the line is written, so the terminal cannot be
 /// taken in the middle of it.
-struct SharedLine<'a>(watch::Ref<'a, bool>);
+struct SharedLine<'a, W> {
+    taken: watch::Ref<'a, bool>,
+    out: W,
+}
 
-impl io::Write for SharedLine<'_> {
+impl<W: io::Write> io::Write for SharedLine<'_, W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if *self.0 {
+        if *self.taken {
             Ok(bytes.len())
         } else {
-            io::stderr().write(bytes)
+            self.out.write(bytes)
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        io::stderr().flush()
+        self.out.flush()
     }
 }
 
-impl<'a> MakeWriter<'a> for Shared {
-    type Writer = SharedLine<'a>;
+impl<'a, M: MakeWriter<'a>> MakeWriter<'a> for Shared<M> {
+    type Writer = SharedLine<'a, M::Writer>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        SharedLine(self.0.borrow())
+        SharedLine {
+            taken: self.taken.borrow(),
+            out: self.out.make_writer(),
+        }
     }
 }
 
@@ -206,6 +218,33 @@ mod tests {
             invalid
                 .unwrap()
                 .starts_with(r#""prysm_capture_device_sys=loud": "#)
+        );
+    }
+
+    #[test]
+    fn shared_stderr_writes_whole_lines_while_free_and_drops_them_while_taken() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let out = {
+            let buffer = buffer.clone();
+            move || Buffer(buffer.clone())
+        };
+        let taken = watch::Sender::new(false);
+        let shared = Shared {
+            taken: taken.subscribe(),
+            out,
+        };
+        let (filter, _) = filter(None);
+        tracing::subscriber::with_default(subscriber("prysm-test", filter, shared), || {
+            tracing::warn!(target: "prysm", field = 1, "free");
+            taken.send_replace(true);
+            tracing::warn!(target: "prysm", "taken");
+            taken.send_replace(false);
+            tracing::warn!(target: "prysm", "free again");
+        });
+        let text = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        assert_eq!(
+            text,
+            "prysm-test: warn prysm: free field=1\nprysm-test: warn prysm: free again\n"
         );
     }
 

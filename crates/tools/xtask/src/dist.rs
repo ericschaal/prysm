@@ -266,7 +266,8 @@ fn mac_build(arch: Arch) -> Command {
     )
 }
 
-/// The executable cargo built for binary `name`, from its JSON messages.
+/// The executable cargo built for binary `name`, from its JSON messages:
+/// exactly one `bin` artifact of that name.
 fn executable(messages: &str, name: &str) -> Result<PathBuf> {
     #[derive(Deserialize)]
     struct Message {
@@ -277,18 +278,29 @@ fn executable(messages: &str, name: &str) -> Result<PathBuf> {
     #[derive(Deserialize)]
     struct Built {
         name: String,
+        kind: Vec<String>,
     }
+    let mut found = Vec::new();
     for line in messages.lines() {
         let message: Message =
             serde_json::from_str(line).with_context(|| format!("reading cargo's `{line}`"))?;
+        let binary =
+            |target: Built| target.name == name && target.kind.iter().any(|kind| kind == "bin");
         if message.reason == "compiler-artifact"
-            && message.target.is_some_and(|target| target.name == name)
+            && message.target.is_some_and(binary)
             && let Some(executable) = message.executable
         {
-            return Ok(executable);
+            found.push(executable);
         }
     }
-    bail!("cargo reported no executable for {name}")
+    match <[PathBuf; 1]>::try_from(found) {
+        Ok([executable]) => Ok(executable),
+        Err(found) if found.is_empty() => bail!("cargo reported no executable for {name}"),
+        Err(found) => bail!(
+            "cargo reported {} executables for {name}: {found:?}",
+            found.len()
+        ),
+    }
 }
 
 /// `packaging/webos/build-ipk.sh`, which prints the path of the package it
@@ -449,17 +461,35 @@ mod tests {
              --message-format=json-render-diagnostics"
         );
         assert!(process::display(&mac_build(Arch::Amd64)).contains("--target x86_64-apple-darwin"));
+        let artifact = |name: &str, kind: &str, executable: &str| {
+            format!(
+                r#"{{"reason":"compiler-artifact","target":{{"name":"{name}","kind":["{kind}"]}},"executable":{executable}}}"#
+            )
+        };
+        let built = r#""/t/aarch64-apple-darwin/release/prysm-headless""#;
         let messages = [
-            r#"{"reason":"compiler-artifact","target":{"name":"prysm-host"},"executable":null}"#,
-            r#"{"reason":"compiler-artifact","target":{"name":"prysm-headless"},"executable":"/t/aarch64-apple-darwin/release/prysm-headless"}"#,
-            r#"{"reason":"build-finished","success":true}"#,
-        ]
-        .join("\n");
+            artifact("prysm-host", "lib", "null"),
+            r#"{"reason":"build-script-executed","package_id":"x"}"#.to_owned(),
+            // A test or example of the same name is not the binary.
+            artifact("prysm-headless", "test", r#""/t/deps/prysm_headless-1""#),
+            artifact(
+                "prysm-headless",
+                "example",
+                r#""/t/examples/prysm-headless""#,
+            ),
+            artifact("prysm-headless", "bin", built),
+            r#"{"reason":"build-finished","success":true}"#.to_owned(),
+        ];
         assert_eq!(
-            executable(&messages, "prysm-headless").unwrap(),
+            executable(&messages.join("\n"), "prysm-headless").unwrap(),
             Path::new("/t/aarch64-apple-darwin/release/prysm-headless")
         );
-        assert!(executable(&messages[..messages.find('\n').unwrap()], "prysm-headless").is_err());
+        assert!(executable(&messages[..4].join("\n"), "prysm-headless").is_err());
+        let twice = [
+            messages[4].clone(),
+            artifact("prysm-headless", "bin", r#""/t/other""#),
+        ];
+        assert!(executable(&twice.join("\n"), "prysm-headless").is_err());
     }
 
     #[test]

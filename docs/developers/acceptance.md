@@ -115,7 +115,9 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
 - **running**: the seam delivers Prysm, writes temporary settings (WLED
   output, neutral processing, the cell's capture) and starts it; stopped with
   SIGTERM (KILL after 30 s). A local target runs the binary on this computer
-  as a child process, its output in `headless.log`; an SSH target is
+  as a child process in a session of its own (a Ctrl-C on the runner's
+  terminal does not reach it, so the runner's SIGTERM is its only signal),
+  its output in `headless.log`; an SSH target is
   described below. The seam also says which sender address WLED should
   report;
 - **prysm**: the portal API. With a capture card, the configured `device`
