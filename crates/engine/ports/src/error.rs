@@ -113,6 +113,7 @@ impl Error {
         let mut source: Option<&(dyn StdError + 'static)> = match self {
             Self::Adapter { source, .. } => source.as_deref().map(|cause| cause as _),
             Self::Decode { source, .. } => Some(&**source),
+            Self::Invalid(invalid) => Some(invalid),
             other => StdError::source(other),
         };
         while let Some(cause) = source {
@@ -165,6 +166,8 @@ mod tests {
             "unplugged"
         );
         assert!(deeper.cause::<ValidationError>().is_none());
+        let invalid = Error::Invalid(ValidationError::new("capture.device", "empty"));
+        assert!(invalid.cause::<ValidationError>().is_some());
         assert!(Error::other("no cause").cause::<std::io::Error>().is_none());
         let decode = Error::Decode {
             kind: "fake".into(),

@@ -367,8 +367,8 @@ fn a_keyframe_request_starts_a_new_session_and_unknown_types_are_ignored() {
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!recorder.frame());
 
-    // A type this end does not know changes nothing: the stream goes on to
-    // the keyframe requested after it, and that session continues.
+    // A type this end does not know does not end the stream: it goes on to
+    // the keyframe requested after it.
     recorder.command(r#"{"type":"pause"}"#);
     recorder.command(r#"{"type":"keyframe"}"#);
     recorder.until_keyframe(&mut sender, &mut next);

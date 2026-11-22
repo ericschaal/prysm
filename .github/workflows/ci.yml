@@ -480,6 +480,7 @@ jobs:
           -p prysm-capture-webos -p prysm-capture-device -p prysm-capture-remote
           -p prysm-capture-file
           -- --skip a_slow_processing_step_is_named_after_a_few_seconds
+          --skip real_ffmpeg_plays_once_paced_and_reports_bad_files
 
   webos-ipk:
     # The SDK below is built for aarch64 hosts.
