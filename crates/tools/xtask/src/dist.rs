@@ -2,14 +2,16 @@
 //! targets are built in [`docker`].
 mod docker;
 
+use crate::doctor::{self, Use};
 use crate::manifest::{Entry, Manifest, sha256, temporary};
 use crate::npm::{self, Script};
 use crate::process::{self, root, target_dir};
 use anyhow::{Context, Result, bail, ensure};
 use clap::ValueEnum;
 use docker::Docker;
+use serde::Deserialize;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime};
 
@@ -121,20 +123,25 @@ impl Kind {
         }
     }
 
-    /// Fails when this machine cannot build `self`.
-    fn check_prerequisites(self) -> Result<()> {
+    /// What `cargo xtask doctor` lists the tools for.
+    fn tools_for(self) -> Use {
         match self {
-            Self::Mac(_) => ensure!(
+            Self::Mac(_) => Use::DistMac,
+            Self::Binary(_) | Self::Deb(_) | Self::Image(_) => Use::DistLinux,
+            Self::Tv(_) => Use::DistTv,
+        }
+    }
+
+    /// Fails when this machine cannot build `self`: the wrong system, or a
+    /// tool doctor lists for it is missing or too old.
+    fn check_prerequisites(self) -> Result<()> {
+        if let Self::Mac(_) = self {
+            ensure!(
                 cfg!(target_os = "macos"),
                 "the mac target builds only on macOS"
-            ),
-            Self::Tv(_) => ensure!(
-                std::env::var_os("WEBOS_SDK").is_some(),
-                "set WEBOS_SDK to the relocated webOS SDK (docs/developers/packaging.md#webos)"
-            ),
-            Self::Binary(_) | Self::Deb(_) | Self::Image(_) => {}
+            );
         }
-        Ok(())
+        doctor::require(self.tools_for())
     }
 }
 
@@ -200,9 +207,9 @@ impl Builder {
     /// Builds the artifact of `kind` at `out`.
     fn build(&mut self, kind: Kind, out: &Path) -> Result<()> {
         match kind {
-            Kind::Mac(_) => {
+            Kind::Mac(arch) => {
                 self.bundle()?;
-                mac(out)
+                mac(arch, out)
             }
             Kind::Binary(arch) | Kind::Deb(arch) => {
                 let exported = self.docker.artifacts(arch)?;
@@ -231,13 +238,57 @@ impl Builder {
     }
 }
 
-/// A release build of prysm-headless for this Mac.
-fn mac(out: &Path) -> Result<()> {
-    process::run(process::command(
+/// A release build of prysm-headless for this Mac: built for `arch`'s target
+/// whatever `CARGO_BUILD_TARGET` or a cargo config says, and copied from
+/// where cargo says it wrote it.
+fn mac(arch: Arch, out: &Path) -> Result<()> {
+    let messages = process::output(mac_build(arch))?;
+    copy(&executable(&messages, "prysm-headless")?, out)
+}
+
+fn mac_build(arch: Arch) -> Command {
+    let target = match arch {
+        Arch::Arm64 => "aarch64-apple-darwin",
+        Arch::Amd64 => "x86_64-apple-darwin",
+    };
+    process::command(
         "cargo",
-        &["build", "--release", "--locked", "-p", "prysm-headless"],
-    ))?;
-    copy(&target_dir().join("release/prysm-headless"), out)
+        &[
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "prysm-headless",
+            "--target",
+            target,
+            "--message-format=json-render-diagnostics",
+        ],
+    )
+}
+
+/// The executable cargo built for binary `name`, from its JSON messages.
+fn executable(messages: &str, name: &str) -> Result<PathBuf> {
+    #[derive(Deserialize)]
+    struct Message {
+        reason: String,
+        target: Option<Built>,
+        executable: Option<PathBuf>,
+    }
+    #[derive(Deserialize)]
+    struct Built {
+        name: String,
+    }
+    for line in messages.lines() {
+        let message: Message =
+            serde_json::from_str(line).with_context(|| format!("reading cargo's `{line}`"))?;
+        if message.reason == "compiler-artifact"
+            && message.target.is_some_and(|target| target.name == name)
+            && let Some(executable) = message.executable
+        {
+            return Ok(executable);
+        }
+    }
+    bail!("cargo reported no executable for {name}")
 }
 
 /// `packaging/webos/build-ipk.sh`, which prints the path of the package it
@@ -366,6 +417,49 @@ mod tests {
                 "tv-slim",
             ]
         );
+    }
+
+    #[test]
+    fn prerequisites_are_doctors_tools_for_the_target() {
+        let uses = Target::value_variants()
+            .iter()
+            .map(|target| target.kind().unwrap().tools_for())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            uses,
+            [
+                Use::DistMac,
+                Use::DistLinux,
+                Use::DistLinux,
+                Use::DistLinux,
+                Use::DistLinux,
+                Use::DistLinux,
+                Use::DistLinux,
+                Use::DistTv,
+                Use::DistTv,
+            ]
+        );
+    }
+
+    #[test]
+    fn the_mac_binary_is_built_for_its_target_and_copied_from_where_cargo_wrote_it() {
+        assert_eq!(
+            process::display(&mac_build(Arch::Arm64)),
+            "cargo build --release --locked -p prysm-headless --target aarch64-apple-darwin \
+             --message-format=json-render-diagnostics"
+        );
+        assert!(process::display(&mac_build(Arch::Amd64)).contains("--target x86_64-apple-darwin"));
+        let messages = [
+            r#"{"reason":"compiler-artifact","target":{"name":"prysm-host"},"executable":null}"#,
+            r#"{"reason":"compiler-artifact","target":{"name":"prysm-headless"},"executable":"/t/aarch64-apple-darwin/release/prysm-headless"}"#,
+            r#"{"reason":"build-finished","success":true}"#,
+        ]
+        .join("\n");
+        assert_eq!(
+            executable(&messages, "prysm-headless").unwrap(),
+            Path::new("/t/aarch64-apple-darwin/release/prysm-headless")
+        );
+        assert!(executable(&messages[..messages.find('\n').unwrap()], "prysm-headless").is_err());
     }
 
     #[test]

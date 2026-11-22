@@ -1,15 +1,16 @@
 //! The built `prysm-headless` binary: arguments, idle start, portal, SIGTERM.
 
 use prysm_capture_device::DeviceSource;
-use prysm_capture_file::FileSource;
-use prysm_capture_remote::RemoteReceiver;
-use prysm_output_wled::Wled;
-use prysm_ports::{Registry, SettingsStore};
-use prysm_runtime::NullOutput;
+use prysm_ports::SettingsStore;
+use prysm_runtime::Prysm;
 use prysm_settings_file::SettingsFile;
 use prysm_testkit::host::{
     Host, check_arguments, check_settings, get, null_settings, put_target, request,
 };
+use std::io::Write;
+use std::net::TcpStream;
+use std::process::Command;
+use std::time::{Duration, Instant};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_prysm-headless");
 
@@ -133,17 +134,55 @@ fn allowed_origins_get_cors() {
     assert!(status.success(), "{stderr:#?}");
 }
 
+/// A second SIGTERM while shutdown waits (here for a request whose body
+/// never completes) exits at once with its own code.
+#[test]
+fn a_second_signal_during_shutdown_exits_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = null_settings(dir.path());
+    let mut host = Host::spawn(
+        BINARY,
+        &[settings.to_str().unwrap(), "--listen", "127.0.0.1:0"],
+    );
+    let port = host.portal_port();
+    host.wait_for("target off, session stopped");
+    // The portal lets it finish for up to 5 s once shutdown starts.
+    let mut unfinished = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    unfinished
+        .write_all(
+            b"PUT /api/v1/settings HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+              Content-Type: application/json\r\nContent-Length: 1000\r\n\r\n{",
+        )
+        .unwrap();
+    let first = Command::new("kill")
+        .args(["-TERM", &host.pid().to_string()])
+        .status()
+        .unwrap();
+    assert!(first.success());
+    host.wait_for("SIGTERM, shutting down; a second SIGINT or SIGTERM exits at once");
+    let second = Instant::now();
+    let (status, stderr) = host.terminate();
+    assert_eq!(status.code(), Some(130), "{stderr:#?}");
+    assert!(second.elapsed() < Duration::from_secs(3), "{stderr:#?}");
+    assert!(
+        stderr
+            .iter()
+            .any(|line| line == "prysm-headless: SIGTERM again, exited without finishing shutdown"),
+        "{stderr:#?}"
+    );
+    assert!(!stderr.iter().any(|line| line == "prysm-headless: stopped"));
+    drop(unfinished);
+}
+
+/// Validated with the adapters the hosts register.
 #[test]
 fn example_settings_load_and_validate() {
-    let mut registry = Registry::default();
-    registry.add_source(DeviceSource);
-    registry.add_source(FileSource);
-    registry.add_source(RemoteReceiver::default());
-    registry.add_output(Wled::default());
-    registry.add_output(NullOutput);
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/settings.example.json");
+    let (adapters, _) = prysm_host::desktop_adapters(DeviceSource);
+    adapters(Prysm::builder(SettingsFile::new(path)))
+        .check()
+        .unwrap();
     let settings = SettingsFile::new(path).load().unwrap().unwrap();
-    registry.validate(&settings).unwrap();
     assert_eq!(settings.capture.unwrap().kind, "device");
     assert_eq!(settings.output.unwrap().kind, "wled");
 }

@@ -12,6 +12,7 @@
 use std::fs::File;
 use std::io;
 use std::sync::Mutex;
+use tokio::sync::watch;
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::format::Writer;
@@ -29,6 +30,11 @@ pub const DEFAULT_FILTER: &str = "warn,prysm=info";
 #[derive(Debug)]
 pub enum Logs {
     Stderr,
+    /// Stderr, except while `taken` holds `true`: a full-screen surface then
+    /// draws on the terminal stderr writes to, and lines are dropped.
+    SharedStderr {
+        taken: watch::Receiver<bool>,
+    },
     /// Appended to, for hosts whose terminal is taken by a full-screen surface.
     File(File),
 }
@@ -40,10 +46,40 @@ pub fn init(name: &'static str, logs: Logs) {
     let (filter, invalid) = filter(std::env::var("RUST_LOG").ok().as_deref());
     let installed = match logs {
         Logs::Stderr => subscriber(name, filter, io::stderr).try_init(),
+        Logs::SharedStderr { taken } => subscriber(name, filter, Shared(taken)).try_init(),
         Logs::File(file) => subscriber(name, filter, Mutex::new(file)).try_init(),
     };
     if let (Ok(()), Some(invalid)) = (installed, invalid) {
         tracing::warn!(target: "prysm", "ignoring RUST_LOG: {invalid}");
+    }
+}
+
+/// [`Logs::SharedStderr`]'s writer.
+struct Shared(watch::Receiver<bool>);
+
+/// Holds the borrow while the line is written, so the terminal cannot be
+/// taken in the middle of it.
+struct SharedLine<'a>(watch::Ref<'a, bool>);
+
+impl io::Write for SharedLine<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if *self.0 {
+            Ok(bytes.len())
+        } else {
+            io::stderr().write(bytes)
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        io::stderr().flush()
+    }
+}
+
+impl<'a> MakeWriter<'a> for Shared {
+    type Writer = SharedLine<'a>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        SharedLine(self.0.borrow())
     }
 }
 

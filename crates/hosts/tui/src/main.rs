@@ -1,4 +1,5 @@
 //! prysm-tui: the terminal previews what the LEDs show, next to the web portal.
+use prysm_capture_device::DeviceSource;
 use prysm_host::{Program, assets};
 use prysm_ports::{Error, Result, Settings, SettingsStore};
 use prysm_settings_file::SettingsFile;
@@ -10,22 +11,21 @@ const ABOUT: &str = "Preview capture in the terminal, optionally driving WLED; u
 video played once through FFmpeg 9+ on PATH; see settings.file.example.json).
 Quit with q, or :quit. Without an interactive
 terminal the preview is unavailable and lighting and portal keep running.
-While the preview uses the terminal, status is not printed and log lines go
-only to --log-file.";
+While the preview uses the terminal, status lines wait until it ends and log
+lines go only to --log-file.";
 
 const PROGRAM: Program = Program {
     name: "prysm-tui",
     about: ABOUT,
-    full_screen: true,
 };
 
 fn main() -> ExitCode {
     // A capture-only TV streams to the portal, which hands it to the remote source.
-    let (adapters, tv_stream) = prysm_host::desktop_adapters();
+    let (adapters, tv_stream) = prysm_host::desktop_adapters(DeviceSource);
     prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
-        let tui = Tui::new(read_settings);
+        let tui = Tui::new(read_settings, host.terminal());
         let quit = tui.quit();
-        let signals = host.signals()?;
+        let signals = host.signals();
         prysm
             .surface(host.status())
             .surface(host.start())

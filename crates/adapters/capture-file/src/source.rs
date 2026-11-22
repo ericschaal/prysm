@@ -1,7 +1,12 @@
 //! One running FFmpeg child. The session thread polls the child's stdout and
-//! stderr with a deadline (no helper thread): stdout carries whole RGB24
-//! frames, stderr is drained into a bounded tail that failures carry.
-use crate::FileSettings;
+//! stderr with a deadline (no reading thread): stdout carries whole RGB24
+//! frames, stderr is drained into a bounded tail that failures carry. A
+//! thread blocked in the child's `wait` reports its exit, which the session
+//! thread awaits with a deadline.
+//!
+//! FFmpeg runs in a process group of its own, so a Ctrl-C on the terminal
+//! reaches only the host, which stops FFmpeg itself by killing that group.
+use crate::{FileSettings, players};
 use nix::errno::Errno;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use prysm_core::{Frame, FramePool, PixelFormat};
@@ -9,14 +14,14 @@ use prysm_ports::{Error, FrameSource, Pull, Result};
 use std::fmt;
 use std::io::{self, Read};
 use std::os::fd::AsFd;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 /// Bytes of FFmpeg's stderr kept for error messages.
 pub(crate) const STDERR_TAIL: usize = 2048;
-/// How often a child is checked for having exited while it is awaited.
-const REAP_POLL: Duration = Duration::from_millis(2);
 
 /// The FFmpeg invocation, as the shipping application runs it: decode the
 /// first video stream once (endlessly with `repeat`: `-stream_loop -1`), cap the rate at `fps`, scale to the frame size
@@ -69,19 +74,41 @@ impl Deadlines {
     };
 }
 
-/// How FFmpeg ended, with the end of what it wrote to stderr.
+/// How FFmpeg ended other than by playing the whole file.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum Ended {
+    #[error("FFmpeg exited with {0}")]
+    Exited(ExitStatus),
+    #[error("FFmpeg closed its output but did not exit within {0:?}")]
+    DidNotExit(Duration),
+    #[error("FFmpeg stalled mid-frame: {filled} of {expected} bytes within {within:?}")]
+    Stalled {
+        filled: usize,
+        expected: usize,
+        within: Duration,
+    },
+    #[error("killed FFmpeg process {pid} was not reaped within {within:?}")]
+    Unreaped { pid: u32, within: Duration },
+}
+
+/// How playback failed, with the end of what FFmpeg wrote to stderr.
 #[derive(Debug, Clone, thiserror::Error)]
 pub(crate) struct DecoderExit {
-    pub outcome: String,
+    pub ended: Ended,
+    /// `(filled, expected)` bytes when stdout ended inside a frame.
+    pub partial: Option<(usize, usize)>,
     pub stderr: String,
 }
 
 impl fmt::Display for DecoderExit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some((filled, expected)) = self.partial {
+            write!(f, "output ended mid-frame ({filled} of {expected} bytes); ")?;
+        }
         if self.stderr.is_empty() {
-            write!(f, "{}; no stderr output", self.outcome)
+            write!(f, "{}; no stderr output", self.ended)
         } else {
-            write!(f, "{}; stderr: {}", self.outcome, self.stderr)
+            write!(f, "{}; stderr: {}", self.ended, self.stderr)
         }
     }
 }
@@ -259,39 +286,74 @@ fn read_frame(
     }
 }
 
-/// Poll the child until it exits or `deadline` passes.
-fn wait_until(child: &mut Child, deadline: Instant) -> io::Result<Option<ExitStatus>> {
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status));
+/// The child's exit, reported by a thread blocked in its `wait`, which also
+/// reaps it: an event the session thread awaits with a deadline.
+struct Exit {
+    pid: u32,
+    reported: mpsc::Receiver<io::Result<ExitStatus>>,
+    status: Option<ExitStatus>,
+}
+
+impl Exit {
+    fn watch(mut child: Child) -> io::Result<Self> {
+        let pid = child.id();
+        let (report, reported) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name("prysm-ffmpeg-wait".into())
+            .spawn(move || {
+                let status = child.wait();
+                players::forget(pid);
+                let _ = report.send(status);
+            })?;
+        Ok(Self {
+            pid,
+            reported,
+            status: None,
+        })
+    }
+
+    /// The exit status, waiting until `deadline` for it; `None`: the child
+    /// still runs then.
+    fn by(&mut self, deadline: Instant) -> io::Result<Option<ExitStatus>> {
+        if self.status.is_none() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.reported.recv_timeout(left) {
+                Ok(status) => self.status = Some(status?),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(io::Error::other(
+                        "the wait for FFmpeg ended without a status",
+                    ));
+                }
+            }
         }
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-        thread::sleep(REAP_POLL);
+        Ok(self.status)
     }
 }
 
 /// `Ok` only once the child has been reaped.
-fn kill_and_reap(child: &mut Child, within: Duration) -> Result<()> {
+fn kill_and_reap(exit: &mut Exit, within: Duration) -> Result<()> {
     let unconfirmed = |error| Error::adapter("FFmpeg termination is unconfirmed", error);
-    if child.try_wait().map_err(unconfirmed)?.is_some() {
+    if exit.by(Instant::now()).map_err(unconfirmed)?.is_some() {
         return Ok(());
     }
-    child.kill().map_err(unconfirmed)?;
-    match wait_until(child, Instant::now() + within).map_err(unconfirmed)? {
+    players::kill_group(exit.pid).map_err(unconfirmed)?;
+    match exit.by(Instant::now() + within).map_err(unconfirmed)? {
         Some(_) => Ok(()),
-        None => Err(Error::other(format!(
-            "FFmpeg termination is unconfirmed: killed process {} was not reaped within {within:?}",
-            child.id()
-        ))),
+        None => Err(Error::adapter(
+            "FFmpeg termination is unconfirmed",
+            Ended::Unreaped {
+                pid: exit.pid,
+                within,
+            },
+        )),
     }
 }
 
 /// A running decoder. Private test seam: `spawn` takes any command that
 /// writes raw RGB24 frames of the given size to stdout.
 pub(crate) struct FileFrames {
-    child: Child,
+    exit: Exit,
     pipes: Pipes,
     pool: FramePool,
     size: [u32; 2],
@@ -320,6 +382,7 @@ impl FileFrames {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .process_group(0)
             .spawn()
             .map_err(|error| {
                 let context = if error.kind() == io::ErrorKind::NotFound {
@@ -331,13 +394,21 @@ impl FileFrames {
                 };
                 Error::adapter(context, error)
             })?;
-        let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-            let unreaped = kill_and_reap(&mut child, deadlines.reap).err();
+        let pid = child.id();
+        players::add(pid);
+        let pipes = (child.stdout.take(), child.stderr.take());
+        let exit = Exit::watch(child).map_err(|error| {
+            let _ = players::kill_group(pid);
+            Error::adapter("cannot wait for FFmpeg", error)
+        });
+        let (Some(stdout), Some(stderr)) = pipes else {
+            // Not reached: both are piped above.
+            let unreaped = kill_and_reap(&mut exit?, deadlines.reap).err();
             let failure = Error::other(format!("`{program}` output pipes are unavailable"));
             return Err(unreaped.unwrap_or(failure));
         };
         Ok(Self {
-            child,
+            exit: exit?,
             pipes: Pipes {
                 stdout,
                 stderr: Some(stderr),
@@ -354,7 +425,7 @@ impl FileFrames {
 
     #[cfg(test)]
     pub(crate) fn pid(&self) -> u32 {
-        self.child.id()
+        self.exit.pid
     }
 
     fn read(&mut self, timeout: Duration) -> Result<Pull> {
@@ -375,10 +446,15 @@ impl FileFrames {
             Filled::Ended { filled, expected } => {
                 self.ended(filled, expected).map(|()| Pull::Ended)
             }
-            Filled::Stalled { filled, expected } => Err(Error::other(format!(
-                "FFmpeg stalled mid-frame playing `{}`: {filled} of {expected} bytes within {:?}",
-                self.name, self.deadlines.stall
-            ))),
+            Filled::Stalled { filled, expected } => {
+                let within = self.deadlines.stall;
+                let stalled = Ended::Stalled {
+                    filled,
+                    expected,
+                    within,
+                };
+                Err(self.failed(stalled, None))
+            }
         }
     }
 
@@ -386,35 +462,29 @@ impl FileFrames {
     /// `Ok`: the whole file played.
     fn ended(&mut self, filled: usize, expected: usize) -> Result<()> {
         let deadline = Instant::now() + self.deadlines.exit;
+        // Until stderr closes: a process FFmpeg left behind may hold it.
         self.pipes.finish_stderr(deadline);
-        let status = wait_until(&mut self.child, deadline);
-        let failed = |outcome: String, stderr: String| {
-            Error::adapter(
-                format!("cannot play video file `{}`", self.name),
-                DecoderExit { outcome, stderr },
-            )
-        };
-        let stderr = self.pipes.tail.text();
-        let partial = if filled > 0 {
-            format!("output ended mid-frame ({filled} of {expected} bytes); ")
-        } else {
-            String::new()
-        };
+        let status = self
+            .exit
+            .by(deadline)
+            .map_err(|error| Error::adapter("cannot wait for FFmpeg", error))?;
+        let partial = (filled > 0).then_some((filled, expected));
         match status {
-            Ok(Some(status)) if status.success() && filled == 0 => Ok(()),
-            Ok(Some(status)) => Err(failed(
-                format!("{partial}FFmpeg exited with {status}"),
-                stderr,
-            )),
-            Ok(None) => Err(failed(
-                format!(
-                    "{partial}FFmpeg closed its output but did not exit within {:?}",
-                    self.deadlines.exit
-                ),
-                stderr,
-            )),
-            Err(error) => Err(Error::adapter("cannot wait for FFmpeg", error)),
+            Some(status) if status.success() && partial.is_none() => Ok(()),
+            Some(status) => Err(self.failed(Ended::Exited(status), partial)),
+            None => Err(self.failed(Ended::DidNotExit(self.deadlines.exit), partial)),
         }
+    }
+
+    fn failed(&self, ended: Ended, partial: Option<(usize, usize)>) -> Error {
+        Error::adapter(
+            format!("cannot play video file `{}`", self.name),
+            DecoderExit {
+                ended,
+                partial,
+                stderr: self.pipes.tail.text(),
+            },
+        )
     }
 }
 
@@ -437,7 +507,7 @@ impl FrameSource for FileFrames {
     /// Kill FFmpeg (if still running) and certify that it was reaped.
     fn close(mut self: Box<Self>) -> Result<()> {
         self.closed = true;
-        kill_and_reap(&mut self.child, self.deadlines.reap)
+        kill_and_reap(&mut self.exit, self.deadlines.reap)
     }
 }
 
@@ -445,7 +515,7 @@ impl Drop for FileFrames {
     /// Without `close`, FFmpeg is still killed and reaped within the bound.
     fn drop(&mut self) {
         if !self.closed
-            && let Err(error) = kill_and_reap(&mut self.child, self.deadlines.reap)
+            && let Err(error) = kill_and_reap(&mut self.exit, self.deadlines.reap)
         {
             tracing::warn!(error = %prysm_ports::chain(&error), "FFmpeg was dropped unconfirmed");
         }

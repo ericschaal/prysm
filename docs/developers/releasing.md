@@ -83,7 +83,8 @@ Covered:
   ([capture-remote](../../crates/adapters/capture-remote/README.md#wire-protocol));
 - the hosts' command-line flags and the exit codes
   [hosts](workspace.md#hosts) documents: 0 after a clean stop, 1 on failure,
-  2 for bad arguments; `--check-settings` 0 when valid, else 1;
+  2 for bad arguments, 130 when a second SIGINT or SIGTERM ended shutdown
+  early; `--check-settings` 0 when valid, else 1;
 - package and image names: the Debian package `prysm-headless`, the image
   `ghcr.io/<owner>/prysm-headless`, the IPKs
   `io.github.ericschaal.prysm-full` and `io.github.ericschaal.prysm-slim`.

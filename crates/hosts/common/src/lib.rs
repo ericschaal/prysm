@@ -5,16 +5,16 @@
 //! stderr and the `--start` request.
 //!
 //! ```ignore
-//! const PROGRAM: Program = Program { name: "prysm-headless", about: ABOUT, full_screen: false };
+//! const PROGRAM: Program = Program { name: "prysm-headless", about: ABOUT };
 //!
 //! fn main() -> ExitCode {
-//!     let (adapters, tv_stream) = prysm_host::desktop_adapters();
+//!     let (adapters, tv_stream) = prysm_host::desktop_adapters(DeviceSource);
 //!     prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
 //!         prysm
 //!             .surface(host.status())
 //!             .surface(host.start())
 //!             .surface(host.portal(assets::HEADLESS)?.capture_stream(tv_stream))
-//!             .run(host.signals()?)
+//!             .run(host.signals())
 //!             .await
 //!     })
 //! }
@@ -22,7 +22,7 @@
 //!
 //! `--check-settings` is handled here: the settings file is validated against
 //! the host's adapters and the run closure is never called. Feature
-//! `desktop` adds [`desktop_adapters`].
+//! `desktop` adds [`desktop_adapters`]. Unix only, as the hosts are.
 mod args;
 pub mod assets;
 
@@ -32,23 +32,25 @@ pub use desktop::desktop_adapters;
 
 #[cfg(feature = "desktop")]
 mod desktop {
-    use prysm_capture_device::DeviceSource;
     use prysm_capture_file::FileSource;
     use prysm_capture_remote::RemoteReceiver;
     use prysm_output_wled::Wled;
-    use prysm_ports::Handoff;
+    use prysm_ports::{Handoff, SourceFactory};
     use prysm_runtime::{Builder, NullOutput};
 
-    /// What both desktop hosts register: sources `device`, `file` and
-    /// `remote`, outputs `wled` and `null`. Also the hand-off through which
-    /// the portal gives a capture-only TV's stream to the `remote` source
+    /// What both desktop hosts register: sources `device` (the factory
+    /// given, `DeviceSource` in the hosts), `file` and `remote`, outputs
+    /// `wled` and `null`. Also the hand-off through which the portal gives a
+    /// capture-only TV's stream to the `remote` source
     /// ([`Portal::capture_stream`](crate::Portal::capture_stream)).
-    pub fn desktop_adapters() -> (impl FnOnce(Builder) -> Builder, Handoff) {
+    pub fn desktop_adapters(
+        device: impl SourceFactory,
+    ) -> (impl FnOnce(Builder) -> Builder, Handoff) {
         let remote = RemoteReceiver::default();
         let tv_stream = remote.incoming();
         let adapters = move |prysm: Builder| {
             prysm
-                .source(DeviceSource)
+                .source(device)
                 .source(FileSource)
                 .source(remote)
                 .output(Wled::default())
@@ -66,11 +68,18 @@ use prysm_runtime::logging::{self, Logs};
 use prysm_runtime::{Builder, EngineHandle, Prysm, Shutdown, Surface};
 use prysm_settings_file::SettingsFile;
 use prysm_web_portal::{Access, FrontendAsset, WebPortal, lan_url};
+use std::fmt;
 use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::{self, IsTerminal};
 use std::net::{SocketAddr, TcpListener};
 use std::process::ExitCode;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::watch;
+
+/// The exit code after a second SIGINT or SIGTERM ended shutdown early:
+/// 128 + SIGINT, as shells report an interrupted command.
+pub const INTERRUPTED: u8 = 130;
 
 /// What a host executable is.
 #[derive(Debug, Clone, Copy)]
@@ -78,43 +87,39 @@ pub struct Program {
     /// Prefixes every status and log line.
     pub name: &'static str,
     pub about: &'static str,
-    /// A surface draws the whole terminal: while stderr is that terminal,
-    /// status lines are not printed and log lines go only to `--log-file`.
-    pub full_screen: bool,
 }
 
 /// Parse arguments, install logging, register `adapters` on a builder over
 /// the settings file, run `host` with it on a current-thread runtime and map
 /// its result to an exit code: 0 after a clean stop or `--help`/`--version`,
-/// 1 if it failed, 2 for bad arguments. Under `--check-settings` only validates the settings
-/// ([`Builder::check`]): 0 if valid, else 1; `host` is not called.
+/// 1 if it failed, 2 for bad arguments, [`INTERRUPTED`] when a second SIGINT
+/// or SIGTERM ended shutdown early. Under `--check-settings` only validates
+/// the settings ([`Builder::check`]): 0 if valid, else 1; `host` is not
+/// called.
 pub fn main<A, F, Fut>(program: Program, adapters: A, host: F) -> ExitCode
 where
     A: FnOnce(Builder) -> Builder,
     F: FnOnce(Host, Builder) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    let Program {
-        name,
-        about,
-        full_screen,
-    } = program;
+    let Program { name, about } = program;
     let options = parse(name, about, std::env::args_os()).unwrap_or_else(|error| error.exit());
-    let quiet = full_screen && io::stderr().is_terminal();
-    let logs = match &options.log_file {
-        Some(path) => match OpenOptions::new().create(true).append(true).open(path) {
-            Ok(file) => Some(Logs::File(file)),
+    let terminal = watch::Sender::new(false);
+    let shown = Shown(io::stderr().is_terminal().then(|| terminal.subscribe()));
+    let logs = match (&options.log_file, &shown.0) {
+        (Some(path), _) => match OpenOptions::new().create(true).append(true).open(path) {
+            Ok(file) => Logs::File(file),
             Err(error) => {
                 eprintln!("{name}: cannot open log file {}: {error}", path.display());
                 return ExitCode::FAILURE;
             }
         },
-        None if quiet => None,
-        None => Some(Logs::Stderr),
+        (None, Some(taken)) => Logs::SharedStderr {
+            taken: taken.clone(),
+        },
+        (None, None) => Logs::Stderr,
     };
-    if let Some(logs) = logs {
-        logging::init(name, logs);
-    }
+    logging::init(name, logs);
     eprintln!("{name}: settings {}", options.settings.display());
     let prysm = adapters(Prysm::builder(SettingsFile::new(&options.settings)));
     if options.check_settings {
@@ -130,15 +135,44 @@ where
             return ExitCode::FAILURE;
         }
     };
-    let process = Host {
-        name,
-        options,
-        quiet,
+    let status = Status { name, shown };
+    // Before the engine starts, so a signal that arrives meanwhile is not lost.
+    let interrupts = match runtime.block_on(async { listen(status.clone()) }) {
+        Ok(interrupts) => interrupts,
+        Err(error) => {
+            eprintln!("{name}: {}", chain(&error));
+            return ExitCode::FAILURE;
+        }
     };
-    let result = runtime.block_on(host(process, prysm));
-    // Dropping the runtime would wait for an abandoned blocking adapter call.
+    let mut again = interrupts.clone();
+    let process = Host {
+        options,
+        status,
+        terminal,
+        interrupts,
+    };
+    let ended = runtime.block_on(async {
+        tokio::select! {
+            biased;
+            result = host(process, prysm) => Ok(result),
+            signal = twice(&mut again) => Err(signal),
+        }
+    });
+    // Drops the surfaces' tasks, so a full-screen surface restores the
+    // terminal. Dropping the runtime would wait for an abandoned blocking
+    // adapter call.
     runtime.shutdown_background();
-    exit_code(name, result, "stopped")
+    // A session abandoned at its stop deadline, or cut short above, still
+    // holds its source.
+    #[cfg(feature = "desktop")]
+    prysm_capture_file::kill_remaining();
+    match ended {
+        Ok(result) => exit_code(name, result, "stopped"),
+        Err(signal) => {
+            eprintln!("{name}: {signal} again, exited without finishing shutdown");
+            ExitCode::from(INTERRUPTED)
+        }
+    }
 }
 
 /// Print how `result` ended (`done` when it succeeded) and its exit code.
@@ -155,58 +189,121 @@ fn exit_code(name: &str, result: Result<()>, done: &str) -> ExitCode {
     }
 }
 
+/// A signal that stops the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Signal {
+    Interrupt,
+    Terminate,
+}
+
+impl fmt::Display for Signal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Interrupt => "SIGINT",
+            Self::Terminate => "SIGTERM",
+        })
+    }
+}
+
+/// The SIGINT and SIGTERM received so far: the first shuts down, a second
+/// exits without waiting for shutdown to finish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Interrupts {
+    Zero,
+    Once(Signal),
+    Twice(Signal),
+}
+
+impl Interrupts {
+    #[must_use]
+    fn and(self, signal: Signal) -> Self {
+        match self {
+            Self::Zero => Self::Once(signal),
+            Self::Once(_) | Self::Twice(_) => Self::Twice(signal),
+        }
+    }
+}
+
+/// Install the SIGINT and SIGTERM handlers and a task that counts the
+/// signals into the returned watch, saying on `status` that shutdown began.
+fn listen(status: Status) -> Result<watch::Receiver<Interrupts>> {
+    let failed = |error| Error::adapter("cannot install signal handlers", error);
+    let mut interrupt = signal(SignalKind::interrupt()).map_err(failed)?;
+    let mut terminate = signal(SignalKind::terminate()).map_err(failed)?;
+    let (count, interrupts) = watch::channel(Interrupts::Zero);
+    tokio::spawn(async move {
+        let mut received = Interrupts::Zero;
+        while !matches!(received, Interrupts::Twice(_)) {
+            let signal = tokio::select! {
+                _ = interrupt.recv() => Signal::Interrupt,
+                _ = terminate.recv() => Signal::Terminate,
+            };
+            received = received.and(signal);
+            if let Interrupts::Once(signal) = received {
+                let status = status.clone();
+                tokio::spawn(async move {
+                    status
+                        .say_when_shown(&format!(
+                            "{signal}, shutting down; a second SIGINT or SIGTERM exits at once"
+                        ))
+                        .await;
+                });
+            }
+            count.send_replace(received);
+        }
+    });
+    Ok(interrupts)
+}
+
+/// Resolves on the second signal, with it.
+async fn twice(interrupts: &mut watch::Receiver<Interrupts>) -> Signal {
+    let second = interrupts
+        .wait_for(|received| matches!(received, Interrupts::Twice(_)))
+        .await
+        .map(|received| *received);
+    match second {
+        Ok(Interrupts::Twice(signal)) => signal,
+        // The listener never ends before the second signal.
+        _ => std::future::pending().await,
+    }
+}
+
 /// The parsed process options of a running host.
 #[derive(Debug)]
 pub struct Host {
-    name: &'static str,
     options: Options,
-    /// A full-screen surface owns stderr; see [`Program::full_screen`].
-    quiet: bool,
+    status: Status,
+    terminal: watch::Sender<bool>,
+    interrupts: watch::Receiver<Interrupts>,
 }
 
 impl Host {
-    /// Resolves on SIGINT or SIGTERM (Ctrl-C elsewhere). Registered now, so a
-    /// signal that arrives while the host starts is not lost.
-    ///
-    /// # Errors
-    /// The signal handlers cannot be installed.
-    pub fn signals(&self) -> Result<impl Future<Output = ()> + Send + 'static> {
-        let name = self.name;
-        let failed = |error| Error::adapter("cannot install signal handlers", error);
-        #[cfg(unix)]
-        let signal = {
-            use tokio::signal::unix::{SignalKind, signal};
-            let mut interrupt = signal(SignalKind::interrupt()).map_err(failed)?;
-            let mut terminate = signal(SignalKind::terminate()).map_err(failed)?;
-            async move {
-                tokio::select! {
-                    _ = interrupt.recv() => "SIGINT",
-                    _ = terminate.recv() => "SIGTERM",
-                }
-            }
-        };
-        #[cfg(not(unix))]
-        let signal = {
-            let _ = failed;
-            async {
-                let _ = tokio::signal::ctrl_c().await;
-                "Ctrl-C"
-            }
-        };
-        Ok(async move {
-            let signal = signal.await;
-            eprintln!("{name}: {signal}, shutting down");
-        })
+    /// Resolves on the first SIGINT or SIGTERM (the handlers are installed
+    /// before the host starts). A second one exits the process at once with
+    /// [`INTERRUPTED`].
+    pub fn signals(&self) -> impl Future<Output = ()> + Send + 'static {
+        let mut interrupts = self.interrupts.clone();
+        async move {
+            let _ = interrupts
+                .wait_for(|received| *received != Interrupts::Zero)
+                .await;
+        }
     }
 
-    /// Reports state changes and surface failures to stderr, unless a
-    /// full-screen surface owns it.
+    /// For a surface that draws on the whole terminal: it holds `true` while
+    /// it does. Meanwhile, if stderr is that terminal, status, signal and log
+    /// lines are not written to it; the status it missed is printed when the
+    /// surface lets go.
+    #[must_use]
+    pub fn terminal(&self) -> watch::Sender<bool> {
+        self.terminal.clone()
+    }
+
+    /// Reports state changes and surface failures to stderr; see
+    /// [`Host::terminal`].
     #[must_use]
     pub fn status(&self) -> Status {
-        Status {
-            name: self.name,
-            print: !self.quiet,
-        }
+        self.status.clone()
     }
 
     /// Requests processed lighting once if `--start` was given, then ends.
@@ -221,7 +318,7 @@ impl Host {
                     () = shutdown.requested() => {}
                     started = engine.set_target(LightingTarget::Processed) => {
                         if let Err(error) = started {
-                            status.say(&format!("--start failed: {}", chain(&error)));
+                            status.say_when_shown(&format!("--start failed: {}", chain(&error))).await;
                         }
                     }
                 }
@@ -237,7 +334,7 @@ impl Host {
     /// Bind failure, or an origin `WebPortal` rejects.
     pub fn portal(&self, assets: &'static [FrontendAsset]) -> Result<Portal> {
         if self.options.no_portal {
-            eprintln!("{}: portal disabled", self.name);
+            self.status.say("portal disabled");
             return Ok(Portal(None));
         }
         Ok(Portal(Some(self.open_portal(assets)?)))
@@ -254,9 +351,8 @@ impl Host {
             .map_err(|error| Error::adapter("cannot read the portal address", error))?;
         let portal =
             WebPortal::from_listener(listener, assets, access.clone())?.metrics(options.metrics);
-        eprintln!(
-            "{}: {} ({}{})",
-            self.name,
+        self.status.say(&format!(
+            "{} ({}{})",
             reachable(address),
             describe(&access),
             if options.metrics {
@@ -264,7 +360,7 @@ impl Host {
             } else {
                 ""
             }
-        );
+        ));
         Ok(portal)
     }
 }
@@ -315,32 +411,89 @@ fn describe(access: &Access) -> String {
     }
 }
 
+/// Whether a line may be written to stderr now: always, unless stderr is a
+/// terminal and a full-screen surface holds it ([`Host::terminal`]).
+#[derive(Debug, Clone)]
+struct Shown(Option<watch::Receiver<bool>>);
+
+impl Shown {
+    /// Runs `write` unless the terminal is taken, holding it meanwhile so a
+    /// surface cannot take it in the middle of the line. Whether it ran.
+    fn write(&self, write: impl FnOnce()) -> bool {
+        match &self.0 {
+            Some(taken) => {
+                let taken = taken.borrow();
+                if !*taken {
+                    write();
+                }
+                !*taken
+            }
+            None => {
+                write();
+                true
+            }
+        }
+    }
+
+    /// Resolves once no full-screen surface holds the terminal.
+    async fn released(&self) {
+        if let Some(taken) = &self.0 {
+            let _ = taken.clone().wait_for(|taken| !*taken).await;
+        }
+    }
+}
+
 /// The status surface; see [`Host::status`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Status {
     name: &'static str,
-    print: bool,
+    shown: Shown,
 }
 
 impl Status {
+    /// Before any surface runs, while nothing can hold the terminal.
     fn say(&self, line: &str) {
-        if self.print {
-            eprintln!("{}: {line}", self.name);
-        }
+        self.shown.write(|| eprintln!("{}: {line}", self.name));
+    }
+
+    /// Once no full-screen surface holds the terminal.
+    async fn say_when_shown(&self, line: &str) {
+        self.shown.released().await;
+        self.say(line);
     }
 
     async fn watch(self, engine: EngineHandle, shutdown: Shutdown) -> Result<()> {
         let mut snapshots = engine.snapshot();
+        let mut taken = self.shown.0.clone();
         let mut seen = Seen::default();
         loop {
-            for line in seen.update(&snapshots.borrow_and_update()) {
-                self.say(&line);
-            }
+            self.report(&mut seen, &snapshots.borrow_and_update().clone());
+            let released = async {
+                match &mut taken {
+                    Some(taken) => taken.changed().await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
-                () = shutdown.requested() => return Ok(()),
-                changed = snapshots.changed() => if changed.is_err() { return Ok(()) },
+                () = shutdown.requested() => break,
+                changed = snapshots.changed() => if changed.is_err() { break },
+                changed = released => if changed.is_err() { taken = None },
             }
         }
+        // A full-screen surface lets go of the terminal as it stops.
+        self.shown.released().await;
+        self.report(&mut seen, &snapshots.borrow().clone());
+        Ok(())
+    }
+
+    /// The changes since the last report, unless the terminal is taken: then
+    /// they wait in `seen`'s difference.
+    fn report(&self, seen: &mut Seen, snapshot: &Snapshot) {
+        self.shown.write(|| {
+            for line in seen.update(snapshot) {
+                eprintln!("{}: {line}", self.name);
+            }
+        });
     }
 }
 
@@ -446,5 +599,40 @@ mod tests {
             seen.update(&snapshot),
             ["target processed, session faulted while idling the output"]
         );
+    }
+
+    #[test]
+    fn lines_wait_while_a_full_screen_surface_holds_the_terminal() {
+        let terminal = watch::Sender::new(false);
+        let shown = Shown(Some(terminal.subscribe()));
+        assert!(shown.write(|| {}));
+        terminal.send_replace(true);
+        let mut wrote = false;
+        assert!(!shown.write(|| wrote = true));
+        assert!(!wrote);
+        terminal.send_replace(false);
+        assert!(shown.write(|| wrote = true));
+        assert!(wrote);
+        // A stderr that is not the terminal is always written.
+        terminal.send_replace(true);
+        assert!(Shown(None).write(|| {}));
+    }
+
+    #[test]
+    fn a_second_signal_exits_whatever_came_first() {
+        use Interrupts::{Once, Twice, Zero};
+        use Signal::{Interrupt, Terminate};
+        for (received, signal, then) in [
+            (Zero, Interrupt, Once(Interrupt)),
+            (Zero, Terminate, Once(Terminate)),
+            (Once(Interrupt), Interrupt, Twice(Interrupt)),
+            (Once(Interrupt), Terminate, Twice(Terminate)),
+            (Once(Terminate), Interrupt, Twice(Interrupt)),
+            (Once(Terminate), Terminate, Twice(Terminate)),
+            (Twice(Interrupt), Terminate, Twice(Terminate)),
+            (Twice(Terminate), Interrupt, Twice(Interrupt)),
+        ] {
+            assert_eq!(received.and(signal), then, "{received:?} + {signal:?}");
+        }
     }
 }

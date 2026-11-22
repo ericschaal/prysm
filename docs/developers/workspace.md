@@ -95,13 +95,22 @@ output kinds, prints `settings OK` or the invalid field with its causes and
 exits 0 or 1, without opening a device or the portal. Log lines (`tracing`
 events, including those of the shared capture and processing crates) go to
 stderr as `prysm-headless: warn <target>: <message> <fields>`, filtered by
-`RUST_LOG` (default `warn,prysm=info`); while the TUI's preview uses the
-terminal they go only to `--log-file`. The TV workers log the same way to
-stderr. The portal is reachable on the LAN
+`RUST_LOG` (default `warn,prysm=info`). While the TUI's preview owns the
+terminal stderr writes to, log lines go only to `--log-file` and status
+lines wait; the state they missed is printed when the preview ends, also
+when it failed, and so is the message of a panic meanwhile. The TV workers
+log the same way to stderr. The portal is reachable on the LAN
 without a password and refuses browser pages from other sites unless allowed;
 see [portal access](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#access). Hosts print
-the portal URL, start idle, report state changes on stderr, stop on
-SIGINT/SIGTERM (the TUI also on `q`) and exit non-zero if shutdown failed.
+the portal URL, start idle, report state changes on stderr and stop on
+SIGINT/SIGTERM (the TUI also on `q`). A second SIGINT or SIGTERM while they
+shut down exits at once, without finishing the stop; FFmpeg children of the
+`file` source are killed then too.
+
+Exit codes: 0 after a clean stop or `--help`/`--version`, 1 if starting or
+shutdown failed, 2 for bad arguments, 130 when a second SIGINT or SIGTERM
+ended shutdown early (128 + SIGINT, as shells report an interrupted
+command); `--check-settings` 0 when the settings are valid, else 1.
 
 ## Extending
 

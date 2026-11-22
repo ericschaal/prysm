@@ -3,7 +3,7 @@
 use crate::layout::fits;
 use crate::restart::restarting;
 use crate::session::Session;
-use crate::{BITRATE, Error, MAX_OUTPUT_BYTES, PITCH, copy_nv12};
+use crate::{BITRATE, Error, FPS, MAX_OUTPUT_BYTES, PITCH, copy_nv12};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_allocators::{DmaBufAllocator, prelude::*};
 use gstreamer_app::{AppSink, AppSrc};
@@ -94,7 +94,7 @@ impl Pipeline {
     ) -> Result<Self, Error> {
         if !(fits(width as usize, height as usize, stride)
             && stride.is_multiple_of(PITCH)
-            && (1..=60).contains(&fps)
+            && FPS.contains(&fps)
             && BITRATE.contains(&bitrate))
         {
             return Err(Error::Config("geometry, rate or bitrate out of range"));

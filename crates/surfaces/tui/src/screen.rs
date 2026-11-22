@@ -2,6 +2,7 @@
 //! terminal I/O happens here, never on the async runtime.
 use crate::command::Command;
 use crate::input::{Action, Notice, Ui};
+use crate::panics;
 use crate::view::{self, View};
 use crossterm::{
     cursor::{Hide, Show},
@@ -16,7 +17,7 @@ use crossterm::{
 use prysm_ports::{Error, Result, Snapshot};
 use prysm_runtime::PreviewWatch;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use std::io::{self, Stdout, Write};
+use std::io::{self, IsTerminal, Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc as std_mpsc};
 use std::time::{Duration, Instant};
@@ -43,6 +44,8 @@ pub(crate) struct Feed {
     pub preview: PreviewWatch,
     pub commands: mpsc::Sender<Command>,
     pub notices: std_mpsc::Receiver<Notice>,
+    /// `true` while the screen owns the terminal.
+    pub terminal: watch::Sender<bool>,
 }
 
 /// The running screen thread. Dropping it stops and joins the thread, so the
@@ -90,7 +93,7 @@ impl Drop for ScreenThread {
 
 fn run(mut feed: Feed, stop: &AtomicBool) -> Result<Exit> {
     let io = |error| Error::adapter("terminal I/O failed", error);
-    let mut screen = Screen::open().map_err(io)?;
+    let mut screen = Screen::open(feed.terminal.clone()).map_err(io)?;
     let result = render_loop(&mut screen, &mut feed, stop).map_err(io);
     let restored = screen
         .restore()
@@ -146,16 +149,26 @@ fn render_loop(screen: &mut Screen, feed: &mut Feed, stop: &AtomicBool) -> io::R
 }
 
 /// Raw mode, alternate screen and hidden cursor, restored exactly once.
+/// Owns the terminal from `open` until restored: `owner` holds `true` and
+/// panic messages are held meanwhile.
 struct Screen {
     terminal: Terminal<CrosstermBackend<Stdout>>,
+    owner: watch::Sender<bool>,
     restored: bool,
 }
 
 impl Screen {
-    fn open() -> io::Result<Self> {
+    fn open(owner: watch::Sender<bool>) -> io::Result<Self> {
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+        // Waits for a status line being written to finish.
+        owner.send_replace(true);
+        // Elsewhere a panic's message is not drawn over and goes out at once.
+        if io::stderr().is_terminal() {
+            panics::hold();
+        }
         let mut screen = Self {
             terminal,
+            owner,
             restored: false,
         };
         // From here on, Drop undoes whatever part succeeded.
@@ -182,6 +195,10 @@ impl Screen {
         let flushed = backend.flush();
         let raw = disable_raw_mode();
         self.restored = true;
+        for message in panics::release() {
+            eprintln!("{message}");
+        }
+        self.owner.send_replace(false);
         resumed
             .and(style)
             .and(cursor)

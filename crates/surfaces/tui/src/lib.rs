@@ -19,12 +19,23 @@
 //! own file). In raw mode Ctrl-C is a key, not a signal: pass [`Tui::quit`]
 //! to the host's shutdown future so quitting stops the host.
 //!
+//! The surface publishes whether it owns the terminal: `true` from just
+//! before it enters raw mode and the alternate screen until it has left
+//! them, so the host writes nothing to that terminal meanwhile. A panic
+//! while it owns the terminal stderr writes to would be written into the
+//! alternate screen and erased with it; its message is held and printed once
+//! the terminal is restored.
+//!
 //! ```no_run
 //! # async fn host(store: impl prysm_ports::SettingsStore + 'static) -> prysm_ports::Result<()> {
 //! use prysm_runtime::{NullOutput, Prysm};
 //! use prysm_surface_tui::Tui;
 //!
-//! let tui = Tui::new(|_path| Err(prysm_ports::Error::other("loading is not offered")));
+//! let terminal = tokio::sync::watch::Sender::new(false);
+//! let tui = Tui::new(
+//!     |_path| Err(prysm_ports::Error::other("loading is not offered")),
+//!     terminal,
+//! );
 //! let quit = tui.quit();
 //! Prysm::builder(store)
 //!     .output(NullOutput)
@@ -35,6 +46,7 @@
 //! ```
 mod command;
 mod input;
+mod panics;
 mod screen;
 mod video;
 mod view;
@@ -63,6 +75,7 @@ pub(crate) type ReadSettings = Arc<dyn Fn(&Path) -> Result<Settings> + Send + Sy
 pub struct Tui {
     quit: watch::Sender<bool>,
     read: ReadSettings,
+    terminal: watch::Sender<bool>,
 }
 
 impl fmt::Debug for Tui {
@@ -73,12 +86,17 @@ impl fmt::Debug for Tui {
 
 impl Tui {
     /// `read` reads the settings file `load <path>` names, as the host reads
-    /// its own; the surface knows no file format.
+    /// its own; the surface knows no file format. `terminal` is set while the
+    /// surface owns the terminal.
     #[must_use]
-    pub fn new(read: impl Fn(&Path) -> Result<Settings> + Send + Sync + 'static) -> Self {
+    pub fn new(
+        read: impl Fn(&Path) -> Result<Settings> + Send + Sync + 'static,
+        terminal: watch::Sender<bool>,
+    ) -> Self {
         Self {
             quit: watch::channel(false).0,
             read: Arc::new(read),
+            terminal,
         }
     }
 
@@ -101,6 +119,7 @@ impl Tui {
             preview: engine.preview(),
             commands,
             notices,
+            terminal: self.terminal.clone(),
         })?;
         // The command being executed; terminated while none is.
         let mut running: Fuse<BoxFuture<'static, Notice>> = Fuse::terminated();
@@ -170,7 +189,10 @@ mod tests {
 
     /// A surface whose `load` is never used.
     fn unread() -> Tui {
-        Tui::new(|_| Err(Error::other("not read in this test")))
+        Tui::new(
+            |_| Err(Error::other("not read in this test")),
+            watch::Sender::new(false),
+        )
     }
 
     #[tokio::test]
@@ -181,6 +203,8 @@ mod tests {
         let log = CallLog::new();
         let tui = unread();
         let quit = tui.quit();
+        // Never taken: the host keeps writing to stderr.
+        let terminal = tui.terminal.subscribe();
         let mut settings = fakes::settings();
         settings.output = Some(prysm_ports::AdapterSettings::new(
             NullOutput::KIND,
@@ -217,6 +241,7 @@ mod tests {
             .unwrap();
         let message = message.unwrap();
         assert!(message.contains("interactive terminal"), "{message}");
+        assert!(!*terminal.borrow());
         // The failed surface never reports a quit.
         let quit = tokio::time::timeout(Duration::from_millis(20), quit.requested()).await;
         assert!(quit.is_err());

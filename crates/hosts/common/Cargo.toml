@@ -28,7 +28,7 @@ prysm-capture-remote = { workspace = true, optional = true }
 prysm-output-wled = { workspace = true, optional = true }
 clap.workspace = true
 futures.workspace = true
-tokio = { workspace = true, features = ["rt", "signal"] }
+tokio = { workspace = true, features = ["rt", "signal", "sync"] }
 
 [lints]
 workspace = true

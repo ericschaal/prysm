@@ -64,11 +64,7 @@ impl Software {
             FrameType::IDR => FrameKind::Idr,
             FrameType::I | FrameType::P => FrameKind::Predicted,
             FrameType::Skip => return Ok(None),
-            other => {
-                return Err(H264Error::Encoder(format!(
-                    "unexpected OpenH264 frame type {other:?}"
-                )));
-            }
+            other => return Err(H264Error::FrameType(other)),
         };
         bitstream.write_vec(output);
         if output.is_empty() {

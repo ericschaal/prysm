@@ -9,8 +9,9 @@ use std::path::PathBuf;
 const AFTER_HELP: &str = "\
 The portal has no password: anyone who can reach ADDR can control the lights.
 Browser pages from other sites are refused unless allowed with --allow-origin.
-SIGINT or SIGTERM stops lighting, idles the output and exits. Status goes to
-stderr. RUST_LOG filters log lines by target [default: warn,prysm=info].";
+SIGINT or SIGTERM stops lighting, idles the output and exits; a second one
+exits at once (code 130). Status goes to stderr. RUST_LOG filters log lines
+by target [default: warn,prysm=info].";
 
 #[derive(Debug, PartialEq, Eq, Parser)]
 #[command(version = prysm_version::VERSION, after_help = AFTER_HELP)]

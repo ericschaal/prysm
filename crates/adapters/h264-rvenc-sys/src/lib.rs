@@ -35,7 +35,7 @@ mod session;
 
 #[cfg(all(target_os = "linux", target_arch = "arm"))]
 pub use gst::Pipeline;
-pub use layout::{BITRATE, MAX_HEIGHT, MAX_OUTPUT_BYTES, MAX_WIDTH, PITCH, copy_nv12, pitch};
+pub use layout::{BITRATE, FPS, MAX_HEIGHT, MAX_OUTPUT_BYTES, MAX_WIDTH, PITCH, copy_nv12, pitch};
 
 /// Why the hardware encoder cannot start or encode.
 #[derive(Debug, thiserror::Error)]
