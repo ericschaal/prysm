@@ -293,6 +293,12 @@ def _restore_plan(existing: installed.Existing, backup: installed.Backup) -> lis
     """What `settings restore` would do, for the dry run."""
     if isinstance(existing, host_deb.DebPrysm):
         return [
+            *shown(commands.deb_options(existing.target)),
+            f'when {commands.DEB_OPTIONS} differs from the backup:',
+            *shown(commands.deb_options_write(existing.target, 'BACKED-UP-OPTIONS')),
+            '  (or, when the backup has no options file:)',
+            *shown(commands.deb_options_remove(existing.target)),
+            *shown(commands.deb_systemctl(existing.target, commands.UnitAction.RESTART)),
             f'GET {existing.url}/api/v1/state (refused when nothing answers)',
             f'PUT {existing.url}/api/v1/settings',
             f'PUT {existing.url}/api/v1/target with the backed-up target, unless it was off (then left as it is)',

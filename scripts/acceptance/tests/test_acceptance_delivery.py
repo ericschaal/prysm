@@ -87,6 +87,9 @@ class Templates(unittest.TestCase):
             'deb.journal': commands.deb_journal(TARGET, 1763380000),
             'deb.purge': commands.deb_purge(TARGET),
             'deb.leftovers': commands.deb_leftovers(TARGET),
+            'deb.options': commands.deb_options(TARGET),
+            'deb.options-write': commands.deb_options_write(TARGET, 'work/prysm-headless.options'),
+            'deb.options-remove': commands.deb_options_remove(TARGET),
             'deb.deliver': commands.deb_deliver(TARGET, RUN, 'dist/prysm-headless-linux-arm64.deb'),
             'image.docker': commands.image_docker(TARGET),
             'image.load': commands.image_load(TARGET, RUN),
@@ -129,6 +132,11 @@ class Templates(unittest.TestCase):
                 "getent passwd prysm-headless > /dev/null && echo 'user prysm-headless'; "
                 "getent group prysm-headless > /dev/null && echo 'group prysm-headless'; "
                 "dpkg-query -W -f='${db:Status-Status}\\n' prysm-headless 2>/dev/null; true",
+                'deb.options': 'if [ -f /etc/default/prysm-headless ]; then cat /etc/default/prysm-headless; '
+                'else echo __absent__; fi',
+                'deb.options-write': 'sudo -n tee /etc/default/prysm-headless > /dev/null && '
+                'sudo -n chmod 0644 /etc/default/prysm-headless',
+                'deb.options-remove': 'sudo -n rm -f /etc/default/prysm-headless',
                 'deb.deliver': f'mkdir -p $HOME/.prysm-acceptance && mkdir -m 700 {DIRECTORY} && '
                 f'cat > {DIRECTORY}/prysm-headless.deb && cd {DIRECTORY} && pwd -P && date +%s',
                 'image.docker': "docker info --format '{{.ServerVersion}}' && docker compose version --short",
@@ -153,6 +161,7 @@ class Templates(unittest.TestCase):
             },
         )
         self.assertEqual(found['deb.deliver'].stdin_file, 'dist/prysm-headless-linux-arm64.deb')
+        self.assertEqual(found['deb.options-write'].stdin_file, 'work/prysm-headless.options')
         self.assertEqual(commands.compose_project('RUN-CELL'), 'prysm-acceptance-run-cell')
         build = commands.xtask_dist(['deb-arm64', 'image-arm64'])
         self.assertEqual(
@@ -182,17 +191,20 @@ class Templates(unittest.TestCase):
 
     def test_what_the_package_and_image_templates_may_change(self) -> None:
         """Outside the run directory only: apt's own files (install, purge), the runtime drop-in, the unit's
-        state (systemctl), and Docker's own storage (load, compose, rm). sudo only in deb.*, as `sudo -n`."""
+        state (systemctl), the package's options file (restored from a backup), and Docker's own storage (load,
+        compose, rm). sudo only in deb.*, as `sudo -n`."""
         found = {name: factory() for name, factory in commands.TEMPLATES.items() if name.startswith(('deb.', 'image.'))}
-        self.assertEqual(len(found), 18)
+        self.assertEqual(len(found), 21)
         allowed_writes = r'^(/dev/null|/data/settings\.json|\$HOME/\.prysm-acceptance(/RUN-CELL(/[\w.-]+)?)?)$'
         for name, command in found.items():
             with self.subTest(name):
                 remote = command.remote or ''
                 self.assertEqual(command.argv[0], 'ssh')
                 self.assertIn('BatchMode=yes', command.argv)
-                # Under /etc only the unit's paths and the package's options file, which deb.leftovers tests for.
-                forbidden = r'/etc/(?!systemd/system/|default/prysm-headless )|\bdd\b|\bmount\b|\breboot\b|prune'
+                # Under /etc only the unit's paths and the package's options file.
+                forbidden = (
+                    r'/etc/(?!systemd/system/|default/prysm-headless(?![\w.-]))|\bdd\b|\bmount\b|\breboot\b|prune'
+                )
                 self.assertIsNone(re.search(forbidden, remote))
                 if name.startswith('image.'):
                     self.assertNotIn('sudo', remote)
@@ -200,7 +212,8 @@ class Templates(unittest.TestCase):
                     self.assertEqual(sudo, '-n', remote)
                 pattern = r"(?:[^2]>|rm -rf|rm -f|rmdir|tee|mkdir -p|mkdir -m 700)\s+([^\s;'\"]+)"
                 for written in re.findall(pattern, remote):
-                    if not written.startswith(commands.DEB_DROPIN_DIR):  # the runtime drop-in under /run
+                    # The runtime drop-in under /run, and the options file a restore writes back.
+                    if not written.startswith(commands.DEB_DROPIN_DIR) and written != commands.DEB_OPTIONS:
                         self.assertRegex(written, allowed_writes, remote)
                 if 'apt-get' in remote:
                     self.assertRegex(

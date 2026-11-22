@@ -58,13 +58,16 @@ OPTIONS="--start --allow-origin null"
 
 Then run `sudo systemctl restart prysm-headless`. The file lists examples, and
 `prysm-headless --help` lists every option. The service passes each word of
-`OPTIONS` to Prysm as one argument after the settings file.
+`OPTIONS` to Prysm as one argument after the settings file. Quotes inside
+`OPTIONS` are not interpreted, so no option value may contain a space.
 
 The options file is the package's configuration file (a Debian *conffile*).
 An upgrade keeps your edits. If the new version also changes the file, apt
 asks which one to keep; keeping yours is safe. Put options in this file, not
 in a `systemctl edit` drop-in: a drop-in that replaces `ExecStart` overrides
-the package's command and keeps overriding it after upgrades.
+the package's command and keeps overriding it after upgrades. If you have
+such a drop-in (`systemctl cat prysm-headless` shows it), move its options to
+`OPTIONS`, then run `sudo systemctl revert prysm-headless` to delete it.
 
 The service can open video devices (`/dev/video*`) and the network, nothing
 else. The slim TV sends its picture to the portal's port (8787), so that is

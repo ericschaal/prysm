@@ -33,7 +33,8 @@ release. The OpenAPI documents' `info.version` is their API's own version
 (the HTTP documents' `1`, Luna's `3`), and the exported `State` fixtures
 carry a fixed `version`, so generated contracts never change for a release.
 [scripts/check-release.py](../../scripts/check-release.py) checks this: VERSION
-is a semantic version, the crates are `0.0.0`, no Rust source uses
+is a semantic version without build metadata (an image tag cannot hold
+`+`), the crates are `0.0.0`, no Rust source uses
 `CARGO_PKG_VERSION`, and the TrueNAS pin equals VERSION; given a tag, also that
 the tag is `v` plus VERSION and the manifest has it. Its tests run in CI.
 

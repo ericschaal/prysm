@@ -103,7 +103,8 @@ Install and use:
 sudo apt install ./prysm-headless*.deb    # enables and starts the service
 systemctl status prysm-headless
 journalctl -u prysm-headless -f
-sudoedit /etc/default/prysm-headless      # e.g. OPTIONS="--start", then systemctl restart
+sudoedit /etc/default/prysm-headless      # e.g. OPTIONS="--start"
+sudo systemctl restart prysm-headless
 ```
 
 The package installs `/usr/bin/prysm-headless`, the

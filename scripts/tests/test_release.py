@@ -84,7 +84,8 @@ class VersionTests(unittest.TestCase):
             root = Path(directory)
             copy_version_files(root)
             set_version(root, '1.0.0')
-            for bad in ('1.0', '01.0.0', 'v1.0.0', '1.0.0-', ''):
+            # Build metadata (`+…`) cannot be in a Docker tag.
+            for bad in ('1.0', '01.0.0', 'v1.0.0', '1.0.0-', '', '1.0.0+build.1', '1.0.0-rc.1+abc'):
                 (root / 'VERSION').write_text(bad + '\n')
                 with self.subTest(version=bad), self.assertRaisesRegex(ValueError, 'VERSION'):
                     release.release_version(root)
@@ -252,6 +253,8 @@ class PublishTests(unittest.TestCase):
         for version, stable_tags, floating in (
                 ('1.2.0', 'v0.2.0 v1.1.0 v1.2.0', ['1', 'latest']),
                 ('1.2.1', 'v1.2.1 v2.0.0', ['1']),
+                # The API does not list the release just published yet.
+                ('1.3.0', 'v1.2.0', ['1', 'latest']),
                 ('1.2.0', 'v1.2.0 v1.10.0 v2.0.0', []),
                 ('2.0.0-rc.1', 'v1.2.0', []),
                 ('0.3.0', 'v0.2.0 v0.3.0', ['0', 'latest']),

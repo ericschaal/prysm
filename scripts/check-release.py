@@ -19,10 +19,10 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = 'packaging/docker/compose.truenas.yaml'
+# A semantic version without build metadata: a Docker tag cannot hold its `+`.
 SEMVER = re.compile(
     r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
-    r'(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?'
-    r'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?')
+    r'(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?')
 CRATE_VERSION = '0.0.0'
 
 
@@ -31,7 +31,7 @@ def release_version(root, tag=None):
     that the tag and the manifest match."""
     version = (root / 'VERSION').read_text().strip()
     if not SEMVER.fullmatch(version):
-        raise ValueError(f'VERSION is not a semantic version: {version!r}')
+        raise ValueError(f'VERSION is not a semantic version without build metadata: {version!r}')
     crates = tomllib.loads((root / 'Cargo.toml').read_text())['workspace']['package']['version']
     if crates != CRATE_VERSION:
         raise ValueError(f'[workspace.package] version is {crates}: keep it {CRATE_VERSION}; '

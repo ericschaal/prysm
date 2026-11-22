@@ -168,7 +168,7 @@ import sys
 def key(version):
     return tuple(map(int, version.split('.')))
 
-version = key(sys.argv[1].split('+')[0])
+version = key(sys.argv[1])
 stable = [key(t[1:]) for t in open('releases.txt').read().split() if re.fullmatch(r'v\d+\.\d+\.\d+', t)]
 tags = []
 if version == max(v for v in stable + [version] if v[0] == version[0]):

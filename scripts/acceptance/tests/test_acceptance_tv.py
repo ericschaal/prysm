@@ -472,6 +472,34 @@ class Existing:
         return []
 
 
+class Streamed(transport.Transcript):
+    """A transcript that also keeps the text of each local file a command streams to its stdin."""
+
+    def __init__(self, entries: Sequence[tuple[str, Result]]) -> None:
+        super().__init__(entries)
+        self.streamed: list[str] = []
+
+    def run(self, command: commands.Command, check: bool = True) -> Result:
+        if command.stdin_file:
+            self.streamed.append(Path(command.stdin_file).read_text())
+        return super().run(command, check)
+
+
+# The options file as the package installs it.
+DEFAULT_OPTIONS = (commands.ROOT / 'packaging/debian/prysm-headless.default').read_text()
+
+
+def linux_backup(prysm: FakePrysm, files: dict[str, str | None]) -> Backup:
+    """A backup of the Linux package whose portal was `prysm`, with lighting off."""
+    return a_backup(
+        target='linux',
+        host='pi@pi.example',
+        portal={'url': f'http://{prysm.listen}', 'settings': {}, 'target': 'off'},
+        luna=None,
+        files=files,
+    )
+
+
 def a_backup(**values: Any) -> Backup:
     backup: Backup = {
         'target': 'tv',
@@ -712,7 +740,8 @@ class Restore(unittest.TestCase):
     def test_the_linux_package_round_trip(self) -> None:
         prysm = FakePrysm()
         self.addCleanup(prysm.close)
-        existing = host_deb.DebPrysm(transport.Refusing(), 'pi@pi.example')
+        recorded = transport.Transcript([('deb.options', ok(DEFAULT_OPTIONS))] * 3)
+        existing = host_deb.DebPrysm(recorded, 'pi@pi.example')
         existing.url = f'http://{prysm.listen}'
         # What every installed package has under /etc; the purge deletes both.
         backup = existing.backup(
@@ -722,12 +751,45 @@ class Restore(unittest.TestCase):
                 '/etc/systemd/system/multi-user.target.wants/prysm-headless.service',
             ]
         )
+        self.assertEqual(backup['files'], {commands.DEB_OPTIONS: DEFAULT_OPTIONS})
         self.assertEqual(untyped(backup['portal'])['target'], 'off')
-        self.assertEqual(existing.restore(backup)[-1], 'lighting was off: left as it is')
+        done = existing.restore(backup)
+        self.assertEqual(done[0], '/etc/default/prysm-headless as backed up: left as it is')
+        self.assertEqual(done[-1], 'lighting was off: left as it is')
         self.assertEqual((len(prysm.saved), prysm.targets), (1, []))
         untyped(backup['portal'])['target'] = 'processed'
         self.assertEqual(existing.restore(backup)[-1], 'lighting processed, as backed up')
         self.assertEqual(prysm.targets, ['processed'])
+        self.assertEqual([command.template for command in recorded.calls], ['deb.options'] * 3)
+
+    def test_the_linux_options_file_comes_back_as_it_was(self) -> None:
+        """An edited file is written back, a deleted one removed, each then read by a restarted unit; the
+        settings follow."""
+        prysm = FakePrysm()
+        self.addCleanup(prysm.close)
+        edited = DEFAULT_OPTIONS.replace('OPTIONS=\n', 'OPTIONS="--start --allow-origin null"\n')
+        for backed_up, change in ((edited, 'deb.options-write'), (None, 'deb.options-remove')):
+            with self.subTest(change):
+                recorded = Streamed(
+                    [
+                        ('deb.options', ok(DEFAULT_OPTIONS)),
+                        (change, ok()),
+                        ('deb.systemctl', ok()),
+                        ('deb.unit', ok('ActiveState=active\n')),
+                    ]
+                )
+                existing = host_deb.DebPrysm(recorded, 'pi@pi.example')
+                existing.url = f'http://{prysm.listen}'
+                backup = linux_backup(prysm, {commands.DEB_OPTIONS: backed_up})
+                done = existing.restore(backup)
+                state = 'removed' if backed_up is None else 'written'
+                self.assertEqual(
+                    done[0], f'/etc/default/prysm-headless {state} as backed up, prysm-headless.service restarted'
+                )
+                self.assertEqual(recorded.streamed, [] if backed_up is None else [edited])
+                self.assertEqual(done[1], f'settings into {existing.url}')
+                restart = recorded.calls[2]
+                self.assertEqual(restart.remote, 'sudo -n systemctl restart prysm-headless.service')
 
     def test_the_linux_package_refuses_an_admin_unit_and_a_silent_prysm(self) -> None:
         existing = host_deb.DebPrysm(transport.Refusing(), 'pi@pi.example')
@@ -735,9 +797,15 @@ class Restore(unittest.TestCase):
             existing.backup(['/etc/systemd/system/prysm-headless.service.d'])
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0))
-            existing.url = f'http://127.0.0.1:{probe.getsockname()[1]}'
-        with self.assertRaises(RuntimeError):
-            existing.restore(a_backup(portal={'url': existing.url, 'settings': {}, 'target': 'off'}))
+            url = f'http://127.0.0.1:{probe.getsockname()[1]}'
+        silent = host_deb.DebPrysm(transport.Transcript([('deb.options', ok(DEFAULT_OPTIONS))]), 'pi@pi.example')
+        silent.url = url
+        backup = a_backup(target='linux', portal={'url': url, 'settings': {}, 'target': 'off'})
+        backup['files'] = {commands.DEB_OPTIONS: DEFAULT_OPTIONS}
+        with self.assertRaisesRegex(RuntimeError, 'api/v1/state: .*refused'):
+            silent.restore(backup)
+        with self.assertRaisesRegex(RuntimeError, 'holds no /etc/default/prysm-headless'):
+            silent.restore(a_backup(target='linux', portal={'url': url, 'settings': {}, 'target': 'off'}))
 
     def test_the_command_refuses_when_nothing_answers(self) -> None:
         """No Prysm answering, a refused Luna call or an instance the template refuses: exit 1, no traceback."""

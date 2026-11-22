@@ -666,7 +666,9 @@ and none after it.
   package's at the address `getState` reports; the Linux package's at
   `HOST:8787`), and on the TV `getState`'s flavour, preferences (`autostart`,
   `instance`) and intent (full `lighting`, slim `enabled`), and the data files `tv.json`,
-  `settings.json` and `resume.json` as they are. It reads the file back and
+  `settings.json` and `resume.json` as they are, and for the Linux package
+  its options file `/etc/default/prysm-headless` as it is (`deb.options`;
+  the purge deletes it). It reads the file back and
   compares it. When the backup cannot be taken (an installed Prysm that does
   not answer) or does not compare, the cell stops and nothing is removed.
   Otherwise Prysm is uninstalled (the TV's uninstall above, Prysm stopped
@@ -690,7 +692,10 @@ uv run --no-dev --project scripts/acceptance acceptance settings restore tv work
 on that configured target through its API and refuses when no Prysm answers
 there (or, on the TV, when the other package is installed): the TV's
 preferences with `setPreferences` and, for the full package, the settings
-with `PUT /api/v1/settings`; the Linux package's settings likewise. Then it
+with `PUT /api/v1/settings`; the Linux package's settings likewise, after
+its options file: when the installed file differs from the backup, it is
+written back (`deb.options-write`, root's, 0644) or, if the backup has none,
+removed (`deb.options-remove`), and the unit is restarted so Prysm reads it. Then it
 puts the lighting back as the backup recorded it, and says what it did: the
 full package's and the Linux package's lighting target with `PUT
 /api/v1/target`, the slim package's `setEnabled true`; lighting that was off
