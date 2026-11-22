@@ -107,22 +107,10 @@ fn raw_frame(format: [u8; 4], width: u16, height: u16, payload: &[u8]) -> Vec<u8
 
 /// The typed wire cause of an adapter error.
 fn wire_cause(error: &prysm_ports::Error) -> WireError {
-    let prysm_ports::Error::Adapter {
-        source: Some(cause),
-        ..
-    } = error
-    else {
-        panic!("no cause: {error}");
-    };
-    let mut cause: &(dyn std::error::Error + 'static) = &**cause;
-    loop {
-        if let Some(wire) = cause.downcast_ref::<WireError>() {
-            return wire.clone();
-        }
-        cause = cause
-            .source()
-            .unwrap_or_else(|| panic!("no wire cause: {error}"));
-    }
+    error
+        .cause::<WireError>()
+        .cloned()
+        .unwrap_or_else(|| panic!("no wire cause: {error}"))
 }
 
 #[test]
@@ -235,9 +223,9 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
 #[test]
 fn a_second_sender_replaces_the_first() {
     let (portal, mut source) = open();
-    // Upgraded, then silence: a crashed TV whose socket never closed.
-    let stalled = portal.client();
-    thread::sleep(Duration::from_millis(100));
+    // Upgraded, then silence: a crashed TV whose socket never closed. The
+    // receiver sends its request once it has adopted the connection.
+    let stalled = greeted(&portal);
 
     let mut sender = portal.connect().unwrap();
     sender.send(&frame(3, 4, 4)).unwrap();

@@ -45,17 +45,6 @@ fn full_message(error: &Error) -> String {
     message
 }
 
-/// The adapter error's preserved cause, downcast.
-fn cause<E: std::error::Error + 'static>(error: &Error) -> Option<&E> {
-    match error {
-        Error::Adapter {
-            source: Some(source),
-            ..
-        } => source.downcast_ref(),
-        _ => None,
-    }
-}
-
 fn entries(directory: &Path) -> Vec<String> {
     let mut names: Vec<_> = fs::read_dir(directory)
         .unwrap()
@@ -142,7 +131,7 @@ fn unknown_field_is_rejected_with_its_name_and_the_path() {
             "{message}"
         );
         assert!(message.contains(line), "{message}");
-        assert!(cause::<serde_json::Error>(&error).is_some());
+        assert!(error.cause::<serde_json::Error>().is_some());
     }
 }
 
@@ -157,7 +146,7 @@ fn format_error(text: &str) -> (FormatError, String) {
         format!("cannot load settings file {}", path.display())
     );
     (
-        cause::<FormatError>(&error).unwrap().clone(),
+        error.cause::<FormatError>().unwrap().clone(),
         full_message(&error),
     )
 }
@@ -195,7 +184,7 @@ fn an_oversized_file_is_refused_before_parsing() {
         full_message(&error).ends_with("it is larger than 1 MiB"),
         "{error}"
     );
-    let io = cause::<std::io::Error>(&error).unwrap();
+    let io = error.cause::<std::io::Error>().unwrap();
     assert_eq!(io.kind(), std::io::ErrorKind::FileTooLarge);
 }
 
@@ -259,7 +248,7 @@ fn corrupt_json_error_names_the_path_and_keeps_the_serde_source() {
         error.to_string(),
         format!("cannot parse settings file {}", path.display())
     );
-    assert!(cause::<serde_json::Error>(&error).is_some());
+    assert!(error.cause::<serde_json::Error>().is_some());
 }
 
 #[test]
@@ -271,7 +260,7 @@ fn unreadable_path_reports_io_source() {
         error.to_string().starts_with("cannot read settings file"),
         "{error}"
     );
-    assert!(cause::<std::io::Error>(&error).is_some());
+    assert!(error.cause::<std::io::Error>().is_some());
 }
 
 #[test]
@@ -287,7 +276,7 @@ fn save_into_missing_directory_errors_clearly() {
         )),
         "{message}"
     );
-    let io = cause::<std::io::Error>(&error).unwrap();
+    let io = error.cause::<std::io::Error>().unwrap();
     assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
     assert!(!path.exists());
 }
@@ -325,8 +314,14 @@ fn failed_save_never_truncates_the_existing_file() {
     // A read-only directory refuses the temporary file.
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o500)).unwrap();
     if tempfile::tempfile_in(directory.path()).is_ok() {
-        // Running as root: permissions do not apply, nothing to test.
+        // Running as root: permissions do not apply, nothing to test. CI's
+        // test jobs are not root, so there it is a failure.
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI runs tests as a user that permissions apply to"
+        );
+        eprintln!("skipped: permissions do not apply to this user");
         return;
     }
     let result = store.save(&Settings::default());

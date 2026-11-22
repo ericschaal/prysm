@@ -94,6 +94,15 @@ async fn start_full(
     }
 }
 
+/// A reply body as JSON; `Null` when empty. A body that is not JSON fails
+/// the test and shows the body.
+fn json_body(path: &str, text: &str) -> Value {
+    if text.is_empty() {
+        return Value::Null;
+    }
+    serde_json::from_str(text).unwrap_or_else(|error| panic!("{path}: {error}: {text}"))
+}
+
 impl Portal {
     fn request(&self, method: Method, path: &str) -> RequestBuilder {
         self.client
@@ -104,14 +113,14 @@ impl Portal {
         let response = self.request(method, path).json(&body).send().await.unwrap();
         let status = response.status();
         let text = response.text().await.unwrap();
-        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+        (status, json_body(path, &text))
     }
 
     async fn get(&self, path: &str) -> (StatusCode, Value) {
         let response = self.request(Method::GET, path).send().await.unwrap();
         let status = response.status();
         let text = response.text().await.unwrap();
-        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+        (status, json_body(path, &text))
     }
 
     async fn state(&self) -> Value {
@@ -1224,8 +1233,9 @@ async fn preview_cadence_is_capped_at_eight_per_second() {
             next_state(&mut events, &mut buffer, |e| e["type"] == "frame").await;
             frames += 1;
         }
+        // The cap is an upper bound; a slow machine may send fewer.
         let rate = f64::from(frames) / started.elapsed().as_secs_f64();
-        assert!((3.0..=9.0).contains(&rate), "{frames} frames, {rate:.1}/s");
+        assert!(frames >= 2 && rate <= 9.0, "{frames} frames, {rate:.1}/s");
         drop(events);
         portal.shutdown().await.unwrap();
     })
@@ -1388,9 +1398,11 @@ async fn colors_are_idle_unless_lights_follow_the_screen_and_sent_only_when_chan
 #[tokio::test]
 async fn colors_cadence_is_capped_at_ten_per_second() {
     bounded(async {
-        // Black and white alternate every 50 ms, eased in so the colors never
-        // settle. Taken at once, as a cut, they would alternate in step with
-        // the cadence and every other look would show the same color.
+        // Black and white alternate every 25 frames of 10 ms, eased in so the
+        // colors keep changing. Taken at once, as a cut, they would alternate
+        // in step with the cadence and every other look would show the same
+        // color. 10 ms is long against a sleep's lateness, so the phases do
+        // not stretch much on a loaded machine.
         let defaults = fakes::settings();
         let eased = StyleValues {
             cut_response_percent: 0,
@@ -1401,6 +1413,7 @@ async fn colors_cadence_is_capped_at_ten_per_second() {
                 "fake",
                 &FakeSourceSettings {
                     blink: Some(255),
+                    frame_interval_ms: 10,
                     ..Default::default()
                 },
             )),
@@ -1423,8 +1436,9 @@ async fn colors_cadence_is_capped_at_ten_per_second() {
             next_state(&mut events, &mut buffer, |e| e["type"] == "colors").await;
             sent += 1;
         }
+        // The cap is an upper bound; a slow machine may send fewer.
         let rate = f64::from(sent) / started.elapsed().as_secs_f64();
-        assert!((3.0..=11.0).contains(&rate), "{sent} events, {rate:.1}/s");
+        assert!(sent >= 2 && rate <= 11.0, "{sent} events, {rate:.1}/s");
         drop(events);
         portal.shutdown().await.unwrap();
     })

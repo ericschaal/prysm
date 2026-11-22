@@ -104,6 +104,26 @@ impl Error {
             _ => None,
         }
     }
+
+    /// The first cause of type `T` in this error's source chain.
+    #[must_use]
+    pub fn cause<T: StdError + 'static>(&self) -> Option<&T> {
+        // From inside the `Arc`s: `source()` gives the `Arc` itself, which
+        // does not downcast to what it holds.
+        let mut source: Option<&(dyn StdError + 'static)> = match self {
+            Self::Adapter { source, .. } => source.as_deref().map(|cause| cause as _),
+            Self::Decode { source, .. } => Some(&**source),
+            Self::Invalid(invalid) => Some(invalid),
+            other => StdError::source(other),
+        };
+        while let Some(cause) = source {
+            if let Some(found) = cause.downcast_ref::<T>() {
+                return Some(found);
+            }
+            source = cause.source();
+        }
+        None
+    }
 }
 
 /// A rejected setting. `field` is a dotted path such as `capture.device`.
@@ -120,5 +140,39 @@ impl ValidationError {
             field: field.into(),
             reason: reason.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("wrapped")]
+    struct Wrapped(#[source] std::io::Error);
+
+    #[test]
+    fn cause_walks_the_whole_chain() {
+        let io = || std::io::Error::other("unplugged");
+        let direct = Error::adapter("cannot read", io());
+        assert_eq!(
+            direct.cause::<std::io::Error>().unwrap().to_string(),
+            "unplugged"
+        );
+        let deeper = Error::adapter("cannot read", Wrapped(io()));
+        assert!(deeper.cause::<Wrapped>().is_some());
+        assert_eq!(
+            deeper.cause::<std::io::Error>().unwrap().to_string(),
+            "unplugged"
+        );
+        assert!(deeper.cause::<ValidationError>().is_none());
+        let invalid = Error::Invalid(ValidationError::new("capture.device", "empty"));
+        assert!(invalid.cause::<ValidationError>().is_some());
+        assert!(Error::other("no cause").cause::<std::io::Error>().is_none());
+        let decode = Error::Decode {
+            kind: "fake".into(),
+            source: Arc::new(serde_json::from_str::<u8>("x").unwrap_err()),
+        };
+        assert!(decode.cause::<serde_json::Error>().is_some());
     }
 }

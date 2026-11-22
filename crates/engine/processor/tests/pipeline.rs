@@ -424,10 +424,11 @@ fn color_change_must_update_output() {
     )
     .unwrap();
     p.process_frame(a.clone());
-    p.process_frame(a);
+    let output_of_a = p.process_frame(a);
     let actual = p.process_frame(b.clone());
     let expected = PrysmProcessor::new(&c).process_frame(b);
-    assert_eq!(actual, expected, "same luma, changed chroma was skipped");
+    assert_ne!(actual, output_of_a, "same luma, changed chroma was skipped");
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -517,7 +518,7 @@ fn dark_scene_preserves_confirmed_crop() {
         );
         assert_eq!(dark.left.len(), cropped.left.len());
     }
-    let resized = p.process_frame(rgb(320, 180, 128));
+    let resized = p.process_frame_at(rgb(320, 180, 128), start + Duration::from_millis(7000));
     assert_eq!(
         resized,
         PrysmProcessor::new(&c).process_frame(rgb(320, 180, 128))

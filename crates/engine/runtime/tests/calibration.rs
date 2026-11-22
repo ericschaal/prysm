@@ -256,9 +256,9 @@ async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
         );
 
         handle.set_calibration(None).await.unwrap();
-        // The restarted smoother passes its first frame unblended.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(green_levels(&handle).await > 2, "smoothing returns");
+        // The restarted smoother passes its first frame unblended; blended
+        // levels follow once the source blinks (`within` bounds the wait).
+        while green_levels(&handle).await <= 2 {}
         assert_eq!(handle.snapshot().borrow().settings, saved);
         assert_eq!(log.count("source.open:a"), 1);
         engine.shutdown().await.unwrap();

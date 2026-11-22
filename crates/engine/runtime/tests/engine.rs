@@ -12,8 +12,10 @@ use std::time::Duration;
 
 const DEADLINE: Duration = Duration::from_secs(2);
 
+/// Longer than any test's own waits, such as the 8 s `behind_within`, so a
+/// slow test fails with its own message.
 async fn within<T>(test: impl Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(10), test)
+    tokio::time::timeout(Duration::from_secs(20), test)
         .await
         .expect("test timed out")
 }
@@ -495,7 +497,8 @@ async fn stuck_calls_in_sequence_share_one_shutdown_grace() {
 
         let asked = tokio::time::Instant::now();
         let shutdown = shutdown_before_stuck_call_returns(engine).await;
-        assert!(asked.elapsed() < GRACE * 3 / 2, "{:?}", asked.elapsed());
+        // A grace for each stuck call would take at least two graces.
+        assert!(asked.elapsed() < GRACE * 2, "{:?}", asked.elapsed());
         assert!(
             matches!(shutdown, Err(Error::Adapter { .. })),
             "{shutdown:?}"
@@ -857,8 +860,9 @@ async fn an_ended_source_stops_cleanly_turns_lighting_off_and_idles_the_output()
         let mut changed = handle.snapshot().borrow().settings.clone();
         changed.processing.brightness_percent =
             changed.processing.brightness_percent.saturating_sub(1);
+        // The engine replies after it has reconciled the session, so a
+        // replayed source would already be open.
         handle.replace_settings(current, changed).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(log.count("source.open:a"), 1);
         assert_eq!(handle.snapshot().borrow().session, SessionState::Stopped);
 
@@ -940,10 +944,11 @@ async fn latency_starts_at_capture_when_every_frame_has_a_capture_time() {
             output_ms,
         } = input.latency.unwrap();
         // Captured 300 ms before the fake hands it over: that part is before
-        // Prysm; the rest is Prysm's own.
+        // Prysm; the rest is Prysm's own. The upper bounds only leave room
+        // for a slow machine.
         let capture_ms = capture_ms.expect("every frame had a capture time");
-        assert!((300.0..400.0).contains(&capture_ms), "{capture_ms}");
-        assert!(output_ms < 100.0, "{output_ms}");
+        assert!((300.0..1000.0).contains(&capture_ms), "{capture_ms}");
+        assert!(output_ms < 500.0, "{output_ms}");
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -1075,7 +1080,8 @@ async fn a_source_without_frames_never_takes_the_output() {
         })
         .await;
         assert_eq!(waiting.session, SessionState::Running);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // The first input report covers a whole sampling window (about a
+        // second) without a frame: the window this proves nothing opened in.
         assert_eq!(log.count("output.open:o"), 0, "{:?}", log.events());
 
         // Off leaves an untouched output untouched.

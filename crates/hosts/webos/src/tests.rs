@@ -21,6 +21,8 @@ fn source(settings: &FakeSourceSettings) -> Settings {
 type Running = tokio::task::JoinHandle<(Result<()>, Option<Stop>)>;
 
 const PORTAL: &str = "http://10.0.0.2:8787/";
+/// The first delay before a failed session is retried; each next one doubles.
+const FIRST_RETRY: Duration = Duration::from_millis(20);
 
 /// Run a fake engine with the link surface until the link stops.
 fn start(settings: Settings, initial: LightingTarget) -> (Peer, VideoSignal, CallLog, Running) {
@@ -48,7 +50,7 @@ fn start_with_portal(
         initial,
         Box::new(move || portal.lock().unwrap().clone()),
     )
-    .with_timing(Duration::from_millis(50), Duration::from_millis(20));
+    .with_timing(Duration::from_millis(50), FIRST_RETRY);
     let (sources, outputs) = (FakeSources(log.clone()), FakeOutputs(log.clone()));
     let task = tokio::spawn(async move {
         let result = Prysm::builder(MemoryStore::with(settings))
@@ -97,7 +99,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
     let running = peer
         .wait_for(|e| status(e).is_some_and(|s| s.capturing))
         .await
-        .unwrap();
+        .expect("a capturing status");
     assert_eq!(status(&running).unwrap().target, LightingTarget::Processed);
     assert_eq!(
         feed.current(),
@@ -114,7 +116,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
     });
     peer.wait_for(|e| status(e).is_some_and(|s| !s.capturing))
         .await
-        .unwrap();
+        .expect("a status that is not capturing");
     assert!(log.wait_for("output.idle::Off", 1).await);
 
     peer.close();
@@ -129,7 +131,7 @@ async fn initial_target_applies_and_status_repeats_as_heartbeat() {
     let running = peer
         .wait_for(|e| status(e).is_some_and(|s| s.capturing))
         .await
-        .unwrap();
+        .expect("a capturing status");
     let running = status(&running).unwrap().clone();
     assert!(running.fps.is_some_and(|fps| fps > 0), "{running:?}");
     // Unchanged status keeps arriving (the rate may have been measured anew).
@@ -157,7 +159,7 @@ async fn a_failed_session_is_retried_until_lighting_is_turned_off() {
     let failed = peer
         .wait_for(|e| status(e).is_some_and(|s| s.failure.is_some()))
         .await
-        .unwrap();
+        .expect("a status with a failure");
     assert!(
         status(&failed)
             .unwrap()
@@ -173,9 +175,10 @@ async fn a_failed_session_is_retried_until_lighting_is_turned_off() {
     });
     peer.wait_for(|e| status(e).is_some_and(|s| s.target == LightingTarget::Off))
         .await
-        .unwrap();
+        .expect("a status with lighting off");
     let opened = log.count("source.open:");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Longer than the first four retry delays together (1 + 2 + 4 + 8).
+    tokio::time::sleep(FIRST_RETRY * 24).await;
     assert_eq!(log.count("source.open:"), opened, "Off cancels retries");
     peer.close();
     task.await.unwrap().0.unwrap();
@@ -191,7 +194,7 @@ async fn missing_settings_are_not_retried() {
     let failed = peer
         .wait_for(|e| status(e).is_some_and(|s| s.failure.is_some()))
         .await
-        .unwrap();
+        .expect("a status with a failure");
     assert!(
         status(&failed)
             .unwrap()
@@ -201,7 +204,8 @@ async fn missing_settings_are_not_retried() {
             .message
             .contains("output")
     );
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Ten first retry delays: a retry would have opened the source.
+    tokio::time::sleep(FIRST_RETRY * 10).await;
     assert_eq!(log.count("source.open:"), 0);
     peer.close();
     task.await.unwrap().0.unwrap();
@@ -255,12 +259,12 @@ async fn the_portal_url_follows_the_tvs_address() {
         status(e).is_some_and(|s| s.portal.as_deref() == Some("http://10.0.0.9:8787/"))
     })
     .await
-    .unwrap();
+    .expect("a status with the new portal URL");
     // No LAN address at all: none is advertised.
     *portal.lock().unwrap() = None;
     peer.wait_for(|e| status(e).is_some_and(|s| s.portal.is_none()))
         .await
-        .unwrap();
+        .expect("a status without a portal URL");
     peer.close();
     task.await.unwrap().0.unwrap();
 }
@@ -308,9 +312,10 @@ async fn a_session_waiting_for_video_is_not_capturing() {
             })
         })
         .await
-        .unwrap();
+        .expect("a status waiting for video");
     assert!(status(&waiting).unwrap().failure.is_none());
-    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    // `fps` is first reported after a whole sampling window (about a
+    // second) without a frame: the window this proves nothing opened in.
     assert_eq!(log.count("output.open:"), 0, "{:?}", log.events());
 
     peer.send(Command::Lighting {
@@ -318,7 +323,7 @@ async fn a_session_waiting_for_video_is_not_capturing() {
     });
     peer.wait_for(|e| status(e).is_some_and(|s| s.target == LightingTarget::Off))
         .await
-        .unwrap();
+        .expect("a status with lighting off");
     peer.close();
     task.await.unwrap().0.unwrap();
 }

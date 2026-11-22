@@ -120,24 +120,6 @@ fn round_trip(sender: &mut RemoteSender, source: &mut RemoteSource, frame: &Fram
     receive(source)
 }
 
-/// The first cause of type `T` in an adapter error's chain.
-fn cause<T: std::error::Error + 'static>(error: &prysm_ports::Error) -> Option<&T> {
-    let prysm_ports::Error::Adapter {
-        source: Some(cause),
-        ..
-    } = error
-    else {
-        return None;
-    };
-    let mut cause: &(dyn std::error::Error + 'static) = &**cause;
-    loop {
-        if let Some(found) = cause.downcast_ref::<T>() {
-            return Some(found);
-        }
-        cause = cause.source()?;
-    }
-}
-
 #[test]
 fn software_h264_round_trips_within_tolerance_and_reports_its_bitrate() {
     let (portal, mut source) = open(SOFTWARE);
@@ -304,7 +286,7 @@ fn a_broken_keyframe_fails_the_source() {
             Ok(pull) => assert!(pull.is_idle(), "a frame was produced"),
         }
     };
-    assert!(cause::<H264Error>(&error).is_some(), "{error}");
+    assert!(error.cause::<H264Error>().is_some(), "{error}");
     assert_eq!(
         prysm_ports::Error::to_string(&error),
         "the sender's stream (640x280 at 30 fps with menus as h264_software) does not decode"
@@ -345,8 +327,24 @@ impl Recorder {
 
     fn command(&mut self, command: &str) {
         self.socket.send(Message::text(command)).unwrap();
-        // Let it arrive before the sender's next poll.
-        thread::sleep(Duration::from_millis(50));
+    }
+
+    /// Send frames until one is a keyframe, which shows that the sender has
+    /// read the keyframe request and every command sent before it.
+    fn until_keyframe(
+        &mut self,
+        sender: &mut RemoteSender,
+        next: &mut impl Iterator<Item = Frame>,
+    ) {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            sender.send(&next.next().unwrap()).unwrap();
+            if self.frame() {
+                return;
+            }
+            assert!(Instant::now() < deadline, "no keyframe within {BOUND:?}");
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 }
 
@@ -365,21 +363,30 @@ fn a_keyframe_request_starts_a_new_session_and_unknown_types_are_ignored() {
     assert!(!recorder.frame());
 
     recorder.command(r#"{"type":"keyframe"}"#);
-    sender.send(&next.next().unwrap()).unwrap();
-    assert!(recorder.frame());
+    recorder.until_keyframe(&mut sender, &mut next);
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!recorder.frame());
 
-    // A type this end does not know changes nothing.
+    // A type this end does not know does not end the stream: it goes on to
+    // the keyframe requested after it.
     recorder.command(r#"{"type":"pause"}"#);
+    recorder.command(r#"{"type":"keyframe"}"#);
+    recorder.until_keyframe(&mut sender, &mut next);
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!recorder.frame());
 
     // Text that is not a command fails the connection.
     recorder.command("jump");
-    let error = sender.send(&next.next().unwrap()).unwrap_err();
+    let deadline = Instant::now() + BOUND;
+    let error = loop {
+        assert!(Instant::now() < deadline, "the sender never read it");
+        if let Err(error) = sender.tick() {
+            break error;
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
     assert!(
-        matches!(cause::<WireError>(&error), Some(WireError::Json(_))),
+        matches!(error.cause::<WireError>(), Some(WireError::Json(_))),
         "{error}"
     );
 }
@@ -400,7 +407,7 @@ fn close_stops_the_sender() {
         thread::sleep(Duration::from_millis(10));
     };
     assert_eq!(
-        cause::<WireError>(&error),
+        error.cause::<WireError>(),
         Some(&WireError::Closed(Some(Close::Stopped)))
     );
 }
@@ -417,7 +424,7 @@ fn an_unavailable_hardware_encoder_is_refused_without_switching() {
     let mut sender = portal.connect().unwrap();
     assert_eq!(sender.request().encoding, StreamEncoding::H264Hardware);
     let error = sender.send(&picture(64, 32, 0)).unwrap_err();
-    assert!(cause::<H264Error>(&error).is_some(), "{error}");
+    assert!(error.cause::<H264Error>().is_some(), "{error}");
     let deadline = Instant::now() + BOUND;
     let refused = loop {
         assert!(Instant::now() < deadline, "no refusal");
@@ -448,7 +455,7 @@ fn h264_of_other_pixels_is_refused() {
     let (portal, mut source) = open(SOFTWARE);
     let mut sender = portal.connect().unwrap();
     let error = sender.send(&Frame::dummy(16, 16).unwrap()).unwrap_err();
-    assert!(cause::<H264Error>(&error).is_some(), "{error}");
+    assert!(error.cause::<H264Error>().is_some(), "{error}");
     let deadline = Instant::now() + BOUND;
     while source.next_frame(Duration::from_millis(20)).is_ok() {
         assert!(Instant::now() < deadline, "no refusal");
