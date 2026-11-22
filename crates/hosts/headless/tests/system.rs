@@ -5,7 +5,7 @@
 //!
 //! The binary sends DDP to port 4048, which it does not let settings change,
 //! so the fake WLED binds 127.0.0.1:4048 and the tests that use it take
-//! [`WLED`] one at a time. Nothing leaves 127.0.0.1.
+//! [`wled_lock`] one at a time. Nothing leaves 127.0.0.1.
 #[path = "../../common/tests/launch/mod.rs"]
 mod launch;
 
@@ -14,23 +14,25 @@ use prysm_capture_remote::RemoteSender;
 use prysm_capture_remote::testkit::{in_test_ca_process, tls_proxy};
 use prysm_core::{Frame, PixelFormat};
 use serde_json::{Value, json};
+use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender as Channel, channel};
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_prysm-headless");
 
-/// Taken by every test that binds the fake WLED's UDP 4048.
-static WLED: Mutex<()> = Mutex::new(());
-
-fn wled_lock() -> MutexGuard<'static, ()> {
-    WLED.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+/// Taken by every test that binds the fake WLED's UDP 4048, until dropped: a
+/// file lock, so tests in other processes (another checkout's `cargo test`)
+/// wait too.
+fn wled_lock() -> File {
+    let lock = File::create(std::env::temp_dir().join("prysm-test-wled-4048.lock")).unwrap();
+    lock.lock().unwrap();
+    lock
 }
 
 /// 12 LEDs: one DDP packet per frame.
@@ -109,7 +111,8 @@ fn save_settings(port: u16, state: &Value, settings: &Value) -> Reply {
 enum Call {
     /// `POST /json/state` with this body.
     State(Value),
-    /// `GET /json/si`: the output checking whose colours it shows.
+    /// `GET /json/si` or `/json/cfg`: the output checking whose colours it
+    /// shows, or how WLED scales them.
     Check,
 }
 
@@ -263,10 +266,22 @@ fn answer(mut socket: TcpStream, calls: &Channel<Call>, fail_state: bool) -> boo
         }
     } else if head.starts_with("GET /json/si ") {
         let si = json!({
-            "state": { "on": true, "lor": 0 },
-            "info": { "live": true, "lm": "DDP", "lip": "127.0.0.1" },
+            "state": { "on": true, "lor": 0, "bri": 255 },
+            "info": {
+                "live": true,
+                "lm": "DDP",
+                "lip": "127.0.0.1",
+                "leds": { "count": LEDS.iter().sum::<usize>() },
+            },
         });
         ("200 OK", si.to_string(), Call::Check)
+    } else if head.starts_with("GET /json/cfg ") {
+        // Neutral: full brightness scale, gamma 1 for brightness and colour.
+        let cfg = json!({
+            "if": { "live": { "maxbri": false } },
+            "light": { "scale-bri": 100, "gc": { "bri": 1.0, "col": 1.0 } },
+        });
+        ("200 OK", cfg.to_string(), Call::Check)
     } else {
         let _ = socket.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
         return true;
@@ -391,6 +406,13 @@ fn a_tv_stream_lights_wled_and_sigterm_turns_it_off() {
     assert_eq!(wled.next_state(), body(LIVE));
     wled.expect_colour(RED);
     wait_for_state(port, "running", |state| session(state) == "running");
+    let configured = wait_for_state(port, "WLED's configuration read", |state| {
+        state["device"]["brightness_percent"] == 100
+    });
+    assert_eq!(
+        configured["device"]["led_count"],
+        LEDS.iter().sum::<usize>()
+    );
 
     let (status, stderr) = host.terminate();
     assert!(status.success(), "{stderr:#?}");
@@ -466,11 +488,12 @@ fn a_dropped_sender_releases_wled_to_its_own_state() {
 /// authorities, so the test runs itself again with the test CA.
 #[test]
 fn a_tv_stream_through_a_tls_proxy_lights_wled() {
-    // Held by the parent while its child runs the test with the test CA.
-    let _wled = wled_lock();
     if !in_test_ca_process("a_tv_stream_through_a_tls_proxy_lights_wled") {
         return;
     }
+    // Taken in the child that runs the test: the lock is a file lock, so a
+    // parent holding it would block its own child.
+    let _wled = wled_lock();
     let wled = FakeWled::start(false);
     let dir = tempfile::tempdir().unwrap();
     let (host, port) = start(&write_settings(dir.path(), &wled_settings(&wled)));

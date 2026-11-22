@@ -129,6 +129,7 @@ impl PrysmProcessor {
     }
 
     /// Process a single frame using the current monotonic time for smoothing.
+    #[cfg(feature = "testkit")]
     pub fn process_frame(&mut self, frame: Frame) -> EdgeColors {
         self.process_frame_at(frame, Instant::now())
     }

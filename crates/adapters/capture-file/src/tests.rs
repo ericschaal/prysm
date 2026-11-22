@@ -62,17 +62,6 @@ fn next(frames: &mut FileFrames) -> prysm_ports::Result<Frame> {
     Ok(pull(frames)?.expect("playback ended"))
 }
 
-/// The adapter error's preserved cause, downcast.
-fn cause<E: std::error::Error + 'static>(error: &Error) -> Option<&E> {
-    match error {
-        Error::Adapter {
-            source: Some(source),
-            ..
-        } => source.downcast_ref(),
-        _ => None,
-    }
-}
-
 fn alive(pid: u32) -> bool {
     Command::new("kill")
         .args(["-0", &pid.to_string()])
@@ -158,7 +147,7 @@ fn failure_reports_exit_status_and_a_bounded_stderr_tail() {
             frames.next_frame(SHORT).unwrap_err().to_string(),
             error.to_string()
         );
-        let exit = cause::<crate::source::DecoderExit>(&error).unwrap();
+        let exit = error.cause::<crate::source::DecoderExit>().unwrap();
         assert!(exit.stderr.starts_with('…'));
         let cause = exit.to_string();
         assert!(
@@ -223,7 +212,7 @@ fn missing_binary_names_the_requirement() {
             .contains("install FFmpeg 9+ and make it available on PATH"),
         "{error}"
     );
-    let io = cause::<std::io::Error>(&error).unwrap();
+    let io = error.cause::<std::io::Error>().unwrap();
     assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
 }
 
@@ -361,7 +350,7 @@ fn open_reports_an_unreadable_file_before_starting_ffmpeg() {
         error.to_string(),
         "cannot open video file `/prysm-test-missing/clip.mkv`"
     );
-    let io = cause::<std::io::Error>(&error).unwrap();
+    let io = error.cause::<std::io::Error>().unwrap();
     assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
 }
 
@@ -372,10 +361,15 @@ fn ffmpeg_available() -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-/// Runs against the real FFmpeg when it is on PATH; skips otherwise.
+/// Runs against the real FFmpeg when it is on PATH; skips otherwise, except
+/// in CI, which installs it.
 #[test]
 fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
     if !ffmpeg_available() {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI installs ffmpeg, but it is not on PATH"
+        );
         eprintln!("skipped: ffmpeg is not on PATH");
         return;
     }

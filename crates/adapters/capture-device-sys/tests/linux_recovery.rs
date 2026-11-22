@@ -1,5 +1,8 @@
 #![cfg(target_os = "linux")]
 
+//! A manual test: CI and `cargo xtask check` do not run it. It is the only
+//! end-to-end check of stall recovery on a real device node.
+//!
 //! Use a dedicated v4l2loopback device with no other readers or writers:
 //! `sudo modprobe v4l2loopback video_nr=42 exclusive_caps=1`
 //! `PRYSM_TEST_VIDEO_DEVICE=/dev/video42 cargo test -p prysm-capture-device-sys --test linux_recovery -- --ignored`

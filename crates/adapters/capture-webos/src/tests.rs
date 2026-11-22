@@ -930,8 +930,16 @@ fn a_panic_drops_the_tap_while_the_backend_still_holds_the_device() {
         include_ui: false,
         ..WebosSettings::default()
     };
-    let mut frames = WebosFrames::start(backend, settings, VideoSignal::default(), TEST).unwrap();
-    assert!(matches!(failure(&mut frames), Error::Panicked(_)));
+    // The panic leaves `acquire` a watched call until the thread has caught
+    // it, after the panic hook has printed it (seconds under a sanitizer).
+    // So the watchdog cannot fire first, and the wait is long.
+    let limits = Limits {
+        watchdog: Duration::MAX,
+        ..TEST
+    };
+    let mut frames = WebosFrames::start(backend, settings, VideoSignal::default(), limits).unwrap();
+    let failure = frames.next_frame(Duration::from_secs(60));
+    assert!(matches!(failure, Err(Error::Panicked(_))), "{failure:?}");
     assert!(close(frames).recv_timeout(LIMIT).unwrap().is_err());
     assert_eq!(*drops.lock().unwrap(), ["tap", "backend"]);
 }

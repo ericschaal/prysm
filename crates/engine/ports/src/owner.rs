@@ -154,7 +154,8 @@ impl OwnerThread {
         Ok(state.frame.take().into())
     }
 
-    /// The frame published and not yet taken.
+    /// The frame published and not yet taken; for adapters' tests.
+    #[doc(hidden)]
     #[must_use]
     pub fn peek(&self) -> Option<Frame> {
         self.shared.lock().frame.clone()

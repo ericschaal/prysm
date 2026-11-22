@@ -105,18 +105,6 @@ fn frame() -> Frame {
     Frame::fill(9, 16, 8, PixelFormat::RGB24).unwrap()
 }
 
-/// The wire cause of an adapter error.
-fn wire_cause(error: &prysm_ports::Error) -> Option<WireError> {
-    let prysm_ports::Error::Adapter {
-        source: Some(cause),
-        ..
-    } = error
-    else {
-        return None;
-    };
-    cause.downcast_ref::<WireError>().cloned()
-}
-
 /// Send frames until the engine counts `count` received.
 async fn deliver(sender: RemoteSender, engine: &EngineHandle, count: u64) -> RemoteSender {
     let start = engine.stats().frames_received;
@@ -147,8 +135,8 @@ async fn a_sender_streams_through_the_portal_once_lighting_runs() {
         // Lighting is off: nobody receives; the sender is told and retries.
         let error = host.connect().await.unwrap_err();
         assert_eq!(
-            wire_cause(&error),
-            Some(WireError::Unavailable(503)),
+            error.cause::<WireError>(),
+            Some(&WireError::Unavailable(503)),
             "{error}"
         );
         // Its refused attempt carried its offer.
@@ -250,8 +238,8 @@ async fn browsers_from_other_sites_cannot_open_it_and_without_a_source_it_is_abs
         let host = start(false).await;
         let error = host.connect().await.unwrap_err();
         assert_eq!(
-            wire_cause(&error),
-            Some(WireError::Unavailable(404)),
+            error.cause::<WireError>(),
+            Some(&WireError::Unavailable(404)),
             "{error}"
         );
         host.shutdown().await;
