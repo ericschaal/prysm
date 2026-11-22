@@ -469,7 +469,8 @@ jobs:
         with:
           key: sanitizer-${{ matrix.sanitizer }}
       # Library and integration tests, not doctests (rustdoc would need the
-      # flags too).
+      # flags too). Not the engine test that processes 4K frames against the
+      # clock: an instrumented build is too slow for its bounds.
       - name: Tests under the ${{ matrix.sanitizer }} sanitizer
         run: >-
           cargo test --locked -Zbuild-std --target x86_64-unknown-linux-gnu
@@ -478,6 +479,7 @@ jobs:
           -p prysm-capture-webos-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
           -p prysm-capture-webos -p prysm-capture-device -p prysm-capture-remote
           -p prysm-capture-file
+          -- --skip a_slow_processing_step_is_named_after_a_few_seconds
 
   webos-ipk:
     # The SDK below is built for aarch64 hosts.
