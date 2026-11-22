@@ -517,7 +517,9 @@ impl Machine {
     }
 
     fn set_enabled(&mut self, enabled: bool, now: Instant, effects: &mut Vec<Effect>) {
-        if !enabled {
+        // Off ends the slim worker; the full worker stays wanted, so its
+        // failure and backoff stay current.
+        if !enabled && matches!(self.package, Package::Slim { .. }) {
             self.dismiss();
         }
         let running = self.running();

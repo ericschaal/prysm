@@ -1470,6 +1470,27 @@ fn a_requested_stop_that_ends_badly_is_a_failure() {
 
 /// A failure is shown until the user or the TV ends the worker: then the
 /// published `Stopped` or the next worker carries no old failure.
+/// Off sets the full worker's lighting; the worker stays wanted, so its
+/// failure stays shown while it retries.
+#[test]
+fn turning_lighting_off_keeps_a_retrying_full_workers_failure() {
+    let (mut m, t0) = (full(), Instant::now());
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (1, Exited(Exit::Code(1)), vec![]),
+            (2, Enabled(false), vec![]),
+        ],
+    );
+    assert_eq!(message(&m.state(t0)), Some("worker failed"));
+}
+
 #[test]
 fn a_requested_stop_clears_the_failure_in_every_phase() {
     let t0 = Instant::now();
