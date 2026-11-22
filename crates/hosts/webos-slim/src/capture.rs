@@ -37,9 +37,10 @@ pub fn settings(request: &RemoteSettings) -> WebosSettings {
 /// A [`FrameSource`] that captures at the size, rate and menu blending the
 /// receiver wants ([`Flow::wanted`]): nothing before the first request,
 /// closed and opened again when a request changes them, and closed while the
-/// receiver has stopped the stream (its lighting is off) until a receiver
-/// takes a connection again, or for good once another sender replaced this
-/// one. It keeps running while a receiver that did not say so is away, so a
+/// receiver has stopped the stream (its lighting is off), while its request
+/// is refused (the encoder failed) or while Prysm speaks another version,
+/// until a receiver takes a connection again, or for good once another
+/// sender replaced this one. It keeps running while a receiver that did not say so is away, so a
 /// dropped connection does not restart the TV capture. With nothing open,
 /// `next_frame` waits out its timeout and reports idle, which keeps the
 /// uplink reconnecting and reading the receiver's messages.

@@ -281,7 +281,7 @@ class SmokeProbeTests(unittest.TestCase):
         self.assertIn('run --sandbox ' + directory + ' --run-for 60', files['probe.service'])
         # The fake worker speaks its flavour's status (webos-link WorkerStatus), absent values omitted.
         common = {'type', 'flavor', 'capturing'}
-        for flavour, own in (('full', {'target'}), ('slim', {'paused'})):
+        for flavour, own in (('full', {'target'}), ('slim', {'link'})):
             status = json.loads(smoke.STATUS[flavour])
             self.assertEqual((status['type'], status['flavor']), ('status', flavour))
             self.assertEqual(set(status), common | own)

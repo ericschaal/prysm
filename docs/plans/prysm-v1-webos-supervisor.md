@@ -140,10 +140,15 @@ pub struct FullStatus {
 }
 pub struct SlimStatus {
     pub capturing: bool,                 // frames sent in the last second
-    pub fps: Option<u16>,                // frames/s sent while connected and sending; 0 = waiting
-    pub encoding: Option<SlimEncoding>,  // the encoding sent while connected
-    pub paused: bool,                    // the receiver paused the stream; capture closed, not a failure
-    pub failure: Option<WorkerFailure>,  // { kind: encoder | receiver | version | other, message }
+    pub link: SlimLink,                  // where the uplink stands
+}
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SlimLink {
+    Starting {},                                     // no attempt yet
+    Sending { encoding: SlimEncoding, fps: u16 },    // connected; frames/s sent, 0 = waiting
+    Paused {},                                       // the receiver paused the stream; capture closed, not a failure
+    Waiting { failure: WorkerFailure },              // kind receiver
+    Failed { failure: WorkerFailure },               // kind encoder | version | replaced
 }
 pub mod exit { STOPPED = 0 /* TERM, EOF */, FAILED = 1, USAGE = 2, FAULTED = 3 }
 ```
@@ -238,7 +243,7 @@ Both packages: service `io.github.ericschaal.prysm.service`, app `io.github.eric
 `returnValue`/`errorText`; payloads are objects of at most 4 KiB. The values
 are exported as the `luna` OpenAPI document
 ([schema.rs](../../crates/hosts/webos-service/src/schema.rs), generated
-`@prysm/contracts/luna`, API version 2): one document for both flavors; `State`
+`@prysm/contracts/luna`, API version 3): one document for both flavors; `State`
 carries the installed package's own fields in `Package`, tagged by `flavor`.
 
 | Method | Request | Reply | Caller |
@@ -271,7 +276,7 @@ pub enum Package {
 #[serde(tag = "phase")]             // the worker's report only while it runs
 pub enum FullWorker { Stopped, Running { capturing, fps, portal }, Stopping { portal }, Retrying { seconds } }
 #[serde(tag = "phase")]
-pub enum SlimWorker { Stopped, Running { capturing, fps, encoding, paused }, Stopping, Retrying { seconds } }
+pub enum SlimWorker { Stopped, Running { capturing, link }, Stopping, Retrying { seconds } }
 ```
 
 The sender check uses LS2's application id, never the payload, before parsing.

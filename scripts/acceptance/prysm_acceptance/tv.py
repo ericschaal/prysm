@@ -42,16 +42,24 @@ class StoppedWorker(TypedDict):
     phase: Literal['stopped']
 
 
+class SlimLink(TypedDict):
+    """Slim: where the stream to Prysm stands (`state`); `encoding` and `fps` while sending."""
+
+    state: Literal['starting', 'sending', 'paused', 'waiting', 'failed']
+    encoding: NotRequired[str]
+    fps: NotRequired[int]
+    failure: NotRequired['TvFailure']
+
+
 class RunningWorker(TypedDict):
-    """A running worker and its report. Both packages: frames flow (`capturing`) at `fps`. Full only: `portal`.
-    Slim only: `encoding` and `paused` (the receiver paused the stream)."""
+    """A running worker and its report. Both packages: frames flow (`capturing`). Full only: `fps` and `portal`.
+    Slim only: `link`, with the encoding and rate while sending (`paused`: the receiver paused the stream)."""
 
     phase: Literal['running']
     capturing: bool
     fps: NotRequired[int]
     portal: NotRequired[str]
-    encoding: NotRequired[str]
-    paused: NotRequired[bool]
+    link: NotRequired[SlimLink]
 
 
 class StoppingWorker(TypedDict):
@@ -99,22 +107,31 @@ def capturing(state: State) -> bool:
     return report is not None and report['capturing']
 
 
+def _link(state: State) -> SlimLink | None:
+    """Slim: the running worker's link."""
+    report = running(state)
+    return None if report is None else report.get('link')
+
+
 def fps(state: State) -> int | None:
     """The running worker's frame rate; `None` while none is measured."""
     report = running(state)
-    return None if report is None else report.get('fps')
+    if report is None:
+        return None
+    link = report.get('link')
+    return report.get('fps') if link is None else link.get('fps')
 
 
 def paused(state: State) -> bool:
     """Slim: the receiver paused the running worker's stream (its lighting is off)."""
-    report = running(state)
-    return report is not None and report.get('paused', False)
+    link = _link(state)
+    return link is not None and link['state'] == 'paused'
 
 
 def encoding(state: State) -> str | None:
     """Slim: the encoding the running worker sends in."""
-    report = running(state)
-    return None if report is None else report.get('encoding')
+    link = _link(state)
+    return None if link is None else link.get('encoding')
 
 
 def portal(state: State) -> str | None:

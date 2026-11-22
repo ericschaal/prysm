@@ -6,8 +6,8 @@
 //! cannot corrupt the stream. A reader thread decodes [`Command`]s from stdin;
 //! stdin EOF or a bad line stops the worker.
 use crate::{
-    Command, Event, FullStatus, LineReader, LinkError, SlimStatus, WorkerFailure, WorkerStatus,
-    encode, exit,
+    Command, Event, FullStatus, LineReader, LinkError, SlimLink, SlimStatus, WorkerFailure,
+    WorkerStatus, encode, exit,
 };
 use prysm_ports::{Error, chain};
 use std::future::Future;
@@ -132,7 +132,15 @@ fn fit(event: Event, limit: usize) -> Event {
         }
         Event::Status(WorkerStatus::Slim(status)) => {
             Event::Status(WorkerStatus::Slim(SlimStatus {
-                failure: status.failure.map(short_failure),
+                link: match status.link {
+                    SlimLink::Waiting { failure } => SlimLink::Waiting {
+                        failure: short_failure(failure),
+                    },
+                    SlimLink::Failed { failure } => SlimLink::Failed {
+                        failure: short_failure(failure),
+                    },
+                    link => link,
+                },
                 ..status
             }))
         }
@@ -506,13 +514,15 @@ mod tests {
         assert!(full.failure.unwrap().message.len() < 2000);
         link.events
             .send(&Event::Status(WorkerStatus::Slim(SlimStatus {
-                failure: long(),
-                ..SlimStatus::default()
+                capturing: false,
+                link: SlimLink::Failed {
+                    failure: long().unwrap(),
+                },
             })));
         let Some(Event::Status(WorkerStatus::Slim(slim))) = peer.event().await else {
             panic!("expected a slim status");
         };
-        assert!(slim.failure.unwrap().message.len() < 2000);
+        assert!(slim.link.failure().unwrap().message.len() < 2000);
         link.events.send(&Event::Failed {
             cause: "w".repeat(10_000),
         });
@@ -555,10 +565,16 @@ mod tests {
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
-                        fps: Some(u16::MAX),
-                        encoding: Some(SlimEncoding::H264Software),
-                        paused: true,
-                        failure: failure(),
+                        link: SlimLink::Waiting {
+                            failure: failure().unwrap(),
+                        },
+                    })),
+                    Event::Status(WorkerStatus::Slim(SlimStatus {
+                        capturing: true,
+                        link: SlimLink::Sending {
+                            encoding: SlimEncoding::H264Software,
+                            fps: u16::MAX,
+                        },
                     })),
                     Event::Failed {
                         cause: text.clone(),

@@ -17,7 +17,7 @@ use prysm_protocol::{
     SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_runtime::{NullOutput, NullSettings};
-use prysm_webos_link::{FailureKind, SlimEncoding, Video, WorkerFailure};
+use prysm_webos_link::{FailureKind, SlimLink, Video, WorkerFailure};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
     GetStateRequest, SetEnabledRequest, UninstallRequest, state_reply,
@@ -90,9 +90,7 @@ fn luna() -> Value {
                 true,
                 SlimWorker::Running {
                     capturing: false,
-                    fps: None,
-                    encoding: Some(SlimEncoding::H264Hardware),
-                    paused: true,
+                    link: SlimLink::Paused {},
                 },
             ),
             None,

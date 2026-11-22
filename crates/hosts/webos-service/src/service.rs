@@ -151,6 +151,8 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
     store: S,
     installer: I,
     worker: Option<L::Worker>,
+    /// Waiting for the current worker failed (and was logged).
+    wait_failed: bool,
     renew: Renewals,
     video_context: Option<Value>,
     published: Option<String>,
@@ -193,6 +195,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             store,
             installer,
             worker: None,
+            wait_failed: false,
             renew: Renewals {
                 power: Some(now + RESUBSCRIBE),
                 video: Some(now + RESUBSCRIBE),
@@ -366,7 +369,11 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         let exit = match worker.try_exit() {
             Ok(exit) => exit,
             Err(error) => {
-                eprintln!("prysm-webos-service: cannot wait for the worker: {error}");
+                // Logged once per worker; the machine lets it go after its kill.
+                if !self.wait_failed {
+                    self.wait_failed = true;
+                    eprintln!("prysm-webos-service: cannot wait for the worker: {error}");
+                }
                 None
             }
         };
@@ -408,7 +415,10 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 Effect::Spawn(arguments) => {
                     debug_assert!(self.worker.is_none(), "spawn before reap");
                     match self.launcher.spawn(&self.config.program, &arguments) {
-                        Ok(worker) => self.worker = Some(worker),
+                        Ok(worker) => {
+                            self.worker = Some(worker);
+                            self.wait_failed = false;
+                        }
                         Err(error) => failed_spawn = Some(error.to_string()),
                     }
                 }
@@ -432,6 +442,14 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                         && let Err(error) = worker.kill()
                     {
                         eprintln!("prysm-webos-service: cannot kill the worker: {error}");
+                    }
+                }
+                // Dropping it reaps it on a thread, if it ever can be.
+                Effect::Abandon => {
+                    if self.worker.take().is_some() {
+                        eprintln!(
+                            "prysm-webos-service: letting go of a worker not reaped after its kill"
+                        );
                     }
                 }
                 Effect::Publish => {

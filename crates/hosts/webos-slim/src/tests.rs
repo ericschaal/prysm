@@ -10,7 +10,7 @@ use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use prysm_webos_link::worker::{Link, Peer, Stop};
 use prysm_webos_link::{Command, Event, LightingTarget, SlimStatus, Video, WorkerStatus};
-use prysm_webos_link::{FailureKind, SlimEncoding};
+use prysm_webos_link::{FailureKind, SlimEncoding, SlimLink};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -136,42 +136,58 @@ fn capturing(event: &Event) -> Option<bool> {
     status(event).map(|status| status.capturing)
 }
 
+fn link(event: &Event) -> Option<&SlimLink> {
+    status(event).map(|status| &status.link)
+}
+
+/// Paused, and no frames left from before.
 fn paused(event: &Event) -> bool {
-    status(event)
-        .is_some_and(|status| status.paused && !status.capturing && status.failure.is_none())
+    status(event).is_some_and(|status| status.link == SlimLink::Paused {} && !status.capturing)
+}
+
+/// The link's wait or failure message, if it is of `kind`.
+fn failure(event: &Event, kind: FailureKind) -> Option<&str> {
+    link(event)
+        .and_then(SlimLink::failure)
+        .filter(|failure| failure.kind == kind)
+        .map(|failure| failure.message.as_str())
 }
 
 fn waiting(event: &Event) -> Option<&str> {
-    status(event)
-        .filter(|status| !status.capturing)
-        .and_then(|status| status.failure.as_ref())
-        .filter(|failure| failure.kind == FailureKind::Receiver)
-        .map(|failure| failure.message.as_str())
+    failure(event, FailureKind::Receiver).filter(|_| capturing(event) == Some(false))
 }
 
 fn version_differs(event: &Event) -> Option<&str> {
-    status(event)
-        .and_then(|status| status.failure.as_ref())
-        .filter(|failure| failure.kind == FailureKind::Version)
-        .map(|failure| failure.message.as_str())
+    failure(event, FailureKind::Version)
 }
 
 fn encoder_failure(event: &Event) -> Option<&str> {
-    status(event)
-        .and_then(|status| status.failure.as_ref())
-        .filter(|failure| failure.kind == FailureKind::Encoder)
-        .map(|failure| failure.message.as_str())
+    failure(event, FailureKind::Encoder)
 }
 
 fn replaced(event: &Event) -> Option<&str> {
-    status(event)
-        .and_then(|status| status.failure.as_ref())
-        .filter(|failure| failure.kind == FailureKind::Replaced)
-        .map(|failure| failure.message.as_str())
+    failure(event, FailureKind::Replaced)
 }
 
 fn encoding(event: &Event) -> Option<SlimEncoding> {
-    status(event).and_then(|status| status.encoding)
+    match link(event)? {
+        SlimLink::Sending { encoding, .. } => Some(*encoding),
+        _ => None,
+    }
+}
+
+/// Sending, without a wait or a failure.
+fn sending(event: &Event) -> bool {
+    encoding(event).is_some()
+}
+
+/// Whether the capture closed once within 5 s.
+async fn released(opened: &Opened) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while opened.closed() == 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    opened.closed() == 1
 }
 
 /// A receiver connection: records `sink.send` and `sink.refuse`, and fails
@@ -245,7 +261,7 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
         Some("waiting for the receiver: cannot connect to receiver: refused")
     );
     // Connected: frames flow and no wait is reported.
-    peer.wait_for(|e| capturing(e) == Some(true) && status(e).is_some_and(|s| s.failure.is_none()))
+    peer.wait_for(|e| capturing(e) == Some(true) && sending(e))
         .await
         .unwrap();
     // The first receiver drops after 5 frames; the uplink reconnects.
@@ -362,10 +378,10 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
 }
 
 /// A Prysm of another capture stream version refuses the upgrade: the
-/// worker keeps running, reports a `version` failure naming both versions
-/// and does not retry before [`VERSION_RECONNECT`].
+/// worker keeps running and reports a `version` failure naming both
+/// versions.
 #[tokio::test]
-async fn a_prysm_of_another_version_is_reported_as_such_and_retried_slowly() {
+async fn a_prysm_of_another_version_is_reported_as_such() {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -399,9 +415,8 @@ async fn a_prysm_of_another_version_is_reported_as_such_and_retried_slowly() {
         reason.contains("Prysm: 9") && reason.contains("update the older one"),
         "{reason}"
     );
-    // Ten ordinary retry intervals pass without another attempt.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(attempts.load(Ordering::SeqCst), 1, "retried too soon");
+    // The slow retry itself is `link::tests::attempts_follow_the_state`.
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
     assert!(!task.is_finished(), "the worker keeps running");
     peer.close();
     let (result, _) = task.await.unwrap();
@@ -522,23 +537,20 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
     );
 
     // While frames go out, the rate is reported.
-    peer.wait_for(|e| status(e).is_some_and(|s| s.fps.is_some_and(|fps| fps > 0)))
+    peer.wait_for(|e| matches!(link(e), Some(SlimLink::Sending { fps, .. }) if *fps > 0))
         .await
         .unwrap();
 
     // Lighting off: the receiver closes the stream as stopped. Paused, not a
-    // failure; the TV capture stops and stays stopped while the worker keeps
-    // reconnecting.
+    // failure; the TV capture stops (and stays stopped while the worker
+    // keeps reconnecting: `link::tests::every_uplink_state_takes_every_event`).
     Box::new(receiver).close().unwrap();
-    peer.wait_for(|e| paused(e) && encoding(e).is_none() && status(e).unwrap().fps.is_none())
-        .await
-        .unwrap();
-    assert_eq!(opened.closed(), 1, "the capture stops while stopped");
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    peer.wait_for(paused).await.unwrap();
+    assert!(released(&opened).await, "the capture stops while stopped");
     assert_eq!(opened.shapes().len(), 1, "no capture while lighting is off");
     // Lighting on again: a new connection resumes the capture.
     let receiver = portal.source(SOFTWARE);
-    peer.wait_for(|e| capturing(e) == Some(true) && !status(e).unwrap().paused)
+    peer.wait_for(|e| capturing(e) == Some(true) && sending(e))
         .await
         .unwrap();
     assert_eq!(
@@ -561,14 +573,7 @@ async fn a_replaced_sender_gives_up() {
     let portal = Portal::start();
     let receiver = portal.source(RAW);
     let opened = Opened::nv12();
-    let attempts = Arc::new(AtomicU32::new(0));
-    let (mut peer, _feed, task) = start(&opened, {
-        let (mut connect, attempts) = (connect(&portal), attempts.clone());
-        move || {
-            attempts.fetch_add(1, Ordering::SeqCst);
-            connect()
-        }
-    });
+    let (mut peer, _feed, task) = start(&opened, connect(&portal));
     peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
 
     let mut other = connect(&portal);
@@ -582,11 +587,8 @@ async fn a_replaced_sender_gives_up() {
             .ends_with("another sender replaced this one at Prysm"),
         "{event:?}"
     );
-    let tried = attempts.load(Ordering::SeqCst);
-    // Ten retry intervals pass without another attempt.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(attempts.load(Ordering::SeqCst), tried, "reconnected");
-    assert_eq!(opened.closed(), 1, "the capture is released");
+    // That it never connects again is `link::tests::attempts_follow_the_state`.
+    assert!(released(&opened).await, "the capture is released");
     assert_eq!(opened.shapes().len(), 1, "and not opened again");
     assert!(!task.is_finished(), "the worker keeps running");
 
@@ -635,11 +637,9 @@ async fn a_version_mismatch_replaces_a_stopped_stream() {
         .await
         .unwrap();
     // The capture stays released: nothing can be sent to that Prysm.
-    peer.wait_for(|e| {
-        version_differs(e).is_some() && !status(e).unwrap().paused && capturing(e) == Some(false)
-    })
-    .await
-    .unwrap();
+    peer.wait_for(|e| version_differs(e).is_some() && capturing(e) == Some(false))
+        .await
+        .unwrap();
     peer.close();
     let (result, _) = task.await.unwrap();
     result.unwrap();
@@ -857,9 +857,7 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
         .unwrap();
     assert!(encoder_failure(&event).unwrap().contains("no encoder here"));
     peer.wait_for(|e| {
-        capturing(e) == Some(true)
-            && encoding(e) == Some(SlimEncoding::H264Software)
-            && status(e).is_some_and(|s| s.failure.is_none())
+        capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
     })
     .await
     .unwrap();
@@ -870,11 +868,42 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
         .collect();
     assert_eq!(refusals.len(), 5, "{refusals:?}");
     assert!(refusals.iter().all(|r| r.contains("no encoder here")));
-    // The request kept the capture's shape, so it never reopened.
-    assert_eq!(opened.shapes(), [settings(&RAW)]);
+    // The capture closed while the request was refused and opened again
+    // for the new one.
+    assert_eq!(opened.shapes(), [settings(&RAW); 2]);
     peer.close();
     let (result, _) = task.await.unwrap();
     result.unwrap();
+}
+
+/// Prysm answered with another version, then became unreachable: the
+/// version is still the news, and the capture stays closed.
+#[test]
+fn a_version_mismatch_outlasts_an_unreachable_receiver() {
+    use prysm_capture_remote::WireError;
+    use prysm_ports::FrameSink;
+    let log = CallLog::new();
+    let mut answers = vec![
+        Err(Error::other("cannot connect to receiver: refused")),
+        Err(Error::adapter(
+            "cannot connect to receiver",
+            WireError::Version {
+                ours: 6,
+                theirs: Some(9),
+            },
+        )),
+        Ok(Fake::new(&log, RAW, 0)),
+    ];
+    let (uplink, flow) = Uplink::new(move || answers.pop().expect("an answer"));
+    let mut uplink = uplink.retry_every(Duration::ZERO, Duration::ZERO);
+    uplink.tick().unwrap();
+    assert_eq!(flow.wanted(), Some(RAW));
+    // The receiver drops; Prysm comes back updated, then goes away.
+    uplink.send(&crate::check::picture(16, 16, 1)).unwrap();
+    uplink.tick().unwrap();
+    assert_eq!(flow.wanted(), None);
+    uplink.tick().unwrap();
+    assert_eq!(flow.wanted(), None, "the capture reopened");
 }
 
 #[test]

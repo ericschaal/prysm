@@ -114,9 +114,7 @@ const tvState: TvState = {
   worker: {
     phase: 'running',
     capturing: true,
-    fps: 30,
-    encoding: 'raw',
-    paused: false,
+    link: { state: 'sending', encoding: 'raw', fps: 30 },
   },
   log: [],
 };

@@ -30,8 +30,8 @@ Everything else derives from it:
 Nothing else carries it. The crates are `0.0.0` (`[workspace.package]`;
 they are never published), so `Cargo.toml` and `Cargo.lock` never change for a
 release. The OpenAPI documents' `info.version` is their API's own version
-(`1`), and the exported `State` fixtures carry a fixed `version`, so generated
-contracts never change either.
+(the HTTP documents' `1`, Luna's `3`), and the exported `State` fixtures
+carry a fixed `version`, so generated contracts never change for a release.
 [scripts/check-release.py](../../scripts/check-release.py) checks this: VERSION
 is a semantic version, the crates are `0.0.0`, no Rust source uses
 `CARGO_PKG_VERSION`, and the TrueNAS pin equals VERSION; given a tag, also that

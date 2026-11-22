@@ -56,7 +56,7 @@ BINARIES = {
 # captured; the full one's engine stays off.
 STATUS = {
     'full': json.dumps({'type': 'status', 'flavor': 'full', 'capturing': False, 'target': 'off'}),
-    'slim': json.dumps({'type': 'status', 'flavor': 'slim', 'capturing': False, 'paused': False}),
+    'slim': json.dumps({'type': 'status', 'flavor': 'slim', 'capturing': False, 'link': {'state': 'starting'}}),
 }
 
 

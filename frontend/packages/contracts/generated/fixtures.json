@@ -970,8 +970,9 @@
       "video": "unknown",
       "worker": {
         "capturing": false,
-        "encoding": "h264_hardware",
-        "paused": true,
+        "link": {
+          "state": "paused"
+        },
         "phase": "running"
       }
     },

@@ -34,6 +34,8 @@ export type {
 export type Flavor = State['flavor'];
 /** Either package's worker process, tagged by `phase`. */
 export type Worker = State['worker'];
+/** Slim: where the running worker's stream to Prysm stands, tagged by `state`. */
+export type SlimLink = Extract<SlimWorker, { phase: 'running' }>['link'];
 
 /** Lighting is not off (full), or frames should flow (slim). */
 export function isEnabled(state: State): boolean {
@@ -48,6 +50,10 @@ export function isCapturing(state: State): boolean {
 
 /** The running worker's frame rate, 0 while it waits for frames; `null` while none is measured. */
 export function captureFps(state: State): number | null {
+  if (state.flavor === 'slim') {
+    const link = slimLink(state);
+    return link?.state === 'sending' ? link.fps : null;
+  }
   const worker = state.worker;
   return worker.phase === 'running' ? (worker.fps ?? null) : null;
 }
@@ -61,18 +67,22 @@ export function fullPortal(state: State): string | null {
     : null;
 }
 
-/** Slim: the encoding the running worker sends in; else `null`. */
-export function slimEncoding(state: State): SlimEncoding | null {
+/** Slim: the running worker's stream to Prysm; else `null`. */
+function slimLink(state: State): SlimLink | null {
   if (state.flavor !== 'slim') return null;
   const worker = state.worker;
-  return worker.phase === 'running' ? (worker.encoding ?? null) : null;
+  return worker.phase === 'running' ? worker.link : null;
+}
+
+/** Slim: the encoding the running worker sends in; else `null`. */
+export function slimEncoding(state: State): SlimEncoding | null {
+  const link = slimLink(state);
+  return link?.state === 'sending' ? link.encoding : null;
 }
 
 /** Slim: the receiver paused the running worker's stream (its lights are off). */
 export function isPaused(state: State): boolean {
-  if (state.flavor !== 'slim') return false;
-  const worker = state.worker;
-  return worker.phase === 'running' && worker.paused;
+  return slimLink(state)?.state === 'paused';
 }
 
 /** The TV app of both packages; its service is `<APP_ID>.service`. */
@@ -180,8 +190,6 @@ const optionalText = (value: unknown) =>
   value === undefined || typeof value === 'string';
 const optionalNumber = (value: unknown) =>
   value === undefined || typeof value === 'number';
-const optionalEncoding = (value: unknown) =>
-  value === undefined || oneOf(encodings, value);
 
 type Fields = Partial<Record<string, unknown>>;
 const isObject = (value: unknown): value is Fields =>
@@ -209,16 +217,27 @@ function isFullWorker(value: unknown): value is FullWorker {
   }
 }
 
+function isSlimLink(value: unknown): value is SlimLink {
+  if (!isObject(value)) return false;
+  switch (value.state) {
+    case 'starting':
+    case 'paused':
+      return true;
+    case 'sending':
+      return oneOf(encodings, value.encoding) && typeof value.fps === 'number';
+    case 'waiting':
+    case 'failed':
+      return value.failure !== undefined && isFailure(value.failure);
+    default:
+      return false;
+  }
+}
+
 function isSlimWorker(value: unknown): value is SlimWorker {
   if (!isObject(value)) return false;
   switch (value.phase) {
     case 'running':
-      return (
-        typeof value.capturing === 'boolean' &&
-        optionalNumber(value.fps) &&
-        optionalEncoding(value.encoding) &&
-        typeof value.paused === 'boolean'
-      );
+      return typeof value.capturing === 'boolean' && isSlimLink(value.link);
     case 'stopping':
       return true;
     default:

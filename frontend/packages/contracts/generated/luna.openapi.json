@@ -258,6 +258,100 @@
         ],
         "type": "string"
       },
+      "SlimLink": {
+        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding`, `fps` per second (0 while none come). `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (`failure.kind` `receiver`).\n`failed`: the encoder, version or replaced failure. The state's own\n`failure` is the one to show.",
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "starting"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "encoding": {
+                "$ref": "#/components/schemas/SlimEncoding"
+              },
+              "fps": {
+                "description": "Frames sent per second over about the last second, rounded.",
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "state": {
+                "enum": [
+                  "sending"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "encoding",
+              "fps",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "paused"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "failure": {
+                "$ref": "#/components/schemas/WorkerFailure"
+              },
+              "state": {
+                "enum": [
+                  "waiting"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "failure": {
+                "$ref": "#/components/schemas/WorkerFailure"
+              },
+              "state": {
+                "enum": [
+                  "failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "SlimWorker": {
         "description": "The slim package's worker process, as `{ \"phase\": … }`.",
         "oneOf": [
@@ -278,22 +372,12 @@
           {
             "properties": {
               "capturing": {
-                "description": "Frames were sent in the last second.",
+                "description": "Frames were sent in the last second (so also just after the\nstream ended).",
                 "type": "boolean"
               },
-              "encoding": {
-                "$ref": "#/components/schemas/SlimEncoding",
-                "description": "The encoding of the frames being sent while connected to the\nreceiver; always the one the receiver requested (set in the\ndesktop portal's remote capture settings)."
-              },
-              "fps": {
-                "description": "Frames sent per second over about the last second, rounded, while\nconnected and sending; 0 while it waits for frames.",
-                "format": "int32",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "paused": {
-                "description": "The receiver stopped the stream because its lighting is off; the\nTV capture is released until a receiver takes a connection\nagain. Not a failure.",
-                "type": "boolean"
+              "link": {
+                "$ref": "#/components/schemas/SlimLink",
+                "description": "Where the uplink to the receiver stands, as the worker last\nreported it."
               },
               "phase": {
                 "enum": [
@@ -304,7 +388,7 @@
             },
             "required": [
               "capturing",
-              "paused",
+              "link",
               "phase"
             ],
             "type": "object"
@@ -453,7 +537,7 @@
       "name": "Apache-2.0"
     },
     "title": "Prysm TV service (luna://io.github.ericschaal.prysm.service)",
-    "version": "2"
+    "version": "3"
   },
   "openapi": "3.1.0",
   "paths": {}

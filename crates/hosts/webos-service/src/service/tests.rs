@@ -19,6 +19,10 @@ pub(crate) struct World {
     pub outputs: VecDeque<Output>,
     pub exit: Option<Exit>,
     pub refuse_spawn: bool,
+    /// `waitpid` fails for every worker.
+    pub wait_fails: bool,
+    /// How many worker handles were let go.
+    pub dropped: u32,
 }
 
 #[derive(Clone, Default)]
@@ -60,7 +64,17 @@ impl Worker for FakeWorker {
         self.0.borrow_mut().outputs.drain(..).collect()
     }
     fn try_exit(&mut self) -> io::Result<Option<Exit>> {
-        Ok(self.0.borrow_mut().exit.take())
+        let mut world = self.0.borrow_mut();
+        if world.wait_fails {
+            return Err(io::Error::other("no child"));
+        }
+        Ok(world.exit.take())
+    }
+}
+
+impl Drop for FakeWorker {
+    fn drop(&mut self) {
+        self.0.borrow_mut().dropped += 1;
     }
 }
 
@@ -451,6 +465,24 @@ fn shutdown_waits_for_the_worker() {
         h.installer.borrow().is_empty(),
         "a plain stop keeps registration"
     );
+}
+
+/// A worker that cannot be reaped is let go 8 s after its kill:
+/// the shutdown finishes and no handle is left behind.
+#[test]
+fn a_worker_that_cannot_be_reaped_is_let_go_after_its_kill() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    h.world.borrow_mut().wait_fails = true;
+    let now = h.at(1);
+    h.service.shutdown(&mut h.bus, now);
+    assert!(h.tick(8_001));
+    assert_eq!(h.log(), ["terminate", "kill"]);
+    assert!(h.tick(16_000));
+    assert_eq!(h.world.borrow().dropped, 0);
+    assert!(!h.tick(16_001), "the shutdown finishes");
+    assert_eq!(h.world.borrow().dropped, 1);
 }
 
 #[test]
