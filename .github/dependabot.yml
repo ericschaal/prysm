@@ -27,7 +27,7 @@ updates:
         patterns: ['*']
         update-types: ['minor', 'patch']
     ignore:
-      # TypeScript 7: openapi-typescript and typescript-eslint still require 5.
+      # openapi-typescript requires TypeScript 5 (typescript-eslint accepts up to 6.0).
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
       # Node 24, as frontend/package.json's engines and CI's setup-node.
