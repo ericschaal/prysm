@@ -615,6 +615,7 @@ async fn race(end: OwnEnd, meets: Meets, order: Order) -> Seen {
             .await
             .unwrap();
     }
+    let opened = log.count("output.open:o");
     let reply = match meets {
         Meets::Target(target) => handle.set_target(target).await,
         Meets::Capture => {
@@ -638,6 +639,11 @@ async fn race(end: OwnEnd, meets: Meets, order: Order) -> Seen {
         )
     } else {
         let snapshot = handle.snapshot().borrow().clone();
+        // A session the command started takes the output at its first frame,
+        // however late that comes: shut down only after it did.
+        if snapshot.session == SessionState::Running {
+            assert!(log.wait_for("output.open:o", opened + 1).await);
+        }
         (text(reply), snapshot, text(engine.shutdown().await))
     };
     Seen {
