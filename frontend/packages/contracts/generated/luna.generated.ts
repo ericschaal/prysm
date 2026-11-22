@@ -73,7 +73,7 @@ export interface components {
          * @description What the user wants the LEDs to do.
          * @enum {string}
          */
-        LightingTarget: "off" | "processed" | "device_native";
+        LightingTarget: "off" | "screen_sync" | "effects";
         /**
          * @description The installed package (both install as the same app), what the user asked
          *     of it and its worker process, as `{ "flavor": … }`.
@@ -82,7 +82,7 @@ export interface components {
             /** @enum {string} */
             flavor: "full";
             /** @description The engine's target, including changes made in the portal. */
-            lighting: components["schemas"]["LightingTarget"];
+            target: components["schemas"]["LightingTarget"];
             worker: components["schemas"]["FullWorker"];
         } | {
             /** @description Frames should flow to the receiver. */
@@ -102,7 +102,10 @@ export interface components {
          *     in the full package.
          */
         Preferences: {
-            /** @description Start enabled (full: processed lighting) when the service starts. */
+            /**
+             * @description Start when the service starts: the full package starts screen sync,
+             *     the slim package streams to its receiver.
+             */
             autostart?: boolean;
             /**
              * @description Slim only: the headless Prysm's address, such as
@@ -115,10 +118,15 @@ export interface components {
              */
             instance?: string;
         };
-        /** @description `setEnabled` request. */
+        /** @description `setEnabled` request (slim package). */
         SetEnabledRequest: {
-            /** @description Slim: frames should flow. Full: processed lighting (or off). */
+            /** @description Frames should flow to the receiver. */
             enabled: boolean;
+        };
+        /** @description `setTarget` request (full package). */
+        SetTargetRequest: {
+            /** @description What the lights do: off, screen sync, or their own effects. */
+            target: components["schemas"]["LightingTarget"];
         };
         /**
          * @description How the slim package encodes the frames it sends: the encoding its
@@ -249,6 +257,7 @@ export type Package = components['schemas']['Package'];
 export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];
 export type SetEnabledRequest = components['schemas']['SetEnabledRequest'];
+export type SetTargetRequest = components['schemas']['SetTargetRequest'];
 export type SlimEncoding = components['schemas']['SlimEncoding'];
 export type SlimLink = components['schemas']['SlimLink'];
 export type SlimWorker = components['schemas']['SlimWorker'];

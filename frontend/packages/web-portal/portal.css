@@ -913,7 +913,7 @@ fieldset > .field-note {
     transform var(--duration-light-on) var(--ease-light),
     opacity var(--duration-light-on) var(--ease-out);
 }
-.light-card[data-lit='true'][data-mode='device_native'] .aurora-light {
+.light-card[data-lit='true'][data-mode='effects'] .aurora-light {
   opacity: 0.62;
 }
 /*
@@ -924,7 +924,7 @@ fieldset > .field-note {
  * turn-on, alternating names a/b so each turn-on restarts it.
  */
 /* The effects rest dimmer, so their ignition is gentler in proportion. */
-.light-card[data-mode='device_native'] {
+.light-card[data-mode='effects'] {
   --ignite-strength: 0.5;
 }
 .aurora-crest,
@@ -1147,7 +1147,7 @@ fieldset > .field-note {
   color: var(--fg);
   transition: color var(--duration-light-on) var(--ease-light);
 }
-/* Off, On and Stopped share one cell and cross-fade: no snap, no shift. */
+/* Off, On, Stopped and Unknown share one cell and cross-fade: no snap, no shift. */
 .light-word {
   display: grid;
   /* Every word on one baseline, whatever its size. */
@@ -1497,19 +1497,19 @@ fieldset > .field-note {
   transform: scale(0.98);
 }
 /* Off, the chosen card is outlined: the mode Power will turn on. */
-.modes[data-mode='processed'] [data-target='processed'],
-.modes[data-mode='device_native'] [data-target='device_native'] {
+.modes[data-mode='screen_sync'] [data-target='screen_sync'],
+.modes[data-mode='effects'] [data-target='effects'] {
   border-color: color-mix(in srgb, var(--fg) 72%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 72%, transparent) inset;
   color: var(--fg);
 }
 /* Lit, it is filled, as a chosen calibration is, in the light's colours. */
 .light-card[data-lit='true']
-  .modes[data-mode='processed']
-  [data-target='processed'],
+  .modes[data-mode='screen_sync']
+  [data-target='screen_sync'],
 .light-card[data-lit='true']
-  .modes[data-mode='device_native']
-  [data-target='device_native'] {
+  .modes[data-mode='effects']
+  [data-target='effects'] {
   border-color: transparent;
   box-shadow: none;
   background: linear-gradient(

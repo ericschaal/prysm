@@ -10,7 +10,7 @@ use std::time::Duration;
 async fn preview_is_idle_while_off_and_streams_frames_while_running() {
     within_async(LIMIT, async {
         let portal = start(fakes::settings(), Duration::from_secs(5)).await;
-        let (status, _) = portal.target("processed").await;
+        let (status, _) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         // Lighting runs, nobody watches: the session publishes nothing.
         assert_eq!(portal.engine.preview_viewers(), 0);
@@ -29,7 +29,7 @@ async fn preview_is_idle_while_off_and_streams_frames_while_running() {
         let first = next_state(&mut events, &mut buffer, |_| true).await;
         assert_eq!(first, json!({ "type": "idle" }));
 
-        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.target("screen_sync").await.0, StatusCode::NO_CONTENT);
         let frame = next_state(&mut events, &mut buffer, |e| e["type"] != "idle").await;
         assert_eq!(frame["type"], "frame");
         assert_eq!(
@@ -68,7 +68,7 @@ async fn preview_is_idle_while_off_and_streams_frames_while_running() {
 async fn preview_cadence_is_capped_at_eight_per_second() {
     within_async(LIMIT, async {
         let portal = start(fakes::settings(), Duration::from_secs(5)).await;
-        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.target("screen_sync").await.0, StatusCode::NO_CONTENT);
         let response = preview_stream(&portal).await;
         let mut events = response.bytes_stream();
         let mut buffer = String::new();

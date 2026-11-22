@@ -46,7 +46,7 @@ from prysm_acceptance.web import JsonObject
 HOST = 'root@tv.example'
 STATE = (
     '{"returnValue":true,"flavor":"full","preferences":{"autostart":false},'
-    '"lighting":"processed","power":"active","video":"available",'
+    '"target":"screen_sync","power":"active","video":"available",'
     '"worker":{"phase":"running","capturing":true,"fps":30,"portal":"http://192.0.2.50:8787"},'
     '"log":["prysm-webos: portal on 0.0.0.0:8787"]}'
 )
@@ -618,13 +618,13 @@ class Replace(unittest.TestCase):
         found = recorded(
             ('tv.read-data', ok(json.dumps(SLIM_PREFERENCES))),
             ('tv.read-data', ok('__absent__\n')),
-            ('tv.read-data', ok('{"boot":"b","intent":"processed"}')),
+            ('tv.read-data', ok('{"boot":"b","intent":"screen_sync"}')),
             ('tv.get-state', ok(SLIM)),
         )
         backup = found.backup([commands.APP_DIR])
         self.assertEqual(
             (backup['portal'], untyped(backup['luna'])['preferences'], backup['files']['resume.json']),
-            (None, {'autostart': False}, '{"boot":"b","intent":"processed"}'),
+            (None, {'autostart': False}, '{"boot":"b","intent":"screen_sync"}'),
         )
         # The slim package's intent is `enabled`; it has no lighting of its own.
         self.assertEqual(
@@ -712,9 +712,9 @@ class Restore(unittest.TestCase):
     def test_a_full_backup_puts_the_lighting_target_back_only_when_it_was_on(self) -> None:
         prysm = FakePrysm()
         self.addCleanup(prysm.close)
-        luna = {'flavor': 'full', 'preferences': {'autostart': False}, 'lighting': 'processed'}
+        luna = {'flavor': 'full', 'preferences': {'autostart': False}, 'target': 'screen_sync'}
         for target, sent, said in (
-            (prysm_api.Target.PROCESSED, ['processed'], 'lighting processed, as backed up'),
+            (prysm_api.Target.SCREEN_SYNC, ['screen_sync'], 'lighting screen_sync, as backed up'),
             (prysm_api.Target.OFF, [], 'lighting was off: left as it is'),
         ):
             with self.subTest(target):
@@ -757,9 +757,9 @@ class Restore(unittest.TestCase):
         self.assertEqual(done[0], '/etc/default/prysm-headless as backed up: left as it is')
         self.assertEqual(done[-1], 'lighting was off: left as it is')
         self.assertEqual((len(prysm.saved), prysm.targets), (1, []))
-        untyped(backup['portal'])['target'] = 'processed'
-        self.assertEqual(existing.restore(backup)[-1], 'lighting processed, as backed up')
-        self.assertEqual(prysm.targets, ['processed'])
+        untyped(backup['portal'])['target'] = 'screen_sync'
+        self.assertEqual(existing.restore(backup)[-1], 'lighting screen_sync, as backed up')
+        self.assertEqual(prysm.targets, ['screen_sync'])
         self.assertEqual([command.template for command in recorded.calls], ['deb.options'] * 3)
 
     def test_the_linux_options_file_comes_back_as_it_was(self) -> None:

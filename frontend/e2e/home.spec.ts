@@ -22,7 +22,7 @@ test('Home turns screen sync on and off', async ({
   await expect(status).toHaveText(/^Lights follow your screen/);
   await expect
     .poll(async () => (await prysm.state()).session.state)
-    .toBe('running');
+    .toBe('screen_sync');
 
   await power.click();
   await expect(power).toHaveAttribute('aria-pressed', 'false');

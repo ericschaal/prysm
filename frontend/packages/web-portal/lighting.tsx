@@ -13,6 +13,7 @@ import {
   type LightingMode,
   type LightingSituation,
   type LightingTarget,
+  type TargetReading,
 } from '@prysm/application-client';
 import type { DeviceReport } from '@prysm/contracts/application';
 import type { OutputLighting } from './adapters';
@@ -25,7 +26,7 @@ import {
 } from './light-card-view';
 
 export interface LightingProps {
-  target: LightingTarget;
+  target: TargetReading;
   /** What the lights are doing, from the state. */
   lighting: LightingSituation;
   /**
@@ -55,11 +56,11 @@ export const modeStorageKey = 'prysm.mode';
 
 function storedMode(): LightingMode {
   try {
-    return window.localStorage.getItem(modeStorageKey) === 'device_native'
-      ? 'device_native'
-      : 'processed';
+    return window.localStorage.getItem(modeStorageKey) === 'effects'
+      ? 'effects'
+      : 'screen_sync';
   } catch {
-    return 'processed';
+    return 'screen_sync';
   }
 }
 
@@ -158,7 +159,7 @@ export function LightCard({
     failure: Failure;
     /** What the click asked for. */
     asked: LightingTarget;
-    target: LightingTarget;
+    target: TargetReading;
     kind: LightingSituation['kind'];
   } | null>(null);
   // Gone once the lights change, also when they change back.
@@ -166,9 +167,11 @@ export function LightCard({
     setRefusal(null);
   const error = refusal && { failure: refusal.failure, asked: refusal.asked };
   const [remembered, setRemembered] = useState(storedMode);
-  if (target !== 'off' && target !== remembered) setRemembered(target);
+  // A target newer than this page is no mode to remember.
+  const asksMode = target === 'screen_sync' || target === 'effects';
+  if (asksMode && target !== remembered) setRemembered(target);
   useEffect(() => {
-    if (target !== 'off') saveMode(target);
+    if (target === 'screen_sync' || target === 'effects') saveMode(target);
   }, [target]);
   const headingId = useId();
   const statusId = useId();
@@ -225,6 +228,7 @@ export function LightCard({
     on,
     reasons,
     mode,
+    chosen,
     powerReason,
     word,
     palette,
@@ -259,13 +263,13 @@ export function LightCard({
 
   const tiles = [
     {
-      value: 'processed',
+      value: 'screen_sync',
       label: 'Screen sync',
       line: 'Follows the screen',
       icon: <SyncIcon />,
     },
     {
-      value: 'device_native',
+      value: 'effects',
       label: effects,
       // Named by the output when it can be: "Patterns from WLED".
       line: effectsLine(output?.effects),
@@ -283,7 +287,9 @@ export function LightCard({
     const step = steps[event.key];
     if (!step) return;
     event.preventDefault();
-    const index = tiles.findIndex((tile) => tile.value === mode);
+    // From the focused tile: the chosen one, or the first while none is.
+    const from = chosen ?? tiles[0].value;
+    const index = tiles.findIndex((tile) => tile.value === from);
     const next = tiles[(index + step + tiles.length) % tiles.length];
     if (!next || locked || reasons[next.value]) return;
     void choose(next.value);
@@ -305,7 +311,7 @@ export function LightCard({
       <section
         className="light-card"
         data-mood={mood}
-        data-mode={mode}
+        data-mode={chosen ?? undefined}
         data-lit={lit}
         data-ignite={ignite}
         aria-labelledby={headingId}
@@ -375,7 +381,7 @@ export function LightCard({
           <small id={`${headingId}-starts`} className="visually-hidden">
             {on
               ? ''
-              : `Turns on ${mode === 'processed' ? 'Screen sync' : effects}.`}
+              : `Turns on ${mode === 'screen_sync' ? 'Screen sync' : effects}.`}
           </small>
         )}
         {configured ? (
@@ -424,7 +430,10 @@ export function LightCard({
                     <button
                       type="button"
                       disabled={locked}
-                      onClick={() => void choose(target)}
+                      onClick={() => {
+                        if (lighting.kind === 'failed')
+                          void choose(lighting.target);
+                      }}
                     >
                       Try again
                     </button>
@@ -454,7 +463,7 @@ export function LightCard({
               className="modes"
               role="radiogroup"
               aria-label="Mode"
-              data-mode={mode}
+              data-mode={chosen ?? undefined}
               data-on={on}
             >
               {tiles.map((tile) => (
@@ -464,8 +473,9 @@ export function LightCard({
                   key={tile.value}
                   className="mode"
                   data-target={tile.value}
-                  aria-checked={mode === tile.value}
-                  tabIndex={mode === tile.value ? 0 : -1}
+                  aria-checked={chosen === tile.value}
+                  // With none chosen, the first one takes the focus.
+                  tabIndex={(chosen ?? tiles[0].value) === tile.value ? 0 : -1}
                   onKeyDown={arrow}
                   aria-busy={pending === tile.value}
                   aria-describedby={
@@ -507,8 +517,8 @@ export function LightCard({
                 reach) while the lights show their own effects. */}
             <div
               className="picture-controls"
-              data-quiet={mode === 'device_native'}
-              inert={mode === 'device_native'}
+              data-quiet={chosen === 'effects'}
+              inert={chosen === 'effects'}
             >
               {children}
             </div>

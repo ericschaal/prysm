@@ -27,7 +27,7 @@ flowchart LR
 ## Commands
 
 ```ts
-await application.store.dispatch(application.commands.setTarget('processed'));
+await application.store.dispatch(application.commands.setTarget('screen_sync'));
 const revision = await application.store.dispatch(
   application.commands.configureOutput(snapshot.revision, wled),
 );

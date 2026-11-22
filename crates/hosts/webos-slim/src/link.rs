@@ -480,7 +480,7 @@ fn wire_cause(error: &Error) -> Option<&WireError> {
 /// receiver has stopped the stream, waiting while it is unavailable, or
 /// failed with the encoder failure, Prysm's other capture stream version or
 /// the sender that replaced this one.
-/// `Lighting` is protocol misuse here and stops the worker as failed.
+/// `Target` is protocol misuse here and stops the worker as failed.
 pub struct ForwarderLink {
     link: Link,
     video: VideoSignal,
@@ -525,8 +525,8 @@ impl ForwarderLink {
                     None => return Ok(()),
                     Some(Command::Video { video }) => self.video.set(video),
                     Some(Command::ResetVideo {}) => self.video.reset(),
-                    Some(Command::Lighting { .. }) => {
-                        stop.request(Stop::Failed("`lighting` is not a slim worker command".into()));
+                    Some(Command::Target { .. }) => {
+                        stop.request(Stop::Failed("`target` is not a slim worker command".into()));
                         return Ok(());
                     }
                 },

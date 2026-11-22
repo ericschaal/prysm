@@ -463,7 +463,7 @@ pub fn settings() -> Settings {
 /// # Errors
 /// Lighting could not start.
 pub async fn light_until_shutdown(engine: EngineHandle, shutdown: Shutdown) -> Result<()> {
-    engine.set_target(LightingTarget::Processed).await?;
+    engine.set_target(LightingTarget::ScreenSync).await?;
     shutdown.requested().await;
     Ok(())
 }

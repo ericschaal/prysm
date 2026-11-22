@@ -56,26 +56,56 @@ has one reading.
 
 | Where | Field | Newer value read as |
 | --- | --- | --- |
-| State stream (`decodeState` in `application-client/http.ts`) | `target` | `off` |
-| | `session.state` | `stopped` (a faulted session's newer `phase` is kept and not named) |
+| State stream (`decodeState` in `application-client/http.ts`) | `target` | `unknown`: no mode is selected; a known one can still be chosen |
+| | `session.state` | `unknown`, keeping a `failure` or `message` it carries (a malformed failure is dropped) |
+| | `session.failure.kind` | said by its side: an `adapter` failure of its `section`, or else of its `field`'s section (`capture`, `output`); without one, `internal` |
+| | `session.failure.section` | absent, unless `capture` or `output` |
 | Preview and colors streams | event `type` | skipped |
 | Light card, TV lights card | `device.issue` | "The lights are not showing screen sync." |
 | TV service (`decodeState` in `webos-platform`) | `power`, `video` | `unknown` |
 | | `failure.kind` | `other` |
-| | full `lighting` | `off` |
-| | worker `phase` | stopped |
+| | full `target` | `unknown` |
+| | worker `phase` | `unknown`: "Updating…", with no start or stop |
 | | slim link `state` | starting |
 | | slim `encoding` | kept, shown as sent |
 | TV calibration screen | `calibration.pattern` | the waiting pattern |
 
-Anything else malformed ends the stream or the reply (`Invalid state
-event.`, `invalid_reply`). What the lights are doing is decided once, by
-`lightingSituation` (`application-client`): faulted, off, failed, screen sync,
-effects or starting, in that order. Off keeps a failure (settings that could
-not be applied, a switch off that failed): the light card and the TV's lights
-card say it, while the setup path, the section pages and the full package's
-status headline read off as off. All of them read that one situation, and
-`describeSituation` gives its words.
+No value is read as off or stopped
+([decision](decisions/2026-11-22-open-response-enums.md)). Anything else
+malformed ends the stream or the reply (`Invalid state event.`,
+`invalid_reply`). What the lights are doing is decided once, by
+`lightingSituation` (`application-client`) from the target and the session
+(with the failure it carries), in this order: faulted, unknown (a target or
+session state newer than the page), off, reached (`session.state` equals the
+target: screen sync or effects), failed (the session carries a failure),
+starting. Every pair lands on exactly one. Screen sync never carries a
+failure. An `effects` session carries one after a start of screen sync
+that failed from the effects (the situation is then failed, headed "Screen
+sync could not start", and the cards add that the effects are still on,
+except when the lights themselves failed, `section` `output`), or, with the effects as the target,
+for saved settings that do not validate (a note, "Prysm can’t use these
+settings."; another kind is said in its own words). Off keeps a stopped
+session's failure (settings that could not be applied, a switch off that
+failed): the light card and the TV's lights card say it, while the setup
+path and the section pages read off as off. Unknown keeps what it carries:
+the note says Prysm is newer, the failure's words follow it, and its
+message goes under Details; no mode tile is chosen, and Power switches the
+lights off. A faulted session's `message` (what did not finish) is under
+Details, on the light card and the section pages. All of them read that
+one situation, and `describeSituation` gives its words.
+
+The full TV package's status follows the portal's situation once it is
+known: the worker reports its session's failure to the supervisor, and the
+situation says what it means (off is off, effects showing are on). A
+faulted or failed session comes before the TV's power and video, since it
+needs the user and waking the TV would not end it; lights that are fine let
+power and video speak first. Try
+again is offered only for a failed mode (`screen_sync` or `effects`) and
+sends `setTarget off`, then that target again. Before the portal answers,
+or while the supervisor retries a worker, the supervisor's failure is the
+headline (before the portal answers, only for a mode: lights that are off
+are said as off). A worker phase newer than the app shows "Updating…" unless a
+failure is reported.
 
 ## Saving from a page
 

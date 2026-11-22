@@ -14,7 +14,7 @@ use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
 use prysm_ports::{
     AdapterSettings, CAPTURE_STREAM_PATH, CalibrationPattern, Handoff, Processing, Result, Section,
 };
-use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, TargetRequest};
+use prysm_protocol::{Failure, SettingsReplaced, SettingsRequest, State, TargetRequest};
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
 use std::future::Future;
@@ -268,14 +268,20 @@ async fn replace_settings(context: &Context, request: Request<Incoming>) -> Resp
 }
 
 fn not_found() -> Response {
-    failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found")
+    failure(
+        StatusCode::NOT_FOUND,
+        Failure::NotFound {
+            message: "not found".into(),
+        },
+    )
 }
 
 fn method_not_allowed() -> Response {
     failure(
         StatusCode::METHOD_NOT_ALLOWED,
-        FailureKind::MethodNotAllowed,
-        "method not allowed",
+        Failure::MethodNotAllowed {
+            message: "method not allowed".into(),
+        },
     )
 }
 
@@ -318,7 +324,7 @@ async fn command<T>(call: impl Future<Output = Result<T>>) -> Result<T, Box<Resp
 }
 
 async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Box<Response>> {
-    let reject = |status, kind, message: &str| Box::new(failure(status, kind, message));
+    let reject = |status, body| Box::new(failure(status, body));
     let json = request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -328,8 +334,9 @@ async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Bo
     if !json {
         return Err(reject(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            FailureKind::UnsupportedMediaType,
-            "application/json required",
+            Failure::UnsupportedMediaType {
+                message: "application/json required".into(),
+            },
         ));
     }
     let body = Limited::new(request.into_body(), BODY_LIMIT).collect();
@@ -337,22 +344,25 @@ async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Bo
         Err(_) => {
             return Err(reject(
                 StatusCode::REQUEST_TIMEOUT,
-                FailureKind::BadRequest,
-                "request body timed out",
+                Failure::BadRequest {
+                    message: "request body timed out".into(),
+                },
             ));
         }
         Ok(Err(error)) if error.is::<http_body_util::LengthLimitError>() => {
             return Err(reject(
                 StatusCode::PAYLOAD_TOO_LARGE,
-                FailureKind::PayloadTooLarge,
-                "request body exceeds 1 MiB",
+                Failure::PayloadTooLarge {
+                    message: "request body exceeds 1 MiB".into(),
+                },
             ));
         }
         Ok(Err(_)) => {
             return Err(reject(
                 StatusCode::BAD_REQUEST,
-                FailureKind::BadRequest,
-                "request body unreadable",
+                Failure::BadRequest {
+                    message: "request body unreadable".into(),
+                },
             ));
         }
         Ok(Ok(body)) => body.to_bytes(),
@@ -360,8 +370,9 @@ async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Bo
     serde_json::from_slice(&body).map_err(|error| {
         reject(
             StatusCode::BAD_REQUEST,
-            FailureKind::BadRequest,
-            &format!("invalid request: {error}"),
+            Failure::BadRequest {
+                message: format!("invalid request: {error}"),
+            },
         )
     })
 }
@@ -373,8 +384,9 @@ fn stream_state(context: &Context) -> Response {
     let Ok(permit) = context.streams.clone().try_acquire_owned() else {
         return failure(
             StatusCode::TOO_MANY_REQUESTS,
-            FailureKind::Busy,
-            "too many state streams",
+            Failure::Busy {
+                message: "too many state streams".into(),
+            },
         );
     };
     let mut snapshot = context.engine.snapshot();

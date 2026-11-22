@@ -2,16 +2,16 @@
 //! testing without physical LEDs (pair it with [`prysm_runtime::NullOutput`]).
 //!
 //! The screen draws the captured frame as half blocks inside a perimeter of the
-//! processed edge colors, with the engine snapshot (target, session, settings
+//! edge colors sent to the LEDs, with the engine snapshot (target, session, settings
 //! revision, adapters) and diagnostics (lighting failure, surface failures and
 //! command results). Keys:
 //!
 //! | Key | Effect |
 //! | --- | --- |
-//! | `p` | target processed |
-//! | `n` | target device native |
+//! | `s` | target screen sync |
+//! | `e` | target effects (the lights' own) |
 //! | `o` | target off |
-//! | `:` | command bar: `on`, `off`, `native`, `load <path>`, `quit`; Enter runs, Esc cancels |
+//! | `:` | command bar: `on` or `screen_sync`, `effects`, `off`, `load <path>`, `quit`; Enter runs, Esc cancels |
 //! | `q`, Esc, Ctrl-C, Ctrl-D | quit |
 //!
 //! `load <path>` replaces all settings with a settings file at the revision
@@ -224,7 +224,7 @@ mod tests {
                 let failed = snapshot
                     .wait_for(|s| {
                         !s.surface_failures.is_empty()
-                            && s.session == prysm_ports::SessionState::Running
+                            && matches!(s.session, prysm_ports::SessionState::ScreenSync)
                     })
                     .await;
                 let message = failed.map_err(|_| Error::Closed)?.surface_failures[0].to_string();

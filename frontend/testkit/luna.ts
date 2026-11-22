@@ -5,6 +5,7 @@
  * no worker, power or timing, but the same replies, validation messages and
  * subscription.
  */
+import type { ApplicationSnapshot } from '@prysm/application-client';
 import {
   APP_ID,
   isEnabled,
@@ -48,7 +49,7 @@ interface CommonFacts {
 }
 export interface FullFacts extends CommonFacts {
   flavor: 'full';
-  lighting: LightingTarget;
+  target: LightingTarget;
   portal: string | null;
 }
 export interface SlimFacts extends CommonFacts {
@@ -61,7 +62,7 @@ export type FakeFacts = FullFacts | SlimFacts;
 /**
  * A change to the facts. Only the package's own keys are accepted (checked
  * when applied, for the untyped tests too): a slim supervisor has no
- * `lighting` or `portal`, a full one no `enabled`, `encoding` or `paused`.
+ * `target` or `portal`, a full one no `enabled`, `encoding` or `paused`.
  */
 export type FakeChange =
   Partial<Omit<FullFacts, 'flavor'>> | Partial<Omit<SlimFacts, 'flavor'>>;
@@ -79,7 +80,7 @@ const commonKeys: Record<keyof CommonFacts, true> = {
   capturing: true,
   fps: true,
 };
-const fullKeys: Record<Own<FullFacts>, true> = { lighting: true, portal: true };
+const fullKeys: Record<Own<FullFacts>, true> = { target: true, portal: true };
 const slimKeys: Record<Own<SlimFacts>, true> = {
   enabled: true,
   encoding: true,
@@ -114,7 +115,7 @@ function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
     ? {
         ...common,
         flavor,
-        lighting: 'off',
+        target: 'off',
         portal: 'http://192.168.1.5:8787/',
       }
     : { ...common, flavor, enabled: false, encoding: null, paused: false };
@@ -174,7 +175,7 @@ function publishedState(facts: FakeFacts): State {
     ? {
         ...common,
         flavor: 'full',
-        lighting: facts.lighting,
+        target: facts.target,
         worker: fullWorker(facts),
       }
     : {
@@ -223,13 +224,6 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
   const error = (errorText: string) =>
     JSON.stringify({ returnValue: false, errorText });
   const state = () => publishedState(facts);
-
-  /** `setEnabled`, in the package's terms, as the machine does. */
-  function setEnabled(value: boolean) {
-    if (facts.flavor === 'slim') facts.enabled = value;
-    else if (!value) facts.lighting = 'off';
-    else if (facts.lighting === 'off') facts.lighting = 'processed';
-  }
 
   /** Settle what follows from the intent, as the machine would. */
   function reconcile() {
@@ -314,8 +308,22 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         later(() => publish());
         return;
       }
+      case 'setTarget':
+        if (facts.flavor !== 'full') {
+          respond(error('setTarget is only for the full package'));
+          return;
+        }
+        facts.target = payload.target as LightingTarget;
+        reconcile();
+        respond(reply(state()));
+        later(() => publish());
+        return;
       case 'setEnabled':
-        setEnabled(payload.enabled === true);
+        if (facts.flavor !== 'slim') {
+          respond(error('setEnabled is only for the slim package'));
+          return;
+        }
+        facts.enabled = payload.enabled === true;
         reconcile();
         respond(reply(state()));
         later(() => publish());
@@ -361,6 +369,23 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     facts: (): Readonly<FakeFacts> => facts,
     /** Change what the supervisor reports, as a worker or power change would. */
     publish,
+    /**
+     * Full: what the running worker reports of its engine's state, as the
+     * real one does (`hosts/webos/src/link.rs`): the session's failure, or
+     * else the last surface failure, as an `other` failure. Its target is
+     * left to the commands, so the service lags as it does.
+     */
+    report(snapshot: ApplicationSnapshot<unknown, unknown>) {
+      if (facts.flavor !== 'full' || facts.worker.phase !== 'running') return;
+      const session =
+        'failure' in snapshot.session ? snapshot.session.failure : undefined;
+      const surfaces = snapshot.surface_failures;
+      const message =
+        session?.message ?? surfaces[surfaces.length - 1]?.message;
+      const failure: WorkerFailure | null =
+        message === undefined ? null : { kind: 'other', message };
+      if (failure?.message !== facts.failure?.message) publish({ failure });
+    },
     subscribers: () => subscribers.size,
     failNext(method: string, errorText: string) {
       failures.set(method, errorText);

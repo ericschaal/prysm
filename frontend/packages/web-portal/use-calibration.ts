@@ -1,7 +1,7 @@
 import { useReducer, useRef, useState } from 'react';
 import type {
   CalibrationPattern,
-  LightingTarget,
+  TargetReading,
   Pattern,
 } from '@prysm/application-client';
 import type {
@@ -35,7 +35,7 @@ import {
 export interface CalibrateProps {
   processing: Processing;
   revision: number;
-  target: LightingTarget;
+  target: TargetReading;
   /** The pattern the TV shows, absent while not calibrating. */
   shown: CalibrationPattern | undefined;
   disabled: boolean;

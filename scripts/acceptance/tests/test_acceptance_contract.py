@@ -145,11 +145,11 @@ class Examples(unittest.TestCase):
             self.assertIn(reply['worker']['phase'], ('stopped', 'running', 'stopping', 'retrying'))
             # Each package's intent: full its lighting target, slim whether enabled.
             if reply['flavor'] == Flavour.FULL:
-                self.assertIn(reply.get('lighting'), tuple(Target))
+                self.assertIn(reply.get('target'), tuple(Target))
                 self.assertNotIn('enabled', reply)
             else:
                 self.assertIsInstance(reply.get('enabled'), bool)
-                self.assertNotIn('lighting', reply)
+                self.assertNotIn('target', reply)
             # The report is read through the accessors, whatever the phase.
             self.assertIsInstance(tv.capturing(reply), bool)
             if reply['worker']['phase'] != 'running':
@@ -175,7 +175,7 @@ class Requests(unittest.TestCase):
     """The bodies the runner sends are the contract's requests."""
 
     def test_target(self) -> None:
-        self.assertIn(sent(lambda prysm: prysm.set_target(Target.PROCESSED)), FIXTURES['TargetRequest'])
+        self.assertIn(sent(lambda prysm: prysm.set_target(Target.SCREEN_SYNC)), FIXTURES['TargetRequest'])
 
     def test_settings(self) -> None:
         state = FIXTURES['State'][1]

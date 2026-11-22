@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-/// `prysm-webos --settings PATH --listen ADDR --lighting off|processed|device_native`
+/// `prysm-webos --settings PATH --listen ADDR --target off|screen_sync|effects`
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
 pub struct FullArgs {
     /// The engine's settings file
@@ -17,9 +17,9 @@ pub struct FullArgs {
     /// Portal listen address, 0.0.0.0:8787 on the TV
     #[arg(long, value_name = "ADDR")]
     pub listen: SocketAddr,
-    /// Initial lighting target: off, processed or device_native
+    /// Initial lighting target: off, screen_sync or effects
     #[arg(long, value_name = "TARGET", value_parser = lighting_target)]
-    pub lighting: LightingTarget,
+    pub target: LightingTarget,
 }
 
 /// `prysm-webos-slim --prysm URL`. What to capture and how to encode it
@@ -84,8 +84,8 @@ impl FullArgs {
             self.settings.display().to_string(),
             "--listen".into(),
             self.listen.to_string(),
-            "--lighting".into(),
-            self.lighting.as_str().into(),
+            "--target".into(),
+            self.target.as_str().into(),
         ]
     }
 }
@@ -97,7 +97,7 @@ impl SlimArgs {
     }
 }
 
-/// `--lighting` values are the serde names of [`LightingTarget`].
+/// `--target` values are the serde names of [`LightingTarget`].
 fn lighting_target(name: &str) -> Result<LightingTarget, String> {
     LightingTarget::ALL
         .into_iter()

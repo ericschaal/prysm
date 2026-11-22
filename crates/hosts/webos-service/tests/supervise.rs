@@ -99,23 +99,23 @@ fn supervises_a_real_child_process() {
     });
     let reply = service.request(
         &mut bus,
-        "setEnabled",
+        "setTarget",
         APP_ID,
-        r#"{"enabled":true}"#,
+        r#"{"target":"screen_sync"}"#,
         Instant::now(),
     );
-    assert!(reply.payload.contains(r#""lighting":"processed""#));
+    assert!(reply.payload.contains(r#""target":"screen_sync""#));
     until(&mut service, &mut bus, |bus, _| {
         bus.0.last().is_some_and(|state| {
             state["log"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|line| line.as_str().unwrap().contains(r#""target":"processed""#))
+                .any(|line| line.as_str().unwrap().contains(r#""target":"screen_sync""#))
         })
     });
     let log = bus.0.last().unwrap()["log"].clone();
-    assert!(log[0].as_str().unwrap().contains("--lighting off"), "{log}");
+    assert!(log[0].as_str().unwrap().contains("--target off"), "{log}");
 
     service.power(&mut bus, r#"{"state":"Active Standby"}"#, Instant::now());
     until(&mut service, &mut bus, |bus, _| {
@@ -131,7 +131,7 @@ fn supervises_a_real_child_process() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|line| line.as_str().unwrap().contains("--lighting processed"))
+                .any(|line| line.as_str().unwrap().contains("--target screen_sync"))
         })
     });
     service.shutdown(&mut bus, Instant::now());

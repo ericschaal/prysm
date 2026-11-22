@@ -79,18 +79,24 @@ mod tests {
             let target = |handle: &EngineHandle, target| {
                 execute(handle.clone(), read(), Command::SetTarget(target))
             };
-            let on = target(&handle, LightingTarget::Processed).await;
-            assert_eq!(on, Notice::info("Target processed"));
-            assert_eq!(handle.snapshot().borrow().session, SessionState::Running);
+            let on = target(&handle, LightingTarget::ScreenSync).await;
+            assert_eq!(on, Notice::info("Target screen_sync"));
+            assert!(matches!(
+                handle.snapshot().borrow().session,
+                SessionState::ScreenSync
+            ));
             assert!(log.wait_for("output.write:", 1).await);
             let off = target(&handle, LightingTarget::Off).await;
             assert_eq!(off, Notice::info("Target off"));
-            assert_eq!(handle.snapshot().borrow().session, SessionState::Stopped);
+            assert!(matches!(
+                handle.snapshot().borrow().session,
+                SessionState::Stopped { failure: None }
+            ));
             engine.shutdown().await.unwrap();
 
             // Nothing configured: the engine's validation error is shown.
             let (handle, engine, _) = start(MemoryStore::new()).await;
-            let failed = target(&handle, LightingTarget::Processed).await;
+            let failed = target(&handle, LightingTarget::ScreenSync).await;
             assert_eq!(failed.severity, Severity::Error);
             assert!(failed.text.contains("not configured"), "{}", failed.text);
             engine.shutdown().await.unwrap();

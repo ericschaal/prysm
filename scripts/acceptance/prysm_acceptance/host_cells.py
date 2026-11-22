@@ -477,11 +477,11 @@ def device_offered(prysm: Prysm, device: str, listed_as: str | None = None) -> o
 # ---- helpers the checks share ----------------------------------------------
 
 
-def processed(prysm: Prysm, seconds: float = 15) -> prysm_api.State:
-    """Screen sync on: target processed answered 204, then running with frames."""
-    reply = prysm.set_target(Target.PROCESSED)
+def screen_sync(prysm: Prysm, seconds: float = 15) -> prysm_api.State:
+    """Screen sync on: target screen_sync answered 204, then running with frames."""
+    reply = prysm.set_target(Target.SCREEN_SYNC)
     if reply.status != 204:
-        raise Failed(f'PUT /api/v1/target processed: HTTP {reply.status}', reply.json())
+        raise Failed(f'PUT /api/v1/target screen_sync: HTTP {reply.status}', reply.json())
     state = prysm.wait(prysm_api.running, seconds)
     if state is None:
         raise Failed(f'not running with frames within {seconds} s', prysm.state())
@@ -531,13 +531,13 @@ def test_version(prysm: Prysm, artifact: Artifact, record: Record) -> None:
     record(f'running {running}, as built', artifact.facts())
 
 
-@planned(does=lambda cell, config: ['PUT /api/v1/target processed', f'GET http://{config.wled}/json/si'])
+@planned(does=lambda cell, config: ['PUT /api/v1/target screen_sync', f'GET http://{config.wled}/json/si'])
 def test_wled_live(prysm: Prysm, wled: Wled, running: Sender, record: Record) -> None:
     """Screen sync starts and WLED shows Prysm.
 
-    Target processed is 204, the session runs with frames within 15 s; WLED reports live DDP from the sender
+    Target screen_sync is 204, the session runs with frames within 15 s; WLED reports live DDP from the sender
     the seam expects (a TV cell: the TV, or the slim package's receiver); no device.issue."""
-    state = processed(prysm)
+    state = screen_sync(prysm)
     si = live_from_host(prysm, wled, running)
     record(f'running at {(state["input"] or {}).get("fps")} fps; live DDP from {si["info"]["lip"]}', si['info'])
 
@@ -547,7 +547,7 @@ def frame_rate(prysm: Prysm, config: Config) -> prysm_api.Rates:
     `[checks] seconds` of Screen sync (the TV cells' too)."""
     expected = _running_size(prysm)['fps']
     tolerance = config.checks.fps_tolerance
-    processed(prysm)
+    screen_sync(prysm)
     measured = rates(prysm.sample(config.checks.seconds))
     measured['expected'] = expected
     if not near(measured['fps_mean'], expected, tolerance):
@@ -585,7 +585,7 @@ def test_colours(prysm: Prysm, clip: Clip | None, feed_shown: Feed | None, recor
 
     Each edge's two halves are nearest the clip's two colours among nine, in the right direction; at least two
     steps, in order, 2 s apart. A clip of unknown content, or a card without a feed: not black."""
-    processed(prysm)
+    screen_sync(prysm)
     if feed_shown:
         feed_shown.settled()
     if clip and clip.edges:
@@ -598,25 +598,25 @@ def test_colours(prysm: Prysm, clip: Clip | None, feed_shown: Feed | None, recor
 
 @planned(
     does=lambda cell, config: [
-        'PUT /api/v1/target device_native, processed, off',
+        'PUT /api/v1/target effects, screen_sync, off',
         f'GET http://{config.wled}/json/si after each',
     ]
 )
 def test_targets(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
     """WLED effects, Screen sync again, off.
 
-    device_native: session native, WLED on and not live; processed: live DDP from the expected sender again;
+    effects: session effects, WLED on and not live; screen_sync: live DDP from the expected sender again;
     off: session stopped, WLED off."""
     evidence: dict[str, object] = {}
 
-    def native(si: wled_api.Si) -> object:
+    def effects(si: wled_api.Si) -> object:
         return not si['info'].get('live') and si['state'].get('on')
 
     def off(si: wled_api.Si) -> object:
         return not si['state'].get('on')
 
     for target, wanted, lights in (
-        (Target.DEVICE_NATIVE, SessionState.NATIVE, native),
+        (Target.EFFECTS, SessionState.EFFECTS, effects),
         (Target.OFF, SessionState.STOPPED, off),
     ):
         reply = prysm.set_target(target)
@@ -629,10 +629,10 @@ def test_targets(prysm: Prysm, wled: Wled, running: Host, record: Record) -> Non
                 f'{target}: Prysm not {wanted} or WLED not as expected', {'prysm': prysm.state(), 'wled': wled.si()}
             )
         evidence[target] = si['state']
-        if target == Target.DEVICE_NATIVE:
-            processed(prysm)
-            evidence[Target.PROCESSED] = live_from_host(prysm, wled, running)['info']
-    record('native: WLED on, not live; processed: live again; off: WLED off', evidence)
+        if target == Target.EFFECTS:
+            screen_sync(prysm)
+            evidence[Target.SCREEN_SYNC] = live_from_host(prysm, wled, running)['info']
+    record('effects: WLED on, not live; screen_sync: live again; off: WLED off', evidence)
 
 
 @planned(
@@ -656,7 +656,7 @@ def test_brightness(prysm: Prysm, wled: Wled, record: Record) -> None:
         raise Failed('/json/cfg is 64 KiB or more', evidence)
     if evidence['maxbri'] is None or evidence['scale_bri'] is None:
         raise Failed('/json/cfg lacks if.live.maxbri or light.scale-bri', evidence)
-    processed(prysm)
+    screen_sync(prysm)
     bri = wled.si()['state'].get('bri', 128)
     try:
         wled.post_state({'bri': 102})
@@ -682,15 +682,15 @@ def test_brightness(prysm: Prysm, wled: Wled, record: Record) -> None:
     )
 
 
-@planned(does=lambda cell, config: ['PUT /api/v1/target off, then processed'] if cell.source == Source.DEVICE else [])
+@planned(does=lambda cell, config: ['PUT /api/v1/target off, then screen_sync'] if cell.source == Source.DEVICE else [])
 def test_release(cell: Cell, prysm: Prysm, config: Config, feed_shown: Feed | None, record: Record) -> None:
-    """Capture release: off, then processed; the device opens again with frames (a capture card only)."""
+    """Capture release: off, then screen sync; the device opens again with frames (a capture card only)."""
     if cell.source != Source.DEVICE:
         pytest.skip('a capture card only')
     reply = prysm.set_target(Target.OFF)
     if reply.status != 204 or prysm.wait(lambda s: session(s) == SessionState.STOPPED, 10) is None:
         raise Failed('Prysm did not stop', prysm.state())
-    state = processed(prysm, seconds=20)
+    state = screen_sync(prysm, seconds=20)
     measured = rates(prysm.sample(config.checks.seconds))
     if measured['fps_mean'] <= 0:
         raise Failed('no frames after re-opening', measured)
@@ -724,7 +724,7 @@ def test_display_check(
         )
         if answer != Answer.YES:
             pytest.skip(f'operator skipped the display set-up {note}'.strip())
-        processed(prysm)
+        screen_sync(prysm)
         results: dict[str, object] = {}
         ok = True
         for name, edges in colour_page.FIELDS:
@@ -753,7 +753,7 @@ def test_display_check(
 def _settings_kept(prysm: Prysm, wled: Wled, seam: Host, renew: Callable[[], prysm_api.State]) -> object:
     """While lighting, `renew` Prysm (a unit restart, a new container): it answers idle with the settings it had,
     and Screen sync lights WLED from the expected sender again."""
-    processed(prysm)
+    screen_sync(prysm)
     saved = prysm.state()['settings']
     state = renew()
     evidence: dict[str, object] = {'target': state['target'], 'session': session(state)}
@@ -761,7 +761,7 @@ def _settings_kept(prysm: Prysm, wled: Wled, seam: Host, renew: Callable[[], pry
         raise Failed(f'not idle after the restart: target {state["target"]}, session {session(state)}', evidence)
     if state['settings'] != saved:
         raise Failed('the settings did not come back', {**evidence, 'before': saved, 'after': state['settings']})
-    processed(prysm)
+    screen_sync(prysm)
     evidence['wled'] = live_from_host(prysm, wled, seam)['info']
     return evidence
 
@@ -779,9 +779,9 @@ def test_package_user(running: Host, record: Record) -> None:
 @only(Delivery.DEB)
 @planned(
     does=lambda cell, config: [
-        'PUT /api/v1/target processed',
+        'PUT /api/v1/target screen_sync',
         f'$ {commands.deb_systemctl(_ssh_host(cell, config), commands.UnitAction.RESTART).display()}',
-        'GET /api/v1/state until it answers, then PUT /api/v1/target processed',
+        'GET /api/v1/state until it answers, then PUT /api/v1/target screen_sync',
     ]
 )
 def test_package_restart(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
@@ -796,10 +796,10 @@ def test_package_restart(prysm: Prysm, wled: Wled, running: Host, record: Record
 @only(Delivery.IMAGE)
 @planned(
     does=lambda cell, config: [
-        'PUT /api/v1/target processed',
+        'PUT /api/v1/target screen_sync',
         '$ '
         + commands.image_compose(_ssh_host(cell, config), 'RUN_DIR-CELL', commands.ComposeAction.RECREATE).display(),
-        'GET /api/v1/state until it answers, then PUT /api/v1/target processed',
+        'GET /api/v1/state until it answers, then PUT /api/v1/target screen_sync',
     ]
 )
 def test_image_volume(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
@@ -812,10 +812,10 @@ def test_image_volume(prysm: Prysm, wled: Wled, running: Host, record: Record) -
 
 
 # Last: it stops the host the checks above share.
-@planned(does=lambda cell, config: ['PUT /api/v1/target processed', 'SIGTERM to Prysm'])
+@planned(does=lambda cell, config: ['PUT /api/v1/target screen_sync', 'SIGTERM to Prysm'])
 def test_sigterm(prysm: Prysm, wled: Wled, running: Host, record: Record) -> None:
     """Clean exit: SIGTERM while lighting, exit code 0 and WLED released."""
-    processed(prysm)
+    screen_sync(prysm)
     start = time.monotonic()
     code = running.stop()
     seconds = round(time.monotonic() - start, 1)

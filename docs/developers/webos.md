@@ -37,13 +37,13 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 ## Supervisor and worker
 
 - The worker gets arguments only (no shell): the full worker its settings
-  path, listen address and lighting target; the slim worker its Prysm address
-  (`--prysm`).
+  path, listen address and lighting target (`--target`); the slim worker its
+  Prysm address (`--prysm`).
 - Commands go to the worker's stdin; events come back on its original stdout,
   one JSON object per line (at most 4 KiB, unknown fields rejected). Vendor
   output is redirected to stderr, which carries logs. The commands are
   `video` (unavailable unless the TV is active), `reset_video` (input, app or
-  picture mode changed) and `lighting` (full only; a slim worker takes it as
+  picture mode changed) and `target` (full only; a slim worker takes it as
   protocol misuse); the events `status`, `failed` and `faulted`. The worker
   exits 0 when stopped (SIGTERM, stdin closed), 1 failed, 2 for bad
   arguments, 3 faulted (a hung or unconfirmed native resource). Types:
@@ -56,7 +56,7 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 - An exit while running is published as a failure: the exit's description,
   then the last cause or report; an `encoder`, `version` or `replaced`
   report keeps its kind, anything else is `other`.
-- Turning it off (`setEnabled` false), the TV going to standby, a shutdown
+- Turning slim capture off (`setEnabled` false), the TV going to standby, a shutdown
   and a new Prysm address clear the published failure and the backoff, in
   every phase (also with no worker, during a backoff or while a failed
   worker stops); turning it off is how a failure is dismissed. A stop asked
@@ -189,13 +189,31 @@ and renews a subscription that has had no good reply for 5 s. Its seams:
 ## Luna API
 
 Service `io.github.ericschaal.prysm.service`: `getState` (any caller, subscribable),
-`setPreferences`, `setEnabled` and `uninstall` (the app only, checked by LS2
-application ID). The state has the fields both packages share (`preferences`,
-`power`, `video`, `failure`, `log`) and the installed package's own, tagged
-by `flavor`: full `lighting` and a `worker` that reports `capturing`, `fps`
-and `portal` while it runs (`portal` also while it stops); slim `enabled` and
-a `worker` that reports `capturing` and its `link` (as in the worker's
-status) while it runs. API version 3 (the document's `info.version`). Preferences hold only `autostart` and, for slim, `instance`
+`setPreferences`, `setTarget` (full), `setEnabled` (slim) and `uninstall`
+(the app only, checked by LS2 application ID). Each package refuses the
+other's lighting method. `setTarget { target }` takes `off`, `screen_sync`
+or `effects` and replies with the state; the TV app retries a failure with
+`setTarget off` and then the target that failed. `setEnabled { enabled }`
+says whether slim capture streams; slim has no target, since the desktop
+Prysm decides what the lights do. The state has the fields both packages
+share (`preferences`, `power`, `video`, `failure`, `log`) and the installed
+package's own, tagged by `flavor`: full `target` and a `worker` that reports
+`capturing`, `fps` and `portal` while it runs (`portal` also while it
+stops); slim `enabled` and a `worker` that reports `capturing` and its
+`link` (as in the worker's status) while it runs. `autostart` starts the
+full package's screen sync, or slim streaming, when the service starts. A
+restart within one boot resumes the intent from `resume.json`
+(`{ "boot": …, "intent": "off" | "screen_sync" | "effects" }`; slim
+streaming is `screen_sync`); one it cannot read is ignored and `autostart`
+applies. API version 4 (the document's `info.version`).
+
+Values the service sends are open, as on HTTP
+([decision](decisions/2026-11-22-open-response-enums.md)): the app reads a
+newer `target` or worker `phase` as `unknown` (never off or stopped; a phase
+shows "Updating…" with no start or stop), a newer `failure.kind` as
+`other`, a newer slim `link.state` as starting, a newer `link.encoding` as
+sent, and a newer `flavor` as a state it cannot show. Requests stay closed:
+the service refuses a value it does not know. Preferences hold only `autostart` and, for slim, `instance`
 (the desktop Prysm's portal address, where frames go). An absent value (no
 failure, `fps`, `portal` or `instance`) is omitted, never `null`,
 here and in the worker's status lines. Picture settings live in a

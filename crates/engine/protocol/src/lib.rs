@@ -1,8 +1,8 @@
 //! JSON values Prysm surfaces exchange with their clients.
 //!
-//! Settings, targets, revisions, inputs, device reports and session phases
-//! are `prysm_ports` types and serialize as ports does. This crate adds only
-//! what ports cannot carry: the product version, a tagged session state, a
+//! Settings, targets, revisions, inputs and device reports are `prysm_ports`
+//! types and serialize as ports does. This crate adds only what ports cannot
+//! carry: the product version, a tagged session state with its failure, a
 //! failure body, and the request/response bodies. It has no HTTP or runtime
 //! dependencies.
 use prysm_ports::{
@@ -56,12 +56,6 @@ pub struct State {
     /// Pass back as `expected` when replacing settings.
     #[cfg_attr(feature = "schema", schema(value_type = u64))]
     pub revision: Revision,
-    /// The last lighting failure; absent while there is none. Every target
-    /// change, settings apply, shutdown and session end replaces it, so the
-    /// next one that succeeds clears it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schema(nullable = false))]
-    pub failure: Option<Failure>,
     /// Surfaces that stopped. Lighting continues without them.
     pub surface_failures: Vec<Failure>,
 }
@@ -71,13 +65,12 @@ impl From<&Snapshot> for State {
         Self {
             version: prysm_version::VERSION.to_owned(),
             target: snapshot.target,
-            session: snapshot.session.into(),
+            session: (&snapshot.session).into(),
             input: snapshot.input,
             device: snapshot.device,
             calibration: snapshot.calibration,
             settings: snapshot.settings.clone(),
             revision: snapshot.revision,
-            failure: snapshot.failure.as_ref().map(Failure::from),
             surface_failures: snapshot
                 .surface_failures
                 .iter()
@@ -87,55 +80,200 @@ impl From<&Snapshot> for State {
     }
 }
 
-/// What the runtime is actually doing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What the runtime is actually doing. Screen sync carries no failure: it
+/// runs on valid settings and has reached its target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum Session {
-    Stopped,
-    Running,
-    /// The output shows its own effect.
-    Native,
+    /// No session; the lights are not driven.
+    Stopped {
+        /// Why the target is not reached, why the lights may not be off, or
+        /// that the saved settings do not validate; absent while none does.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        failure: Option<LightingFailure>,
+    },
+    /// The lights follow the screen.
+    ScreenSync,
+    /// The lights show their own effects.
+    Effects {
+        /// Why screen sync, asked from the effects, did not start, or that
+        /// the saved settings do not validate; absent while none does.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        failure: Option<LightingFailure>,
+    },
     /// A session did not stop in time, or did not confirm its source's
     /// release; only a restart recovers.
     Faulted {
-        #[cfg_attr(feature = "schema", schema(value_type = schema::PhaseSchema))]
-        phase: SessionPhase,
+        /// What did not finish, for people.
+        message: String,
     },
 }
 
-impl From<SessionState> for Session {
-    fn from(state: SessionState) -> Self {
+impl From<&SessionState> for Session {
+    fn from(state: &SessionState) -> Self {
+        let failure = || state.failure().map(LightingFailure::from);
         match state {
-            SessionState::Stopped => Self::Stopped,
-            SessionState::Running => Self::Running,
-            SessionState::Native => Self::Native,
-            SessionState::Faulted(phase) => Self::Faulted { phase },
+            SessionState::Stopped { .. } => Self::Stopped { failure: failure() },
+            SessionState::ScreenSync => Self::ScreenSync,
+            SessionState::Effects { .. } => Self::Effects { failure: failure() },
+            SessionState::Faulted(phase) => Self::Faulted {
+                message: faulted_message(*phase).to_owned(),
+            },
         }
     }
 }
 
-/// A stable failure body: the message a user can act on. An adapter failure
-/// carries its cause chain (`context: cause: cause`), since the cause is what
-/// names the problem (a device's error, a remote sender's reason).
+/// What a faulted session did not finish, in words. The phase itself is
+/// logged, not sent.
+fn faulted_message(phase: SessionPhase) -> &'static str {
+    match phase {
+        SessionPhase::Running => "Lighting did not stop in time.",
+        SessionPhase::ClosingSource => "The video source did not close in time.",
+        SessionPhase::IdlingOutput => "The lights did not switch off in time.",
+        SessionPhase::Finishing => "Lighting did not finish stopping in time.",
+        SessionPhase::SourceUnreleased => "The video source did not confirm it was released.",
+    }
+}
+
+/// Why the lighting is as it is: the failure a session state carries. An
+/// adapter failure carries its cause chain (`context: cause: cause`), since
+/// the cause is what names the problem (a device's error, a remote sender's
+/// reason).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-pub struct Failure {
-    pub kind: FailureKind,
-    pub message: String,
-    /// The rejected setting as a dotted path, such as `output.address`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schema(nullable = false))]
-    pub field: Option<String>,
-    /// The revision to retry against after `stale_revision`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schema(value_type = Option<u64>, nullable = false))]
-    pub current: Option<Revision>,
-    /// Which side an `adapter` failure came from, when the engine knows:
-    /// the capture source or the output.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schema(nullable = false))]
-    pub section: Option<FailureSection>,
+pub enum LightingFailure {
+    /// The saved settings do not validate, or cannot be read.
+    Invalid {
+        message: String,
+        /// The rejected setting as a dotted path, such as `output.address`;
+        /// absent when the settings as a whole are at fault.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        field: Option<String>,
+    },
+    /// A device or adapter failed.
+    Adapter {
+        message: String,
+        /// Which side failed, when the engine knows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        section: Option<FailureSection>,
+    },
+    /// An unexpected internal failure.
+    Internal { message: String },
+}
+
+impl From<&Error> for LightingFailure {
+    fn from(error: &Error) -> Self {
+        match Failure::from(error) {
+            Failure::Invalid { message, field } => Self::Invalid { message, field },
+            Failure::Adapter { message, section } => Self::Adapter { message, section },
+            // The engine keeps no other error in a session: a stale
+            // revision and a pattern without screen sync are replies, and a
+            // fault is its own state.
+            other => Self::Internal {
+                message: other.message().to_owned(),
+            },
+        }
+    }
+}
+
+/// A failure reply (any non-2xx), tagged by `kind`: the message a user can
+/// act on, with what the kind needs to act on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub enum Failure {
+    /// Settings were rejected.
+    Invalid {
+        message: String,
+        /// The rejected setting as a dotted path, such as `output.address`;
+        /// absent when no one field is at fault.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        field: Option<String>,
+    },
+    /// Settings changed since `expected`.
+    StaleRevision {
+        message: String,
+        /// The revision to retry against.
+        #[cfg_attr(feature = "schema", schema(value_type = u64))]
+        current: Revision,
+    },
+    /// A device or adapter failed. Its message carries the cause chain.
+    Adapter {
+        message: String,
+        /// Which side failed, when the engine knows: the capture source or
+        /// the output.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        section: Option<FailureSection>,
+    },
+    /// Calibration patterns need the `screen_sync` target.
+    NeedsScreenSync {
+        message: String,
+    },
+    /// The runtime is faulted and accepts nothing until restarted.
+    Faulted {
+        message: String,
+    },
+    /// The runtime or surface is stopping or stopped.
+    Unavailable {
+        message: String,
+    },
+    /// An unexpected internal failure.
+    Internal {
+        message: String,
+    },
+    Forbidden {
+        message: String,
+    },
+    NotFound {
+        message: String,
+    },
+    MethodNotAllowed {
+        message: String,
+    },
+    /// The request was malformed.
+    BadRequest {
+        message: String,
+    },
+    PayloadTooLarge {
+        message: String,
+    },
+    UnsupportedMediaType {
+        message: String,
+    },
+    /// Too many concurrent requests or streams.
+    Busy {
+        message: String,
+    },
+}
+
+impl Failure {
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Invalid { message, .. }
+            | Self::StaleRevision { message, .. }
+            | Self::Adapter { message, .. }
+            | Self::NeedsScreenSync { message }
+            | Self::Faulted { message }
+            | Self::Unavailable { message }
+            | Self::Internal { message }
+            | Self::Forbidden { message }
+            | Self::NotFound { message }
+            | Self::MethodNotAllowed { message }
+            | Self::BadRequest { message }
+            | Self::PayloadTooLarge { message }
+            | Self::UnsupportedMediaType { message }
+            | Self::Busy { message } => message,
+        }
+    }
 }
 
 /// The side of the signal path a failure came from.
@@ -149,80 +287,40 @@ pub enum FailureSection {
     Output,
 }
 
-impl Failure {
-    #[must_use]
-    pub fn new(kind: FailureKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-            field: None,
-            current: None,
-            section: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-pub enum FailureKind {
-    /// Settings were rejected; see `field`.
-    Invalid,
-    /// Settings changed since `expected`; see `current`.
-    StaleRevision,
-    /// Calibration patterns need the `processed` target.
-    NotProcessed,
-    /// The runtime is faulted and accepts nothing until restarted.
-    Faulted,
-    /// A device or adapter failed.
-    Adapter,
-    /// The runtime or surface is stopping or stopped.
-    Unavailable,
-    /// An unexpected internal failure.
-    Internal,
-    Forbidden,
-    NotFound,
-    MethodNotAllowed,
-    /// The request was malformed.
-    BadRequest,
-    PayloadTooLarge,
-    UnsupportedMediaType,
-    /// Too many concurrent requests or streams.
-    Busy,
-}
-
 impl From<&Error> for Failure {
     fn from(error: &Error) -> Self {
         let message = error.to_string();
         match error {
-            Error::Invalid(invalid) => Self {
+            Error::Invalid(invalid) => Self::Invalid {
+                message: invalid.reason.clone(),
                 field: Some(invalid.field.clone()),
-                ..Self::new(FailureKind::Invalid, invalid.reason.clone())
             },
             // No one field is at fault; the store's cause chain says why.
-            Error::UnusableSettings(_) => {
-                Self::new(FailureKind::Invalid, prysm_ports::chain(error))
-            }
+            Error::UnusableSettings(_) => Self::Invalid {
+                message: prysm_ports::chain(error),
+                field: None,
+            },
             // The decoder's message names the field the user got wrong.
-            Error::Decode { source, .. } => {
-                Self::new(FailureKind::Invalid, format!("{message}: {source}"))
-            }
-            Error::Adapter { .. } => Self {
+            Error::Decode { source, .. } => Self::Invalid {
+                message: format!("{message}: {source}"),
+                field: None,
+            },
+            Error::Adapter { .. } => Self::Adapter {
+                message: prysm_ports::chain(error),
                 section: match error.section() {
                     Some(Section::Capture) => Some(FailureSection::Capture),
                     Some(Section::Output) => Some(FailureSection::Output),
                     Some(Section::Processing) | None => None,
                 },
-                ..Self::new(FailureKind::Adapter, prysm_ports::chain(error))
             },
-            Error::StaleRevision { current, .. } => Self {
-                current: Some(*current),
-                ..Self::new(FailureKind::StaleRevision, message)
+            Error::StaleRevision { current, .. } => Self::StaleRevision {
+                message,
+                current: *current,
             },
-            Error::NotProcessed => Self::new(FailureKind::NotProcessed, message),
-            Error::Faulted(_) => Self::new(FailureKind::Faulted, message),
-            Error::Panicked(_) => Self::new(FailureKind::Internal, message),
-            Error::Closed => Self::new(FailureKind::Unavailable, message),
+            Error::NeedsScreenSync => Self::NeedsScreenSync { message },
+            Error::Faulted(_) => Self::Faulted { message },
+            Error::Panicked(_) => Self::Internal { message },
+            Error::Closed => Self::Unavailable { message },
         }
     }
 }
@@ -248,7 +346,7 @@ pub struct SettingsRequest {
 }
 
 /// Reply to a successful settings replacement. Applying them may still fail;
-/// that failure appears in the state's `failure`.
+/// that failure appears in the state's `session`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct SettingsReplaced {
@@ -265,9 +363,10 @@ mod tests {
     #[test]
     fn state_serializes_ports_values_unchanged() {
         let snapshot = Snapshot {
-            session: SessionState::Faulted(SessionPhase::ClosingSource),
+            session: SessionState::Stopped {
+                failure: Some(Error::other("device unplugged")),
+            },
             revision: Revision(3),
-            failure: Some(Error::other("device unplugged")),
             ..Snapshot::default()
         };
         let value = serde_json::to_value(State::from(&snapshot)).unwrap();
@@ -276,12 +375,12 @@ mod tests {
         assert_eq!(value["revision"], 3);
         assert_eq!(
             value["session"],
-            json!({ "state": "faulted", "phase": "closing_source" })
+            json!({
+                "state": "stopped",
+                "failure": { "kind": "adapter", "message": "device unplugged" },
+            })
         );
-        assert_eq!(
-            value["failure"],
-            json!({ "kind": "adapter", "message": "device unplugged" })
-        );
+        assert!(value.get("failure").is_none(), "only in the session");
         assert_eq!(
             value["settings"],
             serde_json::to_value(&snapshot.settings).unwrap()
@@ -293,12 +392,16 @@ mod tests {
             "absent while not calibrating"
         );
         let back: State = serde_json::from_value(value).unwrap();
-        assert_eq!(back.session, snapshot.session.into());
+        assert_eq!(back.session, (&snapshot.session).into());
         let idle = serde_json::to_value(State::from(&Snapshot::default())).unwrap();
-        assert!(idle.get("failure").is_none(), "absent without one");
+        assert_eq!(
+            idle["session"],
+            json!({ "state": "stopped" }),
+            "absent without one"
+        );
 
         let running = Snapshot {
-            session: SessionState::Running,
+            session: SessionState::ScreenSync,
             input: Some(Input {
                 fps: 29.9,
                 receiving: true,
@@ -332,6 +435,86 @@ mod tests {
             json!({ "issue": "other_sender", "brightness_percent": 40, "led_count": 120 })
         );
         assert!((value["input"]["fps"].as_f64().unwrap() - 29.9).abs() < 1e-4);
+        assert_eq!(value["session"], json!({ "state": "screen_sync" }));
+    }
+
+    /// Each session state on the wire: a failure only where the state
+    /// carries one, a fault as words without its phase.
+    #[test]
+    fn sessions_carry_their_failure_and_a_fault_its_message() {
+        let invalid = || Some(Error::from(ValidationError::new("output.leds", "too many")));
+        let cases = [
+            (SessionState::default(), json!({ "state": "stopped" })),
+            (
+                SessionState::Stopped { failure: invalid() },
+                json!({ "state": "stopped", "failure": {
+                    "kind": "invalid", "message": "too many", "field": "output.leds" } }),
+            ),
+            (SessionState::ScreenSync, json!({ "state": "screen_sync" })),
+            (
+                SessionState::Effects { failure: None },
+                json!({ "state": "effects" }),
+            ),
+            (
+                SessionState::Effects { failure: invalid() },
+                json!({ "state": "effects", "failure": {
+                    "kind": "invalid", "message": "too many", "field": "output.leds" } }),
+            ),
+            (
+                SessionState::Stopped {
+                    failure: Some(Error::Panicked("session thread")),
+                },
+                json!({ "state": "stopped", "failure": {
+                    "kind": "internal", "message": "session thread panicked" } }),
+            ),
+            (
+                SessionState::Stopped {
+                    failure: Some(Error::Closed),
+                },
+                json!({ "state": "stopped", "failure": {
+                    "kind": "internal", "message": "runtime has stopped" } }),
+            ),
+        ];
+        for (state, expected) in cases {
+            let session = Session::from(&state);
+            assert_eq!(serde_json::to_value(&session).unwrap(), expected, "{state}");
+            assert_eq!(
+                serde_json::from_value::<Session>(expected).unwrap(),
+                session
+            );
+        }
+        for (phase, message) in [
+            (SessionPhase::Running, "Lighting did not stop in time."),
+            (
+                SessionPhase::ClosingSource,
+                "The video source did not close in time.",
+            ),
+            (
+                SessionPhase::IdlingOutput,
+                "The lights did not switch off in time.",
+            ),
+            (
+                SessionPhase::Finishing,
+                "Lighting did not finish stopping in time.",
+            ),
+            (
+                SessionPhase::SourceUnreleased,
+                "The video source did not confirm it was released.",
+            ),
+        ] {
+            assert_eq!(
+                serde_json::to_value(Session::from(&SessionState::Faulted(phase))).unwrap(),
+                json!({ "state": "faulted", "message": message })
+            );
+        }
+        let screen_sync_with_failure = json!({ "state": "screen_sync", "failure": {
+            "kind": "internal", "message": "x" } });
+        let read = serde_json::from_value::<Session>(screen_sync_with_failure).unwrap();
+        assert_eq!(
+            read,
+            Session::ScreenSync,
+            "screen sync has nowhere to keep one"
+        );
     }
 
     /// Settings that cannot be loaded are the settings' problem: `invalid`
@@ -359,29 +542,45 @@ mod tests {
             "output.leds",
             "too many",
         )));
-        assert_eq!(invalid.kind, FailureKind::Invalid);
-        assert_eq!(invalid.field.as_deref(), Some("output.leds"));
-        assert_eq!(invalid.message, "too many");
+        assert_eq!(
+            invalid,
+            Failure::Invalid {
+                message: "too many".into(),
+                field: Some("output.leds".into()),
+            }
+        );
 
         let stale = Failure::from(&Error::StaleRevision {
             expected: Revision(1),
             current: Revision(2),
         });
-        assert_eq!(stale.current, Some(Revision(2)));
+        assert_eq!(
+            serde_json::to_value(&stale).unwrap(),
+            json!({
+                "kind": "stale_revision",
+                "message": "settings revision 1 is stale; current is 2",
+                "current": 2,
+            })
+        );
 
-        let not_processed = Failure::from(&Error::NotProcessed);
-        assert_eq!(not_processed.kind, FailureKind::NotProcessed);
-        assert_eq!(not_processed.field, None);
+        let needs = Failure::from(&Error::NeedsScreenSync);
+        assert_eq!(
+            serde_json::to_value(&needs).unwrap(),
+            json!({
+                "kind": "needs_screen_sync",
+                "message": "calibration patterns need screen sync: turn it on first",
+            })
+        );
 
         let source = serde_json::from_str::<u8>("\"x\"").unwrap_err();
         let decode = Failure::from(&Error::Decode {
             kind: "wled".into(),
             source: std::sync::Arc::new(source),
         });
-        assert_eq!(decode.kind, FailureKind::Invalid);
+        assert!(matches!(&decode, Failure::Invalid { field: None, .. }));
         assert!(
             decode
-                .message
+                .message()
                 .starts_with("cannot decode `wled` settings: invalid type")
         );
     }
@@ -390,16 +589,27 @@ mod tests {
     /// which part of the path stopped; without one the field is absent.
     #[test]
     fn adapter_failures_carry_their_section() {
+        let section = |failure: &Failure| match failure {
+            Failure::Adapter { section, .. } => *section,
+            other => panic!("not an adapter failure: {other:?}"),
+        };
         let capture = Failure::from(&Error::other("no 640x400").in_section(Section::Capture));
-        assert_eq!(capture.section, Some(FailureSection::Capture));
+        assert_eq!(section(&capture), Some(FailureSection::Capture));
         assert_eq!(
             serde_json::to_value(&capture).unwrap()["section"],
             "capture"
         );
         let output = Failure::from(&Error::other("gone").in_section(Section::Output));
-        assert_eq!(output.section, Some(FailureSection::Output));
+        assert_eq!(section(&output), Some(FailureSection::Output));
+        assert_eq!(
+            LightingFailure::from(&Error::other("gone").in_section(Section::Output)),
+            LightingFailure::Adapter {
+                message: "gone".into(),
+                section: Some(FailureSection::Output),
+            }
+        );
         let unknown = Failure::from(&Error::other("?"));
-        assert_eq!(unknown.section, None);
+        assert_eq!(section(&unknown), None);
         assert!(
             serde_json::to_value(&unknown)
                 .unwrap()
@@ -438,14 +648,17 @@ mod tests {
             }
         }
         let failure = Failure::from(&Error::adapter("the sender cannot stream", Outer(Cause)));
-        assert_eq!(failure.kind, FailureKind::Adapter);
         assert_eq!(
-            failure.message,
-            "the sender cannot stream: cannot encode frame: hardware H.264 encoder cannot start"
+            failure,
+            Failure::Adapter {
+                message: "the sender cannot stream: cannot encode frame: \
+                          hardware H.264 encoder cannot start"
+                    .into(),
+                section: None,
+            }
         );
-        assert_eq!(failure.field, None);
         let bare = Failure::from(&Error::other("no frames"));
-        assert_eq!(bare.message, "no frames");
+        assert_eq!(bare.message(), "no frames");
     }
 
     #[test]

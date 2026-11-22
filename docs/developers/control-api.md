@@ -10,7 +10,7 @@ types live in `@prysm/contracts/application` ([contracts](contracts.md)).
 | Route | Purpose |
 | --- | --- |
 | `GET /api/v1/state`, `GET /api/v1/state/stream` | The whole state, once or as server-sent events after every change |
-| `PUT /api/v1/target` | `off`, `processed` (Screen sync) or `device_native` (the output's own effects) |
+| `PUT /api/v1/target` | `off`, `screen_sync` or `effects` (the output's own effects) |
 | `PUT /api/v1/settings` | Replace the whole settings document from an expected revision |
 | `PUT /api/v1/processing/trial` | Light with a processing section without saving it, while a slider is dragged |
 | `GET /api/v1/preview/stream` | Picture, sampled area and edge colours, at most 8 per second |
@@ -68,11 +68,19 @@ See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md
 ## Lighting transitions
 
 - **Off:** stop the session; the output is idled off after the last frame.
-- **WLED effects** (`device_native`): stop the session; the output is idled
+- **WLED effects** (`effects`): stop the session; the output is idled
   to the device's own state.
-- **Screen sync** (`processed`): open the source (a failure is the reply), then
-  open the output at the first frame. An output that cannot open ends the
-  session and shows in `failure`.
+- **Screen sync** (`screen_sync`): open the source (a failure is the reply),
+  then open the output at the first frame. An output that cannot open ends
+  the session and shows in `session.failure`.
+
+The session reached the target when `session.state` equals it (`stopped` for
+`off`). A failure lives in the session it explains (`stopped` or `effects`;
+`screen_sync` has none), and a failure of what a command replaced is only
+logged. While stopped with an output failure (the lights may not be off,
+whichever target failed), `off` asked switches them off again; with the
+target `off`, a save that does nothing about the output keeps the failure,
+and saving other lights ends it.
 
 There is no confirmation window and no rollback to the previous mode after a
 failed start. A failure leaves the target as requested. Without frames for 3 s

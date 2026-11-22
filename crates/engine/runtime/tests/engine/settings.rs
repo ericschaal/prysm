@@ -12,7 +12,7 @@ async fn processing_change_keeps_source_and_output_open() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, store) = start(&log, named("a", "a"), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 2).await);
 
         let mut changed = named("a", "a");
@@ -42,7 +42,7 @@ async fn adapter_change_restarts_a_running_session() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, named("a", "a"), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 2).await);
 
         let replaced = handle
@@ -52,7 +52,10 @@ async fn adapter_change_restarts_a_running_session() {
         assert!(before(&log, "source.close:a", "output.idle:a:Off"));
         assert!(before(&log, "output.idle:a:Off", "source.open:b"));
         assert!(log.wait_for("output.open:a", 2).await);
-        assert_eq!(handle.snapshot().borrow().session, SessionState::Running);
+        assert!(matches!(
+            handle.snapshot().borrow().session,
+            SessionState::ScreenSync
+        ));
 
         handle
             .replace_settings(replaced, named("b", "c"))
@@ -137,7 +140,7 @@ async fn restart_failure_keeps_settings_saved_and_a_later_change_recovers() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, store) = start(&log, named("a", "a"), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 1).await);
 
         let broken = settings(
@@ -160,16 +163,21 @@ async fn restart_failure_keeps_settings_saved_and_a_later_change_recovers() {
         assert_eq!(store.saved(), Some(broken));
 
         // The output opens at the first frame; its failure ends the session.
-        let snapshot = snapshot_until(&handle, |s| s.failure.is_some()).await;
+        let snapshot = snapshot_until(&handle, |s| s.session.failure().is_some()).await;
         assert_eq!(
             snapshot
-                .failure
+                .session
+                .failure()
                 .map(|failure| failure.to_string())
                 .as_deref(),
             Some("fake output cannot open")
         );
-        assert_eq!(snapshot.session, SessionState::Stopped);
-        assert_eq!(snapshot.target, LightingTarget::Processed);
+        assert!(
+            matches!(snapshot.session, SessionState::Stopped { .. }),
+            "{}",
+            snapshot.session
+        );
+        assert_eq!(snapshot.target, LightingTarget::ScreenSync);
         assert_eq!(snapshot.revision, replaced);
         // The open failure released the newly opened source.
         assert_eq!(log.count("source.close:a"), 2);
@@ -182,8 +190,12 @@ async fn restart_failure_keeps_settings_saved_and_a_later_change_recovers() {
             .unwrap();
         assert!(log.wait_for("output.write:c", 1).await);
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Running);
-        assert!(snapshot.failure.is_none());
+        assert!(
+            matches!(snapshot.session, SessionState::ScreenSync),
+            "{}",
+            snapshot.session
+        );
+        assert!(snapshot.session.failure().is_none());
         engine.shutdown().await.unwrap();
         assert_eq!(log.count("output.idle:c:Off"), 1);
     })
@@ -226,7 +238,7 @@ async fn output_change_while_off_neither_opens_nor_powers_the_new_output() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let (handle, engine, store) = start(&log, named("a", "a"), DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 1).await);
         handle.set_target(LightingTarget::Off).await.unwrap();
         let events = log.events();
@@ -236,7 +248,10 @@ async fn output_change_while_off_neither_opens_nor_powers_the_new_output() {
             .await
             .unwrap();
         assert_eq!(store.saved(), Some(named("a", "b")));
-        assert_eq!(handle.snapshot().borrow().session, SessionState::Stopped);
+        assert!(matches!(
+            handle.snapshot().borrow().session,
+            SessionState::Stopped { .. }
+        ));
         engine.shutdown().await.unwrap();
         // Nothing was opened, written or idled after lighting went off.
         assert_eq!(log.events(), events);
@@ -273,18 +288,21 @@ async fn concurrent_replacements_of_one_revision_admit_exactly_one() {
 }
 
 #[tokio::test]
-async fn capture_saved_while_processed_is_requested_starts_lighting() {
+async fn capture_saved_while_screen_sync_is_requested_starts_lighting() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let mut output_only = named("a", "a");
         output_only.capture = None;
         let (handle, engine, _) = start(&log, output_only, DEADLINE).await;
         let error = handle
-            .set_target(LightingTarget::Processed)
+            .set_target(LightingTarget::ScreenSync)
             .await
             .unwrap_err();
         assert!(matches!(error, Error::Invalid(ref e) if e.field == "capture"));
-        assert_eq!(handle.snapshot().borrow().target, LightingTarget::Processed);
+        assert_eq!(
+            handle.snapshot().borrow().target,
+            LightingTarget::ScreenSync
+        );
         assert!(log.events().is_empty());
 
         handle
@@ -292,14 +310,17 @@ async fn capture_saved_while_processed_is_requested_starts_lighting() {
             .await
             .unwrap();
         assert!(log.wait_for("output.write:a", 1).await);
-        assert_eq!(handle.snapshot().borrow().session, SessionState::Running);
+        assert!(matches!(
+            handle.snapshot().borrow().session,
+            SessionState::ScreenSync
+        ));
         engine.shutdown().await.unwrap();
     })
     .await;
 }
 
 #[tokio::test]
-async fn a_settings_save_after_a_failed_start_from_native_retries_and_keeps_the_failure() {
+async fn a_settings_save_after_a_failed_start_from_effects_retries_and_keeps_the_failure() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let failing = settings(
@@ -315,13 +336,10 @@ async fn a_settings_save_after_a_failed_start_from_native_retries_and_keeps_the_
         );
         let (handle, engine, _) = start(&log, failing.clone(), DEADLINE).await;
         // The lights run their own effects, then screen sync is asked for and
-        // the source cannot open: the session stays native, the failure set.
-        handle
-            .set_target(LightingTarget::DeviceNative)
-            .await
-            .unwrap();
+        // the source cannot open: the effects stay, the failure in the session.
+        handle.set_target(LightingTarget::Effects).await.unwrap();
         let refused = handle
-            .set_target(LightingTarget::Processed)
+            .set_target(LightingTarget::ScreenSync)
             .await
             .unwrap_err();
         assert_eq!(
@@ -330,9 +348,13 @@ async fn a_settings_save_after_a_failed_start_from_native_retries_and_keeps_the_
             "opening the source"
         );
         let failed = handle.snapshot().borrow().clone();
-        assert_eq!(failed.target, LightingTarget::Processed);
-        assert_eq!(failed.session, SessionState::Native);
-        assert!(failed.failure.is_some());
+        assert_eq!(failed.target, LightingTarget::ScreenSync);
+        assert!(
+            matches!(failed.session, SessionState::Effects { .. }),
+            "{}",
+            failed.session
+        );
+        assert!(failed.session.failure().is_some());
         assert_eq!(log.count("source.open_failed:a"), 1);
 
         // A processing-only save (brightness) is the next attempt, not a
@@ -345,8 +367,11 @@ async fn a_settings_save_after_a_failed_start_from_native_retries_and_keeps_the_
             .unwrap();
         assert_eq!(log.count("source.open_failed:a"), 2, "retried");
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.target, LightingTarget::Processed);
-        assert!(snapshot.failure.is_some(), "the failure is not cleared");
+        assert_eq!(snapshot.target, LightingTarget::ScreenSync);
+        assert!(
+            snapshot.session.failure().is_some(),
+            "the failure is not cleared"
+        );
 
         // Once the source works, the next save starts screen sync.
         let mut fixed = named("a", "a");
@@ -356,8 +381,12 @@ async fn a_settings_save_after_a_failed_start_from_native_retries_and_keeps_the_
             .await
             .unwrap();
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Running);
-        assert!(snapshot.failure.is_none());
+        assert!(
+            matches!(snapshot.session, SessionState::ScreenSync),
+            "{}",
+            snapshot.session
+        );
+        assert!(snapshot.session.failure().is_none());
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -379,7 +408,7 @@ async fn a_restart_starts_the_new_session_even_when_the_old_output_cannot_idle()
             },
         );
         let (handle, engine, _) = start(&log, unreachable, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 1).await);
 
         // The lights that no longer answer are replaced.
@@ -390,14 +419,15 @@ async fn a_restart_starts_the_new_session_even_when_the_old_output_cannot_idle()
         assert_eq!(log.count("output.idle:a:Off"), 1);
         assert!(log.wait_for("output.write:b", 1).await);
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Running);
-        assert_eq!(
-            snapshot
-                .failure
-                .map(|failure| failure.to_string())
-                .as_deref(),
-            Some("fake output cannot idle"),
-            "the old output's failure is still reported"
+        assert!(
+            matches!(snapshot.session, SessionState::ScreenSync),
+            "{}",
+            snapshot.session
+        );
+        assert!(
+            snapshot.session.failure().is_none(),
+            "the replaced output's failure is only logged: {:?}",
+            snapshot.session.failure()
         );
         engine.shutdown().await.unwrap();
         assert_eq!(log.count("output.idle:b:Off"), 1);
@@ -421,7 +451,7 @@ async fn a_restart_that_cannot_start_reports_the_start_failure() {
             },
         );
         let (handle, engine, _) = start(&log, unreachable, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 1).await);
 
         let broken = settings(
@@ -441,9 +471,13 @@ async fn a_restart_that_cannot_start_reports_the_start_failure() {
             .unwrap();
         assert_eq!(log.count("source.open_failed:b"), 1, "the start was tried");
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Stopped);
+        assert!(
+            matches!(snapshot.session, SessionState::Stopped { .. }),
+            "{}",
+            snapshot.session
+        );
         assert_eq!(
-            snapshot.failure.as_ref().and_then(Error::section),
+            snapshot.session.failure().and_then(Error::section),
             Some(Section::Capture),
             "the start's failure, not the old idle's"
         );
@@ -453,7 +487,7 @@ async fn a_restart_that_cannot_start_reports_the_start_failure() {
 }
 
 #[tokio::test]
-async fn a_settings_save_after_a_failed_native_idle_retries_the_idle() {
+async fn a_settings_save_after_a_failed_effects_idle_retries_the_idle() {
     within_async(LIMIT, async {
         let log = CallLog::new();
         let unreachable = settings(
@@ -465,16 +499,15 @@ async fn a_settings_save_after_a_failed_native_idle_retries_the_idle() {
             },
         );
         let (handle, engine, _) = start(&log, unreachable.clone(), DEADLINE).await;
-        assert!(
-            handle
-                .set_target(LightingTarget::DeviceNative)
-                .await
-                .is_err()
-        );
+        assert!(handle.set_target(LightingTarget::Effects).await.is_err());
         let failed = handle.snapshot().borrow().clone();
-        assert_eq!(failed.target, LightingTarget::DeviceNative);
-        assert_eq!(failed.session, SessionState::Stopped);
-        assert!(failed.failure.is_some());
+        assert_eq!(failed.target, LightingTarget::Effects);
+        assert!(
+            matches!(failed.session, SessionState::Stopped { .. }),
+            "{}",
+            failed.session
+        );
+        assert!(failed.session.failure().is_some());
 
         // A processing-only save retries, and the failure stays.
         let mut brighter = unreachable;
@@ -484,7 +517,7 @@ async fn a_settings_save_after_a_failed_native_idle_retries_the_idle() {
             .await
             .unwrap();
         assert_eq!(log.count("output.idle:a:Native"), 2, "retried");
-        assert!(handle.snapshot().borrow().failure.is_some());
+        assert!(handle.snapshot().borrow().session.failure().is_some());
 
         // Corrected output settings put the lights in their own effects.
         handle
@@ -493,8 +526,12 @@ async fn a_settings_save_after_a_failed_native_idle_retries_the_idle() {
             .unwrap();
         assert_eq!(log.count("output.idle:b:Native"), 1);
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Native);
-        assert!(snapshot.failure.is_none());
+        assert!(
+            matches!(snapshot.session, SessionState::Effects { .. }),
+            "{}",
+            snapshot.session
+        );
+        assert!(snapshot.session.failure().is_none());
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -513,23 +550,23 @@ async fn invalid_loaded_settings_stay_reported_after_a_successful_command() {
         );
         let (handle, engine, _) = start(&log, invalid, DEADLINE).await;
         let invalid_capture = |s: &Snapshot| {
-            matches!(&s.failure, Some(Error::Invalid(e)) if e.field == "capture.invalid")
+            matches!(&s.session.failure(), Some(Error::Invalid(e)) if e.field == "capture.invalid")
         };
         assert!(invalid_capture(&handle.snapshot().borrow()));
 
         // The output alone is valid, so the lights take their own effects.
         handle
-            .set_target(LightingTarget::DeviceNative)
+            .set_target(LightingTarget::Effects)
             .await
             .unwrap();
-        assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+        assert!(matches!(handle.snapshot().borrow().session, SessionState::Effects { .. }));
         assert!(invalid_capture(&handle.snapshot().borrow()));
 
         handle
             .replace_settings(revision(&handle), named("a", "a"))
             .await
             .unwrap();
-        assert!(handle.snapshot().borrow().failure.is_none());
+        assert!(handle.snapshot().borrow().session.failure().is_none());
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -563,7 +600,7 @@ async fn an_unreadable_store_starts_unconfigured_and_reports_it_until_a_save() {
         .await
         .unwrap();
         let unreadable = |s: &Snapshot| {
-            matches!(&s.failure, Some(Error::UnusableSettings(stored))
+            matches!(&s.session.failure(), Some(Error::UnusableSettings(stored))
                 if stored.to_string() == "cannot parse settings file")
         };
         assert!(unreadable(&handle.snapshot().borrow()));
@@ -576,7 +613,7 @@ async fn an_unreadable_store_starts_unconfigured_and_reports_it_until_a_save() {
         );
         // Lighting asked for, as `--start` does: the reason nothing is
         // configured is the store's.
-        for target in [LightingTarget::Processed, LightingTarget::DeviceNative] {
+        for target in [LightingTarget::ScreenSync, LightingTarget::Effects] {
             let refused = handle.set_target(target).await.unwrap_err();
             assert!(matches!(refused, Error::UnusableSettings(_)), "{refused:?}");
             assert_eq!(refused.to_string(), "cannot parse settings file");
@@ -589,7 +626,7 @@ async fn an_unreadable_store_starts_unconfigured_and_reports_it_until_a_save() {
             .replace_settings(revision(&handle), named("a", "a"))
             .await
             .unwrap();
-        assert!(handle.snapshot().borrow().failure.is_none());
+        assert!(handle.snapshot().borrow().session.failure().is_none());
         assert_eq!(saved.saved(), Some(named("a", "a")));
         engine.shutdown().await.unwrap();
     })
@@ -636,10 +673,10 @@ async fn a_refused_save_installs_nothing() {
             let snapshot = handle.snapshot().borrow().clone();
             assert_eq!(snapshot.settings, Settings::default());
             assert_eq!(
-                matches!(snapshot.failure, Some(Error::UnusableSettings(_))),
+                matches!(snapshot.session.failure(), Some(Error::UnusableSettings(_))),
                 unreadable,
                 "{:?}",
-                snapshot.failure
+                snapshot.session.failure()
             );
             engine.shutdown().await.unwrap();
         }

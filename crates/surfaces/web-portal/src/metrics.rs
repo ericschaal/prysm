@@ -7,34 +7,40 @@ use std::fmt::{self, Display, Write};
 
 pub(crate) const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
-/// The session state without the faulted phase, to keep the label set small.
+/// The session state without its failure or the faulted phase, to keep the
+/// label set small.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Stopped,
-    Running,
-    Native,
+    ScreenSync,
+    Effects,
     Faulted,
 }
 
 impl State {
-    const ALL: [Self; 4] = [Self::Stopped, Self::Running, Self::Native, Self::Faulted];
+    const ALL: [Self; 4] = [
+        Self::Stopped,
+        Self::ScreenSync,
+        Self::Effects,
+        Self::Faulted,
+    ];
 
     fn name(self) -> &'static str {
         match self {
             Self::Stopped => "stopped",
-            Self::Running => "running",
-            Self::Native => "native",
+            Self::ScreenSync => "screen_sync",
+            Self::Effects => "effects",
             Self::Faulted => "faulted",
         }
     }
 }
 
-impl From<SessionState> for State {
-    fn from(state: SessionState) -> Self {
+impl From<&SessionState> for State {
+    fn from(state: &SessionState) -> Self {
         match state {
-            SessionState::Stopped => Self::Stopped,
-            SessionState::Running => Self::Running,
-            SessionState::Native => Self::Native,
+            SessionState::Stopped { .. } => Self::Stopped,
+            SessionState::ScreenSync => Self::ScreenSync,
+            SessionState::Effects { .. } => Self::Effects,
             SessionState::Faulted(_) => Self::Faulted,
         }
     }
@@ -125,7 +131,7 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
         "What the runtime is doing; 1 for the current state.",
         "state",
         &State::ALL,
-        State::from(snapshot.session),
+        State::from(&snapshot.session),
         State::name,
     );
     text.gauge(
@@ -209,8 +215,8 @@ mod tests {
             output_opens: 3,
         };
         let snapshot = Snapshot {
-            target: LightingTarget::Processed,
-            session: SessionState::Running,
+            target: LightingTarget::ScreenSync,
+            session: SessionState::ScreenSync,
             revision: Revision(42),
             input: Some(Input {
                 fps: 29.9,
@@ -227,13 +233,13 @@ prysm_build_info{{version=\"{}\"}} 1
 # HELP prysm_target What the user asked the LEDs to do; 1 for the current target.
 # TYPE prysm_target gauge
 prysm_target{{target=\"off\"}} 0
-prysm_target{{target=\"processed\"}} 1
-prysm_target{{target=\"device_native\"}} 0
+prysm_target{{target=\"screen_sync\"}} 1
+prysm_target{{target=\"effects\"}} 0
 # HELP prysm_session_state What the runtime is doing; 1 for the current state.
 # TYPE prysm_session_state gauge
 prysm_session_state{{state=\"stopped\"}} 0
-prysm_session_state{{state=\"running\"}} 1
-prysm_session_state{{state=\"native\"}} 0
+prysm_session_state{{state=\"screen_sync\"}} 1
+prysm_session_state{{state=\"effects\"}} 0
 prysm_session_state{{state=\"faulted\"}} 0
 # HELP prysm_settings_revision Revision of the saved settings; starts at a random value per process.
 # TYPE prysm_settings_revision gauge

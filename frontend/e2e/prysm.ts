@@ -85,9 +85,9 @@ export interface FakeDevice {
 /** The parts of `GET /api/v1/state` the tests read. */
 export interface State {
   target: string;
-  session: { state: string };
+  /** `failure` only while stopped or showing the lights' own effects. */
+  session: { state: string; failure?: { message: string } };
   settings: { processing: { brightness_percent: number } };
-  failure: { message: string } | null;
 }
 
 /** A child process whose output lines can be awaited. */

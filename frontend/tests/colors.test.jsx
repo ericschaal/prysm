@@ -121,7 +121,7 @@ const publish = (fixture, change) =>
     fixture.publish(change);
     await sleep(0);
   });
-const running = { target: 'processed', session: { state: 'running' } };
+const running = { target: 'screen_sync', session: { state: 'screen_sync' } };
 
 test('Home streams the LEDs’ colours only while screen sync runs and is seen', async () => {
   const fake = fakeColorsClient();
@@ -187,8 +187,8 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
     );
     assert.equal(fake.open(), 1);
     await publish(fixture, {
-      target: 'device_native',
-      session: { state: 'native' },
+      target: 'effects',
+      session: { state: 'effects' },
     });
     assert.equal(fake.open(), 0, 'effects: one steady colour, no stream');
     assert.equal(live(), null);

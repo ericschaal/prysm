@@ -76,6 +76,19 @@ test('schemas reject unknown targets, untagged sections and incomplete failures'
     false,
   );
   assert.equal(validate('Failure')({ kind: 'invalid' }), false);
+  // Each kind carries what it needs: a stale revision the current one.
+  assert.equal(
+    validate('Failure')({ kind: 'stale_revision', message: 'x' }),
+    false,
+  );
+  assert(
+    validate('Failure')({ kind: 'stale_revision', message: 'x', current: 2 }),
+  );
+  assert.equal(
+    validate('LightingFailure')({ kind: 'busy', message: 'x' }),
+    false,
+    'the state carries only lighting failures',
+  );
   assert.equal(validate('TargetRequest')({ target: 'off', id: 1 }), false);
 });
 
@@ -125,9 +138,9 @@ test('the Luna document covers both flavors with one State', () => {
   assert.equal(state({ ...full, power: 'on' }), false);
   assert.equal(state({ ...full, failure: null }), false, 'omitted, not null');
   // A package's own fields are required, and the other flavor's do not fit.
-  const { lighting, ...withoutLighting } = full;
-  assert.equal(lighting, 'processed');
-  assert.equal(state(withoutLighting), false);
+  const { target, ...withoutTarget } = full;
+  assert.equal(target, 'screen_sync');
+  assert.equal(state(withoutTarget), false);
   assert.equal(state({ ...full, flavor: 'slim' }), false);
   assert.equal(state({ ...slim, flavor: 'full' }), false);
   assert.equal(
@@ -148,6 +161,9 @@ test('the Luna document covers both flavors with one State', () => {
     validate('luna/ErrorReply')({ returnValue: false, errorText: 'denied' }),
   );
   assert.equal(validate('luna/SetEnabledRequest')({}), false);
+  // Requests are closed: a target this version does not know is refused.
+  assert(validate('luna/SetTargetRequest')({ target: 'effects' }));
+  assert.equal(validate('luna/SetTargetRequest')({ target: 'ambient' }), false);
   assert.equal(validate('luna/UninstallRequest')({ force: true }), false);
 });
 

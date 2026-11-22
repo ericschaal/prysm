@@ -25,14 +25,18 @@ pub const RESUBSCRIBE: Duration = Duration::from_secs(5);
 pub enum Method {
     GetState,
     SetPreferences,
+    /// Full only.
+    SetTarget,
+    /// Slim only.
     SetEnabled,
     Uninstall,
 }
 
 impl Method {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::GetState,
         Self::SetPreferences,
+        Self::SetTarget,
         Self::SetEnabled,
         Self::Uninstall,
     ];
@@ -43,6 +47,7 @@ impl Method {
         match self {
             Self::GetState => "getState",
             Self::SetPreferences => "setPreferences",
+            Self::SetTarget => "setTarget",
             Self::SetEnabled => "setEnabled",
             Self::Uninstall => "uninstall",
         }
@@ -54,11 +59,12 @@ impl Method {
 }
 
 /// The Luna names of [`Method::ALL`], in registration order.
-pub const METHODS: [&str; 4] = [
+pub const METHODS: [&str; 5] = [
     Method::ALL[0].name(),
     Method::ALL[1].name(),
     Method::ALL[2].name(),
     Method::ALL[3].name(),
+    Method::ALL[4].name(),
 ];
 /// Subscription key of `getState`.
 pub const STATE_KEY: &str = "/getState";
@@ -275,7 +281,15 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 self.input(bus, Input::Preferences(preferences), now);
                 Ok(self.state_reply(now))
             }
+            Method::SetTarget => {
+                self.only_for(Flavor::Full, name)?;
+                let request: SetTargetRequest =
+                    serde_json::from_value(payload).map_err(parse_error)?;
+                self.input(bus, Input::Target(request.target), now);
+                Ok(self.state_reply(now))
+            }
             Method::SetEnabled => {
+                self.only_for(Flavor::Slim, name)?;
                 let request: SetEnabledRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 self.input(bus, Input::Enabled(request.enabled), now);
@@ -291,6 +305,17 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 })
             }
         }
+    }
+
+    /// Refuse `method`, the other package's, before its request is decoded.
+    fn only_for(&self, flavor: Flavor, method: &str) -> Result<(), String> {
+        if self.config.flavor == flavor {
+            return Ok(());
+        }
+        Err(format!(
+            "{method} is only for the {} package",
+            flavor.as_str()
+        ))
     }
 
     /// A `tvpower` subscription reply.
@@ -503,12 +528,22 @@ pub struct GetStateRequest {
     pub subscribe: bool,
 }
 
-/// `setEnabled` request.
+/// `setTarget` request (full package).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct SetTargetRequest {
+    /// What the lights do: off, screen sync, or their own effects.
+    #[cfg_attr(feature = "schema", schema(value_type = crate::schema::LightingTargetSchema))]
+    pub target: LightingTarget,
+}
+
+/// `setEnabled` request (slim package).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct SetEnabledRequest {
-    /// Slim: frames should flow. Full: processed lighting (or off).
+    /// Frames should flow to the receiver.
     pub enabled: bool,
 }
 

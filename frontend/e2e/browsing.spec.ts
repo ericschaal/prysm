@@ -90,7 +90,7 @@ test('Settings stays put under state ticks and pages keep their own place and sa
   await sender.waitFor('connected');
   await expect
     .poll(async () => (await prysm.state()).session.state)
-    .toBe('running');
+    .toBe('screen_sync');
 
   await mark(page, 'to Settings');
   await page.getByRole('button', { name: 'Settings' }).click();

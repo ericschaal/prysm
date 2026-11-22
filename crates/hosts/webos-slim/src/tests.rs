@@ -466,10 +466,10 @@ async fn reports_frame_flow_and_forwards_video_commands() {
 }
 
 #[tokio::test]
-async fn lighting_is_protocol_misuse() {
+async fn a_target_is_protocol_misuse() {
     let (peer, _feed, task) = start_fake(FakeSourceSettings::default());
-    peer.send(Command::Lighting {
-        target: LightingTarget::Processed,
+    peer.send(Command::Target {
+        target: LightingTarget::ScreenSync,
     });
     let (result, stop) = task.await.unwrap();
     result.unwrap();

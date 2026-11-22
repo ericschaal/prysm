@@ -22,10 +22,10 @@ async fn start(source: FakeSourceSettings, output: FakeOutputSettings) -> (Engin
 
 /// Turn lighting on and wait until the session has ended on its own.
 async fn light_until_ended(handle: &EngineHandle) {
-    handle.set_target(LightingTarget::Processed).await.unwrap();
+    handle.set_target(LightingTarget::ScreenSync).await.unwrap();
     handle
         .snapshot()
-        .wait_for(|s| s.session == SessionState::Stopped)
+        .wait_for(|s| matches!(s.session, SessionState::Stopped { .. }))
         .await
         .unwrap();
 }
@@ -69,10 +69,10 @@ async fn a_failing_output_write_is_counted() {
             ..Default::default()
         };
         let (handle, engine) = start(FakeSourceSettings::default(), output).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         handle
             .snapshot()
-            .wait_for(|s| s.failure.is_some())
+            .wait_for(|s| s.session.failure().is_some())
             .await
             .unwrap();
         let stats = handle.stats();

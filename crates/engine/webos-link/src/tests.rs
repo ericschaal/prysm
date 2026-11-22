@@ -17,10 +17,10 @@ fn commands_have_a_stable_wire_form() {
         ),
         (Command::ResetVideo {}, r#"{"type":"reset_video"}"#),
         (
-            Command::Lighting {
-                target: LightingTarget::DeviceNative,
+            Command::Target {
+                target: LightingTarget::Effects,
             },
-            r#"{"type":"lighting","target":"device_native"}"#,
+            r#"{"type":"target","target":"effects"}"#,
         ),
     ] {
         assert_eq!(encode(&command).unwrap(), line(text));
@@ -33,7 +33,7 @@ fn events_round_trip() {
     let full = Event::Status(WorkerStatus::Full(FullStatus {
         capturing: true,
         fps: Some(30),
-        target: LightingTarget::Processed,
+        target: LightingTarget::ScreenSync,
         portal: Some("http://192.168.1.5:8787/".into()),
         failure: Some(WorkerFailure::other("output: refused")),
     }));
@@ -41,7 +41,7 @@ fn events_round_trip() {
     assert_eq!(
         String::from_utf8(text.clone()).unwrap(),
         "{\"type\":\"status\",\"flavor\":\"full\",\"capturing\":true,\"fps\":30,\
-         \"target\":\"processed\",\"portal\":\"http://192.168.1.5:8787/\",\
+         \"target\":\"screen_sync\",\"portal\":\"http://192.168.1.5:8787/\",\
          \"failure\":{\"kind\":\"other\",\"message\":\"output: refused\"}}\n"
     );
     assert_eq!(decode::<Event>(&text).unwrap(), full);
@@ -239,7 +239,7 @@ fn full_args_round_trip_and_reject_mistakes() {
     let args = FullArgs {
         settings: PathBuf::from("/var/lib/prysm/settings.json"),
         listen: "0.0.0.0:8787".parse().unwrap(),
-        lighting: LightingTarget::DeviceNative,
+        target: LightingTarget::Effects,
     };
     let argv = args.to_args();
     assert_eq!(
@@ -249,30 +249,23 @@ fn full_args_round_trip_and_reject_mistakes() {
             "/var/lib/prysm/settings.json",
             "--listen",
             "0.0.0.0:8787",
-            "--lighting",
-            "device_native"
+            "--target",
+            "effects"
         ])
     );
     assert_eq!(parse::<FullArgs>(&argv).unwrap(), args);
-    for lighting in LightingTarget::ALL {
+    for target in LightingTarget::ALL {
         let args = FullArgs {
             listen: "[::1]:0".parse().unwrap(),
-            lighting,
+            target,
             ..args.clone()
         };
         assert_eq!(parse::<FullArgs>(&args.to_args()).unwrap(), args);
     }
     for bad in [
         strings(&["--settings", "s", "--listen", "0.0.0.0:8787"]),
-        strings(&["--settings", "s", "--listen", "x", "--lighting", "off"]),
-        strings(&[
-            "--settings",
-            "s",
-            "--listen",
-            "0.0.0.0:1",
-            "--lighting",
-            "on",
-        ]),
+        strings(&["--settings", "s", "--listen", "x", "--target", "off"]),
+        strings(&["--settings", "s", "--listen", "0.0.0.0:1", "--target", "on"]),
         strings(&[
             "--settings",
             "s",
@@ -280,10 +273,10 @@ fn full_args_round_trip_and_reject_mistakes() {
             "t",
             "--listen",
             "0.0.0.0:1",
-            "--lighting",
+            "--target",
             "off",
         ]),
-        strings(&["--settings", "s", "--listen", "0.0.0.0:1", "--lighting"]),
+        strings(&["--settings", "s", "--listen", "0.0.0.0:1", "--target"]),
         strings(&["full", "--settings", "s"]),
         strings(&["--prysm", "http://1.2.3.4:5"]),
     ] {

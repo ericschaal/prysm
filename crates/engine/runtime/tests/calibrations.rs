@@ -112,13 +112,13 @@ async fn active_calibration_is_applied_at_start_and_none_is_neutral() {
         let log = CallLog::new();
         let store = MemoryStore::with(with_active(Some("cool")));
         let (handle, engine) = start(&log, &store).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, Cast::Cool).await;
         engine.shutdown().await.unwrap();
 
         let store = MemoryStore::with(with_active(None));
         let (handle, engine) = start(&log, &store).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, Cast::Neutral).await;
         engine.shutdown().await.unwrap();
     })
@@ -131,7 +131,7 @@ async fn switching_the_active_calibration_while_running_keeps_source_and_output_
         let log = CallLog::new();
         let store = MemoryStore::with(with_active(Some("cool")));
         let (handle, engine) = start(&log, &store).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, Cast::Cool).await;
 
         let warm = with_active(Some("warm"));
@@ -181,7 +181,7 @@ async fn calibration_change_while_off_waits_for_the_next_start() {
             .unwrap();
         assert!(log.events().is_empty());
 
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, Cast::Warm).await;
         engine.shutdown().await.unwrap();
     })
@@ -195,7 +195,7 @@ async fn invalid_calibrations_are_rejected_before_persistence() {
         let initial = with_active(Some("cool"));
         let store = MemoryStore::with(initial.clone());
         let (handle, engine) = start(&log, &store).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, Cast::Cool).await;
         let current = revision(&handle);
 
@@ -238,7 +238,7 @@ async fn invalid_calibrations_are_rejected_before_persistence() {
 
         assert_eq!(store.saved(), Some(initial));
         assert_eq!(revision(&handle), current);
-        assert!(handle.snapshot().borrow().failure.is_none());
+        assert!(handle.snapshot().borrow().session.failure().is_none());
         assert_eq!(log.count("source.open:a"), 1);
         engine.shutdown().await.unwrap();
     })
@@ -261,9 +261,9 @@ async fn calibrations_round_trip_through_the_store_and_a_restart() {
 
         let (handle, engine) = start(&log, &store).await;
         assert_eq!(handle.snapshot().borrow().settings, saved);
-        assert!(handle.snapshot().borrow().failure.is_none());
+        assert!(handle.snapshot().borrow().session.failure().is_none());
         assert_eq!(store.clone().load().unwrap(), Some(saved));
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         wait_for_cast(&handle, Cast::Warm).await;
         engine.shutdown().await.unwrap();
     })

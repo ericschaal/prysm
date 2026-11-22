@@ -68,18 +68,35 @@ into `@prysm/contracts/application`.
 | `GET /metrics` (only when enabled) | — | `200` Prometheus text; see [Metrics](#metrics). Disabled: `404` like any unknown path |
 | `GET /api/v1/capture/stream` (only with a capture handoff) | WebSocket upgrade, subprotocol `prysm-capture.v6` | `101`: a capture-only TV's frame stream; see [Capture stream](#capture-stream) |
 
-`State` is `{ version, target, session, input?, device, calibration?, settings, revision, failure?, surface_failures }`.
+`State` is `{ version, target, session, input?, device, calibration?, settings, revision, surface_failures }`.
 `version` is the Prysm product version (`1.0.0`, `1.0.0-rc.1`); `revision` only counts settings replacements.
-`session` is `{ "state": "stopped" | "running" | "native" }` or
-`{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" | "source_unreleased" }`: a session stuck in that step past its deadline, or (`source_unreleased`) one whose source did not confirm its release.
+`target` is what the lights were asked to do: `off`, `screen_sync` or `effects`
+(the lights' own effects). `session` is what Prysm is doing, tagged by `state`;
+the target is reached when `session.state` equals it (`off` is reached by
+`stopped`):
+
+| `session` | Meaning |
+| --- | --- |
+| `{ "state": "stopped", "failure"?: LightingFailure }` | No session; Prysm does not drive the lights. After an output failure they may not be off. |
+| `{ "state": "screen_sync" }` | A session runs. It never carries a failure: it runs on valid settings and has reached its target. |
+| `{ "state": "effects", "failure"?: LightingFailure }` | The lights show their own effects; no session. |
+| `{ "state": "faulted", "message" }` | A session did not stop in time, or did not confirm its source's release; only a restart recovers. `message` says what did not finish, in words (not covered by the contract); the step itself is only logged. |
+
+A `failure` is present only while it explains the present: why the target is
+not reached, why `off` may not be off, or that the saved settings do not
+validate (then with any target). A failure of what a command replaced (the
+old output of a restart, a session that ended as the lights' own effects were
+asked for) is logged, never published nor the reply. `LightingFailure` is
+tagged by `kind`: `invalid { message, field? }` (`field` absent when the
+settings as a whole are at fault), `adapter { message, section? }` or
+`internal { message }`.
 `settings` is the settings file without its `format` number, which belongs to the file alone: a `settings` body carrying `format` is refused as an unknown field (`400`). Shape: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
 `processing.style.kind` is `natural`, `calm`, `vivid`, `game` or `custom`; a built-in style is stored by name only, and `custom` applies `processing.custom_style` (all seven knobs, required with `custom`, kept while another style is chosen). The built-in styles' values are not sent: the portal is built with them (`@prysm/contracts/constants`), and the [settings file](../../adapters/settings-file/README.md) describes the fields.
 A calibration's `correction` is `{ warmth, tint, midtones, red, green, blue }`, each primary `{ hue, strength }`, every control -100 to 100 and 0 when omitted ([settings file](../../adapters/settings-file/README.md)).
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
-`failure` is the last lighting failure, absent while there is none. Setting the target to
-`processed` opens the capture (a failure is the reply); the output is opened
-at the first frame, so an output that cannot open ends the session and appears
-only in `failure`. While no frames arrive, `input.receiving` is `false`
+Setting the target to `screen_sync` opens the capture (a failure is the
+reply); the output is opened at the first frame, so an output that cannot
+open ends the session and appears only in `session.failure`. While no frames arrive, `input.receiving` is `false`
 (waiting for video) and after a few seconds the output is returned to its own
 state until frames return.
 
@@ -120,7 +137,7 @@ the received-to-flushed spans as the `prysm_frame_flush_seconds` summary.
 Settings replacement is whole-document and optimistic: send the `revision` you
 edited from as `expected`. The engine validates, persists, then applies. A
 successful reply means saved; an apply failure afterwards appears in
-`State.failure`. A conflict is never retried automatically.
+`State.session.failure`. A conflict is never retried automatically.
 Revisions start from a random value each time the process starts (below
 2^52, so they stay exact JSON numbers) and count up by one per replacement, so a
 page holding a revision from before a restart gets `409` instead of
@@ -153,14 +170,14 @@ on the state stream.
 
 - `PUT /api/v1/calibration` with `{ "pattern": "gray_192", "uncorrected": false }`
   shows or switches the pattern. Both fields are required; unknown fields and
-  patterns are `400`. It needs `target` `processed` and does not start
-  lighting: otherwise `409 not_processed`.
+  patterns are `400`. It needs `target` `screen_sync` and does not start
+  lighting: otherwise `409 needs_screen_sync`.
 - While a pattern is set, the processor runs without smoothing, so a
   calibration change shows at once, and with `uncorrected: true` without any
   calibration, to compare. Brightness, colour boost, dark-scene glow, black bars and the saved
   settings are unchanged; both return to the settings when it clears.
-- It clears on `DELETE`, when the target leaves `processed` (`off`,
-  `device_native`, or a file source ending), at shutdown, and 10 minutes
+- It clears on `DELETE`, when the target leaves `screen_sync` (`off`,
+  `effects`, or a file source ending), at shutdown, and 10 minutes
   after the last `PUT` (each `PUT`, even unchanged, restarts that time), so
   a client that vanished does not leave lighting unsmoothed.
 
@@ -255,7 +272,7 @@ need not be valid. A form can ask before saving.
 | `type` | Fields | When |
 | --- | --- | --- |
 | `frame` | `sequence, source_width, source_height, width, height, viewport, colors, jpeg` | A frame the stream has not sent yet |
-| `idle` | — | No session runs (lighting `off`, `device_native`, stopped after a failure, faulted) or it has not processed a frame yet |
+| `idle` | — | No session runs (lighting `off`, `effects`, stopped after a failure, faulted) or it has not processed a frame yet |
 | `unavailable` | `message` | The latest frame cannot be shown (an empty frame); its colors are not sent |
 
 - `jpeg` is a base64 baseline JPEG (quality 75) of the whole captured frame,
@@ -283,7 +300,7 @@ registers a preview viewer with the engine; with none, the session publishes
 no preview and nothing is encoded. Encoding runs off the async runtime, once
 per frame for all viewers. Lighting turning off or failing mid-stream sends
 `idle` and keeps the stream open; it ends when the portal shuts down or the
-client leaves. `idle` only means there is no image: why (off, native, failed,
+client leaves. `idle` only means there is no image: why (off, effects, failed,
 waiting for frames) is in the state stream. Streams with nothing new carry a `:` comment every 15 seconds.
 
 The portal's CSP blocks `data:` and `blob:` images, so a portal page decodes
@@ -299,7 +316,7 @@ whose `data:` is a `ColorsEvent`, tagged by `type`:
 | `type` | Fields | When |
 | --- | --- | --- |
 | `colors` | `top, right, bottom, left` | The LEDs show Prysm's colors and they differ from the last ones sent |
-| `idle` | — | They do not: no session runs (`off`, `device_native`, stopped after a failure, faulted), it has not processed a frame yet, or its output was released after 3 s without frames |
+| `idle` | — | They do not: no session runs (`off`, `effects`, stopped after a failure, faulted), it has not processed a frame yet, or its output was released after 3 s without frames |
 
 - Each edge is `LedColors`' `[r, g, b]` sRGB bytes in screen orientation (as in
   the preview), but at most 8 entries (`COLOR_SEGMENTS`): each the average, in
@@ -340,8 +357,8 @@ metrics and no histograms.
 | Name | Type | Meaning |
 | --- | --- | --- |
 | `prysm_build_info{version}` | gauge | Always 1; `version` is the product version, as `State.version` |
-| `prysm_target{target}` | gauge | 1 for the current target (`off`, `processed`, `device_native`), 0 for the others |
-| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `running`, `native`, `faulted`), 0 for the others |
+| `prysm_target{target}` | gauge | 1 for the current target (`off`, `screen_sync`, `effects`), 0 for the others |
+| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `screen_sync`, `effects`, `faulted`), 0 for the others |
 | `prysm_settings_revision` | gauge | `State.revision` (random start per process) |
 | `prysm_input_fps` | gauge | `State.input.fps`; 0 while no session runs |
 | `prysm_frames_received_total` | counter | Frames taken from the capture source (frames from a remote TV included) |
@@ -400,12 +417,15 @@ option.
 
 ## Failures
 
-Every non-2xx API response has a `Failure` body: `{ kind, message, field?,
-current?, section? }`. `message` is what the user can act on; for `adapter`
-it is the whole cause chain (`context: cause: cause`), since the cause names
-the problem: a device's error, a remote sender's reason, an operating system
-error with a path (such as the settings file's). It reaches every client of
-the portal, in command replies and in `State.failure`.
+Every non-2xx API response has a `Failure` body, tagged by `kind`: each kind
+carries `message` and what it needs to act on, `invalid { message, field? }`,
+`stale_revision { message, current }` and `adapter { message, section? }`;
+every other kind is `{ kind, message }`. `message` is what the user can act
+on; for `adapter` it is the whole cause chain (`context: cause: cause`),
+since the cause names the problem: a device's error, a remote sender's
+reason, an operating system error with a path (such as the settings file's).
+It reaches every client of the portal, in command replies and, for a
+lighting failure, in `State.session.failure`.
 
 | Status | `kind` | When |
 | --- | --- | --- |
@@ -415,10 +435,10 @@ the portal, in command replies and in `State.failure`.
 | 405 | `method_not_allowed` | Known API path (or enabled `/metrics`), wrong method |
 | 408 | `bad_request` | Body not received within 5 s |
 | 409 | `stale_revision` | `expected` is not current; `current` is the revision to reload |
-| 409 | `not_processed` | A calibration pattern while the target is not `processed` |
+| 409 | `needs_screen_sync` | A calibration pattern while the target is not `screen_sync` |
 | 413 | `payload_too_large` | Body over 1 MiB |
 | 415 | `unsupported_media_type` | `PUT`, or `POST /api/v1/capture/modes`, without `Content-Type: application/json` |
-| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.calibrations[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `Processed` without capture/output configured; also, with no `field`, a settings file that could not be loaded at start (its whole cause chain in `message`), in `State.failure` and for lighting asked before a save |
+| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.calibrations[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `screen_sync` without capture/output configured; also, with no `field`, a settings file that could not be loaded at start (its whole cause chain in `message`), in `State.session.failure` and for lighting asked before a save |
 | 429 | `busy` | More than 8 open state streams, more than 4 preview streams, or more than 8 colors streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle; `section` (`capture` or `output`) says which side, when the engine knows |
@@ -441,6 +461,28 @@ idling the lights failed. It is absent when the side is unknown.
 A client that loses a command reply cannot know whether it ran; it reads the
 state rather than resubmitting blindly. The engine finishes a received command
 even if the client disconnects.
+
+## Values that may grow
+
+Enum values that Prysm sends (responses, events and the state) are open: a
+minor release may add a value. A client accepts a value it does not know,
+reads it as stated below (never as off or stopped), and sends a value it
+read back unchanged. Values Prysm receives (request bodies) are closed: one
+it does not know is refused (`400`, or `422` with `field`). The schemas list
+the values this version sends.
+
+| Field | Reading of an unknown value |
+| --- | --- |
+| `target` | The lights do something this client cannot name; no mode is selected. Choosing a known one still works. |
+| `session.state` | As `target`; a `failure` or `message` in it is still shown. |
+| `session.failure.kind`, `Failure.kind` | The general line from `section` or `field`, else "Something went wrong"; for a reply, its status class says refused (4xx) or failed (5xx); `message` is shown. |
+| `…failure.section` | Absent: the side is not known. |
+| `device.issue` | The lights are not showing screen sync. |
+| `input.behind` | Prysm cannot keep up, without naming the step. |
+| `calibration.pattern` | A calibration pattern is shown. |
+| `settings` kinds and adapter values | Kept as sent and sent back unchanged. |
+| `Modes.status` | `unknown`. |
+| Event `type`s of the preview and colors streams | Skipped. |
 
 ## Access
 
@@ -550,13 +592,13 @@ returns; nothing is detached.
 [`tests/http/`](tests/http/main.rs), one file per subject, runs the portal on loopback against an engine
 with `prysm-runtime`'s fake adapters: construction validation, foreign origins
 refused before the engine runs (commands, stream, preflight), same-origin and
-origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, calibration (refused unless processed, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), processing trial (applied without saving or a revision change, validated, exact fields, origin policy), adapter failure (502),
+origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, calibration (refused unless screen sync, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), processing trial (applied without saving or a revision change, validated, exact fields, origin policy), adapter failure (502),
 missing settings (422), settings replace success/stale/invalid/undecodable,
 media type and size limits, stream delivery, the stream limit, a faulted engine
 (503), prompt listener shutdown, and the preview: `idle` while off and after the
 session ends, frames while running, no viewer registered without a stream, the
 viewer limit, the 8 per second cap, the origin policy and streams ending at
-shutdown, the colors stream: `idle` while off and in `device_native`, an
+shutdown, the colors stream: `idle` while off and in `effects`, an
 edge summary while running, nothing more while the colors stay the same, no
 preview viewer registered for it, the 10 per second cap, its own limit, the
 origin policy and `405`, and `/metrics`: `404` when disabled; content type, counted frames,

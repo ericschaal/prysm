@@ -117,7 +117,7 @@ test('the preview has its own page, reached from Settings, and streams only whil
     // on (off, the card opens nothing).
     await openEditor('Video source');
     assert(!$('button.section-status-main'), 'off: nothing to open');
-    await act(async () => portal.fixture.publish({ target: 'processed' }));
+    await act(async () => portal.fixture.publish({ target: 'screen_sync' }));
     assert.match(
       $('button.section-status-main').textContent,
       /See the picture$/,
@@ -203,7 +203,7 @@ test('the preview has its own page, reached from Settings, and streams only whil
     assert.equal(preview.open(), 0);
     assert(!$('.preview-canvas'));
     await openEditor('Video source');
-    await act(async () => portal.fixture.publish({ target: 'processed' }));
+    await act(async () => portal.fixture.publish({ target: 'screen_sync' }));
     await click($('button.section-status-main'));
     await act(async () => portal.fixture.publish({ target: 'off' }));
     assert.equal(preview.open(), 1);
@@ -269,9 +269,9 @@ test('a busy or dropped preview says so, offers a retry and leaves the portal wo
       window.location.hash = '';
       await sleep(0);
     });
-    await act(async () => $('[data-target="processed"]').click());
+    await act(async () => $('[data-target="screen_sync"]').click());
     await flush();
-    assert.equal(portal.fixture.snapshot().target, 'processed');
+    assert.equal(portal.fixture.snapshot().target, 'screen_sync');
     await act(async () => {
       window.location.hash = '#/preview';
       await sleep(0);
@@ -290,7 +290,7 @@ test('a busy or dropped preview says so, offers a retry and leaves the portal wo
 test('without a preview client the portal offers no preview', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
-    await act(async () => portal.fixture.publish({ target: 'processed' }));
+    await act(async () => portal.fixture.publish({ target: 'screen_sync' }));
     await openEditor('Video source');
     assert(!$('button.section-status-main'));
     await leaveEditor();

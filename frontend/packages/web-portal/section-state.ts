@@ -1,8 +1,9 @@
 import {
   describeOutputIssue,
   plainFailure,
-  type Failure,
-  type LightingTarget,
+  type LightingFailure,
+  type LightingSituation,
+  type TargetReading,
 } from '@prysm/application-client';
 import type { DeviceReport, Input } from '@prysm/contracts/application';
 import { ledCountsDiffer } from './adapters';
@@ -12,9 +13,12 @@ import type { PathState } from './setup-card';
 /** What the state says about screen sync now, for a section's status. */
 export interface LiveState {
   online: boolean;
-  target: LightingTarget;
+  target: TargetReading;
   path: PathState;
-  failure: Failure | null;
+  /** The failure the lighting situation says (see `situationFailure`). */
+  failure: LightingFailure | null;
+  /** What the lights are doing, decided once (`lightingSituation`). */
+  situation: LightingSituation;
   input?: Input;
   /** What the lights say about themselves. */
   device: DeviceReport;
@@ -55,7 +59,7 @@ export function sectionStatus(
 ): Status {
   const capture = section === 'capture';
   const effects = lights.effects ?? 'Device effects';
-  const { path, failure, target } = live;
+  const { path, failure, target, situation } = live;
   const outputIssue = live.device.issue;
   if (identity === null)
     return {
@@ -67,6 +71,16 @@ export function sectionStatus(
     };
   if (!live.online)
     return { tone: 'idle', title: 'Waiting for the connection…', detail: '' };
+  // A target or session state newer than this page: never "Starting…".
+  if (situation.kind === 'unknown')
+    return {
+      tone: 'idle',
+      title: 'Prysm is newer than this page',
+      detail: 'Reload it to see what the lights do.',
+    };
+  // Why: the fault's own words, else the failure's message.
+  const reason =
+    situation.kind === 'faulted' ? situation.message : failure?.message;
   if (path.kind === 'failed') {
     const plain = failure
       ? plainFailure(failure, target, effects)
@@ -78,13 +92,13 @@ export function sectionStatus(
           tone: 'problem',
           title: 'No picture',
           detail: '',
-          details: failure?.message ?? plain,
+          details: reason ?? plain,
         }
       : {
           tone: 'problem',
           title: 'Lights not responding',
           detail: identity,
-          details: failure?.message,
+          details: reason,
         };
   }
   if (target === 'off')
@@ -95,7 +109,7 @@ export function sectionStatus(
         ? 'Screen sync is off, so this source isn’t in use.'
         : 'Screen sync is off, so these lights aren’t in use.',
     };
-  if (target === 'device_native') {
+  if (target === 'effects') {
     if (capture)
       return {
         tone: 'idle',

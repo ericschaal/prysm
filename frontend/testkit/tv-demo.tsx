@@ -96,11 +96,14 @@ export function runDemo(
   };
   // A worker that starts capturing a moment after it is enabled; the full
   // worker's engine follows the supervisor's target and reports portal changes.
-  const lightingOf = () => {
+  const targetOf = () => {
     const facts = supervisor.facts();
-    return facts.flavor === 'full' ? facts.lighting : null;
+    return facts.flavor === 'full' ? facts.target : null;
   };
-  let lighting = lightingOf();
+  let sent = targetOf();
+  // The full worker reports its engine's failure, as the real one does.
+  if (flavor === 'full')
+    application.watch((snapshot) => supervisor.report(snapshot));
   setInterval(() => {
     const facts = supervisor.facts();
     const capturing =
@@ -111,15 +114,14 @@ export function runDemo(
       supervisor.publish({ capturing, fps: capturing ? 30 : null });
     if (facts.flavor !== 'full') return;
     const target = application.snapshot().target;
-    if (facts.lighting !== lighting)
-      void application.client.setTarget(facts.lighting);
-    else if (target !== facts.lighting)
+    if (facts.target !== sent) void application.client.setTarget(facts.target);
+    else if (target !== facts.target && target !== 'unknown')
       supervisor.publish({
-        lighting: target,
-        capturing: target === 'processed',
-        fps: target === 'processed' ? 30 : null,
+        target,
+        capturing: target === 'screen_sync',
+        fps: target === 'screen_sync' ? 30 : null,
       });
-    lighting = lightingOf();
+    sent = targetOf();
   }, 500);
   Object.assign(window, { demo: { supervisor, application, addLights } });
   const root = document.getElementById('root');
@@ -143,7 +145,7 @@ export function runDemo(
   // The supervisor's states the UI distinguishes, to look at each one.
   // Lighting (full) or capture (slim) on, in the package's own terms.
   const on: FakeChange =
-    flavor === 'full' ? { lighting: 'processed' } : { enabled: true };
+    flavor === 'full' ? { target: 'screen_sync' } : { enabled: true };
   const states: Record<string, FakeChange> = {
     'TV: as it is': {},
     'TV: failure, retry countdown': {
@@ -152,11 +154,18 @@ export function runDemo(
       capturing: false,
       fps: null,
     },
-    'TV: failure': {
-      failure: { kind: 'other', message: 'Capture stopped: no video frames' },
-      capturing: false,
-      fps: null,
-    },
+    // Full: the engine's session failure, which the worker reports (below).
+    'TV: failure':
+      flavor === 'full'
+        ? {}
+        : {
+            failure: {
+              kind: 'other',
+              message: 'Capture stopped: no video frames',
+            },
+            capturing: false,
+            fps: null,
+          },
     'TV: waiting for video': {
       ...on,
       video: 'unavailable',
@@ -219,6 +228,21 @@ export function runDemo(
   );
   for (const name of Object.keys(states)) tvState.add(new Option(name, name));
   tvState.onchange = () => {
+    if (flavor === 'full' && tvState.value === 'TV: failure') {
+      // As on a TV: screen sync asked, then its session failed.
+      application.publish({
+        target: 'screen_sync',
+        session: {
+          state: 'stopped',
+          failure: {
+            kind: 'adapter',
+            section: 'capture',
+            message: 'Capture stopped: no video frames',
+          },
+        },
+      });
+      return;
+    }
     const change = states[tvState.value];
     const facts = supervisor.facts();
     const running = facts.flavor === 'full' || facts.enabled;

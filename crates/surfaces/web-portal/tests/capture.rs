@@ -146,7 +146,7 @@ async fn a_sender_streams_through_the_portal_once_lighting_runs() {
         );
 
         host.engine
-            .set_target(LightingTarget::Processed)
+            .set_target(LightingTarget::ScreenSync)
             .await
             .unwrap();
         // The target is set once the session has opened its source, which
@@ -173,7 +173,7 @@ async fn browsers_from_other_sites_cannot_open_it_and_without_a_source_it_is_abs
     within_async(LIMIT, async {
         let host = start(true).await;
         host.engine
-            .set_target(LightingTarget::Processed)
+            .set_target(LightingTarget::ScreenSync)
             .await
             .unwrap();
         // A page on another site: browsers always send its origin.

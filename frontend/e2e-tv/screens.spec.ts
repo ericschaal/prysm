@@ -69,7 +69,7 @@ const screens: Screen[] = [
     name: 'Home, screen sync on',
     focus: 'mode-off',
     reach: async (page) => {
-      await pressUntil(page, 'ArrowLeft', 'mode-processed');
+      await pressUntil(page, 'ArrowLeft', 'mode-screen_sync');
       await press(page, 'Enter');
       await expect(page.locator('#status-title')).toHaveText('Screen sync on');
     },
@@ -79,14 +79,19 @@ const screens: Screen[] = [
     name: 'Home, failure with Try again',
     focus: 'mode-off',
     reach: async (page) => {
+      // As on a TV: screen sync asked, then its session failed; the worker
+      // reports the failure to the supervisor.
       await page.evaluate(() =>
-        window.demo.supervisor.publish({
-          failure: {
-            kind: 'other',
-            message: 'Capture stopped: no video frames',
+        window.demo.application.publish({
+          target: 'screen_sync',
+          session: {
+            state: 'stopped',
+            failure: {
+              kind: 'adapter',
+              section: 'capture',
+              message: 'Capture stopped: no video frames',
+            },
           },
-          capturing: false,
-          fps: null,
         }),
       );
       await expect(page.locator('#primary')).toHaveText('Try again');

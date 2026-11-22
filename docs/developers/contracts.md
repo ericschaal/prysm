@@ -73,7 +73,7 @@ webOS hosts import from `host-webos`.
 `luna` describes `luna://io.github.ericschaal.prysm.service`, the TV supervisor both
 packages install under one name. It is one document for both flavors: `State`
 carries the installed package's own fields in `Package`, tagged by `flavor`
-(full: `lighting`, `FullWorker`; slim: `enabled`, `SlimWorker`), and each
+(full: `target`, `FullWorker`; slim: `enabled`, `SlimWorker`), and each
 worker type, tagged by `phase`, carries a report only in the phases that have
 one. The frontend narrows on `flavor` and `phase`. Request bodies and
 `Preferences` reject unknown fields. The fixtures hold a `State` of each

@@ -5,7 +5,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import type { LightingTarget } from '@prysm/application-client';
+import type { TargetReading } from '@prysm/application-client';
 import type { Calibration } from '@prysm/contracts/application';
 import {
   screenOf,
@@ -191,7 +191,7 @@ function StartScreen({
   from: string;
   choose: (from: string) => void;
   scope: FieldScope;
-  target: LightingTarget;
+  target: TargetReading;
   locked: boolean;
   starting: boolean;
   start: () => void;
@@ -221,7 +221,7 @@ function StartScreen({
         Patterns are compared in the TV’s current picture mode, so calibrate in
         the mode you watch in.
       </p>
-      {target !== 'processed' ? (
+      {target !== 'screen_sync' ? (
         <p className="notice warning" role="status">
           {needsTv}
         </p>
@@ -255,7 +255,7 @@ function StartScreen({
         <button
           type="button"
           className="primary"
-          disabled={locked || full || target !== 'processed'}
+          disabled={locked || full || target !== 'screen_sync'}
           onClick={start}
         >
           {starting ? 'Starting…' : 'Start'}
@@ -384,7 +384,7 @@ function EndedNotice({
   closing: Closing | null;
   heading: (title: string) => ReactNode;
   notices: ReactNode;
-  target: LightingTarget;
+  target: TargetReading;
   disabled: boolean;
 }) {
   return (
@@ -393,7 +393,7 @@ function EndedNotice({
       <p className="notice warning" role="alert">
         The TV no longer shows the patterns. Your changes so far are kept in “
         {wizard.draft ? wizard.draft.name : 'your calibration'}”.
-        {target !== 'processed' ? ` ${tvInstruction}` : ''}
+        {target !== 'screen_sync' ? ` ${tvInstruction}` : ''}
       </p>
       {notices}
       <div className="actions">
@@ -554,7 +554,7 @@ function StepScreen({
   view: Calibrating;
   heading: (title: string) => ReactNode;
   notices: ReactNode;
-  target: LightingTarget;
+  target: TargetReading;
   /** The portal cannot take commands now. */
   disabled: boolean;
   finish: () => void;

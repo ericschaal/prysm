@@ -38,7 +38,7 @@ impl View<'_> {
     /// What the LEDs show now: nothing unless a session is running.
     fn shown(&self) -> Option<&Preview> {
         self.preview
-            .filter(|_| self.snapshot.session == SessionState::Running)
+            .filter(|_| matches!(self.snapshot.session, SessionState::ScreenSync))
     }
 }
 
@@ -104,13 +104,14 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(match input_label(snapshot) {
+                // Short, so the lights' issue fits beside it.
                 Some(input) => format!(
-                    "Target: {} · Session: {} · Input: {input}{issue}",
+                    "Target {} · Session {} · Input: {input}{issue}",
                     snapshot.target.as_str(),
                     snapshot.session
                 ),
                 None => format!(
-                    "Target: {} · Session: {}{issue}",
+                    "Target {} · Session {}{issue}",
                     snapshot.target.as_str(),
                     snapshot.session
                 ),
@@ -136,7 +137,7 @@ fn header_line(snapshot: &Snapshot) -> Line<'static> {
         Span::styled("  TERMINAL  /  ", Style::default().fg(MUTED)),
         Span::styled(
             snapshot.session.to_string(),
-            Style::default().fg(session_color(snapshot.session)).bold(),
+            Style::default().fg(session_color(&snapshot.session)).bold(),
         ),
     ])
 }
@@ -155,7 +156,7 @@ pub(crate) fn status_lines(view: &View<'_>) -> Vec<Line<'static>> {
             Span::styled("Session   ", Style::default().fg(MUTED)),
             Span::styled(
                 snapshot.session.to_string(),
-                Style::default().fg(session_color(snapshot.session)).bold(),
+                Style::default().fg(session_color(&snapshot.session)).bold(),
             ),
         ]),
     ];
@@ -219,8 +220,9 @@ fn field(name: &str, value: String) -> Line<'static> {
 pub(crate) fn diagnostics(view: &View<'_>) -> Vec<Line<'static>> {
     let snapshot = view.snapshot;
     let failures = snapshot
-        .failure
-        .iter()
+        .session
+        .failure()
+        .into_iter()
         .map(|error| Notice::error(format!("Lighting: {}", chain(error))));
     let surfaces = snapshot
         .surface_failures
@@ -253,12 +255,12 @@ fn panel(title: &str) -> Block<'_> {
         .title(Span::styled(title, Style::default().fg(TEXT)))
 }
 
-fn session_color(state: SessionState) -> Color {
+fn session_color(state: &SessionState) -> Color {
     match state {
-        SessionState::Running => ACCENT,
-        SessionState::Native => WARNING,
+        SessionState::ScreenSync => ACCENT,
+        SessionState::Effects { .. } => WARNING,
         SessionState::Faulted(_) => ERROR,
-        SessionState::Stopped => MUTED,
+        SessionState::Stopped { .. } => MUTED,
     }
 }
 
@@ -322,12 +324,12 @@ fn samples(colors: &EdgeColors) -> usize {
 }
 
 fn idle_text(snapshot: &Snapshot) -> &'static str {
-    match snapshot.session {
-        SessionState::Running => "Waiting for the first frame",
-        SessionState::Native => "The output shows its native effect",
+    match &snapshot.session {
+        SessionState::ScreenSync => "Waiting for the first frame",
+        SessionState::Effects { .. } => "The lights show their own effects",
         SessionState::Faulted(_) => "Session did not finish; only shutdown is accepted",
-        SessionState::Stopped if snapshot.failure.is_some() => "Lighting stopped after a failure",
-        SessionState::Stopped => "Lighting off · press p to start",
+        SessionState::Stopped { failure: Some(_) } => "Lighting stopped after a failure",
+        SessionState::Stopped { failure: None } => "Lighting off · press s to start",
     }
 }
 
@@ -407,7 +409,7 @@ mod tests {
     use super::*;
     use crate::input::Notice;
     use prysm_core::{Frame, LinearColor, PixelFormat, Viewport};
-    use prysm_ports::{Error, LightingTarget, Revision, SessionPhase};
+    use prysm_ports::{Error, LightingTarget, Revision};
     use ratatui::{Terminal, backend::TestBackend};
     use std::num::NonZeroUsize;
 
@@ -432,8 +434,8 @@ mod tests {
 
     fn running() -> Snapshot {
         Snapshot {
-            target: LightingTarget::Processed,
-            session: SessionState::Running,
+            target: LightingTarget::ScreenSync,
+            session: SessionState::ScreenSync,
             revision: Revision(4),
             settings: serde_json::from_str(
                 r#"{ "capture": { "kind": "device" }, "output": { "kind": "null" } }"#,
@@ -520,14 +522,14 @@ mod tests {
         assert_eq!(buffer.content[first - width].bg, Color::Rgb(255, 0, 0));
         assert!(text.contains("32×16 RGB24"), "{text}");
         assert!(text.contains("1 · 3 · 2 · 3"));
-        assert!(text.contains("running"));
+        assert!(text.contains("screen_sync"));
         assert!(text.contains("device"));
     }
 
     #[test]
     fn stopped_sessions_show_no_stale_preview() {
         let snapshot = Snapshot {
-            session: SessionState::Stopped,
+            session: SessionState::default(),
             ..running()
         };
         let preview = green_preview();
@@ -540,7 +542,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         let text = draw(&mut terminal, &view);
         assert!(!text.contains('▀'));
-        assert!(text.contains("press p to start"));
+        assert!(text.contains("press s to start"));
         let red = Color::Rgb(255, 0, 0);
         assert!(
             terminal
@@ -555,17 +557,18 @@ mod tests {
     #[test]
     fn failures_and_notices_are_shown_newest_first_at_every_size() {
         let snapshot = Snapshot {
-            session: SessionState::Faulted(SessionPhase::ClosingSource),
-            failure: Some(Error::adapter(
-                "capture failed",
-                std::io::Error::other("device unplugged"),
-            )),
+            session: SessionState::Effects {
+                failure: Some(Error::adapter(
+                    "capture failed",
+                    std::io::Error::other("device unplugged"),
+                )),
+            },
             surface_failures: vec![Error::other("portal could not bind")],
             ..Snapshot::default()
         };
         let mut ui = Ui::default();
         ui.notify(Notice::info("older event"));
-        ui.notify(Notice::error("Target processed: newest event"));
+        ui.notify(Notice::error("Target screen_sync: newest event"));
         let view = View {
             snapshot: &snapshot,
             preview: None,
@@ -575,7 +578,7 @@ mod tests {
         let text = draw(&mut terminal, &view);
         assert!(text.contains("capture failed: device unplugged"), "{text}");
         assert!(text.contains("portal could not bind"));
-        assert!(text.contains("faulted while closing the source"));
+        assert!(text.contains("Session   effects"), "{text}");
         assert!(text.find("newest event") < text.find("older event"));
         assert!(text.contains("q quit"));
         for (width, height) in [
@@ -591,7 +594,7 @@ mod tests {
             terminal.autoresize().unwrap();
             let text = draw(&mut terminal, &view);
             if width >= 40 && height >= 12 {
-                assert!(text.contains("faulted"), "{width}x{height}");
+                assert!(text.contains("effects"), "{width}x{height}");
                 assert!(text.contains("capture failed"), "{width}x{height}");
             }
         }
@@ -610,7 +613,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
         let text = draw(&mut terminal, &view);
         assert!(text.contains('▀'));
-        assert!(text.contains("Target: processed · Session: running"));
+        assert!(
+            text.contains("Target screen_sync · Session screen_sync"),
+            "{text}"
+        );
         assert!(text.contains("device → null · rev 4"));
     }
 
@@ -680,6 +686,38 @@ mod tests {
         );
         assert!(!text.contains("Input"), "{text}");
     }
+    #[test]
+    fn a_faulted_session_says_what_did_not_finish_at_every_size() {
+        let snapshot = Snapshot {
+            session: SessionState::Faulted(prysm_ports::SessionPhase::ClosingSource),
+            ..Snapshot::default()
+        };
+        let ui = Ui::default();
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        for (width, height) in [(100, 30), (70, 18)] {
+            let text = draw(
+                &mut Terminal::new(TestBackend::new(width, height)).unwrap(),
+                &view,
+            );
+            assert!(
+                text.contains("faulted while closing the source"),
+                "{width}x{height}: {text}"
+            );
+        }
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(
+            text.contains("Session did not finish; only shutdown is accepted"),
+            "{text}"
+        );
+    }
+
     #[test]
     fn status_says_why_the_lights_do_not_show_prysm() {
         let mut snapshot = running();

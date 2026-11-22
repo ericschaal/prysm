@@ -4,7 +4,7 @@ use futures::{Stream, StreamExt};
 use http_body_util::{BodyExt, Full, StreamBody, combinators::UnsyncBoxBody};
 use hyper::{StatusCode, body::Frame, header};
 use prysm_ports::Error;
-use prysm_protocol::{Failure, FailureKind};
+use prysm_protocol::Failure;
 use prysm_runtime::Shutdown;
 use serde::Serialize;
 use std::convert::Infallible;
@@ -81,8 +81,9 @@ pub(crate) fn json(status: StatusCode, value: &impl Serialize) -> Response {
         Ok(body) => bytes(status, "application/json", body),
         Err(_) => failure(
             StatusCode::INTERNAL_SERVER_ERROR,
-            FailureKind::Internal,
-            "response encoding failed",
+            Failure::Internal {
+                message: "response encoding failed".into(),
+            },
         ),
     }
 }
@@ -93,8 +94,7 @@ pub(crate) fn empty(status: StatusCode) -> Response {
     response
 }
 
-pub(crate) fn failure(status: StatusCode, kind: FailureKind, message: &str) -> Response {
-    let body = Failure::new(kind, message);
+pub(crate) fn failure(status: StatusCode, body: Failure) -> Response {
     match serde_json::to_vec(&body) {
         Ok(encoded) => bytes(status, "application/json", encoded),
         Err(_) => empty(status),
@@ -109,7 +109,7 @@ pub(crate) fn error(error: &Error) -> Response {
         Error::Invalid(_) | Error::Decode { .. } | Error::UnusableSettings(_) => {
             StatusCode::UNPROCESSABLE_ENTITY
         }
-        Error::StaleRevision { .. } | Error::NotProcessed => StatusCode::CONFLICT,
+        Error::StaleRevision { .. } | Error::NeedsScreenSync => StatusCode::CONFLICT,
         Error::Faulted(_) | Error::Closed => StatusCode::SERVICE_UNAVAILABLE,
         Error::Adapter { .. } => StatusCode::BAD_GATEWAY,
         Error::Panicked(_) => StatusCode::INTERNAL_SERVER_ERROR,

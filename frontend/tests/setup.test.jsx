@@ -163,7 +163,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     });
     assert.deepEqual(fixture.calls.slice(-2), [
       'replaceSettings',
-      'target:processed',
+      'target:screen_sync',
     ]);
     assert.equal(wizard(), null);
     assert.equal(
@@ -344,7 +344,7 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
     ]);
     await next();
     assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'webos' });
-    assert.equal(fixture.snapshot().target, 'processed');
+    assert.equal(fixture.snapshot().target, 'screen_sync');
     await openEditor('Video source');
     assert.equal($('.page-heading h2').textContent, 'Video source');
     assert(form('Video source'));

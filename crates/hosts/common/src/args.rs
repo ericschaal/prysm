@@ -31,7 +31,7 @@ pub(crate) struct Options {
     /// Serve no web portal
     #[arg(long, conflicts_with_all = ["listen", "allow_origin", "metrics"])]
     pub no_portal: bool,
-    /// Request processed lighting at launch (else idle)
+    /// Start screen sync at launch (else idle)
     #[arg(long)]
     pub start: bool,
     /// Append log lines to PATH instead of stderr

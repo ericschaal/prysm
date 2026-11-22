@@ -23,7 +23,7 @@
 //! Without registrations `CaptureSettings` and `OutputSettings` are open
 //! objects with a string `kind`.
 use crate::{
-    ColorsEvent, Failure, FailureKind, FailureSection, LedColor, LedColors, PreviewEvent,
+    ColorsEvent, Failure, FailureSection, LedColor, LedColors, LightingFailure, PreviewEvent,
     PreviewFrame, PreviewViewport, Session, SettingsReplaced, SettingsRequest, State,
     TargetRequest,
 };
@@ -253,8 +253,8 @@ pub enum PatternSchema {
 #[serde(rename_all = "snake_case")]
 pub enum LightingTargetSchema {
     Off,
-    Processed,
-    DeviceNative,
+    ScreenSync,
+    Effects,
 }
 
 // Mirrors `prysm_ports::Input`.
@@ -438,20 +438,6 @@ pub enum ModesSchema {
     Known { modes: Vec<ModeSchema> },
 }
 
-// Mirrors `prysm_ports::SessionPhase`.
-/// Where a faulted session stopped making progress, or `source_unreleased`:
-/// it finished without confirming its source's release.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Phase)]
-#[serde(rename_all = "snake_case")]
-pub enum PhaseSchema {
-    Running,
-    ClosingSource,
-    IdlingOutput,
-    Finishing,
-    SourceUnreleased,
-}
-
 /// A capture section, `{ "kind": "...", ...fields }`. Replaced by the
 /// registered adapters' tagged schemas in [`Contract::document`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -499,9 +485,8 @@ impl ToSchema for OutputSettings {}
     OutputIssueSchema,
     DeviceReportSchema,
     Session,
-    PhaseSchema,
+    LightingFailure,
     Failure,
-    FailureKind,
     FailureSection,
     TargetRequest,
     SettingsRequest,
@@ -672,8 +657,8 @@ mod tests {
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
         DeviceBrightness, DeviceReport, FrameSource, Input, Latency, LightingTarget, Mode, Modes,
-        OutputIssue, Pattern, PrimaryControls, Processing, Result, SessionPhase, Settings, Span,
-        Style, StyleValues, ValidationError,
+        OutputIssue, Pattern, PrimaryControls, Processing, Result, Settings, Span, Style,
+        StyleValues, ValidationError,
     };
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::json;
@@ -788,15 +773,6 @@ mod tests {
             brightness: DeviceBrightness::from_percent(40),
             led_count: Some(120),
         });
-        for phase in [
-            SessionPhase::Running,
-            SessionPhase::ClosingSource,
-            SessionPhase::IdlingOutput,
-            SessionPhase::Finishing,
-            SessionPhase::SourceUnreleased,
-        ] {
-            assert_mirror_round_trips::<SessionPhase, PhaseSchema>(&phase);
-        }
         assert_mirror_round_trips::<Candidate, CandidateSchema>(&Candidate::new(
             "USB Video",
             &json!({ "path": "/dev/video0" }),

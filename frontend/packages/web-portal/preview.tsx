@@ -1,15 +1,15 @@
 import { useRef, useState } from 'react';
 import type {
-  LightingTarget,
   PreviewClient,
-  Session,
+  SessionReading,
+  TargetReading,
 } from '@prysm/application-client';
 import { usePageVisible } from './live-colors';
 import { usePreviewStream } from './preview-stream';
 
-function idleMessage(target: LightingTarget, session: Session) {
-  if (session.state === 'running') return 'Waiting for the first picture…';
-  if (session.state === 'native')
+function idleMessage(target: TargetReading, session: SessionReading) {
+  if (session.state === 'screen_sync') return 'Waiting for the first picture…';
+  if (session.state === 'effects')
     return 'The lights are showing their own effects, so there is no picture to show.';
   if (target === 'off')
     return 'Lights are off. Turn on Screen sync to see the picture and its colours.';
@@ -31,8 +31,8 @@ export function PreviewPanel({
 }: {
   client: PreviewClient;
   online: boolean;
-  target: LightingTarget;
-  session: Session;
+  target: TargetReading;
+  session: SessionReading;
 }) {
   const [attempt, setAttempt] = useState(0);
   const visible = usePageVisible();

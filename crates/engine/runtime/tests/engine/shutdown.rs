@@ -13,7 +13,7 @@ async fn stop_writes_then_closes_source_then_idles_output_then_joins() {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, named("a", "a"), DEADLINE).await;
         let preview = handle.preview();
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 3).await);
         assert!(preview.latest().is_some());
 
@@ -24,8 +24,12 @@ async fn stop_writes_then_closes_source_then_idles_output_then_joins() {
         assert!(before(&log, "source.close:a", "output.idle:a:Off"));
         assert!(before(&log, "output.idle:a:Off", "joined"));
         let snapshot = handle.snapshot().borrow().clone();
-        assert_eq!(snapshot.session, SessionState::Stopped);
-        assert!(snapshot.failure.is_none());
+        assert!(
+            matches!(snapshot.session, SessionState::Stopped { .. }),
+            "{}",
+            snapshot.session
+        );
+        assert!(snapshot.session.failure().is_none());
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -47,17 +51,17 @@ async fn missed_stop_deadline_faults_and_only_shutdown_is_accepted() {
             },
         );
         let (handle, engine, _) = start(&log, hanging, Duration::from_millis(100)).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 1).await);
 
         let error = handle.set_target(LightingTarget::Off).await.unwrap_err();
         assert!(matches!(error, Error::Faulted(SessionPhase::ClosingSource)));
-        assert_eq!(
+        assert!(matches!(
             handle.snapshot().borrow().session,
             SessionState::Faulted(SessionPhase::ClosingSource)
-        );
+        ));
         assert!(matches!(
-            handle.set_target(LightingTarget::Processed).await,
+            handle.set_target(LightingTarget::ScreenSync).await,
             Err(Error::Faulted(_))
         ));
         assert!(matches!(
@@ -93,7 +97,7 @@ async fn shutdown_abandons_a_command_stuck_in_an_adapter() {
         let (handle, engine, _) = start(&log, stuck, STUCK_DEADLINE).await;
         let starting = tokio::spawn({
             let handle = handle.clone();
-            async move { handle.set_target(LightingTarget::Processed).await }
+            async move { handle.set_target(LightingTarget::ScreenSync).await }
         });
         assert!(log.wait_for("source.opening:a", 1).await);
 
@@ -141,7 +145,7 @@ async fn stuck_calls_in_sequence_share_one_shutdown_grace() {
         // Queued behind the stuck save; its open would block too.
         let starting = tokio::spawn({
             let handle = handle.clone();
-            async move { handle.set_target(LightingTarget::Processed).await }
+            async move { handle.set_target(LightingTarget::ScreenSync).await }
         });
         tokio::task::yield_now().await;
 
@@ -172,7 +176,7 @@ async fn shutdown_abandons_a_stuck_save_and_still_stops_the_session_in_order() {
         let (handle, engine) = Engine::start(registry(&log), Box::new(store), STUCK_DEADLINE)
             .await
             .unwrap();
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:a", 1).await);
         let saving = tokio::spawn({
             let handle = handle.clone();
@@ -214,17 +218,17 @@ async fn unconfirmed_source_release_faults_the_engine() {
         let (handle, engine) = Engine::start(registry, Box::new(store), DEADLINE)
             .await
             .unwrap();
-        handle.set_target(LightingTarget::Processed).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:o", 1).await);
         assert!(handle.set_target(LightingTarget::Off).await.is_err());
         // The output was still idled, and nothing may reopen the device.
         assert_eq!(log.count("output.idle:o:Off"), 1);
-        assert_eq!(
+        assert!(matches!(
             handle.snapshot().borrow().session,
             SessionState::Faulted(SessionPhase::SourceUnreleased)
-        );
+        ));
         assert!(matches!(
-            handle.set_target(LightingTarget::Processed).await,
+            handle.set_target(LightingTarget::ScreenSync).await,
             Err(Error::Faulted(SessionPhase::SourceUnreleased))
         ));
         assert!(engine.shutdown().await.is_err());
@@ -254,7 +258,7 @@ async fn shutdown_refuses_the_requests_queued_behind_it() {
         assert!(log.wait_for("store.saving", 1).await);
         let starting = tokio::spawn({
             let handle = handle.clone();
-            async move { handle.set_target(LightingTarget::Processed).await }
+            async move { handle.set_target(LightingTarget::ScreenSync).await }
         });
         tokio::task::yield_now().await;
 

@@ -231,13 +231,13 @@ export function TvApp({
   async function startCalibration() {
     setStarting(true);
     try {
-      if (portal.snapshot?.target !== 'processed')
-        await portal.setTarget('processed');
+      if (portal.snapshot?.target !== 'screen_sync')
+        await portal.setTarget('screen_sync');
       // Hidden meanwhile: hiding ends calibration, so it does not open.
       if (pageShown()) setCalibrating(portalAddress);
     } catch (reason) {
       tv.say(
-        plainFailure(failureOf(reason), 'processed', 'WLED effects'),
+        plainFailure(failureOf(reason), 'screen_sync', 'WLED effects'),
         true,
       );
     } finally {
@@ -343,8 +343,9 @@ export function TvApp({
                   {screen.label}
                 </button>
               ) : null}
-              {/* Full without a task: the button's place, kept empty. */}
-              {screen.showPrimary || slim ? null : (
+              {/* No task (full; slim in a phase this app cannot read): the
+                  button's place, kept empty. */}
+              {screen.showPrimary ? null : (
                 <div className="primary-slot" aria-hidden="true" />
               )}
             </section>

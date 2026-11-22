@@ -218,6 +218,7 @@ fn get_state_is_open_and_subscribable() {
 fn only_the_app_may_change_anything() {
     let mut h = Harness::new(config(), None);
     for (method, payload) in [
+        ("setTarget", r#"{"target":"screen_sync"}"#),
         ("setEnabled", r#"{"enabled":true}"#),
         ("setPreferences", r#"{"autostart":true}"#),
         ("uninstall", "{}"),
@@ -232,9 +233,9 @@ fn only_the_app_may_change_anything() {
         );
     }
     assert_eq!(h.call("reboot", APP_ID, "{}")["returnValue"], false);
-    let oversized = format!(r#"{{"enabled":true,"x":"{}"}}"#, "y".repeat(MAX_PAYLOAD));
+    let oversized = format!(r#"{{"target":"off","x":"{}"}}"#, "y".repeat(MAX_PAYLOAD));
     assert!(
-        h.app("setEnabled", &oversized)["errorText"]
+        h.app("setTarget", &oversized)["errorText"]
             .as_str()
             .unwrap()
             .contains("exceeds")
@@ -304,7 +305,7 @@ fn power_and_video_drive_the_worker_and_its_commands() {
     assert_eq!(
         h.log(),
         [
-            "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --lighting off",
+            "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --target off",
             r#"send {"type":"video","video":"unknown"}"#,
         ]
     );
@@ -316,13 +317,10 @@ fn power_and_video_drive_the_worker_and_its_commands() {
     h.service.video(&mut h.bus, &changed, now);
     assert_eq!(h.log(), [r#"send {"type":"reset_video"}"#]);
     assert_eq!(
-        h.app("setEnabled", r#"{"enabled":true}"#)["lighting"],
-        "processed"
+        h.app("setTarget", r#"{"target":"effects"}"#)["target"],
+        "effects"
     );
-    assert_eq!(
-        h.log(),
-        [r#"send {"type":"lighting","target":"processed"}"#]
-    );
+    assert_eq!(h.log(), [r#"send {"type":"target","target":"effects"}"#]);
     let published = h.bus.published.last().unwrap();
     assert_eq!(published["subscribed"], true);
     assert_eq!(published["power"], "active");
@@ -437,7 +435,7 @@ fn uninstall_stops_the_worker_then_removes_registration_and_exits() {
     );
     assert_eq!(h.log(), ["terminate"]);
     assert_eq!(
-        h.app("setEnabled", r#"{"enabled":true}"#)["returnValue"],
+        h.app("setTarget", r#"{"target":"screen_sync"}"#)["returnValue"],
         false
     );
     assert!(h.tick(100), "still waiting for the worker");
@@ -491,8 +489,8 @@ fn a_restart_within_one_boot_resumes_the_last_intent() {
     let mut h = Harness::new(config(), None);
     h.power("Active", 0);
     h.log();
-    h.app("setEnabled", r#"{"enabled":true}"#);
-    assert_eq!(h.service.store.1, Some(LightingTarget::Processed));
+    h.app("setTarget", r#"{"target":"screen_sync"}"#);
+    assert_eq!(h.service.store.1, Some(LightingTarget::ScreenSync));
     let store = h.service.store.clone();
 
     let launcher = FakeLauncher::default();
@@ -503,12 +501,12 @@ fn a_restart_within_one_boot_resumes_the_last_intent() {
     service.power(&mut bus, r#"{"returnValue":true,"state":"Active"}"#, t0);
     assert_eq!(
         world.borrow().log[0],
-        "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --lighting processed"
+        "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --target screen_sync"
     );
-    assert_eq!(service.machine().intent(), LightingTarget::Processed);
+    assert_eq!(service.machine().intent(), LightingTarget::ScreenSync);
 
     // Turning it off is remembered too.
-    service.request(&mut bus, "setEnabled", APP_ID, r#"{"enabled":false}"#, t0);
+    service.request(&mut bus, "setTarget", APP_ID, r#"{"target":"off"}"#, t0);
     assert_eq!(service.store.1, Some(LightingTarget::Off));
 }
 
@@ -549,4 +547,36 @@ fn packaged_api_permissions_list_every_method() {
         assert_eq!(Method::parse(method.name()), Some(method));
     }
     assert_eq!(Method::parse("GetState"), None);
+}
+
+/// Each package has its own lighting method and refuses the other's, without
+/// changing anything.
+#[test]
+fn each_package_refuses_the_other_packages_lighting_method() {
+    let mut full = Harness::new(config(), None);
+    let refused = full.app("setEnabled", r#"{"enabled":true}"#);
+    assert_eq!(refused["returnValue"], false);
+    assert_eq!(
+        refused["errorText"],
+        "setEnabled is only for the slim package"
+    );
+    assert_eq!(full.service.machine().intent(), LightingTarget::Off);
+    assert_eq!(
+        full.app("setTarget", r#"{"target":"processed"}"#)["returnValue"],
+        false,
+        "a target this version does not know is refused"
+    );
+
+    let mut slim = Harness::new(slim_config(), None);
+    let refused = slim.app("setTarget", r#"{"target":"screen_sync"}"#);
+    assert_eq!(refused["returnValue"], false);
+    assert_eq!(
+        refused["errorText"],
+        "setTarget is only for the full package"
+    );
+    assert_eq!(slim.service.machine().intent(), LightingTarget::Off);
+    assert_eq!(
+        slim.app("setEnabled", r#"{"enabled":true}"#)["enabled"],
+        true
+    );
 }

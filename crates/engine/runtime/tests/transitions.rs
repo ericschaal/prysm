@@ -24,17 +24,20 @@ const DEADLINE: Duration = Duration::from_secs(2);
 enum Start {
     /// Target `Off`, nothing touched.
     Off,
-    /// Target `Processed`, the session holding the output.
-    Running,
-    /// Target `DeviceNative`, the output in its own effects.
-    Native,
-    /// Target `Processed`, asked from `Native` with a source that cannot
+    /// Target `ScreenSync`, the session holding the output.
+    ScreenSync,
+    /// Target `Effects`, the output in its own effects.
+    Effects,
+    /// Target `ScreenSync`, asked from `Effects` with a source that cannot
     /// open: the effects still show.
-    ProcessedFromNative,
-    /// Target `Processed` with a source that cannot open.
-    ProcessedFailed,
-    /// Target `DeviceNative` with an output that cannot idle.
-    NativeFailed,
+    ScreenSyncFromEffects,
+    /// Target `ScreenSync` with a source that cannot open.
+    ScreenSyncFailed,
+    /// Target `Effects` with an output that cannot idle.
+    EffectsFailed,
+    /// Target `Off` after screen sync, with an output that cannot idle: the
+    /// lights may not be off.
+    OffFailed,
     /// A session whose source release is unconfirmed.
     Unreleased,
 }
@@ -50,7 +53,7 @@ enum Command {
     Output,
 }
 
-/// The command's result: done, failed (reported in the snapshot), or
+/// The command's result: done, failed (reported in the session), or
 /// refused because the engine is faulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
@@ -60,36 +63,51 @@ enum Outcome {
 }
 
 use Command::{Capture, Output, Processing as Process, Target};
-use LightingTarget::{DeviceNative, Off, Processed};
+use LightingTarget::{Effects, Off, ScreenSync};
 use Outcome::{Done, Failed, Refused};
 
-const RUNNING: SessionState = SessionState::Running;
-const STOPPED: SessionState = SessionState::Stopped;
-const NATIVE: SessionState = SessionState::Native;
-const UNRELEASED: SessionState = SessionState::Faulted(SessionPhase::SourceUnreleased);
+/// The session's state without its failure, which the row's [`Outcome`]
+/// checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    Stopped,
+    ScreenSync,
+    Effects,
+    Faulted(SessionPhase),
+}
 
-type Row = (
-    Start,
-    Command,
-    &'static [&'static str],
-    SessionState,
-    Outcome,
-);
+impl From<&SessionState> for Shown {
+    fn from(state: &SessionState) -> Self {
+        match state {
+            SessionState::Stopped { .. } => Self::Stopped,
+            SessionState::ScreenSync => Self::ScreenSync,
+            SessionState::Effects { .. } => Self::Effects,
+            SessionState::Faulted(phase) => Self::Faulted(*phase),
+        }
+    }
+}
+
+const SYNCING: Shown = Shown::ScreenSync;
+const STOPPED: Shown = Shown::Stopped;
+const SHOWING_EFFECTS: Shown = Shown::Effects;
+const UNRELEASED: Shown = Shown::Faulted(SessionPhase::SourceUnreleased);
+
+type Row = (Start, Command, &'static [&'static str], Shown, Outcome);
 
 const CASES: &[Row] = &[
     (Start::Off, Target(Off), &[], STOPPED, Done),
     (
         Start::Off,
-        Target(Processed),
+        Target(ScreenSync),
         &["source.open:s", "output.open:o"],
-        RUNNING,
+        SYNCING,
         Done,
     ),
     (
         Start::Off,
-        Target(DeviceNative),
+        Target(Effects),
         &["output.idle:o:Native"],
-        NATIVE,
+        SHOWING_EFFECTS,
         Done,
     ),
     (Start::Off, Process, &[], STOPPED, Done),
@@ -97,23 +115,23 @@ const CASES: &[Row] = &[
     (Start::Off, Output, &[], STOPPED, Done),
     //
     (
-        Start::Running,
+        Start::ScreenSync,
         Target(Off),
         &["source.close:s", "output.idle:o:Off"],
         STOPPED,
         Done,
     ),
-    (Start::Running, Target(Processed), &[], RUNNING, Done),
+    (Start::ScreenSync, Target(ScreenSync), &[], SYNCING, Done),
     (
-        Start::Running,
-        Target(DeviceNative),
+        Start::ScreenSync,
+        Target(Effects),
         &["source.close:s", "output.idle:o:Native"],
-        NATIVE,
+        SHOWING_EFFECTS,
         Done,
     ),
-    (Start::Running, Process, &[], RUNNING, Done),
+    (Start::ScreenSync, Process, &[], SYNCING, Done),
     (
-        Start::Running,
+        Start::ScreenSync,
         Capture,
         &[
             "source.close:s",
@@ -121,11 +139,11 @@ const CASES: &[Row] = &[
             "source.open:s2",
             "output.open:o",
         ],
-        RUNNING,
+        SYNCING,
         Done,
     ),
     (
-        Start::Running,
+        Start::ScreenSync,
         Output,
         &[
             "source.close:s",
@@ -133,167 +151,196 @@ const CASES: &[Row] = &[
             "source.open:s",
             "output.open:o2",
         ],
-        RUNNING,
+        SYNCING,
         Done,
     ),
     //
     (
-        Start::Native,
+        Start::Effects,
         Target(Off),
         &["output.idle:o:Off"],
         STOPPED,
         Done,
     ),
     (
-        Start::Native,
-        Target(Processed),
+        Start::Effects,
+        Target(ScreenSync),
         &["source.open:s", "output.open:o"],
-        RUNNING,
+        SYNCING,
         Done,
     ),
-    (Start::Native, Target(DeviceNative), &[], NATIVE, Done),
-    (Start::Native, Process, &[], NATIVE, Done),
-    (Start::Native, Capture, &[], NATIVE, Done),
+    (Start::Effects, Target(Effects), &[], SHOWING_EFFECTS, Done),
+    (Start::Effects, Process, &[], SHOWING_EFFECTS, Done),
+    (Start::Effects, Capture, &[], SHOWING_EFFECTS, Done),
     (
-        Start::Native,
+        Start::Effects,
         Output,
         &["output.idle:o2:Native"],
-        NATIVE,
+        SHOWING_EFFECTS,
         Done,
     ),
     //
     (
-        Start::ProcessedFromNative,
+        Start::ScreenSyncFromEffects,
         Target(Off),
         &["output.idle:o:Off"],
         STOPPED,
         Done,
     ),
     (
-        Start::ProcessedFromNative,
-        Target(Processed),
+        Start::ScreenSyncFromEffects,
+        Target(ScreenSync),
         &["source.open_failed:s"],
-        NATIVE,
+        SHOWING_EFFECTS,
         Failed,
     ),
     (
-        Start::ProcessedFromNative,
-        Target(DeviceNative),
+        Start::ScreenSyncFromEffects,
+        Target(Effects),
         &[],
-        NATIVE,
+        SHOWING_EFFECTS,
         Done,
     ),
     (
-        Start::ProcessedFromNative,
+        Start::ScreenSyncFromEffects,
         Process,
         &["source.open_failed:s"],
-        NATIVE,
+        SHOWING_EFFECTS,
         Failed,
     ),
     (
-        Start::ProcessedFromNative,
+        Start::ScreenSyncFromEffects,
         Capture,
         &["source.open:s2", "output.open:o"],
-        RUNNING,
+        SYNCING,
         Done,
     ),
     (
-        Start::ProcessedFromNative,
+        Start::ScreenSyncFromEffects,
         Output,
         &["source.open_failed:s"],
-        NATIVE,
+        SHOWING_EFFECTS,
         Failed,
     ),
     //
-    (Start::ProcessedFailed, Target(Off), &[], STOPPED, Done),
+    (Start::ScreenSyncFailed, Target(Off), &[], STOPPED, Done),
     (
-        Start::ProcessedFailed,
-        Target(Processed),
+        Start::ScreenSyncFailed,
+        Target(ScreenSync),
         &["source.open_failed:s"],
         STOPPED,
         Failed,
     ),
     (
-        Start::ProcessedFailed,
-        Target(DeviceNative),
+        Start::ScreenSyncFailed,
+        Target(Effects),
         &["output.idle:o:Native"],
-        NATIVE,
+        SHOWING_EFFECTS,
         Done,
     ),
     (
-        Start::ProcessedFailed,
+        Start::ScreenSyncFailed,
         Process,
         &["source.open_failed:s"],
         STOPPED,
         Failed,
     ),
     (
-        Start::ProcessedFailed,
+        Start::ScreenSyncFailed,
         Capture,
         &["source.open:s2", "output.open:o"],
-        RUNNING,
+        SYNCING,
         Done,
     ),
     (
-        Start::ProcessedFailed,
+        Start::ScreenSyncFailed,
         Output,
         &["source.open_failed:s"],
         STOPPED,
         Failed,
     ),
     //
-    (Start::NativeFailed, Target(Off), &[], STOPPED, Done),
+    // The lights' state is not known: off is asked of them.
     (
-        Start::NativeFailed,
-        Target(Processed),
+        Start::EffectsFailed,
+        Target(Off),
+        &["output.idle:o:Off"],
+        STOPPED,
+        Failed,
+    ),
+    (
+        Start::EffectsFailed,
+        Target(ScreenSync),
         &["source.open:s", "output.open:o"],
-        RUNNING,
+        SYNCING,
         Done,
     ),
     (
-        Start::NativeFailed,
-        Target(DeviceNative),
+        Start::EffectsFailed,
+        Target(Effects),
         &["output.idle:o:Native"],
         STOPPED,
         Failed,
     ),
     (
-        Start::NativeFailed,
+        Start::EffectsFailed,
         Process,
         &["output.idle:o:Native"],
         STOPPED,
         Failed,
     ),
     (
-        Start::NativeFailed,
+        Start::EffectsFailed,
         Capture,
         &["output.idle:o:Native"],
         STOPPED,
         Failed,
     ),
     (
-        Start::NativeFailed,
+        Start::EffectsFailed,
         Output,
         &["output.idle:o2:Native"],
-        NATIVE,
+        SHOWING_EFFECTS,
         Done,
     ),
+    //
+    // Off asked again switches the lights off again; a save that does
+    // nothing about them keeps saying they may not be off, and other
+    // lights end that.
+    (
+        Start::OffFailed,
+        Target(Off),
+        &["output.idle:o:Off"],
+        STOPPED,
+        Failed,
+    ),
+    (
+        Start::OffFailed,
+        Target(ScreenSync),
+        &["source.open:s", "output.open:o"],
+        SYNCING,
+        Done,
+    ),
+    (
+        Start::OffFailed,
+        Target(Effects),
+        &["output.idle:o:Native"],
+        STOPPED,
+        Failed,
+    ),
+    (Start::OffFailed, Process, &[], STOPPED, Failed),
+    (Start::OffFailed, Capture, &[], STOPPED, Failed),
+    (Start::OffFailed, Output, &[], STOPPED, Done),
     //
     (Start::Unreleased, Target(Off), &[], UNRELEASED, Refused),
     (
         Start::Unreleased,
-        Target(Processed),
+        Target(ScreenSync),
         &[],
         UNRELEASED,
         Refused,
     ),
-    (
-        Start::Unreleased,
-        Target(DeviceNative),
-        &[],
-        UNRELEASED,
-        Refused,
-    ),
+    (Start::Unreleased, Target(Effects), &[], UNRELEASED, Refused),
     (Start::Unreleased, Process, &[], UNRELEASED, Refused),
     (Start::Unreleased, Capture, &[], UNRELEASED, Refused),
     (Start::Unreleased, Output, &[], UNRELEASED, Refused),
@@ -309,9 +356,9 @@ fn base(from: Start) -> Settings {
         ..Default::default()
     };
     match from {
-        Start::Off | Start::Running | Start::Native => {}
-        Start::ProcessedFromNative | Start::ProcessedFailed => source.fail_open = true,
-        Start::NativeFailed => output.fail_idle = true,
+        Start::Off | Start::ScreenSync | Start::Effects => {}
+        Start::ScreenSyncFromEffects | Start::ScreenSyncFailed => source.fail_open = true,
+        Start::EffectsFailed | Start::OffFailed => output.fail_idle = true,
         Start::Unreleased => source.fail_close = true,
     }
     Settings {
@@ -359,19 +406,24 @@ async fn reach(from: Start, log: &CallLog) -> (EngineHandle, Engine) {
     };
     match from {
         Start::Off => {}
-        Start::Running => {
-            set(Processed).await.unwrap();
+        Start::ScreenSync => {
+            set(ScreenSync).await.unwrap();
             assert!(log.wait_for("output.write:o", 1).await);
         }
-        Start::Native => set(DeviceNative).await.unwrap(),
-        Start::ProcessedFromNative => {
-            set(DeviceNative).await.unwrap();
-            set(Processed).await.unwrap_err();
+        Start::Effects => set(Effects).await.unwrap(),
+        Start::ScreenSyncFromEffects => {
+            set(Effects).await.unwrap();
+            set(ScreenSync).await.unwrap_err();
         }
-        Start::ProcessedFailed => drop(set(Processed).await.unwrap_err()),
-        Start::NativeFailed => drop(set(DeviceNative).await.unwrap_err()),
+        Start::ScreenSyncFailed => drop(set(ScreenSync).await.unwrap_err()),
+        Start::EffectsFailed => drop(set(Effects).await.unwrap_err()),
+        Start::OffFailed => {
+            set(ScreenSync).await.unwrap();
+            assert!(log.wait_for("output.write:o", 1).await);
+            drop(set(Off).await.unwrap_err());
+        }
         Start::Unreleased => {
-            set(Processed).await.unwrap();
+            set(ScreenSync).await.unwrap();
             assert!(log.wait_for("output.write:o", 1).await);
             set(Off).await.unwrap_err();
         }
@@ -401,8 +453,8 @@ async fn settled(log: &CallLog, mark: usize, count: usize) -> Vec<String> {
     calls_since(log, mark)
 }
 
-/// What the reply and the snapshot's failure say together. A save replies
-/// with its revision and reports a failed apply in the snapshot; a target
+/// What the reply and the session's failure say together. A save replies
+/// with its revision and reports a failed apply in the session; a target
 /// replies with the failure it records.
 fn outcome(reply: &prysm_ports::Result<()>, failure: Option<&Error>, save: bool) -> Outcome {
     match (reply, failure) {
@@ -444,16 +496,21 @@ async fn run(row: &Row) {
     };
     let made = settled(&log, mark, calls.len()).await;
     let snapshot = handle.snapshot().borrow().clone();
-    let got = outcome(&reply, snapshot.failure.as_ref(), is_save);
+    let got = outcome(&reply, snapshot.session.failure(), is_save);
     assert_eq!(made, calls, "{row:?}");
-    assert_eq!(snapshot.session, state, "{row:?}");
-    assert_eq!(got, expected, "{row:?}: {reply:?}, {:?}", snapshot.failure);
+    assert_eq!(Shown::from(&snapshot.session), state, "{row:?}");
+    assert_eq!(
+        got,
+        expected,
+        "{row:?}: {reply:?}, {:?}",
+        snapshot.session.failure()
+    );
 
     // Shutdown runs after everything the command started: the log then holds
     // the row's calls and the shutdown's own, and nothing that came late.
     let _ = engine.shutdown().await;
     let mut after: Vec<String> = calls.iter().map(|&call| call.to_owned()).collect();
-    if state == RUNNING {
+    if state == SYNCING {
         let all = calls_since(&log, 0);
         after.push(format!("source.close:{}", last_named(&all, "source.open:")));
         after.push(format!(
@@ -480,17 +537,18 @@ async fn every_state_meets_every_command() {
 fn the_table_covers_every_cell() {
     let starts = [
         Start::Off,
-        Start::Running,
-        Start::Native,
-        Start::ProcessedFromNative,
-        Start::ProcessedFailed,
-        Start::NativeFailed,
+        Start::ScreenSync,
+        Start::Effects,
+        Start::ScreenSyncFromEffects,
+        Start::ScreenSyncFailed,
+        Start::EffectsFailed,
+        Start::OffFailed,
         Start::Unreleased,
     ];
     let commands = [
         Target(Off),
-        Target(Processed),
-        Target(DeviceNative),
+        Target(ScreenSync),
+        Target(Effects),
         Process,
         Capture,
         Output,
@@ -560,7 +618,7 @@ enum Order {
 #[derive(Debug, PartialEq)]
 struct Seen {
     reply: Result<(), String>,
-    session: SessionState,
+    session: Shown,
     target: LightingTarget,
     failure: Option<String>,
     saved: Option<Settings>,
@@ -606,12 +664,12 @@ async fn race(end: OwnEnd, meets: Meets, order: Order) -> Seen {
     let (handle, engine) = Engine::start(registry, Box::new(store.clone()), DEADLINE)
         .await
         .unwrap();
-    handle.set_target(Processed).await.unwrap();
+    handle.set_target(ScreenSync).await.unwrap();
     assert!(log.wait_for("output.idle:o:Off", 1).await);
     if order == Order::EndFirst {
         handle
             .snapshot()
-            .wait_for(|s| s.session != SessionState::Running)
+            .wait_for(|s| !matches!(s.session, SessionState::ScreenSync))
             .await
             .unwrap();
     }
@@ -641,16 +699,19 @@ async fn race(end: OwnEnd, meets: Meets, order: Order) -> Seen {
         let snapshot = handle.snapshot().borrow().clone();
         // A session the command started takes the output at its first frame,
         // however late that comes: shut down only after it did.
-        if snapshot.session == SessionState::Running {
+        if matches!(snapshot.session, SessionState::ScreenSync) {
             assert!(log.wait_for("output.open:o", opened + 1).await);
         }
         (text(reply), snapshot, text(engine.shutdown().await))
     };
     Seen {
         reply,
-        session: snapshot.session,
+        session: Shown::from(&snapshot.session),
         target: snapshot.target,
-        failure: snapshot.failure.map(|failure| failure.to_string()),
+        failure: snapshot
+            .session
+            .failure()
+            .map(|failure| failure.to_string()),
         saved: store.saved(),
         shutdown,
         calls: calls_since(&log, 0),
@@ -671,7 +732,7 @@ async fn a_command_meeting_an_own_end_has_one_outcome() {
     ];
     let meets = [
         Meets::Target(Off),
-        Meets::Target(DeviceNative),
+        Meets::Target(Effects),
         Meets::Capture,
         Meets::Shutdown,
     ];

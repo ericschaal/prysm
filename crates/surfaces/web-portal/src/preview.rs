@@ -14,9 +14,7 @@ use hyper::{StatusCode, body::Frame as BodyFrame};
 use image::ExtendedColorType;
 use image::codecs::jpeg::JpegEncoder;
 use prysm_core::{ColorStrip, Frame, Viewport};
-use prysm_protocol::{
-    FailureKind, LedColor, LedColors, PreviewEvent, PreviewFrame, PreviewViewport,
-};
+use prysm_protocol::{Failure, LedColor, LedColors, PreviewEvent, PreviewFrame, PreviewViewport};
 use prysm_runtime::{EngineHandle, Preview, PreviewWatch, Shutdown};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -59,8 +57,9 @@ impl Previews {
         let Ok(permit) = self.viewers.clone().try_acquire_owned() else {
             return failure(
                 StatusCode::TOO_MANY_REQUESTS,
-                FailureKind::Busy,
-                "too many preview viewers",
+                Failure::Busy {
+                    message: "too many preview viewers".into(),
+                },
             );
         };
         let now = Instant::now();

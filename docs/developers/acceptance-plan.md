@@ -201,7 +201,7 @@ Each phase lands with its tests and CI green before the next starts.
      `eyes` stays a plain script, and the `tv` stage keeps the old step
      runner (`plan.py`) until phase 4 moves it.
    - **Dropped**, because other tests prove them: the build steps, the
-     settings check, the first `processed` step, the 60 fps refusal, the
+     settings check, the first `screen_sync` step, the 60 fps refusal, the
      version-mismatch check, the hung-capture steps and eleven `eyes` items
      about the TV app's dialogs and options.
    - **Moved** to the product's own tests: reading WLED's gamma from a real

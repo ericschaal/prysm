@@ -30,7 +30,7 @@ Everything else derives from it:
 Nothing else carries it. The crates are `0.0.0` (`[workspace.package]`;
 they are never published), so `Cargo.toml` and `Cargo.lock` never change for a
 release. The OpenAPI documents' `info.version` is their API's own version
-(the HTTP documents' `1`, Luna's `3`), and the exported `State` fixtures
+(the HTTP documents' `1`, Luna's `4`), and the exported `State` fixtures
 carry a fixed `version`, so generated contracts never change for a release.
 [scripts/check-release.py](../../scripts/check-release.py) checks this: VERSION
 is a semantic version without build metadata (an image tag cannot hold
@@ -53,12 +53,19 @@ Covered:
 
 - the portal HTTP API under `/api/v1` and its values, `State` included
   ([contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md)): routes,
-  fields, closed value sets, status codes and failure kinds. A new field is a
-  minor change; clients must ignore fields they do not know. A new value in a
-  closed set (target, session state or phase, `device.issue`, failure kind,
-  calibration pattern) is a major change today: the portal client refuses a
-  state with an unknown target or session state, and its tables for the
-  others are exhaustive;
+  fields, value sets, status codes and failure kinds. A new field is a
+  minor change; clients must ignore fields they do not know. Enum values that
+  Prysm sends (HTTP responses and events, `State`, the Luna service's replies,
+  the capture stream's messages) are open: a minor release may add a value.
+  A client must accept a value it does not know and read it as the contract
+  states for that field (never as off or stopped), and must send a value it
+  read back unchanged; the one exception is a tag that selects a whole shape
+  (Luna `flavor`), where the stated reading is "this state cannot be shown".
+  Values that Prysm receives (request bodies, the settings file, Luna
+  requests) are closed: Prysm refuses one it does not know (`400`, or `422`
+  with `field`; a Luna error; a settings error), so a new value there is a minor
+  change that only newer clients send
+  ([decision](decisions/2026-11-22-open-response-enums.md));
 - the settings file and its `format` number
   ([settings-file](../../crates/adapters/settings-file/README.md)). A Prysm
   reads files of its own format only and refuses any other number, naming
@@ -100,7 +107,9 @@ Covered:
 
 Not covered: the Rust crates (`0.0.0`, never published) and their APIs, the
 Luna methods only the same package's TV app calls (`setPreferences`,
-`setEnabled`), `/metrics` names, the terminal UI, log and message wording,
+`setEnabled`, `setTarget`), the worker link between the supervisor and its
+worker (both ship in one IPK, and it stays strict), `/metrics` names, the
+terminal UI, log and message wording,
 the `research/` and acceptance tooling, and behaviour that is not in a
 contract (timings, colours produced).
 

@@ -32,12 +32,12 @@ fn slim(preferences: Preferences) -> Machine {
     Machine::new(Spec::Slim, preferences)
 }
 
-fn spawn_full(lighting: LightingTarget) -> Effect {
+fn spawn_full(target: LightingTarget) -> Effect {
     Effect::Spawn(
         FullArgs {
             settings: "/s.json".into(),
             listen: "0.0.0.0:8787".parse().unwrap(),
-            lighting,
+            target,
         }
         .to_args(),
     )
@@ -61,8 +61,8 @@ fn video(video: Video) -> Effect {
     Effect::Send(Command::Video { video })
 }
 
-fn lighting(target: LightingTarget) -> Effect {
-    Effect::Send(Command::Lighting { target })
+fn send_target(target: LightingTarget) -> Effect {
+    Effect::Send(Command::Target { target })
 }
 
 /// The published failure's message.
@@ -123,10 +123,10 @@ fn slim_failure(kind: FailureKind, message: &str) -> Input {
     })
 }
 
-/// The published full package: its lighting and worker.
+/// The published full package: its target and worker.
 fn full_state(state: &State) -> (LightingTarget, &FullWorker) {
     match &state.package {
-        state::Package::Full { lighting, worker } => (*lighting, worker),
+        state::Package::Full { target, worker } => (*target, worker),
         state::Package::Slim { .. } => panic!("a slim state: {state:?}"),
     }
 }
@@ -164,7 +164,7 @@ fn script(machine: &mut Machine, t0: Instant, steps: Vec<(u64, Input, Vec<Effect
 }
 
 use crate::state::Power::{Active, Asleep, ScreenSaver, Unknown};
-use Input::{Enabled, Power as Pw, Tick, Video as V, WorkerExited as Exited};
+use Input::{Enabled, Power as Pw, Target, Tick, Video as V, WorkerExited as Exited};
 
 #[test]
 fn full_runs_while_awake_and_gates_video_on_active() {
@@ -205,13 +205,13 @@ fn full_runs_while_awake_and_gates_video_on_active() {
 }
 
 #[test]
-fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
+fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
     let mut m = full_with(Preferences {
         autostart: true,
         ..Preferences::default()
     });
     let t = Instant::now();
-    assert_eq!(full_state(&m.state(t)).0, LightingTarget::Processed);
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::ScreenSync);
     script(
         &mut m,
         t,
@@ -219,11 +219,18 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
             (
                 0,
                 Pw(Active),
-                vec![spawn_full(LightingTarget::Processed), video(Video::Unknown)],
+                vec![
+                    spawn_full(LightingTarget::ScreenSync),
+                    video(Video::Unknown),
+                ],
             ),
-            (10, Enabled(false), vec![lighting(LightingTarget::Off)]),
+            (
+                10,
+                Target(LightingTarget::Off),
+                vec![send_target(LightingTarget::Off)],
+            ),
             // An older report within the echo window does not undo it.
-            (20, status(LightingTarget::Processed), vec![]),
+            (20, status(LightingTarget::ScreenSync), vec![]),
         ],
     );
     assert_eq!(full_state(&m.state(t)).0, LightingTarget::Off);
@@ -232,23 +239,27 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
         t,
         vec![
             (30, status(LightingTarget::Off), vec![]),
-            // The portal turned device-native lighting on.
-            (40, status(LightingTarget::DeviceNative), vec![]),
+            // The portal turned the lights' own effects on.
+            (40, status(LightingTarget::Effects), vec![]),
         ],
     );
-    assert_eq!(full_state(&m.state(t)).0, LightingTarget::DeviceNative);
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::Effects);
     script(
         &mut m,
         t,
         vec![
-            // Enabling keeps a non-off target.
+            // The app's target is sent as chosen.
             (
                 50,
-                Enabled(true),
-                vec![lighting(LightingTarget::DeviceNative)],
+                Target(LightingTarget::ScreenSync),
+                vec![send_target(LightingTarget::ScreenSync)],
             ),
-            (60, Enabled(false), vec![lighting(LightingTarget::Off)]),
-            (2059, status(LightingTarget::Processed), vec![]),
+            (
+                60,
+                Target(LightingTarget::Off),
+                vec![send_target(LightingTarget::Off)],
+            ),
+            (2059, status(LightingTarget::ScreenSync), vec![]),
         ],
     );
     assert_eq!(full_state(&m.state(t)).0, LightingTarget::Off);
@@ -256,9 +267,9 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
     script(
         &mut m,
         t,
-        vec![(2060, status(LightingTarget::Processed), vec![])],
+        vec![(2060, status(LightingTarget::ScreenSync), vec![])],
     );
-    assert_eq!(full_state(&m.state(t)).0, LightingTarget::Processed);
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::ScreenSync);
 }
 
 #[test]
@@ -268,13 +279,16 @@ fn full_remembers_the_target_for_the_next_worker() {
         &mut m,
         t,
         vec![
-            (0, Enabled(true), vec![]),
+            (0, Target(LightingTarget::ScreenSync), vec![]),
             (
                 0,
                 Pw(Active),
-                vec![spawn_full(LightingTarget::Processed), video(Video::Unknown)],
+                vec![
+                    spawn_full(LightingTarget::ScreenSync),
+                    video(Video::Unknown),
+                ],
             ),
-            (5, status(LightingTarget::DeviceNative), vec![]),
+            (5, status(LightingTarget::Effects), vec![]),
             (
                 6,
                 Pw(Asleep),
@@ -284,10 +298,7 @@ fn full_remembers_the_target_for_the_next_worker() {
             (
                 8,
                 Pw(Active),
-                vec![
-                    spawn_full(LightingTarget::DeviceNative),
-                    video(Video::Unknown),
-                ],
+                vec![spawn_full(LightingTarget::Effects), video(Video::Unknown)],
             ),
         ],
     );
@@ -599,7 +610,7 @@ fn an_exit_keeps_the_workers_last_failure() {
                 1,
                 full_status(FullStatus {
                     failure: Some(WorkerFailure::other("output: refused")),
-                    ..full_report(LightingTarget::Processed)
+                    ..full_report(LightingTarget::ScreenSync)
                 }),
                 vec![],
             ),
@@ -693,7 +704,7 @@ fn an_exit_names_why_the_worker_failed() {
                 1_003,
                 full_status(FullStatus {
                     failure: Some(WorkerFailure::other("output: refused")),
-                    ..full_report(LightingTarget::DeviceNative)
+                    ..full_report(LightingTarget::Effects)
                 }),
                 vec![],
             ),
@@ -703,7 +714,7 @@ fn an_exit_names_why_the_worker_failed() {
     );
     let state = m.state(t0);
     assert_eq!(message(&state), Some("worker failed: engine stopped"));
-    assert_eq!(full_state(&state).0, LightingTarget::DeviceNative);
+    assert_eq!(full_state(&state).0, LightingTarget::Effects);
     // The next worker starts without the old cause.
     script(
         &mut m,
@@ -712,10 +723,7 @@ fn an_exit_names_why_the_worker_failed() {
             (
                 3_005,
                 Tick,
-                vec![
-                    spawn_full(LightingTarget::DeviceNative),
-                    video(Video::Unknown),
-                ],
+                vec![spawn_full(LightingTarget::Effects), video(Video::Unknown)],
             ),
             (3_006, Exited(Exit::Code(1)), vec![]),
         ],
@@ -770,7 +778,7 @@ fn the_other_packages_status_breaks_the_link() {
             ),
             (
                 1,
-                status(LightingTarget::Processed),
+                status(LightingTarget::ScreenSync),
                 vec![Effect::Terminate],
             ),
         ],
@@ -868,7 +876,7 @@ fn published_state_reflects_the_worker() {
         full_status(FullStatus {
             capturing: true,
             fps: Some(30),
-            target: LightingTarget::Processed,
+            target: LightingTarget::ScreenSync,
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
         }),
@@ -881,7 +889,7 @@ fn published_state_reflects_the_worker() {
         json,
         json!({
             "flavor": "full",
-            "lighting": "processed",
+            "target": "screen_sync",
             "worker": {
                 "phase": "running",
                 "capturing": true,
@@ -897,7 +905,7 @@ fn published_state_reflects_the_worker() {
     m.handle(Exited(Exit::Code(1)), t0);
     let state = m.state(t0);
     assert!(matches!(full_state(&state).1, FullWorker::Retrying { .. }));
-    assert_eq!(full_state(&state).0, LightingTarget::Processed);
+    assert_eq!(full_state(&state).0, LightingTarget::ScreenSync);
 }
 
 #[test]
@@ -957,7 +965,7 @@ fn only_a_running_worker_is_capturing() {
     let capturing = full_status(FullStatus {
         capturing: true,
         portal: Some("http://10.0.0.2:8787/".into()),
-        ..full_report(LightingTarget::Processed)
+        ..full_report(LightingTarget::ScreenSync)
     });
     script(
         &mut m,
@@ -966,7 +974,10 @@ fn only_a_running_worker_is_capturing() {
             (
                 0,
                 Pw(Active),
-                vec![spawn_full(LightingTarget::Processed), video(Video::Unknown)],
+                vec![
+                    spawn_full(LightingTarget::ScreenSync),
+                    video(Video::Unknown),
+                ],
             ),
             (1, capturing.clone(), vec![]),
         ],
@@ -976,7 +987,11 @@ fn only_a_running_worker_is_capturing() {
         &mut m,
         t0,
         vec![
-            (2, Enabled(false), vec![lighting(LightingTarget::Off)]),
+            (
+                2,
+                Target(LightingTarget::Off),
+                vec![send_target(LightingTarget::Off)],
+            ),
             (3, status(LightingTarget::Off), vec![]),
         ],
     );
@@ -988,7 +1003,11 @@ fn only_a_running_worker_is_capturing() {
     script(
         &mut m,
         t0,
-        vec![(4, Enabled(true), vec![lighting(LightingTarget::Processed)])],
+        vec![(
+            4,
+            Target(LightingTarget::ScreenSync),
+            vec![send_target(LightingTarget::ScreenSync)],
+        )],
     );
     script(&mut m, t0, vec![(5, capturing.clone(), vec![])]);
     assert!(full_capturing(&m.state(t0)));
@@ -1907,6 +1926,10 @@ fn every_phase_takes_every_input() {
             ],
         ),
         (Enabled(false), false, off(terminate())),
+        // The full package's method: refused by the service, ignored here.
+        (Target(LightingTarget::Off), false, unchanged()),
+        (Target(LightingTarget::ScreenSync), false, unchanged()),
+        (Target(LightingTarget::Effects), false, unchanged()),
         (
             Enabled(true),
             false,
@@ -1995,6 +2018,61 @@ fn every_phase_takes_every_input() {
             assert_eq!(done, effects, "{shown}");
             assert_eq!(is(m.phase), next, "{shown}");
             assert_eq!(message(&m.state(t0)), failure, "{shown}");
+        }
+    }
+}
+
+/// The full package's lighting inputs from each target, with the worker in
+/// each phase: a target is kept, and sent only to a running worker,
+/// and the slim package's `Enabled` changes nothing.
+#[test]
+fn every_full_target_takes_every_lighting_input() {
+    use LightingTarget::{Effects, Off, ScreenSync};
+    let inputs = [
+        Target(Off),
+        Target(ScreenSync),
+        Target(Effects),
+        Enabled(false),
+        Enabled(true),
+    ];
+    let t0 = Instant::now();
+    // Where the worker is: only a running one is sent the target; in every
+    // other phase it is stored for the next worker.
+    let phases = ["idle", "running", "stopping", "retrying"];
+    for from in LightingTarget::ALL {
+        for phase in phases {
+            for input in inputs.clone() {
+                let mut m = full();
+                let mut steps = vec![(0, Target(from), vec![])];
+                if phase != "idle" {
+                    steps.push((0, Pw(Active), vec![spawn_full(from), video(Video::Unknown)]));
+                }
+                match phase {
+                    "stopping" => steps.push((
+                        0,
+                        Pw(Asleep),
+                        vec![video(Video::Unavailable), Effect::Terminate],
+                    )),
+                    "retrying" => steps.push((0, Exited(Exit::Code(1)), vec![])),
+                    _ => {}
+                }
+                script(&mut m, t0, steps);
+                let running = phase == "running";
+                let (effects, intent) = match input {
+                    Target(target) if running => (vec![send_target(target)], target),
+                    Target(target) => (vec![], target),
+                    _ => (vec![], from),
+                };
+                let shown = format!("{from:?}, {phase}, {input:?}");
+                let done: Vec<_> = m
+                    .handle(input, t0 + Duration::from_millis(1))
+                    .into_iter()
+                    .filter(|effect| *effect != Effect::Publish)
+                    .collect();
+                assert_eq!(done, effects, "{shown}");
+                assert_eq!(m.intent(), intent, "{shown}");
+                assert_eq!(full_state(&m.state(t0)).0, intent, "{shown}");
+            }
         }
     }
 }

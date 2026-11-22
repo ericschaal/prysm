@@ -73,7 +73,7 @@ test('the video source page shows whether it works, before and after a save', as
 
   // Screen sync on (from Home, or here another device): the status follows.
   const response = await page.request.put('/api/v1/target', {
-    data: { target: 'processed' },
+    data: { target: 'screen_sync' },
   });
   expect(response.status()).toBe(204);
   await sender.waitFor('connected');

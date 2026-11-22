@@ -10,6 +10,7 @@ import {
   type ApplicationSnapshot,
   type LightingSituation,
   type LightingTarget,
+  type TargetReading,
 } from '@prysm/application-client';
 import type { PortalView } from './portal-connection';
 
@@ -46,7 +47,7 @@ export function LightingCard({
    */
   const [refusal, setRefusal] = useState<{
     text: string;
-    target: LightingTarget | undefined;
+    target: TargetReading | undefined;
     kind: LightingSituation['kind'] | undefined;
   } | null>(null);
   // Gone once the lights change, also when they change back.
@@ -101,14 +102,33 @@ export function LightingCard({
     if (lighting.kind === 'faulted') {
       message = said;
       attention = true;
+    } else if (lighting.kind === 'unknown') {
+      // Newer than this app; what the state carries is still said.
+      const carried = failure
+        ? ` ${plainFailure(failure, 'unknown', effects ?? 'Device effects')}`
+        : '';
+      message = `Prysm is newer than this app. Update the app to see what the lights do.${carried}`;
+      attention = !!failure;
     } else if (!snapshot.settings.output) {
       message = 'Set up your lights in the web portal first.';
+    } else if (
+      lighting.kind === 'effects' &&
+      failure &&
+      failure.kind === 'invalid'
+    ) {
+      // With the effects on, settings that do not validate.
+      message = 'Prysm can’t use these settings.';
+      attention = true;
     } else if (failure) {
-      message = plainFailure(
+      const still =
+        lighting.kind === 'failed' && lighting.effectsOn
+          ? ` ${effects ?? 'Device effects'} are still on.`
+          : '';
+      message = `${plainFailure(
         failure,
         snapshot.target,
         effects ?? 'Device effects',
-      );
+      )}${still}`;
       attention = true;
     } else if (snapshot.device.issue && lighting.kind === 'sync') {
       message = describeOutputIssue(snapshot.device.issue);
@@ -150,12 +170,12 @@ export function LightingCard({
   const hasCapture = !!snapshot?.settings.capture;
   const modes: { value: LightingTarget; label: string; disabled: boolean }[] = [
     {
-      value: 'processed',
+      value: 'screen_sync',
       label: 'Screen sync',
       disabled: !hasOutput || !hasCapture,
     },
     {
-      value: 'device_native',
+      value: 'effects',
       label: effects ?? 'Effects',
       disabled: !effects,
     },

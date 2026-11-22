@@ -334,7 +334,7 @@ impl Host {
         self.status.clone()
     }
 
-    /// Requests processed lighting once if `--start` was given, then ends.
+    /// Starts screen sync once if `--start` was given, then ends.
     /// A failure is printed like a status line; the snapshot keeps it too.
     #[must_use]
     pub fn start(&self) -> impl Surface + use<> {
@@ -344,7 +344,7 @@ impl Host {
             if start {
                 tokio::select! {
                     () = shutdown.requested() => {}
-                    started = engine.set_target(LightingTarget::Processed) => {
+                    started = engine.set_target(LightingTarget::ScreenSync) => {
                         if let Err(error) = started {
                             status.say_when_shown(&format!("--start failed: {}", chain(&error))).await;
                         }
@@ -565,7 +565,8 @@ impl Surface for Status {
 /// What has already been reported, so only changes are printed.
 #[derive(Debug, Default)]
 struct Seen {
-    state: Option<(LightingTarget, SessionState)>,
+    /// The `target …, session …` line last printed.
+    state: Option<String>,
     failure: Option<String>,
     output_issue: Option<OutputIssue>,
     surface_failures: usize,
@@ -574,13 +575,13 @@ struct Seen {
 impl Seen {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<String> {
         let mut lines = Vec::new();
-        let state = (snapshot.target, snapshot.session);
-        if self.state != Some(state) {
-            lines.push(format!(
-                "target {}, session {}",
-                snapshot.target.as_str(),
-                snapshot.session
-            ));
+        let state = format!(
+            "target {}, session {}",
+            snapshot.target.as_str(),
+            snapshot.session
+        );
+        if self.state.as_ref() != Some(&state) {
+            lines.push(state.clone());
             self.state = Some(state);
         }
         if snapshot.device.issue != self.output_issue {
@@ -588,14 +589,14 @@ impl Seen {
                 Some(issue) => lines.push(format!(
                     "lights not showing Prysm, lighting continues: {issue}"
                 )),
-                None if snapshot.session == SessionState::Running => {
+                None if matches!(snapshot.session, SessionState::ScreenSync) => {
                     lines.push("lights showing Prysm again".to_owned());
                 }
                 None => {}
             }
             self.output_issue = snapshot.device.issue;
         }
-        let failure = snapshot.failure.as_ref().map(|failure| chain(failure));
+        let failure = snapshot.session.failure().map(|failure| chain(failure));
         if failure != self.failure {
             if let Some(failure) = &failure {
                 lines.push(format!("lighting failed: {failure}"));
@@ -624,21 +625,22 @@ mod tests {
         assert_eq!(seen.update(&snapshot), ["target off, session stopped"]);
         assert!(seen.update(&snapshot).is_empty());
 
-        snapshot.target = LightingTarget::Processed;
-        snapshot.failure = Some(Error::other("no frames"));
+        snapshot.target = LightingTarget::ScreenSync;
+        snapshot.session = SessionState::Stopped {
+            failure: Some(Error::other("no frames")),
+        };
         snapshot.surface_failures.push(Error::other("no terminal"));
         assert_eq!(
             seen.update(&snapshot),
             [
-                "target processed, session stopped",
+                "target screen_sync, session stopped",
                 "lighting failed: no frames",
                 "surface failed, lighting continues: no terminal",
             ]
         );
         assert!(seen.update(&snapshot).is_empty());
 
-        snapshot.session = SessionState::Running;
-        snapshot.failure = None;
+        snapshot.session = SessionState::ScreenSync;
         let _ = seen.update(&snapshot);
         snapshot.device.issue = Some(OutputIssue::Off);
         assert_eq!(
@@ -649,10 +651,9 @@ mod tests {
         assert_eq!(seen.update(&snapshot), ["lights showing Prysm again"]);
 
         snapshot.session = SessionState::Faulted(prysm_ports::SessionPhase::IdlingOutput);
-        snapshot.failure = None;
         assert_eq!(
             seen.update(&snapshot),
-            ["target processed, session faulted while idling the output"]
+            ["target screen_sync, session faulted while idling the output"]
         );
     }
 
@@ -690,19 +691,19 @@ mod tests {
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let driver = move |engine: EngineHandle, shutdown: Shutdown| async move {
             let mut snapshot = engine.snapshot();
-            engine.set_target(LightingTarget::Processed).await?;
-            let running = |s: &Snapshot| s.session == SessionState::Running;
+            engine.set_target(LightingTarget::ScreenSync).await?;
+            let running = |s: &Snapshot| matches!(s.session, SessionState::ScreenSync);
             let _ = snapshot.wait_for(running).await;
             // Taken: neither "target off" nor the way to running was printed.
             assert!(lines.try_recv().is_err());
             terminal.send_replace(false);
             assert_eq!(
                 lines.recv().await.unwrap(),
-                "target processed, session running"
+                "target screen_sync, session screen_sync"
             );
             terminal.send_replace(true);
             engine.set_target(LightingTarget::Off).await?;
-            let off = |s: &Snapshot| s.session == SessionState::Stopped;
+            let off = |s: &Snapshot| matches!(s.session, SessionState::Stopped { .. });
             let _ = snapshot.wait_for(off).await;
             let _ = stop.send(());
             shutdown.requested().await;

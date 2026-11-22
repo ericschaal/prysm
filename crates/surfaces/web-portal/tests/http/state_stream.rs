@@ -25,13 +25,13 @@ async fn state_stream_delivers_changes_and_ends_on_shutdown() {
         let first = next_state(&mut events, &mut buffer, |_| true).await;
         assert_eq!(first["session"]["state"], "stopped");
 
-        let (status, _) = portal.target("processed").await;
+        let (status, _) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         let running = next_state(&mut events, &mut buffer, |s| {
-            s["session"]["state"] == "running"
+            s["session"]["state"] == "screen_sync"
         })
         .await;
-        assert_eq!(running["target"], "processed");
+        assert_eq!(running["target"], "screen_sync");
 
         portal.shutdown().await.unwrap();
         // The stream ends instead of hanging once the portal stops.

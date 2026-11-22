@@ -20,7 +20,7 @@ use prysm_runtime::{NullOutput, NullSettings};
 use prysm_webos_link::{FailureKind, SlimLink, Video, WorkerFailure};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
-    GetStateRequest, SetEnabledRequest, UninstallRequest, state_reply,
+    GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest, state_reply,
 };
 use prysm_webos_service::state::{FullWorker, Package, Power, SlimWorker, State as TvState};
 use serde_json::{Value, json};
@@ -46,10 +46,10 @@ fn luna() -> Value {
         instance: Some("http://192.168.1.20:8787".parse().expect("a Prysm address")),
     };
     let portal = || Some("http://192.168.1.5:8787/".to_owned());
-    let full = |lighting, worker| Package::Full { lighting, worker };
+    let full = |target, worker| Package::Full { target, worker };
     let slim = |enabled, worker| Package::Slim { enabled, worker };
     let running = full(
-        LightingTarget::Processed,
+        LightingTarget::ScreenSync,
         FullWorker::Running {
             capturing: true,
             fps: Some(30),
@@ -60,11 +60,11 @@ fn luna() -> Value {
         running.clone(),
         full(LightingTarget::Off, FullWorker::Stopped),
         full(
-            LightingTarget::DeviceNative,
+            LightingTarget::Effects,
             FullWorker::Stopping { portal: portal() },
         ),
         full(
-            LightingTarget::Processed,
+            LightingTarget::ScreenSync,
             FullWorker::Retrying { seconds: 2 },
         ),
     ]
@@ -113,6 +113,8 @@ fn luna() -> Value {
         "luna/Preferences": [Preferences::default(), slim_preferences],
         "luna/StateReply": [state_reply(full, Some(true)), state_reply(slim, None)],
         "luna/GetStateRequest": [GetStateRequest { subscribe: true }],
+        "luna/SetTargetRequest": LightingTarget::ALL
+            .map(|target| SetTargetRequest { target }),
         "luna/SetEnabledRequest": [SetEnabledRequest { enabled: false }],
         "luna/UninstallRequest": [UninstallRequest {}],
     })
@@ -186,14 +188,14 @@ fn configured() -> Settings {
     }
 }
 
-/// Idle, running (with an output issue, a surface failure, or calibrating),
-/// device-native and faulted.
+/// Idle, screen sync (with an output issue, a surface failure, or
+/// calibrating), effects, each state with a failure, and faulted.
 fn states() -> Vec<State> {
     let snapshots = [
         Snapshot::default(),
         Snapshot {
-            target: LightingTarget::Processed,
-            session: SessionState::Running,
+            target: LightingTarget::ScreenSync,
+            session: SessionState::ScreenSync,
             settings: configured(),
             revision: Revision(7),
             input: Some(Input {
@@ -215,8 +217,8 @@ fn states() -> Vec<State> {
             ..Snapshot::default()
         },
         Snapshot {
-            target: LightingTarget::Processed,
-            session: SessionState::Running,
+            target: LightingTarget::ScreenSync,
+            session: SessionState::ScreenSync,
             settings: with_calibrations(),
             calibration: Some(CalibrationPattern {
                 pattern: Pattern::Gray192,
@@ -225,23 +227,44 @@ fn states() -> Vec<State> {
             ..Snapshot::default()
         },
         Snapshot {
-            target: LightingTarget::DeviceNative,
-            session: SessionState::Native,
+            target: LightingTarget::Effects,
+            session: SessionState::Effects { failure: None },
             ..Snapshot::default()
         },
-        // A start that failed from the lights' own effects: the session is
-        // still native, the failure says the capture's side.
+        // A start that failed from the lights' own effects: they still show,
+        // and the failure says the capture's side.
         Snapshot {
-            target: LightingTarget::Processed,
-            session: SessionState::Native,
+            target: LightingTarget::ScreenSync,
+            session: SessionState::Effects {
+                failure: Some(
+                    Error::other("video device capture failed").in_section(Section::Capture),
+                ),
+            },
             settings: configured(),
-            failure: Some(Error::other("video device capture failed").in_section(Section::Capture)),
+            ..Snapshot::default()
+        },
+        // Screen sync that stopped on the lights' side.
+        Snapshot {
+            target: LightingTarget::ScreenSync,
+            session: SessionState::Stopped {
+                failure: Some(Error::other("WLED did not answer").in_section(Section::Output)),
+            },
+            settings: configured(),
+            ..Snapshot::default()
+        },
+        // Saved settings that do not validate, with the lights off.
+        Snapshot {
+            session: SessionState::Stopped {
+                failure: Some(Error::from(ValidationError::new(
+                    "output.address",
+                    "a unicast device address is required",
+                ))),
+            },
             ..Snapshot::default()
         },
         Snapshot {
             target: LightingTarget::Off,
             session: SessionState::Faulted(SessionPhase::IdlingOutput),
-            failure: Some(Error::Faulted(SessionPhase::IdlingOutput)),
             ..Snapshot::default()
         },
     ];
@@ -265,7 +288,8 @@ fn failures() -> Vec<Failure> {
             expected: Revision(1),
             current: Revision(2),
         },
-        Error::NotProcessed,
+        Error::NeedsScreenSync,
+        Error::Faulted(SessionPhase::ClosingSource),
         Error::other("device unplugged"),
         Error::other("capture device does not support 640x400 at 30 Hz")
             .in_section(Section::Capture),
@@ -323,7 +347,7 @@ fn application() -> Value {
         "PreviewEvent": preview_events(),
         "ColorsEvent": colors_events(),
         "Failure": failures(),
-        "TargetRequest": [TargetRequest { target: LightingTarget::Processed }],
+        "TargetRequest": LightingTarget::ALL.map(|target| TargetRequest { target }),
         // Every pattern, as `PUT /api/v1/calibration` bodies.
         "CalibrationPattern": Pattern::ALL
             .into_iter()

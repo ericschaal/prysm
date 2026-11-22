@@ -136,8 +136,12 @@
       "message": "settings revision 1 is stale; current is 2"
     },
     {
-      "kind": "not_processed",
-      "message": "calibration patterns need lighting on: set the target to processed first"
+      "kind": "needs_screen_sync",
+      "message": "calibration patterns need screen sync: turn it on first"
+    },
+    {
+      "kind": "faulted",
+      "message": "runtime is faulted: session did not finish closing the source"
     },
     {
       "kind": "adapter",
@@ -597,7 +601,7 @@
       },
       "revision": 7,
       "session": {
-        "state": "running"
+        "state": "screen_sync"
       },
       "settings": {
         "capture": {
@@ -627,7 +631,7 @@
           "message": "portal listener failed"
         }
       ],
-      "target": "processed",
+      "target": "screen_sync",
       "version": "1.0.0"
     },
     {
@@ -638,7 +642,7 @@
       "device": {},
       "revision": 0,
       "session": {
-        "state": "running"
+        "state": "screen_sync"
       },
       "settings": {
         "processing": {
@@ -696,14 +700,14 @@
         }
       },
       "surface_failures": [],
-      "target": "processed",
+      "target": "screen_sync",
       "version": "1.0.0"
     },
     {
       "device": {},
       "revision": 0,
       "session": {
-        "state": "native"
+        "state": "effects"
       },
       "settings": {
         "processing": {
@@ -716,19 +720,19 @@
         }
       },
       "surface_failures": [],
-      "target": "device_native",
+      "target": "effects",
       "version": "1.0.0"
     },
     {
       "device": {},
-      "failure": {
-        "kind": "adapter",
-        "message": "video device capture failed",
-        "section": "capture"
-      },
       "revision": 0,
       "session": {
-        "state": "native"
+        "failure": {
+          "kind": "adapter",
+          "message": "video device capture failed",
+          "section": "capture"
+        },
+        "state": "effects"
       },
       "settings": {
         "capture": {
@@ -753,18 +757,76 @@
         }
       },
       "surface_failures": [],
-      "target": "processed",
+      "target": "screen_sync",
       "version": "1.0.0"
     },
     {
       "device": {},
-      "failure": {
-        "kind": "faulted",
-        "message": "runtime is faulted: session did not finish idling the output"
-      },
       "revision": 0,
       "session": {
-        "phase": "idling_output",
+        "failure": {
+          "kind": "adapter",
+          "message": "WLED did not answer",
+          "section": "output"
+        },
+        "state": "stopped"
+      },
+      "settings": {
+        "capture": {
+          "kind": "device",
+          "path": "/dev/video0"
+        },
+        "output": {
+          "address": "192.0.2.1",
+          "kind": "wled",
+          "leds": {
+            "left": 4,
+            "top": 10
+          }
+        },
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "style": {
+            "kind": "natural"
+          }
+        }
+      },
+      "surface_failures": [],
+      "target": "screen_sync",
+      "version": "1.0.0"
+    },
+    {
+      "device": {},
+      "revision": 0,
+      "session": {
+        "failure": {
+          "field": "output.address",
+          "kind": "invalid",
+          "message": "a unicast device address is required"
+        },
+        "state": "stopped"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "style": {
+            "kind": "natural"
+          }
+        }
+      },
+      "surface_failures": [],
+      "target": "off",
+      "version": "1.0.0"
+    },
+    {
+      "device": {},
+      "revision": 0,
+      "session": {
+        "message": "The lights did not switch off in time.",
         "state": "faulted"
       },
       "settings": {
@@ -829,7 +891,13 @@
   ],
   "TargetRequest": [
     {
-      "target": "processed"
+      "target": "off"
+    },
+    {
+      "target": "screen_sync"
+    },
+    {
+      "target": "effects"
     }
   ],
   "WebosSettings": [
@@ -873,10 +941,20 @@
       "enabled": false
     }
   ],
+  "luna/SetTargetRequest": [
+    {
+      "target": "off"
+    },
+    {
+      "target": "screen_sync"
+    },
+    {
+      "target": "effects"
+    }
+  ],
   "luna/State": [
     {
       "flavor": "full",
-      "lighting": "processed",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
@@ -884,6 +962,7 @@
       "preferences": {
         "autostart": false
       },
+      "target": "screen_sync",
       "video": "available",
       "worker": {
         "capturing": true,
@@ -894,7 +973,6 @@
     },
     {
       "flavor": "full",
-      "lighting": "off",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
@@ -902,6 +980,7 @@
       "preferences": {
         "autostart": false
       },
+      "target": "off",
       "video": "available",
       "worker": {
         "phase": "stopped"
@@ -909,7 +988,6 @@
     },
     {
       "flavor": "full",
-      "lighting": "device_native",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
@@ -917,6 +995,7 @@
       "preferences": {
         "autostart": false
       },
+      "target": "effects",
       "video": "available",
       "worker": {
         "phase": "stopping",
@@ -925,7 +1004,6 @@
     },
     {
       "flavor": "full",
-      "lighting": "processed",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
@@ -933,6 +1011,7 @@
       "preferences": {
         "autostart": false
       },
+      "target": "screen_sync",
       "video": "available",
       "worker": {
         "phase": "retrying",
@@ -1008,7 +1087,6 @@
   "luna/StateReply": [
     {
       "flavor": "full",
-      "lighting": "processed",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
@@ -1018,6 +1096,7 @@
       },
       "returnValue": true,
       "subscribed": true,
+      "target": "screen_sync",
       "video": "available",
       "worker": {
         "capturing": true,

@@ -100,13 +100,13 @@ supervisor in each of its states and play the phone's calibration part). See the
   - [Lighting](packages/web-portal/lighting.tsx): the power button turns the
     lights `off`, or back on in the last mode (kept per browser in
     `localStorage`; screen sync without one); the mode cards choose Screen
-    sync (`processed`) or the output's own effects
-    (`device_native`, named by the output's `lighting().effects`, e.g. "WLED
+    sync (`screen_sync`) or the output's own effects
+    (`effects`, named by the output's `lighting().effects`, e.g. "WLED
     effects"), and a choice made while off turns that mode on; after a
     failure it retries. A mode that cannot work is disabled with the reason.
     Brightness and the calibrations are Prysm's processing, which only a running
     session applies (the engine stops the session and idles the output for
-    `device_native`), so with the lights' own effects they stay in place,
+    `effects`), so with the lights' own effects they stay in place,
     dimmed and inert, and the card's line says "WLED controls its own
     effects." with "Open WLED". The card's light (CSS only, transform and
     opacity) drifts while the session runs; it grows out of the power button
@@ -120,8 +120,10 @@ supervisor in each of its states and play the phone's calibration part). See the
     dull content. WLED effects keep the designed effects palette and open no
     stream. A failed or faulted session shows "Stopped" in a calm red light,
     whatever the session still reports (after a failed start from effects
-    the engine leaves it `native`), with the failure said plainly from its
-    typed `kind` and `field` and the message under Details. The state word
+    the session is still `effects`, carrying the failure), with the failure
+    said plainly from its typed `kind` and `field` and the message under
+    Details. A target or session state newer than the page is "Unknown":
+    "Prysm is newer than this app", with no mode chosen. The state word
     follows the session, not the request. Words appear only when they inform
     (a failure, faulted, waiting for video, an output issue, or starting
     after a second). Your setup is the signal path: Video, Prysm, Lights,
