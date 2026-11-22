@@ -37,7 +37,7 @@ mod session;
 
 #[cfg(all(target_os = "linux", target_arch = "arm"))]
 pub use gst::Pipeline;
-pub use layout::{BITRATE, MAX_HEIGHT, MAX_OUTPUT_BYTES, MAX_WIDTH, PITCH, copy_nv12, pitch};
+pub use layout::{BITRATE, FPS, MAX_HEIGHT, MAX_OUTPUT_BYTES, MAX_WIDTH, PITCH, copy_nv12, pitch};
 
 /// How long [`Pipeline::encode`] waits for a picture's access unit.
 pub const OUTPUT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);

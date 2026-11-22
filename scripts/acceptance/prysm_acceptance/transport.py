@@ -42,6 +42,8 @@ class Process(Protocol):
     """A command started in the background (`spawn`), as `subprocess.Popen` is."""
 
     @property
+    def pid(self) -> int: ...
+    @property
     def returncode(self) -> int | None: ...
     def poll(self) -> int | None: ...
     def wait(self, timeout: float | None = None) -> int: ...
@@ -81,8 +83,15 @@ class Real:
         if not command.background:
             raise ValueError(f'{command.template} is not a background command')
         self.log('$ ' + command.display() + ' &')
+        # A session of its own: a Ctrl-C on the runner's terminal does not reach it, so the runner's stop is
+        # its only signal (a second one would make Prysm exit at once without idling the lights).
         return subprocess.Popen(
-            command.argv, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, env={**os.environ, **command.env}
+            command.argv,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            env={**os.environ, **command.env},
+            start_new_session=True,
         )
 
     @staticmethod

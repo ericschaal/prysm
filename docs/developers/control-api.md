@@ -76,4 +76,5 @@ Prysm's colours; Prysm reports it and never changes it. `device.led_count`
 configured edges' total, and the portal warns while the two differ.
 
 On SIGINT or SIGTERM the host stops the session (output idled off), lets open
-requests finish for up to 5 s, and exits non-zero if shutdown failed.
+requests finish for up to 5 s, and exits non-zero if shutdown failed. A
+second SIGINT or SIGTERM meanwhile exits at once with code 130.

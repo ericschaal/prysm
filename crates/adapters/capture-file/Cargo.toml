@@ -13,7 +13,7 @@ schema = ["dep:utoipa"]
 [dependencies]
 prysm-core.workspace = true
 prysm-ports.workspace = true
-nix = { workspace = true, features = ["poll"] }
+nix = { workspace = true, features = ["poll", "signal"] }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

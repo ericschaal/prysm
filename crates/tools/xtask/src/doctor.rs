@@ -50,7 +50,7 @@ enum Tool {
 
 /// What a tool is needed for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Use {
+pub(crate) enum Use {
     Check,
     Codegen,
     DistMac,
@@ -304,6 +304,26 @@ fn is_libclang(name: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
 }
 
+/// The tools this machine needs for `purpose`, in report order.
+fn needed_for(purpose: Use) -> impl Iterator<Item = Tool> {
+    Tool::iter().filter(move |tool| tool.applies() && tool.uses().contains(&purpose))
+}
+
+/// Fails naming every tool `purpose` needs that is missing or too old, with
+/// its hint, as the report lists them.
+pub(crate) fn require(purpose: Use) -> anyhow::Result<()> {
+    let unusable = needed_for(purpose)
+        .filter(|&tool| !Status::of(tool).usable())
+        .map(|tool| format!("{} ({})", tool.name(), tool.hint()))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        unusable.is_empty(),
+        "{purpose} needs {}; see `cargo xtask doctor`",
+        unusable.join(", ")
+    );
+    Ok(())
+}
+
 /// Prints one line per tool; fails when `check` cannot run. A reader that
 /// stops early (`cargo xtask doctor | head -2`) ends it quietly.
 pub fn run() -> ExitCode {
@@ -486,6 +506,18 @@ mod tests {
         for name in ["libclang-cpp.so.18", "libclangBasic.a", "libc.so.6"] {
             assert!(!is_libclang(name), "{name}");
         }
+    }
+
+    #[test]
+    fn each_dist_target_needs_all_its_tools() {
+        let tools = |purpose| needed_for(purpose).collect::<Vec<_>>();
+        use Tool::*;
+        assert_eq!(
+            tools(Use::DistTv),
+            [Cargo, Rustc, Node, Npm, Python, Git, WebosSdk, AresPackage]
+        );
+        assert_eq!(tools(Use::DistMac), [Cargo, Rustc, Node, Npm, Git]);
+        assert_eq!(tools(Use::DistLinux), [Git, Docker, Buildx]);
     }
 
     #[test]
