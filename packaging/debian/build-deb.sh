@@ -39,6 +39,7 @@ shlibs=$(cd "$work/shlibs" && dpkg-shlibdeps -O -e"$package" 2>/dev/null \
 
 install -D -m 0755 "$binary" "$root/usr/bin/$package"
 install -D -m 0644 "$here/$package.service" "$root/usr/lib/systemd/system/$package.service"
+install -D -m 0644 "$here/$package.default" "$root/etc/default/$package"
 install -D -m 0644 "$repo/crates/hosts/headless/settings.example.json" \
     "$root/usr/share/doc/$package/examples/settings.example.json"
 {
@@ -65,6 +66,9 @@ mkdir -p "$root/DEBIAN"
 for script in postinst prerm postrm; do
     install -m 0755 "$here/$script" "$root/DEBIAN/$script"
 done
+# dpkg keeps the options file as the admin edited it on upgrade, and deletes
+# it on purge.
+install -m 0644 "$here/conffiles" "$root/DEBIAN/conffiles"
 size=$(du -sk --exclude=DEBIAN "$root" | cut -f1)
 cat >"$root/DEBIAN/control" <<EOF
 Package: $package

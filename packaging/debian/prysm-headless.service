@@ -13,10 +13,12 @@ DynamicUser=yes
 SupplementaryGroups=video
 # A missing settings file means "unconfigured"; the portal creates it on the
 # first save. One that cannot be read starts unconfigured too, its error shown
-# in the portal, and the first save keeps it beside the new one. Extra
-# options (--start, --allow-origin ...) go in a drop-in:
-# systemctl edit prysm-headless.
-ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json
+# in the portal, and the first save keeps it beside the new one. Further
+# options (--start, --allow-origin ...) are OPTIONS in the package's conffile
+# /etc/default/prysm-headless. $OPTIONS, unbraced, passes each of its words as
+# one argument, and none when the file or the variable is missing.
+EnvironmentFile=-/etc/default/prysm-headless
+ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json $OPTIONS
 StateDirectory=prysm
 StateDirectoryMode=0700
 WorkingDirectory=/var/lib/prysm

@@ -31,7 +31,7 @@ first save. Hosts start idle; add `--start` to request lighting at launch.
 | Settings | `/data/settings.json` (volume) | `/var/lib/prysm/settings.json` |
 | Runs as | UID/GID 10001, plus `video` (GID 44) | systemd dynamic user `prysm-headless`, plus `video` |
 | Logs | `docker logs` | `journalctl -u prysm-headless` |
-| Extra options | arguments after the image name | `systemctl edit prysm-headless` |
+| Extra options | arguments after the image name | `OPTIONS=` in `/etc/default/prysm-headless` |
 
 `RUST_LOG` filters log lines (default `warn,prysm=info`).
 
@@ -71,8 +71,10 @@ or `docker compose -f packaging/docker/compose.yaml up -d`
 - The image has no FFmpeg, so the development-only `file` source fails to
   start; use `device` or `remote`.
 
-Release images are published as `ghcr.io/ericschaal/prysm-headless:<version>`
-(and `:latest` for the newest stable release) by
+Release images are published as `ghcr.io/ericschaal/prysm-headless:<version>`,
+`:<major>` (the newest stable release of that major version) and `:latest`
+(the newest stable release); a pre-release only as `:<version>`. They are
+published by
 [release.yml](../.github/workflows/release.yml); see
 [releasing](../docs/developers/releasing.md).
 
@@ -101,17 +103,20 @@ Install and use:
 sudo apt install ./prysm-headless*.deb    # enables and starts the service
 systemctl status prysm-headless
 journalctl -u prysm-headless -f
-sudo systemctl edit prysm-headless        # e.g. ExecStart= then ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json --start
+sudoedit /etc/default/prysm-headless      # e.g. OPTIONS="--start"
+sudo systemctl restart prysm-headless
 ```
 
-The package installs `/usr/bin/prysm-headless` and the
-[unit](debian/prysm-headless.service), and creates no account. The unit runs
+The package installs `/usr/bin/prysm-headless`, the
+[unit](debian/prysm-headless.service) and its options file
+`/etc/default/prysm-headless` ([conffile](debian/prysm-headless.default),
+`OPTIONS=` with commented examples), and creates no account. The unit runs
 as a systemd dynamic user (`DynamicUser=yes`) with `video` for `/dev/video*`,
 keeps its state in `StateDirectory=prysm` (`/var/lib/private/prysm`, linked
 from `/var/lib/prysm`), restarts on failure and is sandboxed (read-only
 system, no capabilities, only V4L2 devices, IPv4/IPv6/Unix sockets).
 `apt remove` stops and disables the service; `apt purge` also deletes the
-state directory and its link. The package conflicts with the earlier implementation's `prysm-led`
+state directory, its link and the options file. The package conflicts with the earlier implementation's `prysm-led`
 (both would take the capture device and the portal port), and ships the
 OpenH264 notice next to its copyright file, as the image does in
 `/usr/share/doc/prysm-headless/`.
@@ -158,8 +163,7 @@ address).
 The slim TV app controls the desktop Prysm's portal from `Origin: null` (a
 packaged webOS app). Start the desktop Prysm with `--allow-origin null` for
 that, e.g. `docker run … prysm-headless:local --allow-origin null` or
-`ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json --allow-origin
-null`; without it the TV app says how to allow it. `null` is also the origin
+`OPTIONS="--allow-origin null"` in `/etc/default/prysm-headless`; without it the TV app says how to allow it. `null` is also the origin
 of sandboxed frames on any site, so any web page opened on that network can
 then drive the lights, as with the portal's other LAN exposure.
 

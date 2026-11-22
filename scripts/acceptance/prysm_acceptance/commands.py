@@ -686,7 +686,11 @@ DEB_PACKAGE = 'prysm-headless'
 DEB_UNIT = 'prysm-headless.service'
 DEB_SETTINGS = '/var/lib/prysm/settings.json'
 DEB_FILE = 'prysm-headless.deb'
-# The package's documented override (`systemctl edit`), as a runtime drop-in: /run is emptied at every boot.
+# The package's options file (a conffile): purge deletes it, so `installed = "replace"` backs it up and
+# `settings restore` writes it back (`deb.options`, `deb.options-write`, `deb.options-remove`).
+DEB_OPTIONS = '/etc/default/prysm-headless'
+# A runtime drop-in that replaces the unit's command; /run is emptied at every boot. The options file stays as
+# installed.
 DEB_DROPIN_DIR = '/run/systemd/system/prysm-headless.service.d'
 DEB_DROPIN = DEB_DROPIN_DIR + '/prysm-acceptance.conf'
 # Prysm's files on a Linux target, none of which may be there before the run or after the purge: what the
@@ -696,6 +700,7 @@ DEB_PATHS = (
     '/usr/bin/prysm-headless',
     '/usr/lib/systemd/system/prysm-headless.service',
     '/usr/share/doc/prysm-headless',
+    DEB_OPTIONS,
     '/etc/systemd/system/prysm-headless.service',
     '/etc/systemd/system/prysm-headless.service.d',
     '/etc/systemd/system/multi-user.target.wants/prysm-headless.service',
@@ -776,6 +781,23 @@ def deb_purge(host: str) -> Command:
         f'{_APT} purge -y {DEB_PACKAGE}; s=$?; sudo -n systemctl daemon-reload; exit $s'
     )
     return _ssh('deb.purge', host, remote, 600)
+
+
+def deb_options(host: str) -> Command:
+    """The options file as it is, or `__absent__`."""
+    remote = f'if [ -f {DEB_OPTIONS} ]; then cat {DEB_OPTIONS}; else echo __absent__; fi'
+    return _ssh('deb.options', host, remote, 15)
+
+
+def deb_options_write(host: str, local: str | Path) -> Command:
+    """The options file replaced by the local file `local` (root's, 0644, as the package installs it)."""
+    remote = f'sudo -n tee {DEB_OPTIONS} > /dev/null && sudo -n chmod 0644 {DEB_OPTIONS}'
+    return _ssh('deb.options-write', host, remote, 30, stdin_file=_local_file(local, 'options'))
+
+
+def deb_options_remove(host: str) -> Command:
+    """The options file removed, as an administrator who deleted it left it."""
+    return _ssh('deb.options-remove', host, f'sudo -n rm -f {DEB_OPTIONS}', 30)
 
 
 def deb_leftovers(host: str) -> Command:
@@ -948,6 +970,9 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'deb.journal': lambda: deb_journal('pi@pi.example', 1763380000),
     'deb.purge': lambda: deb_purge('pi@pi.example'),
     'deb.leftovers': lambda: deb_leftovers('pi@pi.example'),
+    'deb.options': lambda: deb_options('pi@pi.example'),
+    'deb.options-write': lambda: deb_options_write('pi@pi.example', 'work/prysm-headless.options'),
+    'deb.options-remove': lambda: deb_options_remove('pi@pi.example'),
     'image.docker': lambda: image_docker('pi@pi.example'),
     'image.device': lambda: image_device('pi@pi.example', '/dev/v4l/by-id/usb-EXAMPLE-video-index0'),
     'image.present': lambda: image_present('pi@pi.example', 'RUN-CELL'),

@@ -91,9 +91,19 @@ This runs the Dockerfile's `artifacts` target for that platform and writes
 assembly with `dpkg-deb` and also runs on any Debian or Ubuntu with
 `dpkg-dev`. The binary is built on Debian 12 and needs glibc 2.34+ and systemd.
 
-The package installs `/usr/bin/prysm-headless` and a sandboxed
-[systemd unit](../../packaging/debian/prysm-headless.service); installing
-enables and starts the service. User guide: [Debian](../users/debian.md).
+The package installs `/usr/bin/prysm-headless`, a sandboxed
+[systemd unit](../../packaging/debian/prysm-headless.service) and its
+options file `/etc/default/prysm-headless`
+([source](../../packaging/debian/prysm-headless.default)); installing enables
+and starts the service. The unit reads the file with
+`EnvironmentFile=-/etc/default/prysm-headless` and runs
+`/usr/bin/prysm-headless /var/lib/prysm/settings.json $OPTIONS`, so an admin
+adds options there and never edits the unit. `OPTIONS` belongs to the unit:
+Prysm itself reads no environment variable. The file is the package's one
+conffile ([conffiles](../../packaging/debian/conffiles)): dpkg keeps the
+admin's edits on upgrade, asks when both sides changed it, keeps it on
+`apt remove` and deletes it on `apt purge`. User guide:
+[Debian](../users/debian.md).
 
 The unit has `DynamicUser=yes`, so the package creates no account: while the
 service runs, systemd allocates a user and group named after the unit
