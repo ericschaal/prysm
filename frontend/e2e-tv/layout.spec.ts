@@ -90,12 +90,14 @@ for (const flavor of ['full', 'slim'] as const) {
     // WLED unplugged: the portal reports a failed output.
     await page.evaluate(() =>
       window.demo.application.publish({
-        failure: {
-          kind: 'adapter',
-          section: 'output',
-          message: 'WLED at 192.168.1.50 did not answer',
+        session: {
+          state: 'stopped',
+          failure: {
+            kind: 'adapter',
+            section: 'output',
+            message: 'WLED at 192.168.1.50 did not answer',
+          },
         },
-        session: { state: 'stopped' },
       }),
     );
     await expect(page.locator('.lighting')).toHaveClass(/attention/);
@@ -109,13 +111,24 @@ for (const flavor of ['full', 'slim'] as const) {
   }) => {
     await lightsOn(page, flavor);
     const normal = await measure(page, flavor);
-    await page.evaluate(() =>
-      window.demo.supervisor.publish({
-        failure: { kind: 'other', message: 'Capture stopped: no video frames' },
-        capturing: false,
-        fps: null,
-      }),
-    );
+    // Full: the TV's engine stops its session, and the worker reports it;
+    // slim: the worker itself reports its capture failing.
+    await page.evaluate((full) => {
+      const message = 'Capture stopped: no video frames';
+      if (full)
+        window.demo.application.publish({
+          session: {
+            state: 'stopped',
+            failure: { kind: 'adapter', section: 'capture', message },
+          },
+        });
+      else
+        window.demo.supervisor.publish({
+          failure: { kind: 'other', message },
+          capturing: false,
+          fps: null,
+        });
+    }, flavor === 'full');
     await expect(page.locator('.overview')).toHaveClass(/attention/);
     expect(await measure(page, flavor), 'with a capture failure').toEqual(
       normal,

@@ -1698,6 +1698,55 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     ).title,
     'Screen sync could not start',
   );
+  // A failed session comes before the TV's power and video (it is what
+  // needs the user); lights that are fine let them speak first.
+  for (const [tv, session, title] of [
+    [
+      { video: 'unavailable' },
+      { state: 'stopped', failure: sessionFailure },
+      'Screen sync stopped',
+    ],
+    [
+      { power: 'asleep' },
+      { state: 'stopped', failure: sessionFailure },
+      'Screen sync stopped',
+    ],
+    [{ video: 'unavailable' }, { state: 'screen_sync' }, 'Waiting for video'],
+    [{ power: 'asleep' }, { state: 'screen_sync' }, 'TV is asleep'],
+  ])
+    assert.equal(
+      tvStatus(
+        true,
+        { ...reported, ...tv },
+        draft,
+        facts({ target: 'screen_sync', session }),
+      ).title,
+      title,
+      JSON.stringify([tv, session]),
+    );
+  // Before the portal answers, a reported failure is said only for a mode:
+  // lights that are off do not flicker as stopped.
+  assert.equal(
+    tvStatus(true, { ...reported, target: 'off' }, draft).title,
+    'Lights off',
+  );
+  assert.equal(tvStatus(true, reported, draft).title, 'Screen sync stopped');
+  // Also when the lights themselves failed (then not said to be still on).
+  assert.equal(
+    tvStatus(
+      true,
+      reported,
+      draft,
+      facts({
+        target: 'screen_sync',
+        session: {
+          state: 'effects',
+          failure: { kind: 'adapter', section: 'output', message: 'x' },
+        },
+      }),
+    ).title,
+    'Screen sync could not start',
+  );
   // The portal's situation says what the reported failure means: off with
   // a switch off that failed is off, effects with invalid settings are on;
   // neither is tried again.
@@ -1794,7 +1843,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     const failing = tvStatus(
       true,
       {
-        ...tvState(flavor, {}),
+        ...tvState(flavor, flavor === 'full' ? { target: 'screen_sync' } : {}),
         worker: { phase: 'unknown' },
         failure: { kind: 'other', message: 'x' },
       },
@@ -2527,6 +2576,7 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
     status(
       tvState('full', {
         ...running,
+        target: 'screen_sync',
         failure: { kind: 'other', message: 'worker exited 1' },
       }),
     ).title,

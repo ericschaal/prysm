@@ -287,7 +287,9 @@ export function LightCard({
     const step = steps[event.key];
     if (!step) return;
     event.preventDefault();
-    const index = tiles.findIndex((tile) => tile.value === mode);
+    // From the focused tile: the chosen one, or the first while none is.
+    const from = chosen ?? tiles[0].value;
+    const index = tiles.findIndex((tile) => tile.value === from);
     const next = tiles[(index + step + tiles.length) % tiles.length];
     if (!next || locked || reasons[next.value]) return;
     void choose(next.value);
@@ -309,7 +311,7 @@ export function LightCard({
       <section
         className="light-card"
         data-mood={mood}
-        data-mode={mode}
+        data-mode={chosen ?? undefined}
         data-lit={lit}
         data-ignite={ignite}
         aria-labelledby={headingId}
@@ -515,8 +517,8 @@ export function LightCard({
                 reach) while the lights show their own effects. */}
             <div
               className="picture-controls"
-              data-quiet={mode === 'effects'}
-              inert={mode === 'effects'}
+              data-quiet={chosen === 'effects'}
+              inert={chosen === 'effects'}
             >
               {children}
             </div>

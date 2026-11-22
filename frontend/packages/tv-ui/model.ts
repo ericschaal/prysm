@@ -212,10 +212,15 @@ export function tvStatus(
   const failed = !!state.failure && !waiting;
   // Full: the worker reports its session's failure, so while the portal's
   // situation is known it says what the failure means (off with a switch
-  // off that failed is still off); a restart being retried is the
-  // supervisor's own.
+  // off that failed is still off). Before the portal answers, the failure
+  // is said only for a mode, so lights that are off never flicker as
+  // stopped. A restart being retried is the supervisor's own.
   const lighting = full ? portal?.lighting : undefined;
-  const workerFailed = failed && (!lighting || phase === 'retrying');
+  const asksMode =
+    state.flavor === 'full' &&
+    (state.target === 'screen_sync' || state.target === 'effects');
+  const workerFailed =
+    failed && (!full || phase === 'retrying' || (!lighting && asksMode));
   const stopped = full ? 'Screen sync stopped' : 'Capture stopped';
   let title: string;
   let description: string;
@@ -258,6 +263,21 @@ export function tvStatus(
     // it reports is said first.
     title = 'Updating…';
     description = 'Update this app if this stays.';
+    // Full: a faulted or failed session comes before the TV's power and
+    // video. It is what needs the user (restart Prysm, try again, another
+    // mode); waking the TV or a picture would not end it, and saying
+    // "Waiting for video" over it would hide it. Lights that are fine
+    // (off, effects, screen sync) let power and video speak first.
+  } else if (lighting?.kind === 'faulted') {
+    title = 'Prysm stopped responding';
+    description = 'Restart Prysm to recover.';
+    attention = true;
+  } else if (lighting?.kind === 'failed') {
+    // The lights card says what failed; its modes try again.
+    if (lighting.target === 'effects') title = 'WLED effects stopped';
+    else title = lighting.fromEffects ? 'Screen sync could not start' : stopped;
+    description = 'Try again, or choose another mode.';
+    attention = true;
   } else if (enabled && state.power !== 'active') {
     title =
       state.power === 'screen_saver' ? 'Screen saver is on' : 'TV is asleep';
@@ -268,17 +288,7 @@ export function tvStatus(
     title = 'Waiting for video';
     description = 'Choose an input or play something on the TV.';
   } else if (state.flavor === 'full') {
-    if (lighting?.kind === 'faulted') {
-      title = 'Prysm stopped responding';
-      description = 'Restart Prysm to recover.';
-      attention = true;
-    } else if (lighting?.kind === 'failed') {
-      // The lights card says what failed; its modes try again.
-      if (lighting.target === 'effects') title = 'WLED effects stopped';
-      else title = lighting.effectsOn ? 'Screen sync could not start' : stopped;
-      description = 'Try again, or choose another mode.';
-      attention = true;
-    } else if (
+    if (
       lighting?.kind === 'unknown' ||
       (!lighting && state.target === 'unknown')
     ) {

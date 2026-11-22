@@ -121,9 +121,9 @@ function failureSide(
  * - `effects`: the output's own effects run; `failure` is saved settings
  *   that do not validate.
  * - `failed`: the mode asked for is not running and the session says why;
- *   `at` is the side that failed, when known, and `effectsOn` says the
- *   lights' own effects still show: a start of screen sync that failed
- *   from them, for a reason that is not the lights themselves.
+ *   `at` is the side that failed, when known. `fromEffects`: a start of
+ *   screen sync that failed from the lights' own effects; `effectsOn`:
+ *   they still show, which is not said when the lights themselves failed.
  * - `starting`: the mode asked for is not running yet (also while switching
  *   from the other one).
  */
@@ -136,6 +136,7 @@ export type LightingSituation =
       target: LightingMode;
       failure: LightingFailure;
       at: FailureSection | null;
+      fromEffects: boolean;
       effectsOn: boolean;
     }
   | { kind: 'sync'; input: Input | undefined }
@@ -171,12 +172,14 @@ export function lightingSituation({
   const failure = sessionFailure(session);
   if (failure) {
     const at = failureSide(failure);
+    const fromEffects = session.state === 'effects';
     return {
       kind: 'failed',
       target,
       failure,
       at,
-      effectsOn: session.state === 'effects' && at !== 'output',
+      fromEffects,
+      effectsOn: fromEffects && at !== 'output',
     };
   }
   return { kind: 'starting', target };
@@ -229,7 +232,7 @@ export function describeSituation(
       if (situation.target === 'effects')
         return both(`${effects} could not start`);
       return both(
-        situation.effectsOn
+        situation.fromEffects
           ? 'Screen sync could not start'
           : 'Screen sync stopped',
       );

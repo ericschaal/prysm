@@ -763,6 +763,14 @@ impl Core {
             Ok(end) => (Lighting::left_by(end), matches!(end.exit, Exit::Ended)),
             Err(error) => (Lighting::failed(error), false),
         };
+        // The result is the loop's failure: a release that also failed (why
+        // the source is unreleased) is said only here.
+        if let Some(release) = end.as_ref().ok().and_then(hidden_release) {
+            tracing::warn!(
+                error = %prysm_ports::chain(release),
+                "the source of a session that failed on its own was not released"
+            );
+        }
         let result = end.and_then(SessionEnd::result);
         let failure = result.as_ref().err().cloned();
         let complete = ended && self.state.borrow().target == LightingTarget::ScreenSync;
@@ -1153,6 +1161,15 @@ fn unpublished<'a>(
     }
 }
 
+/// The release failure a session end's result does not carry: the loop's
+/// own failure comes first ([`SessionEnd::result`]).
+fn hidden_release(end: &SessionEnd) -> Option<&Error> {
+    match (&end.exit, &end.released) {
+        (Exit::Failed(_), Err(release)) => Some(release),
+        _ => None,
+    }
+}
+
 /// Log what [`unpublished`] finds, so a fault's cause is never lost.
 fn log_unpublished(lighting: &Lighting, result: &Result<()>) {
     if let Some((phase, error)) = unpublished(lighting, result) {
@@ -1188,6 +1205,35 @@ mod tests {
 
     fn failure() -> Error {
         Error::other("cannot idle").in_section(Section::Output)
+    }
+
+    /// A release failure behind the loop's own failure is found, once; any
+    /// other end has none to add.
+    #[test]
+    fn a_release_failure_behind_a_loop_failure_is_found() {
+        let end = |exit: Exit, released: Result<()>| SessionEnd {
+            exit,
+            released,
+            left: Ok(IdleMode::Off),
+        };
+        let release = || Err(Error::other("cannot close"));
+        let failed = || Exit::Failed(Error::other("source failed"));
+        let found = |end: &SessionEnd| hidden_release(end).map(ToString::to_string);
+        assert_eq!(
+            found(&end(failed(), release())).as_deref(),
+            Some("cannot close")
+        );
+        assert_eq!(found(&end(failed(), Ok(()))), None);
+        assert_eq!(
+            found(&end(Exit::Stopped, release())),
+            None,
+            "it is the result"
+        );
+        assert_eq!(
+            found(&end(Exit::Ended, release())),
+            None,
+            "it is the result"
+        );
     }
 
     /// What a fault leaves unpublished is logged; a failure a stopped or

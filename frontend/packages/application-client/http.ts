@@ -395,8 +395,9 @@ function known<T extends string, F extends string>(
 /**
  * A session's failure as this page reads it, or `null` when malformed
  * (`field` and `section` are text when present). A `section` other than
- * `capture` or `output` reads as absent; a kind newer than this page is
- * said by its side: `adapter` with a known section, else `internal`.
+ * `capture` or `output` reads as absent. A kind newer than this page is
+ * said by its side, from its `section` or else its `field`'s section:
+ * `adapter` with that section, else `internal`.
  */
 function decodeFailure(value: unknown): LightingFailure | null {
   if (!isObject(value)) return null;
@@ -421,10 +422,14 @@ function decodeFailure(value: unknown): LightingFailure | null {
         : { kind: 'adapter', message };
     case 'internal':
       return { kind: 'internal', message };
-    default:
-      return side
-        ? { kind: 'adapter', message, section: side }
+    default: {
+      const named = typeof field === 'string' ? field.split('.')[0] : undefined;
+      const said =
+        side ?? (named === 'capture' || named === 'output' ? named : undefined);
+      return said
+        ? { kind: 'adapter', message, section: said }
         : { kind: 'internal', message };
+    }
   }
 }
 

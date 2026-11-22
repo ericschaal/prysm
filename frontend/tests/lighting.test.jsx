@@ -131,13 +131,34 @@ test('every target and session has one lighting situation', () => {
     }),
     { kind: 'unknown', failure, message: 'newer' },
   );
-  // A start of screen sync that failed from the lights' own effects.
-  assert.equal(
+  // A start of screen sync that failed from the lights' own effects: they
+  // are still on, unless the lights themselves failed.
+  const startFrom = (failed) =>
     lightingSituation({
       target: 'screen_sync',
-      session: session('effects', true),
-    }).effectsOn,
-    true,
+      session: { state: 'effects', failure: failed },
+    });
+  for (const [failed, effectsOn] of [
+    [failure, true],
+    [{ kind: 'adapter', section: 'capture', message: 'x' }, true],
+    [{ kind: 'adapter', section: 'output', message: 'x' }, false],
+  ]) {
+    const started = startFrom(failed);
+    assert.equal(started.fromEffects, true, JSON.stringify(failed));
+    assert.equal(started.effectsOn, effectsOn, JSON.stringify(failed));
+    assert.equal(
+      describeSituation(started, 'WLED effects').headline,
+      'Screen sync could not start',
+      JSON.stringify(failed),
+    );
+  }
+  const stoppedStart = lightingSituation({
+    target: 'screen_sync',
+    session: session('stopped', true),
+  });
+  assert.deepEqual(
+    [stoppedStart.fromEffects, stoppedStart.effectsOn],
+    [false, false],
   );
   // The side that failed: typed, else the setting named.
   const at = (change) =>
@@ -232,6 +253,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     target: 'screen_sync',
     failure,
     at: 'output',
+    fromEffects: false,
     effectsOn: false,
   };
   assert.equal(moodOf(sync, true), 'sync');
@@ -324,7 +346,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   });
   // A start of screen sync that failed from the effects: they are still on.
   const fromEffects = lightCardView(
-    facts({ ...failed, at: null, effectsOn: true }),
+    facts({ ...failed, at: null, fromEffects: true, effectsOn: true }),
     memory(),
   );
   assert.equal(
@@ -332,6 +354,18 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     'Screen sync could not start. WLED effects are still on.',
   );
   assert.equal(fromEffects.info.retry, true);
+  // The lights themselves failed: not said to be still on.
+  const lightsFailed = lightCardView(
+    facts({
+      ...failed,
+      failure: { kind: 'adapter', section: 'output', message: 'gone' },
+      fromEffects: true,
+      effectsOn: false,
+    }),
+    memory(),
+  );
+  assert.equal(lightsFailed.info.text, 'The lights are not responding.');
+  assert.equal(lightsFailed.status, 'Screen sync could not start');
   assert.equal(
     moodOf({ kind: 'starting', target: 'screen_sync' }, true),
     'starting',

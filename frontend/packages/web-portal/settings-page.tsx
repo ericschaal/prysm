@@ -210,7 +210,7 @@ const targetLabels = {
   off: 'Off',
   screen_sync: 'Screen sync',
   effects: 'The lights’ own effects',
-  unknown: 'Unknown: Prysm is newer than this app',
+  unknown: 'Unknown: Prysm is newer than this page',
 } as const satisfies Record<
   ApplicationSnapshot<unknown, unknown>['target'],
   string
@@ -220,7 +220,7 @@ const sessionLabels = {
   screen_sync: 'Screen sync',
   effects: 'Showing the lights’ own effects',
   faulted: 'Stopped by a fault; restart Prysm',
-  unknown: 'Unknown: Prysm is newer than this app',
+  unknown: 'Unknown: Prysm is newer than this page',
 } as const satisfies Record<
   ApplicationSnapshot<unknown, unknown>['session']['state'],
   string

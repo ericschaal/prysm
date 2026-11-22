@@ -57,7 +57,9 @@ has one reading.
 | Where | Field | Newer value read as |
 | --- | --- | --- |
 | State stream (`decodeState` in `application-client/http.ts`) | `target` | `unknown`: no mode is selected; a known one can still be chosen |
-| | `session.state` | `unknown`, keeping a `failure` or `message` it carries |
+| | `session.state` | `unknown`, keeping a `failure` or `message` it carries (a malformed failure is dropped) |
+| | `session.failure.kind` | said by its side: an `adapter` failure of its `section`, or else of its `field`'s section (`capture`, `output`); without one, `internal` |
+| | `session.failure.section` | absent, unless `capture` or `output` |
 | Preview and colors streams | event `type` | skipped |
 | Light card, TV lights card | `device.issue` | "The lights are not showing screen sync." |
 | TV service (`decodeState` in `webos-platform`) | `power`, `video` | `unknown` |
@@ -78,8 +80,9 @@ session state newer than the page), off, reached (`session.state` equals the
 target: screen sync or effects), failed (the session carries a failure),
 starting. Every pair lands on exactly one. Screen sync never carries a
 failure. An `effects` session carries one after a start of screen sync
-that failed from the effects (the situation is then failed, and the cards
-add that the effects are still on), or, with the effects as the target,
+that failed from the effects (the situation is then failed, headed "Screen
+sync could not start", and the cards add that the effects are still on,
+except when the lights themselves failed, `section` `output`), or, with the effects as the target,
 for saved settings that do not validate (a note, "Prysm can’t use these
 settings."; another kind is said in its own words). Off keeps a stopped
 session's failure (settings that could not be applied, a switch off that
@@ -93,11 +96,15 @@ one situation, and `describeSituation` gives its words.
 
 The full TV package's status follows the portal's situation once it is
 known: the worker reports its session's failure to the supervisor, and the
-situation says what it means (off is off, effects showing are on). Try
+situation says what it means (off is off, effects showing are on). A
+faulted or failed session comes before the TV's power and video, since it
+needs the user and waking the TV would not end it; lights that are fine let
+power and video speak first. Try
 again is offered only for a failed mode (`screen_sync` or `effects`) and
 sends `setTarget off`, then that target again. Before the portal answers,
 or while the supervisor retries a worker, the supervisor's failure is the
-headline. A worker phase newer than the app shows "Updating…" unless a
+headline (before the portal answers, only for a mode: lights that are off
+are said as off). A worker phase newer than the app shows "Updating…" unless a
 failure is reported.
 
 ## Saving from a page

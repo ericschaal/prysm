@@ -154,11 +154,18 @@ export function runDemo(
       capturing: false,
       fps: null,
     },
-    'TV: failure': {
-      failure: { kind: 'other', message: 'Capture stopped: no video frames' },
-      capturing: false,
-      fps: null,
-    },
+    // Full: the engine's session failure, which the worker reports (below).
+    'TV: failure':
+      flavor === 'full'
+        ? {}
+        : {
+            failure: {
+              kind: 'other',
+              message: 'Capture stopped: no video frames',
+            },
+            capturing: false,
+            fps: null,
+          },
     'TV: waiting for video': {
       ...on,
       video: 'unavailable',
@@ -221,6 +228,21 @@ export function runDemo(
   );
   for (const name of Object.keys(states)) tvState.add(new Option(name, name));
   tvState.onchange = () => {
+    if (flavor === 'full' && tvState.value === 'TV: failure') {
+      // As on a TV: screen sync asked, then its session failed.
+      application.publish({
+        target: 'screen_sync',
+        session: {
+          state: 'stopped',
+          failure: {
+            kind: 'adapter',
+            section: 'capture',
+            message: 'Capture stopped: no video frames',
+          },
+        },
+      });
+      return;
+    }
     const change = states[tvState.value];
     const facts = supervisor.facts();
     const running = facts.flavor === 'full' || facts.enabled;

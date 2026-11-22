@@ -196,8 +196,10 @@ export function lightCardView(
   let word: Word = lit ? 'On' : 'Off';
   if (mood === 'problem') word = 'Stopped';
   if (mood === 'unknown') word = 'Unknown';
+  // A target newer than this page chooses no mode, so no effects look.
+  const chosen = target === 'unknown' ? null : mode;
   let palette: LightCardView['palette'] =
-    mode === 'effects' ? 'effects' : 'sync';
+    chosen === 'effects' ? 'effects' : 'sync';
   if (mood === 'problem') palette = 'error';
   const status = describeSituation(lighting, effects).headline;
 
@@ -307,13 +309,13 @@ export function lightCardView(
     on,
     reasons,
     mode,
-    chosen: target === 'unknown' ? null : mode,
+    chosen,
     powerReason,
     word,
     palette,
     status,
     info,
     calm,
-    ownEffects: mode === 'effects' && !info && !(on && note),
+    ownEffects: chosen === 'effects' && !info && !(on && note),
   };
 }

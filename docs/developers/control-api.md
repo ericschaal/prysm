@@ -77,9 +77,10 @@ See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md
 The session reached the target when `session.state` equals it (`stopped` for
 `off`). A failure lives in the session it explains (`stopped` or `effects`;
 `screen_sync` has none), and a failure of what a command replaced is only
-logged. While `off` carries an output failure (the lights may not be off),
-`off` asked again switches them off again, and a save that does nothing
-about the output keeps the failure; saving other lights ends it.
+logged. While stopped with an output failure (the lights may not be off,
+whichever target failed), `off` asked switches them off again; with the
+target `off`, a save that does nothing about the output keeps the failure,
+and saving other lights ends it.
 
 There is no confirmation window and no rollback to the previous mode after a
 failed start. A failure leaves the target as requested. Without frames for 3 s

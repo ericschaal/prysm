@@ -106,12 +106,12 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
             Line::from(match input_label(snapshot) {
                 // Short, so the lights' issue fits beside it.
                 Some(input) => format!(
-                    "Target {} · now {} · Input: {input}{issue}",
+                    "Target {} · Session {} · Input: {input}{issue}",
                     snapshot.target.as_str(),
                     snapshot.session
                 ),
                 None => format!(
-                    "Target {} · now {}{issue}",
+                    "Target {} · Session {}{issue}",
                     snapshot.target.as_str(),
                     snapshot.session
                 ),
@@ -614,7 +614,7 @@ mod tests {
         let text = draw(&mut terminal, &view);
         assert!(text.contains('▀'));
         assert!(
-            text.contains("Target screen_sync · now screen_sync"),
+            text.contains("Target screen_sync · Session screen_sync"),
             "{text}"
         );
         assert!(text.contains("device → null · rev 4"));

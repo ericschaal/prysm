@@ -79,6 +79,16 @@ async fn output_idles_when_a_write_fails() {
         );
         assert_eq!(log.count("source.close:a"), 1);
         assert_eq!(log.count("output.idle:a:Off"), 1);
+        // Stopped with the lights' failure, whatever the target was: `Off`
+        // switches them off again, and that clears it.
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert_eq!(log.count("output.idle:a:Off"), 2, "idled off again");
+        let snapshot = handle.snapshot().borrow().clone();
+        assert!(
+            snapshot.session.failure().is_none(),
+            "{:?}",
+            snapshot.session
+        );
         engine.shutdown().await.unwrap();
     })
     .await;

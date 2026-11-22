@@ -203,6 +203,11 @@ test('a target or session state newer than the page is read as unknown, never of
     kind: 'internal',
     message: 'x',
   });
+  assert.deepEqual(
+    read({ kind: 'overheated', message: 'x', field: 'capture.width' }),
+    { kind: 'adapter', message: 'x', section: 'capture' },
+    'a field names the side too',
+  );
   // A newer state with a malformed failure keeps the state, not the failure.
   assert.deepEqual(
     decodeState(state({ session: { state: 'dimming', failure: 'x' } })),

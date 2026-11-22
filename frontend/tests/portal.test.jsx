@@ -3462,7 +3462,14 @@ test('the script that sets the theme before the page is drawn reads the same key
 
 test('a target or session state newer than the page chooses no mode, and Power switches off', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
-  const { fixture } = portal;
+  const { fixture, dom } = portal;
+  const key = (element, name) =>
+    act(async () => {
+      element.dispatchEvent(
+        new dom.window.KeyboardEvent('keydown', { key: name, bubbles: true }),
+      );
+      await sleep(0);
+    });
   try {
     await act(async () =>
       fixture.publish({ target: 'unknown', session: { state: 'stopped' } }),
@@ -3480,6 +3487,21 @@ test('a target or session state newer than the page chooses no mode, and Power s
       'Prysm is newer than this page. Reload it to see what the lights do.',
     );
     assert.equal(power().getAttribute('aria-pressed'), 'true');
+    assert.equal(mode('screen_sync').tabIndex, 0, 'the first tile takes focus');
+    assert.notEqual(
+      $('.picture-controls').dataset.quiet,
+      'true',
+      'no remembered mode quiets them',
+    );
+    // The arrows step from the focused tile, so either mode is reached.
+    await key(mode('screen_sync'), 'ArrowRight');
+    assert.deepEqual(
+      fixture.calls.filter((call) => call.startsWith('target:')).slice(-1),
+      ['target:effects'],
+    );
+    await act(async () =>
+      fixture.publish({ target: 'unknown', session: { state: 'stopped' } }),
+    );
     await press(power());
     assert.deepEqual(
       fixture.calls.filter((call) => call.startsWith('target:')).slice(-1),
