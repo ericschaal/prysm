@@ -8,16 +8,14 @@ use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
-use prysm_ports::{Accepted, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, Handoff};
+use prysm_ports::{Accepted, Answer, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, Handoff};
 use prysm_protocol::FailureKind;
 
-/// Answer a WebSocket upgrade with `101` and this protocol version's
-/// subprotocol, and hand the connection over once hyper releases it. `426`,
-/// listing the versions spoken here (this one), when the sender offers
-/// none of them; `503`
-/// while no source receives (lighting off, or the capture is not `remote`).
-/// A sender of this version's offer header is announced first, so a refused
-/// attempt still tells the source what the sender can deliver.
+/// Answer a WebSocket upgrade as the [`Handoff`] says ([`Handoff::answer`]):
+/// `426`, listing the versions spoken here (this one), when the sender offers
+/// none of them; `503` while no source receives (lighting off, or the
+/// capture is not `remote`); else `101` with this version's subprotocol, and
+/// hand the connection over with its sender's offer once hyper releases it.
 pub(crate) fn upgrade(
     context: &Context,
     handoff: &Handoff,
@@ -30,32 +28,36 @@ pub(crate) fn upgrade(
             "expected a WebSocket upgrade",
         );
     };
-    if !offers_protocol(request.headers()) {
-        let mut refused = failure(
-            StatusCode::UPGRADE_REQUIRED,
-            FailureKind::BadRequest,
-            "the sender speaks another capture stream version; update the older one",
-        );
-        refused.headers_mut().insert(
-            header::SEC_WEBSOCKET_PROTOCOL,
-            HeaderValue::from_static(CAPTURE_PROTOCOL),
-        );
-        return refused;
-    }
-    if let Some(offer) = request
-        .headers()
+    let headers = request.headers();
+    let protocols = headers
+        .get_all(header::SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .filter_map(|value| value.to_str().ok());
+    let offer = headers
         .get(CAPTURE_OFFER_HEADER)
-        .and_then(|value| value.to_str().ok())
-    {
-        handoff.announce(offer);
-    }
-    if !handoff.is_receiving() {
-        return failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            FailureKind::Unavailable,
-            "no source receives the capture stream: lighting is off or the capture is not `remote`",
-        );
-    }
+        .and_then(|value| value.to_str().ok());
+    let offer = match handoff.answer(protocols, offer) {
+        Answer::Upgrade { offer } => offer,
+        Answer::Version => {
+            let mut refused = failure(
+                StatusCode::UPGRADE_REQUIRED,
+                FailureKind::BadRequest,
+                "the sender speaks another capture stream version; update the older one",
+            );
+            refused.headers_mut().insert(
+                header::SEC_WEBSOCKET_PROTOCOL,
+                HeaderValue::from_static(CAPTURE_PROTOCOL),
+            );
+            return refused;
+        }
+        Answer::Unavailable => {
+            return failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                FailureKind::Unavailable,
+                "no source receives the capture stream: lighting is off or the capture is not `remote`",
+            );
+        }
+    };
     let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
     let upgraded = hyper::upgrade::on(&mut request);
     let handoff = handoff.clone();
@@ -88,6 +90,7 @@ pub(crate) fn upgrade(
             .offer(Accepted {
                 socket,
                 buffered: parts.read_buf.to_vec(),
+                offer,
             })
             .is_err()
         {
@@ -117,11 +120,6 @@ fn lists(headers: &HeaderMap, name: header::HeaderName, token: &str) -> bool {
                 .any(|part| part.trim().eq_ignore_ascii_case(token))
         })
     })
-}
-
-/// The sender offers this end's capture stream version.
-fn offers_protocol(headers: &HeaderMap) -> bool {
-    lists(headers, header::SEC_WEBSOCKET_PROTOCOL, CAPTURE_PROTOCOL)
 }
 
 /// The client's key of a version-13 WebSocket upgrade request.

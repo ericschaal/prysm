@@ -205,8 +205,10 @@ impl Refusal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Close {
     /// The receiving source closed (lighting stopped, or its capture
-    /// settings changed): code 4000. The sender releases its capture and
-    /// encoder until a receiver takes a connection again.
+    /// settings changed) or failed (the sender's refusal, a keyframe that
+    /// does not decode), possibly before it sent the request: code 4000.
+    /// The sender releases its capture and encoder until a receiver takes a
+    /// connection again.
     Stopped,
     /// Another sender's connection replaced this one: code 4001. The sender
     /// stops until its user starts it again, so two senders never take the
@@ -238,7 +240,10 @@ impl fmt::Display for Close {
     }
 }
 
-/// Why a stream or frame cannot be encoded, or was rejected.
+/// What went wrong on the capture stream: the upgrade's answer (another
+/// version, Prysm unavailable), the stream's course (no request, a refusal,
+/// a message out of turn, the peer's close), or a message or frame that
+/// cannot be encoded or was rejected.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum WireError {

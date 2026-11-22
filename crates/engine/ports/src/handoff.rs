@@ -21,20 +21,38 @@ pub const CAPTURE_PROTOCOL_PREFIX: &str = "prysm-capture.v";
 pub const CAPTURE_PROTOCOL: &str = "prysm-capture.v6";
 
 /// The upgrade request header in which a capture host says what it can
-/// deliver, in the source's own format; the surface [announces](Handoff::announce)
-/// it whether or not it then hands the connection over.
+/// deliver, in the source's own format; [`Handoff::answer`] announces it
+/// whether or not the connection is then handed over.
 pub const CAPTURE_OFFER_HEADER: &str = "prysm-capture-offer";
 
-/// The longest announcement kept, in bytes of ASCII.
+/// The longest offer kept, in bytes of ASCII.
 pub const MAX_ANNOUNCEMENT_BYTES: usize = 4096;
 
 /// A connection a surface accepted and upgraded for a source that reads it
-/// itself: the plain, blocking socket and the bytes the surface already read
-/// past the upgrade request.
+/// itself: the plain, blocking socket, the bytes the surface already read
+/// past the upgrade request, and the offer that request carried
+/// ([`Answer::Upgrade`]).
 #[derive(Debug)]
 pub struct Accepted {
     pub socket: TcpStream,
     pub buffered: Vec<u8>,
+    pub offer: Option<String>,
+}
+
+/// How a surface answers an upgrade request at [`CAPTURE_STREAM_PATH`]
+/// ([`Handoff::answer`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// `101` with [`CAPTURE_PROTOCOL`], then [offer](Handoff::offer) the
+    /// connection as an [`Accepted`] with this offer: the request's
+    /// [`CAPTURE_OFFER_HEADER`], `None` when it had none of at most
+    /// [`MAX_ANNOUNCEMENT_BYTES`] of ASCII.
+    Upgrade { offer: Option<String> },
+    /// `426 Upgrade Required`, listing [`CAPTURE_PROTOCOL`]: the request
+    /// offers no version spoken here.
+    Version,
+    /// `503 Service Unavailable`: no source receives.
+    Unavailable,
 }
 
 /// Hands upgraded connections from a surface (the web portal's capture
@@ -43,12 +61,14 @@ pub struct Accepted {
 ///
 /// Offers are refused while no source [receives](Self::receive). While one
 /// does, the newest connection waits for it to take; it replaces one not yet
-/// taken (whose socket closes).
+/// taken, whose socket closes without a WebSocket close.
 ///
-/// It also keeps the newest [announcement](Self::announce): what the capture
-/// host says it can deliver, opaque here. It outlasts sources and
-/// connections, so the receiving source can answer for the capture host
-/// while nothing streams; it is not authenticated and never expires.
+/// It also keeps the newest announcement ([`Self::announcement`]): what a
+/// capture host said it can deliver at the latest upgrade request, opaque
+/// here. It outlasts sources and connections, so the receiving source can
+/// answer for the capture host while nothing streams; it is not
+/// authenticated and never expires. Each connection carries its own
+/// sender's offer ([`Accepted::offer`]).
 #[derive(Debug, Clone, Default)]
 pub struct Handoff(Arc<Mutex<Slot>>);
 
@@ -68,6 +88,41 @@ impl Handoff {
         Self::default()
     }
 
+    /// Answer an upgrade request whose `Sec-WebSocket-Protocol` header
+    /// values are `protocols` (each comma-separated; names are case-sensitive) and whose
+    /// [`CAPTURE_OFFER_HEADER`] is `offer`, in this order: a request that
+    /// offers no version spoken here is refused; its offer, if at most
+    /// [`MAX_ANNOUNCEMENT_BYTES`] of ASCII, is announced, replacing the
+    /// previous one, so a refused attempt still says what its sender can
+    /// deliver; it is refused while no source receives; else it is
+    /// upgraded, carrying the offer. A source that stops before the
+    /// connection is [offered](Self::offer) refuses it then.
+    pub fn answer<'a>(
+        &self,
+        protocols: impl IntoIterator<Item = &'a str>,
+        offer: Option<&str>,
+    ) -> Answer {
+        let speaks = protocols
+            .into_iter()
+            .flat_map(|value| value.split(','))
+            .any(|protocol| protocol.trim() == CAPTURE_PROTOCOL);
+        if !speaks {
+            return Answer::Version;
+        }
+        let offer = offer
+            .filter(|offer| offer.len() <= MAX_ANNOUNCEMENT_BYTES && offer.is_ascii())
+            .map(str::to_owned);
+        let mut slot = self.lock();
+        if let Some(offer) = &offer {
+            slot.announced = Some(offer.clone());
+        }
+        if slot.receiving {
+            Answer::Upgrade { offer }
+        } else {
+            Answer::Unavailable
+        }
+    }
+
     /// Give `connection` to the receiving source.
     ///
     /// # Errors
@@ -81,23 +136,13 @@ impl Handoff {
         Ok(())
     }
 
-    /// Keep `announcement`, replacing the previous one, whether or not a
-    /// source receives. Ignored when longer than [`MAX_ANNOUNCEMENT_BYTES`]
-    /// or not ASCII.
-    pub fn announce(&self, announcement: &str) {
-        if announcement.len() <= MAX_ANNOUNCEMENT_BYTES && announcement.is_ascii() {
-            self.lock().announced = Some(announcement.to_owned());
-        }
-    }
-
     /// The newest announcement, if any came.
     #[must_use]
     pub fn announcement(&self) -> Option<String> {
         self.lock().announced.clone()
     }
 
-    /// Whether a source receives now; a surface answers the upgrade only
-    /// then (one that stops in between closes the offered connection).
+    /// Whether a source receives now.
     #[must_use]
     pub fn is_receiving(&self) -> bool {
         self.lock().receiving
@@ -143,12 +188,6 @@ impl Receiving {
             None
         }
     }
-
-    /// As [`Handoff::announcement`].
-    #[must_use]
-    pub fn announcement(&self) -> Option<String> {
-        self.handoff.announcement()
-    }
 }
 
 impl Drop for Receiving {
@@ -176,6 +215,7 @@ mod tests {
             Accepted {
                 socket,
                 buffered: vec![tag],
+                offer: None,
             },
             peer,
         )
@@ -229,24 +269,71 @@ mod tests {
         assert!(handoff.offer(late).is_err());
     }
 
+    /// Every protocol header x offer x receiving: the version is checked
+    /// first, a bounded ASCII offer is announced either way, and only a
+    /// receiving source upgrades, carrying the offer.
     #[test]
-    fn announcements_outlast_sources_and_are_bounded() {
+    fn answers_check_the_version_then_announce_then_receive() {
+        let other = "prysm-capture.v5";
+        let listed = "prysm-capture.v5, prysm-capture.v6";
+        // Subprotocols are case-sensitive: the 101 echoes this end's name,
+        // which a client that sent another case would refuse.
+        let other_case = "PRYSM-CAPTURE.V6";
+        let longest = "x".repeat(MAX_ANNOUNCEMENT_BYTES);
+        let too_long = "x".repeat(MAX_ANNOUNCEMENT_BYTES + 1);
+        for receiving in [false, true] {
+            for (protocols, speaks) in [
+                (&[][..], false),
+                (&[other][..], false),
+                (&[CAPTURE_PROTOCOL][..], true),
+                (&[listed][..], true),
+                (&[other_case][..], false),
+                (&[other, CAPTURE_PROTOCOL][..], true),
+            ] {
+                for (offer, kept) in [
+                    (None, None),
+                    (Some("{}"), Some("{}")),
+                    (Some(longest.as_str()), Some(longest.as_str())),
+                    (Some(too_long.as_str()), None),
+                    (Some("é"), None),
+                ] {
+                    let handoff = Handoff::new();
+                    let end = receiving.then(|| handoff.receive());
+                    let expected = match (speaks, receiving) {
+                        (false, _) => Answer::Version,
+                        (true, false) => Answer::Unavailable,
+                        (true, true) => Answer::Upgrade {
+                            offer: kept.map(str::to_owned),
+                        },
+                    };
+                    let case = (receiving, protocols, offer.map(str::len));
+                    assert_eq!(
+                        handoff.answer(protocols.iter().copied(), offer),
+                        expected,
+                        "{case:?}"
+                    );
+                    let announced = kept.filter(|_| speaks);
+                    assert_eq!(handoff.announcement().as_deref(), announced, "{case:?}");
+                    drop(end);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn announcements_outlast_sources_and_replace_each_other() {
         let handoff = Handoff::new();
         assert_eq!(handoff.announcement(), None);
-        handoff.announce("first");
+        let _ = handoff.answer([CAPTURE_PROTOCOL], Some("first"));
         let receiving = handoff.receive();
-        assert_eq!(receiving.announcement().as_deref(), Some("first"));
-        handoff.announce("second");
+        assert_eq!(handoff.announcement().as_deref(), Some("first"));
+        let _ = handoff.answer([CAPTURE_PROTOCOL], Some("second"));
         drop(receiving);
         assert_eq!(handoff.announcement().as_deref(), Some("second"));
-        handoff.announce(&"x".repeat(MAX_ANNOUNCEMENT_BYTES + 1));
-        handoff.announce("é");
+        // A request without one, or with one it does not keep, leaves it.
+        let _ = handoff.answer([CAPTURE_PROTOCOL], None);
+        let _ = handoff.answer([CAPTURE_PROTOCOL], Some("é"));
         assert_eq!(handoff.announcement().as_deref(), Some("second"));
-        handoff.announce(&"x".repeat(MAX_ANNOUNCEMENT_BYTES));
-        assert_eq!(
-            handoff.announcement().map(|a| a.len()),
-            Some(MAX_ANNOUNCEMENT_BYTES)
-        );
     }
 
     #[test]

@@ -5,8 +5,8 @@
 use crate::wire::{MAX_FPS, MAX_HEIGHT, MAX_WIDTH};
 use crate::{Offer, RemoteSender, RemoteSettings, RemoteSource, StreamEncoding};
 use prysm_ports::{
-    Accepted, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Handoff, Mode, Result,
-    Span,
+    Accepted, Answer, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Handoff, Mode,
+    Result, Span,
 };
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -123,10 +123,10 @@ impl Portal {
     }
 }
 
-/// Read the request head, answer `101` with the subprotocol (`426` for
-/// another version, `503` while no source receives) and hand the socket over
-/// with what was read past the head. A sender's offer is announced before
-/// `503`, as the portal does.
+/// Read the request head and answer it as the portal does
+/// ([`Handoff::answer`]): `426` for another version, `503` while no source
+/// receives, else `101` with the subprotocol, handing the socket over with
+/// what was read past the head and the sender's offer.
 fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
     socket.set_read_timeout(Some(BOUND)).unwrap();
     let mut read = Vec::new();
@@ -148,21 +148,25 @@ fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
                 .then(|| value.trim().to_owned())
         })
     };
-    if !field("sec-websocket-protocol")
-        .is_some_and(|offered| offered.split(',').any(|p| p.trim() == CAPTURE_PROTOCOL))
-    {
-        let refused = format!(
-            "HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: {CAPTURE_PROTOCOL}\r\ncontent-length: 0\r\n\r\n"
-        );
-        let _ = socket.write_all(refused.as_bytes());
+    let Some(key) = field("sec-websocket-key") else {
+        let _ = socket.write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n");
         return;
-    }
-    if let Some(offer) = field(CAPTURE_OFFER_HEADER) {
-        handoff.announce(&offer);
-    }
-    let (Some(key), true) = (field("sec-websocket-key"), handoff.is_receiving()) else {
-        let _ = socket.write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n");
-        return;
+    };
+    let protocols = field("sec-websocket-protocol");
+    let offer = match handoff.answer(protocols.as_deref(), field(CAPTURE_OFFER_HEADER).as_deref()) {
+        Answer::Upgrade { offer } => offer,
+        Answer::Version => {
+            let refused = format!(
+                "HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: {CAPTURE_PROTOCOL}\r\ncontent-length: 0\r\n\r\n"
+            );
+            let _ = socket.write_all(refused.as_bytes());
+            return;
+        }
+        Answer::Unavailable => {
+            let _ =
+                socket.write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n");
+            return;
+        }
     };
     let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
     let response = format!(
@@ -175,6 +179,7 @@ fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
     let _ = handoff.offer(Accepted {
         socket,
         buffered: read[end..].to_vec(),
+        offer,
     });
 }
 

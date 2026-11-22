@@ -291,19 +291,16 @@ fn a_broken_keyframe_fails_the_source() {
         prysm_ports::Error::to_string(&error),
         "the sender's stream (640x280 at 30 fps with menus as h264_software) does not decode"
     );
-    // The connection ends too.
+    // The sender is told the stream stopped: this source takes no other
+    // connection.
     loop {
         match client.socket.read() {
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(error)) => {
-                assert!(
-                    error.kind() != std::io::ErrorKind::WouldBlock
-                        && error.kind() != std::io::ErrorKind::TimedOut,
-                    "dropped, not stalled"
-                );
+            Ok(Message::Close(frame)) => {
+                assert_eq!(frame.map(|frame| u16::from(frame.code)), Some(4000));
                 break;
             }
-            Err(_) => break,
+            Ok(_) => {}
+            Err(error) => panic!("closed without a close code: {error}"),
         }
     }
     Box::new(source).close().unwrap();

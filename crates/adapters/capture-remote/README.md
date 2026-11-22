@@ -29,7 +29,9 @@ neither has a listener of its own:
   decodes H.264. `next_frame(timeout)` returns the newest complete frame
   (older untaken frames are replaced, never queued) or `Pull::Idle` on
   timeout, and fails when the sender's offer excludes the request, the
-  sender refuses it or its H.264 stream does not decode (see below). `close`
+  sender refuses it, its H.264 stream does not decode or no H.264 decoder
+  starts here (see below), once the connection is closed (as *stopped*,
+  except for an excluded offer). `close`
   stops the thread within about 50 ms, closes the connection as *stopped*
   and waits up to 1 s for the sender to answer the close.
   `modes(request)` answers from the newest offer a sender announced (refused
@@ -62,7 +64,7 @@ new request.
 The slim TV worker offers its capture's modes (`prysm_capture_webos::MODE`)
 raw, and in each H.264 encoder the build has, within that encoder's
 limits (`prysm_h264::Backend::limits`): hardware H.264 at most 30 fps and
-176×144 to 1920×1080, software from 16×16 to 1920×1088.
+176×144 to 1920×1080, software from 16×16 to 1920×1080.
 
 The slim TV worker takes one Prysm address (`--prysm http://host:8787` or
 `https://host[:port]`), resolves its host at every connection attempt, wraps
@@ -130,10 +132,12 @@ absent) and, optionally, its Prysm release:
 ```
 
 A mode is every combination of its `width`, `height` and `fps` spans
-(`min`, `min + step`, … `max`). The portal announces the header to the
+(`min`, `min + step`, … `max`). At most 4096 ASCII bytes are read;
+anything else counts as no offer. The portal announces the header to the
 remote source *before* deciding to answer `101` or `503`, so every attempt,
-refused or not, delivers it; at most 4096 ASCII bytes are kept, anything
-else is ignored. A connection whose sender's offer excludes the request is
+refused or not, delivers it for `modes` and `open`, and hands each
+connection over with its own request's offer, against which the request is
+checked. A connection whose sender's offer excludes the request is
 closed without a request (the sender fails with `NoRequest`), and the source
 fails as for an encoding refusal, with the field the offer excludes
 (`capture.width`, `capture.height`, `capture.fps`, or `capture.encoding` for
@@ -150,7 +154,8 @@ release with a refusal.
   settings' fields, every one required. It is fixed for the connection.
   Messages of other types may come before it and are skipped. A sender that
   gets a frame or a keyframe request first fails with `Unexpected`, one that
-  gets no request within 3 s with `NoRequest`. One it cannot parse (`Json`), that fails
+  gets no request within 3 s, or a close without a code, with `NoRequest`,
+  one closed with a code first with `Closed`. One it cannot parse (`Json`), that fails
   validation or that its offer excludes (`Request`) it refuses, cause
   `request`.
 - Receiver → sender, any time after: `{"type":"keyframe"}`, the next H.264
@@ -173,7 +178,7 @@ sender reads them as `WireError::Closed(Some(Close::…))`:
 
 | Code | `Close` | When | The slim TV |
 | --- | --- | --- | --- |
-| 4000 | `Stopped` | The source closed: lighting stopped, or the capture settings changed | Releases capture and encoder, shows *paused*, reconnects every second |
+| 4000 | `Stopped` | The source closed (lighting stopped, or the capture settings changed) or failed (the sender refused the request, its H.264 keyframe does not decode, or no decoder starts); also, before the request, a newer sender that connected while the source closed | Releases capture and encoder, shows *paused*, reconnects every second. Before the request it is a failed connect: the TV shows *waiting* (or keeps *paused*) and retries every second |
 | 4001 | `Replaced` | A newer sender's connection replaced this one | Releases capture and encoder, shows a failure of kind `replaced`, connects no more until the worker restarts (capture stopped and started, the TV waking, or a new Prysm address) |
 
 Any other close, or none (a crash, the network), is a dropped connection:
@@ -218,15 +223,17 @@ colour signal), and decodes into a reused `FramePool` frame, so the
 processor sees NV12 exactly as from a raw stream. A picture that does not
 decode (a lost reference, a corrupt picture, or a stream that does not start
 with a keyframe) is dropped, the receiver sends *keyframe* once and skips
-pictures until the next keyframe. A keyframe that does not decode fails the
-source at once with the decoder's error as the cause (the sender would send
-the same on every connection).
+pictures until the next keyframe; a keyframe request it cannot write drops
+the connection. A keyframe that does not decode fails the source at once
+with the decoder's error as the cause (the sender would send the same on
+every connection).
 
 - **Validation before allocation.** Format, dimensions and the payload's
   length against the header are checked before a frame is allocated. The
   WebSocket bounds each message too: the sender reads at most 4 KiB, the
-  receiver a header and the largest payload. Either end drops a text
-  message over 4 KiB before parsing it.
+  receiver a header and the largest payload, text included. Either end
+  drops a text message over 4 KiB before parsing it (the receiver after
+  reading it whole).
 - **Malformed input** (a bad header or length, a message that is not JSON
   or lacks a field) drops that connection without panicking, its cause
   logged at debug level; the receiver waits for the sender to connect again.
@@ -234,15 +241,20 @@ the same on every connection).
   is closed as *replaced*, so a TV that restarts without closing its old
   socket is accepted at once. A slim TV that is replaced stops sending, so a
   second TV takes over from the first and keeps the stream. A sender
-  disconnecting is not an error.
+  disconnecting is not an error. One exception: while the receiver closes
+  a connection (up to about a second), connections handed over wait, and
+  each replaces the one before it, which closes without a close code; its
+  sender sees a dropped connection and reconnects.
 - **Timeouts.** Sender: 3 s for the connection and the upgrade (with TLS),
   3 s for the request, 2 s per write (a receiver that stops reading fails
   the send). Receiver: reads wake every 50 ms to check for `close` and newer
   connections; a quiet connection is kept open; 1 s per write. After
-  closing a connection as *stopped* or *replaced* it reads and discards the
-  sender's frames for up to 1 s, until the sender answers the close or the
-  connection ends: closing a socket with unread frames resets the
-  connection, which could lose the close code (through a TLS proxy, say).
+  closing a connection it asked for frames as *stopped* or *replaced* it
+  reads and discards the sender's frames for up to 1 s, until the sender
+  answers the close or the connection ends: closing a socket with unread
+  frames resets the connection, which could lose the close code (through a
+  TLS proxy, say). A `close` during the wait for a replaced sender closes
+  the newer connection as *stopped*, without asking it for anything.
 - **Cost per frame.** 8 bytes of header plus the WebSocket's 2 to 10 bytes of
   framing and the client's 4-byte mask key. The sender builds each message
   in one reused buffer and the WebSocket copies it into its write buffer,

@@ -1,6 +1,6 @@
 //! The capture-host end: one WebSocket to Prysm's portal, one frame per
 //! `send`, encoded as the receiver requested.
-use crate::link::{self, Inbound, Link, LinkError, Outbound};
+use crate::link::{self, Link, LinkError, Message};
 use crate::offer::Offer;
 use crate::request::RemoteSettings;
 use crate::wire::{
@@ -82,7 +82,7 @@ enum Stream {
 }
 
 /// What encoding one frame gave.
-enum Picture {
+enum Encoded {
     /// Rate control skipped it; references are unaffected.
     Skipped,
     Appended {
@@ -138,7 +138,8 @@ impl RemoteSender {
     /// # Errors
     /// Prysm is unreachable, failed TLS verification, has no receiving
     /// source ([`WireError::Unavailable`] `503`), speaks another version
-    /// ([`WireError::Version`]) or sent no valid request.
+    /// ([`WireError::Version`]), sent no valid request, or closed the
+    /// stream with a code before it ([`WireError::Closed`]).
     pub fn connect(url: &Uri, address: SocketAddr, offer: &Offer) -> Result<Self> {
         let failed = |error| Error::adapter(format!("cannot connect to {url}"), error);
         let socket = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(failed)?;
@@ -205,8 +206,8 @@ impl RemoteSender {
             }
             Stream::H264 { settings, encoder } => {
                 match append_picture(payload, encoder, *settings, frame) {
-                    Ok(Picture::Appended { keyframe }) => keyframe,
-                    Ok(Picture::Skipped) => return Ok(()),
+                    Ok(Encoded::Appended { keyframe }) => keyframe,
+                    Ok(Encoded::Skipped) => return Ok(()),
                     Err(error) => {
                         return Err(self.refused(Error::adapter("cannot encode frame", error)));
                     }
@@ -223,7 +224,7 @@ impl RemoteSender {
             Ok(message) => message,
             Err(error) => return Err(self.refused(Error::adapter("cannot send frame", error))),
         };
-        self.send_message(Outbound::Binary(message))
+        self.send_message(Message::Binary(message))
             .map_err(|error| self.failed_send(error))?;
         Ok(())
     }
@@ -265,8 +266,8 @@ impl RemoteSender {
     fn read_pending(&mut self) -> Result<()> {
         while let Some(message) = self.link.receive().map_err(|error| self.failed(error))? {
             let command = match message {
-                Inbound::Text(text) => wire::decode_from_receiver(&text),
-                Inbound::Binary(_) => Err(WireError::Unexpected),
+                Message::Text(text) => wire::decode_from_receiver(&text),
+                Message::Binary(_) => Err(WireError::Unexpected),
             }
             .map_err(|error| self.failed(error.into()))?;
             match command {
@@ -288,7 +289,7 @@ impl RemoteSender {
 
     /// Send one message. A full send buffer is waited out, blocking for at
     /// most the write timeout.
-    fn send_message(&mut self, message: Outbound) -> Result<(), LinkError> {
+    fn send_message(&mut self, message: Message) -> Result<(), LinkError> {
         match self.link.send(message) {
             Err(error) if error.would_block() => {
                 self.set_blocking(true)?;
@@ -344,16 +345,16 @@ fn append_picture(
     encoder: &mut Option<Encoder>,
     settings: EncoderSettings,
     frame: &Frame,
-) -> Result<Picture, H264Error> {
+) -> Result<Encoded, H264Error> {
     let encoder = match encoder {
         Some(encoder) => encoder,
         slot => slot.insert(Encoder::new(settings)?),
     };
     let Some(picture) = encoder.encode(frame)? else {
-        return Ok(Picture::Skipped);
+        return Ok(Encoded::Skipped);
     };
     payload.extend_from_slice(picture.data);
-    Ok(Picture::Appended {
+    Ok(Encoded::Appended {
         keyframe: picture.keyframe,
     })
 }
@@ -442,14 +443,15 @@ struct NoAuthorities(#[source] Option<rustls_native_certs::Error>);
 /// the connection. Best effort, within the socket's write timeout.
 fn refuse<S: Read + Write>(link: &mut Link<S>, cause: RefusalCause, reason: &str) {
     let refusal = ToReceiver::Refused(Refusal::new(cause, reason));
-    let _ = link.send(Outbound::Text(wire::encode_to_receiver(&refusal)));
-    link.close(None);
+    let _ = link.send(Message::Text(wire::encode_to_receiver(&refusal).into()));
+    let _ = link.close(None);
 }
 
 /// The receiver's first message, its request, within [`CONNECT_TIMEOUT`]
 /// (`socket` is the link's, its read timeout set to the time left).
 /// Messages of types this end does not know are skipped. A peer that closes
-/// or stays silent sent none.
+/// without a [`Close`](crate::Close) code, or stays silent, sent none; one
+/// that closes with one fails with it (a receiver stopped before it asked).
 fn read_request<S: Read + Write>(
     link: &mut Link<S>,
     socket: &TcpStream,
@@ -464,10 +466,12 @@ fn read_request<S: Read + Write>(
             .set_read_timeout(Some(left))
             .map_err(|error| LinkError::Socket(error.into()))?;
         let text = match link.receive() {
-            Ok(Some(Inbound::Text(text))) => text,
-            Ok(Some(Inbound::Binary(_))) => return Err(WireError::Unexpected.into()),
+            Ok(Some(Message::Text(text))) => text,
+            Ok(Some(Message::Binary(_))) => return Err(WireError::Unexpected.into()),
             Ok(None) => continue,
-            Err(LinkError::Wire(WireError::Closed(_))) => return Err(WireError::NoRequest.into()),
+            Err(LinkError::Wire(WireError::Closed(None))) => {
+                return Err(WireError::NoRequest.into());
+            }
             Err(error) => return Err(error),
         };
         match wire::decode_from_receiver(&text)? {
@@ -527,7 +531,7 @@ mod tests {
             assert_eq!(*first.get_or_insert(at), at, "frame {frame} allocated anew");
             let bytes = message.finish(&header, Encoding::Raw).unwrap();
             assert_eq!(bytes.len(), HEADER_LEN + 320 * 180 * 3);
-            link.send(Outbound::Binary(bytes)).unwrap();
+            link.send(Message::Binary(bytes)).unwrap();
         }
     }
 }
