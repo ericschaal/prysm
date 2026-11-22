@@ -260,7 +260,7 @@ test('generated Rust states are accepted; contract violations are not', () => {
       ...slim,
       worker: { phase: 'running', capturing: true, fps: 30 },
     }),
-    'a running slim worker says if it is paused',
+    'a running slim worker says where its link stands',
   );
   assert(
     !isState({
@@ -268,11 +268,21 @@ test('generated Rust states are accepted; contract violations are not', () => {
       worker: {
         phase: 'running',
         capturing: true,
-        paused: false,
-        encoding: 'h265',
+        link: { state: 'sending', encoding: 'h265', fps: 30 },
       },
     }),
     'an encoding is one of the slim encodings',
+  );
+  assert(
+    !isState({
+      ...slim,
+      worker: {
+        phase: 'running',
+        capturing: false,
+        link: { state: 'waiting' },
+      },
+    }),
+    'a waiting link says why',
   );
   assert(
     isState(tvState('slim', { worker: { phase: 'running' } })) &&
@@ -880,10 +890,12 @@ test('the capture rate is shown while the worker measures it', async (t) => {
         worker: { phase: 'running' },
         capturing: true,
         fps: 30,
+        encoding: 'raw',
       },
     },
   });
-  assert.equal(tv.text('status-meta'), '30 frames per second');
+  // A sending slim link always names its encoding.
+  assert.equal(tv.text('status-meta'), '30 frames per second · Uncompressed');
   await act(async () => tv.supervisor.publish({ capturing: false, fps: null }));
   await settle();
   // The line stays (nothing moves), empty.

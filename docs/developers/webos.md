@@ -43,12 +43,23 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   one JSON object per line (at most 4 KiB, unknown fields rejected). Vendor
   output is redirected to stderr, which carries logs.
 - The worker reports status on every change and every 5 s; 15 s of silence is
-  a hang. Stop sends TERM, then KILL 8 s later.
+  a hang. Stop sends TERM, then KILL 8 s later; a worker still not reaped 8 s
+  after its KILL is let go and taken as killed, so a stop always ends.
 - An exit is handled once the worker's last events are read, at most 1 s
   after it is reaped (a process it left behind can hold the pipe).
 - An exit while running is published as a failure: the exit's description,
   then the last cause or report; an `encoder`, `version` or `replaced`
   report keeps its kind, anything else is `other`.
+- Turning it off (`setEnabled` false), the TV going to standby, a shutdown
+  and a new Prysm address clear the published failure and the backoff, in
+  every phase (also with no worker, during a backoff or while a failed
+  worker stops); turning it off is how a failure is dismissed. A stop asked
+  for this way still ends in a failure when the worker faults (exit 3, its
+  last cause kept), dies of a signal other than SIGTERM, or has to be
+  killed: then it may not have released the TV capture. (SIGTERM before
+  the worker's handlers are in is the asked-for stop.) While a failed
+  worker stops, the supervisor's reason is the published failure. A worker
+  let go after its KILL is followed by a backoff, not an immediate start.
 - Each status names its package (`"flavor": "full"` or `"slim"`) and has only
   that package's fields; a status of the other package breaks the link. A
   worker whose run ends with an error says why (`failed`, also before its
@@ -71,7 +82,8 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   can block for seconds, and a stop during one is reported as an
   unconfirmed release. The first failure of a run logs a warning, the rest debug
   ([native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
-- The supervisor reaps a worker before starting another. Failures back off
+- The supervisor reaps a worker before starting another (or lets go of one
+  still not reaped 8 s after its KILL). Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.
 - A worker runs while the TV is on (active or screen saver) and, for slim,
   while capture is enabled and `instance` is set. Video is reported
@@ -84,15 +96,25 @@ Full worker: re-applies a non-off target after a session failure (same
 backoff), advertises its LAN portal URL (looked up again at every heartbeat),
 and seeds `settings.json` with `capture.kind = "webos"` when missing.
 
-Slim worker: connects to the receiver at most once a second, resolving a host
-name at each attempt; follows the receiver's stream request (size, rate,
+Slim worker: connects to the receiver at most once a second (every 10 s while
+Prysm speaks another capture stream version), resolving a host name at each
+attempt; follows the receiver's stream request (size, rate,
 menus, encoding); closes capture while the receiver has stopped the stream
 (lighting off). An encoder failure is reported with `failure.kind` `encoder`
 and refused until the desktop asks for another encoding; nothing falls back on
 its own. When another TV takes the stream over, the worker releases capture
 and encoder, reports `failure.kind` `replaced` and connects no more until the
 worker restarts (capture stopped and started, the TV waking, or a new Prysm
-address), so two TVs never take the stream from each other in turn. Wire
+address), so two TVs never take the stream from each other in turn. A
+stopped stream, an encoder failure or another version stays the news while
+the receiver is unreachable. In all three the capture is closed, and
+connection attempts go on, so a receiver that asks again (lighting on, an
+update, another encoding) reopens it. Its status
+carries the uplink as one `link` tagged by `state`: `starting`, `sending`
+(`encoding`, `fps`), `paused`, `waiting` (the receiver wait) or `failed`
+(the encoder, version or replaced failure); the supervisor counts it as up
+once `sending` or `paused`. All rules are one transition function
+([`Report::next`](../../crates/hosts/webos-slim/src/link.rs)). Wire
 protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
 ## Luna API
@@ -103,10 +125,10 @@ application ID). The state has the fields both packages share (`preferences`,
 `power`, `video`, `failure`, `log`) and the installed package's own, tagged
 by `flavor`: full `lighting` and a `worker` that reports `capturing`, `fps`
 and `portal` while it runs (`portal` also while it stops); slim `enabled` and
-a `worker` that reports `capturing`, `fps`, `encoding` and `paused` while it
-runs. API version 2 (the document's `info.version`). Preferences hold only `autostart` and, for slim, `instance`
+a `worker` that reports `capturing` and its `link` (as in the worker's
+status) while it runs. API version 3 (the document's `info.version`). Preferences hold only `autostart` and, for slim, `instance`
 (the desktop Prysm's portal address, where frames go). An absent value (no
-failure, `fps`, `portal`, `encoding` or `instance`) is omitted, never `null`,
+failure, `fps`, `portal` or `instance`) is omitted, never `null`,
 here and in the worker's status lines. Picture settings live in a
 portal, never in Luna. Types: generated `@prysm/contracts/luna` from
 [schema.rs](../../crates/hosts/webos-service/src/schema.rs).

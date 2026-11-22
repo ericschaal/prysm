@@ -1,6 +1,6 @@
 //! Every machine rule, as scripted inputs at explicit times.
 use super::*;
-use prysm_webos_link::{FailureKind, PrysmAddress, SlimEncoding, WorkerFailure};
+use prysm_webos_link::{FailureKind, PrysmAddress, SlimEncoding, SlimLink, WorkerFailure};
 use serde_json::json;
 
 fn full() -> Machine {
@@ -104,6 +104,23 @@ fn full_status(status: FullStatus) -> Input {
 
 fn slim_status(status: SlimStatus) -> Input {
     reported(WorkerStatus::Slim(status))
+}
+
+/// A slim worker reports `link`, no frames.
+fn slim_link(link: SlimLink) -> Input {
+    slim_status(SlimStatus {
+        capturing: false,
+        link,
+    })
+}
+
+/// A slim worker reports `failure`: a wait for the receiver, or failed.
+fn slim_failure(kind: FailureKind, message: &str) -> Input {
+    let failure = WorkerFailure::new(kind, message);
+    slim_link(match kind {
+        FailureKind::Receiver => SlimLink::Waiting { failure },
+        _ => SlimLink::Failed { failure },
+    })
 }
 
 /// The published full package: its lighting and worker.
@@ -620,14 +637,7 @@ fn an_exit_keeps_an_actionable_kind_but_not_a_receiver_wait() {
                     Pw(Active),
                     vec![spawn_slim(&receiver()), video(Video::Unknown)],
                 ),
-                (
-                    1,
-                    slim_status(SlimStatus {
-                        failure: Some(WorkerFailure::new(reported, "refused")),
-                        ..SlimStatus::default()
-                    }),
-                    vec![],
-                ),
+                (1, slim_failure(reported, "refused"), vec![]),
                 (2, Exited(Exit::Signal(11)), vec![]),
             ],
         );
@@ -899,10 +909,10 @@ fn published_slim_state_has_only_its_own_fields() {
     m.handle(
         slim_status(SlimStatus {
             capturing: true,
-            fps: Some(25),
-            encoding: Some(SlimEncoding::Raw),
-            paused: false,
-            failure: None,
+            link: SlimLink::Sending {
+                encoding: SlimEncoding::Raw,
+                fps: 25,
+            },
         }),
         t0,
     );
@@ -914,9 +924,7 @@ fn published_slim_state_has_only_its_own_fields() {
         json!({
             "phase": "running",
             "capturing": true,
-            "fps": 25,
-            "encoding": "raw",
-            "paused": false,
+            "link": { "state": "sending", "encoding": "raw", "fps": 25 },
         })
     );
     let mut fields: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
@@ -1021,13 +1029,7 @@ fn failures_carry_their_kind() {
             ),
             (
                 1,
-                slim_status(SlimStatus {
-                    failure: Some(WorkerFailure::new(
-                        FailureKind::Receiver,
-                        "waiting for the receiver: refused",
-                    )),
-                    ..SlimStatus::default()
-                }),
+                slim_failure(FailureKind::Receiver, "waiting for the receiver: refused"),
                 vec![],
             ),
         ],
@@ -1045,13 +1047,10 @@ fn failures_carry_their_kind() {
         t0,
         vec![(
             1,
-            slim_status(SlimStatus {
-                failure: Some(WorkerFailure::new(
-                    FailureKind::Version,
-                    "waiting for the receiver: the capture stream versions differ",
-                )),
-                ..SlimStatus::default()
-            }),
+            slim_failure(
+                FailureKind::Version,
+                "waiting for the receiver: the capture stream versions differ",
+            ),
             vec![],
         )],
     );
@@ -1070,13 +1069,7 @@ fn failures_carry_their_kind() {
         vec![
             (
                 2,
-                slim_status(SlimStatus {
-                    failure: Some(WorkerFailure::new(
-                        FailureKind::Encoder,
-                        "hardware H.264 cannot start",
-                    )),
-                    ..SlimStatus::default()
-                }),
+                slim_failure(FailureKind::Encoder, "hardware H.264 cannot start"),
                 vec![],
             ),
             (3, Exited(Exit::Code(1)), vec![]),
@@ -1141,15 +1134,7 @@ fn a_paused_receiver_is_published_without_a_failure() {
                 Tick,
                 vec![spawn_slim(&receiver()), video(Video::Unknown)],
             ),
-            (
-                1_002,
-                slim_status(SlimStatus {
-                    paused: true,
-                    encoding: Some(SlimEncoding::H264Hardware),
-                    ..SlimStatus::default()
-                }),
-                vec![],
-            ),
+            (1_002, slim_link(SlimLink::Paused {}), vec![]),
         ],
     );
     let state = m.state(t0);
@@ -1157,15 +1142,13 @@ fn a_paused_receiver_is_published_without_a_failure() {
         slim_state(&state).1,
         &SlimWorker::Running {
             capturing: false,
-            fps: None,
-            encoding: Some(SlimEncoding::H264Hardware),
-            paused: true,
+            link: SlimLink::Paused {},
         }
     );
     assert_eq!(state.failure, None);
     assert_eq!(
-        serde_json::to_value(m.state(t0)).unwrap()["worker"]["paused"],
-        true
+        serde_json::to_value(m.state(t0)).unwrap()["worker"]["link"],
+        json!({ "state": "paused" })
     );
     script(
         &mut m,
@@ -1217,8 +1200,10 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             2_000,
             slim_status(SlimStatus {
                 capturing: true,
-                encoding: Some(SlimEncoding::H264Hardware),
-                ..SlimStatus::default()
+                link: SlimLink::Sending {
+                    encoding: SlimEncoding::H264Hardware,
+                    fps: 30,
+                },
             }),
             vec![],
         )],
@@ -1365,4 +1350,628 @@ fn a_preferences_change_while_a_failed_worker_stops_restarts_on_reaping() {
             ),
         ],
     );
+}
+
+/// A stop the user or the TV asked for that ends in a fault, a signal or a
+/// forced kill is a failure: the worker could not release what it held.
+#[test]
+fn a_requested_stop_that_ends_badly_is_a_failure() {
+    let t0 = Instant::now();
+    // Slim: the worker says why, then exits faulted.
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (1, Enabled(false), vec![Effect::Terminate]),
+            (
+                2,
+                Input::Worker(Event::Failed {
+                    cause: "release unconfirmed".into(),
+                }),
+                vec![],
+            ),
+            (3, Exited(Exit::Code(exit::FAULTED.into())), vec![]),
+            (4, Tick, vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert_eq!(slim_state(&state), (false, &SlimWorker::Stopped));
+    assert_eq!(message(&state), Some("worker faulted: release unconfirmed"));
+    // Full: the worker's fault while it stops.
+    let mut m = full();
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (
+                1,
+                Pw(Asleep),
+                vec![video(Video::Unavailable), Effect::Terminate],
+            ),
+            (
+                2,
+                Input::Worker(Event::Faulted {
+                    cause: "release unconfirmed".into(),
+                }),
+                vec![],
+            ),
+            (3, Exited(Exit::Code(exit::FAULTED.into())), vec![]),
+        ],
+    );
+    assert_eq!(
+        message(&m.state(t0)),
+        Some("worker faulted: release unconfirmed")
+    );
+    // A signal, and a worker that had to be killed.
+    for (kill, exit, shown) in [
+        (false, Exit::Signal(11), "worker killed by signal 11"),
+        (true, Exit::Signal(9), "worker did not stop within 8 s"),
+    ] {
+        let mut m = full();
+        let mut steps = vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (
+                1,
+                Pw(Asleep),
+                vec![video(Video::Unavailable), Effect::Terminate],
+            ),
+        ];
+        if kill {
+            steps.push((8_001, Tick, vec![Effect::Kill]));
+        }
+        steps.push((8_002, Exited(exit), vec![]));
+        script(&mut m, t0, steps);
+        let state = m.state(t0);
+        assert_eq!(full_state(&state).1, &FullWorker::Stopped);
+        assert!(
+            message(&state).is_some_and(|text| text.starts_with(shown)),
+            "{state:?}"
+        );
+    }
+    // A clean exit is no failure.
+    let mut m = full();
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (
+                1,
+                Pw(Asleep),
+                vec![video(Video::Unavailable), Effect::Terminate],
+            ),
+            (2, Exited(Exit::Code(0)), vec![]),
+        ],
+    );
+    assert_eq!(m.state(t0).failure, None);
+}
+
+/// A failure is shown until the user or the TV ends the worker: then the
+/// published `Stopped` or the next worker carries no old failure.
+#[test]
+fn a_requested_stop_clears_the_failure_in_every_phase() {
+    let t0 = Instant::now();
+    let retrying = || {
+        let mut m = slim(Preferences {
+            autostart: true,
+            ..slim_prefs()
+        });
+        script(
+            &mut m,
+            t0,
+            vec![
+                (
+                    0,
+                    Pw(Active),
+                    vec![spawn_slim(&receiver()), video(Video::Unknown)],
+                ),
+                (1, Exited(Exit::Code(1)), vec![]),
+            ],
+        );
+        assert_eq!(message(&m.state(t0)), Some("worker failed"));
+        m
+    };
+    for input in [Enabled(false), Pw(Asleep)] {
+        let mut m = retrying();
+        script(&mut m, t0, vec![(2, input.clone(), vec![])]);
+        let state = m.state(t0);
+        assert_eq!(slim_state(&state).1, &SlimWorker::Stopped, "{input:?}");
+        assert_eq!(state.failure, None, "{input:?}");
+    }
+    // A new address: the new worker starts without the old one's failure.
+    let mut m = retrying();
+    let other = other_receiver();
+    script(
+        &mut m,
+        t0,
+        vec![(
+            2,
+            Input::Preferences(Preferences {
+                autostart: true,
+                instance: Some(other.clone()),
+            }),
+            vec![spawn_slim(&other), video(Video::Unknown)],
+        )],
+    );
+    assert_eq!(m.state(t0).failure, None);
+    // A failed worker being stopped, then disabled: stopped, no failure.
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (
+                1,
+                Input::WorkerBroken("malformed".into()),
+                vec![Effect::Terminate],
+            ),
+            (2, Enabled(false), vec![]),
+            (3, Exited(Exit::Code(1)), vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert_eq!(slim_state(&state).1, &SlimWorker::Stopped);
+    assert_eq!(state.failure, None);
+}
+
+/// A slim worker that reached the receiver is up, frames or not: the last
+/// worker's failure is no longer current.
+#[test]
+fn a_connected_slim_worker_without_frames_is_up() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (1, Exited(Exit::Code(1)), vec![]),
+            (
+                1_001,
+                Tick,
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (
+                1_002,
+                slim_link(SlimLink::Sending {
+                    encoding: SlimEncoding::Raw,
+                    fps: 0,
+                }),
+                vec![],
+            ),
+        ],
+    );
+    assert_eq!(m.state(t0).failure, None);
+}
+
+/// While a failed worker stops, the supervisor's reason is the failure, not
+/// the worker's last report.
+#[test]
+fn a_failed_stop_shows_why_it_was_stopped() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (
+                1,
+                slim_failure(FailureKind::Receiver, "waiting for the receiver: refused"),
+                vec![],
+            ),
+            (
+                2,
+                Input::WorkerBroken("malformed".into()),
+                vec![Effect::Terminate],
+            ),
+        ],
+    );
+    let state = m.state(t0);
+    assert_eq!(message(&state), Some("worker link broke: malformed"));
+    assert_eq!(kind(&state), Some(FailureKind::Other));
+}
+
+/// A worker that is not reaped [`KILL_AFTER`] after its kill is let go, so
+/// a shutdown still finishes.
+#[test]
+fn a_worker_never_reaped_after_its_kill_is_let_go() {
+    let (mut m, t0) = (full(), Instant::now());
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (1, Input::Shutdown, vec![Effect::Terminate]),
+            (8_001, Tick, vec![Effect::Kill]),
+            (16_000, Tick, vec![]),
+            (16_001, Tick, vec![Effect::Abandon]),
+        ],
+    );
+    assert!(m.finished());
+}
+
+/// A phase without its times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Is {
+    Idle,
+    Running,
+    Stopping(Sent, AfterExit),
+    Retrying,
+}
+
+fn is(phase: Phase) -> Is {
+    match phase {
+        Phase::Idle => Is::Idle,
+        Phase::Running { .. } => Is::Running,
+        Phase::Stopping { sent, then, .. } => Is::Stopping(sent, then),
+        Phase::Retrying { .. } => Is::Retrying,
+    }
+}
+
+/// A slim machine in a phase: built by `steps` (from a worker started at 0
+/// unless disabled), then sent each input at `now` (or, for the timer, at
+/// `due`).
+struct From {
+    name: &'static str,
+    enabled: bool,
+    steps: Vec<(u64, Input, Vec<Effect>)>,
+    now: u64,
+    due: u64,
+}
+
+impl From {
+    fn build(&self, t0: Instant) -> Machine {
+        let mut m = slim(Preferences {
+            autostart: self.enabled,
+            ..slim_prefs()
+        });
+        let start = if self.enabled {
+            vec![spawn_slim(&receiver()), video(Video::Unknown)]
+        } else {
+            vec![]
+        };
+        let mut steps = vec![(0, Pw(Active), start)];
+        steps.extend(self.steps.iter().cloned());
+        script(&mut m, t0, steps);
+        m
+    }
+}
+
+/// Every phase x every input: the effects, the next phase and the published
+/// failure. Each row is one input; its cells are the phases in the order of
+/// `froms`. The idle machine shows the failure of a worker that faulted as
+/// it stopped.
+#[test]
+fn every_phase_takes_every_input() {
+    use AfterExit::{Idle as ThenIdle, Retry};
+    use Sent::{Kill, Terminate};
+    let other = other_receiver();
+    let broke = || {
+        (
+            500,
+            Input::WorkerBroken("x".into()),
+            vec![Effect::Terminate],
+        )
+    };
+    let disable = || (500, Enabled(false), vec![Effect::Terminate]);
+    let kill = || (8_500, Tick, vec![Effect::Kill]);
+    let froms = [
+        From {
+            name: "idle",
+            enabled: true,
+            steps: vec![
+                (100, Enabled(false), vec![Effect::Terminate]),
+                (200, Exited(Exit::Code(exit::FAULTED.into())), vec![]),
+            ],
+            now: 1_000,
+            due: 1_000,
+        },
+        From {
+            name: "running",
+            enabled: true,
+            steps: vec![],
+            now: 1_000,
+            due: 15_000,
+        },
+        From {
+            name: "stopping as asked",
+            enabled: true,
+            steps: vec![disable()],
+            now: 1_000,
+            due: 8_500,
+        },
+        From {
+            name: "stopping as failed",
+            enabled: true,
+            steps: vec![broke()],
+            now: 1_000,
+            due: 8_500,
+        },
+        From {
+            name: "killed as asked",
+            enabled: true,
+            steps: vec![disable(), kill()],
+            now: 9_000,
+            due: 16_500,
+        },
+        From {
+            name: "killed as failed",
+            enabled: true,
+            steps: vec![broke(), kill()],
+            now: 9_000,
+            due: 16_500,
+        },
+        From {
+            name: "killed for new settings",
+            enabled: true,
+            steps: vec![
+                (
+                    500,
+                    Input::Preferences(Preferences {
+                        autostart: true,
+                        instance: Some(other.clone()),
+                    }),
+                    vec![Effect::Terminate],
+                ),
+                kill(),
+            ],
+            now: 9_000,
+            due: 16_500,
+        },
+        From {
+            name: "retrying",
+            enabled: true,
+            steps: vec![(500, Exited(Exit::Code(1)), vec![])],
+            now: 1_000,
+            due: 1_500,
+        },
+    ];
+    let (idle, running, retrying) = (Is::Idle, Is::Running, Is::Retrying);
+    let (asked, failing) = (
+        Is::Stopping(Terminate, ThenIdle),
+        Is::Stopping(Terminate, Retry),
+    );
+    let (killed, killed_failing) = (Is::Stopping(Kill, ThenIdle), Is::Stopping(Kill, Retry));
+    let (broken, failed) = (Some("worker link broke: x"), Some("worker failed"));
+    let faulted = Some("worker faulted");
+    let not_stopped = Some("worker did not stop within 8 s");
+    let none = Vec::new;
+    let terminate = || vec![Effect::Terminate];
+    let start = |at: &PrysmAddress| vec![spawn_slim(at), video(Video::Unknown)];
+    type Cell = (Vec<Effect>, Is, Option<&'static str>);
+    // Nothing changes in any phase but running, which gets `running`.
+    let only_running = |running: Cell| -> [Cell; 8] {
+        [
+            (none(), idle, faulted),
+            running,
+            (none(), asked, None),
+            (none(), failing, broken),
+            (none(), killed, None),
+            (none(), killed_failing, broken),
+            (none(), killed, None),
+            (none(), retrying, failed),
+        ]
+    };
+    let unchanged = || only_running((none(), running, None));
+    // Turned off: a requested stop in every phase, clearing the failure.
+    let off = |running: Vec<Effect>| -> [Cell; 8] {
+        [
+            (none(), idle, None),
+            (running, asked, None),
+            (none(), asked, None),
+            (none(), asked, None),
+            (none(), killed, None),
+            (none(), killed, None),
+            (none(), killed, None),
+            (none(), idle, None),
+        ]
+    };
+    // An exit: the last cell respawns at once for the new settings.
+    let exited = |running: &'static str, asked: Option<&'static str>| -> [Cell; 8] {
+        [
+            (none(), idle, faulted),
+            (none(), retrying, Some(running)),
+            (none(), idle, asked),
+            (none(), retrying, broken),
+            (none(), idle, not_stopped),
+            (none(), retrying, broken),
+            (start(&other), Is::Running, not_stopped),
+            (none(), retrying, failed),
+        ]
+    };
+    let worker = |event| Input::Worker(event);
+    let sending = worker(Event::Status(WorkerStatus::Slim(SlimStatus {
+        capturing: true,
+        link: SlimLink::Sending {
+            encoding: SlimEncoding::Raw,
+            fps: 30,
+        },
+    })));
+    let cause = || "c".to_owned();
+    let last_word = |running: Cell| -> [Cell; 8] {
+        [
+            (none(), idle, faulted),
+            running,
+            (none(), asked, Some("c")),
+            (none(), failing, broken),
+            (none(), killed, Some("c")),
+            (none(), killed_failing, broken),
+            (none(), killed, Some("c")),
+            (none(), retrying, failed),
+        ]
+    };
+    let table: Vec<(Input, bool, [Cell; 8])> = vec![
+        (
+            Pw(Asleep),
+            false,
+            off(vec![video(Video::Unavailable), Effect::Terminate]),
+        ),
+        (
+            V(Video::Available),
+            false,
+            only_running((vec![video(Video::Available)], running, None)),
+        ),
+        (
+            Input::VideoContextChanged,
+            false,
+            only_running((vec![Effect::Send(Command::ResetVideo {})], running, None)),
+        ),
+        (
+            Input::Preferences(Preferences {
+                autostart: false,
+                instance: Some(other.clone()),
+            }),
+            false,
+            [
+                (none(), idle, None),
+                (terminate(), asked, None),
+                (none(), asked, None),
+                (none(), asked, None),
+                (none(), killed, None),
+                (none(), killed, None),
+                // The same address: nothing to restart.
+                (none(), killed, None),
+                (start(&other), running, None),
+            ],
+        ),
+        (Enabled(false), false, off(terminate())),
+        (
+            Enabled(true),
+            false,
+            [
+                (start(&receiver()), running, faulted),
+                (none(), running, None),
+                (none(), asked, None),
+                (none(), failing, broken),
+                (none(), killed, None),
+                (none(), killed_failing, broken),
+                (none(), killed, None),
+                (none(), retrying, failed),
+            ],
+        ),
+        (sending, false, unchanged()),
+        (
+            worker(Event::Failed { cause: cause() }),
+            false,
+            last_word((none(), running, Some("c"))),
+        ),
+        (
+            worker(Event::Faulted { cause: cause() }),
+            false,
+            last_word((terminate(), failing, Some("worker faulted: c"))),
+        ),
+        (Input::WorkerLog("l".into()), false, unchanged()),
+        (
+            Input::WorkerBroken("y".into()),
+            false,
+            only_running((terminate(), failing, Some("worker link broke: y"))),
+        ),
+        (
+            Input::SpawnFailed("s".into()),
+            false,
+            only_running((none(), retrying, Some("cannot start the worker: s"))),
+        ),
+        (Exited(Exit::Code(0)), false, exited("worker stopped", None)),
+        (
+            Exited(Exit::Code(exit::FAULTED.into())),
+            false,
+            exited("worker faulted", faulted),
+        ),
+        // SIGTERM before the worker's handlers are in: a clean stop.
+        (
+            Exited(Exit::Signal(15)),
+            false,
+            exited("worker killed by signal 15", None),
+        ),
+        (
+            Exited(Exit::Signal(11)),
+            false,
+            exited(
+                "worker killed by signal 11",
+                Some("worker killed by signal 11"),
+            ),
+        ),
+        (Tick, false, unchanged()),
+        (
+            Tick,
+            true,
+            [
+                (none(), idle, faulted),
+                (terminate(), failing, Some("worker sent nothing for 15 s")),
+                (vec![Effect::Kill], killed, None),
+                (vec![Effect::Kill], killed_failing, broken),
+                (vec![Effect::Abandon], idle, not_stopped),
+                (vec![Effect::Abandon], retrying, broken),
+                // The abandoned worker may still hold the capture.
+                (vec![Effect::Abandon], retrying, not_stopped),
+                (start(&receiver()), running, failed),
+            ],
+        ),
+        (Input::Shutdown, false, off(terminate())),
+    ];
+    let t0 = Instant::now();
+    for (input, due, cells) in table {
+        for (from, (effects, next, failure)) in froms.iter().zip(cells) {
+            let mut m = from.build(t0);
+            let at = if due { from.due } else { from.now };
+            let shown = format!("{} x {input:?} at {at} ms", from.name);
+            let done: Vec<_> = m
+                .handle(input.clone(), t0 + Duration::from_millis(at))
+                .into_iter()
+                .filter(|effect| *effect != Effect::Publish)
+                .collect();
+            assert_eq!(done, effects, "{shown}");
+            assert_eq!(is(m.phase), next, "{shown}");
+            assert_eq!(message(&m.state(t0)), failure, "{shown}");
+        }
+    }
 }

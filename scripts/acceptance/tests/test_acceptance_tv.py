@@ -53,9 +53,10 @@ STATE = (
 SLIM = (
     '{"returnValue":true,"flavor":"slim","preferences":{"autostart":false},'
     '"enabled":true,"power":"active","video":"available",'
-    '"worker":{"phase":"running","capturing":true,"fps":30,"paused":false},'
+    '"worker":{"phase":"running","capturing":true,"link":{"state":"sending","encoding":"raw","fps":30}},'
     '"log":[]}'
 )
+SENDING = '"link":{"state":"sending","encoding":"raw","fps":30}'
 SLIM_PREFERENCES: JsonObject = {'autostart': True, 'instance': 'http://192.0.2.20:8787'}
 NO_SERVICE = Result(1, '', f'Service does not exist: {commands.SERVICE}')
 ABSENT = ''.join(f'absent {path}\n' for path in (*commands.INSTALLED_PATHS, commands.DATA_DIR, commands.STAGING))
@@ -218,11 +219,13 @@ class TheTv(unittest.TestCase):
         slim = webos.luna_reply(ok(SLIM))
         self.assertEqual((tv.capturing(full), tv.fps(full), tv.portal(full)), (True, 30, 'http://192.0.2.50:8787'))
         self.assertEqual((tv.paused(full), tv.encoding(full)), (False, None))
+        self.assertEqual((tv.fps(slim), tv.encoding(slim), tv.paused(slim)), (30, 'raw', False))
         paused = webos.luna_reply(
-            ok(SLIM.replace('"capturing":true', '"capturing":false').replace('"paused":false', '"paused":true'))
+            ok(SLIM.replace('"capturing":true', '"capturing":false').replace(SENDING, '"link":{"state":"paused"}'))
         )
         self.assertEqual((tv.capturing(paused), tv.paused(paused), tv.portal(slim)), (False, True, None))
-        running = '{"phase":"running","capturing":true,"fps":30,"paused":false}'
+        self.assertEqual((tv.fps(paused), tv.encoding(paused)), (None, None))
+        running = '{"phase":"running","capturing":true,' + SENDING + '}'
         stopping = webos.luna_reply(ok(SLIM.replace(running, '{"phase":"stopping"}')))
         self.assertEqual((tv.capturing(stopping), tv.fps(stopping), tv.running(stopping)), (False, None, None))
 

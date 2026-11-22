@@ -15,6 +15,7 @@ import {
   type Preferences,
   type ServiceBridge,
   type SlimEncoding,
+  type SlimLink,
   type SlimWorker,
   type State,
   type Video,
@@ -140,16 +141,21 @@ function fullWorker(facts: FullFacts): FullWorker {
   }
 }
 
+/** The link the facts make: paused, sending in an encoding, or the failure's wait or failure. */
+function slimLink(facts: SlimFacts): SlimLink {
+  const { fps, encoding, paused, failure } = facts;
+  if (paused) return { state: 'paused' };
+  if (encoding !== null) return { state: 'sending', encoding, fps: fps ?? 0 };
+  if (failure === null) return { state: 'starting' };
+  return failure.kind === 'receiver'
+    ? { state: 'waiting', failure }
+    : { state: 'failed', failure };
+}
+
 function slimWorker(facts: SlimFacts): SlimWorker {
-  const { worker, capturing, fps, encoding, paused } = facts;
+  const { worker, capturing } = facts;
   return worker.phase === 'running'
-    ? {
-        phase: 'running',
-        capturing,
-        ...present('fps', fps),
-        ...present('encoding', encoding),
-        paused,
-      }
+    ? { phase: 'running', capturing, link: slimLink(facts) }
     : worker;
 }
 

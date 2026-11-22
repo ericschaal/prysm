@@ -84,11 +84,11 @@ fn an_unreachable_receiver_is_a_reported_wait() {
         .port();
     let mut child = spawn(&format!("http://127.0.0.1:{port}"));
     let status = events(&mut child, |event| {
-        event["type"] == "status" && !event["failure"].is_null()
+        event["type"] == "status" && event["link"]["state"] == "waiting"
     });
-    assert_eq!(status["failure"]["kind"], "receiver", "{status}");
+    assert_eq!(status["link"]["failure"]["kind"], "receiver", "{status}");
     assert!(
-        status["failure"]["message"]
+        status["link"]["failure"]["message"]
             .as_str()
             .unwrap()
             .starts_with("waiting for the receiver"),

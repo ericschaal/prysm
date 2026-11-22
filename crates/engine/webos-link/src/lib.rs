@@ -118,23 +118,51 @@ pub struct FullStatus {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlimStatus {
-    /// Frames were sent in the last second.
+    /// Frames were sent in the last second (so also just after the stream
+    /// ended).
     pub capturing: bool,
-    /// Frames sent per second over about the last second, rounded, while
-    /// connected and sending; `Some(0)` while it waits for frames.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fps: Option<u16>,
-    /// The encoding of the frames being sent, while connected to the
-    /// receiver (always the one it requested).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub encoding: Option<SlimEncoding>,
+    /// Where the uplink to the receiver stands.
+    pub link: SlimLink,
+}
+
+/// Where the slim worker's uplink to the receiver stands, as
+/// `{ "state": … }`. Struct variants throughout, so unknown fields are
+/// rejected in every state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SlimLink {
+    /// No connection attempt yet.
+    Starting {},
+    /// Connected: frames go out in `encoding` (always the one the receiver
+    /// requested), `fps` per second over about the last second, rounded; 0
+    /// while none come.
+    Sending { encoding: SlimEncoding, fps: u16 },
     /// The receiver stopped the stream (its lighting is off), and the TV
     /// capture is released until a receiver takes a connection again. Not a
-    /// failure: `failure` is unset meanwhile.
-    pub paused: bool,
-    /// The receiver wait, or the encoder, version or replaced failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure: Option<WorkerFailure>,
+    /// failure.
+    Paused {},
+    /// The receiver is unavailable (kind [`FailureKind::Receiver`]); the
+    /// worker keeps reconnecting.
+    Waiting { failure: WorkerFailure },
+    /// The encoder, version or replaced failure.
+    Failed { failure: WorkerFailure },
+}
+
+impl SlimLink {
+    /// The wait or the failure, if any.
+    #[must_use]
+    pub fn failure(&self) -> Option<&WorkerFailure> {
+        match self {
+            Self::Waiting { failure } | Self::Failed { failure } => Some(failure),
+            Self::Starting {} | Self::Sending { .. } | Self::Paused {} => None,
+        }
+    }
+}
+
+impl Default for SlimLink {
+    fn default() -> Self {
+        Self::Starting {}
+    }
 }
 
 /// A failure a worker or the supervisor reports.

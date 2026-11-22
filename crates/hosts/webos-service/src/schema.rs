@@ -24,7 +24,7 @@ use utoipa::{OpenApi as _, ToSchema};
 
 /// The Luna API's own version, in the document's `info.version`; not the
 /// product version, which only `VERSION` carries.
-pub const API_VERSION: &str = "2";
+pub const API_VERSION: &str = "3";
 
 // Mirrors `prysm_webos_link::Video`.
 /// The TV's main video output.
@@ -97,6 +97,34 @@ pub enum SlimEncodingSchema {
     Raw,
 }
 
+// Mirrors `prysm_webos_link::SlimLink`.
+/// Where the slim worker's stream to the receiver stands, as `{ "state": … }`.
+/// `starting`: no connection attempt yet. `sending`: connected, frames go
+/// out in `encoding`, `fps` per second (0 while none come). `paused`: the
+/// receiver stopped the stream because its lighting is off; the TV capture
+/// is released until a receiver takes a connection again, not a failure.
+/// `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
+/// `failed`: the encoder, version or replaced failure. The state's own
+/// `failure` is the one to show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = SlimLink)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SlimLinkSchema {
+    Starting {},
+    Sending {
+        encoding: SlimEncodingSchema,
+        /// Frames sent per second over about the last second, rounded.
+        fps: u16,
+    },
+    Paused {},
+    Waiting {
+        failure: WorkerFailureSchema,
+    },
+    Failed {
+        failure: WorkerFailureSchema,
+    },
+}
+
 fn constant(value: bool) -> ObjectBuilder {
     ObjectBuilder::new()
         .schema_type(Type::Boolean)
@@ -150,6 +178,7 @@ pub struct ErrorReply {
     Power,
     Preferences,
     SlimEncodingSchema,
+    SlimLinkSchema,
     FailureKindSchema,
     WorkerFailureSchema,
     VideoSchema,
@@ -175,7 +204,9 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{FailureKind, LightingTarget, SlimEncoding, Video, WorkerFailure};
+    use prysm_webos_link::{
+        FailureKind, LightingTarget, SlimEncoding, SlimLink, Video, WorkerFailure,
+    };
     use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
     use std::fmt;
@@ -221,6 +252,19 @@ mod tests {
             SlimEncoding::Raw,
         ] {
             same_shape::<SlimEncoding, SlimEncodingSchema>(&encoding);
+            same_shape::<SlimLink, SlimLinkSchema>(&SlimLink::Sending { encoding, fps: 30 });
+        }
+        for link in [
+            SlimLink::Starting {},
+            SlimLink::Paused {},
+            SlimLink::Waiting {
+                failure: WorkerFailure::new(FailureKind::Receiver, "x"),
+            },
+            SlimLink::Failed {
+                failure: WorkerFailure::new(FailureKind::Encoder, "x"),
+            },
+        ] {
+            same_shape::<SlimLink, SlimLinkSchema>(&link);
         }
     }
 
@@ -249,7 +293,7 @@ mod tests {
     #[test]
     fn document_describes_both_flavors_in_one_set_of_schemas() {
         let document = serde_json::to_value(document()).unwrap();
-        assert_eq!(document["info"]["version"], json!("2"));
+        assert_eq!(document["info"]["version"], json!("3"));
         let schemas = &document["components"]["schemas"];
         // The common fields, and the package's own tagged by `flavor`.
         let parts = schemas["State"]["allOf"].as_array().unwrap();
@@ -281,10 +325,27 @@ mod tests {
         fields.sort_unstable();
         assert_eq!(fields, ["capturing", "fps", "phase", "portal"]);
         let running = variant(schemas, "SlimWorker", "phase", "running");
-        assert_eq!(required(running), ["capturing", "paused", "phase"]);
-        let mut fields: Vec<_> = running["properties"].as_object().unwrap().keys().collect();
-        fields.sort_unstable();
-        assert_eq!(fields, ["capturing", "encoding", "fps", "paused", "phase"]);
+        assert_eq!(required(running), ["capturing", "link", "phase"]);
+        assert_eq!(
+            running["properties"]["link"]["$ref"],
+            json!("#/components/schemas/SlimLink")
+        );
+        // The slim link is one tag with only that state's fields.
+        assert_eq!(
+            required(variant(schemas, "SlimLink", "state", "sending")),
+            ["encoding", "fps", "state"]
+        );
+        for (state, fields) in [
+            ("starting", vec!["state"]),
+            ("paused", vec!["state"]),
+            ("waiting", vec!["failure", "state"]),
+            ("failed", vec!["failure", "state"]),
+        ] {
+            assert_eq!(
+                required(variant(schemas, "SlimLink", "state", state)),
+                fields
+            );
+        }
         assert_eq!(
             required(variant(schemas, "SlimWorker", "phase", "stopping")),
             ["phase"]

@@ -127,31 +127,55 @@ export interface components {
          * @enum {string}
          */
         SlimEncoding: "h264_hardware" | "h264_software" | "raw";
+        /**
+         * @description Where the slim worker's stream to the receiver stands, as `{ "state": … }`.
+         *     `starting`: no connection attempt yet. `sending`: connected, frames go
+         *     out in `encoding`, `fps` per second (0 while none come). `paused`: the
+         *     receiver stopped the stream because its lighting is off; the TV capture
+         *     is released until a receiver takes a connection again, not a failure.
+         *     `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
+         *     `failed`: the encoder, version or replaced failure. The state's own
+         *     `failure` is the one to show.
+         */
+        SlimLink: {
+            /** @enum {string} */
+            state: "starting";
+        } | {
+            encoding: components["schemas"]["SlimEncoding"];
+            /**
+             * Format: int32
+             * @description Frames sent per second over about the last second, rounded.
+             */
+            fps: number;
+            /** @enum {string} */
+            state: "sending";
+        } | {
+            /** @enum {string} */
+            state: "paused";
+        } | {
+            failure: components["schemas"]["WorkerFailure"];
+            /** @enum {string} */
+            state: "waiting";
+        } | {
+            failure: components["schemas"]["WorkerFailure"];
+            /** @enum {string} */
+            state: "failed";
+        };
         /** @description The slim package's worker process, as `{ "phase": … }`. */
         SlimWorker: {
             /** @enum {string} */
             phase: "stopped";
         } | {
-            /** @description Frames were sent in the last second. */
+            /**
+             * @description Frames were sent in the last second (so also just after the
+             *     stream ended).
+             */
             capturing: boolean;
             /**
-             * @description The encoding of the frames being sent while connected to the
-             *     receiver; always the one the receiver requested (set in the
-             *     desktop portal's remote capture settings).
+             * @description Where the uplink to the receiver stands, as the worker last
+             *     reported it.
              */
-            encoding?: components["schemas"]["SlimEncoding"];
-            /**
-             * Format: int32
-             * @description Frames sent per second over about the last second, rounded, while
-             *     connected and sending; 0 while it waits for frames.
-             */
-            fps?: number;
-            /**
-             * @description The receiver stopped the stream because its lighting is off; the
-             *     TV capture is released until a receiver takes a connection
-             *     again. Not a failure.
-             */
-            paused: boolean;
+            link: components["schemas"]["SlimLink"];
             /** @enum {string} */
             phase: "running";
         } | {
@@ -223,6 +247,7 @@ export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];
 export type SetEnabledRequest = components['schemas']['SetEnabledRequest'];
 export type SlimEncoding = components['schemas']['SlimEncoding'];
+export type SlimLink = components['schemas']['SlimLink'];
 export type SlimWorker = components['schemas']['SlimWorker'];
 export type State = components['schemas']['State'];
 export type StateReply = components['schemas']['StateReply'];

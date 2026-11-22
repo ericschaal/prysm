@@ -1,8 +1,6 @@
 //! What the TV app sees: the published state and its parts.
 use crate::preferences::Preferences;
-use prysm_webos_link::{
-    FullStatus, LightingTarget, SlimEncoding, SlimStatus, Video, WorkerFailure,
-};
+use prysm_webos_link::{FullStatus, LightingTarget, SlimLink, SlimStatus, Video, WorkerFailure};
 use serde::Serialize;
 
 /// Which package this supervisor belongs to. Published as [`Package`]'s tag.
@@ -137,26 +135,13 @@ pub enum FullWorker {
 pub enum SlimWorker {
     Stopped,
     Running {
-        /// Frames were sent in the last second.
+        /// Frames were sent in the last second (so also just after the
+        /// stream ended).
         capturing: bool,
-        /// Frames sent per second over about the last second, rounded, while
-        /// connected and sending; 0 while it waits for frames.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema", schema(nullable = false))]
-        fps: Option<u16>,
-        /// The encoding of the frames being sent while connected to the
-        /// receiver; always the one the receiver requested (set in the
-        /// desktop portal's remote capture settings).
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(
-            feature = "schema",
-            schema(value_type = Option<crate::schema::SlimEncodingSchema>, nullable = false)
-        )]
-        encoding: Option<SlimEncoding>,
-        /// The receiver stopped the stream because its lighting is off; the
-        /// TV capture is released until a receiver takes a connection
-        /// again. Not a failure.
-        paused: bool,
+        /// Where the uplink to the receiver stands, as the worker last
+        /// reported it.
+        #[cfg_attr(feature = "schema", schema(value_type = crate::schema::SlimLinkSchema))]
+        link: SlimLink,
     },
     Stopping,
     /// Waiting before the next start after a failure.
@@ -206,13 +191,8 @@ impl SlimWorker {
         match process {
             Process::Stopped => Self::Stopped,
             Process::Running => {
-                let report = report.cloned().unwrap_or_default();
-                Self::Running {
-                    capturing: report.capturing,
-                    fps: report.fps,
-                    encoding: report.encoding,
-                    paused: report.paused,
-                }
+                let SlimStatus { capturing, link } = report.cloned().unwrap_or_default();
+                Self::Running { capturing, link }
             }
             Process::Stopping => Self::Stopping,
             Process::Retrying { seconds } => Self::Retrying { seconds },

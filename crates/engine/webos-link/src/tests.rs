@@ -50,27 +50,41 @@ fn events_round_trip() {
             encode(&Event::Status(WorkerStatus::Slim(SlimStatus::default()))).unwrap()
         )
         .unwrap(),
-        "{\"type\":\"status\",\"flavor\":\"slim\",\"capturing\":false,\"paused\":false}\n",
-        "absent values are omitted"
+        "{\"type\":\"status\",\"flavor\":\"slim\",\"capturing\":false,\"link\":{\"state\":\"starting\"}}\n",
     );
-    let paused = Event::Status(WorkerStatus::Slim(SlimStatus {
-        paused: true,
-        encoding: Some(SlimEncoding::Raw),
-        ..SlimStatus::default()
-    }));
-    let text = encode(&paused).unwrap();
-    assert!(String::from_utf8_lossy(&text).contains(r#""paused":true"#));
-    assert_eq!(decode::<Event>(&text).unwrap(), paused);
-    let waiting = Event::Status(WorkerStatus::Slim(SlimStatus {
-        failure: Some(WorkerFailure::new(FailureKind::Receiver, "refused")),
-        ..SlimStatus::default()
-    }));
-    let text = encode(&waiting).unwrap();
-    assert!(
-        String::from_utf8_lossy(&text)
-            .contains(r#""failure":{"kind":"receiver","message":"refused"}"#)
-    );
-    assert_eq!(decode::<Event>(&text).unwrap(), waiting);
+    for (link, text) in [
+        (
+            SlimLink::Sending {
+                encoding: SlimEncoding::Raw,
+                fps: 30,
+            },
+            r#"{"state":"sending","encoding":"raw","fps":30}"#,
+        ),
+        (SlimLink::Paused {}, r#"{"state":"paused"}"#),
+        (
+            SlimLink::Waiting {
+                failure: WorkerFailure::new(FailureKind::Receiver, "refused"),
+            },
+            r#"{"state":"waiting","failure":{"kind":"receiver","message":"refused"}}"#,
+        ),
+        (
+            SlimLink::Failed {
+                failure: WorkerFailure::new(FailureKind::Encoder, "busy"),
+            },
+            r#"{"state":"failed","failure":{"kind":"encoder","message":"busy"}}"#,
+        ),
+    ] {
+        let status = Event::Status(WorkerStatus::Slim(SlimStatus {
+            capturing: true,
+            link,
+        }));
+        let encoded = encode(&status).unwrap();
+        assert_eq!(
+            String::from_utf8(encoded.clone()).unwrap(),
+            format!(r#"{{"type":"status","flavor":"slim","capturing":true,"link":{text}}}"#) + "\n"
+        );
+        assert_eq!(decode::<Event>(&encoded).unwrap(), status);
+    }
     let failed = Event::Failed {
         cause: "cannot bind 0.0.0.0:8787".into(),
     };
@@ -105,7 +119,10 @@ fn unknown_types_and_fields_are_rejected() {
             "{text}"
         );
     }
-    const SLIM: &str = r#""capturing":false,"paused":false"#;
+    const SLIM: &str = r#""capturing":false,"link":{"state":"starting"}"#;
+    let slim_link = |link: &str| {
+        format!(r#"{{"type":"status","flavor":"slim","capturing":false,"link":{link}}}"#)
+    };
     const FULL: &str = r#""capturing":false,"target":"off""#;
     // Both base lines are valid, so each rejection below is for its change.
     for valid in [
@@ -123,16 +140,20 @@ fn unknown_types_and_fields_are_rejected() {
         format!(r#"{{"type":"status","flavor":"tv",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"slim",{FULL}}}"#),
-        format!(r#"{{"type":"status","flavor":"full",{FULL},"paused":false}}"#),
+        format!(r#"{{"type":"status","flavor":"full",{FULL},"link":{{"state":"paused"}}}}"#),
         format!(r#"{{"type":"status","flavor":"slim",{SLIM},"portal":"x"}}"#),
-        // The failure as two fields, or a failure without its kind.
-        format!(
-            r#"{{"type":"status","flavor":"slim",{SLIM},"failure":"x","failure_kind":"other"}}"#
-        ),
-        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"failure":{{"message":"x"}}}}"#),
-        format!(
-            r#"{{"type":"status","flavor":"slim",{SLIM},"failure":{{"kind":"other","message":"x","at":1}}}}"#
-        ),
+        // No link, an unknown state, or a field another state has.
+        r#"{"type":"status","flavor":"slim","capturing":false}"#.to_owned(),
+        r#"{"type":"status","flavor":"slim","capturing":false,"link":"sending"}"#.to_owned(),
+        format!(r#"{{"type":"status","flavor":"slim",{SLIM},"paused":false}}"#),
+        slim_link(r#"{"state":"lost"}"#),
+        slim_link(r#"{"state":"paused","fps":1}"#),
+        slim_link(r#"{"state":"starting","failure":{"kind":"other","message":"x"}}"#),
+        slim_link(r#"{"state":"sending","encoding":"raw"}"#),
+        // The failure as text, without its kind, or with another field.
+        slim_link(r#"{"state":"waiting","failure":"x"}"#),
+        slim_link(r#"{"state":"failed","failure":{"message":"x"}}"#),
+        slim_link(r#"{"state":"failed","failure":{"kind":"other","message":"x","at":1}}"#),
     ] {
         assert!(decode::<Event>(text.as_bytes()).is_err(), "{text}");
     }
