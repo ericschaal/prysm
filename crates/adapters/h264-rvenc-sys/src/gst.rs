@@ -2,6 +2,7 @@
 //! synchronisation need `unsafe`.
 use crate::layout::fits;
 use crate::restart::restarting;
+use crate::session::Session;
 use crate::{BITRATE, Error, MAX_OUTPUT_BYTES, PITCH, copy_nv12};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_allocators::{DmaBufAllocator, prelude::*};
@@ -35,6 +36,9 @@ struct Allocation {
     heap_flags: u64,
 }
 
+// The UAPI struct's size, which `HEAP_ALLOC`'s ioctl number encodes (0x18).
+const _: () = assert!(std::mem::size_of::<Allocation>() == 24);
+
 struct Dma {
     memory: gst::Memory,
     mapping: memmap2::MmapMut,
@@ -57,6 +61,7 @@ pub struct Pipeline {
     // Stable DMA-BUF identities prevent the corruption seen with per-frame allocation/free.
     buffers: Vec<Dma>,
     slot: usize,
+    session: Session,
 }
 
 const _: () = {
@@ -134,6 +139,7 @@ impl Pipeline {
             stride,
             buffers: Vec::new(),
             slot: 0,
+            session: Session::default(),
         };
         // `Drop` sets NULL even if PLAYING fails.
         pipeline
@@ -148,8 +154,21 @@ impl Pipeline {
     ///
     /// # Errors
     /// Invalid input layout, DMA failure, a rejected buffer, no output within
-    /// 1 s, or more than one output for one input.
+    /// 1 s (with the encoder's own error when it posted one), or more than
+    /// one output for one input. Any error ends the session: every later call
+    /// returns [`Error::Failed`].
     pub fn encode(
+        &mut self,
+        pixels: &[u8],
+        input_stride: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<(), Error> {
+        self.session.open()?;
+        let result = self.encode_picture(pixels, input_stride, output);
+        self.session.record(result)
+    }
+
+    fn encode_picture(
         &mut self,
         pixels: &[u8],
         input_stride: usize,
@@ -165,6 +184,10 @@ impl Pipeline {
             self.buffers
                 .push(allocate_dma(&self.heap, &self.allocator, size)?);
         }
+        debug_assert!(self.buffers.len() <= 2 && self.slot < self.buffers.len());
+        // Written only while `rvenc` is done with this slot: picture N's
+        // access unit came out before N+1 was uploaded, so the slot of N is
+        // rewritten for N+2 (the ordering in the crate documentation).
         let dma = &mut self.buffers[self.slot];
         dma_sync(&dma.fd, SYNC_START)?;
         let copied = if input_stride == self.stride {
@@ -204,7 +227,7 @@ impl Pipeline {
         let sample = self
             .sink
             .try_pull_sample(gst::ClockTime::SECOND)
-            .ok_or(Error::Timeout)?;
+            .ok_or_else(|| self.posted_error().unwrap_or(Error::Timeout))?;
         let buffer = sample
             .buffer()
             .ok_or(Error::Output("sample without a buffer"))?;
@@ -220,6 +243,15 @@ impl Pipeline {
             return Err(Error::Output("more than one access unit for one picture"));
         }
         Ok(())
+    }
+
+    /// The error the pipeline posted on its bus, if it posted one.
+    fn posted_error(&self) -> Option<Error> {
+        let message = self.bus.pop_filtered(&[gst::MessageType::Error])?;
+        match message.view() {
+            gst::MessageView::Error(error) => Some(gst_error(error.error())),
+            _ => None,
+        }
     }
 }
 
@@ -243,8 +275,10 @@ fn allocate_dma(heap: &File, allocator: &DmaBufAllocator, size: usize) -> Result
     // SAFETY: the successful allocation transferred this new descriptor to us;
     // nothing else owns it.
     let fd = unsafe { OwnedFd::from_raw_fd(raw) };
-    // SAFETY: the new size-byte allocation has no other users; the mapping
-    // stays private to this slot and lives no longer than `fd`.
+    // SAFETY: the new size-byte allocation has no other users yet; the
+    // mapping stays private to this slot and lives no longer than `fd`. Once
+    // `rvenc` shares the buffer, writes through the mapping stay safe by the
+    // slot ordering in `Pipeline::encode_picture` (see the crate documentation).
     let mut mapping =
         unsafe { memmap2::MmapOptions::new().len(size).map_mut(&fd) }.map_err(io("DMA mapping"))?;
     dma_sync(&fd, SYNC_START)?;

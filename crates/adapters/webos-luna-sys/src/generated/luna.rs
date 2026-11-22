@@ -108,8 +108,6 @@ pub struct Luna {
         lserror: *mut LSError,
     ) -> bool,
     pub LSUnregister: unsafe extern "C" fn(service: *mut LSHandle, lserror: *mut LSError) -> bool,
-    pub LSMessageRef: unsafe extern "C" fn(message: *mut LSMessage),
-    pub LSMessageUnref: unsafe extern "C" fn(message: *mut LSMessage),
     pub LSMessageGetApplicationID:
         unsafe extern "C" fn(message: *mut LSMessage) -> *const ::std::os::raw::c_char,
     pub LSMessageGetSenderServiceName:
@@ -155,11 +153,6 @@ pub struct Luna {
         payload: *const ::std::os::raw::c_char,
         lserror: *mut LSError,
     ) -> bool,
-    pub LSSubscriptionGetHandleSubscribersCount: unsafe extern "C" fn(
-        sh: *mut LSHandle,
-        key: *const ::std::os::raw::c_char,
-    )
-        -> ::std::os::raw::c_uint,
 }
 impl Luna {
     pub unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
@@ -182,8 +175,6 @@ impl Luna {
             unsafe { __library.get(b"LSRegisterCategory\0") }.map(|sym| *sym)?;
         let LSCategorySetData = unsafe { __library.get(b"LSCategorySetData\0") }.map(|sym| *sym)?;
         let LSUnregister = unsafe { __library.get(b"LSUnregister\0") }.map(|sym| *sym)?;
-        let LSMessageRef = unsafe { __library.get(b"LSMessageRef\0") }.map(|sym| *sym)?;
-        let LSMessageUnref = unsafe { __library.get(b"LSMessageUnref\0") }.map(|sym| *sym)?;
         let LSMessageGetApplicationID =
             unsafe { __library.get(b"LSMessageGetApplicationID\0") }.map(|sym| *sym)?;
         let LSMessageGetSenderServiceName =
@@ -200,9 +191,6 @@ impl Luna {
             unsafe { __library.get(b"LSSubscriptionProcess\0") }.map(|sym| *sym)?;
         let LSSubscriptionReply =
             unsafe { __library.get(b"LSSubscriptionReply\0") }.map(|sym| *sym)?;
-        let LSSubscriptionGetHandleSubscribersCount =
-            unsafe { __library.get(b"LSSubscriptionGetHandleSubscribersCount\0") }
-                .map(|sym| *sym)?;
         Ok(Luna {
             __library,
             LSErrorInit,
@@ -211,8 +199,6 @@ impl Luna {
             LSRegisterCategory,
             LSCategorySetData,
             LSUnregister,
-            LSMessageRef,
-            LSMessageUnref,
             LSMessageGetApplicationID,
             LSMessageGetSenderServiceName,
             LSMessageGetMethod,
@@ -223,7 +209,6 @@ impl Luna {
             LSCallCancel,
             LSSubscriptionProcess,
             LSSubscriptionReply,
-            LSSubscriptionGetHandleSubscribersCount,
         })
     }
     pub unsafe fn LSErrorInit(&self, error: *mut LSError) -> bool {
@@ -262,12 +247,6 @@ impl Luna {
     }
     pub unsafe fn LSUnregister(&self, service: *mut LSHandle, lserror: *mut LSError) -> bool {
         unsafe { (self.LSUnregister)(service, lserror) }
-    }
-    pub unsafe fn LSMessageRef(&self, message: *mut LSMessage) {
-        unsafe { (self.LSMessageRef)(message) }
-    }
-    pub unsafe fn LSMessageUnref(&self, message: *mut LSMessage) {
-        unsafe { (self.LSMessageUnref)(message) }
     }
     pub unsafe fn LSMessageGetApplicationID(
         &self,
@@ -347,12 +326,5 @@ impl Luna {
         lserror: *mut LSError,
     ) -> bool {
         unsafe { (self.LSSubscriptionReply)(sh, key, payload, lserror) }
-    }
-    pub unsafe fn LSSubscriptionGetHandleSubscribersCount(
-        &self,
-        sh: *mut LSHandle,
-        key: *const ::std::os::raw::c_char,
-    ) -> ::std::os::raw::c_uint {
-        unsafe { (self.LSSubscriptionGetHandleSubscribersCount)(sh, key) }
     }
 }

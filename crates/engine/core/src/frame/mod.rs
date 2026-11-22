@@ -1,7 +1,7 @@
 //! Immutable frame storage, pixel formats, and payload validation.
 mod pool;
 
-pub use pool::{FramePool, FramePoolStats, FrameWriter};
+pub use pool::{FramePool, FramePoolStats, FrameWriter, PayloadError};
 
 use crate::{YuvRange, YuvStandardMatrix};
 use std::{
@@ -259,7 +259,7 @@ mod tests {
         format: PixelFormat,
         stride: usize,
         corrupted: bool,
-    ) -> Option<Frame> {
+    ) -> Result<Frame, PayloadError> {
         FramePool::default().copy_from_strided(data, width, height, format, stride, corrupted)
     }
 
@@ -283,16 +283,39 @@ mod tests {
         let frame = strided(&bytes, 2, 2, format, 6, false).unwrap();
         assert_eq!(frame.format(), format);
         assert_eq!(frame.as_slice(), [16, 128, 235, 128].repeat(2));
-        for (data, stride, corrupted) in [
-            (&bytes[..], 6, true),
-            (&bytes[..9], 6, false),
-            (&bytes[..], 3, false),
-            (&bytes[..], usize::MAX, false),
+        let short = PayloadError::Short {
+            bytes: 9,
+            frame: 10,
+        };
+        let overflow = PayloadError::Geometry(FrameError::SizeOverflow);
+        for (data, stride, corrupted, error) in [
+            (&bytes[..], 6, true, PayloadError::Corrupted),
+            (&bytes[..9], 6, false, short.clone()),
+            (
+                &bytes[..],
+                3,
+                false,
+                PayloadError::Stride { stride: 3, row: 4 },
+            ),
+            (&bytes[..], usize::MAX, false, overflow),
         ] {
-            assert!(strided(data, 2, 2, format, stride, corrupted).is_none());
+            assert_eq!(
+                strided(data, 2, 2, format, stride, corrupted).unwrap_err(),
+                error
+            );
         }
-        assert!(strided(&bytes, 1, 2, format, 6, false).is_none());
-        assert!(strided(&bytes, 2, 0, format, 6, false).is_none());
+        assert_eq!(
+            strided(&bytes, 1, 2, format, 6, false).unwrap_err(),
+            PayloadError::Geometry(FrameError::OddYuyvWidth(1))
+        );
+        assert_eq!(
+            strided(&bytes, 2, 0, format, 6, false).unwrap_err(),
+            PayloadError::Empty
+        );
+        assert_eq!(
+            short.to_string(),
+            "buffer held 9 of the 10 bytes of a frame"
+        );
     }
 
     #[test]
@@ -320,7 +343,7 @@ mod tests {
         let padded = [1, 2, 9, 3, 4, 9, 5, 6];
         let frame = strided(&padded, 2, 2, format, 3, false).unwrap();
         assert_eq!(frame.as_slice(), [1, 2, 3, 4, 5, 6]);
-        assert!(strided(&padded[..7], 2, 2, format, 3, false).is_none());
+        assert!(strided(&padded[..7], 2, 2, format, 3, false).is_err());
         assert!(Frame::fill(0, 2, 3, format).is_err());
     }
 

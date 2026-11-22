@@ -17,7 +17,8 @@
 //!   before it uploads N+1, so slot N is rewritten only for N+2, after `rvenc`
 //!   emitted N+1's access unit. That assumes `rvenc` never reads input N
 //!   after emitting a later access unit (not verified on the TV). Any error
-//!   closes the session (`prysm-h264` opens a new pipeline).
+//!   ends the session: later calls return [`Error::Failed`], and
+//!   `prysm-h264` opens a new pipeline.
 //! - `rvenc` output goes straight to `appsink` (no `h264parse`, which added a
 //!   frame of latency on the TV). Output wait 1 s, EOS wait 500 ms on drop.
 //!
@@ -29,6 +30,8 @@ mod gst;
 mod layout;
 #[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
 mod restart;
+#[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
+mod session;
 
 #[cfg(all(target_os = "linux", target_arch = "arm"))]
 pub use gst::Pipeline;
@@ -56,6 +59,9 @@ pub enum Error {
     Timeout,
     #[error("invalid hardware output: {0}")]
     Output(&'static str),
+    /// An earlier call of this session failed; open a new pipeline.
+    #[error("the hardware encoder session failed earlier")]
+    Failed,
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "arm")))]

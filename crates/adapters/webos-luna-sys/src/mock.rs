@@ -8,8 +8,9 @@ use crate::generated::luna::{
     LSMethodFunction, LSProperty, LSSignal,
 };
 use std::cell::RefCell;
-use std::ffi::{CStr, CString, c_char, c_uint, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr::NonNull;
+use std::sync::OnceLock;
 
 type Script = Box<dyn FnOnce()>;
 
@@ -17,6 +18,10 @@ type Script = Box<dyn FnOnce()>;
 struct State {
     calls: Vec<String>,
     deny: Option<String>,
+    /// The one LS call (as recorded, without arguments) that fails.
+    fail: Option<&'static str>,
+    /// Run inside the next `LSCallCancel`.
+    on_cancel: Option<Script>,
     method: LSMethodFunction,
     data: Option<*mut c_void>,
     lscalls: Vec<(LSFilterFunc, *mut c_void)>,
@@ -44,17 +49,42 @@ pub fn deny_register(name: Option<&str>) {
     STATE.with_borrow_mut(|state| state.deny = name.map(str::to_owned));
 }
 
+/// Make LS call `call` (`category`, `data`, `attach`, `subscribe`, `reply`
+/// or `unregister`) fail, with LS2's error set.
+pub fn fail(call: Option<&'static str>) {
+    STATE.with_borrow_mut(|state| state.fail = call);
+}
+
+/// Whether `call` fails; when it does, its error says so.
+fn failing(call: &str, error: *mut LSError) -> bool {
+    let fails = STATE.with_borrow(|state| state.fail == Some(call));
+    if fails {
+        // SAFETY: an initialized error from the caller; the static outlives it.
+        unsafe { (*error).message = c"failed".as_ptr().cast_mut() };
+    }
+    fails
+}
+
 /// Run `script` inside `g_main_loop_run`.
 pub fn on_run(script: impl FnOnce() + 'static) {
     STATE.with_borrow_mut(|state| state.script = Some(Box::new(script)));
 }
 
-pub fn luna() -> crate::generated::luna::Luna {
-    crate::generated::luna::Luna::test_api()
+/// Run `script` inside the next `LSCallCancel`, as LS2 may deliver a reply
+/// while it cancels the call.
+pub fn on_cancel(script: impl FnOnce() + 'static) {
+    STATE.with_borrow_mut(|state| state.on_cancel = Some(Box::new(script)));
 }
 
-pub fn glib() -> crate::generated::glib::Glib {
-    crate::generated::glib::Glib::test_api()
+/// The stand-in tables, like the real ones built once for the process.
+pub fn luna() -> &'static crate::generated::luna::Luna {
+    static LUNA: OnceLock<crate::generated::luna::Luna> = OnceLock::new();
+    LUNA.get_or_init(crate::generated::luna::Luna::test_api)
+}
+
+pub fn glib() -> &'static crate::generated::glib::Glib {
+    static GLIB: OnceLock<crate::generated::glib::Glib> = OnceLock::new();
+    GLIB.get_or_init(crate::generated::glib::Glib::test_api)
 }
 
 #[cfg(not(miri))]
@@ -63,21 +93,13 @@ pub fn library() -> libloading::Library {
 }
 
 /// Miri cannot `dlopen`: a placeholder handle, never used to look up a
-/// symbol, closed by the `dlclose` stand-in below.
+/// symbol and never closed, as the tables holding it live in statics.
 #[cfg(miri)]
 pub fn library() -> libloading::Library {
-    // SAFETY: the handle only reaches `dlclose`, which Miri resolves to the
-    // stand-in below.
+    // SAFETY: the handle is never passed to the C library: no symbol is
+    // looked up through it, and the static tables are never dropped.
     unsafe { libloading::os::unix::Library::from_raw(NonNull::<c_void>::dangling().as_ptr()) }
         .into()
-}
-
-/// Miri runs an exported Rust function for a foreign call it has no shim
-/// for, so dropping the libraries above ends here instead of in libc.
-#[cfg(miri)]
-#[unsafe(no_mangle)]
-extern "C" fn dlclose(_: *mut c_void) -> std::ffi::c_int {
-    0
 }
 
 /// A message as LS2 would hand it to a callback.
@@ -159,7 +181,7 @@ pub unsafe extern "C" fn register(
     record(format!("register {name}"));
     if STATE.with_borrow(|state| state.deny.as_deref() == Some(name.as_str())) {
         // SAFETY: an initialized error from the caller; the static outlives it.
-        unsafe { (*error).message = c"denied".as_ptr().cast_mut() };
+        unsafe { (*error).message = c"Invalid permissions for this name".as_ptr().cast_mut() };
         return false;
     }
     // SAFETY: writable output from the caller; the sentinel is never dereferenced.
@@ -172,8 +194,11 @@ pub unsafe extern "C" fn category(
     methods: *mut LSMethod,
     _: *mut LSSignal,
     _: *mut LSProperty,
-    _: *mut LSError,
+    error: *mut LSError,
 ) -> bool {
+    if failing("category", error) {
+        return false;
+    }
     let mut names = Vec::new();
     let mut entry = methods;
     // SAFETY: a sentinel-terminated table from the wrapper.
@@ -191,17 +216,19 @@ pub unsafe extern "C" fn category_data(
     _: *mut LSHandle,
     _: *const c_char,
     data: *mut c_void,
-    _: *mut LSError,
+    error: *mut LSError,
 ) -> bool {
     record("data");
+    if failing("data", error) {
+        return false;
+    }
     STATE.with_borrow_mut(|state| state.data = Some(data));
     true
 }
-pub unsafe extern "C" fn unregister(_: *mut LSHandle, _: *mut LSError) -> bool {
+pub unsafe extern "C" fn unregister(_: *mut LSHandle, error: *mut LSError) -> bool {
     record("unregister");
-    true
+    !failing("unregister", error)
 }
-pub unsafe extern "C" fn message_ref(_: *mut LSMessage) {}
 pub unsafe extern "C" fn application_id(message: *mut LSMessage) -> *const c_char {
     // SAFETY: only fake messages reach the mocks.
     unsafe { fake(message) }.app.as_ptr()
@@ -221,15 +248,21 @@ pub unsafe extern "C" fn reply(
     _: *mut LSHandle,
     _: *mut LSMessage,
     payload: *const c_char,
-    _: *mut LSError,
+    error: *mut LSError,
 ) -> bool {
     // SAFETY: the wrapper passes a NUL-terminated payload.
-    record(format!("reply {}", unsafe { text(payload) }));
+    let payload = unsafe { text(payload) };
+    // Only the handler's own reply fails, not an error reply after it.
+    if !payload.contains("errorText") && failing("reply", error) {
+        record(format!("failed reply {payload}"));
+        return false;
+    }
+    record(format!("reply {payload}"));
     true
 }
-pub unsafe extern "C" fn attach(_: *mut LSHandle, _: *mut GMainLoop, _: *mut LSError) -> bool {
+pub unsafe extern "C" fn attach(_: *mut LSHandle, _: *mut GMainLoop, error: *mut LSError) -> bool {
     record("attach");
-    true
+    !failing("attach", error)
 }
 pub unsafe extern "C" fn call(
     _: *mut LSHandle,
@@ -253,15 +286,21 @@ pub unsafe extern "C" fn call(
 }
 pub unsafe extern "C" fn cancel(_: *mut LSHandle, token: LSMessageToken, _: *mut LSError) -> bool {
     record(format!("cancel {token}"));
+    if let Some(script) = STATE.with_borrow_mut(|state| state.on_cancel.take()) {
+        script();
+    }
     true
 }
 pub unsafe extern "C" fn subscribe(
     _: *mut LSHandle,
     _: *mut LSMessage,
     subscribed: *mut bool,
-    _: *mut LSError,
+    error: *mut LSError,
 ) -> bool {
     record("subscribe");
+    if failing("subscribe", error) {
+        return false;
+    }
     // SAFETY: writable output from the caller.
     unsafe { subscribed.write(true) };
     true
@@ -277,9 +316,6 @@ pub unsafe extern "C" fn publish(
         text(payload)
     }));
     true
-}
-pub unsafe extern "C" fn subscribers(_: *mut LSHandle, _: *const c_char) -> c_uint {
-    0
 }
 
 pub unsafe extern "C" fn context_new() -> *mut GMainContext {

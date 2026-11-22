@@ -38,11 +38,14 @@ pub type VtBuffer = unsafe extern "C" fn(*mut c_void, *mut BufferInfo) -> c_int;
 pub type VtClient = unsafe extern "C" fn(*mut c_void, *mut c_char) -> c_int;
 pub type VtRelease = unsafe extern "C" fn(*mut c_void);
 
+// Each bridge writes an exception's message, terminated, into the
+// `error_length` bytes at `error`, and returns -1000 for it.
 unsafe extern "C" {
     pub fn prysm_vt_create(
         function: VtCreate,
         driver: *mut *mut c_void,
         error: *mut c_char,
+        error_length: usize,
     ) -> c_int;
     pub fn prysm_vt_init(
         function: VtInit,
@@ -50,6 +53,7 @@ unsafe extern "C" {
         caller: *const c_char,
         client: *mut c_char,
         error: *mut c_char,
+        error_length: usize,
     ) -> c_int;
     pub fn prysm_vt_preprocess(
         function: VtPreprocess,
@@ -57,6 +61,7 @@ unsafe extern "C" {
         client: *mut c_char,
         properties: *mut Properties,
         error: *mut c_char,
+        error_length: usize,
     ) -> c_int;
     pub fn prysm_vt_plane(
         function: VtPlane,
@@ -64,20 +69,28 @@ unsafe extern "C" {
         client: *mut c_char,
         plane: *mut PlaneInfo,
         error: *mut c_char,
+        error_length: usize,
     ) -> c_int;
     pub fn prysm_vt_buffer(
         function: VtBuffer,
         driver: *mut c_void,
         buffer: *mut BufferInfo,
         error: *mut c_char,
+        error_length: usize,
     ) -> c_int;
     pub fn prysm_vt_client(
         function: VtClient,
         driver: *mut c_void,
         client: *mut c_char,
         error: *mut c_char,
+        error_length: usize,
     ) -> c_int;
-    pub fn prysm_vt_release(function: VtRelease, driver: *mut c_void, error: *mut c_char) -> c_int;
+    pub fn prysm_vt_release(
+        function: VtRelease,
+        driver: *mut c_void,
+        error: *mut c_char,
+        error_length: usize,
+    ) -> c_int;
 }
 
 #[cfg(test)]
@@ -117,10 +130,16 @@ mod tests {
         let mut error = [0; 512];
         let mut driver = ptr::null_mut();
         // SAFETY: the test functions throw before accessing arguments; their
-        // actual signatures match the operation selected in the C++ bridge.
+        // actual signatures match the operation selected in the C++ bridge;
+        // each message fits the buffer's 512 bytes.
         unsafe {
             assert_eq!(
-                prysm_vt_create(prysm_test_throw_create, &raw mut driver, error.as_mut_ptr()),
+                prysm_vt_create(
+                    prysm_test_throw_create,
+                    &raw mut driver,
+                    error.as_mut_ptr(),
+                    error.len()
+                ),
                 -1000
             );
             assert!(
@@ -134,7 +153,8 @@ mod tests {
                     prysm_test_throw_call,
                     driver,
                     ptr::null_mut(),
-                    error.as_mut_ptr()
+                    error.as_mut_ptr(),
+                    error.len()
                 ),
                 -1000
             );
@@ -142,14 +162,18 @@ mod tests {
                 CStr::from_ptr(error.as_ptr()).to_str().unwrap(),
                 "native call failed"
             );
+            // A short buffer gets as much of the message as fits, terminated.
+            let mut short = [1; 7];
             assert_eq!(
-                prysm_vt_release(prysm_test_throw_release, driver, error.as_mut_ptr()),
+                prysm_vt_release(
+                    prysm_test_throw_release,
+                    driver,
+                    short.as_mut_ptr(),
+                    short.len()
+                ),
                 -1000
             );
-            assert_eq!(
-                CStr::from_ptr(error.as_ptr()).to_str().unwrap(),
-                "native release failed"
-            );
+            assert_eq!(CStr::from_ptr(short.as_ptr()).to_str().unwrap(), "native");
         }
     }
     use std::ffi::CStr;

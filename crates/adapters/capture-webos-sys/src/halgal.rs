@@ -9,9 +9,11 @@
 //! capture and release must all run on one thread; [`UiCapture`] is not
 //! `Send`. The library is loaded once and never unloaded: unloading it leaks
 //! file descriptors.
-use crate::vtcapture::{Error, Loaded, load_once};
+use crate::vtcapture::{Error, Plane};
+use prysm_webos_luna_sys::{Loaded, load_once};
 use std::ffi::c_int;
 use std::fs::File;
+use std::marker::PhantomData;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::ptr::NonNull;
@@ -34,9 +36,22 @@ pub(crate) struct Surface {
     pub vendor: u32,
 }
 
-// The TV's 32-bit ABI, as in halgal.h.
+// The TV's 32-bit ABI for halgal.h's declaration: HAL writes `palette`,
+// `property` and `vendor` behind `pixel_format`, so their offsets are pinned
+// as well as the size. (A 2-byte `pixel_format` and a 4-byte enum give the
+// same offsets.)
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(std::mem::size_of::<Surface>() == 1056);
+const _: () = {
+    use std::mem::{offset_of, size_of};
+    assert!(size_of::<Surface>() == 1056);
+    assert!(offset_of!(Surface, physical) == 4);
+    assert!(offset_of!(Surface, pitch) == 8);
+    assert!(offset_of!(Surface, height) == 14);
+    assert!(offset_of!(Surface, pixel_format) == 16);
+    assert!(offset_of!(Surface, palette) == 20);
+    assert!(offset_of!(Surface, property) == 1048);
+    assert!(offset_of!(Surface, vendor) == 1052);
+};
 
 impl Surface {
     fn empty() -> Self {
@@ -73,13 +88,14 @@ fn hal() -> Result<&'static HalApi, Error> {
     let names = ["libhalgal.so.1", "libhalgal.so"];
     // Never unloaded, not even when a symbol is missing: unloading libhalgal
     // leaks file descriptors. A retry reuses the loaded library.
-    load_once(&HAL, &names, |library| {
-        let symbol = |source| Error::Load {
+    let api = load_once(&HAL, &names, |library| {
+        let symbol = |source| prysm_webos_luna_sys::Error::Load {
             library: names.join(" or "),
             source,
         };
-        // SAFETY: the signatures match halgal.h. The library is leaked, so the
-        // function pointers stay valid for the life of the process.
+        // SAFETY: the signatures match halgal.h. The library is never
+        // unloaded, so the function pointers stay valid for the life of the
+        // process.
         unsafe {
             Ok(HalApi {
                 init: *library.get::<HalInit>(b"HAL_GAL_Init\0").map_err(symbol)?,
@@ -94,7 +110,8 @@ fn hal() -> Result<&'static HalApi, Error> {
                     .map_err(symbol)?,
             })
         }
-    })
+    })?;
+    Ok(api)
 }
 
 fn status(code: c_int, operation: &'static str) -> Result<(), Error> {
@@ -111,8 +128,31 @@ fn status(code: c_int, operation: &'static str) -> Result<(), Error> {
 pub struct UiFrame<'a> {
     pub width: u32,
     pub height: u32,
-    pub pitch: usize,
-    pub pixels: &'a [u8],
+    pitch: usize,
+    pixels: Plane<'a>,
+}
+
+impl UiFrame<'_> {
+    /// Copy row `row` (its `width * 4` bytes, without the pitch's padding)
+    /// into `target`, exactly that long. Each row is read once, as the
+    /// mapping is uncached.
+    ///
+    /// # Errors
+    /// A row past the last or a `target` of another length.
+    pub fn copy_row(&self, row: usize, target: &mut [u8]) -> Result<(), Error> {
+        if row >= self.height as usize || target.len() != self.width as usize * 4 {
+            return Err(Error::Invalid("UI row"));
+        }
+        self.pixels.copy(row * self.pitch, target)
+    }
+}
+
+/// A surface's geometry as checked when it was opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Geometry {
+    width: u16,
+    height: u16,
+    pitch: usize,
 }
 
 struct Mapping {
@@ -128,8 +168,13 @@ pub struct UiCapture {
     /// Boxed: HAL keeps no pointer to it, but a stable address costs nothing.
     surface: Box<Surface>,
     created: bool,
+    /// What [`UiCapture::capture`] reports: HAL may rewrite the surface
+    /// struct on every call, the mapping keeps the geometry checked at open.
+    geometry: Option<Geometry>,
     mapping: Option<Mapping>,
     released: bool,
+    /// Not `Send`: HAL GAL binds the tap to the thread that opened it.
+    _thread: PhantomData<*const ()>,
 }
 
 const DEVICE: &str = "/dev/gfx";
@@ -158,8 +203,10 @@ impl UiCapture {
             api,
             surface: Box::new(Surface::empty()),
             created: false,
+            geometry: None,
             mapping: None,
             released: false,
+            _thread: PhantomData,
         };
         // SAFETY: the surface is a live, exclusively owned out parameter.
         let code = unsafe {
@@ -175,6 +222,11 @@ impl UiCapture {
         this.created = true;
         let length = this.check(width, height)?;
         this.mapping = Some(map(device, this.surface.offset, length)?);
+        this.geometry = Some(Geometry {
+            width,
+            height,
+            pitch: usize::from(this.surface.pitch),
+        });
         Ok(this)
     }
 
@@ -209,22 +261,22 @@ impl UiCapture {
     /// # Errors
     /// A nonzero `HAL_GAL_CaptureFrameBuffer` status.
     pub fn capture(&mut self) -> Result<UiFrame<'_>, Error> {
+        let (Some(geometry), Some(mapping)) = (self.geometry, &self.mapping) else {
+            return Err(Error::Invalid("unmapped HAL surface"));
+        };
         // SAFETY: the created surface is live until release.
         let code = unsafe { (self.api.capture)(&raw mut *self.surface) };
         status(code, "HAL_GAL_CaptureFrameBuffer")?;
-        let mapping = self
-            .mapping
-            .as_ref()
-            .ok_or(Error::Invalid("unmapped HAL surface"))?;
         // SAFETY: the mapping is `length` readable bytes until it is unmapped,
-        // which needs `&mut self`; the capture call above has completed, so
-        // HAL does not write the surface while it is borrowed.
-        let pixels =
-            unsafe { std::slice::from_raw_parts(mapping.address.as_ptr(), mapping.length) };
+        // which needs `&mut self`, so not while the frame borrows it. HAL may
+        // still be writing it (the capture is a blit, and nothing says it has
+        // finished when the call returns), so it is read only through the
+        // plane's pointer.
+        let pixels = unsafe { Plane::new(mapping.address, mapping.length) };
         Ok(UiFrame {
-            width: u32::from(self.surface.width),
-            height: u32::from(self.surface.height),
-            pitch: usize::from(self.surface.pitch),
+            width: u32::from(geometry.width),
+            height: u32::from(geometry.height),
+            pitch: geometry.pitch,
             pixels,
         })
     }
@@ -357,8 +409,10 @@ pub fn fuzz_surface_check(data: &[u8]) {
         api: &NO_HAL,
         surface: Box::new(surface),
         created: false,
+        geometry: None,
         mapping: None,
         released: true,
+        _thread: PhantomData,
     };
     let s = &capture.surface;
     let (pitch, rows, row) = (u64::from(s.pitch), u64::from(height), u64::from(width) * 4);
@@ -467,9 +521,32 @@ mod tests {
         let mut capture = UiCapture::open_with(api(), file.path(), 2, 2).unwrap();
         let frame = capture.capture().unwrap();
         assert_eq!((frame.width, frame.height, frame.pitch), (2, 2, 16));
-        assert_eq!(frame.pixels, pixels.as_slice());
+        let mut row = [0; 8];
+        for (index, start) in [(0, 0), (1, 16)] {
+            frame.copy_row(index, &mut row).unwrap();
+            assert_eq!(row, pixels[start..start + 8], "row {index}");
+        }
+        assert!(matches!(
+            frame.copy_row(2, &mut row),
+            Err(Error::Invalid("UI row"))
+        ));
+        assert!(matches!(
+            frame.copy_row(0, &mut [0; 7]),
+            Err(Error::Invalid("UI row"))
+        ));
         capture.release().unwrap();
         assert_eq!(events(), ["init", "create", "capture", "destroy"]);
+    }
+
+    #[test]
+    fn a_capture_reports_the_geometry_checked_at_open() {
+        let file = device(&[0; 32]);
+        let mut capture = UiCapture::open_with(api(), file.path(), 2, 2).unwrap();
+        // HAL rewrites the struct it is handed; the frame keeps to the mapping.
+        capture.surface.height = 4000;
+        capture.surface.pitch = 4000;
+        let frame = capture.capture().unwrap();
+        assert_eq!((frame.width, frame.height, frame.pitch), (2, 2, 16));
     }
 
     #[test]

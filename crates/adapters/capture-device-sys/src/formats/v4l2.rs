@@ -6,10 +6,11 @@ use super::{MAX_FPS, Rates, TOLERANCE_PER_MILLE};
 /// Whether a frame interval of `numerator / denominator` seconds is `fps`
 /// frames per second.
 pub(crate) fn interval_is(numerator: u32, denominator: u32, fps: u32) -> bool {
-    // |1/interval - fps| <= fps * tolerance, without dividing.
-    let stated = u64::from(denominator) * 1000;
-    let whole = u64::from(numerator) * u64::from(fps) * 1000;
-    let slack = u64::from(numerator) * u64::from(fps) * u64::from(TOLERANCE_PER_MILLE);
+    // |1/interval - fps| <= fps * tolerance, without dividing; in `u128`,
+    // which no product of `u32`s and 1000 overflows.
+    let stated = u128::from(denominator) * 1000;
+    let whole = u128::from(numerator) * u128::from(fps) * 1000;
+    let slack = u128::from(numerator) * u128::from(fps) * u128::from(TOLERANCE_PER_MILLE);
     numerator != 0 && stated.abs_diff(whole) <= slack
 }
 
@@ -90,6 +91,9 @@ mod tests {
         assert!(!interval_is(1, 25, 30));
         assert!(!interval_is(0, 0, 30));
         assert!(interval_is(u32::MAX, u32::MAX, 1));
+        // A rate no device lists, against a driver's widest interval.
+        assert!(!interval_is(u32::MAX, 1, u32::MAX));
+        assert!(!interval_is(u32::MAX, u32::MAX, u32::MAX));
         // Continuous 1/60 s to 1 s.
         assert_eq!(spans(|r| r.intervals((1, 60), (1, 1), None)), [span(1, 60)]);
         // Stepwise 1/30 s to 1/10 s in 1/60 s: 2/60 to 6/60, each whole.

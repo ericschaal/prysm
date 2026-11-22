@@ -115,11 +115,112 @@ fn a_refused_registration_releases_the_loop_and_context() {
         Box::new(Recorder::default()),
     )
     .unwrap_err();
-    assert!(error.to_string().contains("denied"), "{error}");
+    assert!(error.to_string().contains("Invalid permissions"), "{error}");
     let calls = mock::calls();
     assert!(!calls.contains(&"unregister".to_owned()));
     assert!(!calls.contains(&"run".to_owned()));
     assert_eq!(&calls[calls.len() - 2..], ["unref", "unref"]);
+}
+
+/// Run the service once, delivering one `getState` request (the recorder
+/// subscribes the caller and publishes), with LS call `failing` failing.
+fn one_request(failing: &'static str) -> Vec<String> {
+    mock::reset();
+    mock::fail(Some(failing));
+    mock::on_run(|| {
+        mock::invoke_method(&mut FakeMessage::new("getState", "app", "{}"));
+        while !mock::invoke_timer() {}
+    });
+    run_with(
+        mock::luna(),
+        mock::glib(),
+        &CONFIG,
+        Box::new(Recorder::default()),
+    )
+    .unwrap();
+    mock::calls()
+}
+
+#[test]
+fn a_failed_subscribe_or_reply_still_answers_and_publishes() {
+    for failing in ["subscribe", "reply"] {
+        let calls = one_request(failing);
+        let error_reply = calls
+            .iter()
+            .position(|c| c.starts_with(r#"reply {"returnValue":false"#))
+            .unwrap_or_else(|| panic!("{failing}: the caller got no answer: {calls:#?}"));
+        assert!(
+            calls[error_reply].contains("failed"),
+            "{}",
+            calls[error_reply]
+        );
+        index(&calls, r#"publish /getState {"n":1}"#);
+    }
+}
+
+#[test]
+fn a_failure_after_registering_still_unregisters() {
+    for failing in ["category", "data", "attach"] {
+        mock::reset();
+        mock::fail(Some(failing));
+        let error = run_with(
+            mock::luna(),
+            mock::glib(),
+            &CONFIG,
+            Box::new(Recorder::default()),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("failed"), "{failing}: {error}");
+        let calls = mock::calls();
+        assert!(!calls.contains(&"run".to_owned()), "{failing}");
+        let unregistered = index(&calls, "unregister");
+        assert_eq!(&calls[unregistered + 2..], ["unref", "unref"], "{failing}");
+    }
+}
+
+/// A handler whose request makes another request of the same service.
+struct Reentrant;
+
+impl Handler for Reentrant {
+    fn request(&mut self, _: &mut Bus, _: Request<'_>) -> Response {
+        mock::invoke_method(&mut FakeMessage::new("uninstall", "app", "{}"));
+        Response {
+            payload: r#"{"returnValue":true}"#.into(),
+            subscribe: false,
+        }
+    }
+    fn reply(&mut self, _: &mut Bus, _: usize, _: &str) {}
+    fn tick(&mut self, _: &mut Bus, _: Instant) -> bool {
+        false
+    }
+}
+
+#[test]
+fn a_request_while_the_handler_runs_is_answered_busy() {
+    mock::reset();
+    mock::on_run(|| {
+        mock::invoke_method(&mut FakeMessage::new("getState", "app", "{}"));
+        mock::invoke_timer();
+    });
+    run_with(mock::luna(), mock::glib(), &CONFIG, Box::new(Reentrant)).unwrap();
+    let calls = mock::calls();
+    let busy = calls
+        .iter()
+        .position(|c| c.contains("the service is busy"))
+        .unwrap_or_else(|| panic!("no busy reply: {calls:#?}"));
+    assert!(busy < index(&calls, r#"reply {"returnValue":true}"#));
+}
+
+#[test]
+fn a_reply_while_closing_does_not_reach_the_handler() {
+    mock::reset();
+    mock::on_run(|| while !mock::invoke_timer() {});
+    mock::on_cancel(|| mock::invoke_call(0, r#"{"late":true}"#));
+    let recorder = Recorder::default();
+    let seen = recorder.seen.clone();
+    run_with(mock::luna(), mock::glib(), &CONFIG, Box::new(recorder)).unwrap();
+    assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
+    index(&mock::calls(), "unregister");
 }
 
 #[test]

@@ -1,6 +1,50 @@
 //! Producer-owned pixel-buffer recycling and exclusive writes before publication.
 use super::{Frame, FrameError, PixelFormat};
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
+
+/// Why [`FramePool::copy_from_strided`] made no frame of a payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PayloadError {
+    /// The source flagged the payload as corrupted.
+    Corrupted,
+    /// Zero width or height: no pixels to show.
+    Empty,
+    /// The format cannot hold this geometry.
+    Geometry(FrameError),
+    /// Rows `stride` bytes apart overlap rows of `row` bytes.
+    Stride { stride: usize, row: usize },
+    /// `bytes` of the `frame` bytes from the first pixel to the last.
+    Short { bytes: usize, frame: usize },
+}
+
+impl Display for PayloadError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Corrupted => f.write_str("source flagged the buffer as corrupted"),
+            Self::Empty => f.write_str("buffer describes a frame without pixels"),
+            Self::Geometry(_) => f.write_str("buffer geometry is not a frame"),
+            Self::Stride { stride, row } => {
+                write!(
+                    f,
+                    "buffer rows are {stride} bytes apart, closer than a {row}-byte row"
+                )
+            }
+            Self::Short { bytes, frame } => {
+                write!(f, "buffer held {bytes} of the {frame} bytes of a frame")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PayloadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Geometry(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Producer-owned storage for up to four reusable pixel buffers.
 /// Consumers keep ordinary immutable [`Frame`]s. A busy buffer is never copied or
@@ -115,7 +159,11 @@ impl FramePool {
     /// Validate a capture payload and remove row padding before constructing a frame.
     /// `stride` applies to every row; an NV12 payload's UV plane starts right
     /// after `height` luma rows.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Why the payload is not a frame: flagged `corrupted`, no pixels, a
+    /// geometry the format refuses, a stride shorter than a row, or fewer
+    /// bytes than the rows span.
     pub fn copy_from_strided(
         &mut self,
         data: &[u8],
@@ -124,26 +172,46 @@ impl FramePool {
         format: PixelFormat,
         stride: usize,
         corrupted: bool,
-    ) -> Option<Frame> {
-        if corrupted || width == 0 || height == 0 {
-            return None;
+    ) -> Result<Frame, PayloadError> {
+        if corrupted {
+            return Err(PayloadError::Corrupted);
         }
-        format.expected_size(width, height).ok()?;
+        if width == 0 || height == 0 {
+            return Err(PayloadError::Empty);
+        }
+        format
+            .expected_size(width, height)
+            .map_err(PayloadError::Geometry)?;
+        let overflow = || PayloadError::Geometry(FrameError::SizeOverflow);
         // NV12's chroma plane follows the luma rows at the same stride.
-        let (row_size, rows) = format.rows(width, height)?;
-        let required = stride.checked_mul(rows - 1)?.checked_add(row_size)?;
-        if stride < row_size || data.len() < required {
-            return None;
+        let (row_size, rows) = format.rows(width, height).ok_or_else(overflow)?;
+        if stride < row_size {
+            return Err(PayloadError::Stride {
+                stride,
+                row: row_size,
+            });
         }
-        let mut frame = self.acquire(width, height, format).ok()?;
+        let required = stride
+            .checked_mul(rows - 1)
+            .and_then(|start| start.checked_add(row_size))
+            .ok_or_else(overflow)?;
+        if data.len() < required {
+            return Err(PayloadError::Short {
+                bytes: data.len(),
+                frame: required,
+            });
+        }
+        let mut frame = self
+            .acquire(width, height, format)
+            .map_err(PayloadError::Geometry)?;
         if stride == row_size {
             frame.as_mut_slice().copy_from_slice(&data[..required]);
-            return Some(frame.finish());
+            return Ok(frame.finish());
         }
         for (row, target) in frame.as_mut_slice().chunks_exact_mut(row_size).enumerate() {
             target.copy_from_slice(&data[row * stride..row * stride + row_size]);
         }
-        Some(frame.finish())
+        Ok(frame.finish())
     }
 }
 
@@ -273,9 +341,10 @@ mod tests {
         let pixels = frame.as_slice().as_ptr();
         assert_eq!(frame.as_slice(), &[1, 2, 3, 4, 5, 6]);
         drop(frame);
-        assert!(
+        assert_eq!(
             pool.copy_from_strided(&[7; 6], 1, 2, PixelFormat::RGB24, 4, false)
-                .is_none()
+                .unwrap_err(),
+            PayloadError::Short { bytes: 6, frame: 7 }
         );
         let frame = pool
             .copy_from_strided(&[8; 6], 1, 2, PixelFormat::RGB24, 3, false)

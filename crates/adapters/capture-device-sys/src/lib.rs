@@ -85,14 +85,30 @@ pub enum CameraAccess {
 pub const CAMERA_ACCESS_WAIT: std::time::Duration = std::time::Duration::from_secs(7);
 
 /// Why a buffer the device delivered could not be used as a frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum BufferRejection {
-    #[error("driver flagged the buffer as corrupted")]
-    Corrupted,
-    #[error("buffer held {bytes} of the {frame} bytes of a frame")]
-    Short { bytes: usize, frame: usize },
-    #[error("buffer could not be converted to a frame")]
+    /// The payload itself: flagged, short, or not the negotiated geometry.
+    #[error(transparent)]
+    Payload(#[from] prysm_core::PayloadError),
+    /// An AVFoundation sample without a pixel buffer.
+    #[error("sample held no pixel buffer")]
+    NoPixelBuffer,
+    /// An AVFoundation pixel buffer in a format other than YUYV (its
+    /// four-character code).
+    #[error("pixel format {} is not YUYV", String::from_utf8_lossy(.0))]
+    PixelFormat([u8; 4]),
+    /// An AVFoundation YUYV buffer whose colour matrix (an H.273 code point)
+    /// has no conversion.
+    #[error("YUYV colour matrix {0} is not supported")]
+    Matrix(i32),
+    /// An AVFoundation pixel buffer laid out in planes or with extended
+    /// pixels, so its base address is not its first pixel.
+    #[error("pixel buffer is not one plane of pixels")]
+    Layout,
+    /// An AVFoundation pixel buffer whose memory could not be locked for
+    /// reading.
+    #[error("pixel buffer memory could not be read")]
     Unreadable,
 }
 
@@ -207,16 +223,21 @@ mod tests {
                 .kind(),
             std::io::ErrorKind::PermissionDenied
         );
+        let corrupted = BufferRejection::Payload(prysm_core::PayloadError::Corrupted);
         let unusable = CaptureError::Unusable {
             rejected: 90,
-            source: BufferRejection::Corrupted,
+            source: corrupted.clone(),
         };
         let unusable = anyhow::Error::new(unusable).context("starting camera");
         assert_eq!(
             unusable
                 .chain()
                 .find_map(|cause| cause.downcast_ref::<BufferRejection>()),
-            Some(&BufferRejection::Corrupted)
+            Some(&corrupted)
+        );
+        assert_eq!(
+            BufferRejection::PixelFormat(*b"BGRA").to_string(),
+            "pixel format BGRA is not YUYV"
         );
         let refused = CaptureError::NoCameraAccess(CameraAccess::Denied);
         let refused = anyhow::Error::new(refused).context("starting camera");
@@ -231,12 +252,10 @@ mod tests {
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod capture_time;
-#[cfg(any(target_os = "linux", test))]
-mod interruptions;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+mod health;
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(any(target_os = "linux", test))]
-mod rejections;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod trace_stats;
 

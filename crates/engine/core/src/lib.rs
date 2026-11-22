@@ -11,7 +11,9 @@ mod oklab;
 mod yuv_rgb;
 pub mod yuyv;
 
-pub use frame::{Frame, FrameError, FramePool, FramePoolStats, FrameWriter, PixelFormat};
+pub use frame::{
+    Frame, FrameError, FramePool, FramePoolStats, FrameWriter, PayloadError, PixelFormat,
+};
 pub use yuv::{YuvRange, YuvStandardMatrix};
 pub use yuv_rgb::YuvToRgb;
 
