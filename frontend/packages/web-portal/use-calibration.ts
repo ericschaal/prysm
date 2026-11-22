@@ -60,9 +60,11 @@ interface Wanted {
  *
  * Start asks the TV for the first pattern, then saves the draft calibration
  * (new, or a copy) as the active one; if that save fails, the draft is put
- * back and the TV's pattern ended, so nothing of the start stays. Finish
- * names the draft, Cancel deletes it and makes the previous calibration
- * active again; each waits for the saves before it.
+ * back and the TV's pattern ended, so nothing of the start stays. A save
+ * whose answer never came may have run all the same: the wizard remembers
+ * the draft, and once the state shows it, calibration goes on (ended on the
+ * TV, with Resume). Finish names the draft, Cancel deletes it and makes the
+ * previous calibration active again; each waits for the saves before it.
  */
 export function useCalibration({
   processing,
@@ -90,6 +92,15 @@ export function useCalibration({
     phase.kind === 'ending' ? phase.last : calibrating;
   if (shown && calibrating && !calibrating.seen)
     dispatch({ type: 'patternSeen' });
+  const unconfirmed = phase.kind === 'start' ? phase.unconfirmed : null;
+  /** The draft of a failed start, as the state shows it: its save ran. */
+  const confirmed =
+    unconfirmed &&
+    processing.calibrations?.find(
+      (calibration) => calibration.id === unconfirmed.draftId,
+    );
+  if (confirmed)
+    dispatch({ type: 'startConfirmed', startedWith: confirmed.correction });
   /** The TV's patterns: one request at a time, the newest waiting one next. */
   const [patterns] = useState(() => throttled<Wanted>(0));
   /** The pattern asked for last; an older one's answer no longer decides. */
@@ -142,7 +153,11 @@ export function useCalibration({
         uncorrected: false,
       });
     } catch (error) {
-      dispatch({ type: 'startFailed', problem: tvProblem(error) });
+      dispatch({
+        type: 'startFailed',
+        problem: tvProblem(error),
+        unconfirmed: null,
+      });
       return;
     }
     // As the settings are now: another device may have saved meanwhile.
@@ -159,24 +174,25 @@ export function useCalibration({
       correction: source ? source.correction : noCorrection,
     };
     const created = withCalibrations(value, [...existing, calibration], id);
+    const started = { draftId: id, previous: value.active_calibration };
     if (await live.commit(created)) {
       dispatch({
         type: 'started',
-        draftId: id,
-        previous: value.active_calibration,
+        ...started,
         startedWith: calibration.correction,
       });
       return;
     }
     // Not saved (the failure says why): nothing of the start may stay, in
-    // the draft, which would save itself later, or on the TV.
+    // the draft, which would save itself later, or on the TV. A save whose
+    // answer never came may have run: the state shows it if it did.
     live.reload();
     try {
       await setCalibration(null);
     } catch {
       // The engine ends it by itself after ten minutes.
     }
-    dispatch({ type: 'startFailed', problem: '' });
+    dispatch({ type: 'startFailed', problem: '', unconfirmed: started });
   }
 
   async function end(title: string, message: string) {
