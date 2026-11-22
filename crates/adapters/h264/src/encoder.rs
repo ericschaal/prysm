@@ -1,12 +1,8 @@
 //! The configured encoder: exactly one backend, sessions restarted on demand.
 use crate::software::Software;
-use crate::{DEFAULT_BITRATE, FORMAT, FrameKind, H264Error};
+use crate::{BITRATE, DEFAULT_BITRATE, FORMAT, FrameKind, H264Error};
 use prysm_core::Frame;
 use prysm_ports::{Mode, Span};
-use std::ops::RangeInclusive;
-
-/// Target bitrates an encoder takes: 64 kbit/s to 100 Mbit/s.
-const BITRATE: RangeInclusive<u32> = 64_000..=100_000_000;
 
 /// `min` to `max` in steps of `step`, for the limits below.
 const fn span(min: u32, max: u32, step: u32) -> Span {
@@ -35,17 +31,17 @@ impl Backend {
     /// encoder refuses others. Limits to intersect with a capture's modes,
     /// not modes themselves.
     ///
-    /// - Hardware: LG's rvenc. 176×144 to 1920×1088 is what the vendor KADP
-    ///   path checks (research `webos-capture/2026-11-01-hardware-encoding`);
-    ///   at most 30 fps because rvenc programs 30 fps for any rate above 25
+    /// - Hardware: LG's rvenc. From 176×144, the vendor KADP path's minimum
+    ///   (research `webos-capture/2026-11-01-hardware-encoding`), to
+    ///   1920×1080, the largest `prysm-h264-rvenc-sys` takes; at most 30 fps
+    ///   because rvenc programs 30 fps for any rate above 25
     ///   (`webos-capture/2026-11-02-encoder-latency`, F-001).
     /// - Software: from one macroblock (16×16) to what the receiver's
-    ///   decoder takes (Baseline up to 1920×1088), 1 to 60 fps, the rates
-    ///   the encoder has always taken.
+    ///   decoder takes (Baseline up to 1920×1088), 1 to 60 fps.
     #[must_use]
     pub const fn limits(self) -> Mode {
         match self {
-            Self::Hardware => Mode::new(span(176, 1920, 2), span(144, 1088, 2), span(1, 30, 1)),
+            Self::Hardware => Mode::new(span(176, 1920, 2), span(144, 1080, 2), span(1, 30, 1)),
             Self::Software => Mode::new(span(16, 1920, 2), span(16, 1088, 2), span(1, 60, 1)),
         }
     }
@@ -67,7 +63,7 @@ pub struct EncoderSettings {
     pub backend: Backend,
     /// Capture rate, within the backend's [limits](Backend::limits).
     pub fps: u32,
-    /// Target bits per second, 64 kbit/s to 100 Mbit/s.
+    /// Target bits per second, within [`BITRATE`](crate::BITRATE).
     pub bitrate: u32,
 }
 
@@ -318,7 +314,12 @@ mod tests {
             Encoder::new(ok).unwrap().encode(&small),
             Err(H264Error::Input(_))
         ));
-        assert!(Encoder::new(EncoderSettings { bitrate: 1, ..ok }).is_err());
+        for bitrate in [BITRATE.start() - 1, BITRATE.end() + 1] {
+            assert!(matches!(
+                Encoder::new(EncoderSettings { bitrate, ..ok }),
+                Err(H264Error::Settings(_))
+            ));
+        }
         let mut encoder = Encoder::new(ok).unwrap();
         let rgb = Frame::new(vec![0; 32 * 32 * 3], 32, 32, prysm_core::PixelFormat::RGB24).unwrap();
         assert!(matches!(encoder.encode(&rgb), Err(H264Error::Input(_))));
@@ -377,7 +378,8 @@ mod tests {
     #[test]
     fn backends_state_their_limits() {
         let hardware = Backend::Hardware.limits();
-        assert!(hardware.contains(176, 144, 30) && hardware.contains(1920, 1088, 1));
+        assert!(hardware.contains(176, 144, 30) && hardware.contains(1920, 1080, 1));
+        assert!(!hardware.contains(1920, 1082, 1));
         assert!(!hardware.contains(174, 144, 30) && !hardware.contains(640, 360, 31));
         assert!(!hardware.contains(641, 360, 30));
         let software = Backend::Software.limits();

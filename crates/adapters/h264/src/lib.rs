@@ -15,6 +15,7 @@
 //!
 //! OpenH264 is Cisco's BSD-licensed codec, compiled from source; see
 //! `LICENSE.openh264`.
+mod annex_b;
 mod decoder;
 mod encoder;
 #[cfg(feature = "hardware")]
@@ -26,12 +27,15 @@ pub use decoder::Decoder;
 pub use encoder::{Backend, Encoder, EncoderSettings, Picture};
 
 use prysm_core::{PixelFormat, YuvRange, YuvStandardMatrix};
+use std::ops::RangeInclusive;
 
 /// The only pixel format encoded and decoded: the webOS capture's NV12.
 pub const FORMAT: PixelFormat = PixelFormat::NV12 {
     range: YuvRange::Limited,
     matrix: YuvStandardMatrix::Bt709,
 };
+/// Target bitrates an encoder takes, in bits per second.
+pub const BITRATE: RangeInclusive<u32> = 64_000..=100_000_000;
 /// The qualified target bitrate (640x280 at 30 fps on the TV).
 pub const DEFAULT_BITRATE: u32 = 2_000_000;
 /// Largest access unit produced or accepted.

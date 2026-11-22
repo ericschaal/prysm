@@ -1,6 +1,8 @@
 //! GStreamer pipeline ownership; only DMA-BUF allocation, mapping and
 //! synchronisation need `unsafe`.
-use crate::{Error, MAX_OUTPUT_BYTES, PITCH, copy_nv12};
+use crate::layout::fits;
+use crate::restart::restarting;
+use crate::{BITRATE, Error, MAX_OUTPUT_BYTES, PITCH, copy_nv12};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_allocators::{DmaBufAllocator, prelude::*};
 use gstreamer_app::{AppSink, AppSrc};
@@ -39,8 +41,9 @@ struct Dma {
     fd: OwnedFd,
 }
 
-/// `appsrc ! rvenc ! appsink` for one geometry, rate and bitrate. Not `Sync`;
-/// one caller encodes one picture at a time.
+/// `appsrc ! rvenc ! appsink` for one geometry, rate and bitrate. `Send` and
+/// `Sync` like its GStreamer handles; [`Pipeline::encode`] takes `&mut self`,
+/// so one caller encodes one picture at a time.
 pub struct Pipeline {
     graph: gst::Pipeline,
     source: AppSrc,
@@ -55,6 +58,11 @@ pub struct Pipeline {
     buffers: Vec<Dma>,
     slot: usize,
 }
+
+const _: () = {
+    const fn shareable<T: Send + Sync>() {}
+    shareable::<Pipeline>();
+};
 
 impl std::fmt::Debug for Pipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -79,15 +87,10 @@ impl Pipeline {
         fps: u32,
         bitrate: u32,
     ) -> Result<Self, Error> {
-        if !((2..=1920).contains(&width)
-            && (2..=1080).contains(&height)
-            && width.is_multiple_of(2)
-            && height.is_multiple_of(2)
-            && stride >= width as usize
-            && stride <= 1920
+        if !(fits(width as usize, height as usize, stride)
             && stride.is_multiple_of(PITCH)
             && (1..=60).contains(&fps)
-            && (64_000..=100_000_000).contains(&bitrate))
+            && BITRATE.contains(&bitrate))
         {
             return Err(Error::Config("geometry, rate or bitrate out of range"));
         }
@@ -261,14 +264,15 @@ fn allocate_dma(heap: &File, allocator: &DmaBufAllocator, size: usize) -> Result
 }
 
 fn dma_sync(fd: &OwnedFd, flags: u64) -> Result<(), Error> {
-    // SAFETY: DMA_BUF_IOCTL_SYNC reads one u64 from a live DMA-BUF descriptor.
-    if unsafe { libc::ioctl(fd.as_raw_fd(), BUF_SYNC, &flags) } != 0 {
-        return Err(Error::Io {
-            context: "DMA synchronization",
-            source: std::io::Error::last_os_error(),
-        });
-    }
-    Ok(())
+    restarting(|| {
+        // SAFETY: DMA_BUF_IOCTL_SYNC reads one u64 from a live DMA-BUF descriptor.
+        if unsafe { libc::ioctl(fd.as_raw_fd(), BUF_SYNC, &flags) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    })
+    .map_err(io("DMA synchronization"))
 }
 
 impl Drop for Pipeline {

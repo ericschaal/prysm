@@ -1,5 +1,5 @@
 //! OpenH264 decoding to NV12, after checking what OpenH264 will allocate.
-use crate::{H264Error, MAX_ACCESS_UNIT_BYTES, ensure};
+use crate::{H264Error, annex_b, ensure};
 use h264_reader::nal::sps::{FrameMbsFlags, SeqParameterSet};
 use h264_reader::nal::{Nal, RefNal, UnitType};
 use openh264::formats::YUVSource;
@@ -46,11 +46,6 @@ impl Decoder {
                 len: nv12.len(),
             });
         }
-        ensure!(
-            !payload.is_empty() && payload.len() <= MAX_ACCESS_UNIT_BYTES,
-            "access unit of {} bytes",
-            payload.len()
-        );
         check(payload, width, height)?;
         let decoded = self.0.decode(payload)?.ok_or(H264Error::NoPicture)?;
         ensure!(
@@ -77,18 +72,8 @@ impl Decoder {
 
 /// Inspect every NAL; an SPS must describe exactly this stream.
 fn check(payload: &[u8], width: u32, height: u32) -> Result<(), H264Error> {
-    ensure!(
-        payload.starts_with(&[0, 0, 1]) || payload.starts_with(&[0, 0, 0, 1]),
-        "not an Annex B access unit"
-    );
-    let mut units = 0;
-    for unit in openh264::nal_units(payload) {
-        units += 1;
-        let bytes = unit
-            .get(3..)
-            .filter(|bytes| !bytes.is_empty())
-            .ok_or_else(|| H264Error::Bitstream("empty NAL".into()))?;
-        let nal = RefNal::new(bytes, &[], true);
+    for bytes in annex_b::nal_units(payload)? {
+        let nal = RefNal::new(bytes?, &[], true);
         let kind = nal
             .header()
             .map_err(|error| H264Error::Bitstream(format!("NAL header: {error:?}")))?
@@ -141,6 +126,5 @@ fn check(payload: &[u8], width: u32, height: u32) -> Result<(), H264Error> {
             );
         }
     }
-    ensure!(units > 0, "no NAL units");
     Ok(())
 }
