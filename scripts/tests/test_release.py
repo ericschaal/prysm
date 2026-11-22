@@ -216,7 +216,8 @@ class PublishTests(unittest.TestCase):
         self.assertIn(['gh', 'release', 'edit', 'v1.2.0', '--draft=false', '--prerelease=false',
                        '--latest=false'], calls)
         self.assertIn(['gh', 'release', 'edit', 'v1.2.0', '--latest'], calls)
-        self.assertTrue(self.find(calls, 'docker', 'buildx', 'imagetools', 'create', '--tag', f'{image}:latest'))
+        self.assertIn(['docker', 'buildx', 'imagetools', 'create', '--tag', f'{image}:1', '--tag', f'{image}:latest',
+                       f'{image}@sha256:index'], calls)
         self.assertEqual((artifacts / 'docker-image.txt').read_text(), f'{image}@sha256:index\n')
         self.assertFalse(self.find(calls, 'gh', 'release', 'create'))
 
@@ -243,6 +244,34 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.find(calls, 'gh', 'release', 'edit', 'v1.2.0', '--latest'))
         self.assertFalse([call for call in calls if any(arg.endswith(':latest') for arg in call)])
+
+    def test_the_image_tags_each_release_moves(self):
+        # The published state skips building and pushing; the tags are set
+        # the same way for a release just published and for a recovery.
+        image = 'ghcr.io/ericschaal/prysm-headless'
+        for version, stable_tags, floating in (
+                ('1.2.0', 'v0.2.0 v1.1.0 v1.2.0', ['1', 'latest']),
+                ('1.2.1', 'v1.2.1 v2.0.0', ['1']),
+                ('1.2.0', 'v1.2.0 v1.10.0 v2.0.0', []),
+                ('2.0.0-rc.1', 'v1.2.0', []),
+                ('0.3.0', 'v0.2.0 v0.3.0', ['0', 'latest']),
+                ('0.3.1', 'v0.3.1 v1.0.0', ['0']),
+                ('0.2.0', 'v0.2.0 v0.10.0 v1.0.0', []),
+                ('1.0.0-rc.2', 'v0.2.0', [])):
+            with self.subTest(version=version, stable_tags=stable_tags):
+                result, calls, artifacts = self.run_publish(
+                    version=version, stable_tags=stable_tags, release_state='published', INDEX='1')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                moved = [call for call in self.find(calls, 'docker', 'buildx', 'imagetools', 'create')
+                         if call[-1] == f'{image}@sha256:index']
+                tags = [arg for call in moved for arg in call[4:-1] if arg != '--tag']
+                self.assertEqual(tags, [f'{image}:{tag}' for tag in floating])
+                self.assertEqual(len(moved), 1 if floating else 0)
+                # The exact tag is the index itself, and docker-image.txt pins it.
+                self.assertIn(['docker', 'buildx', 'imagetools', 'inspect', '--raw', f'{image}:{version}'], calls)
+                self.assertEqual((artifacts / 'docker-image.txt').read_text(), f'{image}@sha256:index\n')
+                latest = bool(self.find(calls, 'gh', 'release', 'edit', f'v{version}', '--latest'))
+                self.assertEqual(latest, 'latest' in floating)
 
     def test_a_published_release_is_only_checked(self):
         result, calls, _ = self.run_publish(release_state='published', INDEX='1')

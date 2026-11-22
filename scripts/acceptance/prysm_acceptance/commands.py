@@ -686,7 +686,8 @@ DEB_PACKAGE = 'prysm-headless'
 DEB_UNIT = 'prysm-headless.service'
 DEB_SETTINGS = '/var/lib/prysm/settings.json'
 DEB_FILE = 'prysm-headless.deb'
-# The package's documented override (`systemctl edit`), as a runtime drop-in: /run is emptied at every boot.
+# A runtime drop-in that replaces the unit's command; /run is emptied at every boot. The package's options file
+# (/etc/default/prysm-headless) stays as installed.
 DEB_DROPIN_DIR = '/run/systemd/system/prysm-headless.service.d'
 DEB_DROPIN = DEB_DROPIN_DIR + '/prysm-acceptance.conf'
 # Prysm's files on a Linux target, none of which may be there before the run or after the purge: what the
@@ -696,6 +697,7 @@ DEB_PATHS = (
     '/usr/bin/prysm-headless',
     '/usr/lib/systemd/system/prysm-headless.service',
     '/usr/share/doc/prysm-headless',
+    '/etc/default/prysm-headless',
     '/etc/systemd/system/prysm-headless.service',
     '/etc/systemd/system/prysm-headless.service.d',
     '/etc/systemd/system/multi-user.target.wants/prysm-headless.service',

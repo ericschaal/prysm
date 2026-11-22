@@ -8,8 +8,17 @@ capture card or WLED.
 
 ## 1. Start Prysm
 
-Pick a version from a `v1.*` [release](https://github.com/ericschaal/prysm/releases)
-and use it in place of `VERSION`:
+Pick an image tag and use it in place of `VERSION`:
+
+- `1.2.3`, a version from a [release](https://github.com/ericschaal/prysm/releases):
+  always that image. Pre-releases (`1.2.3-rc.1`) have only this tag.
+- `1`: the newest stable 1.x.y release. Within one major version an update
+  keeps reading your settings
+  ([what the version promises](../developers/releasing.md#what-the-version-promises)).
+- `latest`: the newest stable release, which may be a new major version.
+
+The tags `VERSION-amd64` and `VERSION-arm64` are not part of this promise: the
+other tags hold both architectures.
 
 ```sh
 docker run -d --name prysm --restart unless-stopped --stop-timeout 30 \
@@ -66,6 +75,7 @@ Arguments after the image name are passed to Prysm. Then follow the
 - Start Screen sync with the container: add `--start` after the image name.
 - Stop: `docker stop prysm`. Prysm turns the lights off and exits.
 - Upgrade: back up the settings, remove the container, and start it again with
-  the new version. The lights start off.
+  the new version (with `1` or `latest`, run `docker pull` first). The lights
+  start off.
 
 The image has no FFmpeg, so the video-file source does not work in it.

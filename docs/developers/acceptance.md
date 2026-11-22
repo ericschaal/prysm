@@ -255,9 +255,10 @@ may be there before the run, and nothing is left after it.
   `sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y
   --no-install-recommends ./prysm-headless.deb` there (its output in
   `apt.log`); `dpkg-query` must then report the control file's version;
-- start: a runtime drop-in, the package's documented override, in
+- start: a runtime drop-in in
   `/run/systemd/system/prysm-headless.service.d/` (gone at the next boot)
-  that runs the unit's own command with `--listen LISTEN --metrics`;
+  that replaces the unit's command with the same command, without the
+  options file's `$OPTIONS`, plus `--listen LISTEN --metrics`;
   `daemon-reload`; `systemctl restart`; once the unit is active and the API
   answers, the settings are given through the portal (`PUT
   /api/v1/settings`), so Prysm writes them into its state directory itself;

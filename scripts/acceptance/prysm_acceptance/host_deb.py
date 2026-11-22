@@ -9,8 +9,8 @@ the run: `close` always purges
 the package and fails when `deb.leftovers` still finds anything, which it
 reports and leaves for a person. In between the runner copies the package
 into its run directory (as the binary cell does), installs it with apt-get
-and adds a runtime drop-in, the package's documented override, so the unit's
-own command also gets `--listen LISTEN --metrics`. It restarts the unit and
+and adds a runtime drop-in that replaces the unit's command with its own
+command plus `--listen LISTEN --metrics`. It restarts the unit and
 gives Prysm its settings through the portal, as a person does, so Prysm
 writes them into the state directory of the unit's dynamic user itself. The
 unit is started and stopped with systemctl; its exit status comes from
@@ -55,6 +55,10 @@ from prysm_acceptance.transport import Result, Transport
 
 # Where the installed unit's Prysm listens: its default address, as the package runs it without a drop-in.
 UNIT_LISTEN = '0.0.0.0:8787'
+# An administrator's unit and drop-ins, which `apt-get purge` leaves.
+_ADMIN_UNIT_PATHS = frozenset(
+    ('/etc/systemd/system/prysm-headless.service', '/etc/systemd/system/prysm-headless.service.d')
+)
 
 
 def deb_control(path: Path) -> dict[str, str]:
@@ -111,8 +115,9 @@ class DebPrysm:
 
     def backup(self, found: list[str]) -> Backup:
         """The settings and target of the Prysm the unit runs. Refused while an administrator's unit or drop-in
-        under /etc is there: the purge would leave it."""
-        kept = [path for path in found if path.startswith('/etc/')]
+        under /etc/systemd/system is there: the purge would leave it. The purge deletes the package's options file
+        and the unit's enablement link, so neither is kept."""
+        kept = [path for path in found if path in _ADMIN_UNIT_PATHS]
         if kept:
             raise RuntimeError(f'{", ".join(kept)} on {self.target} would outlive the purge: remove it there first')
         state = Prysm(self.url).state()

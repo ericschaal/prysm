@@ -121,7 +121,7 @@ class Templates(unittest.TestCase):
                 'sudo -n env DEBIAN_FRONTEND=noninteractive apt-get purge -y prysm-headless; s=$?; '
                 'sudo -n systemctl daemon-reload; exit $s',
                 'deb.leftovers': 'for p in /usr/bin/prysm-headless /usr/lib/systemd/system/prysm-headless.service '
-                '/usr/share/doc/prysm-headless '
+                '/usr/share/doc/prysm-headless /etc/default/prysm-headless '
                 '/etc/systemd/system/prysm-headless.service /etc/systemd/system/prysm-headless.service.d '
                 '/etc/systemd/system/multi-user.target.wants/prysm-headless.service /var/lib/prysm '
                 '/var/lib/private/prysm /run/systemd/system/prysm-headless.service.d; do '
@@ -191,7 +191,9 @@ class Templates(unittest.TestCase):
                 remote = command.remote or ''
                 self.assertEqual(command.argv[0], 'ssh')
                 self.assertIn('BatchMode=yes', command.argv)
-                self.assertIsNone(re.search(r'/etc/(?!systemd/system/)|\bdd\b|\bmount\b|\breboot\b|prune', remote))
+                # Under /etc only the unit's paths and the package's options file, which deb.leftovers tests for.
+                forbidden = r'/etc/(?!systemd/system/|default/prysm-headless )|\bdd\b|\bmount\b|\breboot\b|prune'
+                self.assertIsNone(re.search(forbidden, remote))
                 if name.startswith('image.'):
                     self.assertNotIn('sudo', remote)
                 for sudo in re.findall(r'sudo\s+(\S+)', remote):
@@ -217,8 +219,10 @@ class Packaging(unittest.TestCase):
     def test_the_unit_and_package(self) -> None:
         unit = (commands.ROOT / 'packaging/debian/prysm-headless.service').read_text()
         start = re.search(r'^ExecStart=(.+)$', unit, re.MULTILINE)
-        # The drop-in runs the unit's own command with --listen and --metrics added.
-        self.assertEqual(start and start[1], f'/usr/bin/prysm-headless {commands.DEB_SETTINGS}')
+        # The drop-in runs the unit's own command, without the options file's $OPTIONS, with --listen and
+        # --metrics added.
+        self.assertEqual(start and start[1], f'/usr/bin/prysm-headless {commands.DEB_SETTINGS} $OPTIONS')
+        self.assertIn('EnvironmentFile=-/etc/default/prysm-headless', unit)
         self.assertIn('StateDirectory=prysm', unit)
         build = (commands.ROOT / 'packaging/debian/build-deb.sh').read_text()
         self.assertIn(f'package={commands.DEB_PACKAGE}', build)

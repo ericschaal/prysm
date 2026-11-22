@@ -714,7 +714,14 @@ class Restore(unittest.TestCase):
         self.addCleanup(prysm.close)
         existing = host_deb.DebPrysm(transport.Refusing(), 'pi@pi.example')
         existing.url = f'http://{prysm.listen}'
-        backup = existing.backup(['/usr/bin/prysm-headless'])
+        # What every installed package has under /etc; the purge deletes both.
+        backup = existing.backup(
+            [
+                '/usr/bin/prysm-headless',
+                '/etc/default/prysm-headless',
+                '/etc/systemd/system/multi-user.target.wants/prysm-headless.service',
+            ]
+        )
         self.assertEqual(untyped(backup['portal'])['target'], 'off')
         self.assertEqual(existing.restore(backup)[-1], 'lighting was off: left as it is')
         self.assertEqual((len(prysm.saved), prysm.targets), (1, []))
