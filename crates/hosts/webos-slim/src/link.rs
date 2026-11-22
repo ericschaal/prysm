@@ -79,11 +79,14 @@ impl Flow {
 
     /// What to capture for: the receiver's latest request, kept while it is
     /// away; `None` before the first connection, while the receiver has
-    /// stopped the stream and once another sender replaced this one.
+    /// stopped the stream, while it speaks another version and once another
+    /// sender replaced this one.
     pub fn wanted(&self) -> Option<RemoteSettings> {
         let report = self.lock();
         match report.uplink {
-            UplinkState::Stopped | UplinkState::Replaced(_) => None,
+            UplinkState::Stopped | UplinkState::VersionDiffers(_) | UplinkState::Replaced(_) => {
+                None
+            }
             _ => report.requested,
         }
     }
@@ -282,6 +285,8 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         if let Some((failed, reason)) = &self.failed {
             if *failed == request {
                 sink.refuse_encoding(reason);
+                // The failure is the news again, whatever was shown meanwhile.
+                self.flow.lock().uplink = UplinkState::EncoderFailed(reason.clone());
                 return;
             }
             self.failed = None;

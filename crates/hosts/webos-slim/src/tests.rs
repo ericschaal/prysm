@@ -635,9 +635,12 @@ async fn a_version_mismatch_replaces_a_stopped_stream() {
     tokio::task::spawn_blocking(move || Box::new(receiver).close().unwrap())
         .await
         .unwrap();
-    peer.wait_for(|e| version_differs(e).is_some() && !status(e).unwrap().paused)
-        .await
-        .unwrap();
+    // The capture stays released: nothing can be sent to that Prysm.
+    peer.wait_for(|e| {
+        version_differs(e).is_some() && !status(e).unwrap().paused && capturing(e) == Some(false)
+    })
+    .await
+    .unwrap();
     peer.close();
     let (result, _) = task.await.unwrap();
     result.unwrap();
