@@ -609,6 +609,7 @@ test('status card covers the supervisor states for both packages', () => {
       slim({ failure: { kind: 'receiver', message: 'x' } }),
       slim({ failure: { kind: 'encoder', message: 'x' } }),
       slim({ failure: { kind: 'version', message: 'x' } }),
+      slim({ failure: { kind: 'replaced', message: 'x' } }),
       slim({ failure: { kind: 'other', message: 'x' } }),
       full({ lighting: 'off' }),
       full({ capturing: true }),
@@ -718,25 +719,46 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   );
   assert.deepEqual([wait.title, wait.attention], ['Waiting for Prysm', false]);
   assert.doesNotMatch(wait.description, /encoding/);
-  // Another stream version is not a wait for Prysm: both need updating.
+  // Another stream version is not a wait for Prysm: the older side needs
+  // updating.
   const versions = status(
     slim({
       failure: {
         kind: 'version',
         message:
-          'waiting for the receiver: the capture stream versions differ (Prysm: 9, this end: 4); update both',
+          'waiting for the receiver: the capture stream versions differ (Prysm: 9, this end: 6); update the older one',
       },
     }),
   );
   assert.deepEqual(
     [versions.title, versions.description, versions.attention],
-    ['Update Prysm and TV app', 'Both need the same release.', true],
+    ['Update Prysm or TV app', 'Update the older of Prysm and this app.', true],
+  );
+  // Another TV took the stream over: this one stopped until capture is
+  // started again, which the button offers.
+  const replaced = status(
+    slim({
+      failure: {
+        kind: 'replaced',
+        message:
+          'the stream to ws://prysm.local:8787/api/v1/capture/stream failed: another sender replaced this one at Prysm',
+      },
+    }),
+  );
+  assert.deepEqual(
+    [replaced.title, replaced.description, replaced.attention, replaced.action],
+    [
+      'Another TV took over',
+      'Stop and start capture to send from this TV.',
+      true,
+      'disable',
+    ],
   );
   const versionText = status(
     slim({
       failure: {
         kind: 'receiver',
-        message: 'the capture stream versions differ; update both',
+        message: 'the capture stream versions differ; update the older one',
       },
     }),
   );
@@ -974,6 +996,16 @@ test('every state keeps the same slots, plain words and focus on a control', asy
                 },
               },
             ],
+            [
+              'replaced',
+              {
+                ...running,
+                failure: {
+                  kind: 'replaced',
+                  message: 'another sender replaced this one at Prysm',
+                },
+              },
+            ],
           ]
         : []),
       ['stopping', { worker: { phase: 'stopping' }, failure: null }],
@@ -998,7 +1030,7 @@ test('every state keeps the same slots, plain words and focus on a control', asy
       if (name === 'version')
         assert.deepEqual(
           [tv.text('status-title'), tv.text('status-description')],
-          ['Update Prysm and TV app', 'Both need the same release.'],
+          ['Update Prysm or TV app', 'Update the older of Prysm and this app.'],
           'another stream version asks for an update, not for Prysm to run',
         );
       // No programmer words outside Diagnostics.

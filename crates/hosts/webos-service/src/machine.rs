@@ -535,7 +535,7 @@ impl Machine {
         match self.phase {
             Phase::Running { .. } => {
                 // The worker stops on its own only when something failed. An
-                // encoder or version report keeps its kind (the TV app offers
+                // encoder, version or replaced report keeps its kind (the TV app offers
                 // its fix); a receiver wait is no reason to exit, so `other`.
                 self.failure = Some(match last {
                     Some(last) => WorkerFailure {

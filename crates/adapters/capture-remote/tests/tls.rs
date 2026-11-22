@@ -7,13 +7,13 @@
 use prysm_capture_remote::testkit::{
     BOUND, Portal, in_other_ca_process, in_test_ca_process, tls_proxy,
 };
-use prysm_capture_remote::{RemoteSender, StreamEncoding, StreamRequest};
+use prysm_capture_remote::{Close, RemoteSender, RemoteSettings, StreamEncoding, WireError};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{FrameSink, FrameSource};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const RAW: StreamRequest = StreamRequest {
+const RAW: RemoteSettings = RemoteSettings {
     width: 320,
     height: 180,
     fps: 30,
@@ -69,14 +69,28 @@ fn wss_through_a_tls_terminating_proxy() {
     };
     assert_eq!(got.as_slice(), frame.as_slice());
 
-    // Lighting off: the pause and the close arrive through TLS as well.
+    // Lighting off: the stopped close arrives through TLS as well.
     Box::new(source).close().unwrap();
-    while sender.tick().is_ok() {
+    let error = loop {
         assert!(
             Instant::now() < deadline,
             "the sender never noticed the close"
         );
+        if let Err(error) = sender.tick() {
+            break error;
+        }
         thread::sleep(Duration::from_millis(10));
-    }
-    assert!(sender.paused());
+    };
+    let prysm_ports::Error::Adapter {
+        source: Some(cause),
+        ..
+    } = &error
+    else {
+        panic!("{error:?}");
+    };
+    assert_eq!(
+        cause.downcast_ref::<WireError>(),
+        Some(&WireError::Closed(Some(Close::Stopped))),
+        "{error}"
+    );
 }

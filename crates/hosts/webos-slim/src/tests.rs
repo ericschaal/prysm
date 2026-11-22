@@ -2,7 +2,7 @@ use crate::capture::{RequestedCapture, settings};
 use crate::link::{ForwarderLink, Uplink, Upstream, VERSION_RECONNECT, slim_encoding};
 use crate::resolve::Resolver;
 use prysm_capture_remote::testkit::Portal;
-use prysm_capture_remote::{RemoteSender, SendError, StreamEncoding, StreamRequest};
+use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError, StreamEncoding};
 use prysm_capture_webos::{Readiness, VideoSignal, WebosSettings};
 use prysm_core::Frame;
 use prysm_h264::H264Error;
@@ -19,7 +19,7 @@ use std::time::Duration;
 /// The host task: its result and the stop reason.
 type Running = tokio::task::JoinHandle<(Result<()>, Option<Stop>)>;
 
-const RAW: StreamRequest = StreamRequest {
+const RAW: RemoteSettings = RemoteSettings {
     width: 320,
     height: 180,
     fps: 30,
@@ -27,7 +27,7 @@ const RAW: StreamRequest = StreamRequest {
     encoding: StreamEncoding::Raw,
 };
 
-const SOFTWARE: StreamRequest = StreamRequest {
+const SOFTWARE: RemoteSettings = RemoteSettings {
     width: 64,
     height: 32,
     encoding: StreamEncoding::H264Software,
@@ -164,6 +164,13 @@ fn encoder_failure(event: &Event) -> Option<&str> {
         .map(|failure| failure.message.as_str())
 }
 
+fn replaced(event: &Event) -> Option<&str> {
+    status(event)
+        .and_then(|status| status.failure.as_ref())
+        .filter(|failure| failure.kind == FailureKind::Replaced)
+        .map(|failure| failure.message.as_str())
+}
+
 fn encoding(event: &Event) -> Option<SlimEncoding> {
     status(event).and_then(|status| status.encoding)
 }
@@ -173,13 +180,13 @@ fn encoding(event: &Event) -> Option<SlimEncoding> {
 /// `encoder`, like a failing encoder).
 struct Fake {
     log: CallLog,
-    request: StreamRequest,
+    request: RemoteSettings,
     left: u32,
     encoder: bool,
 }
 
 impl Fake {
-    fn new(log: &CallLog, request: StreamRequest, left: u32) -> Self {
+    fn new(log: &CallLog, request: RemoteSettings, left: u32) -> Self {
         Self {
             log: log.clone(),
             request,
@@ -190,11 +197,8 @@ impl Fake {
 }
 
 impl Upstream for Fake {
-    fn request(&self) -> StreamRequest {
+    fn request(&self) -> RemoteSettings {
         self.request
-    }
-    fn paused(&self) -> bool {
-        false
     }
     fn refuse_encoding(&mut self, reason: &str) {
         self.log.record(format!("sink.refuse:{reason}"));
@@ -202,7 +206,7 @@ impl Upstream for Fake {
     fn deliver(&mut self, _frame: &Frame) -> std::result::Result<(), SendError> {
         if self.left == 0 {
             if self.encoder {
-                return Err(SendError::Encoder(Error::adapter(
+                return Err(SendError::Refused(Error::adapter(
                     "cannot encode frame",
                     H264Error::Settings("no encoder here"),
                 )));
@@ -327,7 +331,7 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
     .unwrap();
     assert_eq!((frame.width(), frame.height()), (64, 32));
 
-    let changed = StreamRequest {
+    let changed = RemoteSettings {
         width: 96,
         height: 48,
         fps: 15,
@@ -393,7 +397,7 @@ async fn a_prysm_of_another_version_is_reported_as_such_and_retried_slowly() {
         .unwrap();
     let reason = version_differs(&event).unwrap();
     assert!(
-        reason.contains("Prysm: 9") && reason.contains("update both"),
+        reason.contains("Prysm: 9") && reason.contains("update the older one"),
         "{reason}"
     );
     // Ten ordinary retry intervals pass without another attempt.
@@ -523,14 +527,14 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
         .await
         .unwrap();
 
-    // Lighting off: the receiver pauses the stream and closes. Paused, not a
+    // Lighting off: the receiver closes the stream as stopped. Paused, not a
     // failure; the TV capture stops and stays stopped while the worker keeps
     // reconnecting.
     Box::new(receiver).close().unwrap();
     peer.wait_for(|e| paused(e) && encoding(e).is_none() && status(e).unwrap().fps.is_none())
         .await
         .unwrap();
-    assert_eq!(opened.closed(), 1, "the capture stops while paused");
+    assert_eq!(opened.closed(), 1, "the capture stops while stopped");
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(opened.shapes().len(), 1, "no capture while lighting is off");
     // Lighting on again: a new connection resumes the capture.
@@ -550,10 +554,102 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
     result.unwrap();
 }
 
-/// A receiver that vanishes without pausing (a crash, the network) keeps
-/// the capture running, as before.
+/// Another TV takes over the stream: this worker releases the capture,
+/// reports `replaced` and connects no more, so the two never take the
+/// stream from each other in turn.
 #[tokio::test]
-async fn a_receiver_lost_without_a_pause_keeps_the_capture() {
+async fn a_replaced_sender_gives_up() {
+    let portal = Portal::start();
+    let receiver = portal.source(RAW);
+    let opened = Opened::nv12();
+    let attempts = Arc::new(AtomicU32::new(0));
+    let (mut peer, _feed, task) = start(&opened, {
+        let (mut connect, attempts) = (connect(&portal), attempts.clone());
+        move || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            connect()
+        }
+    });
+    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+
+    let mut other = connect(&portal);
+    let other = tokio::task::spawn_blocking(move || other().unwrap())
+        .await
+        .unwrap();
+    let event = peer.wait_for(|e| replaced(e).is_some()).await.unwrap();
+    assert!(
+        replaced(&event)
+            .unwrap()
+            .ends_with("another sender replaced this one at Prysm"),
+        "{event:?}"
+    );
+    let tried = attempts.load(Ordering::SeqCst);
+    // Ten retry intervals pass without another attempt.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(attempts.load(Ordering::SeqCst), tried, "reconnected");
+    assert_eq!(opened.closed(), 1, "the capture is released");
+    assert_eq!(opened.shapes().len(), 1, "and not opened again");
+    assert!(!task.is_finished(), "the worker keeps running");
+
+    drop(other);
+    tokio::task::spawn_blocking(move || Box::new(receiver).close().unwrap())
+        .await
+        .unwrap();
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+}
+
+/// A desktop updated while its lighting was off: the TV stopped by the old
+/// Prysm shows the version failure, not a pause.
+#[tokio::test]
+async fn a_version_mismatch_replaces_a_stopped_stream() {
+    use std::io::{Read, Write};
+    let portal = Portal::start();
+    let receiver = portal.source(RAW);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let newer = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut head = [0; 1024];
+            if stream.read(&mut head).is_ok() {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9\r\ncontent-length: 0\r\n\r\n",
+                );
+            }
+        }
+    });
+    let newer_url: tungstenite::http::Uri = format!("ws://{newer}/api/v1/capture/stream")
+        .parse()
+        .unwrap();
+    let mut old = connect(&portal);
+    let attempts = AtomicU32::new(0);
+    let (mut peer, _feed, task) = start(&Opened::nv12(), move || {
+        if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            old()
+        } else {
+            RemoteSender::connect(&newer_url, newer, &prysm_capture_remote::testkit::offer())
+        }
+    });
+    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    tokio::task::spawn_blocking(move || Box::new(receiver).close().unwrap())
+        .await
+        .unwrap();
+    // The capture stays released: nothing can be sent to that Prysm.
+    peer.wait_for(|e| {
+        version_differs(e).is_some() && !status(e).unwrap().paused && capturing(e) == Some(false)
+    })
+    .await
+    .unwrap();
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+}
+
+/// A receiver that vanishes without a close code (a crash, the network)
+/// keeps the capture running.
+#[tokio::test]
+async fn a_receiver_lost_without_a_close_code_keeps_the_capture() {
     let log = CallLog::new();
     let opened = Opened::fake(&log, FakeSourceSettings::default());
     let attempts = Arc::new(AtomicU32::new(0));
@@ -666,7 +762,7 @@ async fn a_hanging_lookup_does_not_hold_up_the_stop() {
 #[tokio::test]
 async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
     // The hardware encoder's smallest size, so the backend itself is tried.
-    let hardware = StreamRequest {
+    let hardware = RemoteSettings {
         width: 176,
         height: 144,
         encoding: StreamEncoding::H264Hardware,
@@ -732,7 +828,7 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
         let (log, attempts) = (log.clone(), attempts.clone());
         move || {
             let attempt = attempts.fetch_add(1, Ordering::SeqCst);
-            let hardware = StreamRequest {
+            let hardware = RemoteSettings {
                 encoding: StreamEncoding::H264Hardware,
                 ..RAW
             };
@@ -747,7 +843,7 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
                 // Software instead.
                 _ => Fake::new(
                     &log,
-                    StreamRequest {
+                    RemoteSettings {
                         encoding: StreamEncoding::H264Software,
                         ..RAW
                     },
@@ -784,7 +880,7 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
 
 #[test]
 fn requests_map_to_capture_settings_and_encodings() {
-    let shape = settings(&StreamRequest::default());
+    let shape = settings(&RemoteSettings::default());
     assert_eq!(
         (shape.width, shape.height, shape.fps, shape.include_ui),
         (320, 180, 30, true)
@@ -833,10 +929,10 @@ fn the_offer_is_the_capture_within_each_encoder() {
         offer.modes(StreamEncoding::H264Software),
         Modes::Known(Vec::new())
     );
-    let tiny_request = StreamRequest {
+    let tiny_request = RemoteSettings {
         width: 8,
         height: 8,
-        ..StreamRequest::default()
+        ..RemoteSettings::default()
     };
     assert_eq!(offer.check(&tiny_request).unwrap_err().field, "width");
 }

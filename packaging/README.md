@@ -148,9 +148,12 @@ only when saved); the slim worker resolves it at every connection attempt,
 waiting at most 0.5 s per attempt (a slower answer is used by the next one),
 so an address change is picked up on reconnect and a name that does not
 resolve shows as waiting for the receiver.
-While the desktop's lighting is off its receiver has paused the stream: the
+While the desktop's lighting is off its receiver has stopped the stream: the
 TV closes its capture and reports `paused` (not a failure) until lighting
-starts again.
+starts again. When a second TV sends to the same desktop it takes the stream
+over; the first reports a `replaced` failure and stops sending until its
+worker restarts (capture stopped and started, the TV waking, or a new Prysm
+address).
 
 The slim TV app controls the desktop Prysm's portal from `Origin: null` (a
 packaged webOS app). Start the desktop Prysm with `--allow-origin null` for

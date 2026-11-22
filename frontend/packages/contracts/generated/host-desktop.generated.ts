@@ -438,7 +438,7 @@ export interface components {
             style: components["schemas"]["ChosenStyle"];
         };
         /**
-         * @description The stream a receiver asks for, and the settings of kind `"remote"`:
+         * @description The settings of kind `"remote"`, and the stream a receiver asks for:
          *     `{ "kind": "remote", "width": 320, "height": 180, "fps": 30,
          *     "include_ui": true, "encoding": "h264_hardware" }`, every field optional.
          *     The sender captures at this size, rate and menu blending and encodes with

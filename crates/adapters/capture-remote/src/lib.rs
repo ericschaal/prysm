@@ -8,14 +8,13 @@
 //! - [`RemoteReceiver`] (kind `"remote"`) opens a [`RemoteSource`], the
 //!   lighting host's [`FrameSource`](prysm_ports::FrameSource). It reads the
 //!   connections the portal hands over through a [`Handoff`](prysm_ports::Handoff).
-//! - [`StreamRequest`]: what the receiver asks the sender to capture and
-//!   how to encode it; the receiver's settings.
+//! - [`RemoteSettings`]: the receiver's settings, which it asks the sender
+//!   for: what to capture and how to encode it.
 //! - [`Offer`]: what the sender can deliver, sent with each connection
 //!   attempt; the receiver answers [`modes`](prysm_ports::SourceFactory::modes)
 //!   from the newest.
 //!
-//! The wire protocol is described in the crate README. Each wire message is
-//! one binary WebSocket message.
+//! The wire protocol is described in the crate README.
 mod link;
 mod offer;
 mod receive;
@@ -28,6 +27,6 @@ mod wire;
 
 pub use offer::Offer;
 pub use receiver::{RemoteReceiver, RemoteSource};
-pub use request::{StreamEncoding, StreamRequest};
+pub use request::{RemoteSettings, StreamEncoding};
 pub use sender::{RemoteSender, SendError};
-pub use wire::WireError;
+pub use wire::{Close, WireError};

@@ -891,7 +891,7 @@
       },
       "RemoteReceiverSettings": {
         "additionalProperties": false,
-        "description": "The stream a receiver asks for, and the settings of kind `\"remote\"`:\n`{ \"kind\": \"remote\", \"width\": 320, \"height\": 180, \"fps\": 30,\n\"include_ui\": true, \"encoding\": \"h264_hardware\" }`, every field optional.\nThe sender captures at this size, rate and menu blending and encodes with\nexactly this encoding. [`validate`](Self::validate) keeps the protocol's\nbounds; what a sender's capture and encoder deliver is in its\n[`Offer`](crate::Offer).",
+        "description": "The settings of kind `\"remote\"`, and the stream a receiver asks for:\n`{ \"kind\": \"remote\", \"width\": 320, \"height\": 180, \"fps\": 30,\n\"include_ui\": true, \"encoding\": \"h264_hardware\" }`, every field optional.\nThe sender captures at this size, rate and menu blending and encodes with\nexactly this encoding. [`validate`](Self::validate) keeps the protocol's\nbounds; what a sender's capture and encoder deliver is in its\n[`Offer`](crate::Offer).",
         "properties": {
           "encoding": {
             "$ref": "#/components/schemas/StreamEncoding",
