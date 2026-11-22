@@ -1,7 +1,6 @@
 //! Explicit V4L buffer lifetime. Unlike the upstream stream, cleanup never panics.
 use crate::{CaptureError, Result};
 use std::ffi::c_void;
-use std::os::fd::RawFd;
 use std::time::{Duration, Instant};
 use std::{io, ptr::NonNull, sync::Arc};
 use v4l::{
@@ -19,13 +18,42 @@ const WAITING: &str = "error waiting for a capture frame";
 const CAPTURING: &str = "error capturing frame";
 const REQUEUING: &str = "failed to requeue capture buffer";
 
-/// A raw ioctl on the stream's device, as `v4l2::ioctl` makes it: the request
-/// and a pointer to the structure that request takes.
-type Ioctl<'a> = dyn FnMut(v4l2::vidioc::_IOC_TYPE, *mut c_void) -> io::Result<()> + 'a;
+/// One request a stream makes of its device, each with the structure it takes.
+enum Request<'a> {
+    Reqbufs(&'a mut v4l2_requestbuffers),
+    Querybuf(&'a mut v4l2_buffer),
+    Qbuf(&'a mut v4l2_buffer),
+    Dqbuf(&'a mut v4l2_buffer),
+    /// For the video capture buffer type.
+    StreamOn,
+    /// For the video capture buffer type.
+    StreamOff,
+}
 
+/// Makes a [`Request`] of the device: the kernel's, or a test's.
+type Ioctl<'a> = dyn FnMut(Request<'_>) -> io::Result<()> + 'a;
+
+/// Gives a mapping back: consumed when unmapped, returned when not.
+type Unmap<'a> = dyn FnMut(Mapping) -> std::result::Result<(), (Mapping, io::Error)> + 'a;
+
+/// One buffer as `mmap` mapped it; made only by [`Stream::allocate`].
 struct Mapping {
     pointer: NonNull<u8>,
     length: usize,
+}
+
+impl Mapping {
+    /// Unmap the buffer, or hand it back with the error.
+    fn unmap(self) -> std::result::Result<(), (Self, io::Error)> {
+        // SAFETY: `pointer` and `length` are what `mmap` returned (only
+        // `allocate` makes a `Mapping`), and the mapping is consumed here, so
+        // it is unmapped once; slices of it borrow the stream, which this
+        // call's caller holds mutably.
+        match unsafe { v4l2::munmap(self.pointer.as_ptr().cast(), self.length) } {
+            Ok(()) => Ok(()),
+            Err(error) => Err((self, error)),
+        }
+    }
 }
 
 /// A device's capture buffers, mapped for reading.
@@ -35,8 +63,10 @@ struct Mapping {
 ///   is gone.
 /// - `buffers`: one slot per buffer index; `None` once unmapped (only by
 ///   `release`, which then never maps again).
-/// - `active`: STREAMON succeeded. When it is false no buffer is queued:
-///   a start that fails undoes itself with STREAMOFF.
+/// - `active`: STREAMON succeeded, so STREAMOFF stops the stream. A start
+///   that fails streams off again to take back the buffers it queued; if
+///   that fails too, some stay queued until `REQBUFS(0)` in `release`
+///   cancels the queue.
 pub(super) struct Stream {
     handle: Arc<Handle>,
     buffers: Vec<Option<Mapping>>,
@@ -110,13 +140,40 @@ fn buffer(index: u32) -> v4l2_buffer {
     }
 }
 
-/// The kernel's ioctl on `fd`, for the `_with` methods.
-fn kernel(fd: RawFd) -> impl FnMut(v4l2::vidioc::_IOC_TYPE, *mut c_void) -> io::Result<()> {
-    // SAFETY: each `_with` method passes only the requests its documentation
-    // names, each with a pointer to the live structure that request takes;
-    // `fd` is the stream's, open for as long as the stream (which outlives
-    // the call) holds its handle.
-    move |request, value| unsafe { v4l2::ioctl(fd, request, value) }
+/// A request for `count` mapped capture buffers (0 frees them).
+fn requested(count: u32) -> v4l2_requestbuffers {
+    v4l2_requestbuffers {
+        count,
+        type_: v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        memory: v4l2_memory_V4L2_MEMORY_MMAP,
+        // SAFETY: the remaining fields are integers, for which zero is valid
+        // (and V4L2 wants reserved fields zero).
+        ..unsafe { std::mem::zeroed() }
+    }
+}
+
+/// The kernel's ioctl on `handle`'s device, for as long as it is borrowed.
+fn kernel(handle: &Handle) -> impl FnMut(Request<'_>) -> io::Result<()> + '_ {
+    use v4l2::vidioc::{
+        VIDIOC_DQBUF, VIDIOC_QBUF, VIDIOC_QUERYBUF, VIDIOC_REQBUFS, VIDIOC_STREAMOFF,
+        VIDIOC_STREAMON,
+    };
+    move |request| {
+        let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        let (code, value): (_, *mut c_void) = match request {
+            Request::Reqbufs(value) => (VIDIOC_REQBUFS, std::ptr::from_mut(value).cast()),
+            Request::Querybuf(value) => (VIDIOC_QUERYBUF, std::ptr::from_mut(value).cast()),
+            Request::Qbuf(value) => (VIDIOC_QBUF, std::ptr::from_mut(value).cast()),
+            Request::Dqbuf(value) => (VIDIOC_DQBUF, std::ptr::from_mut(value).cast()),
+            Request::StreamOn => (VIDIOC_STREAMON, std::ptr::from_mut(&mut kind).cast()),
+            Request::StreamOff => (VIDIOC_STREAMOFF, std::ptr::from_mut(&mut kind).cast()),
+        };
+        // SAFETY: each request code is paired above with a pointer to the
+        // live structure it takes (the buffer type, a `u32`, for STREAMON and
+        // STREAMOFF), so the kernel reads and writes only within it; the fd is
+        // open while `handle` is borrowed.
+        unsafe { v4l2::ioctl(handle.fd(), code, value) }
+    }
 }
 
 impl Stream {
@@ -135,37 +192,17 @@ impl Stream {
         }
         Ok(stream)
     }
-    /// # Safety
-    /// `value` is the structure `request` takes, so the kernel reads and
-    /// writes only within it.
-    unsafe fn ioctl<T>(&self, request: v4l2::vidioc::_IOC_TYPE, value: &mut T) -> io::Result<()> {
-        // SAFETY: the caller pairs `request` with its structure; the fd is open
-        // for as long as `self.handle` lives.
-        unsafe { v4l2::ioctl(self.handle.fd(), request, std::ptr::from_mut(value).cast()) }
-    }
-    fn request_buffers(&self, count: u32) -> io::Result<u32> {
-        let mut request = v4l2_requestbuffers {
-            count,
-            type_: v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE,
-            memory: v4l2_memory_V4L2_MEMORY_MMAP,
-            // SAFETY: the remaining fields are integers, for which zero is valid
-            // (and V4L2 wants reserved fields zero).
-            ..unsafe { std::mem::zeroed() }
-        };
-        // SAFETY: REQBUFS takes a `v4l2_requestbuffers`.
-        unsafe { self.ioctl(v4l2::vidioc::VIDIOC_REQBUFS, &mut request) }?;
-        Ok(request.count)
-    }
     fn allocate(&mut self) -> io::Result<()> {
-        let count = self.request_buffers(4)?;
+        let mut ioctl = kernel(&self.handle);
+        let mut request = requested(4);
+        ioctl(Request::Reqbufs(&mut request))?;
         self.allocated = true;
-        if count == 0 {
+        if request.count == 0 {
             return Err(io::Error::other("capture device allocated no buffers"));
         }
-        for index in 0..count {
+        for index in 0..request.count {
             let mut info = buffer(index);
-            // SAFETY: QUERYBUF takes a `v4l2_buffer`.
-            unsafe { self.ioctl(v4l2::vidioc::VIDIOC_QUERYBUF, &mut info) }?;
+            ioctl(Request::Querybuf(&mut info))?;
             if info.length == 0 {
                 return Err(io::Error::other("capture device returned an empty buffer"));
             }
@@ -192,44 +229,32 @@ impl Stream {
     }
     /// Queue every buffer and stream on.
     pub fn start(&mut self) -> io::Result<()> {
-        self.start_with(&mut kernel(self.handle.fd()))
+        let handle = Arc::clone(&self.handle);
+        self.start_with(&mut kernel(&handle))
     }
-    /// [`Self::start`] through `ioctl`: QBUF with a `v4l2_buffer`, STREAMON
-    /// and STREAMOFF with the buffer type. A failure streams off again, which
+    /// [`Self::start`] through `ioctl`. A failure streams off again, which
     /// also takes back the buffers queued before it, so a later start can
     /// queue them again.
     fn start_with(&mut self, ioctl: &mut Ioctl<'_>) -> io::Result<()> {
-        let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
         let mut started = || {
             for index in 0..self.buffers.len() {
                 let index = u32::try_from(index).expect("V4L buffer index");
-                ioctl(
-                    v4l2::vidioc::VIDIOC_QBUF,
-                    std::ptr::from_mut(&mut buffer(index)).cast(),
-                )?;
+                ioctl(Request::Qbuf(&mut buffer(index)))?;
             }
-            ioctl(
-                v4l2::vidioc::VIDIOC_STREAMON,
-                std::ptr::from_mut(&mut kind).cast(),
-            )
+            ioctl(Request::StreamOn)
         };
         let result = started();
         if result.is_err() {
             // The start's own error is the one reported; a buffer this cannot
             // take back is freed by `release`.
-            let _ = ioctl(
-                v4l2::vidioc::VIDIOC_STREAMOFF,
-                std::ptr::from_mut(&mut kind).cast(),
-            );
+            let _ = ioctl(Request::StreamOff);
         }
         self.active = result.is_ok();
         result
     }
     pub fn stop(&mut self) -> io::Result<()> {
         if self.active {
-            let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            // SAFETY: STREAMOFF takes the buffer type, a `u32`.
-            unsafe { self.ioctl(v4l2::vidioc::VIDIOC_STREAMOFF, &mut kind) }?;
+            kernel(&self.handle)(Request::StreamOff)?;
             self.active = false;
         }
         Ok(())
@@ -239,12 +264,12 @@ impl Stream {
         let handle = Arc::clone(&self.handle);
         self.frame_with(
             &mut |timeout| handle.poll(libc::POLLIN, timeout),
-            &mut kernel(handle.fd()),
+            &mut kernel(&handle),
             copy,
         )
     }
     /// [`Self::frame`] through `poll` (milliseconds in, ready descriptors
-    /// out) and `ioctl`: DQBUF and QBUF, each with a `v4l2_buffer`.
+    /// out) and `ioctl`.
     fn frame_with<T>(
         &mut self,
         poll: &mut dyn FnMut(i32) -> io::Result<i32>,
@@ -264,10 +289,7 @@ impl Stream {
             }
         }
         let mut info = buffer(0);
-        match ioctl(
-            v4l2::vidioc::VIDIOC_DQBUF,
-            std::ptr::from_mut(&mut info).cast(),
-        ) {
+        match ioctl(Request::Dqbuf(&mut info)) {
             Ok(()) => {}
             // `info` names no buffer: one the driver may have taken comes
             // back only with STREAMOFF.
@@ -298,10 +320,7 @@ impl Stream {
                 &info,
             ))
         };
-        match ioctl(
-            v4l2::vidioc::VIDIOC_QBUF,
-            std::ptr::from_mut(&mut buffer(info.index)).cast(),
-        ) {
+        match ioctl(Request::Qbuf(&mut buffer(info.index))) {
             Ok(()) => {}
             // The restart that follows queues every buffer again.
             Err(error) if interrupted(&error) => {
@@ -314,35 +333,21 @@ impl Stream {
             .map_err(|error| failed(error, CAPTURING))
     }
     pub fn release(&mut self) -> io::Result<()> {
-        let fd = self.handle.fd();
-        self.release_with(
-            &mut kernel(fd),
-            // SAFETY: `release_with` passes each mapping's pointer and length as
-            // `mmap` returned them, once: a mapping unmapped is removed from its slot.
-            &mut |pointer, length| unsafe { v4l2::munmap(pointer, length) },
-        )
+        let handle = Arc::clone(&self.handle);
+        self.release_with(&mut kernel(&handle), &mut Mapping::unmap)
     }
-    /// Stop, unmap and free whatever is still held, through `ioctl`
-    /// (STREAMOFF with the buffer type, REQBUFS with a `v4l2_requestbuffers`)
-    /// and `unmap`. A device that is gone ([`device_gone`]) has nothing left
-    /// to stop or free, so that counts as released; its mappings are still
+    /// Stop, unmap and free whatever is still held, through `ioctl` and
+    /// `unmap`. A device that is gone ([`device_gone`]) has nothing left to
+    /// stop or free, so that counts as released; its mappings are still
     /// unmapped, which needs no device.
-    fn release_with(
-        &mut self,
-        ioctl: &mut Ioctl<'_>,
-        unmap: &mut dyn FnMut(*mut c_void, usize) -> io::Result<()>,
-    ) -> io::Result<()> {
-        let mut ioctl = |request, value: *mut c_void| match ioctl(request, value) {
+    fn release_with(&mut self, ioctl: &mut Ioctl<'_>, unmap: &mut Unmap<'_>) -> io::Result<()> {
+        let mut ioctl = |request| match ioctl(request) {
             Err(error) if device_gone(&error) => Ok(()),
             result => result,
         };
         let mut failure = None;
         if self.active {
-            let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            match ioctl(
-                v4l2::vidioc::VIDIOC_STREAMOFF,
-                std::ptr::from_mut(&mut kind).cast(),
-            ) {
+            match ioctl(Request::StreamOff) {
                 Ok(()) => self.active = false,
                 Err(error) => {
                     failure = Some(error);
@@ -350,28 +355,15 @@ impl Stream {
             }
         }
         for slot in &mut self.buffers {
-            if let Some(mapping) = slot {
-                match unmap(mapping.pointer.as_ptr().cast(), mapping.length) {
-                    Ok(()) => *slot = None,
-                    Err(error) => {
-                        failure.get_or_insert(error);
-                    }
-                }
+            if let Some(mapping) = slot.take()
+                && let Err((mapping, error)) = unmap(mapping)
+            {
+                *slot = Some(mapping);
+                failure.get_or_insert(error);
             }
         }
         if self.allocated && self.buffers.iter().all(Option::is_none) {
-            let mut request = v4l2_requestbuffers {
-                count: 0,
-                type_: v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE,
-                memory: v4l2_memory_V4L2_MEMORY_MMAP,
-                // SAFETY: the remaining fields are integers, for which zero is valid
-                // (and V4L2 wants reserved fields zero).
-                ..unsafe { std::mem::zeroed() }
-            };
-            match ioctl(
-                v4l2::vidioc::VIDIOC_REQBUFS,
-                std::ptr::from_mut(&mut request).cast(),
-            ) {
+            match ioctl(Request::Reqbufs(&mut requested(0))) {
                 Ok(()) => self.allocated = false,
                 Err(error) => {
                     failure.get_or_insert(error);

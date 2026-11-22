@@ -64,6 +64,9 @@ pub enum Error {
     Exception(String),
     #[error("invalid native capture: {0}")]
     Invalid(&'static str),
+    /// An earlier driver call of this tap failed; only release is left.
+    #[error("the capture tap failed earlier")]
+    Failed,
     /// The TV UI capture device is missing or cannot be mapped.
     #[error("cannot use {path}")]
     Device {
@@ -411,7 +414,7 @@ impl VtCapture {
     /// call is refused and only release is left.
     fn step<T>(&mut self, step: fn(&mut Self) -> Result<T, Error>) -> Result<T, Error> {
         if !matches!(self.stage, Stage::Working(_)) {
-            return Err(Error::Invalid("used after a failure"));
+            return Err(Error::Failed);
         }
         let result = step(self);
         if let (Err(_), Stage::Working(reached)) = (&result, self.stage) {
@@ -861,10 +864,7 @@ mod tests {
             Err(Error::Status { code: 12, .. })
         ));
         fake.with(|driver| driver.code = 0);
-        assert!(matches!(
-            capture.acquire(),
-            Err(Error::Invalid("used after a failure"))
-        ));
+        assert!(matches!(capture.acquire(), Err(Error::Failed)));
         capture.release().unwrap();
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
 
@@ -874,10 +874,7 @@ mod tests {
         fake.with(|driver| driver.plane_stride = 1);
         let mut capture = fake.capture(Reached::Initialized);
         assert!(matches!(capture.acquire(), Err(Error::Invalid("stride"))));
-        assert!(matches!(
-            capture.acquire(),
-            Err(Error::Invalid("used after a failure"))
-        ));
+        assert!(matches!(capture.acquire(), Err(Error::Failed)));
         assert_eq!(fake.with(|driver| driver.buffers), 0);
         drop(capture);
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [2, 3, 4]);
@@ -902,10 +899,7 @@ mod tests {
             let fake = Fake::new(0);
             let mut capture = fake.capture(reached);
             capture.stage = Stage::Failed(reached);
-            assert!(matches!(
-                capture.acquire(),
-                Err(Error::Invalid("used after a failure"))
-            ));
+            assert!(matches!(capture.acquire(), Err(Error::Failed)));
             assert_eq!(
                 fake.with(|driver| (driver.initializations, driver.buffers)),
                 (0, 0),

@@ -2,7 +2,7 @@
 //! `prysm-capture-webos-sys`, NV12 frames, the cross-process device lock and
 //! signal isolation.
 use crate::WebosSettings;
-use crate::source::{Acquired, Backend, Fault, Tap};
+use crate::source::{Acquired, Backend, Fault, Recovery, Tap};
 use crate::ui::Nv12Converter;
 use prysm_capture_webos_sys::{self as sys, UiCapture, VtCapture};
 use prysm_core::{FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
@@ -61,9 +61,16 @@ impl Lg {
     }
 }
 
-fn fault(context: &str, error: sys::Error) -> Fault {
+/// A native fault: fatal as the driver says, bounded when the Luna
+/// registration check failed in a way it cannot tell from a denial.
+pub(crate) fn fault(context: &str, error: sys::Error) -> Fault {
+    let recovery = match &error {
+        error if error.is_fatal() => Recovery::Never,
+        sys::Error::Luna(_) => Recovery::Bounded,
+        _ => Recovery::Reopen,
+    };
     Fault {
-        fatal: error.is_fatal(),
+        recovery,
         error: Error::adapter(context, error),
     }
 }
@@ -77,7 +84,11 @@ pub(crate) fn ui_open_fault(error: sys::Error) -> Fault {
         _ => false,
     };
     Fault {
-        fatal,
+        recovery: if fatal {
+            Recovery::Never
+        } else {
+            Recovery::Reopen
+        },
         error: Error::adapter("cannot open webOS UI capture", error),
     }
 }

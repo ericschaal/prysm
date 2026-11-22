@@ -7,7 +7,10 @@
 //! The two safe types each own one native capture tap: [`VtCapture`] (video,
 //! optionally blended with menus) and [`UiCapture`] (the UI plane alone, for
 //! when there is no video). Neither is `Send`, so each tap is opened, used and
-//! released on one thread (HAL GAL binds an EGL context to it):
+//! released on one thread (HAL GAL binds an EGL context to it). Each holds a
+//! `PhantomData<*const ()>` for that, so it stays `!Send` whatever its other
+//! fields become (its pointer fields make it `!Send` too). These guard the
+//! property against a regression; they cannot tell which field provides it:
 //!
 //! ```compile_fail
 //! fn send<T: Send>() {}
@@ -23,7 +26,7 @@
 //! taps may be opened on other threads. Each call is a single native
 //! operation; watchdogs, retries, pacing, tap selection and pixel conversion
 //! belong to the caller (`prysm-capture-webos`). After a failed driver call a
-//! [`VtCapture`] refuses every call but release. C++ exceptions from
+//! [`VtCapture`] refuses every call but release with [`Error::Failed`]. C++ exceptions from
 //! VTCapture are caught in `native/vtcapture.cpp` and never cross into Rust.
 //! Vendor memory (driver planes, the `/dev/gfx` mapping) may be written while
 //! it is read, so it is read only through pointers, never as a Rust slice.

@@ -15,12 +15,14 @@
 //!   bad buffers well below its rate, without stalling, from failing after a
 //!   few of them.
 //! - Interruptions (V4L2's possibly temporary EIO, or a failed restart)
-//!   restart the stream, after [`PAUSE`], until a run of them with no buffer
+//!   restart the stream, after [`PAUSE`], until a run of them with no frame
 //!   and no stall between has lasted [`GRACE`]; then capture fails with the
-//!   last one, so a dead device does not restart forever.
-//! - Each event belongs to one run: an interruption ends a run of unusable
-//!   buffers, and an unusable buffer ends a run of interruptions (the device
-//!   answers again).
+//!   last one, so a dead device does not restart forever. Unusable buffers
+//!   between them neither end nor extend that run.
+//! - An interruption ends a run of unusable buffers and starts its own.
+//! - Interruptions with stalls between them (EIO, restart, stall, restart,
+//!   EIO, ...) never fail capture, on purpose: a source that is off stalls,
+//!   and capture keeps "waiting for video".
 use crate::{BufferRejection, CaptureError};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -106,6 +108,11 @@ impl Health {
         let (run, verdict) = match (self.run, event) {
             (_, Event::Frame) => (Run::Clean, Verdict::Continue),
             (_, Event::Stalled) => (Run::Clean, Verdict::Restart),
+            // An unusable buffer between interruptions is not the device
+            // recovering: the interruption run and its clock go on.
+            (Run::Interrupted { since }, Event::Rejected(_)) => {
+                (Run::Interrupted { since }, Verdict::Continue)
+            }
             (run, Event::Rejected(reason)) => {
                 let (since, count) = if let Run::Rejecting { since, count } = run {
                     (since, count.saturating_add(1))
@@ -254,13 +261,13 @@ mod tests {
             ],
             [
                 (clean, Continue),
-                (rejecting(now, 1), Continue),
+                (interrupting(young), Continue),
                 (clean, Restart),
                 (interrupting(young), Restart),
             ],
             [
                 (clean, Continue),
-                (rejecting(now, 1), Continue),
+                (interrupting(old), Continue),
                 (clean, Restart),
                 (interrupting(old), Interrupted),
             ],
@@ -388,14 +395,32 @@ mod tests {
             Kind::Interrupted,
             "a dead device keeps failing"
         );
-        // A buffer, usable or not, ends the run; the next starts afresh.
+        // A frame ends the run; the next starts afresh.
         let later = start + GRACE * 10;
-        health.on(corrupted(), later);
+        health.on(Event::Frame, later);
         assert_eq!(kind(&health.on(interrupted(), later)), Kind::Restart);
         assert_eq!(
             kind(&health.on(interrupted(), later + GRACE)),
             Kind::Interrupted
         );
+    }
+
+    #[test]
+    fn alternating_unusable_buffers_and_interruptions_fail_within_the_grace() {
+        let start = Instant::now();
+        let mut health = Health::new(RATE);
+        let mut now = start;
+        let failed = loop {
+            assert!(now < start + GRACE * 2, "never failed");
+            health.on(corrupted(), now);
+            now += PAUSE / 2;
+            if let Verdict::Fail(error) = health.on(interrupted(), now) {
+                break error;
+            }
+            now += PAUSE / 2;
+        };
+        assert!(now >= start + GRACE && now < start + GRACE + PAUSE);
+        assert!(!matches!(failed, CaptureError::Unusable { .. }));
     }
 
     #[test]

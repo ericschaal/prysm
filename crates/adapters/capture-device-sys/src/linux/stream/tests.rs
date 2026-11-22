@@ -1,8 +1,5 @@
 use super::*;
 use std::cell::RefCell;
-use v4l2::vidioc::{
-    _IOC_TYPE, VIDIOC_DQBUF, VIDIOC_QBUF, VIDIOC_REQBUFS, VIDIOC_STREAMOFF, VIDIOC_STREAMON,
-};
 
 fn allocated() -> Stream {
     Stream {
@@ -53,19 +50,25 @@ impl Drop for Mapped {
     fn drop(&mut self) {
         // The memory is not a mapping: leave nothing for `Stream::drop` to unmap.
         self.stream
-            .release_with(&mut |_, _| Ok(()), &mut |_, _| Ok(()))
+            .release_with(&mut |_| Ok(()), &mut forget)
             .unwrap();
     }
 }
 
-fn name(request: _IOC_TYPE) -> &'static str {
+/// An unmap that lets the mapping go without unmapping anything.
+fn forget(_: Mapping) -> std::result::Result<(), (Mapping, io::Error)> {
+    Ok(())
+}
+
+/// What a test calls each request.
+fn name(request: &Request<'_>) -> &'static str {
     match request {
-        VIDIOC_DQBUF => "dequeue",
-        VIDIOC_QBUF => "queue",
-        VIDIOC_STREAMON => "on",
-        VIDIOC_STREAMOFF => "off",
-        VIDIOC_REQBUFS => "free",
-        _ => "other",
+        Request::Dqbuf(_) => "dequeue",
+        Request::Qbuf(_) => "queue",
+        Request::Querybuf(_) => "query",
+        Request::StreamOn => "on",
+        Request::StreamOff => "off",
+        Request::Reqbufs(_) => "free",
     }
 }
 
@@ -77,21 +80,19 @@ fn driver<'a>(
     index: u32,
     bytes: u32,
     fails: impl Fn(&str) -> Option<i32> + 'a,
-) -> impl FnMut(_IOC_TYPE, *mut c_void) -> io::Result<()> + 'a {
-    move |request, value| {
-        let request = name(request);
-        if request == "dequeue" || request == "queue" {
-            // SAFETY: the stream passes a live `v4l2_buffer` with both requests.
-            let info = unsafe { &mut *value.cast::<v4l2_buffer>() };
-            if request == "dequeue" {
+) -> impl FnMut(Request<'_>) -> io::Result<()> + 'a {
+    move |request| {
+        let name = name(&request);
+        match request {
+            Request::Dqbuf(info) => {
                 info.index = index;
                 info.bytesused = bytes;
+                calls.borrow_mut().push(format!("{name} {}", info.index));
             }
-            calls.borrow_mut().push(format!("{request} {}", info.index));
-        } else {
-            calls.borrow_mut().push(request.to_owned());
+            Request::Qbuf(info) => calls.borrow_mut().push(format!("{name} {}", info.index)),
+            _ => calls.borrow_mut().push(name.to_owned()),
         }
-        fails(request).map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno)))
+        fails(name).map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno)))
     }
 }
 
@@ -298,8 +299,8 @@ fn every_release_failure_is_retained_and_other_cleanup_is_attempted() {
         let mut stream = allocated();
         let calls = RefCell::new(Vec::new());
         let result = stream.release_with(
-            &mut |request, _| {
-                let step = if request == VIDIOC_STREAMOFF {
+            &mut |request| {
+                let step = if matches!(request, Request::StreamOff) {
                     "stop"
                 } else {
                     "free"
@@ -311,10 +312,10 @@ fn every_release_failure_is_retained_and_other_cleanup_is_attempted() {
                     Ok(())
                 }
             },
-            &mut |_, _| {
+            &mut |mapping| {
                 calls.borrow_mut().push("unmap");
                 if failed_step == "unmap" {
-                    Err(io::Error::other("unmap"))
+                    Err((mapping, io::Error::other("unmap")))
                 } else {
                     Ok(())
                 }
@@ -339,11 +340,11 @@ fn every_release_failure_is_retained_and_other_cleanup_is_attempted() {
         let retry = RefCell::new(Vec::new());
         stream
             .release_with(
-                &mut |_, _| {
+                &mut |_| {
                     retry.borrow_mut().push("ioctl");
                     Ok(())
                 },
-                &mut |_, _| {
+                &mut |_| {
                     retry.borrow_mut().push("unmap");
                     Ok(())
                 },
@@ -367,15 +368,15 @@ fn release_failing(
     unmapped: &mut usize,
 ) -> io::Result<()> {
     stream.release_with(
-        &mut |request, _| {
-            let errno = if request == VIDIOC_STREAMOFF {
+        &mut |request| {
+            let errno = if matches!(request, Request::StreamOff) {
                 stop
             } else {
                 free
             };
             errno.map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno)))
         },
-        &mut |_, _| {
+        &mut |_| {
             *unmapped += 1;
             Ok(())
         },
@@ -397,9 +398,7 @@ fn a_device_gone_is_released_and_still_unmapped() {
         assert!(stream.buffers.iter().all(Option::is_none));
         // Nothing is left for a retry (or `Drop`) to touch.
         stream
-            .release_with(&mut |_, _| panic!("released"), &mut |_, _| {
-                panic!("unmapped")
-            })
+            .release_with(&mut |_| panic!("released"), &mut |_| panic!("unmapped"))
             .unwrap();
     }
 }
@@ -439,16 +438,14 @@ fn other_errors_still_fail_the_release() {
 fn successful_release_is_idempotent_and_preserves_first_error() {
     let mut stream = allocated();
     let error = stream
-        .release_with(&mut |_, _| Err(io::Error::other("ioctl")), &mut |_, _| {
-            Err(io::Error::other("unmap"))
+        .release_with(&mut |_| Err(io::Error::other("ioctl")), &mut |mapping| {
+            Err((mapping, io::Error::other("unmap")))
         })
         .unwrap_err();
     assert_eq!(error.to_string(), "ioctl");
+    stream.release_with(&mut |_| Ok(()), &mut forget).unwrap();
     stream
-        .release_with(&mut |_, _| Ok(()), &mut |_, _| Ok(()))
-        .unwrap();
-    stream
-        .release_with(&mut |_, _| panic!("already released"), &mut |_, _| {
+        .release_with(&mut |_| panic!("already released"), &mut |_| {
             panic!("already unmapped")
         })
         .unwrap();

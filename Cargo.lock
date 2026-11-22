@@ -1965,6 +1965,7 @@ dependencies = [
  "prysm-core",
  "prysm-ports",
  "prysm-webos-link",
+ "prysm-webos-luna-sys",
  "serde",
  "serde_json",
  "tempfile",
