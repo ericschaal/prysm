@@ -18,10 +18,11 @@
 //!   restart the stream, after [`PAUSE`], until a run of them with no frame
 //!   and no stall between has lasted [`GRACE`]; then capture fails with the
 //!   last one, so a dead device does not restart forever. Unusable buffers
-//!   after an interruption neither end nor extend that run: one arriving
-//!   once the run has lasted [`GRACE`] fails capture with
-//!   [`CaptureError::Unusable`], so a stream that keeps delivering only bad
-//!   buffers after an interruption does not look alive either.
+//!   after an interruption neither end nor extend that run, and are held
+//!   to the same two bounds as a run of their own, counted from the run's
+//!   first interruption: a stream that delivers only bad buffers after an
+//!   interruption does not look alive either, and one corrupted buffer
+//!   after a late restart does not fail capture.
 //! - An interruption ends a run of unusable buffers and starts its own.
 //! - Interruptions with stalls between them (EIO, restart, stall, restart,
 //!   EIO, ...) never fail capture, on purpose: a source that is off stalls,
@@ -114,11 +115,11 @@ impl Health {
             (_, Event::Frame) => (Run::Clean, Verdict::Continue),
             (_, Event::Stalled) => (Run::Clean, Verdict::Restart),
             // An unusable buffer after an interruption is not the device
-            // recovering: the interruption run and its clock go on, and
-            // capture fails once the run has lasted the grace.
+            // recovering: the interruption run and its clock go on, under
+            // the bounds of a run of unusable buffers.
             (Run::Interrupted { since, rejected }, Event::Rejected(reason)) => {
                 let rejected = rejected.saturating_add(1);
-                let verdict = if lasted(since) {
+                let verdict = if rejected >= self.limit && lasted(since) {
                     Verdict::Fail(CaptureError::Unusable {
                         rejected,
                         source: reason,
@@ -235,8 +236,9 @@ mod tests {
                     count: LIMIT - 1,
                 },
             ),
-            ("interrupted, young", interrupting(young, 2)),
-            ("interrupted, due", interrupting(old, 2)),
+            ("interrupted, young", interrupting(young, LIMIT - 1)),
+            ("interrupted, due", interrupting(old, LIMIT - 1)),
+            ("interrupted, due, few rejected", interrupting(old, 0)),
         ];
         type Named = (&'static str, fn() -> Event);
         let events: [Named; 4] = [
@@ -276,15 +278,21 @@ mod tests {
             ],
             [
                 (clean, Continue),
-                (interrupting(young, 3), Continue),
+                (interrupting(young, LIMIT), Continue),
                 (clean, Restart),
-                (interrupting(young, 2), Restart),
+                (interrupting(young, LIMIT - 1), Restart),
             ],
             [
                 (clean, Continue),
-                (interrupting(old, 3), Unusable),
+                (interrupting(old, LIMIT), Unusable),
                 (clean, Restart),
-                (interrupting(old, 2), Interrupted),
+                (interrupting(old, LIMIT - 1), Interrupted),
+            ],
+            [
+                (clean, Continue),
+                (interrupting(old, 1), Continue),
+                (clean, Restart),
+                (interrupting(old, 0), Interrupted),
             ],
         ];
         for ((name, run), row) in runs.into_iter().zip(expected) {

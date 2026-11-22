@@ -101,8 +101,10 @@ impl<B: Backend> Native<B> {
             if kind != self.kind || current != generation {
                 generation = current;
                 self.kind = kind;
-                // A new period: its first video failure is news again.
+                // A new period: its first video failure is news again, and
+                // its registration failures count from zero.
                 self.video_failing = false;
+                self.unchecked = 0;
                 self.release_tap()?;
                 self.retry_at = Instant::now();
             }
