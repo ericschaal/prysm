@@ -10,6 +10,14 @@ mod source;
 
 pub use settings::DeviceSettings;
 
+/// What a device source's stop waits for: its pulls return within their
+/// timeout, then `close` releases the device.
+pub const STOP: prysm_ports::SourceStop = prysm_ports::SourceStop {
+    frame: std::time::Duration::ZERO,
+    end: std::time::Duration::ZERO,
+    close: source::Deadlines::DEVICE.release,
+};
+
 use prysm_ports::{
     Candidate, FrameSource, Mode, Modes, Result, SourceFactory, Span, ValidationError, capture_size,
 };

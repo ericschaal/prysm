@@ -15,7 +15,7 @@ use prysm_runtime::{ColorsWatch, EngineHandle, Shutdown};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::time::{Instant, Interval, MissedTickBehavior, interval};
+use tokio::time::{Instant, sleep_until};
 
 /// Concurrent colors streams; more are refused with `429`.
 const LISTENERS: usize = 8;
@@ -44,13 +44,12 @@ impl Colors {
                 "too many colors streams",
             );
         };
-        let mut ticks = interval(CADENCE);
-        ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let now = Instant::now();
         let listener = Listener {
             watch: engine.colors(),
-            ticks,
+            due: now,
             shown: Shown::Starting,
-            sent: Instant::now(),
+            sent: now,
             _permit: permit,
         };
         response::event_stream(stream::unfold(listener, Listener::next), shutdown)
@@ -70,19 +69,25 @@ enum Shown {
 /// One open stream; remembers the last colors it sent.
 struct Listener {
     watch: ColorsWatch,
-    ticks: Interval,
+    /// The earliest the stream looks at the feed again.
+    due: Instant,
     shown: Shown,
+    /// When the last event or keepalive went out.
     sent: Instant,
     _permit: OwnedSemaphorePermit,
 }
 
 impl Listener {
     /// The next event, at most one per [`CADENCE`] and only when it differs
-    /// from the last one sent. The body is pulled only after the previous
-    /// event was written, so a slow reader gets fewer events, not a queue.
+    /// from the last one sent; between them the stream sleeps until the
+    /// colors change (or a keepalive is due). The body is pulled only after
+    /// the previous event was written, so a slow reader gets fewer events,
+    /// not a queue.
     async fn next(mut self) -> Option<(BodyFrame<Bytes>, Self)> {
         loop {
-            self.ticks.tick().await;
+            // At most one look per period, whatever wakes the stream.
+            sleep_until(self.due).await;
+            self.due = Instant::now() + CADENCE;
             let shown = match self.watch.latest() {
                 None if self.shown == Shown::Starting => Shown::Nothing,
                 None => Shown::Idle,
@@ -99,8 +104,12 @@ impl Listener {
             self.shown = shown;
             let event = match event {
                 Some(event) => event,
-                None if self.sent.elapsed() >= KEEPALIVE => KEEPALIVE_COMMENT,
-                None => continue,
+                // Just opened, with nothing yet: look once more a period on.
+                None if self.shown == Shown::Nothing => continue,
+                None => tokio::select! {
+                    () = self.watch.changed() => continue,
+                    () = sleep_until(self.sent + KEEPALIVE) => KEEPALIVE_COMMENT,
+                },
             };
             self.sent = Instant::now();
             return Some((BodyFrame::data(event), self));

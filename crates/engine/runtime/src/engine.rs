@@ -1,9 +1,11 @@
 use crate::feeds::{ColorsWatch, Feeds, PreviewWatch};
-use crate::leds::OpenOutput;
+use crate::leds::Configured;
 use crate::meter::Meter;
 use crate::session::{Session, SessionEnd, Stop};
 use crate::stats::{Counters, Stats};
 use crate::worker::Exit;
+use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use prysm_core::Config;
 use prysm_ports::{
     AdapterSettings, CalibrationPattern, Candidate, DeviceReport, Error, IdleMode, Input,
@@ -73,6 +75,8 @@ pub struct EngineHandle {
     /// For [`candidates`](Self::candidates) and
     /// [`capture_modes`](Self::capture_modes), which need no engine state.
     registry: Registry,
+    candidates: Lookups<(Section, String), Vec<Candidate>>,
+    modes: Lookups<AdapterSettings, Modes>,
 }
 
 impl EngineHandle {
@@ -130,27 +134,35 @@ impl EngineHandle {
     /// What the adapter registered for `kind` in `section` finds to choose
     /// from (devices present, devices on the network). The lookup runs off
     /// the async runtime and bypasses the engine's mailbox: it is not state,
-    /// and the adapter bounds it to about two seconds.
+    /// and the adapter bounds it to about two seconds. One runs per section
+    /// and kind at a time: who asks while it runs gets its answer.
     ///
     /// # Errors
     /// A kind not registered in `section` (field `<section>.kind`), or a
     /// panicking lookup.
     pub async fn candidates(&self, section: Section, kind: &str) -> Result<Vec<Candidate>> {
         let (registry, kind) = (self.registry.clone(), kind.to_owned());
-        blocking(move || registry.candidates(section, &kind)).await?
+        self.candidates
+            .run((section, kind.clone()), move || {
+                registry.candidates(section, &kind)
+            })
+            .await
     }
 
     /// What the capture `settings` select delivers (see
     /// [`SourceFactory::modes`](prysm_ports::SourceFactory::modes)). Like
-    /// [`candidates`](Self::candidates), it runs off the async runtime and
-    /// bypasses the engine's mailbox.
+    /// [`candidates`](Self::candidates), it runs off the async runtime,
+    /// bypasses the engine's mailbox, and runs once at a time for the same
+    /// settings, whose askers share its answer.
     ///
     /// # Errors
     /// An unregistered kind (field `capture.kind`), undecodable settings, or
     /// a panicking lookup.
     pub async fn capture_modes(&self, settings: AdapterSettings) -> Result<Modes> {
         let registry = self.registry.clone();
-        blocking(move || registry.capture_modes(&settings)).await?
+        self.modes
+            .run(settings.clone(), move || registry.capture_modes(&settings))
+            .await
     }
 
     #[must_use]
@@ -223,23 +235,39 @@ pub struct Engine {
 
 impl Engine {
     /// Load settings and start the engine task. Loaded settings that no longer
-    /// validate are kept and reported in the snapshot.
+    /// validate are kept and reported in the snapshot. A store that cannot
+    /// be read starts unconfigured, its failure reported until a save
+    /// replaces what it holds (see [`SettingsStore::load`]).
     ///
     /// # Errors
-    /// The store failed to load.
+    /// The load panicked.
     pub async fn start(
         registry: Registry,
         store: Box<dyn SettingsStore>,
         stop_deadline: Duration,
     ) -> Result<(EngineHandle, Self)> {
         let store: Store = Arc::new(Mutex::new(store));
-        let loaded = blocking({
+        let (loaded, unreadable) = match blocking({
             let store = store.clone();
             move || lock(&store).load()
         })
-        .await??
-        .unwrap_or_default();
-        let failure = registry.validate(&loaded).err();
+        .await?
+        {
+            Ok(loaded) => (loaded.unwrap_or_default(), None),
+            Err(error) => {
+                tracing::warn!(
+                    "starting without settings until a save: {}",
+                    prysm_ports::chain(&error)
+                );
+                (
+                    Settings::default(),
+                    Some(Error::UnusableSettings(Arc::new(error))),
+                )
+            }
+        };
+        let failure = unreadable
+            .clone()
+            .or_else(|| registry.validate(&loaded).err());
         let (state, snapshot) = watch::channel(Snapshot {
             settings: loaded,
             revision: first_revision(),
@@ -253,6 +281,7 @@ impl Engine {
         let core = Core {
             registry: registry.clone(),
             store,
+            unreadable,
             lighting: Lighting::Stopped,
             calibration_expires: None,
             trial: None,
@@ -270,6 +299,8 @@ impl Engine {
             feeds,
             stats,
             registry,
+            candidates: Lookups::default(),
+            modes: Lookups::default(),
         };
         let engine = Self {
             commands,
@@ -325,6 +356,81 @@ impl Engine {
     }
 }
 
+/// A lookup's answer, for every asker that waits for it.
+type Answer<T> = Shared<BoxFuture<'static, Result<T>>>;
+
+/// The blocking lookups running, by what they look up. A lookup runs once
+/// at a time per key: who asks while it runs waits for its answer. It keeps
+/// its key until its blocking call returns, also when nobody waits any
+/// more, so no client can stack up blocking threads for the same lookup.
+struct Lookups<K, T>(Arc<Mutex<InFlight<K, T>>>);
+
+/// Each running lookup's key and answer.
+type InFlight<K, T> = Vec<(K, Answer<T>)>;
+
+impl<K, T> Default for Lookups<K, T> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
+}
+
+impl<K, T> Clone for Lookups<K, T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<K, T> Lookups<K, T>
+where
+    K: Clone + PartialEq + Send + 'static,
+    T: Clone + Send + Sync + 'static,
+{
+    /// The answer of the lookup running for `key`, or of `work` started for
+    /// it now on a blocking thread.
+    fn run(&self, key: K, work: impl FnOnce() -> Result<T> + Send + 'static) -> Answer<T> {
+        let mut running = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, answer)) = running.iter().find(|(running, _)| *running == key) {
+            return answer.clone();
+        }
+        let ended = Ended {
+            lookups: self.clone(),
+            key: key.clone(),
+        };
+        // Started by its first poll, outside the lock, then on its thread
+        // to its end whoever still waits.
+        let answer = async move {
+            tokio::task::spawn_blocking(move || {
+                let answer = work();
+                drop(ended);
+                answer
+            })
+            .await
+            .map_err(|_| Error::Panicked("blocking adapter call"))?
+        }
+        .boxed()
+        .shared();
+        running.push((key, answer.clone()));
+        answer
+    }
+}
+
+/// Removes a lookup that returned, on its blocking thread: the next ask
+/// starts a new one.
+struct Ended<K: PartialEq, T> {
+    lookups: Lookups<K, T>,
+    key: K,
+}
+
+impl<K: PartialEq, T> Drop for Ended<K, T> {
+    fn drop(&mut self) {
+        self.lookups
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(running, _)| *running != self.key);
+    }
+}
+
 /// A random start per process, so a revision a client kept from before a
 /// restart is stale rather than matching. Below 2^52: browsers read revisions
 /// as exact JSON numbers, and `Revision::next` has 2^52 steps before either limit.
@@ -364,9 +470,11 @@ impl Lighting {
 
     /// What a session's end leaves, from what its thread reported.
     fn left_by(end: &SessionEnd) -> Self {
-        match end.left {
+        match &end.left {
             _ if end.released.is_err() => Self::UNRELEASED,
             Ok(IdleMode::Native) => Self::Native,
+            // An idle after the join that did not return in time.
+            Err(Error::Faulted(phase)) => Self::Faulted(*phase),
             Ok(IdleMode::Off) | Err(_) => Self::Stopped,
         }
     }
@@ -419,6 +527,9 @@ impl Running {
 struct Core {
     registry: Registry,
     store: Store,
+    /// Why the store could not be read at start; reported until a save
+    /// replaces what it holds.
+    unreadable: Option<Error>,
     lighting: Lighting,
     /// When the snapshot's calibration is cleared; present exactly while it is.
     calibration_expires: Option<Instant>,
@@ -537,7 +648,7 @@ impl Core {
             .stop(IdleMode::Off, self.stop_deadline)
             .await
         {
-            Ok(Stop::AsAsked(end) | Stop::OnItsOwn { end, .. }) => Ok(end),
+            Ok(Stop::AsAsked(end) | Stop::OnItsOwn(end)) => Ok(end),
             Err(error) => Err(error),
         };
         let _ = self.ended(end);
@@ -677,6 +788,7 @@ impl Core {
         let saved = settings.clone();
         self.run_blocking(move || lock(&store).save(&saved))
             .await??;
+        self.unreadable = None;
 
         let (output_changed, capture_changed) = {
             let snapshot = self.state.borrow();
@@ -755,8 +867,8 @@ impl Core {
         let (capture, output) = {
             let snapshot = self.state.borrow();
             let settings = &snapshot.settings;
-            let capture = configured(settings.capture.as_ref(), Section::Capture)?;
-            let output = configured(settings.output.as_ref(), Section::Output)?;
+            let capture = self.configured(settings.capture.as_ref(), Section::Capture)?;
+            let output = self.configured(settings.output.as_ref(), Section::Output)?;
             self.registry.validate(settings)?;
             (capture, output)
         };
@@ -768,11 +880,10 @@ impl Core {
             .await?
             .map_err(|error| error.in_section(Section::Capture))?;
         self.stats.source_opened();
-        let registry = self.registry.clone();
-        let open_output: OpenOutput = Box::new(move || registry.open_output(&output));
+        let output = Configured::new(self.registry.clone(), output);
         let session = match Session::start(
             source,
-            open_output,
+            output,
             config,
             self.feeds.clone(),
             self.stats.clone(),
@@ -817,30 +928,22 @@ impl Core {
                 self.set_lighting(Lighting::left_by(&end));
                 end.result()
             }
-            Ok(Stop::OnItsOwn { end, idled }) => {
-                let ended = self.ended(Ok(end));
-                if matches!(self.lighting, Lighting::Stopped) {
-                    match &idled {
-                        Err(Error::Faulted(phase)) => self.set_lighting(Lighting::Faulted(*phase)),
-                        Ok(()) if mode == IdleMode::Native => self.set_lighting(Lighting::Native),
-                        _ => {}
-                    }
-                }
-                ended.and(idled)
-            }
+            // What the output was left in is the end's, idled again or not.
+            Ok(Stop::OnItsOwn(end)) => self.ended(Ok(end)),
         }
     }
 
-    /// DeviceNative has no session: open the output only to put it in `mode`.
+    /// DeviceNative has no session: put the output in `mode` without
+    /// opening it.
     async fn idle_output(&mut self, mode: IdleMode) -> Result<()> {
-        let output = configured(
+        let output = self.configured(
             self.state.borrow().settings.output.as_ref(),
             Section::Output,
         );
         let registry = self.registry.clone();
         let result = match output {
             Ok(output) => self
-                .run_blocking(move || registry.open_output(&output)?.idle(mode))
+                .run_blocking(move || registry.idle_output(&output, mode))
                 .await
                 .and_then(|idled| idled.map_err(|error| error.in_section(Section::Output))),
             Err(error) => Err(error),
@@ -910,13 +1013,31 @@ impl Core {
         }
     }
 
-    /// Publish `result` as the failure. Without one, saved settings that do
-    /// not validate (loaded that way) stay reported until replaced.
+    /// `section`'s adapter settings. Missing, they are not configured; while
+    /// the store could not be read, its failure says why.
+    fn configured(
+        &self,
+        settings: Option<&AdapterSettings>,
+        section: Section,
+    ) -> Result<AdapterSettings> {
+        match (settings, &self.unreadable) {
+            (Some(settings), _) => Ok(settings.clone()),
+            (None, Some(unreadable)) => Err(unreadable.clone()),
+            (None, None) => Err(ValidationError::new(section.as_str(), "not configured").into()),
+        }
+    }
+
+    /// Publish `result` as the failure. Without one, a store that could not
+    /// be read, or saved settings that do not validate (loaded that way),
+    /// stay reported until replaced.
     fn record(&self, result: &Result<()>) {
         self.state.send_modify(|s| {
             s.failure = match result {
                 Err(error) => Some(error.clone()),
-                Ok(()) => self.registry.validate(&s.settings).err(),
+                Ok(()) => self
+                    .unreadable
+                    .clone()
+                    .or_else(|| self.registry.validate(&s.settings).err()),
             };
         });
     }
@@ -934,12 +1055,6 @@ impl Core {
         self.record(&result);
         result
     }
-}
-
-fn configured(settings: Option<&AdapterSettings>, section: Section) -> Result<AdapterSettings> {
-    settings
-        .cloned()
-        .ok_or_else(|| ValidationError::new(section.as_str(), "not configured").into())
 }
 
 async fn expiry(at: Option<Instant>) {

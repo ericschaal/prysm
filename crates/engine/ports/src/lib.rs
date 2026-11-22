@@ -18,7 +18,8 @@ mod snapshot;
 mod style;
 
 pub use adapter::{
-    DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull, SettingsStore,
+    DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull,
+    SettingsStore, SourceStop,
 };
 pub use calibration::{CalibrationPattern, Pattern};
 pub use calibrations::{
@@ -32,7 +33,9 @@ pub use handoff::{
 };
 pub use modes::{Mode, Modes, Span};
 pub use owner::{OwnerThread, Worker};
-pub use registry::{Candidate, OutputFactory, Registry, SourceFactory};
+pub use registry::{
+    Candidate, OpenFailure, OutputFactory, Registry, SOURCE_OPEN_LIMIT, SourceFactory,
+};
 pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
 pub use snapshot::{

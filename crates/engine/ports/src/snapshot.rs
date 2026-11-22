@@ -109,17 +109,16 @@ pub struct Snapshot {
 }
 
 /// What a held output's device last said about itself
-/// ([`LedOutput::observe`](crate::LedOutput::observe),
-/// [`brightness`](crate::LedOutput::brightness) and
-/// [`device_led_count`](crate::LedOutput::device_led_count)). Each part is
-/// `None` while the output cannot tell; Prysm reports them and changes none.
+/// ([`LedOutput::report`](crate::LedOutput::report)). Each part is `None`
+/// while the output cannot tell; Prysm reports them and changes none.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceReport {
     /// Why the LEDs are not showing the session's colours; `None` while they
     /// show them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<OutputIssue>,
-    /// The device's own brightness while it scales the session's colours;
+    /// The device's own brightness while it scales the session's colours
+    /// (they show at that percent of the brightness Prysm asks for);
     /// `None` while it does not.
     #[serde(
         default,
@@ -127,7 +126,9 @@ pub struct DeviceReport {
         skip_serializing_if = "Option::is_none"
     )]
     pub brightness: Option<DeviceBrightness>,
-    /// How many LEDs the device drives; the configured edges may say otherwise.
+    /// How many LEDs the device drives; the configured edges may say
+    /// otherwise. A report, not a failure: other counts leave LEDs dark or
+    /// colours unshown, and writing goes on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub led_count: Option<u32>,
 }

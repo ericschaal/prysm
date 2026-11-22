@@ -23,15 +23,20 @@ const NAME: &str = "prysm-webos";
 const ABOUT: &str = "The full TV worker. Started by prysm-webos-service: commands on stdin,
 events on stdout, logs on stderr.";
 
-/// Above the capture adapter's release limit, so WLED idle compensation
-/// normally runs.
+/// Above the capture adapter's release limit plus the output's idle limit,
+/// so a stop that meets nothing in flight idles the lights in time. A stop
+/// that meets an open or a release in flight can exceed it (see
+/// [`prysm_output_wled::STOP_WAIT`]); the engine then faults.
 const STOP_DEADLINE: Duration = Duration::from_secs(6);
 /// How long shutdown waits for an engine call stuck in an adapter before
 /// abandoning it: short, so grace and stop (1 + 6 s) end before SIGKILL (8 s).
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 const _: () = assert!(
-    prysm_capture_webos::RELEASE.as_millis() < STOP_DEADLINE.as_millis(),
-    "the capture's release must be reported before the stop deadline"
+    prysm_capture_webos::RELEASE
+        .saturating_add(prysm_output_wled::IDLE_LIMIT)
+        .as_millis()
+        < STOP_DEADLINE.as_millis(),
+    "a stop that meets nothing in flight must end before the stop deadline"
 );
 const _: () = assert!(
     SHUTDOWN_GRACE.as_millis() + STOP_DEADLINE.as_millis() < KILL_AFTER.as_millis(),
@@ -85,7 +90,8 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
 /// portal only has to add the WLED output.
 fn seed(path: &Path) -> Result<()> {
     let mut store = SettingsFile::new(path);
-    if store.load()?.is_none() {
+    // Only a missing file: one that cannot be read is the engine's to report.
+    if matches!(store.load(), Ok(None)) {
         store.save(&Settings {
             capture: Some(AdapterSettings::new(
                 WebosCapture::KIND,

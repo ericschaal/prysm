@@ -7,6 +7,7 @@ Its variants are what callers match on; never match on message text.
 | --- | --- | --- |
 | `Invalid` | A setting failed validation; carries the field path, such as `output.address` | `invalid` (422) |
 | `Decode` | Adapter settings under `kind` could not be decoded | `invalid` (422) |
+| `UnusableSettings` | The settings store could not be read at start (the file does not decode, has another format, or cannot be read); carries the store's error and its causes, no field. The engine runs unconfigured, reporting it until a save | `invalid`, no `field` (422 for a command it refuses) |
 | `Adapter` | A device or adapter failed to open, read, write or idle; `section` says capture or output when known | `adapter` (502) |
 | `StaleRevision` | Settings were replaced from an old revision | `stale_revision` (409) |
 | `NotProcessed` | A calibration pattern while Screen sync is off | `not_processed` (409) |
@@ -35,6 +36,10 @@ The full wire mapping is in the
   not hidden.
 - Surface failures (a portal listener that dies) are recorded in
   `surface_failures`; lighting continues.
+- A settings store that cannot be read is no reason not to start: the
+  engine starts unconfigured and reports the load's error, with its cause,
+  as the failure until a save. A save the store refused changes nothing in
+  the engine; one it took is installed.
 - Panics are for broken internal invariants, not for device, network or file
   errors.
 

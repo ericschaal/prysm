@@ -1,13 +1,14 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
 use crate::address::{DeviceAddress, Host};
 use crate::ddp::{Gamma, Transfer};
+use crate::http::{self, RequestError, TIMEOUT};
 use crate::observe::{BACKOFF, EVERY, Observer, REPLY};
 use crate::output::NotTurnedOff;
-use crate::{LedCounts, MAX_LEDS, Wled, WledSettings, http::RequestError};
+use crate::{IDLE_LIMIT, LedCounts, MAX_LEDS, OPEN_LIMIT, Wled, WledSettings};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{
-    AdapterSettings, DeviceBrightness, Error, IdleMode, LedOutput, OutputFactory, OutputIssue,
-    Registry,
+    AdapterSettings, DeviceBrightness, Error, IdleMode, LedOutput, OpenFailure, OutputFactory,
+    OutputIssue, Registry,
 };
 use prysm_testkit::eventually;
 use serde_json::{Value, json};
@@ -111,6 +112,16 @@ impl Device {
         self.get_request("/json/si");
     }
 
+    /// Run `poll` until a state check reached the device: a check connects
+    /// and sends across polls.
+    fn check_sent(&self, mut poll: impl FnMut()) {
+        let (head, _) = eventually("the check to be sent", WAIT, || {
+            poll();
+            self.calls.try_recv().ok()
+        });
+        assert!(head.starts_with("GET /json/si HTTP/1.1\r\n"), "{head}");
+    }
+
     /// The next request must be `GET path`.
     fn get_request(&self, path: &str) {
         let (head, _) = self.calls.recv_timeout(WAIT).expect("no check");
@@ -152,12 +163,17 @@ impl Device {
     }
 
     fn open_with(&self, leds: LedCounts, dither: bool) -> Result<Box<dyn LedOutput>, Error> {
-        let settings = WledSettings {
+        self.wled
+            .open(&self.settings(leds, dither))
+            .map_err(OpenFailure::into_error)
+    }
+
+    fn settings(&self, leds: LedCounts, dither: bool) -> WledSettings {
+        WledSettings {
             address: self.address("127.0.0.1"),
             leds,
             dither,
-        };
-        self.wled.open(&settings)
+        }
     }
 
     /// The RGB payload of one single-packet DDP frame.
@@ -292,6 +308,75 @@ fn idle_off_and_native_release_then_set_the_idle_state() {
     }
 }
 
+/// A device nobody holds is put in its mode without live mode first, so it
+/// never shows Prysm's colours meanwhile.
+#[test]
+fn idle_without_an_output_sets_the_mode_without_taking_the_device_over() {
+    for (mode, state) in [
+        (IdleMode::Off, off()),
+        (IdleMode::Native, json!({"on": true, "lor": 2, "tt": 0})),
+    ] {
+        let device = Device::new(vec![Reply::Json(OK), Reply::Json(OK)]);
+        let settings = device.settings(one_each(), true);
+        device.wled.idle(&settings, mode).unwrap();
+        device.expect(&[release(), state]);
+    }
+}
+
+/// A request whose deadline has passed is not sent: the device's first
+/// request is the one made after it, with time left.
+#[test]
+fn a_spent_deadline_sends_nothing() {
+    let device = Device::new(vec![Reply::Json(OK)]);
+    let spent = http::Deadline::after(Duration::ZERO);
+    let error = http::post_state(device.http(), "wled", &json!({"on": true}), spent).unwrap_err();
+    assert!(
+        matches!(error, RequestError::TimedOut(Duration::ZERO)),
+        "{error:?}"
+    );
+    http::post_state(
+        device.http(),
+        "wled",
+        &json!({"on": false}),
+        http::Deadline::after(WAIT),
+    )
+    .unwrap();
+    assert_eq!(device.call(), json!({"on": false}));
+}
+
+/// Both requests of an idle share its one deadline, which a timeout names.
+#[test]
+fn an_idle_is_bounded_as_a_whole() {
+    let device = Device::new(vec![Reply::Json(OK), Reply::Hang]);
+    let settings = device.settings(one_each(), true);
+    let error = device.wled.idle(&settings, IdleMode::Off).unwrap_err();
+    assert!(
+        matches!(request_error(&error), RequestError::TimedOut(IDLE_LIMIT)),
+        "{error:?}"
+    );
+    device.expect(&[release(), off()]);
+}
+
+/// An open has one deadline: live mode by its first part, which a timeout
+/// names, and turning the device off again by its end, [`OPEN_LIMIT`].
+#[test]
+fn an_open_is_bounded_as_a_whole() {
+    let device = Device::new(vec![Reply::Hang, Reply::Hang]);
+    let Err(error) = device.open(one_each()) else {
+        panic!("live mode never answered");
+    };
+    let failed: &NotTurnedOff = source(&error).downcast_ref().expect("both failed");
+    assert!(
+        matches!(failed.live, RequestError::TimedOut(TIMEOUT)),
+        "{failed:?}"
+    );
+    assert!(
+        matches!(failed.off, RequestError::TimedOut(OPEN_LIMIT)),
+        "{failed:?}"
+    );
+    device.expect(&[release(), release()]);
+}
+
 #[test]
 fn unreachable_device_fails_open_with_its_cause() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -302,7 +387,12 @@ fn unreachable_device_fails_open_with_its_cause() {
         leds: one_each(),
         dither: true,
     };
-    let error = Wled::local(4048).open(&settings).err().unwrap();
+    let failure = Wled::local(4048).open(&settings).err().unwrap();
+    assert!(
+        matches!(failure, OpenFailure::Untouched(_)),
+        "nothing reached it"
+    );
+    let error = failure.into_error();
     assert!(error.to_string().contains("live mode"), "{error}");
     let cause = request_error(&error);
     assert!(matches!(cause, RequestError::Connect(_)), "{cause:?}");
@@ -328,7 +418,16 @@ fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
             Reply::Json(OK),
             Reply::Json(OK),
         ]);
-        let error = device.open(one_each()).err().unwrap();
+        let failure = device
+            .wled
+            .open(&device.settings(one_each(), true))
+            .err()
+            .unwrap();
+        assert!(
+            matches!(failure, OpenFailure::Touched(_)),
+            "it took a request"
+        );
+        let error = failure.into_error();
         let cause = request_error(&error);
         assert!(!matches!(cause, RequestError::Connect(_)), "{cause:?}");
         assert!(!error.to_string().contains("also failed"), "{error}");
@@ -607,9 +706,14 @@ fn unresolvable_host_fails_open_naming_the_host() {
         leds: one_each(),
         dither: true,
     };
-    let started = Instant::now();
-    let error = Wled::default().open(&settings).err().unwrap();
-    assert!(started.elapsed() < Duration::from_secs(3), "bounded");
+    let wled = Wled::default()
+        .with_lookup(|_, _| Err(io::Error::new(io::ErrorKind::NotFound, "no such host")));
+    let failure = wled.open(&settings).err().unwrap();
+    assert!(
+        matches!(failure, OpenFailure::Untouched(_)),
+        "nothing reached it"
+    );
+    let error = failure.into_error();
     assert!(
         error
             .to_string()
@@ -631,9 +735,15 @@ fn unresolvable_host_fails_open_naming_the_host() {
 #[test]
 fn a_hanging_lookup_is_bounded_and_not_repeated() {
     static CALLS: AtomicU32 = AtomicU32::new(0);
+    // Opened once the test is done, so the lookup thread ends with it.
+    static GATE: (std::sync::Mutex<bool>, std::sync::Condvar) =
+        (std::sync::Mutex::new(false), std::sync::Condvar::new());
     let wled = Wled::default().with_lookup(|_, _| {
         CALLS.fetch_add(1, Ordering::SeqCst);
-        thread::sleep(Duration::from_secs(60));
+        let (open, opened) = &GATE;
+        let _open = opened
+            .wait_while(open.lock().unwrap(), |open| !*open)
+            .unwrap();
         Err(io::Error::other("unreachable"))
     });
     let settings = WledSettings {
@@ -642,13 +752,15 @@ fn a_hanging_lookup_is_bounded_and_not_repeated() {
         dither: true,
     };
     for _ in 0..2 {
-        let error = wled.open(&settings).err().unwrap();
+        let error = wled.open(&settings).err().unwrap().into_error();
         assert_eq!(
             prysm_ports::chain(&error),
             "cannot resolve WLED host wled.local: no answer yet"
         );
     }
     assert_eq!(CALLS.load(Ordering::SeqCst), 1, "one lookup at a time");
+    *GATE.0.lock().unwrap() = true;
+    GATE.1.notify_all();
 }
 
 #[test]
@@ -813,7 +925,8 @@ fn the_sender_address_behind_nat_is_learned_from_wled() {
     assert_eq!(found, [None, None, Some(OutputIssue::OtherSender)]);
 }
 
-/// The check fails in the poll that starts it: no reply is waited for.
+/// A refused connect is reported as soon as a poll sees it, not at the
+/// reply's deadline: the clock never moves here.
 #[test]
 fn an_unreachable_state_endpoint_is_reported_at_once() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -821,7 +934,45 @@ fn an_unreachable_state_endpoint_is_reported_at_once() {
     drop(listener);
     let t0 = Instant::now();
     let mut observer = Observer::new(device, "wled", Duration::ZERO, t0);
-    assert_eq!(observer.poll(t0), Some(OutputIssue::Unreachable));
+    let found = eventually("the refusal", WAIT, || {
+        let found = observer.poll(t0);
+        (!observer.checking()).then_some(found)
+    });
+    assert_eq!(found, Some(OutputIssue::Unreachable));
+}
+
+/// A device that does not answer the connect (a firewall dropping TCP 80,
+/// say) does not hold the caller: the poll that starts the check returns
+/// with it connecting, later polls go on, and the check is given up at
+/// [`REPLY`]. A listener whose queue is full stands in: Linux lets the
+/// connects wait (macOS refuses them, so the test is Linux's).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_state_check_never_waits_for_the_connect() {
+    let listener =
+        socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+    listener
+        .bind(&SocketAddr::from(([127, 0, 0, 1], 0)).into())
+        .unwrap();
+    listener.listen(0).unwrap();
+    let address = listener.local_addr().unwrap().as_socket().unwrap();
+    // Connects nobody accepts, until one is left waiting: the queue is full.
+    let mut fillers = Vec::new();
+    loop {
+        let filler = std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100));
+        match filler {
+            Ok(filler) => fillers.push(filler),
+            Err(_) => break,
+        }
+        assert!(fillers.len() < 64, "the queue never filled");
+    }
+    let t0 = Instant::now();
+    let mut observer = Observer::new(address, "wled", Duration::ZERO, t0);
+    assert_eq!(observer.poll(t0), None, "the check started");
+    assert!(observer.checking(), "still connecting");
+    assert_eq!(observer.poll(t0 + REPLY / 2), None);
+    assert!(observer.checking(), "still connecting");
+    assert_eq!(observer.poll(t0 + REPLY), Some(OutputIssue::Unreachable));
     assert!(!observer.checking());
 }
 
@@ -864,10 +1015,12 @@ fn a_dripping_state_reply_is_abandoned_at_the_deadline() {
     });
     let t0 = Instant::now();
     let mut observer = Observer::new(address, "wled", Duration::ZERO, t0);
-    assert_eq!(observer.poll(t0), None, "sent");
-    assert!(observer.checking());
-    // The whole head has dripped in, a byte at a time; the body never ends.
-    head_written.recv_timeout(WAIT).expect("the reply began");
+    // The whole head drips in, a byte at a time; the body never ends.
+    eventually("the reply to begin", WAIT, || {
+        assert_eq!(observer.poll(t0), None);
+        assert!(observer.checking());
+        head_written.try_recv().ok()
+    });
     let before = t0 + REPLY - Duration::from_millis(1);
     assert_eq!(observer.poll(before), None);
     assert!(observer.checking(), "still reading before the deadline");
@@ -930,31 +1083,24 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
     let device = Device::new(vec![Reply::Json(OK), Reply::Json(OK), Reply::Hang]);
     let mut output = device.open(one_each()).unwrap();
     device.expect(&[release(), live()]);
-    let started = Instant::now();
-    let mut slowest = Duration::ZERO;
-    let mut frames = 0;
-    let issue = loop {
-        let call = Instant::now();
+    // The check is sent and its reply never comes; frames go on meanwhile.
+    // (That a check never waits, and ends at its deadline, the observer's
+    // own tests show with injected time.)
+    device.check_sent(|| {
         output.write(&EdgeColors::default()).unwrap();
-        let issue = output.observe();
-        slowest = slowest.max(call.elapsed());
         assert_eq!(device.rgb(), [0; 12], "every frame reaches WLED");
-        frames += 1;
-        if issue.is_some() {
-            break issue;
-        }
-        assert!(started.elapsed() < WAIT, "no verdict");
-        thread::sleep(Duration::from_millis(5));
-    };
-    assert_eq!(issue, Some(OutputIssue::Unreachable));
-    assert!(
-        started.elapsed() >= Duration::from_millis(900),
-        "waited for the reply"
-    );
-    // Loose bounds for loaded runners: what matters is that no call waits
-    // for the 1.5 s state request.
-    assert!(frames > 10, "{frames} frames");
-    assert!(slowest < Duration::from_millis(500), "{slowest:?}");
+        assert!(output.report().issue.is_none());
+    });
+    for _ in 0..20 {
+        output.write(&EdgeColors::default()).unwrap();
+        assert_eq!(device.rgb(), [0; 12], "every frame reaches WLED");
+        // No answer yet, or none by the deadline.
+        let issue = output.report().issue;
+        assert!(
+            matches!(issue, None | Some(OutputIssue::Unreachable)),
+            "{issue:?}"
+        );
+    }
 }
 
 #[test]
@@ -973,11 +1119,11 @@ fn idle_abandons_a_check_in_flight_and_restores_the_device() {
         let mut output = device.open(one_each()).unwrap();
         device.expect(&[release(), live()]);
         output.write(&EdgeColors::default()).unwrap();
-        assert_eq!(output.observe(), None, "check sent, no answer yet");
-        device.check_request();
-        let started = Instant::now();
+        device.check_sent(|| assert_eq!(output.report().issue, None, "no answer yet"));
+        // The fixture answers one connection at a time: the idle's requests
+        // are answered only once the check's connection is closed, so an
+        // idle that waited for the check would time out instead.
         output.idle(mode).unwrap();
-        assert!(started.elapsed() < Duration::from_secs(1));
         device.expect(&[release(), state]);
     }
 }
@@ -998,7 +1144,7 @@ fn findings_survive_until_the_next_check_and_idle_still_restores() {
     device.expect(&[release(), live()]);
     eventually("WLED switched off to be reported", WAIT, || {
         output.write(&EdgeColors::default()).unwrap();
-        (output.observe() == Some(OutputIssue::Off)).then_some(())
+        (output.report().issue == Some(OutputIssue::Off)).then_some(())
     });
     device.check_request();
     output.idle(IdleMode::Off).unwrap();
@@ -1120,6 +1266,9 @@ fn wled_brightness_follows_the_state_and_goes_with_an_unanswered_check() {
     assert_eq!(observer.brightness(), percent(25), "64 of 255");
     assert_eq!(check(&mut observer), Some(OutputIssue::Unreachable));
     assert_eq!(observer.brightness(), None, "no state, no brightness");
+    // The colours are still encoded for the brightness WLED last had: one
+    // missed check does not rebuild the dither levels for full brightness.
+    assert_eq!(observer.level(), Some(64));
 }
 
 #[test]
@@ -1134,12 +1283,15 @@ fn an_open_output_reports_wled_brightness() {
     ]);
     let mut output = device.open(one_each()).unwrap();
     device.expect(&[release(), live()]);
-    eventually("WLED brightness to be reported", WAIT, || {
+    // A report polls, so each starts the next check: the answers are read
+    // from the report that had them.
+    let brightness = eventually("WLED brightness to be reported", WAIT, || {
         output.write(&EdgeColors::default()).unwrap();
-        assert_eq!(output.observe(), None);
-        output.brightness()
+        let report = output.report();
+        assert_eq!(report.issue, None);
+        report.brightness
     });
-    assert_eq!(output.brightness(), percent(40));
+    assert_eq!(Some(brightness), percent(40));
     device.check_request();
     device.get_request("/json/cfg");
     output.idle(IdleMode::Off).unwrap();
@@ -1188,14 +1340,17 @@ fn an_open_output_reports_wled_led_count_and_keeps_sending() {
     ]);
     let mut output = device.open(one_each()).unwrap();
     device.expect(&[release(), live()]);
-    assert_eq!(output.device_led_count(), None, "unknown before a check");
-    eventually("the WLED LED count to be reported", WAIT, || {
+    let mut reports = 0;
+    let count = eventually("the WLED LED count to be reported", WAIT, || {
         output.write(&EdgeColors::default()).unwrap();
-        assert_eq!(output.observe(), None);
-        output.device_led_count()
+        let report = output.report();
+        reports += 1;
+        assert_eq!(report.issue, None);
+        report.led_count
     });
+    assert!(reports > 1, "unknown before the check answered");
     // Four LEDs sent, 120 on the device: reported, and writing goes on.
-    assert_eq!(output.device_led_count(), Some(120));
+    assert_eq!(count, 120);
     output.write(&EdgeColors::default()).unwrap();
     device.check_request();
     output.idle(IdleMode::Off).unwrap();
@@ -1316,8 +1471,9 @@ fn an_open_output_encodes_for_wled_gamma() {
         let mut output = device.open_with(one_each(), dither).unwrap();
         device.expect(&[release(), live()]);
         eventually("the WLED configuration to be read", WAIT, || {
-            assert_eq!(output.observe(), None);
-            output.brightness()
+            let report = output.report();
+            assert_eq!(report.issue, None);
+            report.brightness
         });
         let color = fill(0.18, 0.0, 1.0);
         output

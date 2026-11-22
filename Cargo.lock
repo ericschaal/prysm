@@ -2080,11 +2080,13 @@ name = "prysm-output-wled"
 version = "0.0.0"
 dependencies = [
  "ddp-rs",
+ "libc",
  "prysm-core",
  "prysm-ports",
  "prysm-testkit",
  "serde",
  "serde_json",
+ "socket2",
  "thiserror 2.0.21",
  "tracing",
  "utoipa",
@@ -2147,6 +2149,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -2207,6 +2211,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "image",
+ "libc",
  "prysm-capture-remote",
  "prysm-core",
  "prysm-ports",

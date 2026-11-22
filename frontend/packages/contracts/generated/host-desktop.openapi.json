@@ -305,7 +305,6 @@
           "faulted",
           "adapter",
           "unavailable",
-          "timeout",
           "internal",
           "forbidden",
           "not_found",

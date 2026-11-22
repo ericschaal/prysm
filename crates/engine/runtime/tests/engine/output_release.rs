@@ -16,7 +16,8 @@ async fn device_native_idles_the_output_without_a_session() {
             .await
             .unwrap();
         assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
-        assert_eq!(log.events(), ["output.open:a", "output.idle:a:Native"]);
+        // Put in its own effects without being taken over.
+        assert_eq!(log.events(), ["output.idle:a:Native"]);
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert_eq!(log.count("output.idle:a:Off"), 1);
@@ -144,9 +145,10 @@ async fn stopping_while_released_leaves_the_output_in_the_stop_mode() {
 
         handle.set_target(LightingTarget::Processed).await.unwrap();
         assert!(log.wait_for("output.idle:o:Native", 2).await);
-        // Released to native, stopped Off: reopened only to turn it off.
+        // Released to native, stopped Off: turned off without being taken
+        // over again.
         handle.set_target(LightingTarget::Off).await.unwrap();
-        assert_eq!(log.count("output.open:o"), 3);
+        assert_eq!(log.count("output.open:o"), 2);
         assert!(before(&log, "source.close:s", "output.idle:o:Off"));
         assert_eq!(log.count("output.idle:o:Off"), 1);
         engine.shutdown().await.unwrap();

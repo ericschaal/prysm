@@ -5,10 +5,11 @@
 //! One request at most every [`EVERY`] (5 × that after a check that got no
 //! usable answer): `GET /json/si`, except that the second check and every
 //! [`CONFIG_EVERY`]th after it read `GET /json/cfg` instead. The caller's
-//! thread only connects (bounded by [`CONNECT`]) and sends the request; the
-//! reply is read without blocking on later polls and abandoned after
-//! [`REPLY`]. Nothing is sent to change WLED's state: Prysm reports, keeps
-//! sending, and the LEDs follow again once WLED takes the colours.
+//! thread never waits for WLED: the connect, the request and the reply each
+//! go as far as they can without blocking at every poll, and the check is
+//! abandoned [`REPLY`] after it started. Nothing is sent to change WLED's
+//! state: Prysm reports, keeps sending, and the LEDs follow again once WLED
+//! takes the colours.
 //!
 //! WLED shows realtime (DDP) colours at its master brightness `bri` scaled by
 //! the LED preferences' brightness factor (`light.scale-bri`, percent,
@@ -29,8 +30,9 @@
 //! settings PIN) no brightness is reported and the gamma is unknown.
 use crate::ddp::{Gamma, Transfer};
 use crate::http::{self, RequestError};
-use prysm_ports::{DeviceBrightness, OutputIssue, chain};
+use prysm_ports::{DeviceBrightness, DeviceReport, OutputIssue, chain};
 use serde::Deserialize;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::num::NonZeroU32;
@@ -41,10 +43,8 @@ pub const EVERY: Duration = Duration::from_secs(1);
 /// After a check without a usable answer the next waits this many times
 /// [`EVERY`].
 pub(crate) const BACKOFF: u32 = 5;
-/// Longest the caller's thread waits, for the TCP connect (and the request
-/// write, which fits an empty send buffer).
-const CONNECT: Duration = Duration::from_millis(200);
-/// How long a reply may take; it is read without waiting meanwhile.
+/// How long a check may take, from the connect to the end of the reply;
+/// nothing waits for it meanwhile.
 pub(crate) const REPLY: Duration = Duration::from_secs(1);
 /// `/json/si` grows with segments and usermods; WLED's own WebSocket limit.
 const MAX_REPLY: usize = 64 * 1024;
@@ -78,8 +78,8 @@ pub struct Observer {
     /// named while it showed DDP.
     ours: Option<IpAddr>,
     issue: Option<OutputIssue>,
-    /// `bri` from the latest state that answered; `None` after one that did
-    /// not.
+    /// `bri` from the latest state that answered, kept through checks that
+    /// got no answer: colours are encoded for it meanwhile.
     bri: Option<u8>,
     /// `info.leds.count` from the latest state that answered; `None` after
     /// one that did not.
@@ -88,11 +88,15 @@ pub struct Observer {
     config: Option<Realtime>,
 }
 
+/// A check in flight: connecting, then sending its request, then reading
+/// the reply, each as far as it goes without blocking.
 struct Pending {
     ask: Ask,
     stream: TcpStream,
-    /// This host's address on the connection to WLED.
-    local: IpAddr,
+    /// This host's address on the connection to WLED, once connected.
+    local: Option<IpAddr>,
+    /// What is left of the request to send once connected.
+    unsent: Vec<u8>,
     reply: Vec<u8>,
     deadline: Instant,
 }
@@ -124,10 +128,23 @@ impl Observer {
     }
 
     /// The device's own brightness while it scales Prysm's colours, from
-    /// the latest state and configuration; `None` until both answered.
+    /// the latest state and configuration; `None` until both answered and
+    /// while the latest state check got no answer.
     pub fn brightness(&self) -> Option<DeviceBrightness> {
+        if self.issue == Some(OutputIssue::Unreachable) {
+            return None;
+        }
         self.level()
             .map(|level| DeviceBrightness::of(level.into(), FULL))
+    }
+
+    /// [`Self::poll`], with the brightness and LED count known then.
+    pub fn report(&mut self, now: Instant) -> DeviceReport {
+        DeviceReport {
+            issue: self.poll(now),
+            brightness: self.brightness(),
+            led_count: self.led_count(),
+        }
     }
 
     /// The brightness WLED scales Prysm's colours by, 0–255 (its
@@ -158,23 +175,24 @@ impl Observer {
     /// Advance the check to `now` without waiting for WLED: send the one
     /// due, or read the reply in flight; the latest finding.
     pub fn poll(&mut self, now: Instant) -> Option<OutputIssue> {
-        if let Some(pending) = &mut self.pending {
-            let body = match pending.read() {
-                Ok(None) if now < pending.deadline => return self.issue,
-                Ok(None) => Err(io::Error::from(ErrorKind::TimedOut).into()),
-                Ok(Some(body)) => Ok(body),
-                Err(error) => Err(error),
-            };
-            let (ask, local) = (pending.ask, pending.local);
-            self.pending = None;
-            self.answered(now, ask, body.map(|body| (body, local)));
-        } else if now >= self.next {
+        if self.pending.is_none() && now >= self.next {
             let ask = self.ask();
             self.checks = self.checks.wrapping_add(1);
             match self.send(now, ask) {
                 Ok(pending) => self.pending = Some(pending),
                 Err(error) => self.answered(now, ask, Err(error)),
             }
+        }
+        if let Some(pending) = &mut self.pending {
+            let answer = match pending.advance() {
+                Ok(None) if now < pending.deadline => return self.issue,
+                Ok(None) => Err(io::Error::from(ErrorKind::TimedOut).into()),
+                Ok(Some(answer)) => Ok(answer),
+                Err(error) => Err(error),
+            };
+            let ask = pending.ask;
+            self.pending = None;
+            self.answered(now, ask, answer);
         }
         self.issue
     }
@@ -231,21 +249,29 @@ impl Observer {
         self.pending.is_some()
     }
 
+    /// Start a check with a connect that does not wait for the device.
     fn send(&self, now: Instant, ask: Ask) -> Result<Pending, RequestError> {
         let path = match ask {
             Ask::State => "/json/si",
             Ask::Config => "/json/cfg",
         };
-        let request = http::get(path, &self.host);
-        let mut stream =
-            TcpStream::connect_timeout(&self.device, CONNECT).map_err(RequestError::Connect)?;
-        stream.set_write_timeout(Some(CONNECT))?;
-        stream.write_all(request.as_bytes())?;
-        stream.set_nonblocking(true)?;
+        let socket = Socket::new(
+            Domain::for_address(self.device),
+            Type::STREAM,
+            Some(Protocol::TCP),
+        )
+        .and_then(|socket| socket.set_nonblocking(true).map(|()| socket))
+        .map_err(RequestError::Connect)?;
+        match socket.connect(&self.device.into()) {
+            Ok(()) => {}
+            Err(error) if connecting(&error) => {}
+            Err(error) => return Err(RequestError::Connect(error)),
+        }
         Ok(Pending {
             ask,
-            local: stream.local_addr()?.ip(),
-            stream,
+            stream: socket.into(),
+            local: None,
+            unsent: http::get(path, &self.host).into_bytes(),
             reply: Vec::new(),
             deadline: now + REPLY,
         })
@@ -262,7 +288,9 @@ impl Observer {
                 self.every * BACKOFF
             };
         let status = answer.as_ref().ok().map(|(status, _)| status);
-        self.bri = status.and_then(|status| status.state.bri);
+        if let Some(status) = status {
+            self.bri = status.state.bri;
+        }
         self.leds = status
             .and_then(|status| status.info.leds)
             .map(|leds| leds.count);
@@ -298,11 +326,48 @@ impl Observer {
     }
 }
 
+/// A non-blocking connect that goes on: `EINPROGRESS` on Unix,
+/// `WSAEWOULDBLOCK` on Windows.
+fn connecting(error: &io::Error) -> bool {
+    #[cfg(unix)]
+    let in_progress = error.raw_os_error() == Some(libc::EINPROGRESS);
+    #[cfg(not(unix))]
+    let in_progress = false;
+    in_progress || error.kind() == ErrorKind::WouldBlock
+}
+
 impl Pending {
-    /// The body once the whole reply arrived; `None` while more is to come.
-    fn read(&mut self) -> Result<Option<Vec<u8>>, RequestError> {
+    /// Go as far as the socket lets without waiting: finish the connect,
+    /// send the request, read the reply. The body, with this host's address
+    /// on the connection, once the whole reply arrived; `None` while more is
+    /// to come.
+    fn advance(&mut self) -> Result<Option<(Vec<u8>, IpAddr)>, RequestError> {
+        let local = match self.local {
+            Some(local) => local,
+            None => {
+                // A failed connect leaves its error on the socket.
+                if let Some(error) = self.stream.take_error()? {
+                    return Err(RequestError::Connect(error));
+                }
+                match self.stream.peer_addr() {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == ErrorKind::NotConnected => return Ok(None),
+                    Err(error) => return Err(RequestError::Connect(error)),
+                }
+                *self.local.insert(self.stream.local_addr()?.ip())
+            }
+        };
+        while !self.unsent.is_empty() {
+            match self.stream.write(&self.unsent) {
+                Ok(0) => return Err(io::Error::from(ErrorKind::WriteZero).into()),
+                Ok(written) => drop(self.unsent.drain(..written)),
+                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         http::read_response(&mut self.stream, &mut self.reply, MAX_REPLY)?
-            .map(http::Response::success)
+            .map(|response| response.success().map(|body| (body, local)))
             .transpose()
     }
 }

@@ -69,6 +69,24 @@ async fn foreign_origins_are_refused_without_running_the_command() {
             put(None, None).await.unwrap().status(),
             StatusCode::NO_CONTENT
         );
+        // Behind a reverse proxy that serves the portal over HTTPS: the
+        // browser's origin has the proxy's scheme and the request its host.
+        for (origin, host) in [
+            ("https://prysm.example.com", "prysm.example.com"),
+            ("https://prysm.example.com", "prysm.example.com:443"),
+            ("https://prysm.example.com:8443", "prysm.example.com:8443"),
+        ] {
+            let proxied = put(Some(origin), Some(host)).await.unwrap();
+            assert_eq!(proxied.status(), StatusCode::NO_CONTENT, "{origin} {host}");
+        }
+        for (origin, host) in [
+            ("https://prysm.example.com", "prysm.example.com:80"),
+            ("https://prysm.example.com:443", "prysm.example.com:8443"),
+            ("ftp://prysm.example.com", "prysm.example.com"),
+        ] {
+            let refused = put(Some(origin), Some(host)).await.unwrap();
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{origin} {host}");
+        }
         portal.shutdown().await.unwrap();
     })
     .await;

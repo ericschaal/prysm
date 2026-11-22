@@ -196,8 +196,6 @@ export function plainFailure(
   if (section === 'capture') return 'The video source is not working.';
   if (section === 'output') return 'The lights are not responding.';
   switch (failure.kind) {
-    case 'timeout':
-      return 'A device took too long to answer.';
     case 'unavailable':
       return 'A device is not available right now.';
     case 'busy':

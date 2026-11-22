@@ -6,6 +6,7 @@ use serde::{
 };
 use serde_json::{Number, Value};
 use std::{
+    ffi::OsStr,
     fmt, fs, io,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -165,17 +166,78 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for WithoutFormat<A> {
     }
 }
 
+/// Why bytes are not settings this Prysm reads.
+enum Refused {
+    TooLarge(io::Error),
+    Json(serde_json::Error),
+    Format(FormatError),
+}
+
+/// The settings in a file's bytes. `load` reads the file with it and `save`
+/// checks what it writes with it, so whatever is saved loads.
+fn decode(bytes: &[u8]) -> std::result::Result<Settings, Refused> {
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(Refused::TooLarge(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            "it is larger than 1 MiB",
+        )));
+    }
+    let file: Value = serde_json::from_slice(bytes).map_err(Refused::Json)?;
+    check_format(&file).map_err(Refused::Format)?;
+    settings(bytes).map_err(Refused::Json)
+}
+
+/// What a file the last `load` could not read is renamed to at the next
+/// `save`: its own name, this, and six random characters, in its directory.
+pub const UNREADABLE: &str = ".unreadable-";
+
 /// A [`SettingsStore`] backed by one JSON file, replaced atomically on save.
+/// A file that the last `load` could not read is never replaced: the next
+/// `save` first moves it beside the new one (see [`UNREADABLE`]).
 #[derive(Debug, Clone)]
 pub struct SettingsFile {
     path: PathBuf,
+    /// The last `load` found something at the path that it could not read.
+    unread: bool,
+    sync_directory: fn(&Path) -> io::Result<()>,
+    /// Renames the written temporary file over the path.
+    replace: fn(tempfile::NamedTempFile, &Path) -> io::Result<()>,
+    /// Gives the file a second name.
+    link: fn(&Path, &Path) -> io::Result<()>,
 }
 
 impl SettingsFile {
     /// Nothing is touched until the first `load` or `save`. A relative path
     /// resolves against the working directory at each call.
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            unread: false,
+            sync_directory,
+            replace,
+            link: |from, to| fs::hard_link(from, to),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_link(mut self, link: fn(&Path, &Path) -> io::Result<()>) -> Self {
+        self.link = link;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_replace(
+        mut self,
+        replace: fn(tempfile::NamedTempFile, &Path) -> io::Result<()>,
+    ) -> Self {
+        self.replace = replace;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_directory_sync(mut self, sync: fn(&Path) -> io::Result<()>) -> Self {
+        self.sync_directory = sync;
+        self
     }
 
     #[must_use]
@@ -200,10 +262,8 @@ impl SettingsFile {
             source,
         )
     }
-}
 
-impl SettingsStore for SettingsFile {
-    fn load(&mut self) -> Result<Option<Settings>> {
+    fn read(&self) -> Result<Option<Settings>> {
         let file = match fs::File::open(&self.path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -213,20 +273,102 @@ impl SettingsStore for SettingsFile {
         file.take(MAX_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|error| self.failed("read", error))?;
-        if bytes.len() as u64 > MAX_BYTES {
-            return Err(self.failed(
-                "read",
-                io::Error::new(io::ErrorKind::FileTooLarge, "it is larger than 1 MiB"),
-            ));
-        }
-        let file: Value =
-            serde_json::from_slice(&bytes).map_err(|error| self.failed("parse", error))?;
-        check_format(&file).map_err(|error| self.failed("load", error))?;
-        settings(&bytes)
-            .map(Some)
-            .map_err(|error| self.failed("parse", error))
+        decode(&bytes).map(Some).map_err(|refused| match refused {
+            Refused::TooLarge(error) => self.failed("read", error),
+            Refused::Json(error) => self.failed("parse", error),
+            Refused::Format(error) => self.failed("load", error),
+        })
     }
 
+    /// Keep the file at the path under a name of its own beside it; `None`
+    /// when nothing is there any more. In order of preference:
+    ///
+    /// - a hard link: the file stays at its path until the save's rename
+    ///   replaces it there;
+    /// - where a hard link fails (no hard links on the filesystem; on Linux
+    ///   `fs.protected_hardlinks` for a file this user neither owns nor may
+    ///   write), a copy with its permissions, which needs the file readable;
+    ///   the file stays at its path likewise;
+    /// - where both fail, a rename: until the save's rename the path holds
+    ///   nothing, and a crash in between leaves it so (the next start is
+    ///   then unconfigured, with no failure shown), the file kept beside.
+    fn set_aside(&self) -> std::result::Result<Option<Aside>, NotSetAside> {
+        let mut prefix = self
+            .path
+            .file_name()
+            .unwrap_or(OsStr::new("settings"))
+            .to_os_string();
+        prefix.push(UNREADABLE);
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(&prefix);
+        let directory = self.directory();
+        // A name nothing has: a hard link or a new file never replaces one.
+        let link = match builder.make_in(directory, |aside| (self.link)(&self.path, aside)) {
+            Ok(aside) => return Ok(Some(Aside::Linked(aside.into_temp_path()))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(link) => link,
+        };
+        let copy = match builder.make_in(directory, |aside| copy_new(&self.path, aside)) {
+            Ok(aside) => return Ok(Some(Aside::Linked(aside.into_temp_path()))),
+            Err(copy) => copy,
+        };
+        // A new file of its own, so the rename replaces nothing else.
+        let moved = builder
+            .tempfile_in(directory)
+            .map(tempfile::NamedTempFile::into_temp_path)
+            .and_then(|placeholder| {
+                fs::rename(&self.path, &placeholder)?;
+                placeholder.keep().map_err(|error| error.error)
+            });
+        match moved {
+            Ok(aside) => Ok(Some(Aside::Moved(aside))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(rename) => Err(NotSetAside { link, copy, rename }),
+        }
+    }
+}
+
+/// Where the file a load could not read is kept.
+enum Aside {
+    /// A second name: the file is still at its path. Removed when dropped,
+    /// unless kept.
+    Linked(tempfile::TempPath),
+    /// Its only name: the path holds nothing until the save's rename.
+    Moved(PathBuf),
+}
+
+/// A save whose rename failed after the file a load could not read was
+/// moved aside, and that could not be moved back: the path now holds no
+/// file, and the old one is only at `aside`.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "{replace}; the file it could not read is now only at {}: moving it back failed: {back}",
+    aside.display()
+)]
+pub struct LeftAside {
+    replace: io::Error,
+    aside: PathBuf,
+    back: io::Error,
+}
+
+/// Why the file a load could not read could not be kept: each way's cause.
+#[derive(Debug, thiserror::Error)]
+#[error("a hard link failed: {link}; a copy failed: {copy}; a rename failed: {rename}")]
+pub struct NotSetAside {
+    link: io::Error,
+    copy: io::Error,
+    rename: io::Error,
+}
+
+impl SettingsStore for SettingsFile {
+    fn load(&mut self) -> Result<Option<Settings>> {
+        let loaded = self.read();
+        self.unread = loaded.is_err();
+        loaded
+    }
+
+    /// `Err` leaves the stored settings as they were; `Ok` once the new file
+    /// is in place, even if syncing its directory then fails (logged).
     fn save(&mut self, settings: &Settings) -> Result<()> {
         let saved = Saved {
             format: FORMAT,
@@ -235,12 +377,26 @@ impl SettingsStore for SettingsFile {
         let mut bytes =
             serde_json::to_vec_pretty(&saved).map_err(|error| self.failed("encode", error))?;
         bytes.push(b'\n');
+        decode(&bytes).map_err(|refused| match refused {
+            Refused::TooLarge(error) => self.failed("save", error),
+            Refused::Json(error) => self.failed("save", error),
+            Refused::Format(error) => self.failed("save", error),
+        })?;
 
         // Everything before the rename only touches the temporary file, which
         // is removed on drop; the existing file stays intact.
         let mut temporary = tempfile::NamedTempFile::new_in(self.directory())
             .map_err(|error| self.failed("create a temporary file for", error))?;
         match fs::metadata(&self.path) {
+            Ok(existing) if !existing.is_file() => {
+                return Err(self.failed(
+                    "replace",
+                    io::Error::new(io::ErrorKind::InvalidInput, "it is not a regular file"),
+                ));
+            }
+            // The file set aside keeps its permissions; the new one has the
+            // temporary file's, owner-only.
+            Ok(_) if self.unread => {}
             Ok(existing) => temporary
                 .as_file()
                 .set_permissions(existing.permissions())
@@ -253,17 +409,86 @@ impl SettingsStore for SettingsFile {
             .and_then(|()| temporary.as_file().sync_all())
             .map_err(|error| self.failed("write a temporary file for", error))?;
 
-        // The rename is the commit point.
-        temporary
-            .persist(&self.path)
-            .map_err(|error| self.failed("replace", error.error))?;
-        sync_directory(self.directory()).map_err(|error| {
-            self.failed(
-                "make durable (the new contents were written, but may not survive a crash)",
-                error,
-            )
-        })
+        let aside = if self.unread {
+            self.set_aside()
+                .map_err(|error| self.failed("set aside the unreadable", error))?
+        } else {
+            None
+        };
+        // The rename is the commit point. A failure leaves the unreadable
+        // file at its path: its second name is removed, or a file moved
+        // aside goes back.
+        if let Err(replace) = (self.replace)(temporary, &self.path) {
+            if let Some(Aside::Moved(aside)) = aside
+                && let Err(back) = fs::rename(&aside, &self.path)
+            {
+                return Err(self.failed(
+                    "replace",
+                    LeftAside {
+                        replace,
+                        aside,
+                        back,
+                    },
+                ));
+            }
+            return Err(self.failed("replace", replace));
+        }
+        self.unread = false;
+        match aside {
+            None => {}
+            Some(Aside::Moved(aside)) => tracing::warn!(
+                "kept the settings file it could not read as {}",
+                aside.display()
+            ),
+            // Saved: a name that cannot be kept is logged, not a failure.
+            Some(Aside::Linked(aside)) => match aside.keep() {
+                Ok(aside) => tracing::warn!(
+                    "kept the settings file it could not read as {}",
+                    aside.display()
+                ),
+                Err(error) => tracing::warn!(
+                    "saved settings file {}, but could not keep the file it could not \
+                     read beside it: {}",
+                    self.path.display(),
+                    error.error
+                ),
+            },
+        }
+        if let Err(error) = (self.sync_directory)(self.directory()) {
+            tracing::warn!(
+                "saved settings file {}, but syncing its directory failed, so the \
+                 save may not survive a crash: {error}",
+                self.path.display()
+            );
+        }
+        Ok(())
     }
+}
+
+fn replace(temporary: tempfile::NamedTempFile, path: &Path) -> io::Result<()> {
+    temporary
+        .persist(path)
+        .map(drop)
+        .map_err(|error| error.error)
+}
+
+/// Copy `from` to the new file `to`, which must not exist; nothing is left
+/// at `to` when it fails.
+fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
+    let mut target = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    let copied = fs::File::open(from)
+        .and_then(|mut source| {
+            io::copy(&mut source, &mut target)?;
+            target.set_permissions(source.metadata()?.permissions())
+        })
+        .and_then(|()| target.sync_all());
+    if copied.is_err() {
+        let _ = fs::remove_file(to);
+    }
+    copied
 }
 
 #[cfg(unix)]

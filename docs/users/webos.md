@@ -116,7 +116,10 @@ Behind an HTTPS reverse proxy, give the TV the proxy's address, such as
 `https://prysm.example.com`: the picture then travels encrypted. The proxy
 must pass WebSockets on `/api/v1/capture/stream` and must not put that path
 behind a login, which the TV cannot do. The computer's LAN address is the
-lowest-delay choice.
+lowest-delay choice. The portal itself works through the proxy when the
+proxy forwards the browser's `Host` header (Caddy and Traefik do; nginx with
+`proxy_set_header Host $host`); a proxy that rewrites it needs Prysm started
+with `--allow-origin https://prysm.example.com` as well.
 
 The TV captures only while the computer's lights are on; otherwise it shows
 **Paused by Prysm**. Picture size, rate, menus and encoding are set in the

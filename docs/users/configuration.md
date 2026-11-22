@@ -224,12 +224,19 @@ Prysm keeps all of the above in one JSON file:
 
 The portal creates the file on the first save. Back it up before upgrades.
 Stop Prysm before editing it by hand. The file starts with `"format": 1`, its
-format number: Prysm refuses a file without it, and a file saved by a newer
-Prysm, with a message naming both numbers. The format is described in the
+format number: Prysm cannot use a file without it, nor one saved by a newer
+Prysm, and says so naming both numbers. The format is described in the
 [settings-file reference](../../crates/adapters/settings-file/README.md).
 
+A file Prysm cannot use (no format number, a newer format, a typo that
+breaks the JSON, a wrong value type, a file it may not read) does not stop
+it: Prysm starts without settings, the light card shows why, and the file
+is left untouched. Fix the file and restart Prysm, or set Prysm up again in
+the portal: the first save keeps the old file beside the new one, as
+`settings.json.unreadable-` and six random characters, and the log names it.
+
 **Upgrading from a version before 1.0:** the existing file has no format
-number, so Prysm refuses to start until you add it. Stop Prysm, add
+number, so Prysm starts without settings until you add it. Stop Prysm, add
 `"format": 1,` after the file's first `{`, check it with `--check-settings`
 (below) and start Prysm again. On the TV's full package, see
 [LG TV](webos.md#1-install).
@@ -241,8 +248,9 @@ readable only by root):
 sudo prysm-headless --check-settings /var/lib/prysm/settings.json
 ```
 
-It prints `settings OK` or the field that is wrong. It does not contact the
-capture device or WLED.
+It prints `settings OK` or what is wrong, and exits 1 then. A missing file
+is reported as `no settings saved yet`, although Prysm itself starts
+unconfigured without one. It does not contact the capture device or WLED.
 
 ## Video files
 

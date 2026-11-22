@@ -1,7 +1,8 @@
 //! Settings changes and the restarts they cause, revisions and validation.
 use crate::common::*;
 use prysm_ports::{
-    AdapterSettings, Error, LightingTarget, Revision, Section, SessionState, Snapshot,
+    AdapterSettings, Error, LightingTarget, Revision, Section, SessionState, Settings,
+    SettingsStore, Snapshot,
 };
 use prysm_runtime::Engine;
 use prysm_runtime::fakes::{CallLog, FakeOutputSettings, FakeSourceSettings, MemoryStore};
@@ -530,6 +531,118 @@ async fn invalid_loaded_settings_stay_reported_after_a_successful_command() {
             .unwrap();
         assert!(handle.snapshot().borrow().failure.is_none());
         engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// Loads fail, like a settings file that does not decode; saves are kept.
+struct Unreadable(MemoryStore);
+
+impl SettingsStore for Unreadable {
+    fn load(&mut self) -> prysm_ports::Result<Option<Settings>> {
+        Err(Error::other("cannot parse settings file"))
+    }
+
+    fn save(&mut self, settings: &Settings) -> prysm_ports::Result<()> {
+        self.0.save(settings)
+    }
+}
+
+/// A store that cannot be read starts the engine unconfigured, with the
+/// load's failure reported until a save replaces what it could not read.
+#[tokio::test]
+async fn an_unreadable_store_starts_unconfigured_and_reports_it_until_a_save() {
+    within_async(LIMIT, async {
+        let log = CallLog::new();
+        let saved = MemoryStore::new();
+        let (handle, engine) = Engine::start(
+            registry(&log),
+            Box::new(Unreadable(saved.clone())),
+            DEADLINE,
+        )
+        .await
+        .unwrap();
+        let unreadable = |s: &Snapshot| {
+            matches!(&s.failure, Some(Error::UnusableSettings(stored))
+                if stored.to_string() == "cannot parse settings file")
+        };
+        assert!(unreadable(&handle.snapshot().borrow()));
+        assert_eq!(handle.snapshot().borrow().settings, Settings::default());
+
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert!(
+            unreadable(&handle.snapshot().borrow()),
+            "a command keeps it"
+        );
+        // Lighting asked for, as `--start` does: the reason nothing is
+        // configured is the store's.
+        for target in [LightingTarget::Processed, LightingTarget::DeviceNative] {
+            let refused = handle.set_target(target).await.unwrap_err();
+            assert!(matches!(refused, Error::UnusableSettings(_)), "{refused:?}");
+            assert_eq!(refused.to_string(), "cannot parse settings file");
+            assert!(unreadable(&handle.snapshot().borrow()), "{target:?}");
+        }
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert!(unreadable(&handle.snapshot().borrow()));
+
+        handle
+            .replace_settings(revision(&handle), named("a", "a"))
+            .await
+            .unwrap();
+        assert!(handle.snapshot().borrow().failure.is_none());
+        assert_eq!(saved.saved(), Some(named("a", "a")));
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// Saves fail, as a store does whose stored settings stay as they were;
+/// loads fail too when `unreadable`.
+struct Refusing {
+    unreadable: bool,
+}
+
+impl SettingsStore for Refusing {
+    fn load(&mut self) -> prysm_ports::Result<Option<Settings>> {
+        if self.unreadable {
+            return Err(Error::other("cannot parse settings file"));
+        }
+        Ok(None)
+    }
+
+    fn save(&mut self, _: &Settings) -> prysm_ports::Result<()> {
+        Err(Error::other("cannot save settings file"))
+    }
+}
+
+/// A refused save leaves the engine with what is stored, and a store that
+/// could not be read reported as it was: its file is still what it was.
+#[tokio::test]
+async fn a_refused_save_installs_nothing() {
+    within_async(LIMIT, async {
+        for unreadable in [false, true] {
+            let log = CallLog::new();
+            let store = Box::new(Refusing { unreadable });
+            let (handle, engine) = Engine::start(registry(&log), store, DEADLINE)
+                .await
+                .unwrap();
+            let before = revision(&handle);
+            let error = handle
+                .replace_settings(before, named("a", "a"))
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), "cannot save settings file");
+            assert_eq!(revision(&handle), before);
+            let snapshot = handle.snapshot().borrow().clone();
+            assert_eq!(snapshot.settings, Settings::default());
+            assert_eq!(
+                matches!(snapshot.failure, Some(Error::UnusableSettings(_))),
+                unreadable,
+                "{:?}",
+                snapshot.failure
+            );
+            engine.shutdown().await.unwrap();
+        }
     })
     .await;
 }

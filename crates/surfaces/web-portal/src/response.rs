@@ -11,7 +11,9 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 /// An event stream with nothing new sends [`KEEPALIVE_COMMENT`] this often,
-/// so a vanished reader is noticed by the write deadline and releases its
+/// so a reader that left is noticed (a reset fails the write; one that
+/// vanished silently once the send buffer is full and the write deadline
+/// passes, which takes long at a few bytes per comment) and releases its
 /// stream slot.
 pub(crate) const KEEPALIVE: Duration = Duration::from_secs(15);
 /// An event-stream comment: ignored by readers, written like any event.
@@ -99,25 +101,18 @@ pub(crate) fn failure(status: StatusCode, kind: FailureKind, message: &str) -> R
     }
 }
 
-/// A runtime command failure. Source chains stay local; the body carries the
-/// kind, a message and, where relevant, the field or current revision.
+/// A runtime command failure: the kind, a message (for an adapter failure its
+/// whole cause chain, see [`Failure`]) and, where relevant, the field, the
+/// current revision or the section.
 pub(crate) fn error(error: &Error) -> Response {
-    let body = Failure::from(error);
-    let status = match body.kind {
-        FailureKind::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
-        FailureKind::StaleRevision | FailureKind::NotProcessed => StatusCode::CONFLICT,
-        FailureKind::Faulted | FailureKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-        FailureKind::Adapter => StatusCode::BAD_GATEWAY,
-        // Not what a runtime error becomes; listed so a new kind is mapped here.
-        FailureKind::Timeout
-        | FailureKind::Internal
-        | FailureKind::Forbidden
-        | FailureKind::NotFound
-        | FailureKind::MethodNotAllowed
-        | FailureKind::BadRequest
-        | FailureKind::PayloadTooLarge
-        | FailureKind::UnsupportedMediaType
-        | FailureKind::Busy => StatusCode::INTERNAL_SERVER_ERROR,
+    let status = match error {
+        Error::Invalid(_) | Error::Decode { .. } | Error::UnusableSettings(_) => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
+        Error::StaleRevision { .. } | Error::NotProcessed => StatusCode::CONFLICT,
+        Error::Faulted(_) | Error::Closed => StatusCode::SERVICE_UNAVAILABLE,
+        Error::Adapter { .. } => StatusCode::BAD_GATEWAY,
+        Error::Panicked(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    json(status, &body)
+    json(status, &Failure::from(error))
 }

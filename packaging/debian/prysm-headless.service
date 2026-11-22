@@ -12,7 +12,9 @@ Type=simple
 DynamicUser=yes
 SupplementaryGroups=video
 # A missing settings file means "unconfigured"; the portal creates it on the
-# first save. Extra options (--start, --allow-origin ...) go in a drop-in:
+# first save. One that cannot be read starts unconfigured too, its error shown
+# in the portal, and the first save keeps it beside the new one. Extra
+# options (--start, --allow-origin ...) go in a drop-in:
 # systemctl edit prysm-headless.
 ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json
 StateDirectory=prysm
@@ -21,7 +23,9 @@ WorkingDirectory=/var/lib/prysm
 Environment=RUST_LOG=warn,prysm=info
 Restart=on-failure
 RestartSec=5
-# The host stops on SIGTERM: session deadline 10 s, portal grace 5 s.
+# The host stops on SIGTERM: an adapter call still running gets the 10 s
+# shutdown grace, then the session stops within its 10 s deadline, while the
+# portal finishes open requests within 5 s: at most about 20 s.
 KillSignal=SIGTERM
 TimeoutStopSec=30
 UMask=0077

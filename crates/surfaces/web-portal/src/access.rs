@@ -141,18 +141,28 @@ pub(crate) fn check(
     }
 }
 
-/// `Origin` is `http://` plus the `Host` header (the portal serves plain HTTP).
+/// `Origin` is `http://` or `https://` plus the `Host` header, the scheme's
+/// default port left out. The portal serves plain HTTP; `https://` is a
+/// reverse proxy that serves it over TLS and forwards the browser's `Host`.
+/// The scheme adds nothing a page could not reach through `Host` already.
 fn same_origin(origin: &str, headers: &HeaderMap) -> bool {
     let mut hosts = headers.get_all(header::HOST).iter();
     let (Some(host), None) = (hosts.next(), hosts.next()) else {
         return false;
     };
-    let (Some(origin), Ok(host)) = (origin.strip_prefix("http://"), host.to_str()) else {
+    let Ok(host) = host.to_str() else {
         return false;
     };
-    origin.eq_ignore_ascii_case(host)
-        || host.parse::<Authority>().is_ok_and(|authority| {
-            authority.port_u16() == Some(80) && origin.eq_ignore_ascii_case(authority.host())
+    [("http://", 80), ("https://", 443)]
+        .into_iter()
+        .any(|(scheme, default_port)| {
+            origin.strip_prefix(scheme).is_some_and(|origin| {
+                origin.eq_ignore_ascii_case(host)
+                    || host.parse::<Authority>().is_ok_and(|authority| {
+                        authority.port_u16() == Some(default_port)
+                            && origin.eq_ignore_ascii_case(authority.host())
+                    })
+            })
         })
 }
 

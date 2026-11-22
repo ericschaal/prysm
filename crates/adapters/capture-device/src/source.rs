@@ -48,6 +48,15 @@ const _: () = assert!(
     "the camera access wait leaves session start too little of the readiness deadline"
 );
 
+const _: () = assert!(
+    Deadlines::DEVICE
+        .ready
+        .saturating_add(Deadlines::DEVICE.release)
+        .as_millis()
+        <= prysm_ports::SOURCE_OPEN_LIMIT.as_millis(),
+    "a device open (readiness, then the release of a failed one) must fit the source open limit"
+);
+
 /// The owner thread as the native capture sees it.
 struct Sink(Worker);
 

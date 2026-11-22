@@ -1,19 +1,60 @@
 //! One blocking `POST /json/state` (or, for discovery, `GET /json/info`) per
-//! call: no retries, no keep-alive, no proxy. [`get`] and [`read_response`]
-//! also serve the state checks, which read without blocking.
+//! call, done by a [`Deadline`]: no retries, no keep-alive, no proxy. [`get`]
+//! and [`read_response`] also serve the state checks, which never block.
 use serde_json::Value;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
-/// Bounds name resolution, and one whole exchange (connect, request and
-/// response) however slowly the device answers. Each mode change is two
-/// exchanges, so idling a held output takes at most 3 s; an output the stop
-/// must open first adds resolution and the open's own mode changes. All of
-/// it counts against the session stop deadline after the source's release,
-/// so a slow release and a slow WLED together can exceed it (on the TV
-/// 4 s + 3 s > 6 s) and the session ends `Faulted`.
+/// Bounds name resolution with a mode change (its exchanges together:
+/// connect, request and response) however slowly the device answers. See
+/// [`IDLE_LIMIT`](crate::output::IDLE_LIMIT) and
+/// [`OPEN_LIMIT`](crate::output::OPEN_LIMIT), and what a stop waits for
+/// beside them.
 pub const TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// When the exchanges of one step must be done, and the budget it was
+/// given, which a timeout names.
+#[derive(Debug, Clone, Copy)]
+pub struct Deadline {
+    at: Instant,
+    budget: Duration,
+}
+
+impl Deadline {
+    #[must_use]
+    pub fn after(budget: Duration) -> Self {
+        Self {
+            at: Instant::now() + budget,
+            budget,
+        }
+    }
+
+    /// This deadline, `by` sooner: the part of its budget before a last
+    /// step that gets `by`.
+    #[must_use]
+    pub fn earlier(self, by: Duration) -> Self {
+        Self {
+            at: self.at.checked_sub(by).unwrap_or(self.at),
+            budget: self.budget.saturating_sub(by),
+        }
+    }
+
+    /// The time left, zero once it passed.
+    #[must_use]
+    pub fn remaining(self) -> Duration {
+        self.at.saturating_duration_since(Instant::now())
+    }
+
+    /// The time left; [`RequestError::TimedOut`] once there is none.
+    fn left(self) -> Result<Duration, RequestError> {
+        let left = self.at.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(RequestError::TimedOut(self.budget));
+        }
+        Ok(left)
+    }
+}
 /// The most a response may hold, head included: `/json/info` is about
 /// 1.5 KiB, more with usermods.
 const MAX_RESPONSE: usize = 20 * 1024;
@@ -63,16 +104,22 @@ impl Response {
     }
 }
 
-/// Send `state` to `device`, naming `host` (the configured `host[:port]`) in
-/// the `Host` header, and require WLED's `{"success":true}` reply.
-pub fn post_state(device: SocketAddr, host: &str, state: &Value) -> Result<(), RequestError> {
+/// Send `state` to `device` by `deadline`, naming `host` (the configured
+/// `host[:port]`) in the `Host` header, and require WLED's
+/// `{"success":true}` reply.
+pub fn post_state(
+    device: SocketAddr,
+    host: &str,
+    state: &Value,
+    deadline: Deadline,
+) -> Result<(), RequestError> {
     let body = state.to_string();
     let request = format!(
         "POST /json/state HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    let body = exchange(device, &request, TIMEOUT)?.success()?;
+    let body = exchange(device, &request, deadline)?.success()?;
     let reply: Value = serde_json::from_slice(&body)?;
     if let Some(error) = reply.get("error") {
         return Err(RequestError::Rejected(error.to_string()));
@@ -87,7 +134,12 @@ pub fn post_state(device: SocketAddr, host: &str, state: &Value) -> Result<(), R
 /// `GET path` from `device` and its JSON reply, waiting at most `timeout`
 /// for the whole exchange.
 pub fn get_json(device: SocketAddr, path: &str, timeout: Duration) -> Result<Value, RequestError> {
-    let body = exchange(device, &get(path, &device.to_string()), timeout)?.success()?;
+    let body = exchange(
+        device,
+        &get(path, &device.to_string()),
+        Deadline::after(timeout),
+    )?
+    .success()?;
     Ok(serde_json::from_slice(&body)?)
 }
 
@@ -99,21 +151,26 @@ pub fn get(path: &str, host: &str) -> String {
     )
 }
 
-/// Connect to `device`, send `request` and read the whole response, all
-/// within `limit`: a peer that answers a byte at a time cannot extend it.
-fn exchange(device: SocketAddr, request: &str, limit: Duration) -> Result<Response, RequestError> {
-    let deadline = Instant::now() + limit;
-    let stream = TcpStream::connect_timeout(&device, limit).map_err(RequestError::Connect)?;
+/// Connect to `device`, send `request` and read the whole response, all by
+/// `deadline`: a peer that answers a byte at a time cannot extend it.
+fn exchange(
+    device: SocketAddr,
+    request: &str,
+    deadline: Deadline,
+) -> Result<Response, RequestError> {
+    let stream =
+        TcpStream::connect_timeout(&device, deadline.left()?).map_err(RequestError::Connect)?;
     let mut stream = Bounded { stream, deadline };
     let response = stream
         .write_all(request.as_bytes())
         .map_err(RequestError::from)
         .and_then(|()| read_response(&mut stream, &mut Vec::new(), MAX_RESPONSE));
+    let timed_out = RequestError::TimedOut(deadline.budget);
     match response {
         Ok(Some(response)) => Ok(response),
         // A blocking read that would block has timed out.
-        Ok(None) => Err(RequestError::TimedOut(limit)),
-        Err(RequestError::Io(error)) if expired(&error) => Err(RequestError::TimedOut(limit)),
+        Ok(None) => Err(timed_out),
+        Err(RequestError::Io(error)) if expired(&error) => Err(timed_out),
         Err(error) => Err(error),
     }
 }
@@ -122,18 +179,17 @@ fn exchange(device: SocketAddr, request: &str, limit: Duration) -> Result<Respon
 /// `deadline`.
 struct Bounded {
     stream: TcpStream,
-    deadline: Instant,
+    deadline: Deadline,
 }
 
 impl Bounded {
     /// The time left; a timed-out error once there is none (a zero socket
     /// timeout would mean "wait forever").
     fn left(&self) -> io::Result<Option<Duration>> {
-        let left = self.deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(ErrorKind::TimedOut.into());
-        }
-        Ok(Some(left))
+        self.deadline
+            .left()
+            .map(Some)
+            .map_err(|_| ErrorKind::TimedOut.into())
     }
 }
 
@@ -265,6 +321,41 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
+    /// A deadline split for a last step: the first part ends that much
+    /// sooner and names what is left of the budget; the whole keeps both.
+    #[test]
+    fn an_earlier_deadline_ends_sooner_by_its_last_step() {
+        let start = Instant::now();
+        let whole = Deadline {
+            at: start + Duration::from_secs(3),
+            budget: Duration::from_secs(3),
+        };
+        let first = whole.earlier(Duration::from_secs(1));
+        assert_eq!(first.at, start + Duration::from_secs(2));
+        assert_eq!(first.budget, Duration::from_secs(2));
+        assert_eq!(whole.at, start + Duration::from_secs(3));
+        assert!(first.remaining() <= Duration::from_secs(2));
+    }
+
+    /// A passed deadline has nothing left, and says so with its budget: so
+    /// a second request under the deadline of a first that used it up is
+    /// not sent.
+    #[test]
+    fn a_passed_deadline_has_nothing_left() {
+        let passed = Deadline {
+            at: Instant::now(),
+            budget: Duration::from_secs(3),
+        };
+        assert_eq!(passed.remaining(), Duration::ZERO);
+        assert!(matches!(
+            passed.left(),
+            Err(RequestError::TimedOut(budget)) if budget == Duration::from_secs(3)
+        ));
+        let split = passed.earlier(Duration::from_secs(5));
+        assert_eq!(split.remaining(), Duration::ZERO);
+        assert_eq!(split.budget, Duration::ZERO);
+    }
+
     const LIMIT: Duration = Duration::from_millis(200);
     /// Far below [`LIMIT`], so each byte alone would reset a per-read timeout.
     const DRIP: Duration = Duration::from_millis(10);
@@ -282,12 +373,12 @@ mod tests {
         address
     }
 
+    /// The exchange ends with the timeout of its whole deadline: a bound
+    /// per read would let a dripping answer go on, and end otherwise.
     fn assert_times_out(device: SocketAddr) {
-        let started = Instant::now();
         let error = get_json(device, "/json/info", LIMIT).unwrap_err();
         assert!(matches!(error, RequestError::TimedOut(LIMIT)), "{error:?}");
         assert_eq!(error.to_string(), "no complete response within 200ms");
-        assert!(started.elapsed() < LIMIT * 3, "{:?}", started.elapsed());
     }
 
     #[test]

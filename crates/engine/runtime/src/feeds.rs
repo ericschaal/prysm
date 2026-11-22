@@ -4,6 +4,7 @@ use crate::slot::LatestSlot;
 use prysm_core::{EdgeColors, Frame, Viewport};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use tokio::sync::watch;
 
 /// The latest processed frame, for surfaces that render what the LEDs show.
 #[derive(Debug, Clone)]
@@ -26,6 +27,8 @@ pub(crate) struct Feed<T> {
     latest: LatestSlot<T>,
     watchers: AtomicUsize,
     sequence: AtomicU64,
+    /// Bumped after every publish and clear, for [`Watch::changed`].
+    changes: watch::Sender<u64>,
 }
 
 impl<T> Default for Feed<T> {
@@ -34,6 +37,7 @@ impl<T> Default for Feed<T> {
             latest: LatestSlot::new(),
             watchers: AtomicUsize::new(0),
             sequence: AtomicU64::new(1),
+            changes: watch::Sender::new(0),
         }
     }
 }
@@ -43,7 +47,10 @@ impl<T> Feed<T> {
     #[must_use]
     pub(crate) fn watch(self: &Arc<Self>) -> Watch<T> {
         self.watchers.fetch_add(1, Ordering::SeqCst);
-        Watch(self.clone())
+        Watch {
+            feed: self.clone(),
+            changes: self.changes.subscribe(),
+        }
     }
 
     /// How many watches exist.
@@ -66,17 +73,28 @@ impl<T> Feed<T> {
         if !self.watched() {
             self.latest.take();
         }
+        self.changed();
     }
 
     fn clear(&self) {
         self.latest.take();
+        self.changed();
+    }
+
+    /// After the value changed, so a watch that then looks sees it.
+    fn changed(&self) {
+        self.changes
+            .send_modify(|version| *version = version.wrapping_add(1));
     }
 }
 
 /// A registered watcher of a feed. Cheap to hold; dropping the last one stops
 /// publication and releases the held value.
 #[derive(Debug)]
-pub struct Watch<T>(Arc<Feed<T>>);
+pub struct Watch<T> {
+    feed: Arc<Feed<T>>,
+    changes: watch::Receiver<u64>,
+}
 
 impl<T: Clone> Watch<T> {
     /// The latest value without taking it: other watchers see it too.
@@ -84,14 +102,24 @@ impl<T: Clone> Watch<T> {
     /// while its output is released.
     #[must_use]
     pub fn latest(&self) -> Option<T> {
-        self.0.latest.peek()
+        self.feed.latest.peek()
+    }
+}
+
+impl<T> Watch<T> {
+    /// Wait until a value was published or cleared since this watch was
+    /// made or last waited; [`latest`](Self::latest) then holds it. Several
+    /// changes meanwhile end one wait. Cancel-safe.
+    pub async fn changed(&mut self) {
+        // This watch holds the feed, which holds the sender: it never closes.
+        let _ = self.changes.changed().await;
     }
 }
 
 impl<T> Drop for Watch<T> {
     fn drop(&mut self) {
-        if self.0.watchers.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.0.clear();
+        if self.feed.watchers.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.feed.clear();
         }
     }
 }
@@ -158,11 +186,14 @@ impl Feeds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::leds::Configured;
+    use crate::null::{NullOutput, NullSettings};
     use crate::session::Session;
     use crate::stats::Stats;
     use prysm_core::{Config, PixelFormat};
-    use prysm_ports::{Error, FrameSource, IdleMode, LedOutput, Pull, Result};
-    use std::sync::atomic::AtomicBool;
+    use prysm_ports::{
+        AdapterSettings, Error, FrameSource, IdleMode, OutputFactory, Pull, Registry, Result,
+    };
     use std::time::Duration;
 
     /// A uniform grey frame every millisecond; counts frames it handed out.
@@ -181,23 +212,16 @@ mod tests {
         }
     }
 
-    struct Sink(Arc<AtomicBool>);
-
-    impl LedOutput for Sink {
-        fn write(&mut self, _colors: &EdgeColors) -> Result<()> {
-            self.0.store(true, Ordering::SeqCst);
-            Ok(())
-        }
-        fn idle(self: Box<Self>, _mode: IdleMode) -> Result<()> {
-            Ok(())
-        }
-    }
-
     fn start(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
         let frames = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::default();
+        registry.add_output(NullOutput);
         let session = Session::start(
             Box::new(Grey(frames.clone())),
-            Box::new(|| Ok(Box::new(Sink(Arc::new(AtomicBool::new(false)))) as Box<dyn LedOutput>)),
+            Configured::new(
+                registry,
+                AdapterSettings::new(NullOutput::KIND, &NullSettings::new()),
+            ),
             Config::default(),
             feeds.clone(),
             Arc::new(Stats::default()),
@@ -225,6 +249,23 @@ mod tests {
 
     fn published<T>(feed: &Feed<T>) -> u64 {
         feed.sequence.load(Ordering::SeqCst) - 1
+    }
+
+    /// A watch wakes for each publish and clear, and only then.
+    #[tokio::test]
+    async fn a_watch_is_told_of_every_publish_and_clear() {
+        use futures::FutureExt;
+        let feed: Arc<Feed<u64>> = Arc::default();
+        let mut watch = feed.watch();
+        assert!(watch.changed().now_or_never().is_none(), "nothing yet");
+        feed.publish(|sequence| sequence);
+        feed.publish(|sequence| sequence);
+        assert!(watch.changed().now_or_never().is_some());
+        assert_eq!(watch.latest(), Some(2));
+        assert!(watch.changed().now_or_never().is_none(), "both seen");
+        feed.clear();
+        assert!(watch.changed().now_or_never().is_some());
+        assert_eq!(watch.latest(), None);
     }
 
     async fn stop(session: Session) {

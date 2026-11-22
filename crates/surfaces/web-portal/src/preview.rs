@@ -21,7 +21,7 @@ use prysm_runtime::{EngineHandle, Preview, PreviewWatch, Shutdown};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::time::{Instant, Interval, MissedTickBehavior, interval};
+use tokio::time::{Instant, sleep_until};
 
 /// Concurrent preview streams; more are refused with `429`.
 const VIEWERS: usize = 4;
@@ -63,14 +63,13 @@ impl Previews {
                 "too many preview viewers",
             );
         };
-        let mut ticks = interval(CADENCE);
-        ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let now = Instant::now();
         let viewer = Viewer {
             watch: engine.preview(),
             encoded: self.encoded.clone(),
-            ticks,
+            due: now,
             shown: Shown::Starting,
-            sent: Instant::now(),
+            sent: now,
             _permit: permit,
         };
         response::event_stream(stream::unfold(viewer, Viewer::next), shutdown)
@@ -91,19 +90,24 @@ enum Shown {
 struct Viewer {
     watch: PreviewWatch,
     encoded: Arc<Mutex<Option<Encoded>>>,
-    ticks: Interval,
+    /// The earliest the stream looks at the feed again.
+    due: Instant,
     shown: Shown,
+    /// When the last event or keepalive went out.
     sent: Instant,
     _permit: OwnedSemaphorePermit,
 }
 
 impl Viewer {
-    /// The next event, at most one per [`CADENCE`]. The body is pulled only
-    /// after the previous event was written, so a slow reader gets fewer
-    /// frames instead of a queue.
+    /// The next event, at most one per [`CADENCE`]; between them the stream
+    /// sleeps until the preview changes (or a keepalive is due). The body is
+    /// pulled only after the previous event was written, so a slow reader
+    /// gets fewer frames instead of a queue.
     async fn next(mut self) -> Option<(BodyFrame<Bytes>, Self)> {
         loop {
-            self.ticks.tick().await;
+            // At most one look per period, whatever wakes the stream.
+            sleep_until(self.due).await;
+            self.due = Instant::now() + CADENCE;
             let event = match self.watch.latest() {
                 None if self.shown == Shown::Idle => None,
                 None if self.shown == Shown::Starting => {
@@ -122,8 +126,12 @@ impl Viewer {
             };
             let event = match event {
                 Some(event) => event,
-                None if self.sent.elapsed() >= KEEPALIVE => KEEPALIVE_COMMENT,
-                None => continue,
+                // Just opened, with nothing yet: look once more a period on.
+                None if self.shown == Shown::Nothing => continue,
+                None => tokio::select! {
+                    () = self.watch.changed() => continue,
+                    () = sleep_until(self.sent + KEEPALIVE) => KEEPALIVE_COMMENT,
+                },
             };
             self.sent = Instant::now();
             return Some((BodyFrame::data(event), self));

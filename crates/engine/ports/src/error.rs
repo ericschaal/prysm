@@ -23,6 +23,12 @@ pub fn chain(error: &dyn StdError) -> String {
 pub enum Error {
     #[error(transparent)]
     Invalid(#[from] ValidationError),
+    /// The settings store holds something it cannot read as settings, or
+    /// cannot read at all: a problem with the settings as a whole, not one
+    /// field. The store's error, with its causes, is kept; the engine runs
+    /// unconfigured until a save.
+    #[error(transparent)]
+    UnusableSettings(Arc<Error>),
     #[error("cannot decode `{kind}` settings")]
     Decode {
         kind: String,
@@ -112,6 +118,7 @@ impl Error {
         // From inside the `Arc`s: `source()` gives the `Arc` itself, which
         // does not downcast to what it holds.
         let mut source: Option<&(dyn StdError + 'static)> = match self {
+            Self::UnusableSettings(stored) => return Self::cause::<T>(stored),
             Self::Adapter { source, .. } => source.as_deref().map(|cause| cause as _),
             Self::Decode { source, .. } => Some(&**source),
             Self::Invalid(invalid) => Some(invalid),
@@ -175,5 +182,11 @@ mod tests {
             source: Arc::new(serde_json::from_str::<u8>("x").unwrap_err()),
         };
         assert!(decode.cause::<serde_json::Error>().is_some());
+        let unusable = Error::UnusableSettings(Arc::new(direct));
+        assert_eq!(
+            unusable.cause::<std::io::Error>().unwrap().to_string(),
+            "unplugged"
+        );
+        assert_eq!(chain(&unusable), "cannot read: unplugged");
     }
 }

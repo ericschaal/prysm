@@ -178,8 +178,6 @@ pub enum FailureKind {
     Adapter,
     /// The runtime or surface is stopping or stopped.
     Unavailable,
-    /// The command did not answer in time; its outcome shows in the state.
-    Timeout,
     /// An unexpected internal failure.
     Internal,
     Forbidden,
@@ -201,6 +199,10 @@ impl From<&Error> for Failure {
                 field: Some(invalid.field.clone()),
                 ..Self::new(FailureKind::Invalid, invalid.reason.clone())
             },
+            // No one field is at fault; the store's cause chain says why.
+            Error::UnusableSettings(_) => {
+                Self::new(FailureKind::Invalid, prysm_ports::chain(error))
+            }
             // The decoder's message names the field the user got wrong.
             Error::Decode { source, .. } => {
                 Self::new(FailureKind::Invalid, format!("{message}: {source}"))
@@ -330,6 +332,25 @@ mod tests {
             json!({ "issue": "other_sender", "brightness_percent": 40, "led_count": 120 })
         );
         assert!((value["input"]["fps"].as_f64().unwrap() - 29.9).abs() < 1e-4);
+    }
+
+    /// Settings that cannot be loaded are the settings' problem: `invalid`
+    /// with the store's whole cause chain, no field and no section.
+    #[test]
+    fn unusable_settings_are_invalid_with_their_cause_chain() {
+        let stored = Error::adapter(
+            "cannot parse settings file /data/settings.json",
+            std::io::Error::other("expected value at line 1 column 3"),
+        );
+        let failure = Failure::from(&Error::UnusableSettings(std::sync::Arc::new(stored)));
+        assert_eq!(
+            serde_json::to_value(&failure).unwrap(),
+            json!({
+                "kind": "invalid",
+                "message": "cannot parse settings file /data/settings.json: \
+                            expected value at line 1 column 3",
+            })
+        );
     }
 
     #[test]

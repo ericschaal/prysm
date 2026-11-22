@@ -195,7 +195,9 @@ device form calls it when it opens and on "Look again"; the lights form on
   does not pass through the engine's command queue. The adapter's
   `candidates` runs off the async runtime (the engine's blocking pool),
   opens nothing for capture or output and keeps nothing; the adapter bounds
-  it to about two seconds, and the 15 s command deadline backs that up.
+  it to about two seconds. One lookup per section and kind runs at a time:
+  who asks while it runs, also after its first asker has gone, waits for it
+  and gets its answer.
 
 What each adapter finds:
 
@@ -205,6 +207,12 @@ What each adapter finds:
 | `wled` | WLED lights, filling `address` (the IPv4 address that answered) | One multicast DNS question for `_wled._tcp.local` from an ephemeral port (a one-shot legacy unicast query, so nothing binds port 5353), answers collected for 1.2 s, then one `GET /json/info` per answer (at most 16, in parallel, 350 ms per step) for its name and LED count. Nothing else is sent to WLED. |
 
 Others (`file`, `remote`, `webos`, `null`) find nothing.
+
+WLED discovery only reaches lights on the same network segment as Prysm:
+across VLANs or subnets without an mDNS reflector nothing answers, and in
+Docker only host networking (`network_mode: host`) lets the question out; on a
+bridge network the reply is `[]`. The LED count is shown, not split over the
+edges: the person enters the per-edge counts.
 
 ## Capture modes
 
@@ -224,8 +232,9 @@ need not be valid. A form can ask before saving.
   does not decode `422 invalid`; a body without `kind` or not JSON `400`;
   other methods `405`. The origin policy applies.
 - Like candidates it is a lookup, not state: off the async runtime, no
-  revision, not through the command queue; the adapter keeps it brief, the
-  15 s command deadline backs it up.
+  revision, not through the command queue; the adapter keeps it brief. One
+  runs at a time for the same body; who asks the same while it runs waits
+  for it and gets its answer.
 - Starting lighting with a size or rate a known answer excludes fails with
   `422 invalid` on that field (`capture.width`, `capture.height`,
   `capture.fps`, for `remote` also `capture.encoding`), saying what is
@@ -236,12 +245,7 @@ need not be valid. A form can ask before saving.
 | `device` | Linux: the device's YUYV (even widths), RGB3 and BGR3 sizes (fixed, or ranges for stepwise and continuous sizes) and their whole-number rates (rates of a range of sizes: those at both ends); none when it cannot set its frame interval. macOS: AVFoundation's formats, each size with the whole-number rates of its ranges. Unknown when the device cannot be opened or cannot list its sizes and rates; elsewhere unknown. |
 | `file` | Any size up to 3840 × 2160 at any rate: FFmpeg scales. |
 | `webos` | Even sizes 2 to 1920 × 2 to 1080 at 1 to 60 fps: LG's driver scales. |
-| `remote` | The newest offer a capture-only TV sent with a connection attempt (also while lighting is off, see [Capture stream](#capture-stream)), for the requested `encoding`; unknown before a TV tried. | WLED discovery only
-reaches lights on the same network segment as Prysm: across VLANs or subnets
-without an mDNS reflector nothing answers, and in Docker only host networking
-(`network_mode: host`) lets the question out; on a bridge network the reply is
-`[]`. The LED count is shown, not split over the edges: the person enters
-the per-edge counts.
+| `remote` | The newest offer a capture-only TV sent with a connection attempt (also while lighting is off, see [Capture stream](#capture-stream)), for the requested `encoding`; unknown before a TV tried. |
 
 ## Preview
 
@@ -268,10 +272,13 @@ the per-edge counts.
   exposed.
 - `sequence` increases with every new frame, across sessions.
 
-Cadence and demand: the stream checks every 125 ms (the first `idle` waits
-one check, so a stream opened while lighting runs starts with a frame) and sends only when there is something new (a new frame,
-or a change to or from `idle`), so a stream sends at most 8 events per second
-and a slow reader gets fewer frames rather than a queue. Each open stream
+Cadence and demand: the stream wakes when the session publishes a frame or
+the preview ends, and sends only when there is something new (a new frame,
+or a change to or from `idle`), at most one event per 125 ms (the first
+`idle` waits that long, so a stream opened while lighting runs starts with a
+frame). So a stream sends at most 8 events per second, nothing wakes it
+while nothing changes, and a slow reader gets fewer frames rather than a
+queue. Each open stream
 registers a preview viewer with the engine; with none, the session publishes
 no preview and nothing is encoded. Encoding runs off the async runtime, once
 per frame for all viewers. Lighting turning off or failing mid-stream sends
@@ -301,9 +308,10 @@ whose `data:` is a `ColorsEvent`, tagged by `type`:
 - There is no `unavailable`: colors exist for every processed frame, also one
   the preview cannot show.
 
-Cadence and demand: the stream checks every 100 ms (the first `idle` waits one
-check, like the preview) and sends only when the summary changed, so at most
-10 events per second and none while the picture is still. Each open stream
+Cadence and demand: the stream wakes when the session publishes colors or
+they end, and sends only when the summary changed, at most one event per
+100 ms (the first `idle` waits that long, like the preview), so at most 10
+events per second and none while the picture is still. Each open stream
 registers a colors listener with the engine, independent of preview viewers:
 with listeners, the session copies the colors it wrote (never the frame) once
 per frame; with none, it costs one atomic load per frame. Nothing is encoded
@@ -392,8 +400,12 @@ option.
 
 ## Failures
 
-Every non-2xx API response has a `Failure` body: `{ kind, message, field?, current? }`.
-Source chains stay in the process; `message` is what the user can act on.
+Every non-2xx API response has a `Failure` body: `{ kind, message, field?,
+current?, section? }`. `message` is what the user can act on; for `adapter`
+it is the whole cause chain (`context: cause: cause`), since the cause names
+the problem: a device's error, a remote sender's reason, an operating system
+error with a path (such as the settings file's). It reaches every client of
+the portal, in command replies and in `State.failure`.
 
 | Status | `kind` | When |
 | --- | --- | --- |
@@ -405,14 +417,22 @@ Source chains stay in the process; `message` is what the user can act on.
 | 409 | `stale_revision` | `expected` is not current; `current` is the revision to reload |
 | 409 | `not_processed` | A calibration pattern while the target is not `processed` |
 | 413 | `payload_too_large` | Body over 1 MiB |
-| 415 | `unsupported_media_type` | `PUT` without `Content-Type: application/json` |
-| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.calibrations[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `Processed` without capture/output configured |
+| 415 | `unsupported_media_type` | `PUT`, or `POST /api/v1/capture/modes`, without `Content-Type: application/json` |
+| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.calibrations[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `Processed` without capture/output configured; also, with no `field`, a settings file that could not be loaded at start (its whole cause chain in `message`), in `State.failure` and for lighting asked before a save |
 | 429 | `busy` | More than 8 open state streams, more than 4 preview streams, or more than 8 colors streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle; `section` (`capture` or `output`) says which side, when the engine knows |
 | 503 | `faulted` | The engine is faulted; only a restart recovers |
 | 503 | `unavailable` | The engine has stopped |
-| 504 | `timeout` | The command took over 15 s; its outcome shows in the state |
+
+The portal sets no deadline on a command: every one ends, since the engine
+bounds a session's stop and every adapter bounds its own calls. A client
+sets its own limit above the longest
+command, `prysm_runtime::COMMAND_LIMIT`: a desktop host's default stop
+deadline plus `prysm_ports::SOURCE_OPEN_LIMIT`, which every capture
+adapter's open fits (the portal's client waits 30 s). That is one command's
+time: a command queued behind others in the engine's mailbox waits for
+them too.
 
 An `adapter` failure in the state carries the same `section`: `capture` when
 opening or reading the source failed, `output` when opening, writing or
@@ -436,10 +456,17 @@ ignored.
 | Request | `Access` | Result |
 | --- | --- | --- |
 | No `Origin` header (curl, native apps, same-origin `GET` in most browsers) | any | Served |
-| `Origin` is `http://` + `Host` (the portal's own pages, by IP or name; `:80` may be omitted) | any | Served, no CORS headers |
+| `Origin` is `http://` or `https://` + `Host` (the portal's own pages, by IP or name, also through a reverse proxy that serves them over HTTPS; the scheme's default port, `:80` or `:443`, may be omitted) | any | Served, no CORS headers |
 | `Origin` in the list (exact, case-insensitive; the entry `null` matches `Origin: null`) | `Origins(..)` | Served with CORS; `OPTIONS` is a preflight |
 | Any other `Origin`, including `null` | `AnyOrigin` | Served with CORS; `OPTIONS` is a preflight |
 | Any other `Origin`, a repeated or non-ASCII `Origin` | otherwise | `403 forbidden`, `origin denied`, the engine is not called |
+
+The portal serves plain HTTP, so it cannot check an `https://` scheme: a
+reverse proxy that terminates TLS and forwards the browser's `Host` (Caddy,
+nginx with `proxy_set_header Host $host`, Traefik) makes the portal's pages
+same-origin. A proxy that rewrites `Host` to the portal's own address needs
+the public origin allowed: `--allow-origin https://prysm.example.com`. This
+adds nothing beyond what `Host` already allows.
 
 CORS responses echo the request's `Origin` in `Access-Control-Allow-Origin`. A
 preflight (`OPTIONS` from an allowed cross origin) answers `204` with
@@ -494,16 +521,25 @@ What it does not protect against:
 - 64 concurrent connections (the listener stops accepting at the limit), 8 state
   streams, 4 preview streams (8 events per second each), 8 colors streams (10
   events per second each), 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
-  write (slow or vanished readers are disconnected), 15 s per engine command.
+  write (slow or vanished readers are disconnected once the socket's send
+  buffer is full).
+- When `accept` finds the process out of file descriptors or memory
+  (`EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`), the portal stops accepting
+  until one of its own connections ends, with no timer; with no connection
+  open nothing would wake it, so the listener then fails. Only its own
+  connections ending wakes it: descriptors freed elsewhere in the process
+  do not, so while its open connections are long-lived (event streams) it
+  accepts nothing until one of them ends.
 
 ## Lifetime
 
 | State | Event | Action |
 | --- | --- | --- |
-| Constructed | Surface starts | Bind (or adopt the listener); bind failure ends the surface with `Error::Adapter`. |
+| Constructed | Surface starts | Adopt the listener the host bound; a listener that cannot be used ends the surface with `Error::Adapter` (`cannot use the portal listener`). |
 | Serving | Request fails validation | Respond without calling the engine. |
 | Serving | Client disconnects | Drop its connection; a command already sent to the engine still completes. |
-| Serving | Listener fails (not a per-connection error) | Stop serving; the runtime records a surface failure; lighting continues. |
+| Serving | `accept` out of descriptors or memory, a connection open | Stop accepting until one of the portal's connections ends (only that wakes it; see [Limits](#limits)). |
+| Serving | Listener fails (not a per-connection error, nor out of resources with a connection open) | Stop serving; the runtime records a surface failure; lighting continues. |
 | Serving | Host shutdown | Close the listener at once, end streams, let open requests finish for up to 5 s, then abort the rest. |
 
 Connection tasks are owned by the surface and joined or aborted before `run`

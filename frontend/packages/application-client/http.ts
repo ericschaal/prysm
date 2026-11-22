@@ -17,7 +17,13 @@ import {
 } from './index';
 import type { Phase } from '@prysm/contracts/application';
 
-const COMMAND_TIMEOUT_MS = 20_000;
+/**
+ * Above the longest command the portal waits for, which sets no deadline of
+ * its own: Rust's `prysm_runtime::COMMAND_LIMIT` (a desktop host's default
+ * stop deadline plus `prysm_ports::SOURCE_OPEN_LIMIT`), with room for the
+ * network. The TV's own portal stops sooner, so it stays below that too.
+ */
+const COMMAND_TIMEOUT_MS = 30_000;
 const EVENT_LIMIT = 2 * 1024 * 1024;
 
 /** `AbortSignal.timeout` exists from Chromium 103; older TV browsers lack it. */

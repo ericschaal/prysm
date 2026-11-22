@@ -1,5 +1,5 @@
 use prysm_core::EdgeColors;
-use prysm_ports::{IdleMode, LedOutput, OutputFactory, Result, ValidationError};
+use prysm_ports::{IdleMode, LedOutput, OpenFailure, OutputFactory, Result, ValidationError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -53,7 +53,7 @@ impl OutputFactory for NullOutput {
         }
     }
 
-    fn open(&self, _settings: &NullSettings) -> Result<Box<dyn LedOutput>> {
+    fn open(&self, _settings: &NullSettings) -> Result<Box<dyn LedOutput>, OpenFailure> {
         Ok(Box::new(NullLeds))
     }
 }

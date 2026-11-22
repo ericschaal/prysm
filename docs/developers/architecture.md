@@ -75,7 +75,14 @@ crate and one builder line.
 - The revision starts at a random value in each process, so a page holding a
   revision from before a restart gets a conflict.
 - Loaded settings that no longer validate are kept and reported as the
-  failure; a file that cannot be read or parsed stops start-up.
+  failure. A settings file that cannot be read or decoded (no `format`, a
+  newer format, cut-off JSON, a wrong type, over 1 MiB, unreadable) starts
+  the host unconfigured, its cause reported as the failure until a save;
+  the file is left as it is, and that save keeps it beside the new one
+  ([settings file](../../crates/adapters/settings-file/README.md#unreadable-files)).
+- A save that the store refuses leaves the engine's settings as they were;
+  a save the store took is installed even if the file's directory could not
+  be synced, so the engine always holds what the next start loads.
 
 ## What a capture delivers
 
@@ -132,7 +139,10 @@ TV two threads take a 640x360 frame from 11 to 7 ms
 
 The output is opened at the first frame, not when lighting starts, so a source
 without video never takes WLED over. After 3 s without frames the output is
-idled to the device's own state and reopened at the next frame. While a
+idled to the device's own state and reopened at the next frame. An output
+nobody holds (released, or `device_native` without a session) is put in
+another idle mode without being opened (`OutputFactory::idle`): WLED is
+switched off, or to its effects, without entering live mode first. While a
 session runs the engine measures, once a second, the frame rate, whether
 frames arrive and the mean latency per link (`State.input`).
 
@@ -148,12 +158,15 @@ output's `idle` is the failure compensation: off for `off`, the device's own
 effects for `device_native`. After the join no frame is in flight.
 
 A session that ends on its own (a failure, or a source that ended) idles its
-output off. A request or shutdown that arrives after its loop ended is
-handled after that end, whichever the engine saw first: the same reply,
-state, failure and saved settings. A session that ends on its own while a
-request is stopping it ended while being stopped: the reply is its failures,
-then the output's in the stop's mode, which the session sets after the join
-through its own output (not over a source whose release is unconfirmed). An
+output off, or in a stop's mode once a stop has asked. A request or
+shutdown that arrives after its loop ended is handled after that end,
+whichever the engine saw first: the same reply, state, failure and saved
+settings. A session that ends on its own while a request is stopping it
+ended while being stopped: the reply is its failures, then the output's in
+the stop's mode. The thread idles in that mode itself when the stop asked
+before it idled; otherwise the session sets it after the join through its
+own output (not over a source whose release is unconfirmed): a second idle
+happens only when the thread idled before the stop asked. An
 ended source turns a `processed` target `off`, so lighting does not restart
 until asked again.
 
@@ -165,11 +178,37 @@ and accepts only shutdown; so does a source whose release is not confirmed
 watchdogs stay inside the capture adapters. Host shutdown stops the session
 with the output idled off; requests still queued behind it are refused.
 
-Commands have no deadline of their own; each adapter bounds its blocking
-calls instead. Resolving a WLED host name takes at most 1.5 s, and so does
-one WLED request (connect, send, whole reply) however slowly the device
-answers. Opening a video device waits up to 10 s for its format query and
-activation together, then, if that ran out, up to 3 s for the release.
+Commands have no deadline of their own, nor do the portal's replies; each
+adapter bounds its blocking calls instead (`COMMAND_LIMIT` in the runtime).
+Opening a video device waits up to 10 s for its format query and activation
+together, then, if that ran out, up to 3 s for the release. A WLED idle,
+name resolution included, has one deadline, `IDLE_LIMIT` (1.5 s); a WLED
+open has one, `OPEN_LIMIT` (3 s): resolution and live mode by its first
+1.5 s, switching the device off again after a failure by its end. The WLED
+state checks never block the session thread: their connect, request and
+reply each go on without waiting, at every frame.
+
+A stop waits for the pull in flight, the source's close, and at most
+`STOP_WAIT` (4.5 s) for WLED: an open in flight (also one that follows the
+frame the pull returned) and an idle, or two idles (a release to the
+device's effects in flight, or, without the release, a session idling `Off`
+on its own when the stop asked for its effects: the thread reads the stop's
+mode after closing the source). A pull returns within its timeout (`TICK`,
+50 ms) for the `device`, `remote` and `webos` sources; a `file` pull that
+found output may take the rest of a frame (2 s), and at the end of the file
+FFmpeg's exit too (2 s more), so each source states what its stop takes
+(`SourceStop`). The desktop hosts assert, for each source they register,
+that this and WLED's share fit their 10 s stop deadline (`file`, the
+longest: 0.05 s + 2 s + 4.5 s + 3 s = 9.55 s). The TV's does not fit: its
+release limit is 4 s and its stop deadline 6 s, and these stops exceed it,
+so the engine then faults and only a restart recovers:
+
+- an open in flight that fails: 3 s, then 4 s and 1.5 s, 8.5 s;
+- an open in flight that succeeds: 1.5 s + 4 s + 1.5 s, 7 s;
+- a release to the device's effects in flight, then a stop `Off`:
+  1.5 s + 4 s + 1.5 s, 7 s.
+
+A stop that meets none of them takes up to 4 s + 1.5 s, 5.5 s.
 
 As a backstop, shutdown gives the engine's blocking adapter and settings
 calls one shared grace (the stop deadline unless the host sets one; 1 s in

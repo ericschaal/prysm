@@ -29,7 +29,12 @@ async fn enabled_metrics_count_frames_and_follow_the_origin_policy() {
         )
         .await;
         assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
-        assert!(portal.log.wait_for("output.write:", 3).await);
+        // The counters the endpoint renders, not the fake's log: a write is
+        // logged before its frame is counted.
+        eventually_async("three counted frames", LIMIT, || {
+            (portal.engine.stats().frames_received >= 3).then_some(())
+        })
+        .await;
 
         let response = portal
             .request(Method::GET, "/metrics")

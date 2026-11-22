@@ -26,8 +26,6 @@ use tokio::time::{Instant, Interval, interval_at, timeout};
 
 const BODY_LIMIT: usize = 1024 * 1024;
 pub(crate) const BODY_DEADLINE: Duration = Duration::from_secs(5);
-/// Longer than the engine's default stop deadline plus an adapter open.
-const COMMAND_DEADLINE: Duration = Duration::from_secs(15);
 const STREAMS: usize = 8;
 /// The Prometheus scrape path, served only when the host enables it.
 const METRICS: &str = "/metrics";
@@ -282,7 +280,7 @@ fn method_not_allowed() -> Response {
 }
 
 /// What the adapter for `capture/<kind>` or `output/<kind>` finds to choose
-/// from. The adapter bounds the lookup; the command deadline backs it up.
+/// from. The adapter bounds the lookup; the engine runs it once at a time.
 async fn candidates(context: &Context, rest: &str, method: &Method) -> Response {
     let section = match rest.split_once('/') {
         Some(("capture", kind)) => Some((Section::Capture, kind)),
@@ -310,18 +308,13 @@ fn applied(result: Result<(), Box<Response>>) -> Response {
     }
 }
 
-/// Await an engine command. A dropped request does not cancel a command the
-/// engine already received; a timeout leaves its outcome to the state stream.
+/// Await an engine command: every one ends, since the engine bounds a
+/// session's stop and each adapter its own calls, so the portal sets no
+/// deadline of its own. A dropped request does not cancel a command the
+/// engine already received; the state stream shows its outcome.
 async fn command<T>(call: impl Future<Output = Result<T>>) -> Result<T, Box<Response>> {
-    match timeout(COMMAND_DEADLINE, call).await {
-        Ok(Ok(value)) => Ok(value),
-        Ok(Err(error)) => Err(Box::new(response::error(&error))),
-        Err(_) => Err(Box::new(failure(
-            StatusCode::GATEWAY_TIMEOUT,
-            FailureKind::Timeout,
-            "the command did not finish in time; watch the state for its outcome",
-        ))),
-    }
+    call.await
+        .map_err(|error| Box::new(response::error(&error)))
 }
 
 async fn decode<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, Box<Response>> {
