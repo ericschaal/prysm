@@ -12,8 +12,8 @@
    for the Debian package, `docker logs -f prysm` for Docker.
 4. Read the state. `failure` has the last lighting failure with its `kind`,
    `section` and `field`; `input` has the measured rate, whether frames arrive
-   and the latency; `output_issue` says why WLED is not showing the colours,
-   and `output_brightness` how far WLED's own brightness dims them.
+   and the latency; `device.issue` says why WLED is not showing the colours,
+   and `device.brightness_percent` how far WLED's own brightness dims them.
 
    ```sh
    curl http://127.0.0.1:8787/api/v1/state
@@ -87,8 +87,8 @@ packages) and asks for the rest.
   plan first:
 
   ```sh
-  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour full root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
-  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour slim --prysm http://HOST:8787 root@TV path/to/io.prysm.tv-slim_VERSION_all.ipk
+  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour full root@TV path/to/io.github.ericschaal.prysm-full_VERSION_all.ipk
+  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour slim --prysm http://HOST:8787 root@TV path/to/io.github.ericschaal.prysm-slim_VERSION_all.ipk
   ```
 
 Compare release builds with the same content, size, rate and encoding.

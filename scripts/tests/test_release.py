@@ -13,6 +13,9 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 ROOT = release.ROOT
 PUBLISH = ROOT / 'packaging/release/publish.sh'
+spec = importlib.util.spec_from_file_location('ipk', ROOT / 'packaging/webos/ipk.py')
+ipk = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ipk)
 
 
 def copy_version_files(root):
@@ -205,7 +208,7 @@ class PublishTests(unittest.TestCase):
         upload = self.find(calls, 'gh', 'release', 'upload')
         self.assertEqual(len(upload), 1)
         for name in ('prysm-headless_1.2.0_amd64.deb', 'prysm-headless_1.2.0_arm64.deb',
-                     'io.prysm.tv-full_1.2.0_all.ipk', 'io.prysm.tv-slim_1.2.0_all.ipk',
+                     f'{ipk.APP_ID}-full_1.2.0_all.ipk', f'{ipk.APP_ID}-slim_1.2.0_all.ipk',
                      'docker-image.txt', 'SHA256SUMS'):
             self.assertTrue(any(arg.endswith(name) for arg in upload[0]), name)
         self.assertEqual(len(upload[0][5:]), 6, 'four packages, docker-image.txt and SHA256SUMS')

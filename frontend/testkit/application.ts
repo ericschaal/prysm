@@ -24,15 +24,16 @@ export function fakeApplicationPort<C, O>(initial: {
   revision?: number;
 }) {
   let snapshot: ApplicationSnapshot<C, O> = {
+    version: '1.0.0',
     target: 'off',
     session: { state: 'stopped' },
+    device: {},
     settings: {
       ...(initial.capture === undefined ? {} : { capture: initial.capture }),
       ...(initial.output === undefined ? {} : { output: initial.output }),
       processing: defaultProcessing,
     },
     revision: initial.revision ?? 0,
-    failure: null,
     surface_failures: [],
   };
   const subscribers = new Set<(value: ApplicationSnapshot<C, O>) => void>();
@@ -144,7 +145,7 @@ export function fakeApplicationPort<C, O>(initial: {
       if (target !== 'processed') clearCalibration();
       publish({
         target,
-        failure: null,
+        failure: undefined,
         session: {
           state: {
             off: 'stopped',

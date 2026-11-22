@@ -22,7 +22,7 @@
 # product version, not Debian's: GitHub replaces the `~` of a Debian
 # pre-release version in an asset's name, and SHA256SUMS would then name files
 # that are not there) and prysm-tv-<flavour>.ipk as
-# io.prysm.tv-<flavour>_<x.y.z>_all.ipk.
+# <app>-<flavour>_<x.y.z>_all.ipk.
 set -euo pipefail
 
 : "${GITHUB_REPOSITORY:?}" "${RELEASE_TAG:?}" "${RELEASE_VERSION:?}" "${RELEASE_SHA:?}" "${RELEASE_DIRECTORY:?}"
@@ -33,6 +33,8 @@ version=$RELEASE_VERSION
 # As packaging/debian/build-deb.sh and packaging/webos/ipk.py name them.
 deb_version=$(printf '%s' "$version" | tr - '~')
 app_version=${version%%[-+]*}
+# The TV app id, as packaging/webos/build-ipk.sh names its packages.
+app=io.github.ericschaal.prysm
 case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
 
 fail() {
@@ -84,7 +86,7 @@ if [ "$release" != published ]; then
   done
   for flavour in full slim; do
     [ -f "prysm-tv-$flavour.ipk" ] || fail "no prysm-tv-$flavour.ipk"
-    named=io.prysm.tv-${flavour}_${app_version}_all.ipk
+    named=${app}-${flavour}_${app_version}_all.ipk
     mv "prysm-tv-$flavour.ipk" "$named"
     assets+=("$named")
   done

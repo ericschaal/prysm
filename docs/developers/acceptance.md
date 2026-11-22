@@ -132,7 +132,7 @@ The checks, in order, through the
 - the running version (`prysm_build_info` in `/metrics`) is the artifact's
   from `manifest.json` (a skip without a matching manifest);
 - Screen sync starts: running with frames; WLED reports live DDP from the
-  sender the seam expects; no `output_issue`;
+  sender the seam expects; no `device.issue`;
 - the frame rate is within the tolerance of the source's, sent alike,
   nothing falls behind;
 - the colours follow the test clip (a card without a feed: not black);
@@ -478,8 +478,8 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   front, and fails the cell unless the TV reports it there within 20 s.
   `--tv-is-free` is the owner's word that nobody is watching. Then the old `io.prysm.capture` app not running,
   and what of Prysm is there: the app, the service, the Luna manifests and
-  boot hook, the staged package, a process under `io.prysm.*`, `getState`
-  answering, or the data files in `/var/lib/io.prysm.tv` that an uninstall
+  boot hook, the staged package, a process under `io.github.ericschaal.prysm.*`, `getState`
+  answering, or the data files in `/var/lib/io.github.ericschaal.prysm` that an uninstall
   leaves (`tv-found.json`);
 - **receiver** (slim): the receiver's preflight, as the host cells' (over SSH:
   reachable, `uname -m` against the binary, the port free);
@@ -495,12 +495,12 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   last;
 - **package**: the package installed the way that works on webOS 10
   ([packaging](packaging.md)): verified, staged as
-  `/media/developer/temp/io.prysm.tv.ipk`, Prysm stopped (below),
+  `/media/developer/temp/io.github.ericschaal.prysm.ipk`, Prysm stopped (below),
   `appInstallService` until `installed`, unstaged, `setup.sh`, `getState`.
   Stopping Prysm, before every install and uninstall: Prysm's Luna
   `uninstall`, called as the app (the worker stops gracefully, then the
   supervisor deregisters and exits; refused or unanswered, as when nothing is
-  installed, the runner goes on), then no process under `io.prysm.*` left
+  installed, the runner goes on), then no process under `io.github.ericschaal.prysm.*` left
   (polled every 2 s for 30 s); while one remains nothing is installed or
   removed. At the end it is uninstalled: Prysm stopped, the supervisor's
   `uninstall` subcommand (deregisters what is still
@@ -539,7 +539,7 @@ evidence holds the state as the TV confirmed it: `getState`'s `power` and
 | State | Set by the runner | Confirmed |
 | --- | --- | --- |
 | video | Prysm's app closed if the runner launched it; the clip cast with its overlay, unless it plays | power `active`, video exactly `available`, the Cast receiver (`com.webos.chromecast`) in front, all within 20 s; `settle_seconds` after `PLAYING` the clip still playing; the frames that arrive exactly the size asked |
-| UI | the cast stopped; Prysm's own app launched | power `active`, video exactly `unavailable`, `io.prysm.tv` in front, all within 20 s; the frames that arrive at most 320 × 180 |
+| UI | the cast stopped; Prysm's own app launched | power `active`, video exactly `unavailable`, `io.github.ericschaal.prysm` in front, all within 20 s; the frames that arrive at most 320 × 180 |
 
 `unknown` video, the screen saver and no app named in front count as not
 reached. Power, video and the app come from the TV (`getState`, which reads
@@ -571,7 +571,7 @@ The checks, in order (`@only` marks a package's own):
   every step. Both checks judge against the clip's known colours, so the clip
   keeps playing and nothing is compared with a capture of another moment;
 - WLED live and the frame rate (video state), the host cells' own: Screen
-  sync lights WLED with live DDP from the expected sender, no `output_issue`;
+  sync lights WLED with live DDP from the expected sender, no `device.issue`;
   the frame rate within the tolerance, sent alike, never behind;
 - capturing (video state): `getState` says capturing with a frame rate;
 - full (video state): the TV's capture modes are known
@@ -609,7 +609,7 @@ teardown, so it is checked also after a failure.
 
 Beyond Prysm's own service and the install service, the runner sends the TV
 `getForegroundAppInfo` (it only reads), `launch` and `closeByAppId` of
-`com.webos.service.applicationManager` with the id `io.prysm.tv`, and `launch`
+`com.webos.service.applicationManager` with the id `io.github.ericschaal.prysm`, and `launch`
 with the id `com.webos.app.home`, each id fixed in its template. To the Cast receiver on port 8009 it loads the clip with its
 subtitle track, switches that track on, and at the end stops the media and
 quits the receiver. It sends no key or input event, no toast, and nothing to
@@ -692,7 +692,7 @@ puts the lighting back as the backup recorded it, and says what it did: the
 full package's and the Linux package's lighting target with `PUT
 /api/v1/target`, the slim package's `setEnabled true`; lighting that was off
 (not enabled), or a backup of only data files, is left as it is.
-`--dry-run` prints what it would send. The run leaves the TV's data files in `/var/lib/io.prysm.tv` with the
+`--dry-run` prints what it would send. The run leaves the TV's data files in `/var/lib/io.github.ericschaal.prysm` with the
 run's values (the runner never deletes them). Within one run they are the
 run's own once a TV cell has started installing, so the next TV cell does not
 count them; a later run on the default `"refuse"` stops on them, and a later
@@ -718,12 +718,12 @@ boot, its state with `getState` when `[tv] target` is set.
   template in [`commands.py`](../../scripts/acceptance/prysm_acceptance/commands.py); its
   parameters are checked against fixed patterns and nothing from the
   configuration becomes shell text. The TV commands only read, stage the
-  package as `/media/developer/temp/io.prysm.tv.ipk` (removed after each
+  package as `/media/developer/temp/io.github.ericschaal.prysm.ipk` (removed after each
   install), install and remove the app through `com.webos.appInstallService`,
   run the package's `setup.sh` and the supervisor's `uninstall`, call
   Prysm's own Luna methods, ask which app is in front, launch or close
   Prysm's own app and bring the home screen to the front (no other app); here, one wake-on-LAN packet. Nothing
-  writes to system partitions or deletes `/var/lib/io.prysm.tv`.
+  writes to system partitions or deletes `/var/lib/io.github.ericschaal.prysm`.
   [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
   enumerate every template and check the paths it names, and every TV command
   the TV cells' plans name ([test](../../scripts/acceptance/tests/test_acceptance_tv.py)). On the Chromecast,

@@ -5,6 +5,7 @@
  * timing, but the same replies, validation messages and subscription.
  */
 import {
+  APP_ID,
   isEnabled,
   type BridgeFactory,
   type Flavor,
@@ -31,7 +32,7 @@ export type FakeProcess =
  * What the fake supervisor knows, as the real one does: the TV, the worker
  * process and the worker's last report. The published state is built from
  * it per package: a report shows only while the worker runs (the full
- * portal also while it stops).
+ * portal also while it stops), and a `null` fact is omitted.
  */
 interface CommonFacts {
   preferences: Preferences;
@@ -98,7 +99,7 @@ function apply(facts: FakeFacts, change: FakeChange) {
 
 function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
   const common: CommonFacts = {
-    preferences: { autostart: false, instance: null, ...preferences },
+    preferences: { autostart: false, ...preferences },
     power: 'active',
     video: 'available',
     failure: null,
@@ -117,13 +118,23 @@ function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
     : { ...common, flavor, enabled: false, encoding: null, paused: false };
 }
 
+/** `{ [key]: value }`, or nothing for `null` (the service omits it). */
+function present<K extends string, V>(key: K, value: V | null) {
+  return (value === null ? {} : { [key]: value }) as Partial<Record<K, V>>;
+}
+
 function fullWorker(facts: FullFacts): FullWorker {
   const { worker, capturing, fps, portal } = facts;
   switch (worker.phase) {
     case 'running':
-      return { phase: 'running', capturing, fps, portal };
+      return {
+        phase: 'running',
+        capturing,
+        ...present('fps', fps),
+        ...present('portal', portal),
+      };
     case 'stopping':
-      return { phase: 'stopping', portal };
+      return { phase: 'stopping', ...present('portal', portal) };
     default:
       return worker;
   }
@@ -132,14 +143,26 @@ function fullWorker(facts: FullFacts): FullWorker {
 function slimWorker(facts: SlimFacts): SlimWorker {
   const { worker, capturing, fps, encoding, paused } = facts;
   return worker.phase === 'running'
-    ? { phase: 'running', capturing, fps, encoding, paused }
+    ? {
+        phase: 'running',
+        capturing,
+        ...present('fps', fps),
+        ...present('encoding', encoding),
+        paused,
+      }
     : worker;
 }
 
 /** The `getState` payload the facts make, as the supervisor publishes it. */
 function publishedState(facts: FakeFacts): State {
   const { preferences, power, video, failure, log } = facts;
-  const common = { preferences, power, video, failure, log };
+  const common = {
+    preferences,
+    power,
+    video,
+    ...present('failure', failure),
+    log,
+  };
   return facts.flavor === 'full'
     ? {
         ...common,
@@ -246,7 +269,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       return;
     }
     if (offline) {
-      respond(error(`Unknown service name: "io.prysm.tv.service"`));
+      respond(error(`Unknown service name: "${APP_ID}.service"`));
       return;
     }
     const failure = failures.get(method);
@@ -278,11 +301,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           );
           return;
         }
-        facts.preferences = {
-          autostart: false,
-          instance: null,
-          ...preferences,
-        };
+        facts.preferences = { autostart: false, ...preferences };
         reconcile();
         respond(reply(state()));
         later(() => publish());

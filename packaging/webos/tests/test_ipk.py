@@ -18,7 +18,7 @@ spec = importlib.util.spec_from_file_location('ipk', HERE / 'ipk.py')
 ipk = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ipk)
 
-INSTALLED = '/media/developer/apps/usr/palm/services/io.prysm.tv.service/'
+INSTALLED = '/media/developer/apps/' + ipk.SERVICE
 
 
 def load(name):
@@ -34,6 +34,11 @@ class MetadataTests(unittest.TestCase):
         worker = re.search(r'pub const WORKER: &str = "(.+?)";', identity).group(1)
         methods = re.findall(r'Self::\w+ => "(\w+)"', re.search(r'pub const fn name\(self\).*?\n    \}', service_rs, re.S).group(0))
         self.assertEqual((app_id, supervisor, worker), (ipk.APP_ID, 'prysm-webos-service', 'prysm-webos-worker'))
+        # The TV app's and the acceptance runner's own constant.
+        platform = (FRONTEND / 'packages/webos-platform/index.ts').read_text()
+        self.assertIn(f"export const APP_ID = '{app_id}';", platform)
+        runner = (ROOT / 'scripts/acceptance/prysm_acceptance/commands.py').read_text()
+        self.assertIn(f"\nAPP = '{app_id}'\n", runner)
 
         app = load('app/appinfo.json')
         info = load('service/services.json')
@@ -71,26 +76,30 @@ class MetadataTests(unittest.TestCase):
         self.assertIn('luna://com.webos.appInstallService/dev/install', text)
         with tempfile.TemporaryDirectory() as directory:
             # The names build-ipk.sh writes and the release attaches.
-            self.assertIn('package="io.prysm.tv-${flavour}_${version}_all.ipk"',
-                          (HERE / 'build-ipk.sh').read_text())
+            build = (HERE / 'build-ipk.sh').read_text()
+            self.assertIn('package="${app}-${flavour}_${version}_all.ipk"', build)
+            # Each script names the app once, as ipk.py does.
+            self.assertIn(f'\napp={ipk.APP_ID}\n', build)
+            self.assertIn(f'\nAPP={ipk.APP_ID}\n', text)
+            self.assertIn(f'\nAPP={ipk.APP_ID}\n', (HERE / 'tests/tv-acceptance.sh').read_text())
             for flavour in ('full', 'slim'):
-                ipk_file = Path(directory) / f'io.prysm.tv-{flavour}_1.0.0_all.ipk'
+                ipk_file = Path(directory) / f'{ipk.APP_ID}-{flavour}_1.0.0_all.ipk'
                 ipk_file.write_bytes(b'')
                 run = subprocess.run(['sh', str(script), '--dry-run', 'root@tv', str(ipk_file)],
                                      capture_output=True, text=True, check=True)
                 plan = run.stderr
-                self.assertIn(f'/media/developer/temp/io.prysm.tv-{flavour}_1.0.0_all.ipk', plan)
+                self.assertIn(f'/media/developer/temp/{ipk.APP_ID}-{flavour}_1.0.0_all.ipk', plan)
                 # Either flavour installs as the one app.
-                self.assertIn('"id":"io.prysm.tv"', plan)
+                self.assertIn(f'"id":"{ipk.APP_ID}"', plan)
                 # luna-send keeps its stdin: every call is fed by a sleep.
                 self.assertEqual(plan.count('luna-send'), plan.count('(sleep '))
                 self.assertLess(plan.index('appInstallService'), plan.index(INSTALLED + 'setup.sh'))
                 # A running Prysm is stopped through its Luna uninstall (as the app) before the install
                 # service would end it abruptly.
-                self.assertLess(plan.index('luna-send -a io.prysm.tv -n 1 luna://io.prysm.tv.service/uninstall'),
+                self.assertLess(plan.index(f'luna-send -a {ipk.APP_ID} -n 1 luna://{ipk.SERVICE_ID}/uninstall'),
                                 plan.index('appInstallService'))
             # Anything else is not a Prysm TV package, the unsuffixed name included.
-            for other in ('other.ipk', 'io.prysm.tv_1.0.0_all.ipk', 'io.prysm.tv-other_1.0.0_all.ipk'):
+            for other in ('other.ipk', f'{ipk.APP_ID}_1.0.0_all.ipk', f'{ipk.APP_ID}-other_1.0.0_all.ipk'):
                 path = Path(directory) / other
                 path.write_bytes(b'')
                 refused = subprocess.run(['sh', str(script), '--dry-run', 'root@tv', str(path)],
@@ -270,9 +279,9 @@ class SmokeProbeTests(unittest.TestCase):
         version = ipk.app_version(ipk.product_version(ROOT / 'VERSION'))
         self.assertEqual(json.loads(manifest)['version'], version)
         self.assertIn('run --sandbox ' + directory + ' --run-for 60', files['probe.service'])
-        # The fake worker speaks its flavour's status (webos-link WorkerStatus).
-        common = {'type', 'flavor', 'capturing', 'fps', 'failure'}
-        for flavour, own in (('full', {'target', 'portal'}), ('slim', {'encoding', 'paused'})):
+        # The fake worker speaks its flavour's status (webos-link WorkerStatus), absent values omitted.
+        common = {'type', 'flavor', 'capturing'}
+        for flavour, own in (('full', {'target'}), ('slim', {'paused'})):
             status = json.loads(smoke.STATUS[flavour])
             self.assertEqual((status['type'], status['flavor']), ('status', flavour))
             self.assertEqual(set(status), common | own)

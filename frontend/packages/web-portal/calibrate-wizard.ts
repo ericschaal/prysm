@@ -28,17 +28,17 @@ const everything = ['white', 'red', 'green', 'blue'] as const;
  * anything.
  */
 export const screens: readonly Screen[] = [
-  { section: 'white', pattern: 'gray-192' },
-  { section: 'red', pattern: 'red-pair' },
-  { section: 'green', pattern: 'green-pair' },
-  { section: 'blue', pattern: 'blue-pair' },
+  { section: 'white', pattern: 'gray_192' },
+  { section: 'red', pattern: 'red_pair' },
+  { section: 'green', pattern: 'green_pair' },
+  { section: 'blue', pattern: 'blue_pair' },
   { section: 'checks', pattern: 'yellow', fixes: ['red', 'green'] },
   { section: 'checks', pattern: 'cyan', fixes: ['green', 'blue'] },
   { section: 'checks', pattern: 'magenta', fixes: ['red', 'blue'] },
   { section: 'checks', pattern: 'coast', fixes: everything },
   { section: 'checks', pattern: 'garden', fixes: everything },
   { section: 'checks', pattern: 'dusk', fixes: everything },
-  { section: 'review', pattern: 'review-grid' },
+  { section: 'review', pattern: 'review_grid' },
 ];
 
 /** The screen adjusting `what`. */

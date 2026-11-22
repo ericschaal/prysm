@@ -20,7 +20,7 @@ the Luna registration observes, restarts and kills it.
 1. **Two packages, two workers.** `prysm-webos` (TV UI, native capture,
    embedded processing, WLED, web portal) and `prysm-webos-slim` (TV UI, native
    capture, frames to a headless Prysm). No in-app switching; there is no `mode`.
-   Both install as the same app (`io.prysm.tv`) with the same file names, so
+   Both install as the same app (`io.github.ericschaal.prysm`) with the same file names, so
    installing one replaces the other; the flavor is a build-time fact of the
    binaries and is reported in `State.flavor`.
 2. **Portal on the LAN without a token** (`WebPortal::from_listener(listener,
@@ -101,7 +101,7 @@ has one Luna binding.
 
 - **Start**: argv only, built without a shell
   ([args.rs](../../crates/engine/webos-link/src/args.rs)):
-  `prysm-webos --settings /var/lib/io.prysm.tv/settings.json --listen 0.0.0.0:8787 --lighting off`;
+  `prysm-webos --settings /var/lib/io.github.ericschaal.prysm/settings.json --listen 0.0.0.0:8787 --lighting off`;
   `prysm-webos-slim --receiver 192.168.1.20:7380` (size, rate, menus and
   encoding come from the receiver's stream request, `prysm-3jx.63`).
 - **Commands**: worker stdin. **Events**: the worker's original stdout. The
@@ -234,7 +234,7 @@ until the handler returns, so LS2 is never re-entered while it is borrowed.
 
 ## 6. Luna API
 
-Both packages: service `io.prysm.tv.service`, app `io.prysm.tv`. Replies carry LS2
+Both packages: service `io.github.ericschaal.prysm.service`, app `io.github.ericschaal.prysm`. Replies carry LS2
 `returnValue`/`errorText`; payloads are objects of at most 4 KiB. The values
 are exported as the `luna` OpenAPI document
 ([schema.rs](../../crates/hosts/webos-service/src/schema.rs), generated
@@ -312,22 +312,22 @@ From `crates/web/prysm-webos/src/App.tsx`.
 
 ## 8. Settings on the TV
 
-Root-owned 0700 state directory `/var/lib/io.prysm.tv` (both packages); one writer per file.
+Root-owned 0700 state directory `/var/lib/io.github.ericschaal.prysm` (both packages); one writer per file.
 
 | File | Contents | Writer |
 | --- | --- | --- |
-| `/var/lib/io.prysm.tv/tv.json` | `Preferences` | supervisor |
-| `/var/lib/io.prysm.tv/settings.json` | v1 `Settings` (`capture.kind = "webos"`, WLED, processing) | full worker's engine, via the portal; seeded by the worker |
+| `/var/lib/io.github.ericschaal.prysm/tv.json` | `Preferences` | supervisor |
+| `/var/lib/io.github.ericschaal.prysm/settings.json` | v1 `Settings` (`capture.kind = "webos"`, WLED, processing) | full worker's engine, via the portal; seeded by the worker |
 
 Saved preferences that no longer validate are ignored (defaults, logged).
 Uninstall keeps settings.
 
 ## 9. Packaging and install (not implemented here)
 
-Both IPKs are the app `io.prysm.tv` with identical installed file names;
+Both IPKs are the app `io.github.ericschaal.prysm` with identical installed file names;
 installing one replaces the other.
 
-| IPK | App | Service directory `…/services/io.prysm.tv.service/` |
+| IPK | App | Service directory `…/services/io.github.ericschaal.prysm.service/` |
 | --- | --- | --- |
 | full | `dist/webos/tv-ui` | `prysm-webos-service` (from bin `prysm-webos-service`), `prysm-webos-worker` (from `prysm-webos`), `setup.sh`, role/service/permission files, licences |
 | slim | `dist/webos-slim/tv-ui` | `prysm-webos-service` (from bin `prysm-webos-slim-service`), `prysm-webos-worker` (from `prysm-webos-slim`), same file names |
@@ -341,7 +341,7 @@ installing one replaces the other.
   Supervisor role: its service name; outbound `com.webos.service.tvpower`,
   `com.webos.service.videooutput`. `supervisor.service` execs the supervisor without arguments.
 - `setup.sh`: `exec "$(dirname "$0")/prysm-webos-service" setup`. Setup writes both
-  manifests and `/var/lib/webosbrew/init.d/io.prysm.tv` (refusing unrelated
+  manifests and `/var/lib/webosbrew/init.d/io.github.ericschaal.prysm` (refusing unrelated
   content; re-running it on the same install succeeds), rescans (10 s bound) and activates with `luna-send … getState`
   (10 s bound, `returnValue` checked). The boot hook runs the same `setup`.
 - To change: `packaging/webos/build-ipk.sh` builds

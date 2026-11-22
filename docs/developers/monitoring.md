@@ -10,8 +10,9 @@ curl http://127.0.0.1:8787/metrics
 
 Metrics are off by default, have no authentication and follow the portal's
 origin policy. They are totals the session already keeps (frames received and
-sent, processing and output-write time, write failures, opens) plus the
-target, session state, revision and input rate. There are no system or
+sent, processing, receive-to-write and output-write time, write failures,
+opens) plus the product version, target, session state, revision and input
+rate. There are no system or
 per-adapter metrics and no histograms. Names and meanings:
 [portal contract](../../crates/surfaces/web-portal/HTTP-CONTRACT.md#metrics).
 

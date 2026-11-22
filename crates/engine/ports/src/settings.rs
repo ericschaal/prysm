@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fmt;
 
-/// Everything a user can change at runtime. Serialized as a human-editable file:
+/// Everything a user can change at runtime. Serialized as the fields of a
+/// human-editable file (`prysm-settings-file` adds the file's `format`):
 ///
 /// ```json
 /// {

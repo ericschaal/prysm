@@ -199,21 +199,29 @@
         ],
         "type": "object"
       },
-      "DeviceBrightness": {
-        "description": "The lights' own brightness while it scales Prysm's colours (WLED: its\nmaster brightness and brightness factor). Prysm reports it and never\nchanges it.",
+      "DeviceReport": {
+        "description": "What the lights say about themselves, from the output's own checks. Each\npart is absent while the output cannot tell, and all are while no session\nholds the output (no session, no frame yet, or released after 3 s without\nvideo; see `session.state` and `input.receiving`). Prysm reports them and\nchanges none.",
         "properties": {
-          "percent": {
-            "description": "The share of Prysm's brightness the lights show.",
+          "brightness_percent": {
+            "description": "The lights' own brightness while it scales Prysm's colours (WLED: its\nmaster brightness and brightness factor): the share of Prysm's\nbrightness they show. Absent while it does not (WLED: \"Force max\nbrightness\" on).",
             "example": 40,
             "format": "int32",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/OutputIssue",
+            "description": "Why the lights are not showing Prysm's colours; absent while they\nshow them."
+          },
+          "led_count": {
+            "description": "How many LEDs the lights say they have (WLED: its LED count). Prysm\nsends the configured `settings.output.leds` either way: a different\ncount leaves LEDs dark or colours unshown.",
+            "example": 120,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
           }
         },
-        "required": [
-          "percent"
-        ],
         "type": "object"
       },
       "DeviceSettings": {
@@ -629,20 +637,20 @@
       "Pattern": {
         "description": "A calibration pattern, by its TV clip name.",
         "enum": [
-          "gray-192",
+          "gray_192",
           "red",
           "yellow",
           "green",
           "cyan",
           "blue",
           "magenta",
-          "blue-pair",
-          "red-pair",
-          "green-pair",
+          "blue_pair",
+          "red_pair",
+          "green_pair",
           "coast",
           "garden",
           "dusk",
-          "review-grid"
+          "review_grid"
         ],
         "type": "string"
       },
@@ -1089,35 +1097,17 @@
             "$ref": "#/components/schemas/CalibrationPattern",
             "description": "The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;\nabsent while not calibrating. Never saved."
           },
-          "device_led_count": {
-            "description": "How many LEDs the lights themselves say they have (WLED: its LED\ncount), from the same checks; absent while the output cannot tell and\nwhile no session runs. Prysm sends the configured\n`settings.output.leds` either way: a different count leaves LEDs dark\nor colours unshown.",
-            "example": 120,
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
+          "device": {
+            "$ref": "#/components/schemas/DeviceReport",
+            "description": "What the lights say about themselves, from the output's own checks\n(about once a second). Empty while no session holds the output: no\nsession, or one that has no frame yet or released the output after 3 s\nwithout video; `session.state` and `input.receiving` say which."
           },
           "failure": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Failure",
-                "description": "The last lighting failure. Every target change, settings apply,\nshutdown and session end replaces it, so the next one that succeeds\nclears it."
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/Failure",
+            "description": "The last lighting failure; absent while there is none. Every target\nchange, settings apply, shutdown and session end replaces it, so the\nnext one that succeeds clears it."
           },
           "input": {
             "$ref": "#/components/schemas/Input",
             "description": "Frames arriving from the source, measured about once a second; absent\nwhile no session runs."
-          },
-          "output_brightness": {
-            "$ref": "#/components/schemas/DeviceBrightness",
-            "description": "The lights' own brightness while it scales Prysm's colours, from the\nsame checks; absent while it does not (WLED: \"Force max brightness\"\non), while the output cannot tell, and while no session runs."
-          },
-          "output_issue": {
-            "$ref": "#/components/schemas/OutputIssue",
-            "description": "Why the lights are not showing Prysm's colours while lighting runs,\nfrom the output's own checks (about once a second); absent while they\nshow them, while the output cannot tell, and while no session runs."
           },
           "revision": {
             "description": "Pass back as `expected` when replacing settings.",
@@ -1140,14 +1130,20 @@
           },
           "target": {
             "$ref": "#/components/schemas/LightingTarget"
+          },
+          "version": {
+            "description": "The Prysm product version, such as `1.0.0` or `1.0.0-rc.1`.",
+            "example": "1.0.0",
+            "type": "string"
           }
         },
         "required": [
+          "version",
           "target",
           "session",
+          "device",
           "settings",
           "revision",
-          "failure",
           "surface_failures"
         ],
         "type": "object"

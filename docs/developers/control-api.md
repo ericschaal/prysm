@@ -47,6 +47,9 @@ origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
   a stale revision is `409` and is never retried automatically. The browser
   copies the latest settings and replaces one section, so it keeps fields it
   does not show ([saving settings](../../frontend/README.md#saving-settings)).
+- The file's `format` number belongs to the file alone: the portal's
+  `settings` never carry it, and a `PUT /api/v1/settings` body with it is
+  `400` (unknown field).
 
 See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md).
 
@@ -63,12 +66,11 @@ There is no confirmation window and no rollback to the previous mode after a
 failed start. A failure leaves the target as requested. Without frames for 3 s
 the output returns to the device's own state until frames return; WLED
 problems while running (switched off, live override, another sender, no
-answer) show as `output_issue`, and Prysm does not switch WLED back.
-`output_brightness` (`{"percent": 40}`) is WLED's own brightness while it
-scales Prysm's colours; Prysm reports it and never changes it.
-`device_led_count` (`120`) is how many LEDs WLED itself says it has; Prysm
-keeps sending the configured edges' total, and the portal warns while the two
-differ.
+answer) show as `device.issue`, and Prysm does not switch WLED back.
+`device.brightness_percent` (`40`) is WLED's own brightness while it scales
+Prysm's colours; Prysm reports it and never changes it. `device.led_count`
+(`120`) is how many LEDs WLED itself says it has; Prysm keeps sending the
+configured edges' total, and the portal warns while the two differ.
 
 On SIGINT or SIGTERM the host stops the session (output idled off), lets open
 requests finish for up to 5 s, and exits non-zero if shutdown failed.

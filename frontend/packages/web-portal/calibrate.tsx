@@ -55,20 +55,20 @@ import {
 
 /** What the TV shows for each pattern. */
 const patternLabels: Record<Pattern, string> = {
-  'gray-192': 'light grey',
+  gray_192: 'light grey',
   red: 'red',
   yellow: 'yellow',
   green: 'green',
   cyan: 'cyan',
   blue: 'blue',
   magenta: 'magenta',
-  'blue-pair': 'blue, moderate left, vivid right',
-  'red-pair': 'red, moderate left, vivid right',
-  'green-pair': 'green, moderate left, vivid right',
+  blue_pair: 'blue, moderate left, vivid right',
+  red_pair: 'red, moderate left, vivid right',
+  green_pair: 'green, moderate left, vivid right',
   coast: 'peach left, teal right',
   garden: 'rose left, sage right',
   dusk: 'amber left, violet right',
-  'review-grid': 'a grid of colours',
+  review_grid: 'a grid of colours',
 };
 
 /** Each section's name in the progress bar. */

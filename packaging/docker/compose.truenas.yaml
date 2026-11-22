@@ -20,7 +20,7 @@ services:
     environment:
       RUST_LOG: warn,prysm=info
     # Options after the settings path. `--allow-origin null` lets the slim
-    # TV app (io.prysm.tv, slim package) control this Prysm; remove it if no
+    # TV app (io.github.ericschaal.prysm, slim package) control this Prysm; remove it if no
     # TV uses this NAS: it also lets a page embedded by any website, opened
     # on your network, control Prysm (docs/users/truenas.md).
     # Add "--start" to start screen sync with the app.

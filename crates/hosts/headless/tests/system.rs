@@ -42,9 +42,14 @@ fn remote_capture() -> Value {
     json!({ "kind": "remote", "width": 32, "height": 18, "fps": 30, "encoding": "raw" })
 }
 
+/// `settings` as a settings file: the format number, then its fields.
 fn write_settings(dir: &Path, settings: &Value) -> String {
     let path = dir.join("settings.json");
-    std::fs::write(&path, settings.to_string()).unwrap();
+    let mut file = json!({ "format": 1 });
+    file.as_object_mut()
+        .unwrap()
+        .extend(settings.as_object().unwrap().clone());
+    std::fs::write(&path, file.to_string()).unwrap();
     path.to_str().unwrap().to_owned()
 }
 
@@ -616,7 +621,7 @@ fn a_corrupt_or_invalid_settings_file_on_start() {
     assert_eq!(state["target"], "off");
     assert_eq!(
         std::fs::read_to_string(&invalid).unwrap(),
-        r#"{"output":{"kind":"bogus"}}"#
+        r#"{"format":1,"output":{"kind":"bogus"}}"#
     );
     // Fixed through the portal.
     let fixed = json!({ "output": { "kind": "null" } });
@@ -626,4 +631,5 @@ fn a_corrupt_or_invalid_settings_file_on_start() {
     assert!(status.success(), "{stderr:#?}");
     let file: Value = serde_json::from_str(&std::fs::read_to_string(&invalid).unwrap()).unwrap();
     assert_eq!(file["output"]["kind"], "null", "{file:#}");
+    assert_eq!(file["format"], 1, "{file:#}");
 }

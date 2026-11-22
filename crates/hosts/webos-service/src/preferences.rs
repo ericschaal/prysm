@@ -11,13 +11,14 @@ use std::path::{Path, PathBuf};
 pub const MAX_BYTES: usize = 65_536;
 
 /// `tv.json` and the `setPreferences` request (complete, every field
-/// optional). Fields marked "Slim only" must stay unset (`null` or absent)
+/// optional, an unset one absent). Fields marked "Slim only" must stay unset
 /// in the full package.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Preferences {
     /// Start enabled (full: processed lighting) when the service starts.
+    #[serde(default)]
     pub autostart: bool,
     /// Slim only: the headless Prysm's address, such as
     /// `http://192.168.1.20:8787` or `https://prysm.example.com` (through a
@@ -25,9 +26,10 @@ pub struct Preferences {
     /// links to its portal. Only the syntax is checked when saved; the TV
     /// resolves a host name at every connection attempt, and one that does
     /// not resolve is reported as the receiver wait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schema(value_type = Option<String>, max_length = 256, example = "http://192.168.1.20:8787")
+        schema(value_type = Option<String>, nullable = false, max_length = 256, example = "http://192.168.1.20:8787")
     )]
     pub instance: Option<PrysmAddress>,
 }
@@ -160,23 +162,35 @@ impl FileStore {
     }
 }
 
-/// Write `bytes` to `path` atomically, private (0600), and sync the directory.
+/// Write `bytes` to `path` atomically, private (0600).
 fn replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
-    let failed = |source: io::Error| StoreError::Save {
+    write_atomic(path, bytes, 0o600, true).map_err(|source| StoreError::Save {
         path: path.to_owned(),
         source,
-    };
+    })
+}
+
+/// Write `bytes` with `mode` to a temporary file next to `path`, sync it,
+/// rename it to `path` and sync the directory: a reader sees the old file or
+/// the new one, never a partial write. Without `replace`, an existing `path`
+/// is an error and stays as it is.
+///
+/// # Errors
+/// Any step failed. An error before the rename removes the temporary file;
+/// a crash can leave it behind (a dot-file next to `path`).
+pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32, replace: bool) -> io::Result<()> {
     let directory = path.parent().unwrap_or(Path::new("."));
-    let mut file = tempfile::NamedTempFile::new_in(directory).map_err(failed)?;
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
     file.as_file()
-        .set_permissions(fs::Permissions::from_mode(0o600))
-        .map_err(failed)?;
-    file.write_all(bytes).map_err(failed)?;
-    file.as_file().sync_all().map_err(failed)?;
-    file.persist(path).map_err(|error| failed(error.error))?;
-    fs::File::open(directory)
-        .and_then(|directory| directory.sync_all())
-        .map_err(failed)
+        .set_permissions(fs::Permissions::from_mode(mode))?;
+    file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    if replace {
+        file.persist(path).map_err(|error| error.error)?;
+    } else {
+        file.persist_noclobber(path).map_err(|error| error.error)?;
+    }
+    fs::File::open(directory)?.sync_all()
 }
 
 impl PreferencesStore for FileStore {

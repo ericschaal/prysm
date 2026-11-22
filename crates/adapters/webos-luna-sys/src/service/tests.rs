@@ -35,7 +35,7 @@ impl Handler for Recorder {
 }
 
 const CONFIG: Config<'static> = Config {
-    name: "io.prysm.tv.service",
+    name: "io.github.ericschaal.prysm.service",
     methods: &["getState", "uninstall"],
     calls: &[("luna://power/get", "{}"), ("luna://video/get", "{}")],
     tick: Duration::from_millis(100),
@@ -54,7 +54,7 @@ fn requests_replies_and_ticks_reach_the_handler_and_teardown_is_ordered() {
     mock::on_run(|| {
         mock::invoke_method(&mut FakeMessage::new(
             "getState",
-            "io.prysm.tv 1234",
+            "io.github.ericschaal.prysm 1234",
             r#"{"subscribe":true}"#,
         ));
         let oversized = format!(r#"{{"x":"{}"}}"#, "y".repeat(MAX_PAYLOAD));
@@ -74,7 +74,7 @@ fn requests_replies_and_ticks_reach_the_handler_and_teardown_is_ordered() {
     assert_eq!(
         *seen.borrow(),
         [
-            r#"request getState from io.prysm.tv: {"subscribe":true}"#,
+            r#"request getState from io.github.ericschaal.prysm: {"subscribe":true}"#,
             r#"reply 0: {"state":"Active"}"#,
             "reply 1: {}",
         ]
@@ -107,7 +107,7 @@ fn requests_replies_and_ticks_reach_the_handler_and_teardown_is_ordered() {
 #[test]
 fn a_refused_registration_releases_the_loop_and_context() {
     mock::reset();
-    mock::deny_register(Some("io.prysm.tv.service"));
+    mock::deny_register(Some("io.github.ericschaal.prysm.service"));
     let error = run_with(
         mock::luna(),
         mock::glib(),

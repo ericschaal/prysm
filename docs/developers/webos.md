@@ -13,7 +13,7 @@ Installation for users: [LG TV](../users/webos.md). Building packages:
 > ([records](../../research/tv-acceptance/README.md)).
 
 > **Safety.** Work only with Prysm's own files: the app and service
-> directories, its Luna manifests, its boot hook and `/var/lib/io.prysm.tv`.
+> directories, its Luna manifests, its boot hook and `/var/lib/io.github.ericschaal.prysm`.
 > Never overwrite the TV's system partitions (kernel, rootfs, tvservice) or
 > LG's manifests. Builds do not deploy.
 
@@ -24,7 +24,7 @@ it. Capture therefore runs in a worker process under a supervisor.
 
 | Installed as | Full package | Slim package | Owns |
 | --- | --- | --- | --- |
-| `prysm-webos-service` (Luna-activated, root) | bin `prysm-webos-service` | bin `prysm-webos-slim-service` | Luna name `io.prysm.tv.service`, TV power and video, preferences, the intent, worker start/stop/kill, setup and uninstall |
+| `prysm-webos-service` (Luna-activated, root) | bin `prysm-webos-service` | bin `prysm-webos-slim-service` | Luna name `io.github.ericschaal.prysm.service`, TV power and video, preferences, the intent, worker start/stop/kill, setup and uninstall |
 | `prysm-webos-worker` (child) | `prysm-webos`: engine, webOS capture, WLED, portal on `0.0.0.0:8787` | `prysm-webos-slim`: webOS capture, H.264 or raw stream to a desktop Prysm | Capture and everything after it |
 
 The flavour is compiled into each supervisor binary, and each package ships
@@ -44,6 +44,11 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   output is redirected to stderr, which carries logs.
 - The worker reports status on every change and every 5 s; 15 s of silence is
   a hang. Stop sends TERM, then KILL 8 s later.
+- An exit is handled once the worker's last events are read, at most 1 s
+  after it is reaped (a process it left behind can hold the pipe).
+- An exit while running is published as a failure: the exit's description,
+  then the last cause or report; an `encoder` or `version` report keeps its
+  kind, anything else is `other`.
 - Each status names its package (`"flavor": "full"` or `"slim"`) and has only
   that package's fields; a status of the other package breaks the link. A
   worker whose run ends with an error says why (`failed`, also before its
@@ -88,7 +93,7 @@ protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
 ## Luna API
 
-Service `io.prysm.tv.service`: `getState` (any caller, subscribable),
+Service `io.github.ericschaal.prysm.service`: `getState` (any caller, subscribable),
 `setPreferences`, `setEnabled` and `uninstall` (the app only, checked by LS2
 application ID). The state has the fields both packages share (`preferences`,
 `power`, `video`, `failure`, `log`) and the installed package's own, tagged
@@ -96,7 +101,9 @@ by `flavor`: full `lighting` and a `worker` that reports `capturing`, `fps`
 and `portal` while it runs (`portal` also while it stops); slim `enabled` and
 a `worker` that reports `capturing`, `fps`, `encoding` and `paused` while it
 runs. API version 2 (the document's `info.version`). Preferences hold only `autostart` and, for slim, `instance`
-(the desktop Prysm's portal address, where frames go). Picture settings live in a
+(the desktop Prysm's portal address, where frames go). An absent value (no
+failure, `fps`, `portal`, `encoding` or `instance`) is omitted, never `null`,
+here and in the worker's status lines. Picture settings live in a
 portal, never in Luna. Types: generated `@prysm/contracts/luna` from
 [schema.rs](../../crates/hosts/webos-service/src/schema.rs).
 
@@ -107,17 +114,20 @@ The TV app sets the service up through the Homebrew Channel's `exec` of
 
 | Path | Purpose |
 | --- | --- |
-| `/media/developer/apps/usr/palm/applications/io.prysm.tv/` | TV app |
-| `/media/developer/apps/usr/palm/services/io.prysm.tv.service/` | Supervisor, worker, `setup.sh`, Luna role/service files, licences |
-| `/var/luna-service2/manifests.d/io.prysm.tv.supervisor.json`, `io.prysm.tv.worker.json` | Luna role registration, written by `setup` |
-| `/var/lib/webosbrew/init.d/io.prysm.tv` | Boot hook; runs `setup` at boot |
-| `/var/lib/io.prysm.tv/tv.json` | Preferences (supervisor) |
-| `/var/lib/io.prysm.tv/resume.json` | Intent and boot ID (supervisor) |
-| `/var/lib/io.prysm.tv/settings.json` | Full only: portal settings (worker's engine) |
+| `/media/developer/apps/usr/palm/applications/io.github.ericschaal.prysm/` | TV app |
+| `/media/developer/apps/usr/palm/services/io.github.ericschaal.prysm.service/` | Supervisor, worker, `setup.sh`, Luna role/service files, licences |
+| `/var/luna-service2/manifests.d/io.github.ericschaal.prysm.supervisor.json`, `io.github.ericschaal.prysm.worker.json` | Luna role registration, written by `setup` |
+| `/var/lib/webosbrew/init.d/io.github.ericschaal.prysm` | Boot hook; runs `setup` at boot |
+| `/var/lib/io.github.ericschaal.prysm/tv.json` | Preferences (supervisor) |
+| `/var/lib/io.github.ericschaal.prysm/resume.json` | Intent and boot ID (supervisor) |
+| `/var/lib/io.github.ericschaal.prysm/settings.json` | Full only: portal settings (worker's engine) |
 
-`prysm-webos-service setup` writes the manifests and boot hook (refusing
-unrelated content), rescans Luna and activates the service, all with bounded
-waits. It must run after every install or update: IPKs carry no install
+`prysm-webos-service setup` writes the manifests and boot hook, rescans Luna
+(also after a failed step) and activates the service, all with bounded
+waits. A manifest with Prysm's id and role files, and a hook with its
+`# Prysm (<app id>):` line, are Prysm's from any release and are replaced
+atomically; anything else is refused, and a manifest that is not JSON must
+be deleted before setup runs again. It must run after every install or update: IPKs carry no install
 scripts. The Luna method `uninstall` (only the app may call it) replies at
 once, stops the worker gracefully (TERM, KILL 8 s later), then removes the
 hook and manifests, rescans and exits. The `uninstall` subcommand only

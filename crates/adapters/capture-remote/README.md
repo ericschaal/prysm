@@ -9,9 +9,10 @@ has a listener of its own:
 - `RemoteReceiver` registers source kind `"remote"`:
 
   ```json
-  { "capture": { "kind": "remote",
-                 "width": 320, "height": 180, "fps": 30,
-                 "include_ui": true, "encoding": "h264_hardware" } }
+  { "format": 1,
+    "capture": { "kind": "remote",
+                   "width": 320, "height": 180, "fps": 30,
+                   "include_ui": true, "encoding": "h264_hardware" } }
   ```
 
   Every field is optional; these are the defaults. An even `width` (2 to

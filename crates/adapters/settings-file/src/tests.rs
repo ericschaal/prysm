@@ -1,4 +1,4 @@
-use super::SettingsFile;
+use super::{FormatError, SettingsFile};
 use prysm_ports::{
     AdapterSettings, Error, Processing, Settings, SettingsStore, Style, StyleValues,
 };
@@ -82,6 +82,7 @@ fn save_then_load_round_trips_as_pretty_json() {
     assert_eq!(store.load().unwrap(), Some(sample()));
 
     let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with("{\n  \"format\": 1,\n"), "{text}");
     assert!(text.ends_with("}\n"), "{text}");
     assert!(text.contains("\n  \"capture\": {\n"), "{text}");
     assert!(
@@ -106,7 +107,7 @@ fn hand_written_minimal_file_loads_with_defaults() {
     let path = directory.path().join("settings.json");
     fs::write(
         &path,
-        r#"{ "output": { "kind": "wled", "host": "led.local" } }"#,
+        r#"{ "output": { "kind": "wled", "host": "led.local" }, "format": 1 }"#,
     )
     .unwrap();
     let settings = SettingsFile::new(&path).load().unwrap().unwrap();
@@ -119,16 +120,133 @@ fn hand_written_minimal_file_loads_with_defaults() {
 fn unknown_field_is_rejected_with_its_name_and_the_path() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("settings.json");
-    fs::write(&path, r#"{ "processing": { "brightnes_percent": 80 } }"#).unwrap();
+    for (text, field, line) in [
+        (
+            r#"{ "format": 1, "processing": { "brightnes_percent": 80 } }"#,
+            "brightnes_percent",
+            "line 1",
+        ),
+        // Beside the format, at the top: the format is not a gap for other fields.
+        (
+            "{ \"format\": 1,\n  \"outptu\": { \"kind\": \"null\" } }",
+            "outptu",
+            "line 2",
+        ),
+    ] {
+        fs::write(&path, text).unwrap();
+        let error = SettingsFile::new(&path).load().unwrap_err();
+        let message = full_message(&error);
+        assert!(message.contains(&path.display().to_string()), "{message}");
+        assert!(
+            message.contains(&format!("unknown field `{field}`")),
+            "{message}"
+        );
+        assert!(message.contains(line), "{message}");
+        assert!(cause::<serde_json::Error>(&error).is_some());
+    }
+}
+
+/// What `load` refuses for the file's format.
+fn format_error(text: &str) -> (FormatError, String) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, text).unwrap();
     let error = SettingsFile::new(&path).load().unwrap_err();
-    let message = full_message(&error);
-    assert!(message.contains(&path.display().to_string()), "{message}");
+    assert_eq!(
+        error.to_string(),
+        format!("cannot load settings file {}", path.display())
+    );
+    (
+        cause::<FormatError>(&error).unwrap().clone(),
+        full_message(&error),
+    )
+}
+
+#[test]
+fn a_newer_format_is_refused_for_its_number_before_its_fields() {
+    // A newer Prysm's file may well have fields this one does not know.
+    let (error, message) = format_error(r#"{ "added": true, "format": 2 }"#);
+    assert_eq!(error, FormatError::Newer { found: 2.into() });
     assert!(
-        message.contains("unknown field `brightnes_percent`"),
+        message.ends_with("it is format 2, written by a newer Prysm; this Prysm reads format 1"),
         "{message}"
     );
-    assert!(message.contains("line 1"), "{message}");
-    assert!(cause::<serde_json::Error>(&error).is_some());
+}
+
+#[test]
+fn a_file_without_a_format_is_refused() {
+    let (error, message) = format_error(r#"{ "output": { "kind": "null" } }"#);
+    assert_eq!(error, FormatError::Missing);
+    assert!(message.contains("add `\"format\": 1`"), "{message}");
+    assert_eq!(format_error("{}").0, FormatError::Missing);
+    assert_eq!(
+        format_error(r#"{ "format": 0 }"#).0,
+        FormatError::Older { found: 0.into() }
+    );
+}
+
+#[test]
+fn an_oversized_file_is_refused_before_parsing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("big.json");
+    fs::write(&path, vec![b' '; 1024 * 1024 + 1]).unwrap();
+    let error = SettingsFile::new(&path).load().unwrap_err();
+    assert!(
+        full_message(&error).ends_with("it is larger than 1 MiB"),
+        "{error}"
+    );
+    let io = cause::<std::io::Error>(&error).unwrap();
+    assert_eq!(io.kind(), std::io::ErrorKind::FileTooLarge);
+}
+
+#[test]
+fn a_format_that_is_not_a_whole_number_says_so() {
+    for (text, found) in [
+        (r#"{ "format": "1" }"#, r#""1""#),
+        (r#"{ "format": null }"#, "null"),
+        (r#"{ "format": 2.0 }"#, "2.0"),
+        (r#"{ "format": -1 }"#, "-1"),
+    ] {
+        let (error, message) = format_error(text);
+        assert_eq!(
+            error,
+            FormatError::NotANumber {
+                found: found.into()
+            }
+        );
+        assert!(
+            message.ends_with(&format!(
+                "its `format` is {found}, not a format number; this Prysm reads format 1"
+            )),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn any_whole_number_above_the_format_is_newer() {
+    for text in [r#"{ "format": 4294967296 }"#, r#"{ "format": 1e30 }"#] {
+        assert!(
+            matches!(format_error(text).0, FormatError::Newer { .. }),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn only_an_object_has_a_format() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    for text in ["[2]", "[1]", "2"] {
+        fs::write(&path, text).unwrap();
+        let error = SettingsFile::new(&path).load().unwrap_err();
+        assert!(
+            error.to_string().starts_with("cannot parse settings file"),
+            "{text}: {error}"
+        );
+        let message = full_message(&error);
+        assert!(message.contains("expected a settings object"), "{message}");
+    }
 }
 
 #[test]

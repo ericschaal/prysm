@@ -13,9 +13,11 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApplicationError } from '@prysm/application-client';
 import {
+  APP_ID,
   CALL_TIMEOUT_MS,
   HOMEBREW_EXEC,
   RESUBSCRIBE_MS,
+  SERVICE_URI,
   SETUP_SCRIPT,
   isState,
   lunaTvService,
@@ -28,6 +30,7 @@ import {
   instanceAddress,
   localPortal,
   retrySeconds,
+  sentPreferences,
   shown,
   tvStatus,
   completePreferences,
@@ -240,6 +243,7 @@ test('generated Rust states are accepted; contract violations are not', () => {
     'a restart says when',
   );
   assert(!isState({ ...state(), failure: 'x' }), 'a failure has a kind');
+  assert(!isState({ ...state(), failure: null }), 'absent, not null');
   assert(isState({ ...state(), failure: { kind: 'receiver', message: 'x' } }));
   assert(!isState({ ...state(), failure: { kind: 'later', message: 'x' } }));
   assert(!isState({ ...state(), worker: { ...state().worker, fps: '30' } }));
@@ -284,7 +288,7 @@ test('the state subscription retries after unsubscribed, malformed and refused r
   const stop = lunaTvService(bridge.factory).watch((event) =>
     events.push(event),
   );
-  assert.equal(bridge.channels[0].uri, 'luna://io.prysm.tv.service/getState');
+  assert.equal(bridge.channels[0].uri, `${SERVICE_URI}/getState`);
   assert.deepEqual(bridge.channels[0].payload, { subscribe: true });
   bridge.channels[0].reply({
     returnValue: true,
@@ -366,18 +370,15 @@ test('commands carry the contract payloads and fail with typed errors', async ()
   const bridge = manualBridge();
   const service = lunaTvService(bridge.factory);
   const saving = service.setPreferences({ autostart: true });
-  assert.equal(
-    bridge.channels[0].uri,
-    'luna://io.prysm.tv.service/setPreferences',
-  );
+  assert.equal(bridge.channels[0].uri, `${SERVICE_URI}/setPreferences`);
   assert.deepEqual(bridge.channels[0].payload, { autostart: true });
   bridge.channels[0].reply({
     returnValue: false,
-    errorText: 'only io.prysm.tv may change Prysm',
+    errorText: `only ${APP_ID} may change Prysm`,
   });
   await assert.rejects(saving, {
     kind: 'refused',
-    message: 'only io.prysm.tv may change Prysm',
+    message: `only ${APP_ID} may change Prysm`,
   });
   const removing = service.uninstall();
   assert.deepEqual(bridge.channels[1].payload, {});
@@ -412,9 +413,10 @@ test('setup runs setup.sh through the Homebrew Channel and reports its stderr', 
   const ok = service.setup();
   assert.equal(bridge.channels[0].uri, HOMEBREW_EXEC);
   assert.deepEqual(bridge.channels[0].payload, { command: SETUP_SCRIPT });
+  assert.equal(SERVICE_URI, `luna://${APP_ID}.service`);
   assert.equal(
     SETUP_SCRIPT,
-    '/media/developer/apps/usr/palm/services/io.prysm.tv.service/setup.sh',
+    `/media/developer/apps/usr/palm/services/${APP_ID}.service/setup.sh`,
   );
   bridge.channels[0].reply({ returnValue: true, stdoutString: '' });
   await ok;
@@ -870,6 +872,10 @@ test('preferences are completed with their defaults', () => {
   assert.deepEqual(completePreferences({ autostart: true }), {
     autostart: true,
     instance: null,
+  });
+  // No address is omitted on the wire, never sent as `null`.
+  assert.deepEqual(sentPreferences({ autostart: true, instance: null }), {
+    autostart: true,
   });
 });
 
@@ -1773,7 +1779,7 @@ test('full: the lights card says why the lights do not follow the picture', asyn
     tv.application.publish({
       session: { state: 'running' },
       input: { fps: 30, receiving: true },
-      output_issue: 'other_sender',
+      device: { issue: 'other_sender' },
     }),
   );
   assert.equal(
@@ -1782,7 +1788,7 @@ test('full: the lights card says why the lights do not follow the picture', asyn
   );
   assert(!tv.el('lighting-status').querySelector('.visually-hidden'));
   assert.match(document.querySelector('.card.lighting').className, /attention/);
-  await act(async () => tv.application.publish({ output_issue: undefined }));
+  await act(async () => tv.application.publish({ device: {} }));
   assert.equal(tv.text('lighting-status'), 'Screen sync is running.');
   assert(
     tv.el('lighting-status').querySelector('.visually-hidden'),
@@ -2174,22 +2180,22 @@ test('full: Calibrate turns screen sync on, shows the phone address and follows 
   // The gray pattern already plays under the waiting screen.
   assert.equal(player.plays, 1);
   assert.equal(player.video, tv.el('pattern-video'));
-  assert.equal(player.pattern(), 'gray-192');
+  assert.equal(player.pattern(), 'gray_192');
 
   await phone(tv, { pattern: 'red', uncorrected: false });
   assert.equal(visibleText(), '', 'nothing but the video');
   assert.equal(document.querySelector('svg'), null);
   assert(tv.el('pattern-video'));
   assert.equal(player.pattern(), 'red');
-  await phone(tv, { pattern: 'blue-pair', uncorrected: true });
-  assert.equal(player.pattern(), 'blue-pair');
+  await phone(tv, { pattern: 'blue_pair', uncorrected: true });
+  assert.equal(player.pattern(), 'blue_pair');
   assert.equal(player.plays, 1, 'one stream for every pattern');
   assert.equal(player.stops, 0);
 
   // The phone ends calibration: the TV waits for it again.
   await phone(tv, null);
   assert.equal(tv.text('calibration-address'), '192.168.1.5:8787/#/calibrate');
-  assert.equal(player.pattern(), 'gray-192');
+  assert.equal(player.pattern(), 'gray_192');
   assert.equal(player.plays, 1);
 
   // Back leaves: the pattern ends, lighting stays on.
@@ -2441,7 +2447,7 @@ test('the pattern stream appends the requested pattern in sequence mode and stop
   assert.equal(msePatternPlayer.supported, true);
 
   const video = new FakeVideo();
-  let pattern = 'gray-192';
+  let pattern = 'gray_192';
   let failures = 0;
   streamPatterns(
     video,
@@ -2458,7 +2464,7 @@ test('the pattern stream appends the requested pattern in sequence mode and stop
   for (let i = 0; i < 8; i++) buffer.dispatchEvent(new Event('updateend'));
   assert.equal(buffer.appended.length, 5);
   for (const appended of buffer.appended)
-    assert.deepEqual(appended, bytes('gray-192'));
+    assert.deepEqual(appended, bytes('gray_192'));
   // Playing: a new pattern is appended when less than half a second is left.
   pattern = 'red';
   video.currentTime = 1.5;

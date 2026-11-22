@@ -246,8 +246,10 @@ async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
             .set_calibration(pattern(Pattern::Gray192, false))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert_eq!(green_levels(&handle).await, 2, "no smoothing");
+        // A frame blended before the pattern took effect can still be in the
+        // preview: wait for 300 ms without one (`within` bounds the wait).
+        // With smoothing on, no 300 ms shows only the two grays.
+        while green_levels(&handle).await != 2 {}
         assert!(
             cool(cast(&handle).unwrap()),
             "the calibration still applies"

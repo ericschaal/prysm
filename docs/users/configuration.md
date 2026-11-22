@@ -202,7 +202,7 @@ theirs** shows their settings, **Keep mine** saves yours.
 ### This device
 
 **Appearance** chooses System, Light or Dark, kept in this browser only.
-**About this Prysm** shows what the lights are doing and the settings version.
+**About this Prysm** shows what the lights are doing and the Prysm version.
 **Start over with setup** reopens the wizard.
 
 **Developer options**, under About this Prysm, also offer a video file and
@@ -219,12 +219,20 @@ Prysm keeps all of the above in one JSON file:
 | Debian package | `/var/lib/prysm/settings.json` |
 | Docker | `/data/settings.json` in the container's volume |
 | TrueNAS | `settings.json` in the app's dataset |
-| LG TV, full package | `/var/lib/io.prysm.tv/settings.json` on the TV |
+| LG TV, full package | `/var/lib/io.github.ericschaal.prysm/settings.json` on the TV |
 | From source | The path you pass on the command line |
 
 The portal creates the file on the first save. Back it up before upgrades.
-Stop Prysm before editing it by hand. The format is described in the
+Stop Prysm before editing it by hand. The file starts with `"format": 1`, its
+format number: Prysm refuses a file without it, and a file saved by a newer
+Prysm, with a message naming both numbers. The format is described in the
 [settings-file reference](../../crates/adapters/settings-file/README.md).
+
+**Upgrading from a version before 1.0:** the existing file has no format
+number, so Prysm refuses to start until you add it. Stop Prysm, add
+`"format": 1,` after the file's first `{`, check it with `--check-settings`
+(below) and start Prysm again. On the TV's full package, see
+[LG TV](webos.md#1-install).
 
 To check a file without starting the lights (the Debian package's file is
 readable only by root):

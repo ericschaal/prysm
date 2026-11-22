@@ -359,7 +359,7 @@ def video_section(cell: TvCell) -> JsonObject:
 )
 def test_wled_live(cell: TvCell, screen: Screen, prysm: Prysm, wled: Wled, running: Sender, record: Record) -> None:
     """In the video state, Screen sync lights WLED: live DDP from the expected sender (the TV, or the slim
-    package's receiver), no output_issue (the host cells' check)."""
+    package's receiver), no device.issue (the host cells' check)."""
     reached = in_state(screen, Shown.VIDEO, prysm, video_section(cell))
     with stated(reached):
         si = host_cells.live_from_host(prysm, wled, running)

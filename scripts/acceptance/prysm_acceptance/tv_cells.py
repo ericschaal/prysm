@@ -211,7 +211,7 @@ def _target_plan(cell: TvCell, config: Config) -> list[str]:
         f'(the home screen not in front within {tv_checks.CONFIRM_SECONDS} s fails the cell before anything else '
         'changes)',
         *shown(commands.tv_processes(ssh)),
-        '(the old io.prysm.capture app running fails the cell)',
+        f'(the old {commands.CAPTURE_APP} app running fails the cell)',
         *shown(
             commands.tv_paths(ssh),
             commands.tv_processes(ssh),
@@ -253,9 +253,9 @@ def target(cell: TvCell, config: Config, bench: Bench, request: pytest.FixtureRe
     if unreachable:
         unavailable(request, cell, unreachable)
     bench.save('tv-foreground.json', {'foreground': at_home(found)})
-    old = [line for line in found.processes() if 'io.prysm.capture' in line[-1]]
+    old = [line for line in found.processes() if commands.CAPTURE_APP in line[-1]]
     if old:
-        pytest.fail(f'the old io.prysm.capture app is running; remove it first (docs/users/webos.md): {old}')
+        pytest.fail(f'the old {commands.CAPTURE_APP} app is running; remove it first (docs/users/webos.md): {old}')
     prysm = owners(found.found(), request.config.stash.get(INSTALLED_BY_RUN, False))
     bench.save('tv-found.json', prysm)
     if config.tv.installed == Installed.REFUSE:

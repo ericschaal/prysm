@@ -51,16 +51,17 @@ pub struct State {
     pub video: Video,
     /// The current failure (or, slim, the receiver wait): what it is and
     /// its message with the causes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schema(value_type = Option<crate::schema::WorkerFailureSchema>)
+        schema(value_type = Option<crate::schema::WorkerFailureSchema>, nullable = false)
     )]
     pub failure: Option<WorkerFailure>,
     /// The latest worker stderr lines, oldest first (at most 20).
     pub log: Vec<String>,
 }
 
-/// The installed package (both install as `io.prysm.tv`), what the user asked
+/// The installed package (both install as the same app), what the user asked
 /// of it and its worker process, as `{ "flavor": … }`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "flavor", rename_all = "snake_case")]
@@ -105,13 +106,19 @@ pub enum FullWorker {
         capturing: bool,
         /// Frames per second over about the last second, rounded, while
         /// lighting runs; 0 while it waits for frames.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
         fps: Option<u16>,
         /// The portal's LAN address once the worker reported it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
         portal: Option<String>,
     },
     /// Being stopped; the portal may still answer until it exits.
     Stopping {
         /// The portal's LAN address the worker last reported.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
         portal: Option<String>,
     },
     /// Waiting before the next start after a failure.
@@ -134,13 +141,16 @@ pub enum SlimWorker {
         capturing: bool,
         /// Frames sent per second over about the last second, rounded, while
         /// connected and sending; 0 while it waits for frames.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
         fps: Option<u16>,
         /// The encoding of the frames being sent while connected to the
         /// receiver; always the one the receiver requested (set in the
         /// desktop portal's remote capture settings).
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(
             feature = "schema",
-            schema(value_type = Option<crate::schema::SlimEncodingSchema>)
+            schema(value_type = Option<crate::schema::SlimEncodingSchema>, nullable = false)
         )]
         encoding: Option<SlimEncoding>,
         /// The receiver paused the stream because its lighting is off; the

@@ -5,7 +5,7 @@ are generated from OpenAPI documents the Rust exporter prints.
 
 | Owner | Declares | Frontend import |
 | --- | --- | --- |
-| `prysm-ports` | `Settings`, `Processing`, `Style`, `StyleValues`, `AdapterSettings`, `LightingTarget`, `Revision`, `Calibration`, `Pattern`, `Candidate` and their serde shape (the settings file format); the built-in styles' values (`Style::built_in`). No OpenAPI dependency. | — |
+| `prysm-ports` | `Settings`, `Processing`, `Style`, `StyleValues`, `AdapterSettings`, `LightingTarget`, `Revision`, `Calibration`, `Pattern`, `Candidate` and their serde shape (the settings file, after its `format` number, which `prysm-settings-file` owns); the built-in styles' values (`Style::built_in`). No OpenAPI dependency. | — |
 | [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs) | `State`, `Session`, `Failure`, request/response bodies; schema mirrors of the ports types and the adapter-schema hook ([`schema.rs`](../../crates/engine/protocol/src/schema.rs), feature `schema`) | `@prysm/contracts/application` |
 | Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null), `@prysm/contracts/host-webos` (webos, wled) |
 | [`prysm-webos-service`](../../crates/hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences` (no picture settings: those are the portals'), request and reply bodies; schema mirrors of `Video`, `SlimEncoding`, `FailureKind`, `LightingTarget` (feature `schema`) | `@prysm/contracts/luna` |
@@ -70,7 +70,7 @@ webOS hosts import from `host-webos`.
 
 ### Luna document
 
-`luna` describes `luna://io.prysm.tv.service`, the TV supervisor both
+`luna` describes `luna://io.github.ericschaal.prysm.service`, the TV supervisor both
 packages install under one name. It is one document for both flavors: `State`
 carries the installed package's own fields in `Package`, tagged by `flavor`
 (full: `lighting`, `FullWorker`; slim: `enabled`, `SlimWorker`), and each

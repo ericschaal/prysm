@@ -1,12 +1,9 @@
 //! Commands typed in the terminal, executed against the engine.
+use crate::ReadSettings;
 use crate::input::Notice;
-use prysm_ports::{Error, LightingTarget, Result, Settings, chain};
+use prysm_ports::{Error, LightingTarget, Result, chain};
 use prysm_runtime::EngineHandle;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-
-/// Settings files larger than this are rejected before parsing.
-const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -16,7 +13,8 @@ pub(crate) enum Command {
 }
 
 /// Run one command and describe its outcome for the diagnostics panel.
-pub(crate) async fn execute(engine: EngineHandle, command: Command) -> Notice {
+/// `read` reads a settings file as the host reads its own.
+pub(crate) async fn execute(engine: EngineHandle, read: ReadSettings, command: Command) -> Notice {
     match command {
         Command::SetTarget(target) => match engine.set_target(target).await {
             Ok(()) => Notice::info(format!("Target {}", target.as_str())),
@@ -24,7 +22,7 @@ pub(crate) async fn execute(engine: EngineHandle, command: Command) -> Notice {
         },
         Command::Load(path) => {
             let shown = path.display().to_string();
-            match load(&engine, path).await {
+            match load(&engine, read, path).await {
                 Ok(revision) => Notice::info(format!("Settings revision {revision} from {shown}")),
                 Err(error) => Notice::error(format!("Load {shown}: {}", chain(&error))),
             }
@@ -32,24 +30,16 @@ pub(crate) async fn execute(engine: EngineHandle, command: Command) -> Notice {
     }
 }
 
-async fn load(engine: &EngineHandle, path: PathBuf) -> Result<prysm_ports::Revision> {
+async fn load(
+    engine: &EngineHandle,
+    read: ReadSettings,
+    path: PathBuf,
+) -> Result<prysm_ports::Revision> {
     let expected = engine.snapshot().borrow().revision;
-    let settings = tokio::task::spawn_blocking(move || read_settings(&path))
+    let settings = tokio::task::spawn_blocking(move || read(&path))
         .await
         .map_err(|_| Error::Panicked("settings file read"))??;
     engine.replace_settings(expected, settings).await
-}
-
-fn read_settings(path: &Path) -> Result<Settings> {
-    let file = std::fs::File::open(path).map_err(|e| Error::adapter("cannot open file", e))?;
-    let mut bytes = Vec::new();
-    file.take(MAX_SETTINGS_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| Error::adapter("cannot read file", e))?;
-    if bytes.len() as u64 > MAX_SETTINGS_BYTES {
-        return Err(Error::other("settings file exceeds 1 MiB"));
-    }
-    serde_json::from_slice(&bytes).map_err(|e| Error::adapter("invalid settings file", e))
 }
 
 #[cfg(test)]
@@ -59,6 +49,7 @@ mod tests {
     use prysm_ports::SessionState;
     use prysm_runtime::Engine;
     use prysm_runtime::fakes::{self, CallLog, FakeOutputs, FakeSources, MemoryStore};
+    use std::sync::Arc;
     use std::time::Duration;
 
     async fn start(store: MemoryStore) -> (EngineHandle, Engine, CallLog) {
@@ -78,26 +69,33 @@ mod tests {
             .expect("timed out")
     }
 
+    /// A stand-in for the host's reader: the file's JSON as settings.
+    fn read() -> ReadSettings {
+        Arc::new(|path| {
+            let bytes = std::fs::read(path).map_err(|e| Error::adapter("cannot read", e))?;
+            serde_json::from_slice(&bytes).map_err(|e| Error::adapter("cannot parse", e))
+        })
+    }
+
     #[tokio::test]
     async fn targets_drive_the_engine_and_failures_are_error_notices() {
         within(async {
             let (handle, engine, log) = start(MemoryStore::with(fakes::settings())).await;
-            let on = execute(
-                handle.clone(),
-                Command::SetTarget(LightingTarget::Processed),
-            )
-            .await;
+            let target = |handle: &EngineHandle, target| {
+                execute(handle.clone(), read(), Command::SetTarget(target))
+            };
+            let on = target(&handle, LightingTarget::Processed).await;
             assert_eq!(on, Notice::info("Target processed"));
             assert_eq!(handle.snapshot().borrow().session, SessionState::Running);
             assert!(log.wait_for("output.write:", 1).await);
-            let off = execute(handle.clone(), Command::SetTarget(LightingTarget::Off)).await;
+            let off = target(&handle, LightingTarget::Off).await;
             assert_eq!(off, Notice::info("Target off"));
             assert_eq!(handle.snapshot().borrow().session, SessionState::Stopped);
             engine.shutdown().await.unwrap();
 
             // Nothing configured: the engine's validation error is shown.
             let (handle, engine, _) = start(MemoryStore::new()).await;
-            let failed = execute(handle, Command::SetTarget(LightingTarget::Processed)).await;
+            let failed = target(&handle, LightingTarget::Processed).await;
             assert_eq!(failed.severity, Severity::Error);
             assert!(failed.text.contains("not configured"), "{}", failed.text);
             engine.shutdown().await.unwrap();
@@ -117,8 +115,9 @@ mod tests {
                 r#"{ "capture": { "kind": "fake" }, "output": { "kind": "fake" } }"#,
             )
             .unwrap();
+            let load = |path| execute(handle.clone(), read(), Command::Load(path));
             let next = handle.snapshot().borrow().revision.next();
-            let loaded = execute(handle.clone(), Command::Load(path.clone())).await;
+            let loaded = load(path.clone()).await;
             assert_eq!(loaded.severity, Severity::Info, "{}", loaded.text);
             assert!(
                 loaded
@@ -129,7 +128,7 @@ mod tests {
             assert_eq!(store.saved().unwrap().output.unwrap().kind, "fake");
 
             std::fs::write(&path, r#"{ "output": { "kind": "laser" } }"#).unwrap();
-            let rejected = execute(handle.clone(), Command::Load(path.clone())).await;
+            let rejected = load(path.clone()).await;
             assert_eq!(rejected.severity, Severity::Error);
             assert!(
                 rejected.text.contains("unknown kind `laser`"),
@@ -137,33 +136,14 @@ mod tests {
                 rejected.text
             );
 
+            // The reader's failure is shown with its cause.
             std::fs::write(&path, "{ not json").unwrap();
-            let invalid = execute(handle.clone(), Command::Load(path)).await;
-            assert!(
-                invalid.text.contains("invalid settings file"),
-                "{}",
-                invalid.text
-            );
-
-            let missing = execute(handle.clone(), Command::Load(dir.path().join("none"))).await;
-            assert!(
-                missing.text.contains("cannot open file"),
-                "{}",
-                missing.text
-            );
+            let invalid = load(path).await;
+            assert_eq!(invalid.severity, Severity::Error);
+            assert!(invalid.text.contains("cannot parse: "), "{}", invalid.text);
             assert_eq!(handle.snapshot().borrow().revision, next);
             engine.shutdown().await.unwrap();
         })
         .await;
-    }
-
-    #[test]
-    fn oversized_settings_files_are_rejected() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("big.json");
-        let size = usize::try_from(MAX_SETTINGS_BYTES).unwrap() + 1;
-        std::fs::write(&path, vec![b' '; size]).unwrap();
-        let error = read_settings(&path).unwrap_err();
-        assert!(error.to_string().contains("exceeds"));
     }
 }

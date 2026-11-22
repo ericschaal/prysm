@@ -5,11 +5,12 @@
 set -uo pipefail
 tv=${PRYSM_TV:-root@192.168.18.10}
 dir=/media/developer/temp/ui-probe
+app=io.github.ericschaal.prysm
 probe=$1 out=$2 matrix=$3
 mkdir -p "$out"
 ssh_tv() { ssh -o BatchMode=yes "$tv" "$@"; }
 luna() { (sleep 13) | ssh_tv "timeout 12 luna-send $*"; }
-enable() { luna "-a io.prysm.tv -w 10000 -n 1 luna://io.prysm.tv.service/setEnabled '{\"enabled\":$1}'"; }
+enable() { luna "-a $app -w 10000 -n 1 luna://$app.service/setEnabled '{\"enabled\":$1}'"; }
 restore() {
   echo "== re-enable Prysm"; enable true
   ssh_tv "rm -rf $dir"; echo "== probe folder removed"

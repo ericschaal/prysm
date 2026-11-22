@@ -39,10 +39,10 @@ impl CalibrationPattern {
 
 /// A calibration pattern. The wire names are the TV pattern clips' names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "snake_case")]
 pub enum Pattern {
     /// Light gray (192) full screen: white balance (warmth, tint).
-    #[serde(rename = "gray-192")]
+    #[serde(rename = "gray_192")]
     Gray192,
     /// Full-screen primaries and secondaries, one colour each. The
     /// secondaries check the primaries they mix.
@@ -101,27 +101,34 @@ mod tests {
         assert_eq!(
             names,
             [
-                "gray-192",
+                "gray_192",
                 "red",
                 "yellow",
                 "green",
                 "cyan",
                 "blue",
                 "magenta",
-                "blue-pair",
-                "red-pair",
-                "green-pair",
+                "blue_pair",
+                "red_pair",
+                "green_pair",
                 "coast",
                 "garden",
                 "dusk",
-                "review-grid"
+                "review_grid"
             ]
         );
         for pattern in Pattern::ALL {
             let json = serde_json::to_value(pattern).unwrap();
             assert_eq!(serde_json::from_value::<Pattern>(json).unwrap(), pattern);
         }
-        for dropped in ["gray-64", "response", "colors", "Red"] {
+        for dropped in [
+            "gray-64",
+            "gray-192",
+            "blue-pair",
+            "response",
+            "colors",
+            "Red",
+        ] {
             assert!(serde_json::from_value::<Pattern>(dropped.into()).is_err());
         }
     }

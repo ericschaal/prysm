@@ -123,7 +123,7 @@ does not work with it; use `device` or `remote`.
 
 Two IPKs for a rooted LG TV ([design](../docs/plans/prysm-v1-webos-supervisor.md)),
 built by [`webos/build-ipk.sh`](webos/build-ipk.sh). Both are the app
-`io.prysm.tv` with the service `io.prysm.tv.service` and the same installed
+`io.github.ericschaal.prysm` with the service `io.github.ericschaal.prysm.service` and the same installed
 file names, so installing one replaces the other. Nothing detects or migrates
 the old `io.prysm.capture` app: remove it (and its service setup) first.
 
@@ -177,8 +177,8 @@ and Node.js 24+ for the frontend.
 export WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot
 cargo xtask dist tv-full tv-slim     # dist/prysm-tv-full.ipk, dist/prysm-tv-slim.ipk
 # or, after npm --prefix frontend ci && npm --prefix frontend run bundle (or with --frontend):
-packaging/webos/build-ipk.sh full    # target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk
-packaging/webos/build-ipk.sh slim    # target/webos-ipk/slim/io.prysm.tv-slim_1.0.0_all.ipk
+packaging/webos/build-ipk.sh full    # target/webos-ipk/full/io.github.ericschaal.prysm-full_1.0.0_all.ipk
+packaging/webos/build-ipk.sh slim    # target/webos-ipk/slim/io.github.ericschaal.prysm-slim_1.0.0_all.ipk
 ```
 
 The script prints the package's path on standard output and everything else
@@ -233,16 +233,16 @@ Installed layout (`/media/developer/apps/usr/palm/…`):
 
 | Path | Contents |
 | --- | --- |
-| `applications/io.prysm.tv/` | TV UI bundle, [`appinfo.json`](webos/app/appinfo.json), icon |
-| `services/io.prysm.tv.service/prysm-webos-service` | the flavour's supervisor (Luna-activated, root) |
-| `services/io.prysm.tv.service/prysm-webos-worker` | the flavour's worker |
-| `services/io.prysm.tv.service/setup.sh` | run after every install or update (TV app via Homebrew Channel, `install-ipk.sh`, or ssh): `prysm-webos-service setup` |
-| `services/io.prysm.tv.service/*.json`, `supervisor.service` | [Luna files](webos/service/): supervisor role (name `io.prysm.tv.service`, inbound any, outbound `tvpower`, `videooutput`), worker role (capture and resource-manager clients), public API `getState setPreferences setEnabled uninstall`, client groups, D-Bus service |
-| `services/io.prysm.tv.service/licenses/` | Prysm, hyperion-webos and TV native API notices, `javascript.txt` for the bundled JavaScript; slim also OpenH264, gstreamer-rs and gtk-rs |
+| `applications/io.github.ericschaal.prysm/` | TV UI bundle, [`appinfo.json`](webos/app/appinfo.json), icon |
+| `services/io.github.ericschaal.prysm.service/prysm-webos-service` | the flavour's supervisor (Luna-activated, root) |
+| `services/io.github.ericschaal.prysm.service/prysm-webos-worker` | the flavour's worker |
+| `services/io.github.ericschaal.prysm.service/setup.sh` | run after every install or update (TV app via Homebrew Channel, `install-ipk.sh`, or ssh): `prysm-webos-service setup` |
+| `services/io.github.ericschaal.prysm.service/*.json`, `supervisor.service` | [Luna files](webos/service/): supervisor role (name `io.github.ericschaal.prysm.service`, inbound any, outbound `tvpower`, `videooutput`), worker role (capture and resource-manager clients), public API `getState setPreferences setEnabled uninstall`, client groups, D-Bus service |
+| `services/io.github.ericschaal.prysm.service/licenses/` | Prysm, hyperion-webos and TV native API notices, `javascript.txt` for the bundled JavaScript; slim also OpenH264, gstreamer-rs and gtk-rs |
 
-`setup` writes `/var/luna-service2/manifests.d/io.prysm.tv.{supervisor,worker}.json`
-and the boot hook `/var/lib/webosbrew/init.d/io.prysm.tv`; preferences and
-settings live in `/var/lib/io.prysm.tv` (`tv.json`, `resume.json`, full:
+`setup` writes `/var/luna-service2/manifests.d/io.github.ericschaal.prysm.{supervisor,worker}.json`
+and the boot hook `/var/lib/webosbrew/init.d/io.github.ericschaal.prysm`; preferences and
+settings live in `/var/lib/io.github.ericschaal.prysm` (`tv.json`, `resume.json`, full:
 `settings.json`). The Luna method `uninstall` (from the
 TV app) removes the registration before the IPK is removed.
 
@@ -250,7 +250,7 @@ Checks without a TV:
 
 ```sh
 python3 -m unittest discover -s packaging/webos/tests    # package files and ipk.py
-python3 packaging/webos/ipk.py verify target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk
+python3 packaging/webos/ipk.py verify target/webos-ipk/full/io.github.ericschaal.prysm-full_1.0.0_all.ipk
 WEBOS_SDK=… cargo run -p prysm-webos-luna-sys \
   --features codegen --bin generate-luna-bindings -- --check   # Luna/GLib bindings vs SDK headers
 ```
@@ -261,7 +261,7 @@ The generator needs libclang; without `--check` it rewrites
 [`tests/native-smoke.py`](webos/tests/native-smoke.py) is the on-TV smoke test
 (`--host root@TV --flavour full|slim [--supervisor | --capture]`, `--dry-run`
 prints its files and touches nothing). It runs the cargo binaries from the
-build directory under a probe identity (`io.prysm.tv.probe`, `run --sandbox`
+build directory under a probe identity (`io.github.ericschaal.prysm.probe`, `run --sandbox`
 in a private `/tmp/prysm-supervisor.*`, bounded `--run-for`) and removes its
 probe manifest only if unchanged. No run on a TV is recorded yet.
 
@@ -273,22 +273,22 @@ Install through the TV's install service instead;
 (`--dry-run` prints them):
 
 ```sh
-packaging/webos/install-ipk.sh root@TV target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk
+packaging/webos/install-ipk.sh root@TV target/webos-ipk/full/io.github.ericschaal.prysm-full_1.0.0_all.ipk
 ```
 
 The helper first stops a running Prysm through its Luna `uninstall` and
-installs nothing while a process under `io.prysm.*` is left: the install
+installs nothing while a process under `io.github.ericschaal.prysm.*` is left: the install
 service would end it abruptly
 ([webOS](../docs/developers/webos.md#files-on-the-tv)).
 
 By hand (wait until no Prysm process is left before the install):
 
 ```sh
-ssh root@TV 'mkdir -p /media/developer/temp && cat > /media/developer/temp/io.prysm.tv.ipk' < io.prysm.tv-full_1.0.0_all.ipk
-(sleep 14) | ssh root@TV "timeout 12 luna-send -a io.prysm.tv -n 1 luna://io.prysm.tv.service/uninstall '{}'"
+ssh root@TV 'mkdir -p /media/developer/temp && cat > /media/developer/temp/io.github.ericschaal.prysm.ipk' < io.github.ericschaal.prysm-full_1.0.0_all.ipk
+(sleep 14) | ssh root@TV "timeout 12 luna-send -a io.github.ericschaal.prysm -n 1 luna://io.github.ericschaal.prysm.service/uninstall '{}'"
 (sleep 122) | ssh root@TV "timeout 120 luna-send -i luna://com.webos.appInstallService/dev/install \
-  '{\"id\":\"io.prysm.tv\",\"ipkUrl\":\"/media/developer/temp/io.prysm.tv.ipk\",\"subscribe\":true}'"
-ssh root@TV /media/developer/apps/usr/palm/services/io.prysm.tv.service/setup.sh
+  '{\"id\":\"io.github.ericschaal.prysm\",\"ipkUrl\":\"/media/developer/temp/io.github.ericschaal.prysm.ipk\",\"subscribe\":true}'"
+ssh root@TV /media/developer/apps/usr/palm/services/io.github.ericschaal.prysm.service/setup.sh
 ```
 
 luna-send waits for replies only while its stdin is open, so hold it open with
@@ -301,7 +301,7 @@ setup`): the service is not running again until then, and nothing in the
 package can trigger it, since IPKs carry no install scripts. Setup rescans
 and activates the service, which then resumes what it was doing: the
 supervisor keeps the intent (full: lighting target; slim: enabled) with the
-boot id in `/var/lib/io.prysm.tv/resume.json`, so a restart in the same boot
+boot id in `/var/lib/io.github.ericschaal.prysm/resume.json`, so a restart in the same boot
 restores it, and a reboot starts from `autostart` as before.
 
 ### Checking the slim H.264 encoder on a TV
@@ -311,7 +311,7 @@ Luna role and no receiver (run as root, with the Prysm service disabled so the
 hardware encoder is free):
 
 ```sh
-W=/media/developer/apps/usr/palm/services/io.prysm.tv.service/prysm-webos-worker
+W=/media/developer/apps/usr/palm/services/io.github.ericschaal.prysm.service/prysm-webos-worker
 timeout 60 $W check-encoder --encoding h264_hardware --width 640 --height 280 --fps 30 --frames 90
 timeout 60 $W check-encoder --encoding h264_software --width 640 --height 280 --fps 30 --frames 90
 ```

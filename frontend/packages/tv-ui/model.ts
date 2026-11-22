@@ -31,13 +31,19 @@ export function encodingName(encoding: SlimEncoding): string {
   return encodingNames[encoding] || encoding;
 }
 
-/** Preferences with every field present, as the supervisor stores them. */
-export type SavedPreferences = Required<Preferences>;
+/** Preferences with every field present (no address: `null`), as the app edits them. */
+export type SavedPreferences = { autostart: boolean; instance: string | null };
 export function completePreferences(value: Preferences): SavedPreferences {
   return {
     autostart: value.autostart ?? false,
     instance: value.instance ?? null,
   };
+}
+
+/** `saved` as the service takes it: no address is omitted. */
+export function sentPreferences(saved: SavedPreferences): Preferences {
+  const { autostart, instance } = saved;
+  return instance === null ? { autostart } : { autostart, instance };
 }
 
 /**

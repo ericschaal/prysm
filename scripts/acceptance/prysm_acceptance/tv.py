@@ -48,9 +48,9 @@ class RunningWorker(TypedDict):
 
     phase: Literal['running']
     capturing: bool
-    fps: NotRequired[int | None]
-    portal: NotRequired[str | None]
-    encoding: NotRequired[str | None]
+    fps: NotRequired[int]
+    portal: NotRequired[str]
+    encoding: NotRequired[str]
     paused: NotRequired[bool]
 
 
@@ -58,7 +58,7 @@ class StoppingWorker(TypedDict):
     """A worker being stopped; the full one's portal may still answer."""
 
     phase: Literal['stopping']
-    portal: NotRequired[str | None]
+    portal: NotRequired[str]
 
 
 class RetryingWorker(TypedDict):
@@ -81,7 +81,7 @@ class State(TypedDict, total=False):
     power: Power
     video: Video
     worker: Worker
-    failure: TvFailure | None
+    failure: TvFailure
     log: list[str]
 
 

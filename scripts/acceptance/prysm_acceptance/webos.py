@@ -27,7 +27,7 @@ STOP_SECONDS = 30
 
 class Preferences(TypedDict, total=False):
     autostart: bool
-    instance: str | None
+    instance: str
 
 
 class LunaReply(tv.State, total=False):
@@ -361,6 +361,8 @@ class WebosTv:
             self.set_preferences(preferences)
             done.append(f'preferences {json.dumps(preferences)}')
         settings = backup['portal']['settings'] if backup['portal'] else _file_json(backup, 'settings.json')
+        if isinstance(settings, dict):  # the file's own number; the portal takes the settings alone
+            settings = {key: value for key, value in settings.items() if key != 'format'}
         if flavour == Flavour.FULL and settings is not None:
             prysm = self.wait_portal()
             reply = prysm.replace_settings(cast('prysm_api.Settings', settings))
