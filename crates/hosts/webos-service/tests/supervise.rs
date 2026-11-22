@@ -60,15 +60,11 @@ fn until(
     bus: &mut Published,
     done: impl Fn(&Published, bool) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    // Ticks on the real clock: the worker is a real process.
+    prysm_testkit::eventually("the supervisor's state", Duration::from_secs(10), || {
         let running = service.tick(bus, Instant::now());
-        if done(bus, running) {
-            return;
-        }
-        assert!(Instant::now() < deadline, "published: {:#?}", bus.0.last());
-        std::thread::sleep(Duration::from_millis(20));
-    }
+        done(bus, running).then_some(())
+    });
 }
 
 #[test]

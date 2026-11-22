@@ -74,6 +74,10 @@ struct Script {
     /// When each UI open was attempted.
     ui_opened_at: Vec<Instant>,
     ui_releases: usize,
+    /// How long each UI release takes, like a slow driver.
+    ui_release_delay: Duration,
+    /// When each UI release returned.
+    ui_released_at: Vec<Instant>,
     /// Taps open right now, and the most ever open together.
     open_taps: usize,
     most_open: usize,
@@ -116,6 +120,8 @@ impl Driver {
                 ui_opens: 0,
                 ui_opened_at: Vec::new(),
                 ui_releases: 0,
+                ui_release_delay: Duration::ZERO,
+                ui_released_at: Vec::new(),
                 open_taps: 0,
                 most_open: 0,
                 events: Vec::new(),
@@ -226,10 +232,14 @@ impl Tap for FakeUiTap {
     }
 
     fn release(self: Box<Self>) -> prysm_ports::Result<()> {
-        let mut script = self.0.enter("UI release");
+        let delay = self.0.enter("UI release").ui_release_delay;
+        // Simulated driver work, outside the script's lock.
+        thread::sleep(delay);
+        let mut script = self.0.script();
         script.ui_releases += 1;
         script.open_taps -= 1;
         script.record("UI release");
+        script.ui_released_at.push(Instant::now());
         Ok(())
     }
 }
@@ -664,6 +674,34 @@ fn missing_ui_capture_is_unsupported_once() {
     assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
     closes_cleanly(frames);
     assert_eq!(driver.count(|s| s.ui_releases), 0, "nothing was opened");
+}
+
+/// The wait before reopening counts from after the release: a release
+/// slower than the wait does not make the next open immediate.
+#[test]
+fn the_ui_retry_waits_from_after_a_slow_release() {
+    let limits = Limits {
+        ui_retry: Duration::from_millis(50),
+        ui_retry_max: Duration::from_secs(1),
+        ..TEST
+    };
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    driver.with(|s| {
+        s.ui_fail_once = true;
+        s.ui_release_delay = Duration::from_millis(100);
+    });
+    let frames = start_ui_with(&driver, &video, limits);
+    eventually("the reopen after the failed UI tap", LIMIT, || {
+        (driver.count(|s| s.ui_opens) >= 2).then_some(())
+    });
+    let script = driver.script();
+    // Lower bound only: a loaded host may wake late, never early.
+    let gap = script.ui_opened_at[1] - script.ui_released_at[0];
+    assert!(gap >= limits.ui_retry, "{gap:?} after the release");
+    drop(script);
+    closes_cleanly(frames);
 }
 
 #[test]

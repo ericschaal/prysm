@@ -61,7 +61,9 @@ impl CallLog {
     }
 
     /// Wait up to five seconds, woken at each call, for `done` to hold for
-    /// the calls so far; whether it did.
+    /// the calls so far; whether it did. The five seconds are tokio's: under
+    /// a paused clock they pass as soon as the runtime idles while a fake
+    /// works on its own thread, so wait with the clock running.
     pub async fn wait_until(&self, done: impl Fn(&[String]) -> bool) -> bool {
         let mut calls = self.0.subscribe();
         let happened = calls.wait_for(|events| done(events));

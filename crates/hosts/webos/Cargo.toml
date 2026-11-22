@@ -20,6 +20,7 @@ futures.workspace = true
 tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
+prysm-webos-link = { workspace = true, features = ["testkit"] }
 prysm-testkit.workspace = true
 prysm-runtime = { workspace = true, features = ["testkit"] }
 serde_json.workspace = true

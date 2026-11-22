@@ -847,13 +847,17 @@ fn a_state_reply_may_hold_up_to_64_kib() {
 fn a_dripping_state_reply_is_abandoned_at_the_deadline() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
+    let (dripped, head_written) = mpsc::channel();
     thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         let _ = socket.read(&mut [0; 1024]);
         let head = b"HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n";
-        for byte in head.iter().chain(std::iter::repeat(&b' ')) {
+        for (written, byte) in head.iter().chain(std::iter::repeat(&b' ')).enumerate() {
             if socket.write_all(&[*byte]).is_err() {
                 return;
+            }
+            if written + 1 == head.len() {
+                let _ = dripped.send(());
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -862,6 +866,8 @@ fn a_dripping_state_reply_is_abandoned_at_the_deadline() {
     let mut observer = Observer::new(address, "wled", Duration::ZERO, t0);
     assert_eq!(observer.poll(t0), None, "sent");
     assert!(observer.checking());
+    // The whole head has dripped in, a byte at a time; the body never ends.
+    head_written.recv_timeout(WAIT).expect("the reply began");
     let before = t0 + REPLY - Duration::from_millis(1);
     assert_eq!(observer.poll(before), None);
     assert!(observer.checking(), "still reading before the deadline");

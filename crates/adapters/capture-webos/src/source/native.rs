@@ -179,8 +179,7 @@ impl<B: Backend> Native<B> {
         wanted(video, self.settings.include_ui, self.ui)
     }
 
-    /// Open if needed, then acquire once. The outcome is judged at the time
-    /// the native call returned: a failing open can block for seconds.
+    /// Open if needed, then acquire once.
     fn step(&mut self, kind: Kind) -> Result<()> {
         let worker = self.worker.clone();
         let tap = match &mut self.tap {
@@ -197,7 +196,7 @@ impl<B: Backend> Native<B> {
                         }
                         &mut self.tap.insert((kind, tap)).1
                     }
-                    Err(fault) => return self.recover(kind, fault, Instant::now()),
+                    Err(fault) => return self.recover(kind, fault),
                 }
             }
         };
@@ -206,17 +205,13 @@ impl<B: Backend> Native<B> {
             Kind::Ui => "UI acquire",
         };
         let acquired = worker.watch(operation, || tap.acquire());
-        self.acquired(kind, acquired, Instant::now())
+        self.acquired(kind, acquired)
     }
 
-    /// Act on one acquisition at `now`: publish a frame, time a pending or
-    /// preparing driver, or recover from a fault.
-    fn acquired(
-        &mut self,
-        kind: Kind,
-        acquired: Result<Acquired, Fault>,
-        now: Instant,
-    ) -> Result<()> {
+    /// Act on one acquisition: publish a frame, time a pending or preparing
+    /// driver, or recover from a fault.
+    fn acquired(&mut self, kind: Kind, acquired: Result<Acquired, Fault>) -> Result<()> {
+        let now = Instant::now();
         match acquired {
             Ok(Acquired::Frame(frame)) => {
                 self.not_ready_since = None;
@@ -245,7 +240,6 @@ impl<B: Backend> Native<B> {
                             "webOS video produced no frame for {:?}",
                             self.limits.pending
                         ))),
-                        now,
                     );
                 }
             }
@@ -259,7 +253,7 @@ impl<B: Backend> Native<B> {
                 }
                 self.retry_at = now + self.limits.retry;
             }
-            Err(fault) => return self.recover(kind, fault, now),
+            Err(fault) => return self.recover(kind, fault),
         }
         Ok(())
     }
@@ -272,7 +266,7 @@ impl<B: Backend> Native<B> {
     /// without video, as with `include_ui` off); others retry with a backoff
     /// that a frame resets, so a long session without video regains the TV
     /// UI after a transient failure.
-    fn recover(&mut self, kind: Kind, fault: Fault, now: Instant) -> Result<()> {
+    fn recover(&mut self, kind: Kind, fault: Fault) -> Result<()> {
         let wait = match kind {
             Kind::Video => {
                 let Some(unchecked) = video_fault(self.unchecked, fault.recovery, &self.limits)
@@ -318,7 +312,8 @@ impl<B: Backend> Native<B> {
             }
         };
         self.release_tap()?;
-        self.retry_at = now + wait;
+        // From after the release, which can take until the watchdog.
+        self.retry_at = Instant::now() + wait;
         Ok(())
     }
 

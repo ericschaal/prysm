@@ -65,20 +65,12 @@ fn state(port: u16) -> Value {
     serde_json::from_str(&body).unwrap()
 }
 
-/// The state once `ready` holds; panics with the last state after [`TIMEOUT`].
+/// The state once `ready` holds, read from the host's portal.
 fn wait_for_state(port: u16, what: &str, ready: impl Fn(&Value) -> bool) -> Value {
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
+    prysm_testkit::eventually(what, TIMEOUT, || {
         let state = state(port);
-        if ready(&state) {
-            return state;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "never {what}; last state {state:#}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+        ready(&state).then_some(state)
+    })
 }
 
 fn session(state: &Value) -> &str {

@@ -223,9 +223,9 @@ async fn advance(peer: &mut Peer, portal: &Arc<Mutex<Option<String>>>, by: Durat
 
 /// The link's own loop retries a failed session once its first delay has
 /// passed, then waits twice as long, and retries nothing once lighting is
-/// off. The first delay and the heartbeat are 10 s (short of
-/// `Backoff::HEALTHY`, so the jumps do not count as a healthy run), so
-/// nothing is due until the test moves the clock.
+/// off. The first delay and the heartbeat are 10 s, so nothing is due until
+/// the test moves the clock, and the doubled delay (20 s) stays under
+/// `Backoff::MAX` (30 s), which caps every delay.
 #[tokio::test]
 async fn the_link_retries_after_the_delay_and_not_after_off() {
     const FIRST: Duration = Duration::from_secs(10);

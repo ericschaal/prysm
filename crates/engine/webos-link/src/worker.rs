@@ -174,6 +174,7 @@ pub struct Link {
 }
 
 /// The supervisor's end of an in-memory link, for tests.
+#[cfg(any(test, feature = "testkit"))]
 #[derive(Debug)]
 pub struct Peer {
     commands: Option<mpsc::UnboundedSender<Command>>,
@@ -181,6 +182,7 @@ pub struct Peer {
     stop: StopHandle,
 }
 
+#[cfg(any(test, feature = "testkit"))]
 impl Peer {
     pub fn send(&self, command: Command) {
         if let Some(commands) = &self.commands {
@@ -219,6 +221,7 @@ impl Peer {
 
 impl Link {
     /// An in-memory link and its supervisor end, for tests.
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn memory() -> (Self, Peer) {
         let stop = StopHandle::default();

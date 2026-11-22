@@ -166,8 +166,8 @@ impl Portal {
 
 /// Read the request head and answer it as the portal does
 /// ([`Handoff::answer`]): `400` without a WebSocket key, `426` for another
-/// version, `503` while no source receives, each with the portal's failure
-/// body; else `101` with the subprotocol, then hand the socket over with
+/// version, `503` while no source receives (the status is what a sender
+/// reads; the portal's failure body is not copied here); else `101` with the subprotocol, then hand the socket over with
 /// what was read past the head and the sender's offer.
 fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
     socket.set_read_timeout(Some(BOUND)).unwrap();
@@ -191,13 +191,7 @@ fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
         })
     };
     let Some(key) = field("sec-websocket-key") else {
-        refuse(
-            &mut socket,
-            "400 Bad Request",
-            "",
-            "bad_request",
-            "expected a WebSocket upgrade",
-        );
+        refuse(&mut socket, "400 Bad Request", "");
         return;
     };
     let protocols = field("sec-websocket-protocol");
@@ -208,19 +202,11 @@ fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
                 &mut socket,
                 "426 Upgrade Required",
                 &format!("sec-websocket-protocol: {CAPTURE_PROTOCOL}\r\n"),
-                "bad_request",
-                "the sender speaks another capture stream version; update the older one",
             );
             return;
         }
         Answer::Unavailable => {
-            refuse(
-                &mut socket,
-                "503 Service Unavailable",
-                "",
-                "unavailable",
-                "no source receives the capture stream: lighting is off or the capture is not `remote`",
-            );
+            refuse(&mut socket, "503 Service Unavailable", "");
             return;
         }
     };
@@ -239,14 +225,9 @@ fn upgrade(mut socket: TcpStream, handoff: &Handoff) {
     });
 }
 
-/// Refuse an upgrade with `status`, `headers` (whole lines) and the
-/// portal's JSON failure body of `kind` and `message`.
-fn refuse(socket: &mut TcpStream, status: &str, headers: &str, kind: &str, message: &str) {
-    let body = serde_json::json!({ "kind": kind, "message": message }).to_string();
-    let reply = format!(
-        "HTTP/1.1 {status}\r\n{headers}content-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
-        body.len()
-    );
+/// Refuse an upgrade with `status` and `headers` (whole lines).
+fn refuse(socket: &mut TcpStream, status: &str, headers: &str) {
+    let reply = format!("HTTP/1.1 {status}\r\n{headers}content-length: 0\r\n\r\n");
     let _ = socket.write_all(reply.as_bytes());
 }
 

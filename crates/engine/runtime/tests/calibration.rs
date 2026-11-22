@@ -301,7 +301,7 @@ async fn leaving_processed_ending_and_shutdown_clear_the_pattern() {
     .await;
 }
 
-/// Not under [`within`]: its deadline would expire with the paused clock.
+/// Not under [`within_async`]: its deadline would expire with the paused clock.
 #[tokio::test]
 async fn a_pattern_nobody_sets_again_expires() {
     {

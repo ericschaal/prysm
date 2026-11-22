@@ -68,12 +68,15 @@ impl EngineLink {
         let mut beat = Instant::now() + self.heartbeat;
         let mut retry = Retry::new(self.backoff);
         loop {
+            // One clock read per round, so a retry and a heartbeat set in the
+            // same round fall due together.
+            let now = Instant::now();
             let snapshot = snapshots.borrow_and_update().clone();
             let status = status(&snapshot, portal.as_deref());
             if sent.as_ref() != Some(&status) {
                 events.send(&Event::Status(status.clone()));
                 sent = Some(status);
-                beat = Instant::now() + self.heartbeat;
+                beat = now + self.heartbeat;
             }
             if let SessionState::Faulted(phase) = snapshot.session {
                 let cause = faulted(phase, snapshot.failure.as_ref());
@@ -83,7 +86,7 @@ impl EngineLink {
                 stop.request(Stop::Faulted(cause));
                 return Ok(());
             }
-            retry.observe(&snapshot, Instant::now());
+            retry.observe(&snapshot, now);
             let retry_at = retry.at;
             // In this order when several are ready: a retry due with the
             // heartbeat is applied before the heartbeat's status is sent.
