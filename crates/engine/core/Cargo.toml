@@ -9,5 +9,9 @@ description = "Core colour, frame and processing types for Prysm"
 [dependencies]
 yuv = { version = "0.8.20", features = ["fast_mode"] }
 
+[features]
+# `nv12::nv12_to_rgb`, a whole-frame reference converter for other crates' tests.
+testkit = []
+
 [lints]
 workspace = true

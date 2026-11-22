@@ -59,6 +59,11 @@ impl TemporalSmoother {
         })
     }
 
+    /// Forgets the history: the next input is shown as it is.
+    pub fn reset(&mut self) {
+        self.history = None;
+    }
+
     pub fn process(&mut self, input: EdgeColors, now: Instant) -> EdgeColors {
         let Some(history) = &mut self.history else {
             self.history = Some(History {

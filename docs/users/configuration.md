@@ -157,7 +157,7 @@ The rest of the Picture group stays as it is whichever style is chosen:
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. The slider goes to 512. |
+| Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. The slider goes to 512. A value gives the same detail, and the same work, at any capture size: a picture larger than 640x360 is sampled as if it were 640x360. Above about 200 nothing changes for a 16:9 picture of 640x360 or larger: the lights already get one colour per sampling-grid cell. Squarer or smaller pictures keep changing up to a higher value. |
 | Remove black bars | On | A switch: ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
 
 **Calibrations** lists your calibrations: each matches the lights’ colours to

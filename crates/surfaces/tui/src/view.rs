@@ -618,9 +618,9 @@ mod tests {
     fn preview_errors_replace_the_video_without_failing() {
         let snapshot = running();
         let preview = Preview {
-            frame: Frame::new(vec![1, 2, 3], 4, 2, PixelFormat::MJPEG).unwrap(),
+            frame: Frame::dummy(0, 2).unwrap(),
             colors: EdgeColors::default(),
-            viewport: Viewport::full_frame(4, 2),
+            viewport: Viewport::full_frame(0, 2),
             sequence: 1,
         };
         let ui = Ui::default();

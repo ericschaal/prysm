@@ -2,18 +2,17 @@ use crate::Stage;
 use crate::frames::FrameView;
 use crate::workers::Workers;
 use color_focus::ColorFocus;
-use prysm_core::{ColorFocusPercent, ColorStrip, Edge, EdgeColors, LinearColor, SampleDensity};
+use prysm_core::{
+    ColorStrip, Config, Edge, EdgeColors, LinearColor, PIXEL_BUDGET, SampleDensity,
+    SpatialReachPercent,
+};
 use std::ops::Range;
 
 mod color_focus;
 
-/// Most pixels cell averaging reads per frame: every pixel of a 640x360
-/// picture. Larger pictures are read on a lattice of every `step`th pixel and
-/// row, so sampling costs about the same at any capture size.
-pub(crate) const PIXEL_BUDGET: u64 = 640 * 360;
-
 /// The smallest lattice step that reads at most [`PIXEL_BUDGET`] pixels of a
-/// `width` x `height` picture.
+/// `width` x `height` picture: cell averaging reads every pixel of a 640x360
+/// picture, and larger ones on a lattice of every `step`th pixel and row.
 pub(crate) fn lattice_step(width: u32, height: u32) -> u32 {
     let mut step = 1;
     while u64::from(width.div_ceil(step)) * u64::from(height.div_ceil(step)) > PIXEL_BUDGET {
@@ -24,13 +23,12 @@ pub(crate) fn lattice_step(width: u32, height: u32) -> u32 {
 
 /// Projects the whole picture onto the perimeter using a smooth distance
 /// falloff, then optionally lets each sample keep the colour next to it
-/// ([`ColorFocus`]).
-#[derive(Debug)]
+/// ([`ColorFocus`]). It reads its settings from the [`Config`] of each frame
+/// and keeps only what they and the picture size determine.
+#[derive(Debug, Default)]
 pub struct SpatialSampler {
-    sample_density: SampleDensity,
-    reach_ratio: f32,
-    color_focus: ColorFocusPercent,
-    dimensions: Option<(u32, u32)>,
+    /// What the geometry below is built for; `None` before the first frame.
+    built_for: Option<GeometryKey>,
     step: u32,
     // Cell rectangles `[x0, y0, x1, y1]`, row by row, `columns` to a row.
     cells: Vec<[u32; 4]>,
@@ -45,6 +43,15 @@ pub struct SpatialSampler {
     focus: ColorFocus,
     // Every edge's output samples in strip order, reused from frame to frame.
     samples: Vec<LinearColor>,
+}
+
+/// Everything the sampler's geometry depends on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GeometryKey {
+    width: u32,
+    height: u32,
+    density: SampleDensity,
+    reach: SpatialReachPercent,
 }
 
 /// The sampler's geometry, as the colour focus pass reads it.
@@ -191,71 +198,25 @@ fn edge_parts(
 }
 
 impl SpatialSampler {
-    pub fn new(sample_density: SampleDensity, reach_ratio: f32) -> Self {
-        Self {
-            sample_density,
-            reach_ratio,
-            color_focus: ColorFocusPercent(0),
-            dimensions: None,
-            step: 1,
-            cells: Vec::new(),
-            columns: 0,
-            cell_colors: Vec::new(),
-            radius: 0.0,
-            sample_points: std::array::from_fn(|_| Vec::new()),
-            sample_weights: std::array::from_fn(|_| Vec::new()),
-            focus: ColorFocus::default(),
-            samples: Vec::new(),
-        }
-    }
-
-    /// How much each sample keeps the colour next to it; 0 is the plain
-    /// weighted mean, exactly. Geometry is kept.
-    pub fn set_color_focus(&mut self, color_focus: ColorFocusPercent) {
-        self.color_focus = color_focus;
-    }
-
-    #[allow(
-        clippy::float_cmp,
-        reason = "invalidate geometry on any change to the configured reach"
-    )]
-    pub fn configure(&mut self, sample_density: SampleDensity, reach_ratio: f32) {
-        if self.sample_density != sample_density || self.reach_ratio != reach_ratio {
-            self.sample_density = sample_density;
-            self.reach_ratio = reach_ratio;
-            self.dimensions = None;
-        }
-    }
-
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
         clippy::cast_sign_loss,
         reason = "grid coordinates are bounded by u32 dimensions; weights use approximate f32 geometry"
     )]
-    fn prepare_geometry(&mut self, width: u32, height: u32) {
-        let horizontal = self.sample_density.samples_for_length(width as usize);
-        let vertical = self.sample_density.samples_for_length(height as usize);
-        // A picture larger than the budget gets the grid of its copy scaled
-        // down to the budget, so cells hold about as many read pixels, and
-        // projection costs about the same, at any capture size.
-        let pixels = u64::from(width) * u64::from(height);
-        let budget_length = if pixels > PIXEL_BUDGET {
-            (f64::from(width.max(height)) * (PIXEL_BUDGET as f64 / pixels as f64).sqrt()).round()
-                as usize
-        } else {
-            width.max(height) as usize
-        };
-        // shortcut: cap the grid at 128 cells per axis; raise only if footage shows lost detail.
-        let longest = self
-            .sample_density
-            .samples_for_length(budget_length)
-            .clamp(64, 128) as u32;
-        let grid_length = |length: u32| {
-            (u64::from(length) * u64::from(longest) / u64::from(width.max(height)))
-                .clamp(1, u64::from(length)) as u32
-        };
-        let (columns, rows) = (grid_length(width), grid_length(height));
+    fn prepare_geometry(&mut self, key: GeometryKey) {
+        let GeometryKey {
+            width,
+            height,
+            density,
+            reach,
+        } = key;
+        // A picture larger than the budget gets the samples and the grid of
+        // its copy scaled down to the budget, so cells hold about as many read
+        // pixels, and the weights and projection cost the same, at any
+        // capture size.
+        let [horizontal, vertical] = density.samples_for_picture(width, height);
+        let [columns, rows] = density.grid_size(width, height);
         self.cells.clear();
         for y in 0..rows {
             for x in 0..columns {
@@ -270,7 +231,7 @@ impl SpatialSampler {
         self.cell_colors
             .resize(self.cells.len(), LinearColor::black());
         self.columns = columns as usize;
-        let radius = height as f32 * self.reach_ratio;
+        let radius = height as f32 * reach.as_ratio();
         self.radius = radius;
         let edges = self.sample_weights.iter_mut().zip(&mut self.sample_points);
         for ((weights, points), (edge, count)) in edges.zip([
@@ -297,31 +258,33 @@ impl SpatialSampler {
         }
         self.focus.invalidate();
         self.step = lattice_step(width, height);
-        self.dimensions = Some((width, height));
+        self.built_for = Some(key);
     }
 
-    /// [`Self::process_with`] on the caller's thread alone, unobserved.
-    #[cfg(test)]
-    pub fn process(&mut self, view: &FrameView) -> EdgeColors {
-        self.process_with(view, &Workers::default(), &mut |_| {})
-    }
-
-    /// Reduces `view` to edge colours. Cells, projected samples and colour
-    /// focus samples are each independent of the others, so `workers` may compute them in chunks on its pool; the
-    /// result is the same, bit for bit, on any number of threads. `mark` is
-    /// told as each stage ends.
+    /// Reduces `view` to edge colours with `config`'s density, reach and
+    /// colour focus. Cells, projected samples and colour focus samples are
+    /// each independent of the others, so `workers` may compute them in
+    /// chunks on its pool; the result is the same, bit for bit, on any number
+    /// of threads. `mark` is told as each stage ends.
     pub fn process_with(
         &mut self,
         view: &FrameView,
+        config: &Config,
         workers: &Workers,
         mark: &mut impl FnMut(Stage),
     ) -> EdgeColors {
         let (width, height) = (view.viewport_width(), view.viewport_height());
         if width == 0 || height == 0 {
-            return EdgeColors::black(width as usize, height as usize, self.sample_density);
+            return EdgeColors::black(width, height, config.sample_density);
         }
-        if self.dimensions != Some((width, height)) {
-            self.prepare_geometry(width, height);
+        let key = GeometryKey {
+            width,
+            height,
+            density: config.sample_density,
+            reach: config.spatial_reach_percent,
+        };
+        if self.built_for != Some(key) {
+            self.prepare_geometry(key);
         }
         let (cells, step) = (&self.cells, self.step);
         workers.for_each_chunk(&mut self.cell_colors, CELL_CHUNK, |offset, colors| {
@@ -335,7 +298,7 @@ impl SpatialSampler {
         // sample's weighted mean is independent of the others.
         let (colors, weights) = (&self.cell_colors, &self.sample_weights);
         let cell_count = colors.len();
-        let counts = weights.each_ref().map(|w| w.len() / cell_count);
+        let counts = self.sample_points.each_ref().map(Vec::len);
         let samples = &mut self.samples;
         samples.clear();
         samples.resize(counts.iter().sum(), LinearColor::black());
@@ -350,7 +313,7 @@ impl SpatialSampler {
         });
         mark(Stage::Projection);
 
-        let focus = self.color_focus.as_ratio();
+        let focus = config.color_focus_percent.as_ratio();
         if focus > 0.0 {
             let geometry = Geometry {
                 width,
@@ -383,8 +346,67 @@ impl SpatialSampler {
 mod tests {
     use super::*;
     use crate::frames::Viewport;
-    use prysm_core::Color;
-    use prysm_core::{Frame, PixelFormat};
+    use prysm_core::{Color, ColorFocusPercent, Frame, PixelFormat};
+    use std::ops::{Deref, DerefMut};
+
+    /// A sampler and the settings it is given with each frame.
+    pub(super) struct Configured {
+        sampler: SpatialSampler,
+        config: Config,
+    }
+
+    impl Configured {
+        pub(super) fn new(density: SampleDensity, reach_percent: u8) -> Self {
+            Self {
+                sampler: SpatialSampler::default(),
+                config: Config {
+                    sample_density: density,
+                    spatial_reach_percent: SpatialReachPercent(reach_percent),
+                    ..Config::default()
+                },
+            }
+        }
+
+        pub(super) fn set_color_focus(&mut self, focus: ColorFocusPercent) {
+            self.config.color_focus_percent = focus;
+        }
+
+        pub(super) fn set_reach(&mut self, reach_percent: u8) {
+            self.config.spatial_reach_percent = SpatialReachPercent(reach_percent);
+        }
+
+        /// [`SpatialSampler::process_with`] on the caller's thread alone, unobserved.
+        pub(super) fn process(&mut self, view: &FrameView) -> EdgeColors {
+            let config = self.config;
+            self.sampler
+                .process_with(view, &config, &Workers::default(), &mut |_| {})
+        }
+
+        /// Builds the geometry of a `width` x `height` picture.
+        fn prepare(&mut self, width: u32, height: u32) {
+            let key = GeometryKey {
+                width,
+                height,
+                density: self.config.sample_density,
+                reach: self.config.spatial_reach_percent,
+            };
+            self.sampler.prepare_geometry(key);
+        }
+    }
+
+    impl Deref for Configured {
+        type Target = SpatialSampler;
+
+        fn deref(&self) -> &SpatialSampler {
+            &self.sampler
+        }
+    }
+
+    impl DerefMut for Configured {
+        fn deref_mut(&mut self) -> &mut SpatialSampler {
+            &mut self.sampler
+        }
+    }
 
     pub(super) fn picture(
         width: u32,
@@ -407,7 +429,7 @@ mod tests {
     #[test]
     fn yuyv_is_sampled_in_place_and_matches_its_pixels_as_rgb_with_an_offset_crop() {
         use prysm_core::{YuvRange, YuvStandardMatrix};
-        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        let mut sampler = Configured::new(SampleDensity(128), 10);
         for range in [YuvRange::Full, YuvRange::Limited] {
             for matrix in [
                 YuvStandardMatrix::Bt601,
@@ -444,7 +466,7 @@ mod tests {
     #[test]
     fn nv12_is_sampled_in_place_and_matches_its_rgb_conversion_with_an_offset_crop() {
         use prysm_core::{YuvRange, YuvStandardMatrix};
-        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        let mut sampler = Configured::new(SampleDensity(128), 10);
         for range in [YuvRange::Full, YuvRange::Limited] {
             for matrix in [YuvStandardMatrix::Bt601, YuvStandardMatrix::Bt709] {
                 // Legal codes, where the reference converter and ours agree within one step.
@@ -489,7 +511,7 @@ mod tests {
 
     #[test]
     fn projected_samples_match_serial_sums_in_strip_order() {
-        let mut sampler = SpatialSampler::new(SampleDensity(700), 0.15);
+        let mut sampler = Configured::new(SampleDensity(700), 15);
         let mut view = picture(93, 55, |x, y| {
             [
                 x.to_le_bytes()[0],
@@ -581,10 +603,10 @@ mod tests {
 
     #[test]
     fn large_pictures_are_read_on_the_lattice_and_use_the_budget_sized_grid() {
-        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        let mut sampler = Configured::new(SampleDensity(128), 10);
         let _ = sampler.process(&picture(1280, 720, |_, _| [0; 3]));
         assert_eq!(sampler.step, 2);
-        let mut small = SpatialSampler::new(SampleDensity(128), 0.1);
+        let mut small = Configured::new(SampleDensity(128), 10);
         let _ = small.process(&picture(640, 360, |_, _| [0; 3]));
         assert_eq!(small.step, 1);
         assert_eq!(
@@ -619,9 +641,31 @@ mod tests {
     }
 
     #[test]
+    fn a_4k_picture_at_the_most_detail_has_the_weights_of_640x360() {
+        // `prysm_ports::Processing::MAX_SAMPLE_DENSITY`.
+        let density = SampleDensity(1024);
+        let mut large = Configured::new(density, 10);
+        large.prepare(3840, 2160);
+        let mut budget = Configured::new(density, 10);
+        budget.prepare(640, 360);
+        let lengths = |sampler: &Configured| sampler.sample_weights.each_ref().map(Vec::len);
+        assert_eq!(lengths(&large), lengths(&budget));
+        // At most one sample per grid cell along each edge: 2 x (128 + 72)
+        // samples of 128 x 72 cells, 15 MB of weights.
+        assert!(lengths(&budget).iter().sum::<usize>() <= 400 * 9216);
+        let samples = |sampler: &Configured| sampler.sample_points.each_ref().map(Vec::len);
+        assert_eq!(samples(&budget), [128, 72, 128, 72]);
+        // A picture within the budget's area but not its shape.
+        let mut sliver = Configured::new(density, 10);
+        sliver.prepare(230_400, 1);
+        assert_eq!(samples(&sliver), [128, 1, 128, 1]);
+        assert_eq!((sliver.cells.len(), sliver.columns), (128, 128));
+    }
+
+    #[test]
     fn a_doubled_picture_lights_exactly_like_the_original() {
-        // The lattice reads one pixel of each 2x2 block of a doubled picture.
-        // Half the density gives both the same samples and the same 64-cell grid.
+        // The lattice reads one pixel of each 2x2 block of a doubled picture,
+        // and the same density gives both the same samples and the same grid.
         let pixel = |x: u32, y: u32| {
             if x < 200 && y < 180 {
                 [255, 64, 0]
@@ -631,17 +675,16 @@ mod tests {
                 [(x / 3).to_le_bytes()[0], 30, (y / 2).to_le_bytes()[0]]
             }
         };
-        let original =
-            SpatialSampler::new(SampleDensity(100), 0.1).process(&picture(640, 360, pixel));
+        let original = Configured::new(SampleDensity(100), 10).process(&picture(640, 360, pixel));
         let doubled =
-            SpatialSampler::new(SampleDensity(50), 0.1)
+            Configured::new(SampleDensity(100), 10)
                 .process(&picture(1280, 720, |x, y| pixel(x / 2, y / 2)));
         assert_eq!(doubled, original);
     }
 
     #[test]
     fn small_highlights_on_the_lattice_still_reach_the_edges() {
-        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        let mut sampler = Configured::new(SampleDensity(128), 10);
         let output = sampler.process(&picture(1280, 720, |x, y| {
             if (638..640).contains(&x) && (358..360).contains(&y) {
                 [255, 0, 0]
@@ -658,7 +701,7 @@ mod tests {
     fn uniform_colors_and_black_are_preserved_at_every_density() {
         for density in [0, 128, 2000] {
             for (width, height) in [(1, 1), (1, 8), (8, 1), (8, 8), (133, 79)] {
-                let mut sampler = SpatialSampler::new(SampleDensity(density), 0.1);
+                let mut sampler = Configured::new(SampleDensity(density), 10);
                 for rgb in [[0, 0, 0], [255, 255, 255], [64, 128, 192]] {
                     let expected = LinearColor::from_srgb(Color::new(rgb[0], rgb[1], rgb[2]));
                     let output = sampler.process(&picture(width, height, |_, _| rgb));
@@ -679,7 +722,7 @@ mod tests {
 
     #[test]
     fn center_light_reaches_every_edge_and_moves_toward_the_left() {
-        let mut sampler = SpatialSampler::new(SampleDensity(250), 0.1);
+        let mut sampler = Configured::new(SampleDensity(250), 10);
         let mut previous = 0.0;
         for x0 in [30, 22, 14, 6, 0] {
             let output = sampler.process(&picture(64, 64, |x, y| {
@@ -714,7 +757,7 @@ mod tests {
 
     #[test]
     fn opposing_regions_keep_their_colors_and_strip_orientation() {
-        let mut sampler = SpatialSampler::new(SampleDensity(250), 0.1);
+        let mut sampler = Configured::new(SampleDensity(250), 10);
         for vertical in [false, true] {
             let output = sampler.process(&picture(64, 64, |x, y| {
                 if (if vertical { y } else { x }) < 32 {
@@ -751,7 +794,7 @@ mod tests {
 
     #[test]
     fn subcell_highlights_are_not_skipped_and_larger_lights_are_brighter() {
-        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        let mut sampler = Configured::new(SampleDensity(128), 10);
         let small = sampler.process(&picture(640, 360, |x, y| {
             if x == 319 && y == 179 {
                 [255, 0, 0]
@@ -774,7 +817,7 @@ mod tests {
 
     #[test]
     fn cached_geometry_tracks_size_and_reads_current_viewport_offset() {
-        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        let mut sampler = Configured::new(SampleDensity(128), 10);
         for (width, height, offset) in [(33, 17, 0), (33, 17, 11), (17, 33, 5)] {
             let pixel = |x, y| {
                 if x < width / 2 && y < height / 2 {
@@ -797,8 +840,8 @@ mod tests {
                 height,
             };
             let actual = sampler.process(&padded);
-            let expected = SpatialSampler::new(SampleDensity(128), 0.1)
-                .process(&picture(width, height, pixel));
+            let expected =
+                Configured::new(SampleDensity(128), 10).process(&picture(width, height, pixel));
             assert_eq!(actual, expected);
         }
     }
@@ -806,7 +849,7 @@ mod tests {
     #[test]
     fn scaling_the_picture_preserves_influence_in_landscape_and_portrait() {
         for (width, height) in [(64, 36), (36, 64)] {
-            let mut sampler = SpatialSampler::new(SampleDensity(0), 0.1);
+            let mut sampler = Configured::new(SampleDensity(0), 10);
             let render = |scale| {
                 picture(width * scale, height * scale, |x, y| {
                     if x / scale < width / 3 && y / scale < height / 2 {

@@ -281,7 +281,7 @@ fn preview_events() -> Vec<PreviewEvent> {
     vec![
         PreviewEvent::Idle,
         PreviewEvent::Unavailable {
-            message: "MJPEG frames cannot be previewed".into(),
+            message: "the frame is empty".into(),
         },
         PreviewEvent::Frame(PreviewFrame {
             sequence: 42,

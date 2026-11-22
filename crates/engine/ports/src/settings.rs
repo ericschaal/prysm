@@ -104,7 +104,12 @@ pub struct Processing {
     /// kept while another style is; absent until first tuned.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_style: Option<StyleValues>,
-    /// Samples per 1000 px of edge, 1 to [`Processing::MAX_SAMPLE_DENSITY`].
+    /// Samples per 1000 px of edge, measured on the picture scaled down to
+    /// 640x360, 1 to [`Processing::MAX_SAMPLE_DENSITY`]: the same value gives
+    /// the same samples at any capture size. At most one sample per
+    /// sampling-grid cell along an edge (128 along the longer side): density
+    /// 200 reaches it for 16:9 pictures of 640x360 or more, a higher one for
+    /// squarer or smaller pictures.
     pub sample_density: u16,
     pub remove_black_bars: bool,
     /// At most [`MAX_CALIBRATIONS`](crate::MAX_CALIBRATIONS), with unique ids.
@@ -131,8 +136,9 @@ impl Default for Processing {
 }
 
 impl Processing {
-    /// The most detail: from 1000 every pixel is its own sample already, so
-    /// more would only grow the sampler's weights and its time per frame.
+    /// The most a user may set. The sampler gives an edge at most one sample
+    /// per grid cell, which density 128,000 / (the 640x360 copy's longer side)
+    /// reaches: 200 for 16:9, about 267 for a square, 400 for a 320x180 picture.
     pub const MAX_SAMPLE_DENSITY: u16 = 1024;
 
     /// # Errors

@@ -1,4 +1,4 @@
-use super::BlackBarDetector;
+use super::{BlackBarDetector, Candidate, Content, EdgeCrop, Px, Sighting};
 use crate::frames::{FrameView, Viewport, yuyv_frame_from_luma};
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
 use std::time::{Duration, Instant};
@@ -73,7 +73,7 @@ fn feed(
 #[test]
 fn one_pixel_bottom_noise_never_moves_the_top_edge() {
     let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     let boxed = picture([20, 0, 11, 0], |_, _| 128);
     assert_eq!(
         feed(&mut detector, &boxed, start, 0, 2000),
@@ -106,7 +106,7 @@ fn asymmetric_thin_letter_pillar_and_window_bars_are_detected() {
         for range in [YuvRange::Full, YuvRange::Limited] {
             let frame = with_range(&full, range);
             let crop = feed(
-                &mut BlackBarDetector::new(),
+                &mut BlackBarDetector::default(),
                 &frame,
                 Instant::now(),
                 0,
@@ -129,7 +129,7 @@ fn dim_picture_edges_do_not_consume_a_confirmed_picture() {
         },
     );
     for range in [YuvRange::Full, YuvRange::Limited] {
-        let mut detector = BlackBarDetector::new();
+        let mut detector = BlackBarDetector::default();
         let boxed = with_range(&boxed, range);
         let dim = with_range(&dim, range);
         assert_eq!(feed(&mut detector, &boxed, start, 0, 2000), expected);
@@ -159,7 +159,7 @@ fn sustained_wide_subtitles_and_corner_logos_do_not_change_framing() {
         }
     });
     for initial in [&clean, &overlay] {
-        let mut detector = BlackBarDetector::new();
+        let mut detector = BlackBarDetector::default();
         assert_eq!(feed(&mut detector, initial, start, 0, 2000), expected);
         for millis in (2050..=6050).step_by(50) {
             let frame = if millis < 5050 { &overlay } else { &clean };
@@ -178,7 +178,7 @@ fn darkness_and_fades_keep_the_last_crop_without_confirming_new_bars() {
     let boxed = picture([48, 0, 48, 0], |_, _| 128);
     let dark = yuyv_frame_from_luma(WIDTH, HEIGHT, |_, _| 0);
     let faded = picture([48, 0, 48, 0], |_, _| 4);
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     assert_eq!(feed(&mut detector, &dark, start, 0, 2000), viewport([0; 4]));
     assert_eq!(
         feed(&mut detector, &boxed, start, 2050, 4050),
@@ -190,7 +190,7 @@ fn darkness_and_fades_keep_the_last_crop_without_confirming_new_bars() {
             viewport([48, 0, 48, 0])
         );
     }
-    let mut candidate = BlackBarDetector::new();
+    let mut candidate = BlackBarDetector::default();
     feed(&mut candidate, &boxed, start, 0, 100);
     feed(&mut candidate, &dark, start, 150, 3000);
     assert_eq!(at(&mut candidate, &boxed, start, 3050), viewport([0; 4]));
@@ -203,7 +203,7 @@ fn genuine_aspect_changes_are_slow_inward_and_fast_outward_at_different_rates() 
     let boxed = picture([48, 0, 48, 0], |_, _| 128);
     let full = picture([0; 4], |_, _| 128);
     for fps in [24, 30, 60, 120] {
-        let mut detector = BlackBarDetector::new();
+        let mut detector = BlackBarDetector::default();
         for (frame, offset, expected, earliest, latest) in [
             (&shallow, 0.0, viewport([20, 0, 20, 0]), 1.5, 2.0),
             (&boxed, 2.1, viewport([48, 0, 48, 0]), 1.5, 2.0),
@@ -235,7 +235,7 @@ fn genuine_aspect_changes_are_slow_inward_and_fast_outward_at_different_rates() 
 fn interrupted_evidence_does_not_turn_elapsed_time_into_confirmation() {
     let start = Instant::now();
     let boxed = picture([48, 0, 48, 0], |_, _| 128);
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     feed(&mut detector, &boxed, start, 0, 100);
     assert_eq!(at(&mut detector, &boxed, start, 10_000), viewport([0; 4]));
     assert_eq!(
@@ -253,7 +253,7 @@ fn repeated_or_earlier_times_do_not_advance_or_reset_evidence() {
     let start = Instant::now();
     let boxed = picture([48, 0, 48, 0], |_, _| 128);
     let full = picture([0; 4], |_, _| 128);
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     let before = feed(&mut detector, &boxed, start, 0, 1000);
     for now in [
         start.checked_sub(Duration::from_secs(1)).unwrap(),
@@ -290,7 +290,7 @@ fn isolated_highlights_cannot_establish_a_picture_rectangle() {
         });
         assert_eq!(
             feed(
-                &mut BlackBarDetector::new(),
+                &mut BlackBarDetector::default(),
                 &frame,
                 Instant::now(),
                 0,
@@ -304,7 +304,7 @@ fn isolated_highlights_cannot_establish_a_picture_rectangle() {
 #[test]
 fn alternating_framing_does_not_accumulate_false_support() {
     let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     let boxed = picture([48, 0, 48, 0], |_, _| 128);
     let full = picture([0; 4], |_, _| 128);
     for i in 0..=50 {
@@ -338,7 +338,7 @@ fn low_luma_colored_picture_is_not_a_neutral_black_bar() {
     .unwrap();
     assert_eq!(
         feed(
-            &mut BlackBarDetector::new(),
+            &mut BlackBarDetector::default(),
             &frame,
             Instant::now(),
             0,
@@ -364,7 +364,7 @@ fn rgb_and_bgr_frames_detect_the_same_asymmetric_geometry() {
         let frame = Frame::new(bytes, WIDTH, HEIGHT, format).unwrap();
         assert_eq!(
             feed(
-                &mut BlackBarDetector::new(),
+                &mut BlackBarDetector::default(),
                 &frame,
                 Instant::now(),
                 0,
@@ -378,7 +378,7 @@ fn rgb_and_bgr_frames_detect_the_same_asymmetric_geometry() {
 #[test]
 fn sparse_sustained_picture_detail_vetoes_a_deeper_crop() {
     let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     let clean = picture([20, 0, 20, 0], |_, _| 128);
     feed(&mut detector, &clean, start, 0, 2000);
     let dim = picture([20, 0, 20, 0], |x, y| {
@@ -402,7 +402,7 @@ fn sparse_sustained_picture_detail_vetoes_a_deeper_crop() {
 #[test]
 fn noisy_bars_and_soft_boundary_pixels_stay_within_the_locked_geometry() {
     let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     let clean = picture([20, 0, 11, 0], |_, _| 128);
     let expected = viewport([20, 0, 11, 0]);
     assert_eq!(feed(&mut detector, &clean, start, 0, 2000), expected);
@@ -448,10 +448,10 @@ fn nv12_frames_detect_the_same_bars_as_yuyv_and_see_their_chroma() {
         let yuyv = with_range(&picture(bars, |_, _| 128), range);
         let nv12 = as_nv12(&yuyv);
         let start = Instant::now();
-        let expected = feed(&mut BlackBarDetector::new(), &yuyv, start, 0, 2000);
+        let expected = feed(&mut BlackBarDetector::default(), &yuyv, start, 0, 2000);
         assert_eq!(expected, viewport(bars), "{range:?}");
         assert_eq!(
-            feed(&mut BlackBarDetector::new(), &nv12, start, 0, 2000),
+            feed(&mut BlackBarDetector::default(), &nv12, start, 0, 2000),
             expected,
             "{range:?}"
         );
@@ -479,7 +479,7 @@ fn nv12_frames_detect_the_same_bars_as_yuyv_and_see_their_chroma() {
     .unwrap();
     assert_eq!(
         feed(
-            &mut BlackBarDetector::new(),
+            &mut BlackBarDetector::default(),
             &frame,
             Instant::now(),
             0,
@@ -550,7 +550,7 @@ fn dark_scene(width: u32, height: u32, frame: u32, letterboxed: bool) -> Frame {
 /// scans/s, cycling through `frames`.
 fn crops(frames: &[Frame], seconds: usize) -> Vec<[u32; 4]> {
     let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     (0..seconds * 20)
         .map(|scan| {
             let frame = &frames[scan % frames.len()];
@@ -628,7 +628,7 @@ fn intermittent_sightings_in_a_dark_scene_crop_after_enough_evidence_without_fli
     let lit = picture([48, 0, 48, 0], |_, _| 128);
     let dark = yuyv_frame_from_luma(WIDTH, HEIGHT, |_, _| 0);
     let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
+    let mut detector = BlackBarDetector::default();
     for scan in 0..400 {
         let frame = if scan % 3 == 0 { &lit } else { &dark };
         assert_eq!(at(&mut detector, frame, start, scan * 50), viewport([0; 4]));
@@ -654,5 +654,201 @@ fn lit_letterbox_bars_are_found_in_1_5_seconds_at_every_capture_size() {
             "{width}x{height}: {:?}",
             crops.last()
         );
+    }
+}
+
+/// A portrait frame with a lit band 45 rows high: top and bottom both crop to
+/// it after 1.5 s, which together leave less than a tenth of the height.
+fn band() -> Frame {
+    yuyv_frame_from_luma(
+        360,
+        640,
+        |_, y| {
+            if (290..335).contains(&y) { 128 } else { 0 }
+        },
+    )
+}
+
+#[test]
+fn a_rejected_crop_keeps_the_evidence_of_the_edges_that_did_not_move() {
+    let start = Instant::now() + Duration::from_secs(10);
+    let mut detector = BlackBarDetector::default();
+    // The left edge has seen a pillar 40 px wide for a second; the band does
+    // not show the left edge, so its evidence only waits.
+    detector.edges[3].candidate = Some(Candidate {
+        anchor: Px(40),
+        seen: (0..20_u64)
+            .map(|i| Sighting {
+                time: start - Duration::from_millis(1000 - i * 50),
+                credit: Duration::from_millis(if i == 0 { 0 } else { 50 }),
+                position: Px(40),
+            })
+            .collect(),
+    });
+    let frame = band();
+    for millis in (0..=1500).step_by(50) {
+        assert_eq!(
+            at(&mut detector, &frame, start, millis),
+            Viewport::full_frame(360, 640),
+            "{millis} ms"
+        );
+    }
+    // Top and bottom proposed, were rejected, and start over.
+    let edges = &detector.edges;
+    assert!(edges[0].candidate.is_none() && edges[2].candidate.is_none());
+    assert_eq!(detector.crops(), [Px(0); 4]);
+    assert!(
+        edges[3].candidate.is_some(),
+        "the left edge lost its evidence"
+    );
+}
+
+/// An edge's state for [`one_edge_proposes_once_its_evidence_confirms`].
+#[derive(Debug, Clone, Copy)]
+enum State {
+    /// At its crop, 40 px, with no candidate.
+    Idle,
+    /// A candidate 80 px in, seen for 0.5 s.
+    Gathering,
+    /// A candidate 80 px in, one scan short of 1.5 s.
+    Due,
+    /// As `Due`, but a scan 0.1 s ago saw picture at 40 px.
+    DueVetoed,
+    /// At 80 px, with a candidate 40 px in one scan short of 0.4 s.
+    DueOutward,
+}
+
+/// What one scan, 50 ms after the previous, sees at an edge.
+#[derive(Debug, Clone, Copy)]
+enum Scan {
+    Unclear,
+    Current,
+    Candidate,
+    Other,
+}
+
+const SCAN: Duration = Duration::from_millis(50);
+
+/// An edge in `state` at `now`: the candidate's sightings are one scan apart,
+/// the last a scan before `now`.
+fn edge(state: State, now: Instant) -> EdgeCrop {
+    let (current, anchor, scans) = match state {
+        State::Idle => (40, None, 0),
+        State::Gathering => (40, Some(80), 11),
+        State::Due | State::DueVetoed => (40, Some(80), 30),
+        State::DueOutward => (80, Some(40), 8),
+    };
+    let sightings: Vec<_> = (0..scans)
+        .map(|i| Sighting {
+            time: now - SCAN * (scans - i),
+            credit: if i == 0 { Duration::ZERO } else { SCAN },
+            position: Px(anchor.unwrap_or_default()),
+        })
+        .collect();
+    let mut recent_content: std::collections::VecDeque<_> = sightings
+        .iter()
+        .filter(|sighting| now - sighting.time < Duration::from_millis(1500))
+        .map(|sighting| Content {
+            position: sighting.position,
+            time: sighting.time,
+        })
+        .collect();
+    if let State::DueVetoed = state {
+        recent_content.push_back(Content {
+            position: Px(40),
+            time: now - Duration::from_millis(100),
+        });
+    }
+    EdgeCrop {
+        current: Px(current),
+        candidate: anchor.map(|anchor| Candidate {
+            anchor: Px(anchor),
+            seen: sightings.into(),
+        }),
+        recent_content,
+    }
+}
+
+#[test]
+fn one_edge_proposes_once_its_evidence_confirms() {
+    use Scan::{Candidate, Current, Other, Unclear};
+    use State::{Due, DueOutward, DueVetoed, Gathering, Idle};
+    // State, scan, then the proposal and the candidate's anchor after it.
+    let table = [
+        (Idle, Unclear, None, None),
+        (Idle, Current, None, None),
+        (Idle, Candidate, None, Some(80)),
+        (Idle, Other, None, Some(120)),
+        (Gathering, Unclear, None, Some(80)),
+        (Gathering, Current, None, None),
+        (Gathering, Candidate, None, Some(80)),
+        (Gathering, Other, None, Some(120)),
+        (Due, Unclear, None, Some(80)),
+        (Due, Current, None, None),
+        (Due, Candidate, Some(80), Some(80)),
+        (Due, Other, None, Some(120)),
+        (DueVetoed, Unclear, None, Some(80)),
+        (DueVetoed, Current, None, None),
+        (DueVetoed, Candidate, None, Some(80)),
+        (DueVetoed, Other, None, Some(120)),
+        (DueOutward, Unclear, None, Some(40)),
+        (DueOutward, Current, None, None),
+        (DueOutward, Candidate, Some(40), Some(40)),
+        (DueOutward, Other, None, Some(120)),
+    ];
+    let now = Instant::now() + Duration::from_secs(10);
+    for (state, scan, proposal, anchor) in table {
+        let mut edge = edge(state, now);
+        let current = edge.current;
+        let candidate = edge.candidate.as_ref().map(|candidate| candidate.anchor);
+        let observed = match scan {
+            Unclear => None,
+            Current => Some(current),
+            Candidate => Some(candidate.unwrap_or(Px(80))),
+            Other => Some(Px(120)),
+        };
+        let proposed = edge.propose(observed, now, SCAN, Px(4));
+        assert_eq!(
+            (
+                proposed,
+                edge.candidate.as_ref().map(|candidate| candidate.anchor)
+            ),
+            (proposal.map(Px), anchor.map(Px)),
+            "{state:?} after {scan:?}"
+        );
+        assert_eq!(edge.current, current, "only a commit moves the crop");
+    }
+}
+
+#[test]
+fn proposals_commit_together_only_when_they_leave_a_tenth_of_the_frame() {
+    // 640x360: at least 64 columns and 36 rows must remain.
+    let frame = Frame::dummy(WIDTH, HEIGHT).unwrap();
+    let now = Instant::now() + Duration::from_secs(10);
+    let some = |crops: [u32; 4]| crops.map(|crop| (crop > 0).then_some(Px(crop)));
+    // Proposals (top, right, bottom, left; 0 none), then the crops after them.
+    let table = [
+        ([0; 4], [0; 4]),
+        ([20, 0, 20, 0], [20, 0, 20, 0]),
+        ([0, 300, 0, 276], [0, 300, 0, 276]),
+        ([200, 0, 150, 0], [0; 4]),
+        ([330, 0, 0, 0], [0; 4]),
+        ([0, 300, 0, 300], [0; 4]),
+    ];
+    for (proposals, crops) in table {
+        let mut detector = BlackBarDetector::default();
+        for crop in &mut detector.edges {
+            *crop = edge(State::Gathering, now);
+            crop.current = Px(0);
+        }
+        detector.commit(&frame, some(proposals));
+        assert_eq!(detector.crops(), crops.map(Px), "{proposals:?}");
+        for (edge, proposal) in detector.edges.iter().zip(proposals) {
+            assert_eq!(
+                edge.candidate.is_some(),
+                proposal == 0,
+                "{proposals:?}: a proposal uses up its evidence, others keep theirs"
+            );
+        }
     }
 }

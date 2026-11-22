@@ -16,6 +16,7 @@ rayon.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+prysm-core = { workspace = true, features = ["testkit"] }
 prysm-processor = { path = ".", features = ["testkit"] }
 
 # Not the workspace lints: examples/frame_recycling.rs counts allocations with

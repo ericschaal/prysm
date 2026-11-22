@@ -820,7 +820,7 @@ fn repeated_or_earlier_timestamps_do_not_advance_smoothing() {
 }
 
 #[test]
-fn configured_density_controls_valid_and_unsupported_frame_edge_colors() {
+fn configured_density_controls_sampled_and_empty_frame_edge_colors() {
     for sample_density in [
         SampleDensity(0),
         SampleDensity(30),
@@ -833,19 +833,20 @@ fn configured_density_controls_valid_and_unsupported_frame_edge_colors() {
             ..Config::default()
         };
         let mut processor = PrysmProcessor::new(&config);
-        for frame in [
-            rgb(640, 360, 255),
-            Frame::new(vec![], 640, 360, PixelFormat::MJPEG).unwrap(),
-            rgb(0, 360, 128),
-        ] {
-            let width = frame.width() as usize;
-            let height = frame.height() as usize;
+        for frame in [rgb(640, 360, 255), rgb(1280, 720, 255), rgb(0, 360, 128)] {
+            let [horizontal, vertical] =
+                sample_density.samples_for_picture(frame.width(), frame.height());
             let output = processor.process_frame(frame);
-            assert_eq!(output.top.len(), sample_density.samples_for_length(width));
+            assert_eq!(output.top.len(), horizontal);
             assert_eq!(output.bottom.len(), output.top.len());
-            assert_eq!(output.left.len(), sample_density.samples_for_length(height));
+            assert_eq!(output.left.len(), vertical);
             assert_eq!(output.right.len(), output.left.len());
         }
+        // A larger capture gets the samples of its 640x360 copy.
+        assert_eq!(
+            sample_density.samples_for_picture(1280, 720),
+            sample_density.samples_for_picture(640, 360)
+        );
     }
 }
 

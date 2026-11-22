@@ -158,19 +158,22 @@ impl Pooling {
         self.of_cell.clear();
         for (index, &[x0, y0, x1, y1]) in cells.iter().enumerate() {
             let group = index / columns / side * group_columns + index % columns / side;
-            if let (Some(rect), Some(area)) = (self.rects.get_mut(group), areas.get_mut(group)) {
-                *rect = [
-                    rect[0].min(x0),
-                    rect[1].min(y0),
-                    rect[2].max(x1),
-                    rect[3].max(y1),
-                ];
-                *area += cell_area([x0, y0, x1, y1]);
-            }
+            debug_assert!(
+                group < count,
+                "cell {index} lies in group {group} of {count}"
+            );
+            let rect = &mut self.rects[group];
+            *rect = [
+                rect[0].min(x0),
+                rect[1].min(y0),
+                rect[2].max(x1),
+                rect[3].max(y1),
+            ];
+            areas[group] += cell_area([x0, y0, x1, y1]);
             self.of_cell.push((group, 0.0));
         }
-        for (&cell, (group, share)) in cells.iter().zip(&mut self.of_cell) {
-            let area = areas.get(*group).copied().unwrap_or_default();
+        for (&cell, &mut (group, ref mut share)) in cells.iter().zip(&mut self.of_cell) {
+            let area = areas[group];
             *share = if area > 0.0 {
                 cell_area(cell) / area
             } else {
@@ -188,9 +191,7 @@ impl Pooling {
         self.colors.clear();
         self.colors.resize(self.len(), LinearColor::black());
         for (&color, &(group, share)) in cell_colors.iter().zip(&self.of_cell) {
-            if let Some(mean) = self.colors.get_mut(group) {
-                *mean += color * share;
-            }
+            self.colors[group] += color * share;
         }
         self.tints.clear();
         let groups = self.colors.iter().zip(&self.in_use);
@@ -204,11 +205,8 @@ impl Pooling {
     }
 
     /// Group `index`'s colour and tint.
-    fn get(&self, index: usize) -> Option<(LinearColor, Tint)> {
-        self.colors
-            .get(index)
-            .copied()
-            .zip(self.tints.get(index).copied())
+    fn get(&self, index: usize) -> (LinearColor, Tint) {
+        (self.colors[index], self.tints[index])
     }
 }
 
@@ -350,18 +348,12 @@ impl ColorFocus {
         strength: f32,
         samples: &mut [LinearColor],
     ) {
-        let Some(fields) = self.fields.get(edge) else {
-            return;
-        };
-        // Without blocks `far` is empty, and so is the zip.
-        let far_rows = fields
-            .far
-            .chunks_exact(self.blocks.len().max(1))
-            .skip(first);
+        let fields = &self.fields[edge];
+        // A picture has at least one cell, so at least one block.
+        let far_rows = fields.far.chunks_exact(self.blocks.len()).skip(first);
         let near_rows = fields.starts.windows(2).skip(first);
         for (sample, (near, far)) in samples.iter_mut().zip(near_rows.zip(far_rows)) {
-            let near = fields.near.get(near[0]..near[1]).unwrap_or_default();
-            *sample = self.focused(*sample, near, far, strength);
+            *sample = self.focused(*sample, &fields.near[near[0]..near[1]], far, strength);
         }
     }
 
@@ -375,9 +367,8 @@ impl ColorFocus {
         let anchor = self.anchor(near).unwrap_or_else(|| Chromaticity::of(plain));
         let mut mean = WeightedMean::default();
         for near_group in near {
-            if let Some((color, tint)) = self.groups.get(near_group.group) {
-                mean.add(color, near_group.weight * tint.factor(anchor, strength));
-            }
+            let (color, tint) = self.groups.get(near_group.group);
+            mean.add(color, near_group.weight * tint.factor(anchor, strength));
         }
         let blocks = self.blocks.colors.iter().zip(&self.blocks.tints);
         for (&weight, (&color, &tint)) in far.iter().zip(blocks) {
@@ -392,9 +383,8 @@ impl ColorFocus {
     fn anchor(&self, near: &[NearGroup]) -> Option<Chromaticity> {
         let mut mean = WeightedMean::default();
         for near_group in near {
-            if let Some((color, tint)) = self.groups.get(near_group.group) {
-                mean.add(color, near_group.local * tint.grey_factor);
-            }
+            let (color, tint) = self.groups.get(near_group.group);
+            mean.add(color, near_group.local * tint.grey_factor);
         }
         mean.value().map(Chromaticity::of)
     }
@@ -437,9 +427,7 @@ impl ColorFocus {
         }
         self.groups.in_use.fill(false);
         for near_group in self.fields.iter().flat_map(|fields| &fields.near) {
-            if let Some(in_use) = self.groups.in_use.get_mut(near_group.group) {
-                *in_use = true;
-            }
+            self.groups.in_use[near_group.group] = true;
         }
         self.ready = true;
     }
@@ -494,12 +482,12 @@ impl Split<'_> {
         let pooled = self.groups.of_cell.iter().zip(&self.blocks.of_cell);
         for ((&cell, &weight), (&(group, _), &(block, _))) in self.cells.iter().zip(row).zip(pooled)
         {
-            let near = scratch.near.get(group).copied().unwrap_or(false);
-            if let (true, Some((sum, local))) = (near, scratch.weights.get_mut(group)) {
+            if scratch.near[group] {
+                let (sum, local) = &mut scratch.weights[group];
                 *sum += weight;
                 *local += cell_area(cell) * local_lobe(distance_squared(cell, point, self.radius));
-            } else if let Some(far) = far.get_mut(block) {
-                *far += weight;
+            } else {
+                far[block] += weight;
             }
         }
         let groups = scratch.near.iter().zip(&scratch.weights).enumerate();

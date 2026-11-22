@@ -219,12 +219,12 @@ impl WledRenderer {
         if !self.prepare(leds.total() as usize) {
             return Ok(());
         }
-        let led_counts = leds.edges();
+        let [top, right, bottom, left] = leds.edges();
         let colors = [
-            (&edges.left, led_counts[3], true),
-            (&edges.top, led_counts[0], false),
-            (&edges.right, led_counts[1], false),
-            (&edges.bottom, led_counts[2], true),
+            (&edges.left, left, true),
+            (&edges.top, top, false),
+            (&edges.right, right, false),
+            (&edges.bottom, bottom, true),
         ]
         .into_iter()
         .flat_map(|(strip, count, reverse)| {

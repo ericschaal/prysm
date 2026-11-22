@@ -37,7 +37,6 @@ pub enum PixelFormat {
         range: YuvRange,
         matrix: YuvStandardMatrix,
     },
-    MJPEG, // Variable size (future support)
 }
 
 impl Display for PixelFormat {
@@ -47,7 +46,6 @@ impl Display for PixelFormat {
             PixelFormat::BGR24 => f.write_str("BGR24"),
             PixelFormat::YUYV { .. } => f.write_str("YUYV"),
             PixelFormat::NV12 { .. } => f.write_str("NV12"),
-            PixelFormat::MJPEG => f.write_str("JPEG"),
         }
     }
 }
@@ -59,7 +57,6 @@ pub enum FrameError {
     OddNv12Dimensions { width: u32, height: u32 },
     SizeOverflow,
     BufferLength { expected: usize, actual: usize },
-    VariableSizeFormat,
 }
 
 impl Display for FrameError {
@@ -76,7 +73,6 @@ impl Display for FrameError {
             Self::BufferLength { expected, actual } => {
                 write!(f, "frame requires {expected} bytes, got {actual}")
             }
-            Self::VariableSizeFormat => f.write_str("cannot fill a variable-size pixel format"),
         }
     }
 }
@@ -84,32 +80,22 @@ impl Display for FrameError {
 impl std::error::Error for FrameError {}
 
 impl PixelFormat {
-    /// Returns the bytes per pixel for packed formats.
-    /// Returns None for planar NV12 (1.5 bytes per pixel) and for
-    /// variable-size formats like MJPEG.
-    fn bytes_per_pixel(&self) -> Option<usize> {
-        match self {
-            PixelFormat::RGB24 | PixelFormat::BGR24 => Some(3),
-            PixelFormat::YUYV { .. } => Some(2),
-            PixelFormat::NV12 { .. } | PixelFormat::MJPEG => None,
-        }
-    }
-
     /// Bytes per stored row and the number of stored rows, counting both NV12
     /// planes (each NV12 row, luma or chroma, is `width` bytes).
-    /// `None` for variable-size formats and for sizes beyond `usize`.
+    /// `None` for sizes beyond `usize`.
     fn rows(&self, width: u32, height: u32) -> Option<(usize, usize)> {
         let (width, height) = (width as usize, height as usize);
         match self {
+            Self::RGB24 | Self::BGR24 => Some((width.checked_mul(3)?, height)),
+            Self::YUYV { .. } => Some((width.checked_mul(2)?, height)),
             Self::NV12 { .. } => Some((width, height.checked_add(height / 2)?)),
-            _ => Some((width.checked_mul(self.bytes_per_pixel()?)?, height)),
         }
     }
 
-    /// Returns the expected buffer size, or `Ok(None)` for variable-size formats like MJPEG.
+    /// Returns the buffer size of a `width` x `height` frame.
     /// Returns an error for odd YUYV widths, odd NV12 dimensions or dimensions
     /// exceeding the supported buffer size.
-    pub fn expected_size(&self, width: u32, height: u32) -> Result<Option<usize>, FrameError> {
+    pub fn expected_size(&self, width: u32, height: u32) -> Result<usize, FrameError> {
         match self {
             Self::YUYV { .. } if !width.is_multiple_of(2) => {
                 return Err(FrameError::OddYuyvWidth(width));
@@ -117,15 +103,12 @@ impl PixelFormat {
             Self::NV12 { .. } if !width.is_multiple_of(2) || !height.is_multiple_of(2) => {
                 return Err(FrameError::OddNv12Dimensions { width, height });
             }
-            Self::MJPEG => return Ok(None),
             _ => {}
         }
-        let size = self
-            .rows(width, height)
+        self.rows(width, height)
             .and_then(|(row, rows)| row.checked_mul(rows))
             .filter(|&bytes| isize::try_from(bytes).is_ok())
-            .ok_or(FrameError::SizeOverflow)?;
-        Ok(Some(size))
+            .ok_or(FrameError::SizeOverflow)
     }
 }
 
@@ -161,17 +144,16 @@ impl Frame {
     /// YUYV color metadata is required by its format variant.
     ///
     /// # Errors
-    /// Returns an error for odd YUYV widths, buffer-size overflow, or a payload
-    /// whose length does not match the fixed-size format. Zero-sized frames remain valid.
+    /// Returns an error for odd YUYV widths, odd NV12 dimensions, buffer-size
+    /// overflow, or a payload whose length does not match. Zero-sized frames remain valid.
     pub fn new(
         data: Vec<u8>,
         width: u32,
         height: u32,
         format: PixelFormat,
     ) -> Result<Self, FrameError> {
-        if let Some(expected) = format.expected_size(width, height)?
-            && data.len() != expected
-        {
+        let expected = format.expected_size(width, height)?;
+        if data.len() != expected {
             return Err(FrameError::BufferLength {
                 expected,
                 actual: data.len(),
@@ -187,17 +169,15 @@ impl Frame {
     }
 
     /// Create a frame filled with the specified byte value.
-    /// Returns an error for invalid dimensions or a variable-size format such as MJPEG.
+    /// Returns an error for invalid dimensions.
     pub fn fill(
         value: u8,
         width: u32,
         height: u32,
         format: PixelFormat,
     ) -> Result<Self, FrameError> {
-        let expected_size = format
-            .expected_size(width, height)?
-            .ok_or(FrameError::VariableSizeFormat)?;
-        Self::new(vec![value; expected_size], width, height, format)
+        let size = format.expected_size(width, height)?;
+        Self::new(vec![value; size], width, height, format)
     }
 
     /// Create a black RGB24 placeholder, including for odd-width video input.
@@ -321,7 +301,7 @@ mod tests {
             range: YuvRange::Limited,
             matrix: YuvStandardMatrix::Bt709,
         };
-        assert_eq!(format.expected_size(4, 2), Ok(Some(12)));
+        assert_eq!(format.expected_size(4, 2), Ok(12));
         assert_eq!(format.to_string(), "NV12");
         for (width, height) in [(3, 2), (4, 3)] {
             assert_eq!(
@@ -375,15 +355,10 @@ mod tests {
             Frame::fill(0, 3, 1, yuyv).unwrap_err(),
             FrameError::OddYuyvWidth(3)
         );
-        assert_eq!(
-            Frame::fill(0, 2, 2, PixelFormat::MJPEG).unwrap_err(),
-            FrameError::VariableSizeFormat
-        );
         assert!(
             Frame::new(vec![], 0, 0, PixelFormat::RGB24)
                 .unwrap()
                 .is_empty()
         );
-        assert!(Frame::new(vec![1], 2, 2, PixelFormat::MJPEG).is_ok());
     }
 }

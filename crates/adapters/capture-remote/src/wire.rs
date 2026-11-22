@@ -409,8 +409,7 @@ impl Header {
         let raw = self
             .format
             .expected_size(width, height)
-            .map_err(WireError::Geometry)?
-            .ok_or(WireError::Format(self.format))?;
+            .map_err(WireError::Geometry)?;
         match encoding {
             Encoding::Raw => {
                 if len != raw {
@@ -495,7 +494,6 @@ fn format_code(format: PixelFormat) -> Result<(u8, u8, u8), WireError> {
             let (range, matrix) = yuv_code(format, range, matrix)?;
             (4, range, matrix)
         }
-        PixelFormat::MJPEG => return Err(WireError::Format(format)),
     })
 }
 
@@ -579,7 +577,7 @@ mod tests {
             },
         ] {
             let sent = header(320, 180, format);
-            let payload = vec![7; format.expected_size(320, 180).unwrap().unwrap()];
+            let payload = vec![7; format.expected_size(320, 180).unwrap()];
             let bytes = message(&sent, Encoding::Raw, &payload);
             let got = decode_frame(&bytes, Encoding::Raw).unwrap();
             assert_eq!(got.header, sent);
@@ -596,7 +594,6 @@ mod tests {
         let largest = header(MAX_WIDTH, MAX_HEIGHT, PixelFormat::RGB24);
         let len = PixelFormat::RGB24
             .expected_size(MAX_WIDTH, MAX_HEIGHT)
-            .unwrap()
             .unwrap();
         assert!(len <= MAX_PAYLOAD_BYTES);
         largest.encode(Encoding::Raw, len).unwrap();
@@ -605,7 +602,6 @@ mod tests {
     #[test]
     fn unsendable_frames_are_rejected() {
         for (format, width, height) in [
-            (PixelFormat::MJPEG, 2, 2),
             (
                 PixelFormat::YUYV {
                     range: YuvRange::Full,
@@ -620,11 +616,7 @@ mod tests {
             (PixelFormat::RGB24, 2, MAX_HEIGHT + 1),
         ] {
             let header = header(width, height, format);
-            let len = format
-                .expected_size(width, height)
-                .ok()
-                .flatten()
-                .unwrap_or(0);
+            let len = format.expected_size(width, height).unwrap_or(0);
             assert!(
                 header.encode(Encoding::Raw, len).is_err(),
                 "{format:?} {width}x{height}"

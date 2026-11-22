@@ -192,7 +192,8 @@ impl EdgeColors {
         }
     }
 
-    /// Create `EdgeColors` filled with the specified color
+    /// `EdgeColors` of a `width` x `height` picture filled with `color`, with
+    /// the sample counts the processor gives that picture.
     #[must_use]
     #[allow(
         clippy::missing_panics_doc,
@@ -200,28 +201,27 @@ impl EdgeColors {
     )]
     pub fn fill(
         color: LinearColor,
-        width: usize,
-        height: usize,
+        width: u32,
+        height: u32,
         sample_density: SampleDensity,
     ) -> Self {
-        let top_samples = NonZeroUsize::new(sample_density.samples_for_length(width))
-            .expect("sample density produces at least one sample");
-        let bottom_samples = top_samples;
-        let left_samples = NonZeroUsize::new(sample_density.samples_for_length(height))
-            .expect("sample density produces at least one sample");
-        let right_samples = left_samples;
-
+        let [horizontal, vertical] =
+            sample_density
+                .samples_for_picture(width, height)
+                .map(|count| {
+                    NonZeroUsize::new(count).expect("sample density produces at least one sample")
+                });
         Self {
-            top: ColorStrip::fill(color, top_samples),
-            right: ColorStrip::fill(color, right_samples),
-            bottom: ColorStrip::fill(color, bottom_samples),
-            left: ColorStrip::fill(color, left_samples),
+            top: ColorStrip::fill(color, horizontal),
+            right: ColorStrip::fill(color, vertical),
+            bottom: ColorStrip::fill(color, horizontal),
+            left: ColorStrip::fill(color, vertical),
         }
     }
 
     /// Create `EdgeColors` with all black colors
     #[must_use]
-    pub fn black(width: usize, height: usize, sample_density: crate::SampleDensity) -> Self {
+    pub fn black(width: u32, height: u32, sample_density: SampleDensity) -> Self {
         Self::fill(LinearColor::black(), width, height, sample_density)
     }
 

@@ -1,4 +1,4 @@
-use super::super::tests::{picture, strips};
+use super::super::tests::{Configured, picture, strips};
 use super::*;
 use crate::frames::{FrameView, Viewport};
 use crate::nodes::SpatialSampler;
@@ -26,8 +26,8 @@ impl Random {
     }
 }
 
-fn sampler(focus: u8, reach: f32) -> SpatialSampler {
-    let mut sampler = SpatialSampler::new(SampleDensity(128), reach);
+fn sampler(focus: u8, reach_percent: u8) -> Configured {
+    let mut sampler = Configured::new(SampleDensity(128), reach_percent);
     sampler.set_color_focus(ColorFocusPercent(focus));
     sampler
 }
@@ -196,8 +196,10 @@ fn reference(sampler: &SpatialSampler, plain: &[LinearColor], strength: f32) -> 
         .collect()
 }
 
-fn rebuild(sampler: &mut SpatialSampler, sizes: Sizes) {
-    let (width, height) = sampler.dimensions.unwrap_or_default();
+fn rebuild(sampler: &mut Configured, sizes: Sizes) {
+    let sampler: &mut SpatialSampler = sampler;
+    let key = sampler.built_for.expect("a processed frame");
+    let (width, height) = (key.width, key.height);
     let geometry = Geometry {
         width,
         height,
@@ -212,7 +214,7 @@ fn rebuild(sampler: &mut SpatialSampler, sizes: Sizes) {
 
 /// Per-LED distance between the two-part evaluation at `sizes` and the
 /// reference, in just-noticeable steps.
-fn errors(view: &FrameView, focus: u8, reach: f32, sizes: Sizes) -> Vec<f32> {
+fn errors(view: &FrameView, focus: u8, reach: u8, sizes: Sizes) -> Vec<f32> {
     let plain = samples(&sampler(0, reach).process(view));
     let mut focused = sampler(focus, reach);
     let _ = focused.process(view);
@@ -234,7 +236,7 @@ fn the_two_part_evaluation_agrees_with_every_cell_at_full_resolution() {
     println!("| --- | ---: | ---: | ---: | ---: |");
     for (name, view) in accuracy_pictures() {
         for focus in [50, 100] {
-            let mut errors = errors(&view, focus, 0.1, Sizes::SHIPPED);
+            let mut errors = errors(&view, focus, 10, Sizes::SHIPPED);
             let mean = errors.iter().sum::<f32>() / errors.len() as f32;
             let p95 = percentile(&mut errors, 0.95);
             let max = percentile(&mut errors, 1.0);
@@ -308,7 +310,7 @@ fn evaluation_sizes_table() {
     println!("| Edge depth | Sizes | Colours per sample | Worst p95 | Worst max |");
     println!("| ---: | --- | ---: | ---: | ---: |");
     let pictures = accuracy_pictures();
-    for reach in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.6, 1.0] {
+    for reach in [1, 5, 10, 20, 30, 40, 60, 100] {
         for (name, sizes) in variants {
             let (mut worst_p95, mut worst_max) = (0.0_f32, 0.0_f32);
             for (_, view) in &pictures {
@@ -323,10 +325,7 @@ fn evaluation_sizes_table() {
             let samples: usize = fields.iter().map(|f| f.starts.len() - 1).sum();
             let near: usize = fields.iter().map(|f| f.near.len()).sum();
             let colours = near as f32 / samples as f32 + probe.focus.blocks.len() as f32;
-            println!(
-                "| {:.0} % | {name} | {colours:.0} | {worst_p95:.2} | {worst_max:.2} |",
-                reach * 100.0
-            );
+            println!("| {reach} % | {name} | {colours:.0} | {worst_p95:.2} | {worst_max:.2} |");
         }
     }
 }
@@ -372,8 +371,8 @@ fn varied_pictures(width: u32, height: u32) -> Vec<FrameView> {
 fn focus_zero_is_the_plain_mean_exactly_even_after_focusing() {
     for (width, height) in [(96, 54), (33, 17), (1, 1)] {
         for view in varied_pictures(width, height) {
-            let expected = SpatialSampler::new(SampleDensity(128), 0.1).process(&view);
-            let mut sampler = sampler(100, 0.1);
+            let expected = Configured::new(SampleDensity(128), 10).process(&view);
+            let mut sampler = sampler(100, 10);
             let _ = sampler.process(&view);
             sampler.set_color_focus(ColorFocusPercent(0));
             assert_eq!(sampler.process(&view), expected);
@@ -388,10 +387,10 @@ fn emitted_light_stays_in_range_and_keeps_the_plain_brightness() {
     let every: Vec<u8> = (1..=100).collect();
     let few = vec![1, 2, 50, 99, 100];
     for (width, height, reach, focuses) in [
-        (96, 54, 0.1, &every),
-        (96, 54, 0.01, &few),
-        (64, 64, 1.0, &few),
-        (1, 1, 0.1, &every),
+        (96, 54, 10, &every),
+        (96, 54, 1, &few),
+        (64, 64, 100, &few),
+        (1, 1, 10, &every),
     ] {
         for view in varied_pictures(width, height) {
             let plain = samples(&sampler(0, reach).process(&view));
@@ -446,22 +445,26 @@ fn without_near_cells_or_weight_a_sample_keeps_its_plain_mean() {
     assert!(focus.anchor(&[]).is_none());
     let plain = LinearColor::new(0.3, 0.2, 0.1);
     assert_eq!(focus.focused(plain, &[], &[], 1.0), plain);
-    // A near group outside the frame's colours is skipped, not read.
+}
+
+#[test]
+#[should_panic(expected = "index out of bounds")]
+fn a_near_group_outside_the_frames_colours_is_a_bug() {
     let stray = NearGroup {
         group: 7,
         weight: 1.0,
         local: 1.0,
     };
-    assert_eq!(focus.focused(plain, &[stray], &[], 1.0), plain);
+    let _ = ColorFocus::default().focused(LinearColor::black(), &[stray], &[], 1.0);
 }
 
 #[test]
 fn a_uniform_picture_is_the_same_at_any_focus() {
     for rgb in [[0, 0, 0], [255, 255, 255], [200, 40, 120], [30, 30, 30]] {
         let view = picture(96, 54, |_, _| rgb);
-        let plain = samples(&sampler(0, 0.1).process(&view));
+        let plain = samples(&sampler(0, 10).process(&view));
         for focus in [1, 30, 100] {
-            for (actual, expected) in samples(&sampler(focus, 0.1).process(&view))
+            for (actual, expected) in samples(&sampler(focus, 10).process(&view))
                 .iter()
                 .zip(&plain)
             {
@@ -478,7 +481,7 @@ fn a_uniform_picture_is_the_same_at_any_focus() {
 fn lights_beside_each_half_take_its_hue_as_focus_rises() {
     let (left, right) = ([230, 80, 20], [20, 90, 230]);
     let view = halves(left, right);
-    let at = |focus| sampler(focus, 0.1).process(&view);
+    let at = |focus| sampler(focus, 10).process(&view);
     // The middle of the side strips, and the top strip just beside the boundary.
     let beside = |colors: &EdgeColors| {
         [
@@ -510,8 +513,8 @@ fn lights_beside_each_half_take_its_hue_as_focus_rises() {
 fn grey_next_to_a_saturated_object_keeps_the_objects_hue() {
     let view = objects_on_grey();
     let (plain, focused) = (
-        sampler(0, 0.1).process(&view).left.sample_at(0.5),
-        sampler(100, 0.1).process(&view).left.sample_at(0.5),
+        sampler(0, 10).process(&view).left.sample_at(0.5),
+        sampler(100, 10).process(&view).left.sample_at(0.5),
     );
     let green = linear([40, 200, 60]);
     assert!(hue_difference(focused, green) < 10.0, "{focused:?}");
@@ -532,7 +535,7 @@ fn a_small_change_of_the_picture_moves_the_lights_a_little() {
                 [20, 90, 230]
             }
         });
-        samples(&sampler(focus, 0.1).process(&view))
+        samples(&sampler(focus, 10).process(&view))
     };
     let largest_change = |focus| {
         at(320, focus)
@@ -551,7 +554,7 @@ fn a_small_change_of_the_picture_moves_the_lights_a_little() {
 
 #[test]
 fn a_new_geometry_rebuilds_the_fields_and_frames_reuse_their_storage() {
-    let mut sampler = sampler(50, 0.1);
+    let mut sampler = sampler(50, 10);
     let view = random_blocks(5, 16, false);
     let _ = sampler.process(&view);
     let near = sampler.focus.fields[0].near.as_ptr();
@@ -580,14 +583,14 @@ fn a_new_geometry_rebuilds_the_fields_and_frames_reuse_their_storage() {
         height: 270,
     };
     let _ = sampler.process(&cropped);
-    let mut fresh = super::tests::sampler(50, 0.1);
+    let mut fresh = super::tests::sampler(50, 10);
     let _ = fresh.process(&cropped);
     assert_ne!(sampler.focus.fields[0].near.len(), before);
     assert_eq!(sampler.focus.fields, fresh.focus.fields);
     // A changed edge depth too.
-    sampler.configure(SampleDensity(128), 0.3);
+    sampler.set_reach(30);
     let _ = sampler.process(&cropped);
-    let mut deeper = super::tests::sampler(50, 0.3);
+    let mut deeper = super::tests::sampler(50, 30);
     let _ = deeper.process(&cropped);
     assert_eq!(sampler.focus.fields, deeper.focus.fields);
 }

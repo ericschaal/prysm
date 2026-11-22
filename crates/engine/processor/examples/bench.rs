@@ -7,12 +7,14 @@
 //! `--threads N` gives the sampler N pool threads (1: no pool, the calling
 //! thread alone); without it the processor chooses, as in the hosts.
 //! `--frames N` frames are timed per table column, after a warm-up.
+//! `--density N` sets the sample density (default: the hosts' 128).
 //! Frames are gradients, moving patches and noise, different every frame
 //! (except the static case), so no stage is skipped or cached.
 
 use prysm_core::{
     BrightnessPercent, ColorCorrection, ColorFocusPercent, Config, DarkFloorPercent, Frame,
-    PixelFormat, SaturationBoostPercent, SpatialReachPercent, YuvRange, YuvStandardMatrix,
+    PixelFormat, SampleDensity, SaturationBoostPercent, SpatialReachPercent, YuvRange,
+    YuvStandardMatrix,
 };
 use prysm_processor::{PrysmProcessor, Stage};
 use std::num::NonZeroUsize;
@@ -34,12 +36,14 @@ const WARM_UP_FRAMES: u32 = 10;
 struct Options {
     threads: Option<NonZeroUsize>,
     frames: u32,
+    density: SampleDensity,
 }
 
 fn options() -> Result<Options, String> {
     let mut options = Options {
         threads: None,
         frames: 120,
+        density: SampleDensity::default(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -52,9 +56,10 @@ fn options() -> Result<Options, String> {
         match arg.as_str() {
             "--threads" => options.threads = NonZeroUsize::new(value()? as usize),
             "--frames" => options.frames = value()?,
+            "--density" => options.density = SampleDensity(value()? as usize),
             _ => {
                 return Err(format!(
-                    "unknown argument {arg}; use --threads N --frames N"
+                    "unknown argument {arg}; use --threads N --frames N --density N"
                 ));
             }
         }
@@ -272,11 +277,12 @@ fn main() {
         dark_floor_percent: DarkFloorPercent(2),
         correction: ColorCorrection::new(10, -5, 5).expect("a valid correction"),
         brightness_percent: BrightnessPercent(90),
+        sample_density: options.density,
         ..Config::default()
     };
     println!(
-        "Settings: black bars on, edge depth {} %, smoothing {} s, boost 20 %, floor 2 %, calibration on, brightness 90 %",
-        base.spatial_reach_percent.0, base.smoothing_seconds.0
+        "Settings: black bars on, density {}, edge depth {} %, smoothing {} s, boost 20 %, floor 2 %, calibration on, brightness 90 %",
+        base.sample_density.0, base.spatial_reach_percent.0, base.smoothing_seconds.0
     );
     println!("'-': the stage did not run. 'other': the call outside the stages.\n");
 

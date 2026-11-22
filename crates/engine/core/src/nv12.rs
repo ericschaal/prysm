@@ -1,5 +1,4 @@
 //! NV12 (planar 4:2:0) sampling without converting the whole frame.
-use crate::yuyv::ConversionError;
 use crate::{Frame, PixelFormat, YuvToRgb};
 
 /// Borrowed NV12 planes plus the frame's precomputed color conversion.
@@ -37,20 +36,98 @@ impl<'a> Nv12View<'a> {
         if x >= self.width || y >= self.height {
             return (0, 0, 0);
         }
-        let width = self.width as usize;
-        let luma = self.y[y as usize * width + x as usize];
-        let chroma = (y as usize / 2) * width + (x as usize & !1);
-        self.convert.rgb(luma, self.uv[chroma], self.uv[chroma + 1])
+        self.row(y).rgb(x as usize)
+    }
+
+    /// Row `y`: its luma, and the chroma row it shares with its pair of rows.
+    ///
+    /// # Panics
+    /// If `y` is outside the frame.
+    #[inline]
+    #[must_use]
+    pub fn row(&self, y: u32) -> Nv12Row<'a> {
+        let (width, y) = (self.width as usize, y as usize);
+        Nv12Row {
+            luma: &self.y[y * width..(y + 1) * width],
+            chroma: &self.uv[y / 2 * width..(y / 2 + 1) * width],
+            convert: self.convert,
+        }
     }
 }
 
-/// Converts a whole NV12 frame to RGB24 with the `yuv` crate's SIMD path.
-/// Sampling should use [`Nv12View`]; this is the reference and for consumers
-/// that need every pixel.
+/// One row of an NV12 frame: `width` luma bytes, and `width / 2`
+/// interleaved `U V` pairs, one per pair of pixels. Each accessor panics for
+/// a pixel outside the row.
+#[derive(Debug, Clone, Copy)]
+pub struct Nv12Row<'a> {
+    luma: &'a [u8],
+    chroma: &'a [u8],
+    convert: YuvToRgb,
+}
+
+impl Nv12Row<'_> {
+    /// Pixel `x`'s luma.
+    #[inline]
+    #[must_use]
+    pub fn luma(&self, x: usize) -> u8 {
+        self.luma[x]
+    }
+
+    /// Pixel `x`'s chroma `(U, V)`, which it shares with its 2x2 block.
+    #[inline]
+    #[must_use]
+    pub fn chroma(&self, x: usize) -> (u8, u8) {
+        let pair = x & !1;
+        (self.chroma[pair], self.chroma[pair + 1])
+    }
+
+    /// Pixel `x` as 8-bit RGB.
+    #[inline]
+    #[must_use]
+    pub fn rgb(&self, x: usize) -> (u8, u8, u8) {
+        let (u, v) = self.chroma(x);
+        self.convert.rgb(self.luma(x), u, v)
+    }
+}
+
+/// A frame cannot be converted to RGB by [`nv12_to_rgb`].
+#[cfg(any(test, feature = "testkit"))]
+#[derive(Debug)]
+pub enum ConversionError {
+    NotNv12,
+    SizeOverflow,
+    Decode(yuv::YuvError),
+}
+
+#[cfg(any(test, feature = "testkit"))]
+impl std::fmt::Display for ConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotNv12 => f.write_str("expected an NV12 frame"),
+            Self::SizeOverflow => f.write_str("RGB dimensions exceed the supported buffer size"),
+            Self::Decode(error) => error.fmt(f),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testkit"))]
+impl std::error::Error for ConversionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Decode(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+/// Converts a whole NV12 frame to RGB24 with the `yuv` crate's SIMD path: an
+/// independent reference for tests of [`Nv12View`] and its users, with the
+/// `testkit` feature.
 ///
 /// # Errors
 /// Returns an error for a non-NV12 frame, RGB size overflow, or a decoder failure.
 /// Empty frames give an empty buffer.
+#[cfg(any(test, feature = "testkit"))]
 pub fn nv12_to_rgb(frame: &Frame) -> Result<Vec<u8>, ConversionError> {
     let PixelFormat::NV12 { range, matrix } = frame.format() else {
         return Err(ConversionError::NotNv12);
@@ -62,8 +139,7 @@ pub fn nv12_to_rgb(frame: &Frame) -> Result<Vec<u8>, ConversionError> {
     let (y_plane, uv_plane) = frame.nv12_planes().ok_or(ConversionError::NotNv12)?;
     let rgb_size = PixelFormat::RGB24
         .expected_size(width, height)
-        .map_err(|_| ConversionError::SizeOverflow)?
-        .ok_or(ConversionError::SizeOverflow)?;
+        .map_err(|_| ConversionError::SizeOverflow)?;
     let mut rgb = vec![0; rgb_size];
     yuv::yuv_nv12_to_rgb(
         &yuv::YuvBiPlanarImage {

@@ -11,7 +11,7 @@ pub enum PreviewEvent {
     Frame(PreviewFrame),
     /// Nothing to show: no session runs or it has not processed a frame yet.
     Idle,
-    /// The latest frame cannot be shown, such as an undecoded MJPEG frame.
+    /// The latest frame cannot be shown, such as an empty frame.
     Unavailable { message: String },
 }
 

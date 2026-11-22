@@ -202,7 +202,7 @@ bytes. H.264: 1 to 8,388,608 bytes (8 MiB, the largest access unit
 `prysm-h264` produces, more than a 1080p RGB frame). The format describes the
 frame's pixels; NV12 is the Y plane (`width` bytes per row) followed by the
 interleaved UV plane (`width` bytes per row, `height / 2` rows), with even
-width and height. MJPEG and custom YUV matrices are rejected by the sender. A
+width and height. Custom YUV matrices are rejected by the sender. A
 frame's size is its own: the receiver does not require the requested one (the
 slim TV captures at it). A frame the sender cannot put in a message (too
 large, or the wrong pixels) is refused, cause `encoding` for an H.264 stream

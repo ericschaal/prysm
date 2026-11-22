@@ -82,6 +82,11 @@ pub struct ProcessingSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     custom_style: Option<StyleValuesSchema>,
+    /// Samples per 1000 px of edge, measured on the picture scaled down to
+    /// 640x360: the same value gives the same samples at any capture size.
+    /// At most one sample per sampling-grid cell along an edge (128 along the
+    /// longer side): density 200 reaches it for 16:9 pictures of 640x360 or
+    /// more, a higher one for squarer or smaller pictures.
     #[schema(minimum = 1, maximum = 1024)]
     sample_density: u16,
     remove_black_bars: bool,

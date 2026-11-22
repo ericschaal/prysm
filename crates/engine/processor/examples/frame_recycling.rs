@@ -52,7 +52,7 @@ static ALLOCATOR: CountedAllocator = CountedAllocator;
 )]
 fn measure(width: u32, height: u32, format: PixelFormat, processing: bool, recycle: bool) -> u64 {
     const FRAMES: usize = 120;
-    let size = format.expected_size(width, height).unwrap().unwrap();
+    let size = format.expected_size(width, height).unwrap();
     let source: Vec<_> = (0..size).map(|i| i.to_le_bytes()[0]).collect();
     let mut pool = FramePool::default();
     let mut processor = PrysmProcessor::new(&Config {

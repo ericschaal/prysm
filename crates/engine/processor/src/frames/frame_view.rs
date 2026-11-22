@@ -1,31 +1,7 @@
-use prysm_core::{Color, Frame, LinearColor, PixelFormat, YuvToRgb};
+use super::PixelView;
+use prysm_core::{Frame, LinearColor};
 
 pub use prysm_core::Viewport;
-
-/// Brightness for black-bar detection, read directly from raw frame data.
-///
-/// YUYV stores luma at every even byte and NV12 in its first plane, so
-/// black-bar detection never needs a color conversion. Out-of-bounds coordinates read as black.
-/// RGB uses the brightest channel so dark colored pixels are not treated as black.
-pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
-    if x >= frame.width() || y >= frame.height() {
-        return 0;
-    }
-    // `usize`, as `u32` overflowed large valid frames: offsets stay below `expected_size`.
-    let pixel = || y as usize * frame.width() as usize + x as usize;
-    match frame.format() {
-        PixelFormat::YUYV { .. } => frame.as_slice().get(pixel() * 2).copied().unwrap_or(0),
-        PixelFormat::NV12 { .. } => frame.as_slice().get(pixel()).copied().unwrap_or(0),
-        PixelFormat::RGB24 | PixelFormat::BGR24 => {
-            let idx = pixel() * 3;
-            match frame.as_slice().get(idx..idx + 3) {
-                Some(px) => px[0].max(px[1]).max(px[2]),
-                None => 0,
-            }
-        }
-        PixelFormat::MJPEG => 0,
-    }
-}
 
 /// A raw frame plus the viewport that downstream nodes should read from.
 ///
@@ -64,9 +40,8 @@ impl FrameView {
 
     /// Like [`Self::average_linear`], but reads only every `step`th pixel of
     /// every `step`th row, starting at the region's first pixel, so a region
-    /// always contributes at least one pixel. `step` 1 reads every pixel.
-    /// A row missing from the buffer, which a validated frame never has,
-    /// makes the region black in every format.
+    /// always contributes at least one pixel. `step` 1 reads every pixel. The
+    /// region is clipped to the frame.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
@@ -89,87 +64,18 @@ impl FrameView {
         if x0 >= x1 || y0 >= y1 {
             return LinearColor::black();
         }
-        let step = step.max(1) as usize;
-        let (x0, x1, y0, y1, width) = (
-            x0 as usize,
-            x1 as usize,
-            y0 as usize,
-            y1 as usize,
-            width as usize,
-        );
-
-        let (data, format) = (self.frame.as_slice(), self.frame.format());
+        let pixels = PixelView::new(&self.frame);
+        let step = step.max(1);
         let mut sum = [0.0f64; 3];
         let mut count = 0u64;
-        let mut add = |color| {
-            let linear = LinearColor::from_srgb(color);
-            sum[0] += f64::from(linear.r);
-            sum[1] += f64::from(linear.g);
-            sum[2] += f64::from(linear.b);
-            count += 1;
-        };
-        match format {
-            PixelFormat::RGB24 | PixelFormat::BGR24 => {
-                let pixels = data.as_chunks::<3>().0;
-                for y in (y0..y1).step_by(step) {
-                    let Some(span) = pixels.get(y * width + x0..y * width + x1) else {
-                        return LinearColor::black();
-                    };
-                    for &[r, g, b] in span.iter().step_by(step) {
-                        add(Color::new(r, g, b));
-                    }
-                }
-                if format == PixelFormat::BGR24 {
-                    sum.swap(0, 2);
-                }
-            }
-            PixelFormat::YUYV { range, matrix } => {
-                let convert = YuvToRgb::new(range, matrix);
-                for y in (y0..y1).step_by(step) {
-                    // Whole rows of `[Y0 U Y1 V]` pairs; the width is even.
-                    let Some(row) = data.get(y * width * 2..(y + 1) * width * 2) else {
-                        return LinearColor::black();
-                    };
-                    for x in (x0..x1).step_by(step) {
-                        let pair = (x & !1) * 2;
-                        let luma = row[pair + (x & 1) * 2];
-                        let (r, g, b) = convert.rgb(luma, row[pair + 1], row[pair + 3]);
-                        add(Color::new(r, g, b));
-                    }
-                }
-            }
-            PixelFormat::NV12 { range, matrix } => {
-                let Some((luma, chroma)) = self.frame.nv12_planes() else {
-                    return LinearColor::black();
-                };
-                let convert = YuvToRgb::new(range, matrix);
-                let [mut red, mut green, mut blue] = [0.0f64; 3];
-                for y in (y0..y1).step_by(step) {
-                    // Row slices hoist the bounds checks out of the pixel loop.
-                    let (Some(luma), Some(uv)) = (
-                        luma.get(y * width + x0..y * width + x1),
-                        chroma.get((y / 2) * width..(y / 2 + 1) * width),
-                    ) else {
-                        return LinearColor::black();
-                    };
-                    let mut x = x0;
-                    for &level in luma.iter().step_by(step) {
-                        let pair = x & !1;
-                        let (r, g, b) = convert.rgb(level, uv[pair], uv[pair + 1]);
-                        let linear = LinearColor::from_srgb(Color::new(r, g, b));
-                        red += f64::from(linear.r);
-                        green += f64::from(linear.g);
-                        blue += f64::from(linear.b);
-                        x += step;
-                    }
-                    count += luma.len().div_ceil(step) as u64;
-                }
-                sum = [red, green, blue];
-            }
-            PixelFormat::MJPEG => return LinearColor::black(),
-        }
-        if count == 0 {
-            return LinearColor::black();
+        for y in (y0..y1).step_by(step as usize) {
+            pixels.for_each_rgb(y, x0 as usize..x1 as usize, step as usize, |color| {
+                let linear = LinearColor::from_srgb(color);
+                sum[0] += f64::from(linear.r);
+                sum[1] += f64::from(linear.g);
+                sum[2] += f64::from(linear.b);
+                count += 1;
+            });
         }
         let [r, g, b] = sum.map(|channel| (channel / count as f64) as f32);
         LinearColor::new(r, g, b)
@@ -179,6 +85,7 @@ impl FrameView {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use prysm_core::{Color, PixelFormat};
 
     /// Build a YUYV frame with neutral chroma from a per-pixel luma function.
     pub fn yuyv_frame_from_luma(width: u32, height: u32, luma: impl Fn(u32, u32) -> u8) -> Frame {
@@ -204,14 +111,21 @@ pub mod tests {
     }
 
     #[test]
-    fn luma_reads_yuyv_directly() {
+    fn detection_reads_yuyv_luma_and_chroma_directly() {
         let frame = yuyv_frame_from_luma(4, 2, |x, y| u8::try_from(x + y * 10).unwrap() * 10);
-        assert_eq!(luma_at(&frame, 0, 0), 0);
-        assert_eq!(luma_at(&frame, 1, 0), 10);
-        assert_eq!(luma_at(&frame, 3, 1), 130);
-        // Out of bounds reads as black
-        assert_eq!(luma_at(&frame, 4, 0), 0);
-        assert_eq!(luma_at(&frame, 0, 2), 0);
+        let pixels = PixelView::new(&frame);
+        assert_eq!(pixels.luma_and_chroma(0, 0), (0, 0));
+        assert_eq!(pixels.luma_and_chroma(1, 0), (10, 0));
+        assert_eq!(pixels.luma_and_chroma(3, 1), (130, 0));
+        let rgb = Frame::new(vec![10, 200, 30, 0, 0, 0], 2, 1, PixelFormat::BGR24).unwrap();
+        assert_eq!(PixelView::new(&rgb).luma_and_chroma(0, 0), (200, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn a_pixel_right_of_the_frame_is_a_bug_not_the_next_row() {
+        let frame = yuyv_frame_from_luma(4, 2, |_, _| 0);
+        let _ = PixelView::new(&frame).luma_and_chroma(4, 0);
     }
 
     #[test]
@@ -220,7 +134,17 @@ pub mod tests {
             range: prysm_core::YuvRange::Full,
             matrix: prysm_core::YuvStandardMatrix::Bt601,
         };
-        // 4x2: left half black, right half white; neutral chroma.
+        // 4x2: left half black, right half white; chroma neutral on the left, red on the right.
+        let frame = Frame::new(
+            [0, 0, 255, 255, 0, 0, 255, 255, 128, 128, 128, 200].to_vec(),
+            4,
+            2,
+            format,
+        )
+        .unwrap();
+        let pixels = PixelView::new(&frame);
+        assert_eq!(pixels.luma_and_chroma(2, 1), (255, 72));
+        assert_eq!(pixels.luma_and_chroma(1, 1), (0, 0));
         let frame = Frame::new(
             [0, 0, 255, 255, 0, 0, 255, 255, 128, 128, 128, 128].to_vec(),
             4,
@@ -228,9 +152,6 @@ pub mod tests {
             format,
         )
         .unwrap();
-        assert_eq!(luma_at(&frame, 2, 1), 255);
-        assert_eq!(luma_at(&frame, 1, 1), 0);
-        assert_eq!(luma_at(&frame, 4, 0), 0);
         let mut view = FrameView::new(frame);
         assert_eq!(
             view.average_linear(0, 0, 4, 2),
@@ -348,7 +269,7 @@ pub mod tests {
         ];
         let mut worst = 0.0_f64;
         for format in formats {
-            let size = format.expected_size(width, height).unwrap().unwrap();
+            let size = format.expected_size(width, height).unwrap();
             // Noise, and a bright and a dark block so the means span the range.
             let data = (0..size)
                 .map(|i| match i * 8 / size {

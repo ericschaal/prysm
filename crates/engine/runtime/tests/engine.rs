@@ -1273,40 +1273,6 @@ async fn behind_within(handle: &EngineHandle, wanted: Behind, seconds: u64) -> b
     .is_ok()
 }
 
-/// A picture that takes longer to turn into colours than the source takes to
-/// send the next: processing is what keeps Prysm behind, after the grace.
-#[tokio::test]
-async fn a_slow_processing_step_is_named_after_a_few_seconds() {
-    within(async {
-        let log = CallLog::new();
-        let large = settings(
-            FakeSourceSettings {
-                name: "a".into(),
-                // 4K: far slower to process than the 2 ms between frames,
-                // also in an optimized build.
-                width: 3840,
-                height: 2160,
-                ..Default::default()
-            },
-            FakeOutputSettings {
-                name: "a".into(),
-                ..Default::default()
-            },
-        );
-        let (handle, engine, _) = start(&log, large, DEADLINE).await;
-        handle.set_target(LightingTarget::Processed).await.unwrap();
-        // Not after the first slow second: the grace is several windows.
-        snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
-        assert_eq!(
-            handle.snapshot().borrow().input.unwrap().behind,
-            Behind::None
-        );
-        assert!(behind_within(&handle, Behind::Processing, 8).await);
-        engine.shutdown().await.unwrap();
-    })
-    .await;
-}
-
 /// Lights that take longer to write than the source takes to send the next.
 #[tokio::test]
 async fn a_slow_output_is_named_after_a_few_seconds() {

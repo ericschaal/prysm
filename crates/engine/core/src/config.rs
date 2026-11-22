@@ -50,9 +50,13 @@ pub struct Config {
     /// smoothing and cuts allow. Default: 0, no limit.
     pub brightness_ramp_seconds: BrightnessRampSeconds,
 
-    /// Color samples per 1000 pixels of cropped edge length. Default: 128.
+    /// Color samples per 1000 pixels of cropped edge length, measured on the
+    /// picture scaled down to [`PIXEL_BUDGET`] (640x360): the same value gives
+    /// the same samples at any capture size. Default: 128.
     /// Controls spatial detail independently of LED count; all picture pixels
-    /// still contribute. Each edge has at least one sample and at most one per pixel.
+    /// still contribute. Each edge has at least one sample and at most one per
+    /// sampling-grid cell along it (at most 128 along the longer side): finer
+    /// samples add no detail.
     pub sample_density: SampleDensity,
 
     /// Broad spatial influence radius, as a percentage of picture height after
@@ -179,6 +183,12 @@ impl SaturationBoostPercent {
     pub fn as_ratio(self) -> f32 {
         f32::from(self.0.min(100)) / 100.0
     }
+
+    /// Zero: the boost leaves every colour exactly as it is.
+    #[must_use]
+    pub fn is_neutral(self) -> bool {
+        self.0 == 0
+    }
 }
 
 /// The least luminance the lights keep, in percent of full linear light,
@@ -194,15 +204,96 @@ impl DarkFloorPercent {
     pub fn as_ratio(self) -> f32 {
         f32::from(self.0.min(Self::MAX)) / 100.0
     }
+
+    /// Zero: the floor leaves every colour exactly as it is.
+    #[must_use]
+    pub fn is_neutral(self) -> bool {
+        self.0 == 0
+    }
 }
 
-/// Sample density representing samples per 1000 pixels of edge length
+/// Most pixels sampling sizes itself for: every pixel of a 640x360 picture.
+/// A larger picture is sampled as if scaled down to this many pixels
+/// ([`budget_size`]), so its cost and its samples do not grow with the capture size.
+pub const PIXEL_BUDGET: u64 = 640 * 360;
+
+/// `width` x `height` scaled down, keeping its aspect ratio, to about
+/// [`PIXEL_BUDGET`] pixels; a picture within the budget keeps its size.
+#[must_use]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "scaled sides are below the u32 sides they come from"
+)]
+pub fn budget_size(width: u32, height: u32) -> [usize; 2] {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels <= PIXEL_BUDGET {
+        return [width as usize, height as usize];
+    }
+    let scale = (PIXEL_BUDGET as f64 / pixels as f64).sqrt();
+    [width, height].map(|side| (f64::from(side) * scale).round() as usize)
+}
+
+/// Samples per 1000 pixels of edge length, measured on the picture scaled
+/// down to [`PIXEL_BUDGET`], and at most one per grid cell along the edge
+/// ([`Self::samples_for_picture`]).
 ///
-/// Example: `SampleDensity(50)` means 50 samples per 1000px, so a 1920px edge gets ~96 samples
+/// Example: `SampleDensity(50)` means 50 samples per 1000px, so the top of a
+/// 640x360 picture gets 32 samples, and so does the top of a 1920x1080 one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SampleDensity(pub usize);
 
+/// The fewest and most grid cells along a picture's longer side.
+// shortcut: cap the grid at 128 cells per axis; raise only if footage shows lost detail.
+const GRID_CELLS: std::ops::RangeInclusive<usize> = 64..=128;
+
 impl SampleDensity {
+    /// Samples along the top and bottom, and along the left and right, of a
+    /// `width` x `height` picture: [`Self::samples_for_length`] of its
+    /// [`budget_size`], and at most one per grid cell along the edge (the
+    /// cells' share of the edge rounded up): finer samples add no detail.
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a cap of at most 128 samples fits usize"
+    )]
+    pub fn samples_for_picture(self, width: u32, height: u32) -> [usize; 2] {
+        let cells = self.grid_cells(width, height);
+        let longer = u64::from(width.max(height)).max(1);
+        let lengths = budget_size(width, height);
+        std::array::from_fn(|axis| {
+            let side = u64::from([width, height][axis]);
+            let cap = (side * cells).div_ceil(longer).max(1) as usize;
+            self.samples_for_length(lengths[axis]).min(cap)
+        })
+    }
+
+    /// The sampler's grid of a nonempty `width` x `height` picture, columns
+    /// and rows: about this density's cells per 1000 px of its
+    /// [`budget_size`]'s longer side, 64 to 128 along it, and the other side
+    /// in proportion.
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a side's cells are at most the side's pixels"
+    )]
+    pub fn grid_size(self, width: u32, height: u32) -> [u32; 2] {
+        let cells = self.grid_cells(width, height);
+        let longer = u64::from(width.max(height));
+        [width, height]
+            .map(|side| (u64::from(side) * cells / longer).clamp(1, u64::from(side)) as u32)
+    }
+
+    /// Grid cells along a picture's longer side.
+    fn grid_cells(self, width: u32, height: u32) -> u64 {
+        let longer = budget_size(width, height).into_iter().max().unwrap_or(0);
+        let cells = self
+            .samples_for_length(longer)
+            .clamp(*GRID_CELLS.start(), *GRID_CELLS.end());
+        u64::try_from(cells).expect("at most 128 cells")
+    }
+
     /// Calculate samples, capped at one per pixel (at least one for empty edges).
     #[must_use]
     #[allow(
@@ -215,7 +306,7 @@ impl SampleDensity {
         (((length_px as f32 / 1000.0) * self.0 as f32).max(1.0) as usize).min(length_px.max(1))
     }
 
-    /// Get the raw density value (samples per 1000px)
+    /// Get the raw density value (samples per 1000px at the budget)
     #[must_use]
     pub const fn get(self) -> usize {
         self.0
@@ -268,6 +359,27 @@ mod tests {
         for seconds in [f32::MIN_POSITIVE, 0.5, 2.0] {
             assert!(BrightnessRampSeconds(seconds).is_enabled(), "{seconds}");
         }
+    }
+
+    #[test]
+    fn pictures_beyond_the_budget_get_the_samples_of_their_640x360_copy() {
+        let density = SampleDensity(128);
+        assert_eq!(density.samples_for_picture(640, 360), [81, 46]);
+        assert_eq!(density.samples_for_picture(360, 640), [46, 81]);
+        assert_eq!(density.samples_for_picture(320, 180), [40, 23]);
+        for (width, height) in [(1280, 720), (1920, 1080), (3840, 2160)] {
+            assert_eq!(budget_size(width, height), [640, 360]);
+            assert_eq!(density.samples_for_picture(width, height), [81, 46]);
+        }
+        assert_eq!(budget_size(0, 2160), [0, 2160]);
+        assert_eq!(density.grid_size(640, 360), [81, 45]);
+        // At most one sample per grid cell along an edge, at any shape.
+        let most = SampleDensity(1024);
+        for (width, height) in [(640, 360), (3840, 2160)] {
+            assert_eq!(most.samples_for_picture(width, height), [128, 72]);
+            assert_eq!(most.grid_size(width, height), [128, 72]);
+        }
+        assert_eq!(most.samples_for_picture(230_400, 1), [128, 1]);
     }
 
     #[test]

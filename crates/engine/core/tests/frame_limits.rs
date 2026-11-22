@@ -15,15 +15,14 @@ const NV12: PixelFormat = PixelFormat::NV12 {
 
 /// The exact size and the widest intermediate `expected_size` needs: the
 /// bytes of one stored row, or the number of stored rows.
-fn reference(format: PixelFormat, width: u32, height: u32) -> Option<(u128, u128)> {
+fn reference(format: PixelFormat, width: u32, height: u32) -> (u128, u128) {
     let (w, h) = (u128::from(width), u128::from(height));
     let (row, rows) = match format {
         PixelFormat::RGB24 | PixelFormat::BGR24 => (w * 3, h),
         PixelFormat::YUYV { .. } => (w * 2, h),
         PixelFormat::NV12 { .. } => (w, h + h / 2),
-        PixelFormat::MJPEG => return None,
     };
-    Some((row * rows, row.max(rows)))
+    (row * rows, row.max(rows))
 }
 
 /// An accepted size is exact and allocatable; a refusal is an odd dimension,
@@ -37,16 +36,15 @@ fn check(format: PixelFormat, width: u32, height: u32) {
     };
     let context = format!("{format} {width}x{height}: {got:?}");
     match (got, reference(format, width, height)) {
-        (Ok(None), None) => {}
         (Err(FrameError::OddYuyvWidth(_) | FrameError::OddNv12Dimensions { .. }), _) => {
             assert!(odd, "{context}");
         }
-        (Ok(Some(size)), Some((exact, _))) => {
+        (Ok(size), (exact, _)) => {
             assert!(!odd, "{context}");
             assert_eq!(size as u128, exact, "{context}");
             assert!(isize::try_from(size).is_ok(), "{context}");
         }
-        (Err(FrameError::SizeOverflow), Some((exact, widest))) => {
+        (Err(FrameError::SizeOverflow), (exact, widest)) => {
             assert!(!odd, "{context}");
             assert!(
                 exact > isize::MAX as u128 || widest > usize::MAX as u128,
@@ -79,13 +77,7 @@ const EDGES: [u32; 16] = [
 
 #[test]
 fn expected_size_matches_a_wide_reference_at_the_edges() {
-    for format in [
-        PixelFormat::RGB24,
-        PixelFormat::BGR24,
-        YUYV,
-        NV12,
-        PixelFormat::MJPEG,
-    ] {
+    for format in [PixelFormat::RGB24, PixelFormat::BGR24, YUYV, NV12] {
         for width in EDGES {
             for height in EDGES {
                 check(format, width, height);
