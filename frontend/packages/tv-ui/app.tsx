@@ -11,28 +11,21 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
-  type ReactNode,
-  type Ref,
 } from 'react';
+import { fullPortal, type Flavor, type TvService } from '@prysm/webos-platform';
 import {
-  fullPortal,
-  isCapturing,
-  slimEncoding,
-  type Flavor,
-  type TvService,
-} from '@prysm/webos-platform';
-import { failureOf, plainFailure } from '@prysm/application-client';
+  failureOf,
+  lightingSituation,
+  plainFailure,
+} from '@prysm/application-client';
 import { CalibrationScreen, QrCode } from './calibration';
+import { Dialogs, type DialogId } from './dialogs';
 import {
   calibrationBlocker,
-  captureRate,
-  diagnostics,
-  encodingName,
-  instanceAddress,
   localPortal,
   retrySeconds,
   shown,
+  tvScreen,
   tvStatus,
 } from './model';
 import { qrCode } from './qr';
@@ -47,7 +40,6 @@ import {
 import { useTvService, type Retry } from './service';
 import './tv.css';
 
-type DialogId = 'instance' | 'service' | 'diagnostics' | 'cleanup' | 'exit';
 const parents: Partial<Record<DialogId, DialogId>> = {
   diagnostics: 'service',
   cleanup: 'service',
@@ -66,6 +58,8 @@ export interface TvAppProps {
 
 /** Set by `pagehide`, which comes before `document.hidden` says so. */
 let pageHidden = false;
+/** The page is shown now. */
+const pageShown = () => !document.hidden && !pageHidden;
 
 function watchVisibility(changed: () => void) {
   const hide = () => {
@@ -96,10 +90,7 @@ function watchVisibility(changed: () => void) {
  * once subscribed. Missing that left the app on "Connecting…" for ever.
  */
 function useVisible() {
-  return useSyncExternalStore(
-    watchVisibility,
-    () => !document.hidden && !pageHidden,
-  );
+  return useSyncExternalStore(watchVisibility, pageShown);
 }
 
 /** Milliseconds since `since` (a `Date.now()`), updated every second; 0 for `null`. */
@@ -155,7 +146,6 @@ export function TvApp({
   const rootRef = useRef<HTMLElement>(null);
   const slim = flavor === 'slim';
   const { state, draft, online } = tv;
-  const mismatch = !!state && state.flavor !== flavor;
   // The full package's portal on this TV, as its worker reports it.
   const ownPortal = state && fullPortal(state);
   const baseUrl = slim ? draft.instance : localPortal(ownPortal);
@@ -185,46 +175,41 @@ export function TvApp({
       ? {
           lights: !!snapshot.settings.output,
           address: portalAddress,
-          lighting: {
-            target: snapshot.target,
-            // Without the portal's measure yet, the TV's own word.
-            receiving:
-              snapshot.session.state === 'running' &&
-              (snapshot.input?.receiving ?? (!!state && isCapturing(state))),
-          },
+          lighting: lightingSituation(snapshot),
         }
       : null,
   );
   // Counted from the latest state; its bar from when the wait began.
   const retry =
     tv.countdown && state?.worker.phase === 'retrying' ? state.worker : null;
-  // One quiet line under the detail, always kept: the countdown to a
-  // restart, or while frames flow their rate (and the slim encoding).
-  let meta = '';
-  if (retry) {
-    const left = retrySeconds(retry, elapsed);
-    meta = left ? `Trying again in ${left} s` : 'Trying again now…';
-  } else if (state && isCapturing(state) && !mismatch) {
-    const encoding = slimEncoding(state);
-    meta = [captureRate(state), encoding ? encodingName(encoding) : null]
-      .filter(Boolean)
-      .join(' · ');
-  }
+  const screen = tvScreen({
+    flavor,
+    status,
+    state,
+    changing: tv.changing,
+    portalAddress,
+    retryLeft: retry ? retrySeconds(retry, elapsed) : null,
+  });
   const portalQr = useMemo(
     () => (portalAddress ? qrCode(portalAddress) : null),
     [portalAddress],
   );
 
   const { say } = tv;
+  /** The newest address check; an older one's answer no longer decides. */
+  const checkRef = useRef(0);
 
   /**
    * Save a Prysm address (slim) and check it: a warning replaces the notice
    * when no portal that allows this app answers there.
    */
   async function setInstance(instance: string | null) {
+    checkRef.current += 1;
+    const check = checkRef.current;
     if (!(await tv.set({ instance })) || !instance) return;
     const reach = await checkPortal(instance, portalOptions);
-    if (reach !== 'ok') say(instanceWarning(reach), true);
+    if (reach !== 'ok' && check === checkRef.current)
+      say(instanceWarning(reach), true);
   }
 
   function primary() {
@@ -241,23 +226,6 @@ export function TvApp({
         return void tv.enable(true);
     }
   }
-  // Full: no button while there is nothing for the service to do; the
-  // lighting modes are the one way to choose what the lights do. Its place
-  // under the status lines (where slim has its button) stays reserved, so the
-  // lights card never moves when it comes (Try again, Set up service). Slim
-  // keeps its button while capture stops ("Please wait…").
-  const setupFirst = status.setupLights && !mismatch && !!portalAddress;
-  // Full: never only because a setting is being saved, or a "Please wait…"
-  // button would fill the empty place for the length of the call.
-  const showPrimary =
-    status.action !== 'none' || (slim && (tv.changing || !!status.label));
-  // While it waits it keeps focus (a disabled button would drop it) and OK
-  // does nothing.
-  const waiting = tv.changing || status.action === 'none';
-  // The full package's portal address arrives with the worker; its panel
-  // keeps its place meanwhile, empty (nothing to scan yet), so Settings does
-  // not move down.
-  const portalPanel = !setupFirst && (!!portalAddress || !state || !slim);
 
   /** Screen sync on (calibration needs it), then the calibration screen. */
   async function startCalibration() {
@@ -265,7 +233,8 @@ export function TvApp({
     try {
       if (portal.snapshot?.target !== 'processed')
         await portal.setTarget('processed');
-      setCalibrating(portalAddress);
+      // Hidden meanwhile: hiding ends calibration, so it does not open.
+      if (pageShown()) setCalibrating(portalAddress);
     } catch (reason) {
       tv.say(
         plainFailure(failureOf(reason), 'processed', 'WLED effects'),
@@ -305,6 +274,7 @@ export function TvApp({
   // A change applies at once; while one is sent the others wait (the
   // service runs one command at a time), but nothing dims for it.
   const disabled = !online;
+  const { setupFirst } = screen;
 
   if (calibrating)
     return (
@@ -336,7 +306,7 @@ export function TvApp({
         <div className="layout">
           <div className="column" data-column="status">
             <section
-              className={`card overview${status.attention || mismatch ? ' attention' : ''}`}
+              className={`card overview${screen.attention ? ' attention' : ''}`}
               aria-labelledby="status-title"
             >
               <p className="section-label">
@@ -346,37 +316,35 @@ export function TvApp({
               <div role="status" aria-live="polite">
                 <h1
                   id="status-title"
-                  key={mismatch ? 'mismatch' : status.title}
+                  key={screen.mismatch ? 'mismatch' : screen.title}
                 >
-                  {mismatch ? 'Reinstall Prysm' : status.title}
+                  {screen.title}
                 </h1>
               </div>
               <p id="status-description" className="description">
-                {mismatch
-                  ? 'The app and its TV service don’t match.'
-                  : status.description}
+                {screen.description}
               </p>
               {/* Always a line, so the buttons never move. */}
               <p id="status-meta" className="meta">
                 {tv.countdown ? (
                   <RetryBar key={tv.countdown.since} retry={tv.countdown} />
                 ) : null}
-                {meta || '\u00a0'}
+                {screen.meta || '\u00a0'}
               </p>
-              {showPrimary ? (
+              {screen.showPrimary ? (
                 <button
                   id="primary"
                   type="button"
                   className="primary"
-                  disabled={mismatch}
-                  aria-busy={waiting || undefined}
-                  onClick={waiting ? undefined : primary}
+                  disabled={screen.mismatch}
+                  aria-busy={screen.waiting || undefined}
+                  onClick={screen.waiting ? undefined : primary}
                 >
-                  {tv.changing ? 'Please wait…' : status.label}
+                  {screen.label}
                 </button>
               ) : null}
               {/* Full without a task: the button's place, kept empty. */}
-              {showPrimary || slim ? null : (
+              {screen.showPrimary || slim ? null : (
                 <div className="primary-slot" aria-hidden="true" />
               )}
             </section>
@@ -406,7 +374,7 @@ export function TvApp({
             )}
           </div>
           <div className="column" data-column="settings">
-            {portalPanel ? (
+            {screen.portalPanel ? (
               <section
                 className={`portal-address${portalAddress ? '' : ' empty'}`}
                 id="portal-address"
@@ -566,267 +534,5 @@ function SwitchRow({
       </span>
       <span className="switch" aria-hidden="true" />
     </button>
-  );
-}
-
-/** One choice in a dialog's list: a name, an optional line of detail. */
-function Choice({
-  id,
-  title,
-  detail,
-  action,
-}: {
-  id?: string;
-  title: string;
-  detail?: string;
-  action: () => void;
-}) {
-  return (
-    <button id={id} type="button" className="choice" onClick={action}>
-      <span className="choice-name">{title}</span>
-      {detail ? <span className="choice-detail">{detail}</span> : null}
-    </button>
-  );
-}
-
-/** A text field committed with OK on the keyboard or the button beside Cancel. */
-function AddressForm({
-  id,
-  label,
-  initial,
-  placeholder,
-  apply,
-  button,
-  cancel,
-}: {
-  id: string;
-  label: string;
-  initial: string;
-  placeholder: string;
-  apply: (text: string) => string | null;
-  button: string;
-  cancel: () => void;
-}) {
-  const [text, setText] = useState(initial);
-  const [error, setError] = useState<string | null>(null);
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    setError(apply(text));
-  }
-  return (
-    <form onSubmit={submit} noValidate>
-      <label htmlFor={id}>{label}</label>
-      <input
-        id={id}
-        type="text"
-        inputMode="url"
-        value={text}
-        placeholder={placeholder}
-        spellCheck={false}
-        autoComplete="off"
-        autoCapitalize="off"
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : undefined}
-        onChange={(event) => setText(event.target.value)}
-      />
-      {/* Always a line, so the buttons never move when an error comes. */}
-      {error ? (
-        <p id={`${id}-error`} className="notice error" role="alert">
-          {error}
-        </p>
-      ) : (
-        <p className="notice">{' '}</p>
-      )}
-      <div className="dialog-actions" data-row="form">
-        <button id={`${id}-apply`} type="submit" className="primary">
-          {button}
-        </button>
-        <button
-          id="dialog-back"
-          type="button"
-          className="tonal"
-          onClick={cancel}
-        >
-          Cancel
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function Dialogs({
-  dialog,
-  modal,
-  tv,
-  slim,
-  setInstance,
-  openDialog,
-  closeDialog,
-  dismiss,
-  onExit,
-}: {
-  dialog: DialogId;
-  modal: Ref<HTMLDivElement>;
-  tv: ReturnType<typeof useTvService>;
-  slim: boolean;
-  setInstance: (instance: string | null) => void;
-  openDialog: (dialog: DialogId) => void;
-  closeDialog: () => void;
-  dismiss: () => void;
-  onExit: () => void;
-}) {
-  let title = '';
-  let description = '';
-  let content: ReactNode = null;
-  /** The buttons along the bottom; a list dialog has Back alone. */
-  let actions: ReactNode = (
-    <button
-      id="dialog-back"
-      type="button"
-      className="tonal"
-      onClick={closeDialog}
-    >
-      Back
-    </button>
-  );
-  switch (dialog) {
-    case 'instance':
-      title = 'Prysm address';
-      description =
-        'The address you open Prysm’s web portal with on your computer, such as 192.168.1.20.';
-      content = (
-        <AddressForm
-          id="instance-input"
-          label="Address"
-          initial={tv.draft.instance ? shown(tv.draft.instance) : ''}
-          placeholder="192.168.1.20"
-          button="Use this address"
-          cancel={closeDialog}
-          apply={(text) => {
-            const result = instanceAddress(text);
-            if ('error' in result) return result.error;
-            setInstance(result.value);
-            closeDialog();
-            return null;
-          }}
-        />
-      );
-      // The form has its own buttons, under the field.
-      actions = null;
-      break;
-    case 'service':
-      title = 'Service options';
-      description = 'Manage the Prysm service on this TV.';
-      content = (
-        <>
-          <Choice
-            id="repair"
-            title="Set up or repair service"
-            detail="Install the service and permissions again (needs the Homebrew Channel)."
-            action={() => {
-              dismiss();
-              void tv.setup();
-            }}
-          />
-          <Choice
-            id="diagnostics"
-            title="View diagnostics"
-            detail="Service state and recent messages."
-            action={() => openDialog('diagnostics')}
-          />
-          <Choice
-            id="cleanup"
-            title="Remove service setup…"
-            detail="Stop capture and remove autostart and permissions."
-            action={() => openDialog('cleanup')}
-          />
-        </>
-      );
-      break;
-    case 'diagnostics':
-      title = 'Diagnostics';
-      description = 'Service state and the latest messages.';
-      content = (
-        <pre className="diagnostics" id="diagnostics-text" data-scroll>
-          {diagnostics(tv.online === false ? null : tv.state, tv.problem)}
-        </pre>
-      );
-      break;
-    case 'cleanup':
-      title = 'Remove service setup?';
-      description =
-        'Capture stops and the service is removed with its autostart and permissions. Your settings are kept; set it up again from Service options.';
-      // Two answers and no third Back button: the Back key keeps the setup.
-      actions = (
-        <>
-          <button
-            id="keep-setup"
-            type="button"
-            className="tonal"
-            onClick={() => openDialog('service')}
-          >
-            Keep setup
-          </button>
-          <button
-            id="confirm-cleanup"
-            type="button"
-            className="danger"
-            onClick={() => {
-              dismiss();
-              void tv.uninstall();
-            }}
-          >
-            Remove setup
-          </button>
-        </>
-      );
-      break;
-    case 'exit':
-      title = 'Close Prysm?';
-      description = slim
-        ? 'Capture keeps its current setting when you close the app.'
-        : 'The lights keep their current mode when you close the app.';
-      actions = (
-        <>
-          <button
-            id="stay"
-            type="button"
-            className="tonal"
-            onClick={closeDialog}
-          >
-            Stay here
-          </button>
-          <button id="exit" type="button" className="primary" onClick={onExit}>
-            Close app
-          </button>
-        </>
-      );
-      break;
-  }
-  return (
-    <div
-      ref={modal}
-      id="modal"
-      className={`modal${dialog === 'instance' ? ' top' : ''}`}
-    >
-      <section
-        className="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="dialog-title"
-        aria-describedby="dialog-description"
-      >
-        <h2 id="dialog-title">{title}</h2>
-        <p id="dialog-description" className="dialog-description">
-          {description}
-        </p>
-        <div id="dialog-body">{content}</div>
-        {actions ? (
-          <div className="dialog-actions" data-row="actions">
-            {actions}
-          </div>
-        ) : null}
-      </section>
-    </div>
   );
 }

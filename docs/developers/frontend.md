@@ -46,6 +46,53 @@ xtask runs the Rust exporter, so codegen needs a Rust toolchain (and
 translates it; run on its own, that script stops and names the xtask command.
 Details: [contract ownership](contracts.md).
 
+## Reading the state
+
+The portal page and the TV app may be older than the Prysm or TV service
+they talk to, so they read what they are sent as
+[wire messages](decisions/2026-11-22-strict-settings-tolerant-wire.md):
+the structure is checked, and a value newer than the page in a known field
+has one reading.
+
+| Where | Field | Newer value read as |
+| --- | --- | --- |
+| State stream (`decodeState` in `application-client/http.ts`) | `target` | `off` |
+| | `session.state` | `stopped` (a faulted session's newer `phase` is kept and not named) |
+| Preview and colors streams | event `type` | skipped |
+| Light card, TV lights card | `device.issue` | "The lights are not showing screen sync." |
+| TV service (`decodeState` in `webos-platform`) | `power`, `video` | `unknown` |
+| | `failure.kind` | `other` |
+| | full `lighting` | `off` |
+| | worker `phase` | stopped |
+| | slim link `state` | starting |
+| | slim `encoding` | kept, shown as sent |
+| TV calibration screen | `calibration.pattern` | the waiting pattern |
+
+Anything else malformed ends the stream or the reply (`Invalid state
+event.`, `invalid_reply`). What the lights are doing is decided once, by
+`lightingSituation` (`application-client`): faulted, off, failed, screen sync,
+effects or starting, in that order. Off keeps a failure (settings that could
+not be applied, a switch off that failed): the light card and the TV's lights
+card say it, while the setup path, the section pages and the full package's
+status headline read off as off. All of them read that one situation, and
+`describeSituation` gives its words.
+
+## Saving from a page
+
+`useLiveProcessing` saves the processing section from the Picture panel, the
+light card, Calibrations and Calibrate. Saves never overlap: each waits for
+the one before it and is sent against the revision that one returned, so
+`commit(value)` resolves only once `value` itself is saved, with what was saved (or `null`). A save
+refused as stale is moved onto the newer settings, each calibration on its
+own: one changed here keeps this page's version, one changed elsewhere the
+other's, one deleted on either side is gone.
+
+The Calibrate page is one reducer (`calibrate-wizard.ts`, every transition
+in one function and tested as a table) and one hook (`use-calibration.ts`)
+that sends the TV's patterns and the saves; `calibrate.tsx` only renders.
+Start shows the first pattern, then saves the draft calibration; when that
+save fails it ends the pattern and puts the draft back.
+
 ## webOS TV app
 
 ```sh

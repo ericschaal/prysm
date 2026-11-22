@@ -7,25 +7,27 @@ import {
 } from 'react';
 import { useLingering } from './lingering';
 import {
-  describeLighting,
-  describeOutputIssue,
   failureOf,
   same,
   type Failure,
+  type LightingMode,
+  type LightingSituation,
   type LightingTarget,
-  type Session,
-  plainFailure,
 } from '@prysm/application-client';
-import type { DeviceReport, Input } from '@prysm/contracts/application';
-import { ledCountsDiffer, type OutputLighting } from './adapters';
-
-/** What the lights show while on: screen sync or the output's own effects. */
-export type LightingMode = Exclude<LightingTarget, 'off'>;
+import type { DeviceReport } from '@prysm/contracts/application';
+import type { OutputLighting } from './adapters';
+import {
+  lightCardView,
+  moodOf,
+  pauseOf,
+  words,
+  type Pause,
+} from './light-card-view';
 
 export interface LightingProps {
   target: LightingTarget;
-  session: Session;
-  failure: Failure | null;
+  /** What the lights are doing, from the state. */
+  lighting: LightingSituation;
   /**
    * What the lights say about themselves while screen sync runs: why they
    * do not show it, their own brightness, how many LEDs they have.
@@ -33,8 +35,6 @@ export interface LightingProps {
   device: DeviceReport;
   /** How many LEDs Prysm sends: the configured edges' total. */
   sentLedCount?: number;
-  /** Whether frames arrive, while screen sync runs. */
-  input?: Input;
   hasCapture: boolean;
   hasOutput: boolean;
   /** What the configured output offers, `null` without an output. */
@@ -46,14 +46,6 @@ export interface LightingProps {
   /** The screen sync picture controls, under the mode tiles. */
   children?: ReactNode;
 }
-
-/**
- * Below this share the lights' own brightness is named on the card. The
- * lights show Prysm's brightness times theirs; above about three quarters
- * the difference is hard to see (perceived lightness stays near 90 %), while
- * WLED's own default (128 of 255, 50 %) halves every colour unexplained.
- */
-export const deviceBrightnessNoteBelow = 75;
 
 /**
  * The mode the power button turns on: a per-browser preference, like the
@@ -79,10 +71,6 @@ function saveMode(mode: LightingMode) {
   }
 }
 
-/** The state words, drawn in one place and cross-faded. */
-const words = ['Off', 'On', 'Stopped'] as const;
-type Word = (typeof words)[number];
-
 /** Starting is mentioned only once it takes longer than this. */
 export const slowStartMs = 1000;
 
@@ -93,130 +81,6 @@ export const slowStartMs = 1000;
  */
 export const ringDelayMs = 350;
 export const ringHoldMs = 450;
-
-/**
- * What the card shows: lit by screen sync or the effects, starting, stopped
- * by a problem, off, or without the setup it needs.
- */
-type Mood = 'off' | 'problem' | 'sync' | 'effects' | 'starting' | 'unset';
-
-/**
- * A failure wins, whatever the session still does: after a failed start
- * from effects, the engine leaves the session `native` (the lights keep
- * their own effects) with the target `processed` and the failure set. Lit
- * only when the session does what was asked.
- */
-function moodOf(
-  target: LightingTarget,
-  session: Session,
-  failure: Failure | null,
-  configured: boolean,
-): Mood {
-  if (!configured) return 'unset';
-  if (session.state === 'faulted' || (target !== 'off' && failure))
-    return 'problem';
-  if (session.state === 'running' && target === 'processed') return 'sync';
-  if (session.state === 'native' && target === 'device_native')
-    return 'effects';
-  return target !== 'off' ? 'starting' : 'off';
-}
-
-/**
- * The calm line, said for sighted people (the status says it for screen
- * readers): what Power will do, a pause once it lasts, or what runs. Empty
- * while the card has something else to say, or Power cannot turn on.
- */
-function calmLine({
-  info,
-  powerReason,
-  target,
-  session,
-  input,
-  mode,
-  effects,
-  note,
-  lit,
-}: {
-  info: Info | null;
-  powerReason: string | null;
-  target: LightingTarget;
-  session: Session;
-  input: Input | undefined;
-  mode: LightingMode;
-  effects: string;
-  note: 'waiting' | 'starting' | null;
-  lit: boolean;
-}) {
-  const on = target !== 'off';
-  if (info || (!on && powerReason)) return '';
-  if (!on)
-    return mode === 'processed'
-      ? 'Power turns on Screen sync.'
-      : `Power turns on ${effects}.`;
-  if (note === 'waiting') return 'Waiting for the picture.';
-  if (note === 'starting') return 'Starting…';
-  if (lit && target === 'processed' && input?.receiving)
-    return 'Following the screen.';
-  if (target === 'device_native' && session.state === 'native')
-    return `${effects} are showing.`;
-  return '';
-}
-
-/** The card's one informative line: a problem, a warning or a note. */
-interface Info {
-  tone: 'problem' | 'warning' | 'note';
-  text: string;
-  /** Offer Try again: the requested mode failed. */
-  retry?: boolean;
-  /** The technical message, under Details. */
-  details?: string;
-}
-
-/** Why screen sync cannot start yet, or `null`. */
-function missingSetup(hasCapture: boolean, hasOutput: boolean) {
-  if (!hasCapture && !hasOutput)
-    return 'Set up a video source and lights first.';
-  if (!hasCapture) return 'Set up a video source first.';
-  if (!hasOutput) return 'Set up your lights first.';
-  return null;
-}
-
-/** Why the output's own effects cannot start, or `null`. */
-function missingEffects(hasOutput: boolean, effects: string | undefined) {
-  if (!hasOutput) return 'Set up your lights first.';
-  if (!effects) return 'These lights have no effects of their own.';
-  return null;
-}
-
-/** The state in plain words, under the state word. */
-function headline({
-  target,
-  session,
-  failure,
-  effects,
-}: {
-  target: LightingTarget;
-  session: Session;
-  failure: Failure | null;
-  effects: string;
-}) {
-  // In the card's order: a failure first, then what the session does for
-  // the request (a session still in the previous mode is starting).
-  if (session.state === 'faulted')
-    return describeLighting({ target, session, failure, effects });
-  if (target === 'off') return 'Lights are off';
-  if (failure)
-    return target === 'processed'
-      ? 'Screen sync stopped'
-      : `${effects} could not start`;
-  if (target === 'processed' && session.state === 'running')
-    return 'Lights follow your screen';
-  if (target === 'device_native' && session.state === 'native')
-    return `${effects} are on`;
-  return target === 'processed'
-    ? 'Starting screen sync…'
-    : `Starting ${effects}…`;
-}
 
 function PowerIcon() {
   return (
@@ -274,11 +138,9 @@ function effectsLine(effects: string | undefined) {
  */
 export function LightCard({
   target,
-  session,
-  failure,
+  lighting,
   device,
   sentLedCount,
-  input,
   hasCapture,
   hasOutput,
   output,
@@ -288,8 +150,21 @@ export function LightCard({
   children,
 }: LightingProps) {
   const [pending, setPending] = useState<LightingTarget | null>(null);
-  /** The latest command's own failure (a click that was refused). */
-  const [error, setError] = useState<Failure | null>(null);
+  /**
+   * The latest refused click, with the lights as they were then: a command
+   * that timed out may still have run, so it is shown only until they change.
+   */
+  const [refusal, setRefusal] = useState<{
+    failure: Failure;
+    /** What the click asked for. */
+    asked: LightingTarget;
+    target: LightingTarget;
+    kind: LightingSituation['kind'];
+  } | null>(null);
+  // Gone once the lights change, also when they change back.
+  if (refusal && (refusal.target !== target || refusal.kind !== lighting.kind))
+    setRefusal(null);
+  const error = refusal && { failure: refusal.failure, asked: refusal.asked };
   const [remembered, setRemembered] = useState(storedMode);
   if (target !== 'off' && target !== remembered) setRemembered(target);
   useEffect(() => {
@@ -297,37 +172,22 @@ export function LightCard({
   }, [target]);
   const headingId = useId();
   const statusId = useId();
-  const effects = output?.effects ?? 'Device effects';
-  const faulted = session.state === 'faulted';
-  const on = target !== 'off';
-  const configured = hasCapture && hasOutput;
 
   async function choose(next: LightingTarget) {
+    const at = { target, kind: lighting.kind };
     setPending(next);
-    setError(null);
+    setRefusal(null);
     try {
       await setTarget(next);
     } catch (reason) {
-      setError(failureOf(reason));
+      setRefusal({ failure: failureOf(reason), asked: next, ...at });
     } finally {
       setPending(null);
     }
   }
 
-  const reasonOf = (unavailable: string | null) =>
-    faulted ? 'Restart Prysm to change the lights.' : unavailable;
-  const reasons: Record<LightingMode, string | null> = {
-    processed: reasonOf(missingSetup(hasCapture, hasOutput)),
-    device_native: reasonOf(missingEffects(hasOutput, output?.effects)),
-  };
-  // The chosen mode: the one on, else the one the power button turns on.
-  let mode: LightingMode = on ? target : remembered;
-  const other = mode === 'processed' ? 'device_native' : 'processed';
-  if (!on && reasons[mode] && !reasons[other]) mode = other;
-  const powerReason = on ? reasonOf(null) : reasons[mode];
-  const locked = disabled || pending !== null;
-
-  const mood = moodOf(target, session, failure, configured);
+  const configured = hasCapture && hasOutput;
+  const mood = moodOf(lighting, configured);
   // Switching modes passes through starting: the light stays up meanwhile.
   const [stayLit, setStayLit] = useState(false);
   const running = mood === 'sync' || mood === 'effects';
@@ -345,22 +205,12 @@ export function LightCard({
   }
   let ignite: 'a' | 'b' | undefined;
   if (ignitions) ignite = ignitions % 2 ? 'a' : 'b';
-  // The word follows the light, not the request: "On" arrives with the light.
-  let word: Word = lit ? 'On' : 'Off';
-  if (mood === 'problem') word = 'Stopped';
-  /** What went wrong: the latest command's own failure, else the state's. */
-  // Faulted, the status says what to do instead.
-  // A failure belongs to the lights being on; off, only a refused click counts.
-  const problem = faulted ? null : (error ?? (on ? failure : null));
 
   // A pause worth naming, beside the eyebrow (never a line of its own, so
   // the card keeps its size): only once it lasts, so a normal start says
   // nothing.
-  let pause: 'waiting' | 'starting' | null = null;
-  if (input && session.state === 'running' && !input.receiving)
-    pause = 'waiting';
-  else if (mood === 'starting' && !lit) pause = 'starting';
-  const [lasting, setLasting] = useState<typeof pause>(null);
+  const pause = pauseOf(lighting, lit);
+  const [lasting, setLasting] = useState<Pause | null>(null);
   useEffect(() => {
     if (!pause) return;
     const timer = setTimeout(() => setLasting(pause), slowStartMs);
@@ -370,67 +220,37 @@ export function LightCard({
     };
   }, [pause]);
   const note = lasting === pause ? pause : null;
-  const status = headline({ target, session, failure, effects });
-  let palette: 'sync' | 'effects' | 'error' =
-    mode === 'device_native' ? 'effects' : 'sync';
-  if (mood === 'problem') palette = 'error';
+  const {
+    effects,
+    on,
+    reasons,
+    mode,
+    powerReason,
+    word,
+    palette,
+    status,
+    info,
+    calm,
+    ownEffects,
+  } = lightCardView(
+    {
+      target,
+      lighting,
+      device,
+      sentLedCount,
+      hasCapture,
+      hasOutput,
+      output,
+    },
+    { remembered, error, lit, note },
+  );
+  const locked = disabled || pending !== null;
   // Busy: a click on its way, or the lights starting (not yet lit).
   const ring = useLingering(
     pending !== null || (mood === 'starting' && !lit),
     ringDelayMs,
     ringHoldMs,
   );
-  // The card's one line of words, only when it says what the card does not.
-  const showing =
-    lit &&
-    target === 'processed' &&
-    session.state === 'running' &&
-    !!input?.receiving;
-  const countsDiffer = ledCountsDiffer(device.led_count, sentLedCount);
-  const deviceBrightness = device.brightness_percent;
-  let info: Info | null = null;
-  if (problem)
-    info = {
-      tone: 'problem',
-      text: plainFailure(problem, target, effects),
-      details: problem.message,
-      retry: !!failure && on,
-    };
-  else if (faulted) info = { tone: 'problem', text: status, retry: false };
-  else if (device.issue && session.state === 'running')
-    info = { tone: 'warning', text: describeOutputIssue(device.issue) };
-  // While screen sync shows: LED counts that differ leave some LEDs dark or
-  // some colours unshown, so they come first; then the lights' own
-  // brightness, as a low one is named in place of "Following the screen.",
-  // so Prysm at 100 % that looks dim has its reason. Prysm never changes the
-  // lights' settings.
-  else if (showing && countsDiffer)
-    info = { tone: 'warning', text: countsDiffer };
-  else if (
-    showing &&
-    deviceBrightness !== undefined &&
-    deviceBrightness < deviceBrightnessNoteBelow
-  )
-    info = {
-      tone: 'note',
-      text: `${output?.effects?.replace(/ effects$/, '') ?? 'The lights'} limits brightness to ${deviceBrightness}%.`,
-    };
-
-  const calm = calmLine({
-    info,
-    powerReason,
-    target,
-    session,
-    input,
-    mode,
-    effects,
-    note,
-    lit,
-  });
-  // With the lights' own effects chosen, Prysm's picture controls do not
-  // reach the lights (the engine runs no session): one line says so, with
-  // the way to the device's own controls.
-  const ownEffects = mode === 'device_native' && !info && !(on && note);
 
   // Kept while the line folds away, so it leaves as it came.
   const [kept, setKept] = useState(info);
@@ -658,7 +478,7 @@ export function LightCard({
                   data-unavailable={reasons[tile.value] !== null}
                   onClick={() => {
                     // Already on and fine: nothing to restart. After a failure it retries.
-                    if (target !== tile.value || failure)
+                    if (target !== tile.value || lighting.kind === 'failed')
                       void choose(tile.value);
                   }}
                 >

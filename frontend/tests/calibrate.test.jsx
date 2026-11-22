@@ -3,9 +3,12 @@ import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
+import { ApplicationError } from '@prysm/application-client';
 import { processingDelayMs } from '@prysm/web-portal';
 import {
   initialWizard,
+  losesWork,
+  placeAfter,
   screenOf,
   screens,
   wizardReducer,
@@ -657,121 +660,409 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
   }
 });
 
-test('the wizard moves at once, the TV follows, a refusal goes back, and it ends once', () => {
-  // It used to move only once the TV confirmed, so a tap showed nothing for
-  // a whole request. Now it moves at once and goes back to what the TV shows
-  // if the TV refuses: the screen still never stays on a pattern the TV lacks.
-  const run = (...actions) => actions.reduce(wizardReducer, initialWizard);
-  // Before the start, a pattern does not move any screen.
-  let state = run(
-    { type: 'sourceChosen', from: 'p1' },
-    { type: 'requestSent', screen: 3 },
-    { type: 'patternShown' },
+/** The next save is refused with `failure`; the TV's patterns still work. */
+function failNextSave(fixture, failure) {
+  const { client } = fixture;
+  const replace = client.replaceSettings;
+  client.replaceSettings = async () => {
+    client.replaceSettings = replace;
+    throw new ApplicationError(failure);
+  };
+}
+
+test('a refused save at Start leaves no calibration, no pattern and no draft', async () => {
+  // The pattern was shown and the draft kept: the TV stayed in calibration,
+  // and a second Start saved two calibrations.
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    failNextSave(fixture, { kind: 'unavailable', message: 'no answer' });
+    await press(button('Start'));
+    await settle();
+    assert.equal(heading(), 'Match the lights to your TV');
+    assert.equal(processing(fixture).calibrations, undefined);
+    assert.deepEqual(patterns(fixture), [
+      'calibration:gray_192',
+      'calibration:end',
+    ]);
+    assert.equal('calibration' in fixture.snapshot(), false);
+    assert.equal(
+      $('.calibrate .notice.error').textContent,
+      'Not saved: Prysm did not answer. Try again.',
+    );
+    assert.equal(button('Start').disabled, false);
+
+    await press(button('Start'));
+    await settle();
+    assert.equal(heading(), questions.white);
+    assert.equal(processing(fixture).calibrations.length, 1);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a save elsewhere while the first pattern is on its way does not stop the start', async () => {
+  // The draft was saved against the revision of the tap, refused as stale,
+  // and saved later by itself, with no wizard on it.
+  const portal = await openCalibrate({ calibrations: [ps5] });
+  const { fixture } = portal;
+  try {
+    const release = fixture.holdPatterns();
+    await act(async () => button('Start').click());
+    // Another phone renames PS5 meanwhile.
+    await act(async () => {
+      const { settings, revision } = fixture.snapshot();
+      await fixture.client.replaceSettings(revision, {
+        ...settings,
+        processing: {
+          ...settings.processing,
+          calibrations: [{ ...ps5, name: 'PS5 games' }],
+        },
+      });
+      await sleep(0);
+    });
+    release();
+    await act(async () => sleep(5));
+    await settle();
+    assert.equal(heading(), questions.white);
+    const [renamed, draft] = processing(fixture).calibrations;
+    assert.equal(renamed.name, 'PS5 games', 'the other change is kept');
+    assert.equal(draft.name, 'Calibrated');
+    assert.equal(processing(fixture).active_calibration, draft.id);
+    assert.equal(processing(fixture).calibrations.length, 2);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a refused Resume keeps calibration ended, with Resume and why', async () => {
+  // The screen showed the pattern the TV did not show, without Resume.
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    await press(button('Start'));
+    await act(async () => {
+      fixture.publish({ calibration: undefined });
+      await sleep(5);
+    });
+    assert.equal(heading(), 'Calibration ended');
+    fixture.failNext({ kind: 'unavailable', message: 'no answer' });
+    await press(button('Resume'));
+    assert.equal(heading(), 'Calibration ended');
+    assert(button('Resume'));
+    assert(text().includes('The TV pattern did not change: no answer'));
+    await press(button('Resume'));
+    assert.equal(heading(), questions.white, 'resumed');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a failed slider save in the wizard is shown at the slider, with Try again', async () => {
+  // The slider's place was not named: no retry was offered and nothing
+  // saved until a slider moved again.
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    await press(button('Start'));
+    fixture.failNext({ kind: 'unavailable', message: 'no answer' });
+    await edit(draftField('warmth'), 20);
+    await settle();
+    assert.equal(errorOf(draftField('warmth')), 'Not saved. Try again');
+    await press(button('Try again'));
+    await settle();
+    assert.equal(processing(fixture).calibrations[0].correction.warmth, 20);
+    assert.equal(errorOf(draftField('warmth')), undefined);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a failed save at Finish keeps the wizard open with its buttons', async () => {
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    await press(button('Start'));
+    for (let screen = 1; screen < screens.length; screen++)
+      await press(button('Looks right'));
+    assert.equal(heading(), questions.review);
+    await edit(field('calibration.name'), 'Movie night');
+    failNextSave(fixture, { kind: 'unavailable', message: 'no answer' });
+    await press(button('Finish'));
+    await settle();
+    assert.equal(heading(), questions.review, 'not finished');
+    assert.equal(button('Finish').disabled, false);
+    assert.equal(button('Finish').hasAttribute('aria-busy'), false);
+    assert.notEqual(patterns(fixture).at(-1), 'calibration:end');
+    await press(button('Finish'));
+    await settle();
+    assert.equal(heading(), 'Calibration finished');
+    assert.equal(processing(fixture).calibrations[0].name, 'Movie night');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('Leave waits while Start is under way', async () => {
+  // Leaving then left the pattern on the TV and the draft saved and active.
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    const release = fixture.holdPatterns();
+    await act(async () => button('Start').click());
+    assert.equal(button('Leave').disabled, true);
+    release();
+    await act(async () => sleep(5));
+    assert.equal(heading(), questions.white);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('Finish does not claim a calibration deleted elsewhere meanwhile', async () => {
+  // The rename was dropped onto the other phone's deletion, and Finish said
+  // the calibration was saved and active.
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    await press(button('Start'));
+    for (let screen = 1; screen <= screenOf('blue'); screen++)
+      await press(button('Looks right'));
+    const release = fixture.holdSaves();
+    await edit(draftField('blue.hue'), 5);
+    while (heading() !== questions.review) await press(button('Looks right'));
+    // The slider's save is on its way; Finish waits for it.
+    await settle();
+    await edit(field('calibration.name'), 'Movie night');
+    await press(button('Finish'));
+    // Another phone deletes the draft meanwhile.
+    await act(async () => {
+      const { settings, revision } = fixture.snapshot();
+      const rest = { ...settings.processing };
+      delete rest.calibrations;
+      delete rest.active_calibration;
+      fixture.publish({
+        settings: { ...settings, processing: rest },
+        revision: revision + 1,
+      });
+      await sleep(0);
+    });
+    release();
+    await settle();
+    assert.notEqual(heading(), 'Calibration finished');
+    assert(
+      text().includes(
+        'This calibration was deleted elsewhere. Cancel to finish.',
+      ),
+    );
+    assert.notEqual(patterns(fixture).at(-1), 'calibration:end');
+    assert.equal(processing(fixture).calibrations, undefined);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+/* ---- The wizard's state ---- */
+
+const place = (screen, returnTo = null, uncorrected = false) => ({
+  screen,
+  returnTo,
+  uncorrected,
+});
+const calibratingPhase = (change = {}) => ({
+  kind: 'calibrating',
+  draftId: 'd',
+  previous: 'p',
+  startedWith: zero,
+  place: place(0),
+  name: null,
+  seen: true,
+  request: { kind: 'idle' },
+  confirming: false,
+  closing: null,
+  ...change,
+});
+const at = (phase, problem = '') => ({ phase, problem });
+
+/** One state in each phase, and the ways a calibrating one can be. */
+const states = {
+  start: at({ kind: 'start', from: 'p' }, 'no answer'),
+  starting: at({ kind: 'starting', from: 'p' }),
+  calibrating: at(calibratingPhase()),
+  sending: at(
+    calibratingPhase({
+      place: place(2),
+      request: { kind: 'sending', confirmed: place(1), resuming: false },
+    }),
+  ),
+  resuming: at(
+    calibratingPhase({
+      seen: false,
+      request: { kind: 'sending', confirmed: place(0), resuming: true },
+    }),
+  ),
+  confirming: at(calibratingPhase({ confirming: true })),
+  closing: at(calibratingPhase({ closing: 'finish' })),
+  ending: at({ kind: 'ending', last: calibratingPhase({ closing: 'finish' }) }),
+  done: at({ kind: 'done', title: 'Calibration finished', message: 'Saved.' }),
+};
+
+/** One action of each kind. */
+const actions = {
+  sourceChosen: { type: 'sourceChosen', from: 'q' },
+  startRequested: { type: 'startRequested' },
+  startFailed: { type: 'startFailed', problem: 'no' },
+  started: { type: 'started', draftId: 'd2', previous: 'p', startedWith: zero },
+  patternSeen: { type: 'patternSeen' },
+  requestSent: { type: 'requestSent', place: place(3, 4), resume: false },
+  resumed: { type: 'requestSent', place: place(0), resume: true },
+  patternShown: { type: 'patternShown' },
+  patternShownMore: { type: 'patternShown', more: place(2) },
+  requestFailed: { type: 'requestFailed', problem: 'no' },
+  named: { type: 'named', name: 'Movie night' },
+  confirmAsked: { type: 'confirmAsked' },
+  kept: { type: 'kept' },
+  closingStarted: { type: 'closingStarted', how: 'discard' },
+  closingFailed: { type: 'closingFailed' },
+  ending: { type: 'ending' },
+  ended: { type: 'ended', title: 'Calibration cancelled', message: 'Deleted.' },
+};
+
+/**
+ * What every calibrating phase does with a tap, a name and the end: the
+ * screen moves at once and the TV follows, keeping the last place it
+ * confirmed, and a resume waits for the TV to show a pattern again.
+ */
+function calibratingRow(phase) {
+  const sending = phase.request.kind === 'sending' ? phase.request : null;
+  const confirmed = sending ? sending.confirmed : phase.place;
+  return {
+    requestSent: at({
+      ...phase,
+      place: place(3, 4),
+      request: {
+        kind: 'sending',
+        confirmed,
+        resuming: sending ? sending.resuming : false,
+      },
+    }),
+    resumed: at({
+      ...phase,
+      place: place(0),
+      seen: false,
+      request: { kind: 'sending', confirmed, resuming: true },
+    }),
+    named: at({ ...phase, name: 'Movie night' }),
+    ending: at({ kind: 'ending', last: phase }),
+  };
+}
+
+/** Every change each action makes in each state; any other pair changes nothing. */
+const transitions = {
+  start: {
+    sourceChosen: at({ kind: 'start', from: 'q' }, 'no answer'),
+    startRequested: at({ kind: 'starting', from: 'p' }),
+  },
+  starting: {
+    startFailed: at({ kind: 'start', from: 'p' }, 'no'),
+    started: at(calibratingPhase({ draftId: 'd2', seen: false })),
+  },
+  calibrating: {
+    ...calibratingRow(states.calibrating.phase),
+    confirmAsked: at(calibratingPhase({ confirming: true })),
+    closingStarted: at(calibratingPhase({ closing: 'discard' })),
+  },
+  sending: {
+    ...calibratingRow(states.sending.phase),
+    patternShown: at({ ...states.sending.phase, request: { kind: 'idle' } }),
+    patternShownMore: at({
+      ...states.sending.phase,
+      request: { kind: 'sending', confirmed: place(2), resuming: false },
+    }),
+    requestFailed: at(
+      { ...states.sending.phase, place: place(1), request: { kind: 'idle' } },
+      'no',
+    ),
+    confirmAsked: at({ ...states.sending.phase, confirming: true }),
+    closingStarted: at({ ...states.sending.phase, closing: 'discard' }),
+  },
+  resuming: {
+    ...calibratingRow(states.resuming.phase),
+    patternSeen: at({ ...states.resuming.phase, seen: true }),
+    patternShown: at({ ...states.resuming.phase, request: { kind: 'idle' } }),
+    patternShownMore: at({
+      ...states.resuming.phase,
+      request: { kind: 'sending', confirmed: place(2), resuming: true },
+    }),
+    // Refused: calibration is still ended, so the ended screen shows again.
+    requestFailed: at(
+      { ...states.resuming.phase, seen: true, request: { kind: 'idle' } },
+      'no',
+    ),
+    confirmAsked: at({ ...states.resuming.phase, confirming: true }),
+    closingStarted: at({ ...states.resuming.phase, closing: 'discard' }),
+  },
+  confirming: {
+    ...calibratingRow(states.confirming.phase),
+    kept: at(calibratingPhase()),
+    closingStarted: at(
+      calibratingPhase({ confirming: true, closing: 'discard' }),
+    ),
+  },
+  closing: {
+    ...calibratingRow(states.closing.phase),
+    closingFailed: at(calibratingPhase()),
+  },
+  ending: {
+    ended: at({
+      kind: 'done',
+      title: 'Calibration cancelled',
+      message: 'Deleted.',
+    }),
+  },
+  done: {},
+};
+
+test('the wizard: each action in each state, and no change anywhere else', () => {
+  for (const [name, state] of Object.entries(states))
+    for (const [kind, action] of Object.entries(actions)) {
+      const next = wizardReducer(state, action);
+      const wanted = transitions[name][kind];
+      if (wanted) assert.deepEqual(next, wanted, `${name} × ${kind}`);
+      else assert.equal(next, state, `${name} × ${kind} changes nothing`);
+    }
+  assert.deepEqual(initialWizard, at({ kind: 'start', from: '' }));
+});
+
+test('a tap moves to a place: a new screen forgets the check unless it names one', () => {
+  const fromCheck = place(2, 4, true);
+  assert.deepEqual(placeAfter(fromCheck, { screen: 3 }), place(3));
+  assert.deepEqual(
+    placeAfter(fromCheck, { screen: 1, returnTo: 5 }),
+    place(1, 5),
   );
-  assert.deepEqual(state.phase, { kind: 'start', from: 'p1' });
-  assert.equal(state.busy, false);
-
-  state = run(
-    { type: 'patternRequested' },
-    { type: 'requestSent' },
-    { type: 'patternShown' },
-    { type: 'started', draftId: 'd', previous: 'p1' },
+  // Comparing, or showing the screen again, keeps the check and ends the comparison.
+  assert.deepEqual(
+    placeAfter(fromCheck, { uncorrected: true }),
+    place(2, 4, true),
   );
-  assert.deepEqual(state.phase, {
-    kind: 'calibrating',
-    draftId: 'd',
-    previous: 'p1',
-    screen: 0,
-    returnTo: null,
-    name: null,
-  });
-  assert.equal(state.seen, false, 'waits for the TV to show the pattern');
-  state = wizardReducer(state, { type: 'patternSeen' });
+  assert.deepEqual(placeAfter(fromCheck, {}), place(2, 4));
+});
 
-  // Next: the screen moves at once, busy until the TV shows its pattern.
-  state = wizardReducer(state, { type: 'requestSent', screen: 1 });
-  assert.equal(state.busy, true);
-  assert.equal(state.phase.screen, 1);
-  assert.deepEqual(state.confirmed, {
-    screen: 0,
-    returnTo: null,
-    uncorrected: false,
-  });
-  state = wizardReducer(state, { type: 'patternShown' });
-  assert.equal(state.busy, false);
-  assert.equal(state.phase.screen, 1);
-  assert.equal(state.confirmed, null);
-
-  // From a check to a colour and back: the check is kept while the colour
-  // shows, also through a comparison or a resume, and cleared on the way back.
-  // The comparison shows at once; a move ends it.
-  const yellow = screens.findIndex((screen) => screen.pattern === 'yellow');
-  state = [
-    { type: 'requestSent', screen: screenOf('green'), returnTo: yellow },
-    { type: 'patternShown' },
-  ].reduce(wizardReducer, state);
-  assert.equal(state.phase.screen, screenOf('green'));
-  assert.equal(state.phase.returnTo, yellow);
-  state = wizardReducer(state, { type: 'requestSent', uncorrected: true });
-  assert.equal(state.uncorrected, true);
-  state = [{ type: 'patternShown' }, { type: 'requestSent' }].reduce(
-    wizardReducer,
-    state,
+test('Cancel asks only when a slider moved or a name was typed', () => {
+  const phase = calibratingPhase({ startedWith: zero });
+  const draft = { id: 'd', name: 'Calibrated', correction: zero };
+  assert.equal(losesWork(phase, draft), false);
+  assert.equal(losesWork(phase, undefined), false, 'deleted elsewhere');
+  assert.equal(
+    losesWork(phase, { ...draft, correction: { ...zero, warmth: 3 } }),
+    true,
   );
-  assert.equal(state.phase.returnTo, yellow);
-  state = [
-    { type: 'patternShown' },
-    { type: 'requestSent', uncorrected: true },
-    { type: 'patternShown' },
-    { type: 'requestSent', screen: yellow },
-    { type: 'patternShown' },
-  ].reduce(wizardReducer, state);
-  assert.equal(state.phase.screen, yellow);
-  assert.equal(state.phase.returnTo, null);
-  assert.equal(state.uncorrected, false);
+  assert.equal(losesWork({ ...phase, name: ' Calibrated ' }, draft), false);
+  assert.equal(losesWork({ ...phase, name: 'Movie night' }, draft), true);
+});
 
-  // Two quick taps: the first answer is not the last, so it stays busy and
-  // keeps what the TV shows; the newest refused goes back there and says why.
-  state = [
-    { type: 'requestSent', screen: yellow + 1 },
-    { type: 'requestSent', screen: yellow + 2 },
-  ].reduce(wizardReducer, state);
-  assert.equal(state.phase.screen, yellow + 2);
-  assert.equal(state.confirmed.screen, yellow);
-  state = wizardReducer(state, {
-    type: 'patternShown',
-    more: { screen: yellow + 1, returnTo: null, uncorrected: false },
-  });
-  assert.equal(state.busy, true, 'the newest is still on its way');
-  assert.equal(state.phase.screen, yellow + 2);
-  state = wizardReducer(state, { type: 'requestFailed', problem: 'no' });
-  assert.equal(state.busy, false);
-  assert.equal(state.phase.screen, yellow + 1, 'what the TV shows');
-  assert.equal(state.problem, 'no');
-  // A refused comparison goes back too.
-  state = [
-    { type: 'requestSent', uncorrected: true },
-    { type: 'requestFailed', problem: 'no' },
-  ].reduce(wizardReducer, state);
-  assert.equal(state.uncorrected, false);
-  assert.equal(state.phase.screen, yellow + 1);
-
-  // A refused pattern keeps the screen and says why; the next request clears it.
-  state = [
-    { type: 'started', draftId: 'd', previous: undefined },
-    { type: 'requestSent' },
-    { type: 'requestFailed', problem: 'no' },
-  ].reduce(wizardReducer, initialWizard);
-  assert.equal(state.phase.screen, 0);
-  assert.equal(state.problem, 'no');
-  assert.equal(wizardReducer(state, { type: 'requestSent' }).problem, '');
-
-  // Typing a name clears the problem; the last screen is the review.
-  state = wizardReducer(state, { type: 'named', name: 'Movie night' });
-  assert.equal(state.problem, '');
-  assert.equal(state.phase.name, 'Movie night');
-
-  // White, one screen per primary on its pair, checks, review.
+test('the screens: white, one per primary on its pair, checks and the review', () => {
   assert.deepEqual(
     screens.map(({ section, pattern }) => `${section}:${pattern}`),
     [
@@ -799,16 +1090,5 @@ test('the wizard moves at once, the TV follows, a refusal goes back, and it ends
       ['white', 'red', 'green', 'blue'],
     ],
   );
-
-  state = [
-    { type: 'ending' },
-    { type: 'ended', title: 'Calibration finished', message: 'Saved.' },
-  ].reduce(wizardReducer, state);
-  assert.deepEqual(state.phase, {
-    kind: 'done',
-    title: 'Calibration finished',
-    message: 'Saved.',
-  });
-  assert.equal(state.busy, false);
-  assert.equal(wizardReducer(state, { type: 'named', name: 'x' }), state);
+  assert.equal(screens[screenOf('green')].pattern, 'green_pair');
 });

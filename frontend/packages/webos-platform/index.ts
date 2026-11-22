@@ -8,6 +8,7 @@ import type {
   FailureKind,
   FullWorker,
   LightingTarget,
+  Package,
   Power,
   Preferences,
   SlimEncoding,
@@ -166,11 +167,6 @@ const videos: Record<Video, true> = {
   unavailable: true,
   available: true,
 };
-const encodings: Record<SlimEncoding, true> = {
-  h264_hardware: true,
-  h264_software: true,
-  raw: true,
-};
 const failureKinds: Record<FailureKind, true> = {
   encoder: true,
   receiver: true,
@@ -183,8 +179,14 @@ const targets: Record<LightingTarget, true> = {
   processed: true,
   device_native: true,
 };
-const oneOf = (values: object, value: unknown) =>
-  typeof value === 'string' && Object.keys(values).indexOf(value) >= 0;
+/** `raw` if it is one of `values`, else `fallback`: a value newer than this app. */
+function known<T extends string>(
+  values: Record<T, true>,
+  raw: string,
+  fallback: T,
+): T {
+  return Object.keys(values).indexOf(raw) >= 0 ? (raw as T) : fallback;
+}
 // An absent value is omitted, never `null`.
 const optionalText = (value: unknown) =>
   value === undefined || typeof value === 'string';
@@ -195,78 +197,119 @@ type Fields = Partial<Record<string, unknown>>;
 const isObject = (value: unknown): value is Fields =>
   !!value && typeof value === 'object';
 
-/** The phases both packages share: stopped, and retrying with its seconds. */
-function isCommonPhase(worker: Fields): boolean {
-  if (worker.phase === 'stopped') return true;
-  return worker.phase === 'retrying' && typeof worker.seconds === 'number';
+/** A failure; an unknown kind is `other`. `null` when malformed. */
+function decodeFailure(value: unknown): WorkerFailure | null {
+  if (
+    !isObject(value) ||
+    typeof value.kind !== 'string' ||
+    typeof value.message !== 'string'
+  )
+    return null;
+  return {
+    kind: known(failureKinds, value.kind, 'other'),
+    message: value.message,
+  };
 }
 
-function isFullWorker(value: unknown): value is FullWorker {
-  if (!isObject(value)) return false;
+/**
+ * The phases both packages share: stopped, and retrying with its seconds; a
+ * phase newer than this app is read as stopped. `null` when malformed.
+ */
+function decodeCommonPhase(
+  worker: Fields,
+): { phase: 'stopped' } | { phase: 'retrying'; seconds: number } | null {
+  if (worker.phase !== 'retrying') return { phase: 'stopped' };
+  return typeof worker.seconds === 'number'
+    ? { phase: 'retrying', seconds: worker.seconds }
+    : null;
+}
+
+function decodeFullWorker(value: unknown): FullWorker | null {
+  if (!isObject(value) || typeof value.phase !== 'string') return null;
   switch (value.phase) {
     case 'running':
-      return (
-        typeof value.capturing === 'boolean' &&
+      return typeof value.capturing === 'boolean' &&
         optionalNumber(value.fps) &&
         optionalText(value.portal)
-      );
+        ? (value as unknown as FullWorker)
+        : null;
     case 'stopping':
-      return optionalText(value.portal);
+      return optionalText(value.portal)
+        ? (value as unknown as FullWorker)
+        : null;
     default:
-      return isCommonPhase(value);
+      return decodeCommonPhase(value);
   }
 }
 
-function isSlimLink(value: unknown): value is SlimLink {
-  if (!isObject(value)) return false;
+/**
+ * Slim: where the stream stands; a state newer than this app is read as
+ * starting. An encoding newer than this app is kept (it is shown as sent).
+ */
+function decodeSlimLink(value: unknown): SlimLink | null {
+  if (!isObject(value) || typeof value.state !== 'string') return null;
   switch (value.state) {
-    case 'starting':
-    case 'paused':
-      return true;
     case 'sending':
-      return oneOf(encodings, value.encoding) && typeof value.fps === 'number';
+      return typeof value.encoding === 'string' && typeof value.fps === 'number'
+        ? {
+            state: 'sending',
+            encoding: value.encoding as SlimEncoding,
+            fps: value.fps,
+          }
+        : null;
     case 'waiting':
-    case 'failed':
-      return value.failure !== undefined && isFailure(value.failure);
+    case 'failed': {
+      const failure = decodeFailure(value.failure);
+      return failure ? { state: value.state, failure } : null;
+    }
+    case 'paused':
+      return { state: 'paused' };
     default:
-      return false;
+      return { state: 'starting' };
   }
 }
 
-function isSlimWorker(value: unknown): value is SlimWorker {
-  if (!isObject(value)) return false;
+function decodeSlimWorker(value: unknown): SlimWorker | null {
+  if (!isObject(value) || typeof value.phase !== 'string') return null;
   switch (value.phase) {
-    case 'running':
-      return typeof value.capturing === 'boolean' && isSlimLink(value.link);
+    case 'running': {
+      const link = decodeSlimLink(value.link);
+      return typeof value.capturing === 'boolean' && link
+        ? { phase: 'running', capturing: value.capturing, link }
+        : null;
+    }
     case 'stopping':
-      return true;
+      return { phase: 'stopping' };
     default:
-      return isCommonPhase(value);
+      return decodeCommonPhase(value);
   }
 }
 
-/** The package's own fields, by its `flavor`. */
-function isPackage(state: Fields): boolean {
+/** The package's own fields, by its `flavor`; an unknown flavor is malformed. */
+function decodePackage(state: Fields): Package | null {
   switch (state.flavor) {
-    case 'full':
-      return oneOf(targets, state.lighting) && isFullWorker(state.worker);
-    case 'slim':
-      return typeof state.enabled === 'boolean' && isSlimWorker(state.worker);
+    case 'full': {
+      const worker = decodeFullWorker(state.worker);
+      return typeof state.lighting === 'string' && worker
+        ? {
+            flavor: 'full',
+            lighting: known(targets, state.lighting, 'off'),
+            worker,
+          }
+        : null;
+    }
+    case 'slim': {
+      const worker = decodeSlimWorker(state.worker);
+      return typeof state.enabled === 'boolean' && worker
+        ? { flavor: 'slim', enabled: state.enabled, worker }
+        : null;
+    }
     default:
-      return false;
+      return null;
   }
 }
 
-function isFailure(value: unknown): value is WorkerFailure | undefined {
-  if (value === undefined) return true;
-  return (
-    isObject(value) &&
-    oneOf(failureKinds, value.kind) &&
-    typeof value.message === 'string'
-  );
-}
-
-function isPreferences(value: unknown): boolean {
+function isPreferences(value: unknown): value is Preferences {
   return (
     isObject(value) &&
     (value.autostart === undefined || typeof value.autostart === 'boolean') &&
@@ -274,17 +317,38 @@ function isPreferences(value: unknown): boolean {
   );
 }
 
-export function isState(value: unknown): value is State {
-  return (
-    isObject(value) &&
-    isPackage(value) &&
-    oneOf(powers, value.power) &&
-    oneOf(videos, value.video) &&
-    isPreferences(value.preferences) &&
-    Array.isArray(value.log) &&
-    (value.log as unknown[]).every((line) => typeof line === 'string') &&
-    isFailure(value.failure)
-  );
+/**
+ * A state as this app reads it, or `null` when it is malformed. Its
+ * structure is checked; a value newer than this app in a known field has
+ * one reading: an unknown power or video is `unknown`, an unknown failure
+ * kind `other`, an unknown lighting target `off`, an unknown worker phase
+ * stopped and an unknown slim link state starting, so an app older than its
+ * service still shows the service it talks to.
+ */
+export function decodeState(value: unknown): State | null {
+  if (!isObject(value)) return null;
+  const pack = decodePackage(value);
+  const failure =
+    value.failure === undefined ? undefined : decodeFailure(value.failure);
+  const { log, preferences } = value;
+  if (
+    !pack ||
+    failure === null ||
+    typeof value.power !== 'string' ||
+    typeof value.video !== 'string' ||
+    !isPreferences(preferences) ||
+    !Array.isArray(log) ||
+    !(log as unknown[]).every((line) => typeof line === 'string')
+  )
+    return null;
+  return {
+    ...pack,
+    power: known(powers, value.power, 'unknown'),
+    video: known(videos, value.video, 'unknown'),
+    preferences,
+    log: log as string[],
+    ...(failure ? { failure } : {}),
+  };
 }
 
 type Reply = Record<string, unknown>;
@@ -321,15 +385,13 @@ function decode(text: string): Reply {
 }
 
 function stateOf(reply: Reply): State {
-  if (!isState(reply))
+  const state = decodeState(reply);
+  if (!state)
     throw new LunaError(
       'invalid_reply',
       'The TV service sent an unexpected state.',
     );
-  const state = { ...reply } as Reply;
-  delete state.returnValue;
-  delete state.subscribed;
-  return state as unknown as State;
+  return state;
 }
 
 const notOnTv = () =>

@@ -6,7 +6,7 @@ import {
 } from '@prysm/application-client';
 import type { DeviceReport, Input } from '@prysm/contracts/application';
 import { ledCountsDiffer } from './adapters';
-import { deviceBrightnessNoteBelow } from './lighting';
+import { deviceBrightnessNoteBelow } from './light-card-view';
 import type { PathState } from './setup-card';
 
 /** What the state says about screen sync now, for a section's status. */

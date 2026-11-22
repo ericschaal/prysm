@@ -8,7 +8,14 @@
  * move focus, so nothing changes without OK, and there is no draft to save
  * or lose. A failed change leaves the saved value shown and says so.
  */
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import type {
   LunaError,
   ServiceEvent,
@@ -51,7 +58,7 @@ export type Link =
     }
   | { status: 'missing'; state: State | null };
 
-interface ServiceState {
+export interface ServiceState {
   link: Link;
   /** Sent with the last successful save, until the subscription shows it. */
   pending: Saved | null;
@@ -62,7 +69,7 @@ interface ServiceState {
   problem: string;
 }
 
-type Action =
+export type ServiceAction =
   | { type: 'event'; event: ServiceEvent; at: number }
   | { type: 'removed' }
   | { type: 'saved'; sent: Saved }
@@ -75,15 +82,25 @@ type Action =
 const lastState = (link: Link) =>
   link.status === 'connecting' ? null : link.state;
 
-/** The service is gone: the status card says so (its words go to Diagnostics). */
-const missing = (current: ServiceState): ServiceState => ({
-  ...current,
-  link: { status: 'missing', state: lastState(current.link) },
-  notice: '',
-  error: false,
-});
+/**
+ * The service is gone: the status card says so (its words go to
+ * Diagnostics). The notice is cleared only as it goes: a failed setup's
+ * notice stays through the resubscriptions that fail after it.
+ */
+const missing = (current: ServiceState): ServiceState =>
+  current.link.status === 'missing'
+    ? current
+    : {
+        ...current,
+        link: { status: 'missing', state: lastState(current.link) },
+        notice: '',
+        error: false,
+      };
 
-function reducer(current: ServiceState, action: Action): ServiceState {
+export function serviceReducer(
+  current: ServiceState,
+  action: ServiceAction,
+): ServiceState {
   switch (action.type) {
     case 'event': {
       const { event } = action;
@@ -140,7 +157,7 @@ function reducer(current: ServiceState, action: Action): ServiceState {
   }
 }
 
-const initial: ServiceState = {
+export const initialService: ServiceState = {
   link: { status: 'connecting' },
   pending: null,
   changing: false,
@@ -156,9 +173,12 @@ const messageOf = (error: unknown) =>
   (error as LunaError | Error | undefined)?.message ?? String(error);
 
 export function useTvService(service: TvService, active: boolean) {
-  const [current, dispatch] = useReducer(reducer, initial);
+  const [current, dispatch] = useReducer(serviceReducer, initialService);
   const [generation, setGeneration] = useState(0);
-  const busy = useRef(false);
+  /** The end of the queue of commands; it never rejects. */
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  /** Commands asked for and not finished. */
+  const queued = useRef(0);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -187,43 +207,61 @@ export function useTvService(service: TvService, active: boolean) {
   const saved = completePreferences(state?.preferences ?? {});
   /** What the settings show: the saved values, or those being saved. */
   const draft: Saved = current.pending ?? saved;
+  /**
+   * The preferences a queued change applies to: the latest render's, or
+   * what the change before it sent, until a render shows that.
+   */
+  const shown = useRef(draft);
+  useLayoutEffect(() => {
+    shown.current = draft;
+  });
   const say = useCallback(
     (text: string, error = false) => dispatch({ type: 'notice', text, error }),
     [],
   );
 
   /**
-   * Run one command at a time; resolves `false` when it did not run or
-   * failed. A failure says `failed` in plain words; the service's own
-   * message goes to Diagnostics.
+   * Run `work` once the commands before it are done: the service runs one at
+   * a time. Resolves `false` when it failed, which says `failed` in plain
+   * words; the service's own message goes to Diagnostics. `begun` is said
+   * when it starts.
    */
-  async function run(
+  function run(
     work: () => Promise<unknown>,
     done: string | undefined,
     failed: string,
-  ) {
-    if (busy.current) return false;
-    busy.current = true;
+    begun?: string,
+  ): Promise<boolean> {
+    queued.current += 1;
     dispatch({ type: 'changing', value: true });
-    try {
-      await work();
-      if (done !== undefined && mounted.current) say(done);
-      return true;
-    } catch (error) {
-      if (mounted.current) {
-        dispatch({ type: 'problem', text: messageOf(error) });
-        say(`${failed} ${DETAILS}`, true);
+    const result = queue.current.then(async () => {
+      try {
+        // The app closed meanwhile: nothing more is sent.
+        if (!mounted.current) return false;
+        if (begun !== undefined) say(begun);
+        await work();
+        if (done !== undefined && mounted.current) say(done);
+        return true;
+      } catch (error) {
+        if (mounted.current) {
+          dispatch({ type: 'problem', text: messageOf(error) });
+          say(`${failed} ${DETAILS}`, true);
+        }
+        return false;
+      } finally {
+        queued.current -= 1;
+        if (mounted.current && queued.current === 0)
+          dispatch({ type: 'changing', value: false });
       }
-      return false;
-    } finally {
-      busy.current = false;
-      if (mounted.current) dispatch({ type: 'changing', value: false });
-    }
+    });
+    queue.current = result;
+    return result;
   }
 
   async function sendPreferences(patch: Edits) {
-    const sent = { ...draft, ...patch };
+    const sent = { ...shown.current, ...patch };
     await service.setPreferences(sentPreferences(sent));
+    shown.current = sent;
     if (mounted.current) dispatch({ type: 'saved', sent });
   }
 
@@ -257,17 +295,16 @@ export function useTvService(service: TvService, active: boolean) {
         '',
         'Couldn’t start.',
       ),
-    setup: () => {
-      say('Setting up the service. This may take a moment.');
-      return run(
+    setup: () =>
+      run(
         async () => {
           await service.setup();
           setGeneration((count) => count + 1);
         },
         'Service setup complete.',
         'Setup didn’t finish.',
-      );
-    },
+        'Setting up the service. This may take a moment.',
+      ),
     uninstall: () =>
       run(
         async () => {

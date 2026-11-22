@@ -1,5 +1,6 @@
 export * from './adapters';
-export { CalibrateWizard, type CalibrateProps } from './calibrate';
+export { CalibrateWizard } from './calibrate';
+export type { CalibrateProps } from './use-calibration';
 export * from './checks';
 export { DeviceRows, FindDevices } from './discovery';
 export * from './fields';
@@ -10,7 +11,6 @@ export {
   ringDelayMs,
   ringHoldMs,
   slowStartMs,
-  type LightingMode,
 } from './lighting';
 export {
   processingControls,

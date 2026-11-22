@@ -1,11 +1,14 @@
 /** The lighting card: what the lights do on the Prysm that drives them. */
 import { useState } from 'react';
 import {
-  describeLighting,
   describeOutputIssue,
+  describeSituation,
   failureOf,
+  lightingSituation,
   plainFailure,
+  situationFailure,
   type ApplicationSnapshot,
+  type LightingSituation,
   type LightingTarget,
 } from '@prysm/application-client';
 import type { PortalView } from './portal-connection';
@@ -33,20 +36,42 @@ export function LightingCard({
   connecting: boolean;
 }) {
   const [pending, setPending] = useState<LightingTarget | null>(null);
-  const [error, setError] = useState('');
   const { snapshot, connection } = portal;
   const full = flavor === 'full';
   const effects = snapshot ? effectsOf(snapshot) : null;
+  const lighting = snapshot ? lightingSituation(snapshot) : null;
+  /**
+   * The latest refused press, with the lights as they were then: a command
+   * that timed out may still have run, so it is shown only until they change.
+   */
+  const [refusal, setRefusal] = useState<{
+    text: string;
+    target: LightingTarget | undefined;
+    kind: LightingSituation['kind'] | undefined;
+  } | null>(null);
+  // Gone once the lights change, also when they change back.
+  if (
+    refusal &&
+    (refusal.target !== snapshot?.target || refusal.kind !== lighting?.kind)
+  )
+    setRefusal(null);
+  const error = refusal?.text ?? '';
 
   async function choose(target: LightingTarget) {
+    const at = { target: snapshot?.target, kind: lighting?.kind };
     setPending(target);
-    setError('');
+    setRefusal(null);
     try {
       await portal.setTarget(target);
     } catch (reason) {
-      setError(
-        plainFailure(failureOf(reason), target, effects ?? 'Device effects'),
-      );
+      setRefusal({
+        text: plainFailure(
+          failureOf(reason),
+          target,
+          effects ?? 'Device effects',
+        ),
+        ...at,
+      });
     } finally {
       setPending(null);
     }
@@ -67,39 +92,37 @@ export function LightingCard({
     message =
       'This TV is too old to control the lights. Use the web portal on your phone.';
     attention = true;
-  } else if (snapshot) {
-    const { session, target } = snapshot;
-    said = describeLighting({
-      ...snapshot,
-      effects: effects ?? 'Device effects',
-    });
+  } else if (snapshot && lighting) {
+    said = describeSituation(lighting, effects ?? 'Device effects').sentence;
+    // Said also with the lights off: settings that could not be applied.
+    const failure = situationFailure(lighting);
     const kind = (snapshot.settings.capture as { kind?: string } | undefined)
       ?.kind;
-    if (session.state === 'faulted') {
+    if (lighting.kind === 'faulted') {
       message = said;
       attention = true;
     } else if (!snapshot.settings.output) {
       message = 'Set up your lights in the web portal first.';
-    } else if (snapshot.failure) {
+    } else if (failure) {
       message = plainFailure(
-        snapshot.failure,
-        target,
+        failure,
+        snapshot.target,
         effects ?? 'Device effects',
       );
       attention = true;
-    } else if (snapshot.device.issue && session.state === 'running') {
+    } else if (snapshot.device.issue && lighting.kind === 'sync') {
       message = describeOutputIssue(snapshot.device.issue);
       attention = true;
     } else if (!full && kind !== 'remote') {
       message =
         'This Prysm uses another picture. Choose LG TV on your network in its web portal.';
       attention = true;
-    } else if (session.state === 'stopped' && target !== 'off') {
+    } else if (lighting.kind === 'starting') {
       message = said;
     } else if (
-      session.state === 'running' &&
-      snapshot.input &&
-      !snapshot.input.receiving
+      lighting.kind === 'sync' &&
+      lighting.input &&
+      !lighting.input.receiving
     ) {
       message = 'No picture arriving yet.';
     }
@@ -122,7 +145,7 @@ export function LightingCard({
   // A press in flight does not disable the track: a disabled control drops
   // focus, which the remote navigation then moves to another column.
   const offline = !snapshot;
-  const faulted = snapshot?.session.state === 'faulted';
+  const faulted = lighting?.kind === 'faulted';
   const hasOutput = !!snapshot?.settings.output;
   const hasCapture = !!snapshot?.settings.capture;
   const modes: { value: LightingTarget; label: string; disabled: boolean }[] = [

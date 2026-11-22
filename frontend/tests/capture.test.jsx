@@ -943,3 +943,37 @@ test('every choice row shows its ring; only the chosen one is checked', async ()
     await portal.unmount();
   }
 });
+
+test('a slower lookup does not overwrite the answer of a newer one', async () => {
+  // A focus during a lookup asked again; the older answer, arriving last,
+  // was shown.
+  let answer = () => Promise.resolve(known(anyMode(1920, 1080, 60)));
+  const captureModes = { modes: () => answer() };
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', path }, output },
+    undefined,
+    { captureModes },
+  );
+  try {
+    await openEditor('Video source');
+    await settled();
+    const before = rows();
+    let release;
+    answer = () =>
+      new Promise((resolve) => {
+        release = () => resolve(known(anyMode(1920, 1080, 60)));
+      });
+    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    answer = () => Promise.resolve(known(fixedMode(640, 360, 30)));
+    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    await settled();
+    const newer = rows();
+    assert.notDeepEqual(newer, before);
+    await act(async () => release());
+    await settled();
+    assert.deepEqual(rows(), newer, 'the newer answer stays');
+  } finally {
+    await portal.unmount();
+  }
+});
