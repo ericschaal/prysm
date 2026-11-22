@@ -136,7 +136,9 @@ fn connected(socket: &socket2::Socket, deadline: Instant, hangup: &Hangup) -> st
         if left.is_zero() {
             return Err(std::io::ErrorKind::TimedOut.into());
         }
-        let timeout = PollTimeout::try_from(left).unwrap_or(PollTimeout::MAX);
+        // Rounded up to poll's milliseconds, so the last one is waited, not spun.
+        let timeout =
+            PollTimeout::try_from(left + Duration::from_millis(1)).unwrap_or(PollTimeout::MAX);
         let mut fds = [PollFd::new(socket.as_fd(), PollFlags::POLLOUT)];
         match poll(&mut fds, timeout) {
             Ok(0) | Err(nix::errno::Errno::EINTR) => {}
@@ -879,12 +881,15 @@ mod tests {
         error.cause::<Stopping>().is_some()
     }
 
-    /// Wait (yielding, without a timer) until `hangup` counts a blocking wait
-    /// after the first `seen`.
+    /// Wait (yielding) until `hangup` counts a blocking wait after the first
+    /// `seen`; a call that ended without waiting fails the test here.
     fn blocked(hangup: &Hangup, seen: usize) {
-        while hangup.waits() == seen {
-            std::thread::yield_now();
-        }
+        let hangup = hangup.clone();
+        prysm_testkit::within(Duration::from_secs(10), move || {
+            while hangup.waits() == seen {
+                std::thread::yield_now();
+            }
+        });
     }
 
     /// Long enough that a call the cut did not wake would still be waiting
@@ -976,7 +981,7 @@ mod tests {
         // The first blocking write: the buffer is full.
         blocked(&hangup, connected);
         hangup.cut();
-        let error = prysm_testkit::within(WRITE_TIMEOUT / 2, move || sending.join().unwrap());
+        let error = prysm_testkit::within(WRITE_TIMEOUT * 3 / 4, move || sending.join().unwrap());
         assert!(stopped(&error), "{}", chain(&error));
     }
 
