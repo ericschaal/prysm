@@ -23,6 +23,7 @@ prysm-capture-webos-sys = { path = "../capture-webos-sys" }
 utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
+prysm-testkit.workspace = true
 # The Luna errors the registration check can return, for the fault tests.
 prysm-webos-luna-sys.workspace = true
 serde_json.workspace = true

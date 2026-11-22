@@ -49,6 +49,7 @@ mod tests {
     use prysm_ports::SessionState;
     use prysm_runtime::Engine;
     use prysm_runtime::fakes::{self, CallLog, FakeOutputs, FakeSources, MemoryStore};
+    use prysm_testkit::within_async;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -63,12 +64,6 @@ mod tests {
         (handle, engine, log)
     }
 
-    async fn within<T>(future: impl Future<Output = T>) -> T {
-        tokio::time::timeout(Duration::from_secs(5), future)
-            .await
-            .expect("timed out")
-    }
-
     /// A stand-in for the host's reader: the file's JSON as settings.
     fn read() -> ReadSettings {
         Arc::new(|path| {
@@ -79,7 +74,7 @@ mod tests {
 
     #[tokio::test]
     async fn targets_drive_the_engine_and_failures_are_error_notices() {
-        within(async {
+        within_async(Duration::from_secs(5), async {
             let (handle, engine, log) = start(MemoryStore::with(fakes::settings())).await;
             let target = |handle: &EngineHandle, target| {
                 execute(handle.clone(), read(), Command::SetTarget(target))
@@ -105,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_replaces_settings_at_the_shown_revision() {
-        within(async {
+        within_async(Duration::from_secs(5), async {
             let store = MemoryStore::new();
             let (handle, engine, _) = start(store.clone()).await;
             let dir = tempfile::tempdir().unwrap();

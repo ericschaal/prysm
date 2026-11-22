@@ -68,12 +68,15 @@ impl EngineLink {
         let mut beat = Instant::now() + self.heartbeat;
         let mut retry = Retry::new(self.backoff);
         loop {
+            // One clock read per round, so a retry and a heartbeat set in the
+            // same round fall due together.
+            let now = Instant::now();
             let snapshot = snapshots.borrow_and_update().clone();
             let status = status(&snapshot, portal.as_deref());
             if sent.as_ref() != Some(&status) {
                 events.send(&Event::Status(status.clone()));
                 sent = Some(status);
-                beat = Instant::now() + self.heartbeat;
+                beat = now + self.heartbeat;
             }
             if let SessionState::Faulted(phase) = snapshot.session {
                 let cause = faulted(phase, snapshot.failure.as_ref());
@@ -83,9 +86,12 @@ impl EngineLink {
                 stop.request(Stop::Faulted(cause));
                 return Ok(());
             }
-            retry.observe(&snapshot, Instant::now());
+            retry.observe(&snapshot, now);
             let retry_at = retry.at;
+            // In this order when several are ready: a retry due with the
+            // heartbeat is applied before the heartbeat's status is sent.
             tokio::select! {
+                biased;
                 () = shutdown.requested() => return Ok(()),
                 command = commands.next() => match command {
                     // The link closed; the stop reason is already recorded.
@@ -98,14 +104,14 @@ impl EngineLink {
                     }
                 },
                 changed = snapshots.changed() => if changed.is_err() { return Ok(()) },
+                () = wait(retry_at) => {
+                    retry.cancel();
+                    apply(&engine, snapshot.target).await;
+                }
                 // The heartbeat: the status again, with the current portal URL.
                 () = sleep_until(beat) => {
                     portal = (self.portal_url)();
                     sent = None;
-                }
-                () = wait(retry_at) => {
-                    retry.cancel();
-                    apply(&engine, snapshot.target).await;
                 }
             }
         }
@@ -221,4 +227,130 @@ fn wants_retry(snapshot: &Snapshot) -> bool {
             .failure
             .as_ref()
             .is_some_and(|failure| !matches!(failure, Error::Invalid(_) | Error::Decode { .. }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prysm_ports::ValidationError;
+
+    const FIRST: Duration = Duration::from_millis(100);
+
+    /// What a snapshot says, as far as retrying goes.
+    #[derive(Debug, Clone, Copy)]
+    enum Seen {
+        /// Lighting off after a failure: nothing to retry.
+        Off,
+        Running,
+        /// Stopped with a failure a retry can fix.
+        Failed,
+        /// Stopped because the settings are invalid: the user must act.
+        Invalid,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum Event {
+        Observe(Seen),
+        /// A command, or the retry itself, applied a target.
+        Cancel,
+    }
+
+    fn snapshot(seen: Seen) -> Snapshot {
+        let stopped = |target, failure| Snapshot {
+            target,
+            failure: Some(failure),
+            ..Snapshot::default()
+        };
+        match seen {
+            Seen::Off => stopped(LightingTarget::Off, Error::other("source failed")),
+            Seen::Running => Snapshot {
+                target: LightingTarget::Processed,
+                session: SessionState::Running,
+                ..Snapshot::default()
+            },
+            Seen::Failed => stopped(LightingTarget::Processed, Error::other("source failed")),
+            Seen::Invalid => stopped(
+                LightingTarget::Processed,
+                Error::Invalid(ValidationError::new("output", "missing")),
+            ),
+        }
+    }
+
+    fn apply(retry: &mut Retry, event: Event, now: Instant) {
+        match event {
+            Event::Observe(seen) => retry.observe(&snapshot(seen), now),
+            Event::Cancel => retry.cancel(),
+        }
+    }
+
+    /// Every reachable state meets every event: when the retry is due and
+    /// since when a session has run, afterwards. (A scheduled retry with a
+    /// running session cannot happen: running clears the schedule.)
+    #[test]
+    fn every_state_meets_every_event() {
+        let t0 = Instant::now();
+        let now = t0 + Duration::from_secs(10);
+        let due = t0 + Duration::from_secs(5);
+        let idle = (None, None);
+        let scheduled = (Some(due), None);
+        let ran = (None, Some(t0));
+        let first = Some(now + FIRST);
+        #[rustfmt::skip]
+        let cases = [
+            (idle, Event::Observe(Seen::Off), (None, None)),
+            (idle, Event::Observe(Seen::Running), (None, Some(now))),
+            (idle, Event::Observe(Seen::Failed), (first, None)),
+            (idle, Event::Observe(Seen::Invalid), (None, None)),
+            (idle, Event::Cancel, (None, None)),
+            // Lighting turned off cancels a scheduled retry.
+            (scheduled, Event::Observe(Seen::Off), (None, None)),
+            (scheduled, Event::Observe(Seen::Running), (None, Some(now))),
+            // The same failure seen again keeps its time.
+            (scheduled, Event::Observe(Seen::Failed), (Some(due), None)),
+            (scheduled, Event::Observe(Seen::Invalid), (None, None)),
+            (scheduled, Event::Cancel, (None, None)),
+            (ran, Event::Observe(Seen::Off), (None, Some(t0))),
+            (ran, Event::Observe(Seen::Running), (None, Some(t0))),
+            (ran, Event::Observe(Seen::Failed), (first, None)),
+            (ran, Event::Observe(Seen::Invalid), (None, Some(t0))),
+            (ran, Event::Cancel, (None, Some(t0))),
+        ];
+        for ((at, running_since), event, expected) in cases {
+            let mut retry = Retry {
+                backoff: Backoff::starting_at(FIRST),
+                at,
+                running_since,
+            };
+            apply(&mut retry, event, now);
+            assert_eq!(
+                (retry.at, retry.running_since),
+                expected,
+                "{at:?} {running_since:?} meets {event:?}"
+            );
+        }
+    }
+
+    /// Each failure in a row waits twice as long as the one before, until a
+    /// session has run for [`Backoff::HEALTHY`].
+    #[test]
+    fn the_delay_doubles_until_a_session_runs_healthy() {
+        let t0 = Instant::now();
+        let mut retry = Retry::new(Backoff::starting_at(FIRST));
+        let fail_at = |retry: &mut Retry, now: Instant| {
+            apply(retry, Event::Observe(Seen::Failed), now);
+            let due = retry.at.expect("a retry is scheduled");
+            apply(retry, Event::Cancel, due);
+            due - now
+        };
+        assert_eq!(fail_at(&mut retry, t0), FIRST);
+        assert_eq!(fail_at(&mut retry, t0), FIRST * 2);
+        // A session too short to count as healthy keeps doubling.
+        let started = t0 + Duration::from_secs(1);
+        apply(&mut retry, Event::Observe(Seen::Running), started);
+        let short = started + Backoff::HEALTHY - Duration::from_millis(1);
+        assert_eq!(fail_at(&mut retry, short), FIRST * 4);
+        apply(&mut retry, Event::Observe(Seen::Running), short);
+        let healthy = short + Backoff::HEALTHY;
+        assert_eq!(fail_at(&mut retry, healthy), FIRST);
+    }
 }

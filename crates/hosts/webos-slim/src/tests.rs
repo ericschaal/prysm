@@ -181,12 +181,12 @@ fn sending(event: &Event) -> bool {
     encoding(event).is_some()
 }
 
-/// Whether the capture closed once within 5 s.
+/// Whether the capture, once it closed (within 5 s), closed only once.
 async fn released(opened: &Opened) -> bool {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while opened.closed() == 0 && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    prysm_testkit::eventually_async("the capture to close", Duration::from_secs(5), || {
+        (opened.closed() > 0).then_some(())
+    })
+    .await;
     opened.closed() == 1
 }
 
@@ -255,15 +255,18 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
             }
         }
     });
-    let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    let event = peer
+        .wait_for("a waiting status", |e| waiting(e).is_some())
+        .await;
     assert_eq!(
         waiting(&event),
         Some("waiting for the receiver: cannot connect to receiver: refused")
     );
     // Connected: frames flow and no wait is reported.
-    peer.wait_for(|e| capturing(e) == Some(true) && sending(e))
-        .await
-        .unwrap();
+    peer.wait_for("a capturing status that is sending", |e| {
+        capturing(e) == Some(true) && sending(e)
+    })
+    .await;
     // The first receiver drops after 5 frames; the uplink reconnects.
     assert!(log.wait_for("sink.send", 20).await);
     assert!(attempts.load(Ordering::SeqCst) >= 5);
@@ -293,7 +296,9 @@ async fn frames_reach_a_receiver_that_starts_later() {
         &Opened::fake(&log, FakeSourceSettings::default()),
         connect(&portal),
     );
-    let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    let event = peer
+        .wait_for("a waiting status", |e| waiting(e).is_some())
+        .await;
     assert!(waiting(&event).unwrap().contains("503"), "{event:?}");
 
     let mut receiver = portal.source(RAW);
@@ -309,9 +314,10 @@ async fn frames_reach_a_receiver_that_starts_later() {
     .await
     .unwrap();
     assert_eq!((frame.width(), frame.height()), (16, 9));
-    peer.wait_for(|e| capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::Raw))
-        .await
-        .unwrap();
+    peer.wait_for("a capturing status sending raw", |e| {
+        capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::Raw)
+    })
+    .await;
     Box::new(receiver).close().unwrap();
 
     peer.close();
@@ -328,11 +334,10 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
     let mut receiver = portal.source(SOFTWARE);
     let opened = Opened::nv12();
     let (mut peer, _feed, task) = start(&opened, connect(&portal));
-    peer.wait_for(|e| {
+    peer.wait_for("a capturing status sending software H.264", |e| {
         capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
     })
-    .await
-    .unwrap();
+    .await;
     let frame = tokio::task::spawn_blocking(move || {
         let frame = receiver
             .next_frame(Duration::from_secs(5))
@@ -370,7 +375,8 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
         (frame.width(), frame.height(), frame.format()),
         (96, 48, prysm_h264::FORMAT)
     );
-    peer.wait_for(|e| encoding(e).is_none()).await.unwrap();
+    peer.wait_for("a status without an encoding", |e| encoding(e).is_none())
+        .await;
     assert_eq!(opened.shapes(), [settings(&SOFTWARE), settings(&changed)]);
     peer.close();
     let (result, _) = task.await.unwrap();
@@ -407,9 +413,8 @@ async fn a_prysm_of_another_version_is_reported_as_such() {
         move || RemoteSender::connect(&url, address, &prysm_capture_remote::testkit::offer()),
     );
     let event = peer
-        .wait_for(|e| version_differs(e).is_some())
-        .await
-        .unwrap();
+        .wait_for("a version mismatch", |e| version_differs(e).is_some())
+        .await;
     let reason = version_differs(&event).unwrap();
     assert!(
         reason.contains("Prysm: 9") && reason.contains("update the older one"),
@@ -433,11 +438,13 @@ async fn reports_frame_flow_and_forwards_video_commands() {
         peer.event().await.unwrap(),
         Event::Status(WorkerStatus::Slim(SlimStatus::default()))
     );
-    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    peer.wait_for("a capturing status", |e| capturing(e) == Some(true))
+        .await;
     // The fake goes quiet after 40 frames.
-    peer.wait_for(|e| capturing(e) == Some(false))
-        .await
-        .unwrap();
+    peer.wait_for("a status that is not capturing", |e| {
+        capturing(e) == Some(false)
+    })
+    .await;
     // Heartbeat repeats the unchanged status.
     let again = peer.event().await.unwrap();
     assert_eq!(capturing(&again), Some(false));
@@ -477,7 +484,8 @@ async fn an_unconfirmed_release_fails_the_forwarder() {
         fail_close: true,
         ..FakeSourceSettings::default()
     });
-    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    peer.wait_for("a capturing status", |e| capturing(e) == Some(true))
+        .await;
     peer.close();
     let (result, _) = task.await.unwrap();
     assert!(result.unwrap_err().to_string().contains("unconfirmed"));
@@ -516,11 +524,10 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
     let mut receiver = portal.source(SOFTWARE);
     let opened = Opened::nv12();
     let (mut peer, _feed, task) = start(&opened, connect(&portal));
-    peer.wait_for(|e| {
+    peer.wait_for("a capturing status sending software H.264", |e| {
         capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
     })
-    .await
-    .unwrap();
+    .await;
     let (frame, receiver) = tokio::task::spawn_blocking(move || {
         let frame = receiver
             .next_frame(Duration::from_secs(5))
@@ -537,22 +544,25 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
     );
 
     // While frames go out, the rate is reported.
-    peer.wait_for(|e| matches!(link(e), Some(SlimLink::Sending { fps, .. }) if *fps > 0))
-        .await
-        .unwrap();
+    peer.wait_for(
+        "a status sending frames",
+        |e| matches!(link(e), Some(SlimLink::Sending { fps, .. }) if *fps > 0),
+    )
+    .await;
 
     // Lighting off: the receiver closes the stream as stopped. Paused, not a
     // failure; the TV capture stops (and stays stopped while the worker
     // keeps reconnecting: `link::tests::every_uplink_state_takes_every_event`).
     Box::new(receiver).close().unwrap();
-    peer.wait_for(paused).await.unwrap();
+    peer.wait_for("a paused status", paused).await;
     assert!(released(&opened).await, "the capture stops while stopped");
     assert_eq!(opened.shapes().len(), 1, "no capture while lighting is off");
     // Lighting on again: a new connection resumes the capture.
     let receiver = portal.source(SOFTWARE);
-    peer.wait_for(|e| capturing(e) == Some(true) && sending(e))
-        .await
-        .unwrap();
+    peer.wait_for("a capturing status that is sending", |e| {
+        capturing(e) == Some(true) && sending(e)
+    })
+    .await;
     assert_eq!(
         opened.shapes(),
         [settings(&SOFTWARE); 2],
@@ -574,13 +584,16 @@ async fn a_replaced_sender_gives_up() {
     let receiver = portal.source(RAW);
     let opened = Opened::nv12();
     let (mut peer, _feed, task) = start(&opened, connect(&portal));
-    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    peer.wait_for("a capturing status", |e| capturing(e) == Some(true))
+        .await;
 
     let mut other = connect(&portal);
     let other = tokio::task::spawn_blocking(move || other().unwrap())
         .await
         .unwrap();
-    let event = peer.wait_for(|e| replaced(e).is_some()).await.unwrap();
+    let event = peer
+        .wait_for("a replaced status", |e| replaced(e).is_some())
+        .await;
     assert!(
         replaced(&event)
             .unwrap()
@@ -632,14 +645,16 @@ async fn a_version_mismatch_replaces_a_stopped_stream() {
             RemoteSender::connect(&newer_url, newer, &prysm_capture_remote::testkit::offer())
         }
     });
-    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    peer.wait_for("a capturing status", |e| capturing(e) == Some(true))
+        .await;
     tokio::task::spawn_blocking(move || Box::new(receiver).close().unwrap())
         .await
         .unwrap();
     // The capture stays released: nothing can be sent to that Prysm.
-    peer.wait_for(|e| version_differs(e).is_some() && capturing(e) == Some(false))
-        .await
-        .unwrap();
+    peer.wait_for("a version mismatch without capture", |e| {
+        version_differs(e).is_some() && capturing(e) == Some(false)
+    })
+    .await;
     peer.close();
     let (result, _) = task.await.unwrap();
     result.unwrap();
@@ -659,9 +674,10 @@ async fn a_receiver_lost_without_a_close_code_keeps_the_capture() {
             _ => Err(Error::other("cannot connect to receiver: refused")),
         }
     });
-    peer.wait_for(|e| waiting(e).is_some_and(|w| w.contains("refused")))
-        .await
-        .unwrap();
+    peer.wait_for("a waiting status naming the refusal", |e| {
+        waiting(e).is_some_and(|w| w.contains("refused"))
+    })
+    .await;
     assert!(!log.events().iter().any(|e| e.starts_with("source.close")));
     assert_eq!(opened.shapes(), [settings(&RAW)]);
     peer.close();
@@ -705,13 +721,16 @@ async fn a_receiver_host_name_is_resolved_at_each_attempt() {
             )
         },
     );
-    let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    let event = peer
+        .wait_for("a waiting status", |e| waiting(e).is_some())
+        .await;
     assert_eq!(
         waiting(&event),
         Some("waiting for the receiver: cannot resolve http://prysm.local:8787: no such host")
     );
     RESOLVES.store(true, Ordering::SeqCst);
-    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    peer.wait_for("a capturing status", |e| capturing(e) == Some(true))
+        .await;
     Box::new(receiver).close().unwrap();
     peer.close();
     let (result, _) = task.await.unwrap();
@@ -742,7 +761,9 @@ async fn a_hanging_lookup_does_not_hold_up_the_stop() {
             )
         },
     );
-    let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    let event = peer
+        .wait_for("a waiting status", |e| waiting(e).is_some())
+        .await;
     assert!(waiting(&event).unwrap().ends_with("no answer yet"));
     let started = std::time::Instant::now();
     peer.close();
@@ -771,9 +792,8 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
     let mut receiver = portal.source(hardware);
     let (mut peer, _feed, task) = start(&Opened::nv12(), connect(&portal));
     let event = peer
-        .wait_for(|e| encoder_failure(e).is_some())
-        .await
-        .unwrap();
+        .wait_for("an encoder failure", |e| encoder_failure(e).is_some())
+        .await;
     let failure = encoder_failure(&event).unwrap();
     assert!(failure.contains("hardware H.264"), "{failure}");
     assert_eq!(encoding(&event), None);
@@ -808,9 +828,8 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
     );
 
     // Still the encoder failure while the receiver is away.
-    peer.wait_for(|e| encoder_failure(e).is_some())
-        .await
-        .unwrap();
+    peer.wait_for("an encoder failure", |e| encoder_failure(e).is_some())
+        .await;
     peer.close();
     let (result, _) = task.await.unwrap();
     result.unwrap();
@@ -852,15 +871,13 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
         }
     });
     let event = peer
-        .wait_for(|e| encoder_failure(e).is_some())
-        .await
-        .unwrap();
+        .wait_for("an encoder failure", |e| encoder_failure(e).is_some())
+        .await;
     assert!(encoder_failure(&event).unwrap().contains("no encoder here"));
-    peer.wait_for(|e| {
+    peer.wait_for("a capturing status sending software H.264", |e| {
         capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
     })
-    .await
-    .unwrap();
+    .await;
     let refusals: Vec<String> = log
         .events()
         .into_iter()

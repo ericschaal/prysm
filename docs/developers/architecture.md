@@ -9,8 +9,8 @@ video source ──frames──▶ Prysm engine and session ──colours──�
 ```
 
 **Concurrency lives in one runtime; adapters are plain blocking objects.**
-The rule and its reasons: [simplified runtime](../plans/prysm-v1-simplified-runtime.md),
-recorded as a [decision](decisions/2026-11-12-one-runtime-plain-adapters.md).
+The rule and its reasons are a
+[decision](decisions/2026-11-12-one-runtime-plain-adapters.md).
 Reference: [workspace map](workspace.md).
 
 ## Owners
@@ -29,6 +29,27 @@ correction) and [`prysm-processor`](../../crates/engine/processor/src/lib.rs) ar
 runtime and the adapters; keep application, serialisation and runtime code out
 of `prysm-core`.
 
+## Adapters, surfaces and hosts
+
+An adapter is one object behind one trait, with no channels, `select!`,
+identities or lifecycle state machine of its own. Opening is construction:
+each adapter registers a factory under its kind (`device`, `remote`, `wled`,
+...) with typed settings, which it validates itself; the `Registry` erases the
+type, so persisted capture and output settings are `{ "kind": "...", ... }`
+and the engine and settings file name no adapter; the contract exporter
+publishes each adapter's settings schema. A push-style backend (a callback, a
+native capture thread) runs on an [`OwnerThread`](../../crates/engine/ports/src/owner.rs),
+which keeps only the newest frame for `next_frame`.
+
+A surface (`Surface<H>` in [surface.rs](../../crates/engine/runtime/src/surface.rs))
+gets an `EngineHandle` in a full host, or `()` under a
+[`Forwarder`](../../crates/engine/runtime/src/forwarder.rs): the session loop
+with a `FrameSink` in place of the processor and output, for a capture-only
+host such as the slim TV worker. A surface that fails is reported in the
+state; lighting goes on without it. A host is a builder list of adapters and
+surfaces, so a new capture source, LED driver or TV platform is a new adapter
+crate and one builder line.
+
 ## Commands and state
 
 - Commands (`SetTarget`, `ReplaceSettings`, `SetCalibration`) are handled one
@@ -37,9 +58,20 @@ of `prysm-core`.
 - State is one watched `Snapshot`: target, session state, settings and
   revision, last failure, input rate and latency, output issue, calibration.
   Observers always see the latest value, never a queue.
-- Settings changes are validated, persisted, then applied. Processing-only
-  changes reach a running session at the next frame. Capture or output
-  changes stop the session and start a new one.
+- Settings changes are validated, persisted, then applied, without a
+  process restart. Processing-only changes reach a running session at the
+  next frame. Capture or output changes (an LED count too) stop the session
+  and start a new one, the same path as off then on. If applying fails, the
+  settings stay saved and the state carries the failure.
+- A calibration pattern is not a session and not a setting: it is state
+  beside the target, shown only while the target is `processed` (otherwise
+  the command fails as `not_processed`). While it shows, the session runs
+  without smoothing (and without correction when `uncorrected`). It clears
+  when the target leaves `processed`, at shutdown, and after
+  `CALIBRATION_TIMEOUT` (10 minutes) without being set again. A processing
+  trial nobody tries again or saves ends after `TRIAL_TIMEOUT` (30 s).
+- The session only adds to shared counters; the engine samples them once a
+  second while a session runs for `input`.
 - The revision starts at a random value in each process, so a page holding a
   revision from before a restart gets a conflict.
 - Loaded settings that no longer validate are kept and reported as the
@@ -165,6 +197,6 @@ Every crate is under `crates/`, one folder per layer: `engine` (core types,
 processor, ports, runtime, wire protocol, TV link, version), `adapters`
 (sources, outputs, settings file, H.264, Luna and capture bindings),
 `surfaces`, `hosts`, `tools` (`export-contracts`: OpenAPI for frontend
-codegen; `xtask`). Outside it:
+codegen; `xtask`; `testkit`: what the tests share). Outside it:
 `frontend` (portal and TV bundles), `packaging` (Docker, Debian, IPKs).
 Contract ownership: [CONTRACTS.md](contracts.md).

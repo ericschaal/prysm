@@ -7,6 +7,7 @@ use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, FrameSink, LightingTarget, Modes, Settings};
 use prysm_runtime::fakes::{CallLog, FakeOutputSettings, FakeOutputs, MemoryStore};
 use prysm_runtime::{EngineHandle, Prysm, Shutdown};
+use prysm_testkit::{eventually, within_async};
 use prysm_web_portal::{Access, WebPortal};
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -120,14 +121,13 @@ async fn deliver(sender: RemoteSender, engine: &EngineHandle, count: u64) -> Rem
         .await
         .unwrap();
         sender = Some(moved);
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }
     sender.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_sender_streams_through_the_portal_once_lighting_runs() {
-    timeout(LIMIT, async {
+    within_async(LIMIT, async {
         let host = start(true).await;
         let remote = AdapterSettings::new("remote", &RAW);
         let modes = || host.engine.capture_modes(remote.clone());
@@ -149,17 +149,9 @@ async fn a_sender_streams_through_the_portal_once_lighting_runs() {
             .set_target(LightingTarget::Processed)
             .await
             .unwrap();
-        // The source opens with the session: retry as the TV does.
-        let deadline = Instant::now() + LIMIT;
-        let sender = loop {
-            match host.connect().await {
-                Ok(sender) => break sender,
-                Err(_) if Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                Err(error) => panic!("{error}"),
-            }
-        };
+        // The target is set once the session has opened its source, which
+        // receives from then on.
+        let sender = host.connect().await.unwrap();
         assert_eq!(sender.request(), RAW);
         let first = deliver(sender, &host.engine, 3).await;
 
@@ -168,22 +160,17 @@ async fn a_sender_streams_through_the_portal_once_lighting_runs() {
         deliver(second, &host.engine, 3).await;
         let ended = tokio::task::spawn_blocking(move || {
             let mut first = first;
-            let deadline = std::time::Instant::now() + LIMIT;
-            while first.tick().is_ok() {
-                assert!(std::time::Instant::now() < deadline, "the first kept going");
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            eventually("the replaced sender to stop", LIMIT, || first.tick().err());
         });
         ended.await.unwrap();
         host.shutdown().await;
     })
-    .await
-    .expect("test timed out");
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn browsers_from_other_sites_cannot_open_it_and_without_a_source_it_is_absent() {
-    timeout(LIMIT, async {
+    within_async(LIMIT, async {
         let host = start(true).await;
         host.engine
             .set_target(LightingTarget::Processed)
@@ -244,6 +231,5 @@ async fn browsers_from_other_sites_cannot_open_it_and_without_a_source_it_is_abs
         );
         host.shutdown().await;
     })
-    .await
-    .expect("test timed out");
+    .await;
 }

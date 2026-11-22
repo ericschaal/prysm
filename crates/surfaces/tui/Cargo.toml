@@ -19,6 +19,7 @@ crossterm = { version = "0.29", default-features = false, features = ["events", 
 
 [dev-dependencies]
 prysm-runtime = { workspace = true, features = ["testkit"] }
+prysm-testkit.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "macros"] }
 tempfile.workspace = true
 

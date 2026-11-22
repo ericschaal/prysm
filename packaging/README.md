@@ -121,7 +121,7 @@ does not work with it; use `device` or `remote`.
 
 ## webOS TV packages
 
-Two IPKs for a rooted LG TV ([design](../docs/plans/prysm-v1-webos-supervisor.md)),
+Two IPKs for a rooted LG TV ([how they run](../docs/developers/webos.md)),
 built by [`webos/build-ipk.sh`](webos/build-ipk.sh). Both are the app
 `io.github.ericschaal.prysm` with the service `io.github.ericschaal.prysm.service` and the same installed
 file names, so installing one replaces the other. Nothing detects or migrates

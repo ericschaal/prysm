@@ -4,6 +4,7 @@ use super::*;
 use crate::source::{Acquired, Backend, Fault, Limits, Recovery, Tap};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
+use prysm_testkit::{eventually, within};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
 use std::thread::{self, ThreadId};
@@ -41,24 +42,6 @@ fn ui_frame(value: u8) -> Frame {
     Frame::fill(value, 4, 2, PixelFormat::RGB24).unwrap()
 }
 
-fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
-    let (done, result) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = done.send(work());
-    });
-    result
-        .recv_timeout(LIMIT)
-        .expect("capture made no progress")
-}
-
-fn eventually(condition: impl Fn() -> bool) {
-    let deadline = Instant::now() + LIMIT;
-    while !condition() {
-        assert!(Instant::now() < deadline, "condition not reached");
-        thread::sleep(Duration::from_millis(1));
-    }
-}
-
 // ---- Scripted driver ----------------------------------------------------
 
 #[derive(Clone, Copy, Debug)]
@@ -91,6 +74,10 @@ struct Script {
     /// When each UI open was attempted.
     ui_opened_at: Vec<Instant>,
     ui_releases: usize,
+    /// How long each UI release takes, like a slow driver.
+    ui_release_delay: Duration,
+    /// When each UI release returned.
+    ui_released_at: Vec<Instant>,
     /// Taps open right now, and the most ever open together.
     open_taps: usize,
     most_open: usize,
@@ -133,6 +120,8 @@ impl Driver {
                 ui_opens: 0,
                 ui_opened_at: Vec::new(),
                 ui_releases: 0,
+                ui_release_delay: Duration::ZERO,
+                ui_released_at: Vec::new(),
                 open_taps: 0,
                 most_open: 0,
                 events: Vec::new(),
@@ -243,10 +232,14 @@ impl Tap for FakeUiTap {
     }
 
     fn release(self: Box<Self>) -> prysm_ports::Result<()> {
-        let mut script = self.0.enter("UI release");
+        let delay = self.0.enter("UI release").ui_release_delay;
+        // Simulated driver work, outside the script's lock.
+        thread::sleep(delay);
+        let mut script = self.0.script();
         script.ui_releases += 1;
         script.open_taps -= 1;
         script.record("UI release");
+        script.ui_released_at.push(Instant::now());
         Ok(())
     }
 }
@@ -364,7 +357,7 @@ fn waits_for_video_before_opening_the_tap() {
     let driver = Driver::new();
     let video = VideoSignal::default();
     video.set(Video::Unavailable);
-    let mut frames = within({
+    let mut frames = within(LIMIT, {
         let (driver, video) = (driver.clone(), video.clone());
         move || start(&driver, &video)
     });
@@ -388,7 +381,9 @@ fn losing_video_releases_the_tap_and_frames_resume() {
     assert_eq!(next(&mut frames).as_slice(), &[1; 96]);
 
     video.set(Video::Unavailable);
-    eventually(|| driver.count(|s| s.releases) == 1);
+    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
+        (driver.count(|s| s.releases) == 1).then_some(())
+    });
     assert!(frames.next_frame(SHORT).unwrap().is_idle());
     assert_eq!(driver.count(|s| s.opens), 1);
 
@@ -399,7 +394,9 @@ fn losing_video_releases_the_tap_and_frames_resume() {
 
     // A context change restarts the tap without losing the source.
     video.reset();
-    eventually(|| driver.count(|s| s.releases) == 2);
+    eventually("`driver.count(|s| s.releases) == 2`", LIMIT, || {
+        (driver.count(|s| s.releases) == 2).then_some(())
+    });
     driver.push([Step::Frame(3)]);
     assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
     assert_eq!(driver.count(|s| s.opens), 3);
@@ -413,7 +410,9 @@ fn newest_frame_wins() {
     driver.push([Step::Frame(1), Step::Frame(2), Step::Frame(3)]);
     let mut frames = start(&driver, &video);
     // All three are acquired before anything is taken; only the last remains.
-    eventually(|| driver.count(|s| s.acquires) > 3);
+    eventually("`driver.count(|s| s.acquires) > 3`", LIMIT, || {
+        (driver.count(|s| s.acquires) > 3).then_some(())
+    });
     assert_eq!(frames.pending_frame().unwrap().as_slice(), &[3; 96]);
     assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
     assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
@@ -463,7 +462,11 @@ fn stalled_producer_restarts_the_tap() {
     };
     let mut frames = start_with(&driver, &video, limits);
     assert_eq!(next(&mut frames).as_slice(), &[1; 96]);
-    eventually(|| driver.count(|s| s.releases) >= 1 && driver.count(|s| s.opens) >= 2);
+    eventually(
+        "`driver.count(|s| s.releases) >= 1 && driver.count(|s| s.opens) >= 2`",
+        LIMIT,
+        || (driver.count(|s| s.releases) >= 1 && driver.count(|s| s.opens) >= 2).then_some(()),
+    );
     driver.push([Step::Frame(2)]);
     assert_eq!(next(&mut frames).as_slice(), &[2; 96]);
     closes_cleanly(frames);
@@ -482,7 +485,9 @@ fn recoverable_failure_reopens_without_an_error() {
 
     driver.with(|s| s.open_fails = Some(Recovery::Reopen));
     video.reset();
-    eventually(|| driver.count(|s| s.opens) >= 4);
+    eventually("`driver.count(|s| s.opens) >= 4`", LIMIT, || {
+        (driver.count(|s| s.opens) >= 4).then_some(())
+    });
     assert!(
         frames.next_frame(SHORT).unwrap().is_idle(),
         "open retries quietly"
@@ -502,7 +507,9 @@ fn fatal_failure_propagates_with_its_cause_and_release_is_certified() {
         frames.next_frame(Duration::ZERO).is_err(),
         "failure is sticky"
     );
-    eventually(|| driver.count(|s| s.releases) == 1);
+    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
+        (driver.count(|s| s.releases) == 1).then_some(())
+    });
     closes_cleanly(frames);
 }
 
@@ -546,7 +553,9 @@ fn watchdog_reports_a_hung_native_call() {
     );
     // The driver returns late; the thread still releases the tap.
     driver.unhang();
-    eventually(|| driver.count(|s| s.releases) == 1);
+    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
+        (driver.count(|s| s.releases) == 1).then_some(())
+    });
 }
 
 // ---- TV UI without video -------------------------------------------------
@@ -587,9 +596,9 @@ fn ui_tap_replaces_video_only_while_there_is_none() {
         script.ui_opens == opens && script.events.last().unwrap().0 == "UI acquire"
     };
     video.set(Video::Unavailable);
-    eventually(|| captured(2));
+    eventually("`captured(2)`", LIMIT, || (captured(2)).then_some(()));
     video.reset();
-    eventually(|| captured(3));
+    eventually("`captured(3)`", LIMIT, || (captured(3)).then_some(()));
     closes_cleanly(frames);
 
     assert_eq!(driver.count(|s| s.most_open), 1, "two taps were open");
@@ -646,7 +655,9 @@ fn missing_ui_capture_is_unsupported_once() {
     video.set(Video::Unavailable);
     driver.with(|s| s.ui_open_fails = Some(true));
     let mut frames = start_ui(&driver, &video);
-    eventually(|| driver.count(|s| s.ui_opens) == 1);
+    eventually("`driver.count(|s| s.ui_opens) == 1`", LIMIT, || {
+        (driver.count(|s| s.ui_opens) == 1).then_some(())
+    });
     thread::sleep(TEST.ui_retry_max * 5);
     assert!(frames.next_frame(SHORT).unwrap().is_idle());
     assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
@@ -655,12 +666,42 @@ fn missing_ui_capture_is_unsupported_once() {
     video.set(Video::Available);
     assert_eq!(next(&mut frames).as_slice(), &[5; 96]);
     video.set(Video::Unavailable);
-    eventually(|| driver.count(|s| s.releases) == 1);
+    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
+        (driver.count(|s| s.releases) == 1).then_some(())
+    });
     thread::sleep(TEST.ui_retry_max * 5);
     assert!(frames.next_frame(SHORT).unwrap().is_idle());
     assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
     closes_cleanly(frames);
     assert_eq!(driver.count(|s| s.ui_releases), 0, "nothing was opened");
+}
+
+/// The wait before reopening counts from after the release: a release
+/// slower than the wait does not make the next open immediate.
+#[test]
+fn the_ui_retry_waits_from_after_a_slow_release() {
+    let limits = Limits {
+        ui_retry: Duration::from_millis(50),
+        ui_retry_max: Duration::from_secs(1),
+        ..TEST
+    };
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    driver.with(|s| {
+        s.ui_fail_once = true;
+        s.ui_release_delay = Duration::from_millis(100);
+    });
+    let frames = start_ui_with(&driver, &video, limits);
+    eventually("the reopen after the failed UI tap", LIMIT, || {
+        (driver.count(|s| s.ui_opens) >= 2).then_some(())
+    });
+    let script = driver.script();
+    // Lower bound only: a loaded host may wake late, never early.
+    let gap = script.ui_opened_at[1] - script.ui_released_at[0];
+    assert!(gap >= limits.ui_retry, "{gap:?} after the release");
+    drop(script);
+    closes_cleanly(frames);
 }
 
 #[test]
@@ -675,7 +716,9 @@ fn failing_ui_capture_is_retried_until_it_works() {
         ..TEST
     };
     let mut frames = start_ui_with(&driver, &video, limits);
-    eventually(|| driver.count(|s| s.ui_opens) >= 3);
+    eventually("`driver.count(|s| s.ui_opens) >= 3`", LIMIT, || {
+        (driver.count(|s| s.ui_opens) >= 3).then_some(())
+    });
     assert!(frames.next_frame(SHORT).unwrap().is_idle(), "no failure");
     driver.with(|s| s.ui_fails = false);
     assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
@@ -696,7 +739,9 @@ fn ui_capture_failing_through_the_longest_wait_is_unsupported() {
     video.set(Video::Unavailable);
     driver.with(|s| s.ui_open_fails = Some(false));
     let mut frames = start_ui(&driver, &video);
-    eventually(|| driver.count(|s| s.ui_opens) == 4);
+    eventually("`driver.count(|s| s.ui_opens) == 4`", LIMIT, || {
+        (driver.count(|s| s.ui_opens) == 4).then_some(())
+    });
     thread::sleep(TEST.ui_retry_max * 5);
     assert!(frames.next_frame(SHORT).unwrap().is_idle(), "no failure");
     assert_eq!(driver.count(|s| s.ui_opens), 4, "UI capture was retried");
@@ -734,7 +779,9 @@ fn ui_open_failures_wait_longer_each_time_and_a_frame_resets_the_wait() {
     video.set(Video::Unavailable);
     driver.with(|s| s.ui_open_fails = Some(false));
     let mut frames = start_ui_with(&driver, &video, limits);
-    eventually(|| driver.count(|s| s.ui_opens) >= 4);
+    eventually("`driver.count(|s| s.ui_opens) >= 4`", LIMIT, || {
+        (driver.count(|s| s.ui_opens) >= 4).then_some(())
+    });
     // Lower bounds only: a loaded host may wake late, never early.
     for (gap, wait) in ui_open_gaps(&driver, 0).into_iter().zip([50, 100, 200]) {
         assert!(gap >= Duration::from_millis(wait), "{gap:?} < {wait} ms");
@@ -749,7 +796,9 @@ fn ui_open_failures_wait_longer_each_time_and_a_frame_resets_the_wait() {
         s.ui_open_fails = Some(false);
         s.ui_fail_once = true;
     });
-    eventually(|| driver.count(|s| s.ui_opens) >= base + 2);
+    eventually("`driver.count(|s| s.ui_opens) >= base + 2`", LIMIT, || {
+        (driver.count(|s| s.ui_opens) >= base + 2).then_some(())
+    });
     let gap = ui_open_gaps(&driver, base)[0];
     assert!(
         gap >= Duration::from_millis(100) && gap < Duration::from_millis(400),
@@ -864,7 +913,9 @@ fn ui_fault_after_it_worked_reopens_without_an_error() {
     let mut frames = start_ui(&driver, &video);
     next(&mut frames);
     driver.with(|s| s.ui_fail_once = true);
-    eventually(|| driver.count(|s| s.ui_opens) == 2);
+    eventually("`driver.count(|s| s.ui_opens) == 2`", LIMIT, || {
+        (driver.count(|s| s.ui_opens) == 2).then_some(())
+    });
     assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
     assert_eq!(driver.count(|s| s.ui_releases), 1);
     closes_cleanly(frames);
@@ -951,7 +1002,9 @@ fn close_reports_unconfirmed_release_within_its_bound() {
         "{error}"
     );
     driver.unhang();
-    eventually(|| driver.count(|s| s.releases) == 1);
+    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
+        (driver.count(|s| s.releases) == 1).then_some(())
+    });
 }
 
 #[test]
@@ -962,7 +1015,9 @@ fn drop_without_close_still_releases() {
     let mut frames = start(&driver, &video);
     next(&mut frames);
     drop(frames);
-    eventually(|| driver.count(|s| s.releases) == 1);
+    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
+        (driver.count(|s| s.releases) == 1).then_some(())
+    });
 }
 
 /// Records its name when dropped.
@@ -1042,7 +1097,9 @@ fn real_backend_refuses_a_non_tv_host_without_hanging() {
     if cfg!(all(target_os = "linux", target_arch = "arm")) {
         return; // On a TV this would touch hardware; not a host test.
     }
-    let Err(error) = within(|| WebosCapture::default().start(&WebosSettings::default())) else {
+    let Err(error) = within(LIMIT, || {
+        WebosCapture::default().start(&WebosSettings::default())
+    }) else {
         panic!("a development host cannot capture TV video");
     };
     assert!(error.to_string().contains("LG webOS TV"), "{error}");

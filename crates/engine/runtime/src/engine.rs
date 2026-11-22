@@ -183,12 +183,14 @@ impl EngineHandle {
     }
 
     /// How many preview watches exist.
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn preview_viewers(&self) -> usize {
         self.feeds.preview.watchers()
     }
 
     /// How many colors watches exist.
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn colors_viewers(&self) -> usize {
         self.feeds.colors.watchers()

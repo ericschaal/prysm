@@ -174,6 +174,7 @@ pub struct Link {
 }
 
 /// The supervisor's end of an in-memory link, for tests.
+#[cfg(any(test, feature = "testkit"))]
 #[derive(Debug)]
 pub struct Peer {
     commands: Option<mpsc::UnboundedSender<Command>>,
@@ -181,6 +182,7 @@ pub struct Peer {
     stop: StopHandle,
 }
 
+#[cfg(any(test, feature = "testkit"))]
 impl Peer {
     pub fn send(&self, command: Command) {
         if let Some(commands) = &self.commands {
@@ -199,14 +201,19 @@ impl Peer {
         self.events.recv().await
     }
 
-    /// Wait up to five seconds for an event matching `want`.
-    pub async fn wait_for(&mut self, want: impl Fn(&Event) -> bool) -> Option<Event> {
+    /// The next event matching `want` (`what` describes it), skipping the
+    /// others, within five seconds.
+    ///
+    /// # Panics
+    /// None came in time, or the worker dropped its link first.
+    pub async fn wait_for(&mut self, what: &str, want: impl Fn(&Event) -> bool) -> Event {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             match tokio::time::timeout_at(deadline, self.event()).await {
-                Ok(Some(event)) if want(&event) => return Some(event),
+                Ok(Some(event)) if want(&event) => return event,
                 Ok(Some(_)) => {}
-                Ok(None) | Err(_) => return None,
+                Ok(None) => panic!("the link closed before {what}"),
+                Err(_) => panic!("no {what} within 5 s"),
             }
         }
     }
@@ -214,6 +221,7 @@ impl Peer {
 
 impl Link {
     /// An in-memory link and its supervisor end, for tests.
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn memory() -> (Self, Peer) {
         let stop = StopHandle::default();

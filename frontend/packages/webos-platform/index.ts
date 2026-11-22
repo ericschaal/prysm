@@ -2,7 +2,7 @@
  * The TV supervisor's Luna API (`luna://<APP_ID>.service`, both packages)
  * over the webOS service bridge. Values are the generated `luna` contract;
  * replies are checked before use because the bridge hands over plain text.
- * See docs/plans/prysm-v1-webos-supervisor.md §6.
+ * See docs/developers/webos.md, "Luna API".
  */
 import type {
   FailureKind,

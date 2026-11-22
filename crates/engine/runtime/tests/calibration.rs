@@ -15,16 +15,13 @@ use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
 use prysm_runtime::{CALIBRATION_TIMEOUT, Engine, EngineHandle};
-use std::future::Future;
+use prysm_testkit::{eventually_async, within_async};
 use std::time::Duration;
 
 const DEADLINE: Duration = Duration::from_secs(2);
 
-async fn within<T>(test: impl Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(20), test)
-        .await
-        .expect("test timed out")
-}
+/// How long a test may take.
+const LIMIT: Duration = Duration::from_secs(20);
 
 fn source(fill: u8, end_after: Option<u32>) -> FakeSourceSettings {
     FakeSourceSettings {
@@ -101,17 +98,10 @@ fn cast(handle: &EngineHandle) -> Option<f32> {
 /// Wait up to five seconds for the preview's cast to satisfy `done`.
 async fn wait_for_cast(handle: &EngineHandle, what: &str, done: impl Fn(f32) -> bool) {
     let _viewer = handle.preview();
-    let mut seen = None;
-    for _ in 0..1000 {
-        if let Some(cast) = cast(handle) {
-            if done(cast) {
-                return;
-            }
-            seen = Some(cast);
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("preview never became {what}; last red - blue {seen:?}");
+    eventually_async(what, Duration::from_secs(5), || {
+        cast(handle).filter(|&cast| done(cast)).map(drop)
+    })
+    .await;
 }
 
 fn neutral(cast: f32) -> bool {
@@ -124,7 +114,7 @@ fn cool(cast: f32) -> bool {
 
 #[tokio::test]
 async fn patterns_need_processed_lighting() {
-    within(async {
+    within_async(LIMIT, async {
         let store = MemoryStore::with(settings(None, &source(128, None)));
         let (handle, engine, log) = start(&store).await;
         for target in [LightingTarget::Off, LightingTarget::DeviceNative] {
@@ -146,7 +136,7 @@ async fn patterns_need_processed_lighting() {
 
 #[tokio::test]
 async fn set_switch_and_clear_leave_settings_and_revision_untouched() {
-    within(async {
+    within_async(LIMIT, async {
         let saved = settings(Some("cool"), &source(128, None));
         let store = MemoryStore::with(saved.clone());
         let (handle, engine, log) = start(&store).await;
@@ -181,7 +171,7 @@ async fn set_switch_and_clear_leave_settings_and_revision_untouched() {
 
 #[tokio::test]
 async fn uncorrected_shows_at_once_without_the_calibration_and_clearing_restores_it() {
-    within(async {
+    within_async(LIMIT, async {
         let store = MemoryStore::with(settings(Some("cool"), &source(128, None)));
         let (handle, engine, _) = start(&store).await;
         handle.set_target(LightingTarget::Processed).await.unwrap();
@@ -229,7 +219,7 @@ async fn green_levels(handle: &EngineHandle) -> usize {
 
 #[tokio::test]
 async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
-    within(async {
+    within_async(LIMIT, async {
         let blinking = FakeSourceSettings {
             blink: Some(64),
             ..source(160, None)
@@ -268,7 +258,7 @@ async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
 
 #[tokio::test]
 async fn leaving_processed_ending_and_shutdown_clear_the_pattern() {
-    within(async {
+    within_async(LIMIT, async {
         let store = MemoryStore::with(settings(None, &source(128, None)));
         let (handle, engine, _) = start(&store).await;
         for target in [LightingTarget::Off, LightingTarget::DeviceNative] {
@@ -311,7 +301,7 @@ async fn leaving_processed_ending_and_shutdown_clear_the_pattern() {
     .await;
 }
 
-/// Not under [`within`]: its deadline would expire with the paused clock.
+/// Not under [`within_async`]: its deadline would expire with the paused clock.
 #[tokio::test]
 async fn a_pattern_nobody_sets_again_expires() {
     {

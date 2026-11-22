@@ -675,25 +675,13 @@ mod tests {
         OutputIssue, Pattern, PrimaryControls, Processing, Result, SessionPhase, Settings, Span,
         Style, StyleValues, ValidationError,
     };
+    use prysm_testkit::assert_mirror_round_trips;
     use serde_json::json;
-
-    /// Each mirror reads what the ports type writes, and vice versa.
-    fn same_shape<P, M>(value: &P)
-    where
-        P: Serialize + serde::de::DeserializeOwned + PartialEq + fmt::Debug,
-        M: Serialize + serde::de::DeserializeOwned,
-    {
-        let json = serde_json::to_value(value).unwrap();
-        let mirror: M = serde_json::from_value(json.clone()).unwrap();
-        let back = serde_json::to_value(&mirror).unwrap();
-        assert_eq!(back, json);
-        assert_eq!(&serde_json::from_value::<P>(back).unwrap(), value);
-    }
 
     #[test]
     fn mirrors_match_ports_serialization() {
-        same_shape::<Settings, SettingsSchema>(&Settings::default());
-        same_shape::<Settings, SettingsSchema>(&Settings {
+        assert_mirror_round_trips::<Settings, SettingsSchema>(&Settings::default());
+        assert_mirror_round_trips::<Settings, SettingsSchema>(&Settings {
             capture: Some(AdapterSettings::new(
                 "device",
                 &json!({ "path": "/dev/video0" }),
@@ -704,7 +692,7 @@ mod tests {
             )),
             processing: Processing::default(),
         });
-        same_shape::<Settings, SettingsSchema>(&Settings {
+        assert_mirror_round_trips::<Settings, SettingsSchema>(&Settings {
             processing: Processing {
                 calibrations: vec![
                     Calibration {
@@ -739,7 +727,7 @@ mod tests {
             },
             ..Settings::default()
         });
-        same_shape::<Settings, SettingsSchema>(&Settings {
+        assert_mirror_round_trips::<Settings, SettingsSchema>(&Settings {
             processing: Processing {
                 style: Style::Custom,
                 custom_style: Some(StyleValues {
@@ -755,15 +743,15 @@ mod tests {
             ..Settings::default()
         });
         for style in Style::BUILT_IN.into_iter().chain([Style::Custom]) {
-            same_shape::<Style, StyleSchema>(&style);
+            assert_mirror_round_trips::<Style, StyleSchema>(&style);
         }
         for style in Style::BUILT_IN {
-            same_shape::<StyleValues, StyleValuesSchema>(&style.built_in().unwrap());
+            assert_mirror_round_trips::<StyleValues, StyleValuesSchema>(&style.built_in().unwrap());
         }
         for target in LightingTarget::ALL {
-            same_shape::<LightingTarget, LightingTargetSchema>(&target);
+            assert_mirror_round_trips::<LightingTarget, LightingTargetSchema>(&target);
         }
-        same_shape::<Input, InputSchema>(&Input {
+        assert_mirror_round_trips::<Input, InputSchema>(&Input {
             fps: 29.5,
             receiving: true,
             sent_fps: 29.5,
@@ -773,18 +761,18 @@ mod tests {
             }),
             behind: Behind::Output,
         });
-        same_shape::<Input, InputSchema>(&Input {
+        assert_mirror_round_trips::<Input, InputSchema>(&Input {
             behind: Behind::Processing,
             ..Input::default()
         });
-        same_shape::<Input, InputSchema>(&Input {
+        assert_mirror_round_trips::<Input, InputSchema>(&Input {
             latency: Some(Latency {
                 capture_ms: None,
                 output_ms: 4.0,
             }),
             ..Input::default()
         });
-        same_shape::<Input, InputSchema>(&Input::default());
+        assert_mirror_round_trips::<Input, InputSchema>(&Input::default());
         for issue in [
             OutputIssue::Off,
             OutputIssue::Overridden,
@@ -792,10 +780,10 @@ mod tests {
             OutputIssue::OtherSender,
             OutputIssue::Unreachable,
         ] {
-            same_shape::<OutputIssue, OutputIssueSchema>(&issue);
+            assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
         }
-        same_shape::<DeviceReport, DeviceReportSchema>(&DeviceReport::default());
-        same_shape::<DeviceReport, DeviceReportSchema>(&DeviceReport {
+        assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport::default());
+        assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport {
             issue: Some(OutputIssue::OtherSender),
             brightness: DeviceBrightness::from_percent(40),
             led_count: Some(120),
@@ -807,20 +795,20 @@ mod tests {
             SessionPhase::Finishing,
             SessionPhase::SourceUnreleased,
         ] {
-            same_shape::<SessionPhase, PhaseSchema>(&phase);
+            assert_mirror_round_trips::<SessionPhase, PhaseSchema>(&phase);
         }
-        same_shape::<Candidate, CandidateSchema>(&Candidate::new(
+        assert_mirror_round_trips::<Candidate, CandidateSchema>(&Candidate::new(
             "USB Video",
             &json!({ "path": "/dev/video0" }),
         ));
-        same_shape::<Candidate, CandidateSchema>(
+        assert_mirror_round_trips::<Candidate, CandidateSchema>(
             &Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))
                 .detail("192.168.1.40")
                 .led_count(120),
         );
-        same_shape::<Modes, ModesSchema>(&Modes::Unknown);
-        same_shape::<Modes, ModesSchema>(&Modes::Known(Vec::new()));
-        same_shape::<Modes, ModesSchema>(&Modes::Known(vec![
+        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Unknown);
+        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Known(Vec::new()));
+        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Known(vec![
             Mode::new(
                 Span::new(2, 1920, 2).unwrap(),
                 Span::new(2, 1080, 2).unwrap(),
@@ -829,10 +817,12 @@ mod tests {
             Mode::new(Span::exactly(640), Span::exactly(360), Span::exactly(30)),
         ]));
         for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
-            same_shape::<CalibrationPattern, CalibrationPatternSchema>(&CalibrationPattern {
-                pattern,
-                uncorrected: index % 2 == 0,
-            });
+            assert_mirror_round_trips::<CalibrationPattern, CalibrationPatternSchema>(
+                &CalibrationPattern {
+                    pattern,
+                    uncorrected: index % 2 == 0,
+                },
+            );
         }
     }
 

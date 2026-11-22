@@ -1,8 +1,9 @@
 /**
  * An in-memory TV supervisor behind a fake service bridge, so tests and the
  * demo pages run the real Luna client. It follows the supervisor's rules
- * (docs/plans/prysm-v1-webos-supervisor.md §5–6) loosely: no worker, power or
- * timing, but the same replies, validation messages and subscription.
+ * (docs/developers/webos.md: the state machine and the Luna API) loosely:
+ * no worker, power or timing, but the same replies, validation messages and
+ * subscription.
  */
 import {
   APP_ID,

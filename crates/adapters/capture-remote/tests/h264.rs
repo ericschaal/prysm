@@ -1,16 +1,17 @@
 //! H.264 streams on loopback over WebSocket with the software encoder: round
 //! trip, recovery, keyframe requests, the stopped close and refusal. Every
 //! wait is bounded.
-use prysm_capture_remote::testkit::{BOUND, Portal};
+use prysm_capture_remote::testkit::{BOUND, Portal, failure, receive, try_receive};
 use prysm_capture_remote::{
     Close, RemoteSender, RemoteSettings, RemoteSource, StreamEncoding, WireError,
 };
 use prysm_core::Frame;
 use prysm_h264::{Backend, Encoder, EncoderSettings, FORMAT, H264Error};
 use prysm_ports::{FrameSink, FrameSource};
+use prysm_testkit::eventually;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
@@ -93,24 +94,6 @@ fn mean_error(a: &Frame, b: &Frame) -> f64 {
         .map(|(a, b)| u64::from(a.abs_diff(*b)))
         .sum();
     sum as f64 / a.len() as f64
-}
-
-fn receive(source: &mut RemoteSource) -> Frame {
-    try_receive(source, BOUND).unwrap_or_else(|| panic!("no frame within {BOUND:?}"))
-}
-
-fn try_receive(source: &mut RemoteSource, within: Duration) -> Option<Frame> {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
-        if let Some(frame) = source
-            .next_frame(Duration::from_millis(20))
-            .unwrap()
-            .into_frame()
-        {
-            return Some(frame);
-        }
-    }
-    None
 }
 
 /// Send, then wait until the receiver produced that frame (frames are not
@@ -278,14 +261,7 @@ fn a_broken_keyframe_fails_the_source() {
     let mut client = Client::connect(&portal);
     let broken = nv12_message(true, 64, 32, b"\x00\x00\x01\x65\x00");
     client.socket.send(Message::binary(broken)).unwrap();
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "the source never failed");
-        match source.next_frame(Duration::from_millis(20)) {
-            Err(error) => break error,
-            Ok(pull) => assert!(pull.is_idle(), "a frame was produced"),
-        }
-    };
+    let error = failure(&mut source);
     assert!(error.cause::<H264Error>().is_some(), "{error}");
     assert_eq!(
         prysm_ports::Error::to_string(&error),
@@ -333,15 +309,10 @@ impl Recorder {
         sender: &mut RemoteSender,
         next: &mut impl Iterator<Item = Frame>,
     ) {
-        let deadline = Instant::now() + BOUND;
-        loop {
+        eventually("a keyframe", BOUND, || {
             sender.send(&next.next().unwrap()).unwrap();
-            if self.frame() {
-                return;
-            }
-            assert!(Instant::now() < deadline, "no keyframe within {BOUND:?}");
-            thread::sleep(Duration::from_millis(5));
-        }
+            self.frame().then_some(())
+        });
     }
 }
 
@@ -374,14 +345,7 @@ fn a_keyframe_request_starts_a_new_session_and_unknown_types_are_ignored() {
 
     // Text that is not a command fails the connection.
     recorder.command("jump");
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "the sender never read it");
-        if let Err(error) = sender.tick() {
-            break error;
-        }
-        thread::sleep(Duration::from_millis(5));
-    };
+    let error = eventually("the sender to read it", BOUND, || sender.tick().err());
     assert!(
         matches!(error.cause::<WireError>(), Some(WireError::Json(_))),
         "{error}"
@@ -395,14 +359,7 @@ fn close_stops_the_sender() {
     let mut sender = portal.connect().unwrap();
     round_trip(&mut sender, &mut source, &picture(64, 32, 0));
     Box::new(source).close().unwrap();
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "the sender never noticed");
-        if let Err(error) = sender.tick() {
-            break error;
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
+    let error = eventually("the sender to notice", BOUND, || sender.tick().err());
     assert_eq!(
         error.cause::<WireError>(),
         Some(&WireError::Closed(Some(Close::Stopped)))
@@ -422,14 +379,7 @@ fn an_unavailable_hardware_encoder_is_refused_without_switching() {
     assert_eq!(sender.request().encoding, StreamEncoding::H264Hardware);
     let error = sender.send(&picture(64, 32, 0)).unwrap_err();
     assert!(error.cause::<H264Error>().is_some(), "{error}");
-    let deadline = Instant::now() + BOUND;
-    let refused = loop {
-        assert!(Instant::now() < deadline, "no refusal");
-        match source.next_frame(Duration::from_millis(20)) {
-            Err(error) => break error,
-            Ok(pull) => assert!(pull.is_idle(), "a frame was sent"),
-        }
-    };
+    let refused = failure(&mut source);
     // The encoding is named as the setting the sender cannot produce.
     let prysm_ports::Error::Invalid(invalid) = &refused else {
         panic!("{refused:?}");
@@ -453,9 +403,6 @@ fn h264_of_other_pixels_is_refused() {
     let mut sender = portal.connect().unwrap();
     let error = sender.send(&Frame::dummy(16, 16).unwrap()).unwrap_err();
     assert!(error.cause::<H264Error>().is_some(), "{error}");
-    let deadline = Instant::now() + BOUND;
-    while source.next_frame(Duration::from_millis(20)).is_ok() {
-        assert!(Instant::now() < deadline, "no refusal");
-    }
+    failure(&mut source);
     Box::new(source).close().unwrap();
 }

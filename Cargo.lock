@@ -1892,6 +1892,7 @@ dependencies = [
  "prysm-capture-device-sys",
  "prysm-core",
  "prysm-ports",
+ "prysm-testkit",
  "serde",
  "serde_json",
  "utoipa",
@@ -1926,6 +1927,7 @@ dependencies = [
  "nix",
  "prysm-core",
  "prysm-ports",
+ "prysm-testkit",
  "serde",
  "serde_json",
  "tempfile",
@@ -1944,6 +1946,7 @@ dependencies = [
  "prysm-h264",
  "prysm-ports",
  "prysm-runtime",
+ "prysm-testkit",
  "prysm-version",
  "rustls",
  "rustls-native-certs",
@@ -1964,6 +1967,7 @@ dependencies = [
  "prysm-capture-webos-sys",
  "prysm-core",
  "prysm-ports",
+ "prysm-testkit",
  "prysm-webos-link",
  "prysm-webos-luna-sys",
  "serde",
@@ -2048,7 +2052,7 @@ dependencies = [
  "prysm-ports",
  "prysm-runtime",
  "prysm-settings-file",
- "prysm-version",
+ "prysm-testkit",
  "serde",
  "serde_json",
  "tempfile",
@@ -2079,6 +2083,7 @@ dependencies = [
  "ddp-rs",
  "prysm-core",
  "prysm-ports",
+ "prysm-testkit",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2111,6 +2116,7 @@ name = "prysm-protocol"
 version = "0.0.0"
 dependencies = [
  "prysm-ports",
+ "prysm-testkit",
  "prysm-version",
  "serde",
  "serde_json",
@@ -2126,6 +2132,7 @@ dependencies = [
  "prysm-ports",
  "prysm-processor",
  "prysm-runtime",
+ "prysm-testkit",
  "serde",
  "tokio",
  "tracing",
@@ -2152,10 +2159,23 @@ dependencies = [
  "prysm-core",
  "prysm-ports",
  "prysm-runtime",
+ "prysm-testkit",
  "ratatui",
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "prysm-testkit"
+version = "0.0.0"
+dependencies = [
+ "prysm-version",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "utoipa",
 ]
 
 [[package]]
@@ -2171,7 +2191,7 @@ dependencies = [
  "prysm-runtime",
  "prysm-settings-file",
  "prysm-surface-tui",
- "prysm-version",
+ "prysm-testkit",
  "tempfile",
  "tokio",
 ]
@@ -2196,6 +2216,7 @@ dependencies = [
  "prysm-ports",
  "prysm-protocol",
  "prysm-runtime",
+ "prysm-testkit",
  "prysm-version",
  "reqwest",
  "serde",
@@ -2216,6 +2237,7 @@ dependencies = [
  "prysm-ports",
  "prysm-runtime",
  "prysm-settings-file",
+ "prysm-testkit",
  "prysm-web-portal",
  "prysm-webos-link",
  "serde_json",
@@ -2254,9 +2276,11 @@ dependencies = [
  "clap",
  "nix",
  "prysm-ports",
+ "prysm-testkit",
  "prysm-version",
  "prysm-webos-link",
  "prysm-webos-luna-sys",
+ "prysm-webos-service",
  "serde",
  "serde_json",
  "signal-hook 0.4.6",
@@ -2277,6 +2301,7 @@ dependencies = [
  "prysm-h264",
  "prysm-ports",
  "prysm-runtime",
+ "prysm-testkit",
  "prysm-webos-link",
  "serde_json",
  "tokio",

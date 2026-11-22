@@ -11,9 +11,17 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 
-#[derive(Debug, Clone, Default)]
-pub struct CallLog(Arc<Mutex<Vec<String>>>);
+/// The calls recorded so far, in order; waiters wake at each new one.
+#[derive(Debug, Clone)]
+pub struct CallLog(Arc<watch::Sender<Vec<String>>>);
+
+impl Default for CallLog {
+    fn default() -> Self {
+        Self(Arc::new(watch::Sender::new(Vec::new())))
+    }
+}
 
 impl CallLog {
     #[must_use]
@@ -23,18 +31,12 @@ impl CallLog {
 
     pub fn record(&self, event: impl Into<String>) {
         let event = event.into();
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(event);
+        self.0.send_modify(|events| events.push(event));
     }
 
     #[must_use]
     pub fn events(&self) -> Vec<String> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.0.borrow().clone()
     }
 
     #[must_use]
@@ -54,14 +56,20 @@ impl CallLog {
 
     /// Wait up to five seconds for `event` to have happened `times` times.
     pub async fn wait_for(&self, event: &str, times: usize) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if self.count(event) >= times {
-                return true;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        false
+        self.wait_until(|events| events.iter().filter(|e| *e == event).count() >= times)
+            .await
+    }
+
+    /// Wait up to five seconds, woken at each call, for `done` to hold for
+    /// the calls so far; whether it did. The five seconds are tokio's: under
+    /// a paused clock they pass as soon as the runtime idles while a fake
+    /// works on its own thread, so wait with the clock running.
+    pub async fn wait_until(&self, done: impl Fn(&[String]) -> bool) -> bool {
+        let mut calls = self.0.subscribe();
+        let happened = calls.wait_for(|events| done(events));
+        tokio::time::timeout(Duration::from_secs(5), happened)
+            .await
+            .is_ok()
     }
 }
 
@@ -107,6 +115,16 @@ pub struct FakeSourceSettings {
     pub height: u32,
 }
 
+impl FakeSourceSettings {
+    /// `width` × `height`, or 16 × 9 when either is 0.
+    fn frame_size(&self) -> (u32, u32) {
+        match (self.width, self.height) {
+            (0, _) | (_, 0) => (16, 9),
+            size => size,
+        }
+    }
+}
+
 /// Frames per `blink` phase of a [`FakeSource`].
 pub const BLINK_FRAMES: u32 = 25;
 
@@ -137,12 +155,13 @@ impl SourceFactory for FakeSources {
         Ok(Box::new(FakeSource::new(&self.0, settings.clone())))
     }
 
-    /// 16 × 9 at 1 to 60 fps, whatever the settings.
-    fn modes(&self, _: &FakeSourceSettings) -> Modes {
+    /// The frame size the settings give, at 1 to 60 fps.
+    fn modes(&self, settings: &FakeSourceSettings) -> Modes {
         self.0.record("source.modes");
+        let (width, height) = settings.frame_size();
         Modes::from(Mode::new(
-            Span::exactly(16),
-            Span::exactly(9),
+            Span::exactly(width),
+            Span::exactly(height),
             Span::new(1, 60, 1).expect("a span"),
         ))
     }
@@ -205,10 +224,7 @@ impl FrameSource for FakeSource {
             .settings
             .captured_ago_ms
             .and_then(|ago| Instant::now().checked_sub(Duration::from_millis(ago)));
-        let (width, height) = match (self.settings.width, self.settings.height) {
-            (0, _) | (_, 0) => (16, 9),
-            size => size,
-        };
+        let (width, height) = self.settings.frame_size();
         Frame::fill(fill, width, height, PixelFormat::RGB24)
             .map(|frame| Pull::Frame(frame.with_captured(captured)))
             .map_err(|error| Error::adapter("fake frame", error))
@@ -270,6 +286,8 @@ impl OutputFactory for FakeOutputs {
 
     fn open(&self, settings: &FakeOutputSettings) -> Result<Box<dyn LedOutput>> {
         if settings.fail_open {
+            self.0
+                .record(format!("output.open_failed:{}", settings.name));
             return Err(Error::other("fake output cannot open"));
         }
         self.0.record(format!("output.open:{}", settings.name));
@@ -412,15 +430,6 @@ pub fn settings() -> Settings {
 /// Lighting could not start.
 pub async fn light_until_shutdown(engine: EngineHandle, shutdown: Shutdown) -> Result<()> {
     engine.set_target(LightingTarget::Processed).await?;
-    shutdown.requested().await;
-    Ok(())
-}
-
-/// A surface that only waits for shutdown, under an engine or a forwarder.
-///
-/// # Errors
-/// Never.
-pub async fn until_shutdown<H>(_handle: H, shutdown: Shutdown) -> Result<()> {
     shutdown.requested().await;
     Ok(())
 }

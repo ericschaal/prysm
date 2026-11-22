@@ -90,10 +90,12 @@ pub trait PreferencesStore {
     fn remember(&mut self, intent: LightingTarget) -> Result<(), StoreError>;
 }
 
-/// In memory, for tests and probes: preferences and the remembered intent.
+/// In memory, for tests: preferences and the remembered intent.
+#[cfg(any(test, feature = "testkit"))]
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStore(pub Option<Preferences>, pub Option<LightingTarget>);
 
+#[cfg(any(test, feature = "testkit"))]
 impl PreferencesStore for MemoryStore {
     fn load(&mut self) -> Result<Option<Preferences>, StoreError> {
         Ok(self.0.clone())

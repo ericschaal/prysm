@@ -1,21 +1,14 @@
 //! The built `prysm-webos` binary on the development host: argv, events on
 //! stdout, exit codes. The LG backend is never opened (lighting stays off).
+use prysm_testkit::wait_child;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_prysm-webos");
 
-fn wait(child: &mut std::process::Child) -> i32 {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            return status.code().expect("exit code");
-        }
-        assert!(Instant::now() < deadline, "worker did not exit");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
+/// How long the worker may take to exit; it is killed then.
+const EXIT: Duration = Duration::from_secs(10);
 
 #[test]
 fn bad_arguments_exit_with_usage() {
@@ -60,7 +53,12 @@ fn reports_status_and_stops_on_stdin_eof() {
     );
 
     drop(child.stdin.take());
-    assert_eq!(wait(&mut child), 0);
+    assert_eq!(
+        wait_child(&mut child, EXIT)
+            .expect("the worker exits")
+            .code(),
+        Some(0)
+    );
 }
 
 #[test]
@@ -72,5 +70,10 @@ fn a_garbage_command_fails_the_worker() {
     events.read_line(&mut line).unwrap();
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"{\"type\":\"reboot\"}\n").unwrap();
-    assert_eq!(wait(&mut child), 1);
+    assert_eq!(
+        wait_child(&mut child, EXIT)
+            .expect("the worker exits")
+            .code(),
+        Some(1)
+    );
 }

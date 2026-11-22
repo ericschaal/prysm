@@ -207,34 +207,21 @@ mod tests {
     use prysm_webos_link::{
         FailureKind, LightingTarget, SlimEncoding, SlimLink, Video, WorkerFailure,
     };
-    use serde::de::DeserializeOwned;
-    use serde_json::{Value, json};
-    use std::fmt;
 
-    /// Each mirror reads what the real type writes, and vice versa.
-    fn same_shape<P, M>(value: &P)
-    where
-        P: Serialize + DeserializeOwned + PartialEq + fmt::Debug,
-        M: Serialize + DeserializeOwned,
-    {
-        let json = serde_json::to_value(value).unwrap();
-        let mirror: M = serde_json::from_value(json.clone()).unwrap();
-        let back = serde_json::to_value(&mirror).unwrap();
-        assert_eq!(back, json);
-        assert_eq!(&serde_json::from_value::<P>(back).unwrap(), value);
-    }
+    use prysm_testkit::assert_mirror_round_trips;
+    use serde_json::{Value, json};
 
     #[test]
     fn mirrors_match_the_wire_types() {
         for video in [Video::Unknown, Video::Unavailable, Video::Available] {
-            same_shape::<Video, VideoSchema>(&video);
+            assert_mirror_round_trips::<Video, VideoSchema>(&video);
         }
         for target in [
             LightingTarget::Off,
             LightingTarget::Processed,
             LightingTarget::DeviceNative,
         ] {
-            same_shape::<LightingTarget, LightingTargetSchema>(&target);
+            assert_mirror_round_trips::<LightingTarget, LightingTargetSchema>(&target);
         }
         for kind in [
             FailureKind::Encoder,
@@ -243,16 +230,21 @@ mod tests {
             FailureKind::Replaced,
             FailureKind::Other,
         ] {
-            same_shape::<FailureKind, FailureKindSchema>(&kind);
-            same_shape::<WorkerFailure, WorkerFailureSchema>(&WorkerFailure::new(kind, "x"));
+            assert_mirror_round_trips::<FailureKind, FailureKindSchema>(&kind);
+            assert_mirror_round_trips::<WorkerFailure, WorkerFailureSchema>(&WorkerFailure::new(
+                kind, "x",
+            ));
         }
         for encoding in [
             SlimEncoding::H264Hardware,
             SlimEncoding::H264Software,
             SlimEncoding::Raw,
         ] {
-            same_shape::<SlimEncoding, SlimEncodingSchema>(&encoding);
-            same_shape::<SlimLink, SlimLinkSchema>(&SlimLink::Sending { encoding, fps: 30 });
+            assert_mirror_round_trips::<SlimEncoding, SlimEncodingSchema>(&encoding);
+            assert_mirror_round_trips::<SlimLink, SlimLinkSchema>(&SlimLink::Sending {
+                encoding,
+                fps: 30,
+            });
         }
         for link in [
             SlimLink::Starting {},
@@ -264,7 +256,7 @@ mod tests {
                 failure: WorkerFailure::new(FailureKind::Encoder, "x"),
             },
         ] {
-            same_shape::<SlimLink, SlimLinkSchema>(&link);
+            assert_mirror_round_trips::<SlimLink, SlimLinkSchema>(&link);
         }
     }
 

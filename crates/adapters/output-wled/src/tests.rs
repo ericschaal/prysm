@@ -1,7 +1,7 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
 use crate::address::{DeviceAddress, Host};
 use crate::ddp::{Gamma, Transfer};
-use crate::observe::Observer;
+use crate::observe::{BACKOFF, EVERY, Observer, REPLY};
 use crate::output::NotTurnedOff;
 use crate::{LedCounts, MAX_LEDS, Wled, WledSettings, http::RequestError};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
@@ -9,6 +9,7 @@ use prysm_ports::{
     AdapterSettings, DeviceBrightness, Error, IdleMode, LedOutput, OutputFactory, OutputIssue,
     Registry,
 };
+use prysm_testkit::eventually;
 use serde_json::{Value, json};
 use std::error::Error as _;
 use std::io::{self, ErrorKind, Read, Write};
@@ -51,17 +52,11 @@ impl Device {
         let (sender, calls) = mpsc::channel();
         thread::spawn(move || {
             for reply in replies {
-                let deadline = Instant::now() + WAIT;
-                let mut socket = loop {
-                    match listener.accept() {
-                        Ok((socket, _)) => break socket,
-                        Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                            assert!(Instant::now() < deadline, "no connection");
-                            thread::sleep(Duration::from_millis(5));
-                        }
-                        Err(error) => panic!("{error}"),
-                    }
-                };
+                let mut socket = eventually("a connection", WAIT, || match listener.accept() {
+                    Ok((socket, _)) => Some(socket),
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => None,
+                    Err(error) => panic!("{error}"),
+                });
                 socket.set_nonblocking(false).unwrap();
                 socket.set_read_timeout(Some(WAIT)).unwrap();
                 let (head, json) = read_request(&mut socket);
@@ -96,10 +91,19 @@ impl Device {
         self.observer_with_config().state_only()
     }
 
+    /// The HTTP fixture's address.
+    fn http(&self) -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], self.http_port))
+    }
+
     /// An observer that also reads the configuration, as an open output's.
     fn observer_with_config(&self) -> Observer {
-        let device = SocketAddr::from(([127, 0, 0, 1], self.http_port));
-        Observer::new(device, &self.address("127.0.0.1"), Duration::ZERO)
+        Observer::new(
+            self.http(),
+            &self.address("127.0.0.1"),
+            Duration::ZERO,
+            Instant::now(),
+        )
     }
 
     /// The next request must be a state check.
@@ -697,16 +701,22 @@ fn sender(lip: &str) -> Reply {
     )
 }
 
-/// Run one state check to its end; what it found.
-fn check(observer: &mut Observer) -> Option<OutputIssue> {
-    let deadline = Instant::now() + WAIT;
-    let mut issue = observer.poll();
-    while observer.checking() {
-        assert!(Instant::now() < deadline, "check never finished");
-        thread::sleep(Duration::from_millis(2));
-        issue = observer.poll();
+/// Run one check to its end with the clock at `now` (the reply is read as
+/// it arrives); what it found.
+fn check_at(observer: &mut Observer, now: Instant) -> Option<OutputIssue> {
+    let issue = observer.poll(now);
+    if !observer.checking() {
+        return issue;
     }
-    issue
+    eventually("the check's reply", WAIT, || {
+        let issue = observer.poll(now);
+        (!observer.checking()).then_some(issue)
+    })
+}
+
+/// Run one check to its end now.
+fn check(observer: &mut Observer) -> Option<OutputIssue> {
+    check_at(observer, Instant::now())
 }
 
 #[test]
@@ -803,16 +813,16 @@ fn the_sender_address_behind_nat_is_learned_from_wled() {
     assert_eq!(found, [None, None, Some(OutputIssue::OtherSender)]);
 }
 
+/// The check fails in the poll that starts it: no reply is waited for.
 #[test]
 fn an_unreachable_state_endpoint_is_reported_at_once() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let device = listener.local_addr().unwrap();
     drop(listener);
-    let mut observer = Observer::new(device, "wled", Duration::ZERO);
-    let started = Instant::now();
-    assert_eq!(observer.poll(), Some(OutputIssue::Unreachable));
+    let t0 = Instant::now();
+    let mut observer = Observer::new(device, "wled", Duration::ZERO, t0);
+    assert_eq!(observer.poll(t0), Some(OutputIssue::Unreachable));
     assert!(!observer.checking());
-    assert!(started.elapsed() < Duration::from_millis(250));
 }
 
 /// State checks allow 64 KiB, more than the 20 KiB of other requests:
@@ -832,30 +842,87 @@ fn a_state_reply_may_hold_up_to_64_kib() {
 }
 
 /// A reply that arrives a byte at a time cannot keep a check open past its
-/// deadline.
+/// deadline, [`REPLY`] after the request.
 #[test]
 fn a_dripping_state_reply_is_abandoned_at_the_deadline() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
+    let (dripped, head_written) = mpsc::channel();
     thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         let _ = socket.read(&mut [0; 1024]);
         let head = b"HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n";
-        for byte in head.iter().chain(std::iter::repeat(&b' ')) {
+        for (written, byte) in head.iter().chain(std::iter::repeat(&b' ')).enumerate() {
             if socket.write_all(&[*byte]).is_err() {
                 return;
+            }
+            if written + 1 == head.len() {
+                let _ = dripped.send(());
             }
             thread::sleep(Duration::from_millis(10));
         }
     });
-    let mut observer = Observer::new(address, "wled", Duration::ZERO);
-    let started = Instant::now();
-    assert_eq!(check(&mut observer), Some(OutputIssue::Unreachable));
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        started.elapsed()
+    let t0 = Instant::now();
+    let mut observer = Observer::new(address, "wled", Duration::ZERO, t0);
+    assert_eq!(observer.poll(t0), None, "sent");
+    assert!(observer.checking());
+    // The whole head has dripped in, a byte at a time; the body never ends.
+    head_written.recv_timeout(WAIT).expect("the reply began");
+    let before = t0 + REPLY - Duration::from_millis(1);
+    assert_eq!(observer.poll(before), None);
+    assert!(observer.checking(), "still reading before the deadline");
+    assert_eq!(observer.poll(t0 + REPLY), Some(OutputIssue::Unreachable));
+    assert!(!observer.checking());
+}
+
+/// After a usable state the next check is [`EVERY`] later; after none,
+/// [`BACKOFF`] times that.
+#[test]
+fn state_checks_wait_every_and_back_off_after_no_answer() {
+    let every = EVERY;
+    let just = Duration::from_millis(1);
+    let device = Device::new(vec![healthy(), Reply::Raw(String::new()), healthy()]);
+    let t0 = Instant::now();
+    let mut observer =
+        Observer::new(device.http(), &device.address("127.0.0.1"), every, t0).state_only();
+    let mut answered = t0;
+    // The first check is `every` after the observer starts.
+    for (wait, found) in [
+        (every, None),
+        (every, Some(OutputIssue::Unreachable)),
+        (every * BACKOFF, None),
+    ] {
+        let due = answered + wait;
+        observer.poll(due - just);
+        assert!(!observer.checking(), "a check before it was due");
+        assert_eq!(check_at(&mut observer, due), found);
+        device.check_request();
+        answered = due;
+    }
+}
+
+/// A configuration read that WLED refuses backs the next check off too.
+#[test]
+fn a_refused_configuration_read_backs_off() {
+    let every = EVERY;
+    let device = Device::new(vec![at(255), refused(), at(255)]);
+    let t0 = Instant::now();
+    let mut observer = Observer::new(device.http(), &device.address("127.0.0.1"), every, t0);
+    let first = t0 + every;
+    assert_eq!(check_at(&mut observer, first), None);
+    device.check_request();
+    let second = first + every;
+    assert_eq!(
+        check_at(&mut observer, second),
+        None,
+        "a refusal is no issue"
     );
+    device.get_request("/json/cfg");
+    let third = second + every * BACKOFF;
+    observer.poll(third - Duration::from_millis(1));
+    assert!(!observer.checking(), "backed off");
+    assert_eq!(check_at(&mut observer, third), None);
+    device.check_request();
 }
 
 #[test]
@@ -929,15 +996,10 @@ fn findings_survive_until_the_next_check_and_idle_still_restores() {
     ]);
     let mut output = device.open(one_each()).unwrap();
     device.expect(&[release(), live()]);
-    let deadline = Instant::now() + WAIT;
-    while output.observe() != Some(OutputIssue::Off) {
-        assert!(
-            Instant::now() < deadline,
-            "WLED switched off was not reported"
-        );
+    eventually("WLED switched off to be reported", WAIT, || {
         output.write(&EdgeColors::default()).unwrap();
-        thread::sleep(Duration::from_millis(2));
-    }
+        (output.observe() == Some(OutputIssue::Off)).then_some(())
+    });
     device.check_request();
     output.idle(IdleMode::Off).unwrap();
     device.expect(&[release(), off()]);
@@ -1072,16 +1134,11 @@ fn an_open_output_reports_wled_brightness() {
     ]);
     let mut output = device.open(one_each()).unwrap();
     device.expect(&[release(), live()]);
-    let deadline = Instant::now() + WAIT;
-    while output.brightness().is_none() {
-        assert!(
-            Instant::now() < deadline,
-            "WLED brightness was not reported"
-        );
+    eventually("WLED brightness to be reported", WAIT, || {
         output.write(&EdgeColors::default()).unwrap();
         assert_eq!(output.observe(), None);
-        thread::sleep(Duration::from_millis(2));
-    }
+        output.brightness()
+    });
     assert_eq!(output.brightness(), percent(40));
     device.check_request();
     device.get_request("/json/cfg");
@@ -1132,13 +1189,11 @@ fn an_open_output_reports_wled_led_count_and_keeps_sending() {
     let mut output = device.open(one_each()).unwrap();
     device.expect(&[release(), live()]);
     assert_eq!(output.device_led_count(), None, "unknown before a check");
-    let deadline = Instant::now() + WAIT;
-    while output.device_led_count().is_none() {
-        assert!(Instant::now() < deadline, "WLED LED count was not reported");
+    eventually("the WLED LED count to be reported", WAIT, || {
         output.write(&EdgeColors::default()).unwrap();
         assert_eq!(output.observe(), None);
-        thread::sleep(Duration::from_millis(2));
-    }
+        output.device_led_count()
+    });
     // Four LEDs sent, 120 on the device: reported, and writing goes on.
     assert_eq!(output.device_led_count(), Some(120));
     output.write(&EdgeColors::default()).unwrap();
@@ -1260,12 +1315,10 @@ fn an_open_output_encodes_for_wled_gamma() {
         ]);
         let mut output = device.open_with(one_each(), dither).unwrap();
         device.expect(&[release(), live()]);
-        let deadline = Instant::now() + WAIT;
-        while output.brightness().is_none() {
-            assert!(Instant::now() < deadline, "WLED configuration was not read");
+        eventually("the WLED configuration to be read", WAIT, || {
             assert_eq!(output.observe(), None);
-            thread::sleep(Duration::from_millis(2));
-        }
+            output.brightness()
+        });
         let color = fill(0.18, 0.0, 1.0);
         output
             .write(&EdgeColors::new(

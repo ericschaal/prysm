@@ -18,6 +18,7 @@ serde.workspace = true
 utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
+prysm-testkit.workspace = true
 anyhow = "1"
 serde_json.workspace = true
 

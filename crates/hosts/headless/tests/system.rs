@@ -6,13 +6,11 @@
 //! The binary sends DDP to port 4048, which it does not let settings change,
 //! so the fake WLED binds 127.0.0.1:4048 and the tests that use it take
 //! [`wled_lock`] one at a time. Nothing leaves 127.0.0.1.
-#[path = "../../common/tests/launch/mod.rs"]
-mod launch;
 
-use launch::{Host, Reply, TIMEOUT, get, null_settings, put_target, request};
 use prysm_capture_remote::RemoteSender;
 use prysm_capture_remote::testkit::{in_test_ca_process, tls_proxy};
 use prysm_core::{Frame, PixelFormat};
+use prysm_testkit::host::{Host, Reply, TIMEOUT, get, null_settings, put_target, request};
 use serde_json::{Value, json};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -67,20 +65,12 @@ fn state(port: u16) -> Value {
     serde_json::from_str(&body).unwrap()
 }
 
-/// The state once `ready` holds; panics with the last state after [`TIMEOUT`].
+/// The state once `ready` holds, read from the host's portal.
 fn wait_for_state(port: u16, what: &str, ready: impl Fn(&Value) -> bool) -> Value {
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
+    prysm_testkit::eventually_or(what, TIMEOUT, || {
         let state = state(port);
-        if ready(&state) {
-            return state;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "never {what}; last state {state:#}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+        if ready(&state) { Ok(state) } else { Err(state) }
+    })
 }
 
 fn session(state: &Value) -> &str {

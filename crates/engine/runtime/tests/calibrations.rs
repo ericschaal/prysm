@@ -14,16 +14,13 @@ use prysm_runtime::EngineHandle;
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
-use std::future::Future;
+use prysm_testkit::{eventually_async, within_async};
 use std::time::Duration;
 
 const DEADLINE: Duration = Duration::from_secs(2);
 
-async fn within<T>(test: impl Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(10), test)
-        .await
-        .expect("test timed out")
-}
+/// How long a test may take.
+const LIMIT: Duration = Duration::from_secs(10);
 
 fn calibration(id: &str, warmth: i16) -> Calibration {
     Calibration {
@@ -86,10 +83,11 @@ enum Cast {
 /// Wait up to five seconds for the preview to show `cast`.
 async fn wait_for_cast(handle: &EngineHandle, cast: Cast) {
     let preview = handle.preview();
-    let mut seen = None;
-    for _ in 0..1000 {
-        if let Some(latest) = preview.latest() {
-            let color = latest.colors.top.sample_at(0.5);
+    eventually_async(
+        &format!("a {cast:?} preview"),
+        Duration::from_secs(5),
+        || {
+            let color = preview.latest()?.colors.top.sample_at(0.5);
             assert!(color.g > 0.0, "the gray frame lights the LEDs");
             let now = if (color.r - color.b).abs() < 1e-4 {
                 Cast::Neutral
@@ -98,14 +96,10 @@ async fn wait_for_cast(handle: &EngineHandle, cast: Cast) {
             } else {
                 Cast::Warm
             };
-            if now == cast {
-                return;
-            }
-            seen = Some(now);
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("preview never showed {cast:?}; last {seen:?}");
+            (now == cast).then_some(())
+        },
+    )
+    .await;
 }
 
 fn revision(handle: &EngineHandle) -> prysm_ports::Revision {
@@ -114,7 +108,7 @@ fn revision(handle: &EngineHandle) -> prysm_ports::Revision {
 
 #[tokio::test]
 async fn active_calibration_is_applied_at_start_and_none_is_neutral() {
-    within(async {
+    within_async(LIMIT, async {
         let log = CallLog::new();
         let store = MemoryStore::with(with_active(Some("cool")));
         let (handle, engine) = start(&log, &store).await;
@@ -133,7 +127,7 @@ async fn active_calibration_is_applied_at_start_and_none_is_neutral() {
 
 #[tokio::test]
 async fn switching_the_active_calibration_while_running_keeps_source_and_output_open() {
-    within(async {
+    within_async(LIMIT, async {
         let log = CallLog::new();
         let store = MemoryStore::with(with_active(Some("cool")));
         let (handle, engine) = start(&log, &store).await;
@@ -177,7 +171,7 @@ async fn switching_the_active_calibration_while_running_keeps_source_and_output_
 
 #[tokio::test]
 async fn calibration_change_while_off_waits_for_the_next_start() {
-    within(async {
+    within_async(LIMIT, async {
         let log = CallLog::new();
         let store = MemoryStore::with(with_active(Some("cool")));
         let (handle, engine) = start(&log, &store).await;
@@ -196,7 +190,7 @@ async fn calibration_change_while_off_waits_for_the_next_start() {
 
 #[tokio::test]
 async fn invalid_calibrations_are_rejected_before_persistence() {
-    within(async {
+    within_async(LIMIT, async {
         let log = CallLog::new();
         let initial = with_active(Some("cool"));
         let store = MemoryStore::with(initial.clone());
@@ -253,7 +247,7 @@ async fn invalid_calibrations_are_rejected_before_persistence() {
 
 #[tokio::test]
 async fn calibrations_round_trip_through_the_store_and_a_restart() {
-    within(async {
+    within_async(LIMIT, async {
         let log = CallLog::new();
         let store = MemoryStore::new();
         let (handle, engine) = start(&log, &store).await;

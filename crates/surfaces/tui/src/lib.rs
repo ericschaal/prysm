@@ -187,6 +187,7 @@ mod tests {
             &prysm_runtime::NullSettings::new(),
         ));
         let (report, reported) = tokio::sync::oneshot::channel();
+        let mut message = None;
         let run = Prysm::builder(MemoryStore::with(settings))
             .source(FakeSources(log.clone()))
             .output(FakeOutputs(log.clone()))
@@ -195,22 +196,26 @@ mod tests {
             .surface(tui)
             .surface(move |engine: EngineHandle, shutdown: Shutdown| async move {
                 let mut snapshot = engine.snapshot();
-                let failed = snapshot.wait_for(|s| !s.surface_failures.is_empty()).await;
+                // Lighting runs with the terminal's failure reported.
+                let failed = snapshot
+                    .wait_for(|s| {
+                        !s.surface_failures.is_empty()
+                            && s.session == prysm_ports::SessionState::Running
+                    })
+                    .await;
                 let message = failed.map_err(|_| Error::Closed)?.surface_failures[0].to_string();
                 let _ = report.send(message);
                 shutdown.requested().await;
                 Ok(())
             })
             .run(async {
-                // Lighting keeps running after the surface failure.
-                assert!(log.wait_for("source.open:", 1).await);
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                message = Some(reported.await.unwrap());
             });
         tokio::time::timeout(Duration::from_secs(5), run)
             .await
             .expect("host did not stop")
             .unwrap();
-        let message = reported.await.unwrap();
+        let message = message.unwrap();
         assert!(message.contains("interactive terminal"), "{message}");
         // The failed surface never reports a quit.
         let quit = tokio::time::timeout(Duration::from_millis(20), quit.requested()).await;

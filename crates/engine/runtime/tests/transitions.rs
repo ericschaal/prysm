@@ -381,23 +381,23 @@ async fn reach(from: Start, log: &CallLog) -> (EngineHandle, Engine) {
 
 /// The calls since `mark`, without the writes a running session repeats.
 fn calls_since(log: &CallLog, mark: usize) -> Vec<String> {
-    log.events()[mark..]
+    since(&log.events(), mark).cloned().collect()
+}
+
+/// The calls in `events` from `mark` on, without the repeated writes.
+fn since(events: &[String], mark: usize) -> impl Iterator<Item = &String> {
+    events[mark..]
         .iter()
         .filter(|call| !call.starts_with("output.write:"))
-        .cloned()
-        .collect()
 }
 
 /// A session started by the command opens its output at its first frame,
 /// after the command returned: wait up to five seconds for `count` calls.
 async fn settled(log: &CallLog, mark: usize, count: usize) -> Vec<String> {
-    for _ in 0..1000 {
-        let calls = calls_since(log, mark);
-        if calls.len() >= count {
-            return calls;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    // On a timeout the calls so far are returned: the caller's comparison
+    // shows what is missing.
+    log.wait_until(|events| since(events, mark).count() >= count)
+        .await;
     calls_since(log, mark)
 }
 

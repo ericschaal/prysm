@@ -9,6 +9,8 @@ description = "The webOS supervisor <-> worker protocol: argv, line-delimited JS
 [features]
 # The worker side: stdio plumbing, stop reasons and the process entry point.
 worker = ["dep:tokio", "dep:nix"]
+# `worker::Link::memory` and its `Peer`, for the workers' tests.
+testkit = ["worker"]
 
 [dependencies]
 prysm-ports.workspace = true
