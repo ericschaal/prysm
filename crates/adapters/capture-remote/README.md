@@ -62,7 +62,7 @@ new request.
 The slim TV worker offers its capture's modes (`prysm_capture_webos::MODE`)
 raw, and in each H.264 encoder the build has, within that encoder's
 limits (`prysm_h264::Backend::limits`): hardware H.264 at most 30 fps and
-176×144 to 1920×1088, software from 16×16.
+176×144 to 1920×1080, software from 16×16 to 1920×1088.
 
 The slim TV worker takes one Prysm address (`--prysm http://host:8787` or
 `https://host[:port]`), resolves its host at every connection attempt, wraps

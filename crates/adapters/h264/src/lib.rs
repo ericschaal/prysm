@@ -15,6 +15,7 @@
 //!
 //! OpenH264 is Cisco's BSD-licensed codec, compiled from source; see
 //! `LICENSE.openh264`.
+mod annex_b;
 mod decoder;
 mod encoder;
 #[cfg(feature = "hardware")]
@@ -26,12 +27,15 @@ pub use decoder::Decoder;
 pub use encoder::{Backend, Encoder, EncoderSettings, Picture};
 
 use prysm_core::{PixelFormat, YuvRange, YuvStandardMatrix};
+use std::ops::RangeInclusive;
 
 /// The only pixel format encoded and decoded: the webOS capture's NV12.
 pub const FORMAT: PixelFormat = PixelFormat::NV12 {
     range: YuvRange::Limited,
     matrix: YuvStandardMatrix::Bt709,
 };
+/// Target bitrates an encoder takes, in bits per second.
+pub const BITRATE: RangeInclusive<u32> = 64_000..=100_000_000;
 /// The qualified target bitrate (640x280 at 30 fps on the TV).
 pub const DEFAULT_BITRATE: u32 = 2_000_000;
 /// Largest access unit produced or accepted.
@@ -49,8 +53,9 @@ pub(crate) enum FrameKind {
 pub enum H264Error {
     #[error("H.264 needs limited-range BT.709 NV12 of a size its encoder takes, not {0}")]
     Input(String),
-    #[error("invalid H.264 settings: {0}")]
-    Settings(&'static str),
+    /// A target bitrate outside [`BITRATE`].
+    #[error("a bitrate of {0} bit/s is outside {min} to {max}", min = BITRATE.start(), max = BITRATE.end())]
+    Bitrate(u32),
     /// A rate outside the backend's limits.
     #[error("{} encodes {offered} fps, not {fps}", backend.name())]
     Rate {

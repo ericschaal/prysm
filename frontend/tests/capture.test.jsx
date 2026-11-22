@@ -125,7 +125,7 @@ test('a preset is its target where a mode takes it, else the smallest 16:9 mode 
   ]);
   assert.deepEqual(offered([]), []);
   // The TV's video chip streams up to 30 fps: no Smooth.
-  assert.deepEqual(offered([anyMode(1920, 1088, 30)]), [
+  assert.deepEqual(offered([anyMode(1920, 1080, 30)]), [
     'balanced 640×360@30',
     'efficient 320×180@30',
   ]);
@@ -532,7 +532,7 @@ test('a capture-only TV that has not connected locks the rows on the saved choic
     // up to 60, and it sends nothing uncompressed. Asked again by itself.
     offer = ({ encoding }) =>
       ({
-        h264_hardware: known(anyMode(1920, 1088, 30)),
+        h264_hardware: known(anyMode(1920, 1080, 30)),
         h264_software: known(anyMode(1920, 1080, 60)),
         raw: known(),
       })[encoding];

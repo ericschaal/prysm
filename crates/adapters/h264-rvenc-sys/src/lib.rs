@@ -1,7 +1,6 @@
 //! The LG webOS TV's hardware H.264 encoder (`rvenc`, a GStreamer element)
-//! fed with NV12 in DMA-BUFs from `/dev/dma_heap/dvr`. Ported from the
-//! qualified `apps/prysm-webos-capture/src/encoder/gst.rs` (tag
-//! `pre-1.0-consolidation`); the contract is the two-TV-packages decision
+//! fed with NV12 in DMA-BUFs from `/dev/dma_heap/dvr`. The contract is the
+//! two-TV-packages decision
 //! (`docs/developers/decisions/2026-11-12-two-tv-packages.md`).
 //!
 //! [`Pipeline`] is the one safe type: `appsrc ! rvenc ! appsink`, one picture
@@ -10,10 +9,11 @@
 //!
 //! - Two persistent DMA-BUFs, each mapped for its slot's lifetime, with a
 //!   192-byte pitch (per-frame allocation corrupted pictures on the TV).
-//!   Each upload is bracketed by `DMA_BUF_IOCTL_SYNC` start/end. The memory's
-//!   writability does not show when `rvenc` lets go of an input (GStreamer
-//!   reports it writable while `rvenc` still holds the buffer), and nothing
-//!   else watches for it, so only the order protects a slot: [`Pipeline::encode`] waits for picture N's access unit
+//!   Each upload is bracketed by `DMA_BUF_IOCTL_SYNC` start/end, restarted
+//!   when interrupted. The memory's writability does not show when `rvenc`
+//!   lets go of an input (GStreamer reports it writable while `rvenc` still
+//!   holds the buffer), and nothing else watches for it, so only the order
+//!   protects a slot: [`Pipeline::encode`] waits for picture N's access unit
 //!   before it uploads N+1, so slot N is rewritten only for N+2, after `rvenc`
 //!   emitted N+1's access unit. That assumes `rvenc` never reads input N
 //!   after emitting a later access unit (not verified on the TV). Any error
@@ -27,10 +27,12 @@
 #[cfg(all(target_os = "linux", target_arch = "arm"))]
 mod gst;
 mod layout;
+#[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
+mod restart;
 
 #[cfg(all(target_os = "linux", target_arch = "arm"))]
 pub use gst::Pipeline;
-pub use layout::{MAX_OUTPUT_BYTES, PITCH, copy_nv12, pitch};
+pub use layout::{BITRATE, MAX_HEIGHT, MAX_OUTPUT_BYTES, MAX_WIDTH, PITCH, copy_nv12, pitch};
 
 /// Why the hardware encoder cannot start or encode.
 #[derive(Debug, thiserror::Error)]
@@ -79,7 +81,6 @@ mod stub {
 
         /// # Errors
         /// Always [`Error::Unavailable`] off the TV.
-        #[allow(clippy::unused_self, reason = "the TV pipeline's signature")]
         pub fn encode(&mut self, _: &[u8], _: usize, _: &mut Vec<u8>) -> Result<(), Error> {
             Err(Error::Unavailable)
         }

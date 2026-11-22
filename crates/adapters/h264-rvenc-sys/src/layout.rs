@@ -1,8 +1,15 @@
 //! NV12 layout of the DMA input buffers; safe and testable on any host.
 use crate::Error;
+use std::ops::RangeInclusive;
 
 /// `rvenc` input pitch alignment, in bytes.
 pub const PITCH: usize = 192;
+/// Widest picture, and widest DMA pitch, the encoder takes.
+pub const MAX_WIDTH: u32 = 1920;
+/// Tallest picture the encoder takes.
+pub const MAX_HEIGHT: u32 = 1080;
+/// Target bitrates the encoder takes, in bits per second.
+pub const BITRATE: RangeInclusive<u32> = 64_000..=100_000_000;
 /// Largest access unit accepted from the encoder.
 pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
@@ -10,6 +17,18 @@ pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 #[must_use]
 pub fn pitch(width: u32) -> usize {
     (width as usize).div_ceil(PITCH) * PITCH
+}
+
+/// Whether an even `width`x`height` picture, at most
+/// [`MAX_WIDTH`]x[`MAX_HEIGHT`], fits rows of `stride` bytes, at most
+/// [`MAX_WIDTH`].
+pub(crate) fn fits(width: usize, height: usize, stride: usize) -> bool {
+    let (max_width, max_height) = (MAX_WIDTH as usize, MAX_HEIGHT as usize);
+    (2..=max_width).contains(&width)
+        && (2..=max_height).contains(&height)
+        && width.is_multiple_of(2)
+        && height.is_multiple_of(2)
+        && (width..=max_width).contains(&stride)
 }
 
 /// Copy tightly packed NV12 (`width` bytes per row) into a buffer with
@@ -25,12 +44,7 @@ pub fn copy_nv12(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), Error> {
-    if !((2..=1920).contains(&width)
-        && (2..=1080).contains(&height)
-        && width.is_multiple_of(2)
-        && height.is_multiple_of(2)
-        && stride >= width
-        && stride <= 1920
+    if !(fits(width, height, stride)
         && input.len() == width * height * 3 / 2
         && output.len() == stride * height * 3 / 2)
     {
@@ -54,6 +68,15 @@ mod tests {
         assert_eq!(pitch(320), 384);
         assert_eq!(pitch(640), 768);
         assert_eq!(pitch(192), 192);
+    }
+
+    #[test]
+    fn the_largest_picture_fits_and_no_more() {
+        assert!(fits(1920, 1080, 1920) && fits(2, 2, 2));
+        for (width, height, stride) in [(1920, 1082, 1920), (1922, 1080, 1922), (1920, 1080, 1921)]
+        {
+            assert!(!fits(width, height, stride));
+        }
     }
 
     #[test]

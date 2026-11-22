@@ -15,7 +15,6 @@ pub(crate) struct Software {
 
 impl Software {
     pub(crate) fn new(bitrate: u32, fps: u32) -> Result<Self, H264Error> {
-        #[allow(clippy::cast_precision_loss, reason = "fps is 1..=60")]
         let rate = fps as f32;
         let config = EncoderConfig::new()
             .bitrate(BitRate::from_bps(bitrate))
