@@ -174,9 +174,9 @@ mod tests {
             LinearColor::new(1.0, 0.0, 0.0),
             LinearColor::new(0.0, 0.0, 1.0),
         );
-        // 16 samples: each segment averages two, red then blue.
+        // Two samples per segment: each averages a red and a blue.
         let mut alternating = Vec::new();
-        for _ in 0..8 {
+        for _ in 0..COLOR_SEGMENTS {
             alternating.extend([red, blue]);
         }
         let colors = EdgeColors::new(

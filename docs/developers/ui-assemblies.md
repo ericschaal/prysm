@@ -81,8 +81,8 @@ setup again, one Save form each for capture
 and output, the theme and the technical details. Both browser hosts
 pass `httpPreviewClient()` (same `baseUrl` option as the application client)
 as `WebPortal`'s optional `preview`. `httpColorsClient()` (a `ColorsClient`;
-`fakeColorsClient()` in the testkit) streams just the LED colors, a few per
-edge, for tinting Home. Both also pass `httpDiscoveryClient()` as the
+`fakeColorsClient()` in the testkit) streams just the LED colors, up to 16 per
+edge, for Home's light and LED band. Both also pass `httpDiscoveryClient()` as the
 optional `discovery` (devices to pick) and `httpCaptureModesClient()` as the
 required `captureModes` (the sizes and rates a capture delivers, for its
 editor; `fakeCaptureModesClient()` in the testkit). A host registers each section's kinds as an `AdapterUis` map of

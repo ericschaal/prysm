@@ -142,14 +142,19 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
     // The LED band is a readout: no colours (neutral) before the first event,
     // as the CSS keys the designed band to hosts without a stream only.
     assert.equal(grid().dataset.colors, 'stream');
-    assert.equal(grid().style.getPropertyValue('--led-t'), '');
+    assert.equal(grid().style.getPropertyValue('--led-t-0'), '');
 
     await act(async () => fake.send(colors));
     await flush();
     assert.equal(live(), 'colors');
-    // Each edge's average, and the card's four light fields, as custom properties.
-    assert.equal(led('--led-t'), 'rgb(128 0 128)');
-    assert.equal(led('--led-l'), 'rgb(255 0 0)');
+    // Each edge's colours along it, in the stream's order (top left to
+    // right), and the card's four light fields, as custom properties.
+    assert.equal(led('--led-t-0'), 'rgb(255 0 0)', 'red on the left');
+    assert.equal(led('--led-t-15'), 'rgb(0 0 255)', 'blue on the right');
+    for (const stop of [0, 15]) {
+      assert.equal(led(`--led-r-${stop}`), 'rgb(0 0 255)', 'one colour fills');
+      assert.equal(led(`--led-l-${stop}`), 'rgb(255 0 0)');
+    }
     for (const pool of ['--live-a', '--live-b', '--live-c', '--live-d'])
       assert.match(
         led(pool),
@@ -250,9 +255,11 @@ test('a black scene is a colourless moonlight; a refused or ended stream falls b
     await flush();
     // The drawing's edges are lifted to a faint floor, hue kept; an edge
     // without LEDs takes the whole.
-    assert.equal(led('--led-t'), 'rgb(40 40 40)');
-    assert.equal(led('--led-b'), 'rgb(40 10 10)');
-    assert.equal(led('--led-r'), 'rgb(40 25 25)');
+    for (const stop of [0, 15]) {
+      assert.equal(led(`--led-t-${stop}`), 'rgb(40 40 40)');
+      assert.equal(led(`--led-b-${stop}`), 'rgb(40 10 10)');
+      assert.equal(led(`--led-r-${stop}`), 'rgb(40 25 25)');
+    }
     // The fields by the black top are moonlight; the one by the dim red
     // bottom is red, low.
     for (const pool of ['--live-a', '--live-b', '--live-d'])
