@@ -323,9 +323,9 @@ Server-sent events whose `data:` is a `ColorsEvent`, tagged by `type`:
 | `idle` | — | They do not: no session runs (`off`, `effects`, stopped after a failure, faulted), it has not processed a frame yet, or its output was released after 3 s without frames |
 
 - Each edge is `LedColors`' `[r, g, b]` sRGB bytes in screen orientation (as in
-  the preview), but at most 8 entries (`COLOR_SEGMENTS`): each the average, in
+  the preview), but at most 16 entries (`COLOR_SEGMENTS`): each the average, in
   linear light, of an equal stretch of the edge; an edge with fewer samples
-  keeps them. A tint needs a few colors, not 256 per edge.
+  keeps them. A tint and a gradient need a few colors, not 256 per edge.
 - There is no `unavailable`: colors exist for every processed frame, also one
   the preview cannot show.
 

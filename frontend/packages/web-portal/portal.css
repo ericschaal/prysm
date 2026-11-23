@@ -1856,26 +1856,6 @@ fieldset > .field-note {
   inherits: true;
   initial-value: #ff8a4c;
 }
-@property --led-t {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: rgb(0 0 0 / 0);
-}
-@property --led-r {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: rgb(0 0 0 / 0);
-}
-@property --led-b {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: rgb(0 0 0 / 0);
-}
-@property --led-l {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: rgb(0 0 0 / 0);
-}
 /* Your setup: where the picture comes from, where the colours go. */
 .setup-card {
   display: flex;
@@ -2219,17 +2199,22 @@ fieldset > .field-note {
   font-variant-numeric: tabular-nums;
 }
 .led-map-edge line {
-  stroke: var(--band, var(--line-strong));
   stroke-width: 4;
   stroke-linecap: round;
-  transition: stroke var(--duration-led) var(--ease-out);
+}
+/* A band's gradient (led-drawing.tsx): its one colour unless live. */
+.led-map-edge stop {
+  stop-color: var(--band, var(--line-strong));
+  transition: stop-color var(--duration-led) var(--ease-out);
 }
 .led-map-edge line.halo {
   stroke-width: 10;
   opacity: 0.55;
 }
-.led-map-edge.empty line {
+.led-map-edge.empty {
   --band: var(--line);
+}
+.led-map-edge.empty line {
   stroke-dasharray: 2 6;
 }
 .led-map-edge.empty line.halo {
@@ -2340,14 +2325,13 @@ fieldset > .field-note {
   --band-bottom: var(--effects-3);
   --band-left: var(--effects-1);
 }
+/* Live, each lit edge runs through its LEDs' colours (live-colors.ts). */
 .home-grid[data-live='colors']:has(
     .light-frame[data-lit='true'][data-palette='sync']
   )
-  .led-map {
-  --band-top: var(--led-t);
-  --band-right: var(--led-r);
-  --band-bottom: var(--led-b);
-  --band-left: var(--led-l);
+  .led-map-edge:not(.empty)
+  stop {
+  stop-color: var(--led, var(--band, var(--line-strong)));
 }
 .edge-top {
   --band: var(--band-top);

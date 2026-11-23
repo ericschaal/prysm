@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Colors per edge in a [`ColorsEvent::Colors`]: each is the average of an
 /// equal stretch of its edge.
-pub const COLOR_SEGMENTS: usize = 8;
+pub const COLOR_SEGMENTS: usize = 16;
 
 /// One server-sent event of the colors stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

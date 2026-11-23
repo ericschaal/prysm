@@ -1,5 +1,6 @@
-import { useId, type ReactNode } from 'react';
+import { useId, type CSSProperties, type ReactNode } from 'react';
 import { ledCount, type LedEdges } from './adapters';
+import { ledStops } from './live-colors';
 
 export type Edge = keyof LedEdges;
 export type Corner = 'bottom-left' | 'top-left' | 'top-right' | 'bottom-right';
@@ -72,6 +73,13 @@ const clockwise: readonly Wire[] = [
   { edge: 'bottom', from: 'bottom-right', to: 'bottom-left' },
   { edge: 'left', from: 'bottom-left', to: 'top-left' },
 ];
+/** The way each edge's colours run: left to right, top to bottom. */
+const screenWay: Record<Edge, readonly [Corner, Corner]> = {
+  top: ['top-left', 'top-right'],
+  right: ['top-right', 'bottom-right'],
+  bottom: ['bottom-left', 'bottom-right'],
+  left: ['top-left', 'bottom-left'],
+};
 
 const along = ([x, y]: Point, [dx, dy]: Point, by: number): Point => [
   x + dx * by,
@@ -141,7 +149,7 @@ export function LedDrawing({
     counts: Record<Edge, ReactNode>;
   };
 }) {
-  const blurId = useId();
+  const id = useId();
   const wires = editing?.wiring ?? clockwise;
   const start = editing && wires.find(({ edge }) => edges[edge] > 0)?.from;
   const drawing = (
@@ -153,7 +161,7 @@ export function LedDrawing({
       <defs>
         {/* The light the band throws on the wall: soft, not an outline. */}
         <filter
-          id={blurId}
+          id={`${id}-blur`}
           filterUnits="userSpaceOnUse"
           x="0"
           y="0"
@@ -168,6 +176,8 @@ export function LedDrawing({
           const band = bandOf(corners[from], corners[to]);
           const lit = edges[edge] > 0;
           const arrow = editing && lit;
+          const [first, last] = screenWay[edge];
+          const paint = `url(#${id}-${edge})`;
           const lines: readonly (readonly [Point, Point])[] = arrow
             ? band.parts
             : [band.whole];
@@ -176,13 +186,32 @@ export function LedDrawing({
               key={edge}
               className={`led-map-edge edge-${edge}${lit ? '' : ' empty'}`}
             >
+              {/* The edge's colours along its band, in the stream's order. */}
+              <linearGradient
+                id={`${id}-${edge}`}
+                gradientUnits="userSpaceOnUse"
+                {...ends(bandOf(corners[first], corners[last]).whole)}
+              >
+                {Array.from({ length: ledStops }, (_, index) => (
+                  <stop
+                    key={index}
+                    offset={(index + 0.5) / ledStops}
+                    style={
+                      {
+                        '--led': `var(--led-${edge[0]}-${index})`,
+                      } as CSSProperties
+                    }
+                  />
+                ))}
+              </linearGradient>
               <line
                 className="halo"
-                filter={`url(#${blurId})`}
+                filter={`url(#${id}-blur)`}
+                stroke={paint}
                 {...ends(band.whole)}
               />
               {lines.map((part) => (
-                <line key={part[0].join()} {...ends(part)} />
+                <line key={part[0].join()} stroke={paint} {...ends(part)} />
               ))}
               {arrow ? <path className="led-map-way" d={band.arrow} /> : null}
             </g>
