@@ -115,6 +115,8 @@ const flush = () => act(async () => sleep(0));
 const grid = () => $('.home-grid');
 const live = () => grid()?.getAttribute('data-live') ?? null;
 const led = (name) => grid().style.getPropertyValue(name);
+/** What black LEDs leave on the card. */
+const moonlight = 'rgb(61 61 61)';
 const publish = (fixture, change) =>
   act(async () => {
     fixture.publish(change);
@@ -135,7 +137,8 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
     assert.equal(fake.opened(), 0, 'off: no stream');
     await publish(fixture, running);
     assert.equal(fake.open(), 1);
-    assert.equal(live(), null, 'the designed glow until colours arrive');
+    assert.equal(live(), null);
+    assert.equal(led('--live-a'), moonlight, 'moonlight until colours arrive');
     // The LED band is a readout: no colours (neutral) before the first event,
     // as the CSS keys the designed band to hosts without a stream only.
     assert.equal(grid().dataset.colors, 'stream');
@@ -158,10 +161,32 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
     const [rr, , rb] = led('--live-b').match(/\d+/g).map(Number);
     assert(lr > lb && rb > rr);
 
-    // No picture: the designed glow, low.
+    // The same LEDs dimmed keep their hue and glow lower.
+    const sum = (name) =>
+      led(name)
+        .match(/\d+/g)
+        .reduce((total, value) => total + Number(value), 0);
+    const full = sum('--live-a');
+    const dim = (edge) => edge.map((color) => color.map((value) => value / 4));
+    await act(async () =>
+      fake.send({
+        type: 'colors',
+        top: dim(colors.top),
+        right: dim(colors.right),
+        bottom: dim(colors.bottom),
+        left: dim(colors.left),
+      }),
+    );
+    await flush();
+    const [dr, , db] = led('--live-a').match(/\d+/g).map(Number);
+    assert(dr > db, 'still red');
+    assert(sum('--live-a') < full, 'lower');
+
+    // No picture: the moonlight, as for black LEDs.
     await act(async () => fake.send({ type: 'idle' }));
     await flush();
     assert.equal(live(), 'idle');
+    assert.equal(led('--live-a'), moonlight);
 
     // Leaving Home, a hidden tab, the lights' own effects or off: closed.
     await openSettings();
@@ -203,7 +228,7 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
   assert.equal(fake.open(), 0);
 });
 
-test('a black scene glows faintly; a refused or ended stream falls back and retries', async () => {
+test('a black scene is a colourless moonlight; a refused or ended stream falls back and retries', async () => {
   const fake = fakeColorsClient();
   const portal = await renderPortal(
     HeadlessWebPortal,
@@ -228,10 +253,14 @@ test('a black scene glows faintly; a refused or ended stream falls back and retr
     assert.equal(led('--led-t'), 'rgb(40 40 40)');
     assert.equal(led('--led-b'), 'rgb(40 10 10)');
     assert.equal(led('--led-r'), 'rgb(40 25 25)');
-    // Little colour to give: the pools stay near the designed ones, at full
-    // strength (the glow never goes out or muddy).
-    for (const pool of ['--live-a', '--live-b', '--live-c', '--live-d'])
-      assert.match(led(pool), /^rgb\(\d+ \d+ \d+\)$/, pool);
+    // The fields by the black top are moonlight; the one by the dim red
+    // bottom is red, low.
+    for (const pool of ['--live-a', '--live-b', '--live-d'])
+      assert.equal(led(pool), moonlight, pool);
+    const [lowRed, lowGreen, lowBlue] = led('--live-c')
+      .match(/\d+/g)
+      .map(Number);
+    assert(lowRed > 2 * lowGreen && lowRed > 2 * lowBlue);
     await act(async () =>
       fake.send({
         type: 'colors',
@@ -242,18 +271,31 @@ test('a black scene glows faintly; a refused or ended stream falls back and retr
       }),
     );
     await flush();
-    // Black: exactly the designed screen sync light.
-    assert.equal(led('--live-a'), 'rgb(224 71 158)');
-    assert.equal(led('--live-b'), 'rgb(34 195 238)');
-    assert.equal(led('--live-d'), 'rgb(255 138 76)');
+    // Black: a faint colourless moonlight, never the designed colours.
+    for (const pool of ['--live-a', '--live-b', '--live-c', '--live-d'])
+      assert.equal(led(pool), moonlight, pool);
+    // Grey LEDs give white light, brighter than the moonlight.
+    await act(async () =>
+      fake.send({
+        type: 'colors',
+        top: [[128, 128, 128]],
+        right: [],
+        bottom: [],
+        left: [],
+      }),
+    );
+    await flush();
+    const grey = led('--live-c').match(/\d+/g).map(Number);
+    assert(grey[0] > 100 && Math.max(...grey) - Math.min(...grey) <= 1);
 
     await act(async () => fake.end());
     await flush();
-    assert.equal(live(), null, 'ended: the designed glow');
+    assert.equal(live(), null);
+    assert.equal(led('--live-a'), moonlight, 'ended: the moonlight');
     assert.equal(fake.open(), 0);
     fake.refuseNext({ kind: 'busy', message: 'too many colors streams' });
     await act(async () => sleep(reconnectDelayMs(0) + 100));
-    assert.equal(fake.open(), 0, 'refused: still the designed glow');
+    assert.equal(fake.open(), 0, 'refused: still the moonlight');
     await act(async () => sleep(reconnectDelayMs(1) + 100));
     assert.equal(fake.open(), 1, 'retried quietly');
   } finally {

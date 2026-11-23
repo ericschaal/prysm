@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useState, type RefObject } from 'react';
 import {
   reconnectDelayMs,
   type ColorsClient,
@@ -8,6 +8,8 @@ import {
 type Rgb = readonly number[];
 type Edge = 'top' | 'right' | 'bottom' | 'left';
 
+type Colors = Extract<ColorsEvent, { type: 'colors' }>;
+
 const edges: readonly Edge[] = ['top', 'right', 'bottom', 'left'];
 
 /**
@@ -15,17 +17,6 @@ const edges: readonly Edge[] = ['top', 'right', 'bottom', 'left'];
  * still shows its LED drawing, and no colour is made up.
  */
 const floor = 40;
-
-/**
- * The designed screen sync light (`--aurora-1`…`-4` in tokens.css): what a
- * grey or black scene shows, and what every colour leans toward a little.
- */
-export const designedFields = {
-  a: [224, 71, 158],
-  b: [34, 195, 238],
-  c: [107, 77, 255],
-  d: [255, 138, 76],
-} as const;
 
 /**
  * The CSS custom properties written: the edge averages `--led-t`… (the LED
@@ -118,45 +109,40 @@ function mixLab(parts: readonly [readonly Rgb[], number][]) {
   return total ? sum.map((value) => value / total) : null;
 }
 
-/** Lightness and chroma the fields keep: rich, never muddy or blown out. */
-const range = { lightness: [0.5, 0.66], chroma: [0.12, 0.22] } as const;
-/** From this chroma a scene counts as vivid; below this lightness, as dark. */
-const vividChroma = 0.12;
-const dark = 0.4;
-/** Even vivid content keeps this much of the designed light. */
-const designedShare = 0.15;
+/** A field's lightness: black LEDs rest at `moon`, bright ones reach `full`. */
+const lightness = { moon: 0.36, full: 0.66 } as const;
+/**
+ * From this LED lightness a field is at full strength: mid grey and most
+ * full colours reach it (pure blue, the darkest, glows a little lower).
+ */
+const bright = 0.6;
+/** How fast a field sinks as the LEDs dim: more than their lightness does. */
+const sink = 1.5;
+/** A field's most chroma: rich, never garish. */
+const richest = 0.22;
+/** Below `none` LEDs have no hue to trust; from `clear` it shows fully. */
+const hueFrom = { none: 0.06, clear: 0.16 } as const;
 
 /**
- * One field: the LEDs' colour (OKLab) held in the lightness and chroma
- * window with its hue kept, blended with the designed field. Grey or black
- * content gives the designed field; vivid content leads.
+ * One field from the LEDs' colour (OKLab): their hue and saturation, as
+ * strong as they are bright. Dimmed LEDs keep their colour and glow lower;
+ * grey ones give white light; black ones a faint colourless moonlight. No
+ * colour is made up.
  */
-function field(lab: readonly number[] | null, designed: Rgb) {
-  if (!lab) return css(designed);
-  const [L = 0, a = 0, b = 0] = lab;
+function field([L = 0, a = 0, b = 0]: readonly number[]) {
+  const light =
+    lightness.moon +
+    (lightness.full - lightness.moon) * Math.min(1, L / bright) ** sink;
+  const shown = Math.min(
+    1,
+    Math.max(0, (L - hueFrom.none) / (hueFrom.clear - hueFrom.none)),
+  );
   const chroma = Math.hypot(a, b);
-  const hue = Math.atan2(b, a);
-  const clamp = (value: number, [min, max]: readonly [number, number]) =>
-    Math.min(max, Math.max(min, value));
-  const held = [
-    clamp(L, range.lightness),
-    clamp(chroma, range.chroma) * Math.cos(hue),
-    clamp(chroma, range.chroma) * Math.sin(hue),
-  ];
-  const vivid = Math.min(
-    Math.min(1, chroma / vividChroma),
-    Math.min(1, L / dark),
-  );
-  const live = (1 - designedShare) * vivid;
-  const target = oklab(designed);
-  return css(
-    srgb(
-      held.map(
-        (value, index) =>
-          (target[index] ?? 0) + (value - (target[index] ?? 0)) * live,
-      ),
-    ),
-  );
+  // Chroma falls with lightness as LEDs dim: carried to the field's own.
+  const scale = chroma
+    ? (Math.min(richest, (chroma / L) * light) * shown) / chroma
+    : 0;
+  return css(srgb([light, a * scale, b * scale]));
 }
 
 /**
@@ -165,42 +151,50 @@ function field(lab: readonly number[] | null, designed: Rgb) {
  * four fields from the LEDs nearest them: top-left from the top's first
  * third and the left's upper half, top-right likewise, the top-centre field
  * from the top's middle, the low middle field from the bottom and the
- * sides' lower halves.
+ * sides' lower halves (a field without LEDs takes all of them).
  */
-export function ledValues(event: Extract<ColorsEvent, { type: 'colors' }>) {
+export function ledValues(event: Colors) {
   const all = average(edges.flatMap((edge) => event[edge])) ?? [0, 0, 0];
-  const values: Record<string, string> = {};
+  const values = fieldValues(event);
   for (const edge of edges)
     values[`--led-${edge[0]}`] = css(lift(average(event[edge]) ?? all));
+  return values;
+}
+
+/** The card's four fields for the LEDs' colours in `event`. */
+function fieldValues(event: Colors) {
+  const values: Record<string, string> = {};
   const { top, right, bottom, left } = event;
-  values['--live-a'] = field(
-    mixLab([
+  const whole = mixLab([[edges.flatMap((edge) => event[edge]), 1]]) ?? [0];
+  const fields: Record<string, [readonly Rgb[], number][]> = {
+    '--live-a': [
       [stretch(top, 0, 3), 1],
       [stretch(left, 0, 2), 1],
-    ]),
-    designedFields.a,
-  );
-  values['--live-b'] = field(
-    mixLab([
+    ],
+    '--live-b': [
       [stretch(top, 2, 3), 1],
       [stretch(right, 0, 2), 1],
-    ]),
-    designedFields.b,
-  );
-  values['--live-c'] = field(
-    mixLab([
+    ],
+    '--live-c': [
       [bottom, 2],
       [stretch(left, 1, 2), 1],
       [stretch(right, 1, 2), 1],
-    ]),
-    designedFields.c,
-  );
-  values['--live-d'] = field(
-    mixLab([[stretch(top, 1, 3), 1]]),
-    designedFields.d,
-  );
+    ],
+    '--live-d': [[stretch(top, 1, 3), 1]],
+  };
+  for (const [name, parts] of Object.entries(fields))
+    values[name] = field(mixLab(parts) ?? whole);
   return values;
 }
+
+/** The LEDs showing nothing. */
+const dark: Colors = {
+  type: 'colors',
+  top: [],
+  right: [],
+  bottom: [],
+  left: [],
+};
 
 /** Whether the page is shown (not a background tab). */
 export function usePageVisible() {
@@ -218,19 +212,27 @@ export function usePageVisible() {
 /**
  * While `active`, stream the LEDs' colours onto `target` as CSS custom
  * properties (see `ledProperties`) and say what the glow shows in its
- * `data-live`: `colors`, or `idle` while the lights show none. Written
- * through the CSSOM, never through React state: no render per event. A
- * failed or ended stream is retried quietly after {@link reconnectDelayMs};
- * meanwhile `data-live` is absent and the glow is the designed one.
+ * `data-live`: `colors`, or `idle` while the lights show none. Until the
+ * first colours, on `idle` and while the stream is lost (`data-live`
+ * absent) the card's fields are those of black LEDs: the moonlight, never
+ * colours the LEDs do not have. Written through the CSSOM, never through
+ * React state: no render per event. A failed or ended stream is retried
+ * quietly after {@link reconnectDelayMs}.
  */
 export function useLiveColors(
   client: ColorsClient | undefined,
   active: boolean,
   target: RefObject<HTMLElement | null>,
 ) {
-  useEffect(() => {
+  // Before the first paint, so the designed colours never flash.
+  useLayoutEffect(() => {
     const element = target.current;
     if (!client || !active || !element) return;
+    const show = (values: Record<string, string>) => {
+      for (const [name, value] of Object.entries(values))
+        element.style.setProperty(name, value);
+    };
+    show(fieldValues(dark));
     const abort = new AbortController();
     const { signal } = abort;
     void (async () => {
@@ -244,19 +246,16 @@ export function useLiveColors(
           for await (const event of stream.events) {
             if (signal.aborted) break;
             attempt = 0;
-            if (event.type === 'idle')
-              element.setAttribute('data-live', 'idle');
-            else {
-              for (const [name, value] of Object.entries(ledValues(event)))
-                element.style.setProperty(name, value);
-              element.setAttribute('data-live', 'colors');
-            }
+            // No picture is black LEDs: the card rests in its moonlight.
+            show(event.type === 'idle' ? fieldValues(dark) : ledValues(event));
+            element.setAttribute('data-live', event.type);
           }
         } catch {
-          // Busy or gone: the designed glow stays; try again later.
+          // Busy or gone: try again later.
         }
         if (signal.aborted) break;
         element.removeAttribute('data-live');
+        show(fieldValues(dark));
         await new Promise((resolve) => {
           const timer = setTimeout(resolve, reconnectDelayMs(attempt));
           signal.addEventListener(

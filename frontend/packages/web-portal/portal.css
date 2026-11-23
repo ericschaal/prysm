@@ -769,10 +769,12 @@ fieldset > .field-note {
   --light-d: var(--error-4);
 }
 /*
- * Screen sync with the LEDs' colours streaming: the card's four fields take
- * them (see live-colors.ts), easing from one update to the next.
+ * Screen sync on a host that streams the LEDs' colours: the card's four
+ * fields take them (see live-colors.ts), easing from one update to the
+ * next. Dim LEDs glow lower in their own colour; black ones, no picture, or
+ * no colours yet leave a faint colourless moonlight.
  */
-.home-grid[data-live='colors'] .light-frame[data-palette='sync'] {
+.home-grid[data-colors='stream'] .light-frame[data-palette='sync'] {
   --light-a: var(--live-a);
   --light-b: var(--live-b);
   --light-c: var(--live-c);
@@ -1625,7 +1627,8 @@ fieldset > .field-note {
   transition: --tint var(--duration-light-off) var(--ease-in-out);
 }
 .light-card[data-lit='true'] .range input {
-  --tint: 100%;
+  /* Some of the text colour stays, so the fill shows in the moonlight too. */
+  --tint: 70%;
   transition: --tint var(--duration-light-on) var(--ease-in-out);
 }
 
