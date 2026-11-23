@@ -35,8 +35,8 @@ For Compose, start from the example
 To build the image yourself, see [packaging](../developers/packaging.md#docker).
 
 Then [set up your lights](configuration.md). Type WLED's IP address: a
-normal container cannot resolve names such as `wled.local`, and
-**Find lights** does not work without host networking.
+normal container cannot resolve names such as `wled.local`, and finds no
+WLED devices to list without host networking.
 
 ## Use a capture card
 

@@ -7,7 +7,7 @@
 # port controls the lights. Publish it on a trusted LAN only.
 # The default bridge network is enough. WLED must then be entered by IP
 # address: a bridge network cannot resolve names such as wled.local, and the
-# portal's "Find lights" finds nothing.
+# portal finds no WLED lights to list.
 services:
   prysm:
     image: ghcr.io/ericschaal/prysm-headless:1.0.0-rc.1 # x-release-please-version

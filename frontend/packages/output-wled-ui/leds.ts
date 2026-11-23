@@ -1,4 +1,5 @@
 import type { LedCounts } from '@prysm/contracts/host-desktop';
+import type { Corner, LedEdges, Wire } from '@prysm/web-portal';
 
 export type Edge = keyof LedCounts;
 
@@ -9,8 +10,6 @@ export type Edge = keyof LedCounts;
 export const ledTotalLimits = { min: 1, max: 16384 } as const;
 /** Per edge, from the generated `LedCounts` schema: one edge may hold all. */
 export const ledEdgeLimits = { min: 0, max: 16384, step: 1 } as const;
-
-export type Corner = 'bottom-left' | 'top-left' | 'top-right' | 'bottom-right';
 
 /**
  * The physical LED order, as output-wled's `render_edges` writes it:
@@ -33,12 +32,7 @@ export const wiring = [
     to: 'bottom-left',
     direction: 'leftward',
   },
-] as const satisfies readonly {
-  edge: Edge;
-  from: Corner;
-  to: Corner;
-  direction: string;
-}[];
+] as const satisfies readonly (Wire & { direction: string })[];
 
 export interface LedRun {
   edge: Edge;
@@ -63,6 +57,14 @@ export function ledRuns(leds: LedCounts): LedRun[] {
     return run;
   });
 }
+
+/** Every edge's count, an omitted edge as none. */
+export const ledEdges = (leds: LedCounts): LedEdges => ({
+  top: leds.top ?? 0,
+  right: leds.right ?? 0,
+  bottom: leds.bottom ?? 0,
+  left: leds.left ?? 0,
+});
 
 export function ledTotal(leds: LedCounts) {
   return wiring.reduce((sum, { edge }) => sum + (leds[edge] ?? 0), 0);

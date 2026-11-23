@@ -2,7 +2,8 @@ export * from './adapters';
 export { CalibrateWizard } from './calibrate';
 export type { CalibrateProps } from './use-calibration';
 export * from './checks';
-export { DeviceRows, FindDevices } from './discovery';
+export { DeviceRows } from './discovery';
+export { LedDrawing, type Corner, type Edge, type Wire } from './led-drawing';
 export * from './fields';
 export * from './form';
 export {

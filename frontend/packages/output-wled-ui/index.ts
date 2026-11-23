@@ -2,10 +2,15 @@ import type { WledSettings } from '@prysm/contracts/host-desktop';
 import type { AdapterUi } from '@prysm/web-portal';
 import { normalizeWledAddress, wledUrl } from './address';
 import { WledEditor } from './editor';
-import { ledEdgeLimits, ledTotal, ledTotalLimits, wiring } from './leds';
+import {
+  ledEdgeLimits,
+  ledEdges,
+  ledTotal,
+  ledTotalLimits,
+  wiring,
+} from './leds';
 
 export { normalizeWledAddress, wledUrl } from './address';
-export { LedLayout } from './layout';
 export {
   ledEdgeLimits,
   ledRuns,
@@ -48,10 +53,5 @@ export const wledOutput: AdapterUi<WledSettings> = {
       ]),
     ),
   },
-  edges: ({ leds }) => ({
-    top: leds.top ?? 0,
-    right: leds.right ?? 0,
-    bottom: leds.bottom ?? 0,
-    left: leds.left ?? 0,
-  }),
+  edges: ({ leds }) => ledEdges(leds),
 };

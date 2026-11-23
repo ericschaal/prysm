@@ -1924,6 +1924,55 @@ test('smooth dark colours waits under Advanced in the WLED panel, on unless turn
   }
 });
 
+test('the WLED panel lists the lights present as rows; the saved ones keep their ticked row while not found', async () => {
+  const discovery = fakeDiscoveryClient({
+    'output/wled': [
+      {
+        label: 'Living room',
+        detail: '192.0.2.40',
+        fields: { address: '192.0.2.40' },
+      },
+    ],
+  });
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    undefined,
+    { discovery: discovery.client },
+  );
+  const { fixture } = portal;
+  const lights = () =>
+    $$('.device-rows .row-choice').map((row) => [
+      $('.row-label', row).textContent,
+      $('.row-value', row)?.textContent,
+      $('input', row).checked,
+    ]);
+  try {
+    await openEditor('Lights');
+    await act(async () => sleep(0));
+    // Looked for as the panel opened; the saved address by itself, ticked,
+    // with nothing said against it: lights can be there and not found.
+    assert.deepEqual(lights(), [
+      ['Living room', undefined, false],
+      [output.address, undefined, true],
+    ]);
+    // Typed by hand under the one Advanced, with smooth dark colours.
+    assert.equal($$('.advanced', form('Your lights')).length, 1);
+    assert(field('output.address').closest('[hidden]'));
+    assertSame(
+      field('output.address').closest('.advanced'),
+      field('output.dither').closest('.advanced'),
+    );
+    await click($('.device-rows input'));
+    assert.equal(field('output.address').value, '192.0.2.40');
+    assert.deepEqual(lights(), [['Living room', undefined, true]]);
+    await submit(form('Your lights'));
+    assert.equal(fixture.snapshot().settings.output.address, '192.0.2.40');
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('each edge’s LED count is typed on that edge of the drawing', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {

@@ -2069,7 +2069,7 @@ fieldset > .field-note {
   margin: 0 auto;
   overflow: visible;
 }
-.led-map-screen {
+.led-map-screen rect {
   fill: var(--bg);
   stroke: var(--line-strong);
   stroke-width: 1;
@@ -2762,84 +2762,6 @@ button.section-status-main:focus-visible {
 }
 
 /* ── Found devices ────────────────────────────────────────────────────── */
-.find {
-  margin: 0 0 var(--space-block);
-}
-.find > button[aria-busy='true']::before {
-  content: '';
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.9s linear infinite;
-}
-.find .notice {
-  margin-top: var(--space-3);
-}
-.found {
-  display: grid;
-  margin: var(--space-3) 0 0;
-  padding: 0;
-  list-style: none;
-  border-radius: var(--radius-2);
-  box-shadow: 0 0 0 1px var(--line) inset;
-}
-.found li {
-  animation: fade-up var(--duration-slow) var(--ease-out) both;
-}
-.found li + li {
-  border-top: 1px solid var(--line);
-}
-.found li:nth-child(2) {
-  animation-delay: 50ms;
-}
-.found li:nth-child(n + 3) {
-  animation-delay: 100ms;
-}
-.found button {
-  display: block;
-  position: relative;
-  width: 100%;
-  min-height: 56px;
-  padding: var(--space-3) var(--space-7) var(--space-3) var(--space-4);
-  border: 0;
-  border-radius: 0;
-  text-align: left;
-}
-.found li:first-child button {
-  border-radius: var(--radius-2) var(--radius-2) 0 0;
-}
-.found li:last-child button {
-  border-radius: 0 0 var(--radius-2) var(--radius-2);
-}
-.found li:only-child button {
-  border-radius: var(--radius-2);
-}
-.found button[aria-pressed='true'] {
-  background: var(--accent-soft);
-}
-.found button[aria-pressed='true']::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  right: var(--icon);
-  width: 6px;
-  height: var(--space-3);
-  margin-top: calc(-1 * var(--space-2));
-  border-right: 2px solid var(--accent-ink);
-  border-bottom: 2px solid var(--accent-ink);
-  transform: rotate(45deg);
-}
-.found-detail {
-  display: block;
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: var(--text-small);
-  overflow-wrap: anywhere;
-}
-
-/* Under the found devices: what the lookup found, and Look again. */
 /*
  * The devices' heading carries Look again at its end, so the action takes
  * no line of its own; on a narrow screen it wraps under the heading.
@@ -2861,16 +2783,25 @@ button.section-status-main:focus-visible {
 }
 
 /* ── LED layout (WLED editor) ─────────────────────────────────────────── */
-/* Each edge's count sits on its own edge of the drawing. */
+/*
+ * Home's drawing of the TV, its bands in the accent, with each edge's count
+ * field on its own edge, centred on it (the drawing is symmetric about the
+ * band), all four one width and one gap away.
+ */
 .led-layout {
+  --led-count: 72px;
+  --band-top: var(--accent);
+  --band-right: var(--accent);
+  --band-bottom: var(--accent);
+  --band-left: var(--accent);
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 72px;
+  grid-template-columns: var(--led-count) minmax(0, 1fr) var(--led-count);
   grid-template-areas:
     '. top .'
     'left screen right'
     '. bottom .';
   align-items: center;
-  gap: var(--space-1) var(--space-2);
+  gap: var(--space-2);
   max-width: 480px;
   margin: 0 auto;
 }
@@ -2888,7 +2819,7 @@ button.section-status-main:focus-visible {
 }
 .led-edge-top,
 .led-edge-bottom {
-  width: 88px;
+  width: var(--led-count);
   justify-self: center;
 }
 /* The label and note are read out; the place says which edge it is. */
@@ -2919,55 +2850,34 @@ button.section-status-main:focus-visible {
 .leds > .field-note {
   text-align: center;
 }
-.screen {
-  fill: var(--bg);
-  stroke: var(--line-strong);
-  stroke-width: 1.5;
+/*
+ * The editor's additions: each band's wiring direction in the break at its
+ * middle, LED 1 the badge in its corner, the total in the screen (in night
+ * colours, as the screen is).
+ */
+.led-map-way {
+  fill: none;
+  stroke: var(--band);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.screen-label {
+.led-map-start circle {
+  fill: var(--accent);
+}
+.led-map-start text {
+  fill: var(--on-fill);
+  font-size: 11px;
+  font-weight: 700;
+}
+.led-map-screen .screen-label {
   fill: var(--fg);
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.5px;
 }
-.screen-label[data-invalid='true'] {
+.led-map-screen .screen-label[data-invalid='true'] {
   fill: var(--alert);
-}
-.screen-sublabel {
-  fill: var(--muted);
-  font-size: 11px;
-}
-/* Each strip drawn as LEDs: round dots, coloured like light on a wall. */
-.strip line {
-  stroke: var(--aurora-3);
-  stroke-width: 6;
-  stroke-linecap: round;
-  stroke-dasharray: 0 9;
-}
-.strip-left line {
-  stroke: var(--aurora-1);
-}
-.strip-right line {
-  stroke: var(--aurora-2);
-}
-.strip-bottom line {
-  stroke: var(--accent-ink);
-}
-.strip.empty line {
-  stroke: var(--line-strong);
-  stroke-width: 3;
-  stroke-dasharray: 2 7;
-}
-.strip .arrow {
-  fill: var(--muted);
-}
-.start circle {
-  fill: var(--accent);
-}
-.start text {
-  fill: var(--fg);
-  font-size: 11px;
-  font-weight: 700;
 }
 
 /* ── Motion ───────────────────────────────────────────────────────────── */

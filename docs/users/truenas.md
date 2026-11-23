@@ -44,8 +44,8 @@ and drive the lights. If no slim TV app controls this Prysm, delete the
 ## 3. Connect the TV and lights
 
 1. In the portal's setup wizard, choose **LG TV on your network**.
-2. Enter WLED by its **IP address**. Names such as `wled.local` and
-   **Find lights** do not work on the app's network.
+2. Enter WLED by its **IP address**. Names such as `wled.local` do not
+   work on the app's network, and no WLED devices are found to list.
 3. Follow the [slim TV steps](webos.md#slim-package-the-tv-sends-the-picture),
    using `http://NAS_IP:8787` as the Prysm address.
 
