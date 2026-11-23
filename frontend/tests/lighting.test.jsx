@@ -8,6 +8,7 @@ import { act } from 'react';
 import {
   describeOutputIssue,
   describeSituation,
+  failureSide,
   lightingSituation,
   plainFailure,
   situationFailure,
@@ -18,6 +19,7 @@ import {
   moodOf,
   pauseOf,
 } from '../packages/web-portal/light-card-view';
+import { sectionStatus } from '../packages/web-portal/section-state';
 import { $, navigated, renderPortal } from './dom';
 
 const failure = { kind: 'adapter', message: 'WLED cannot be reached' };
@@ -581,6 +583,68 @@ test('with the lights off a failure is still said, as off', () => {
     }),
   );
   assert.equal(refused.info.text, 'Screen sync could not start.');
+});
+
+test('with the lights off a section page says the failure it names, else not in use', () => {
+  const identity = 'WLED at 192.0.2.1';
+  const idle = 'Not in use';
+  // A failure, then the video source's and the lights' status.
+  for (const [failure, video, lights] of [
+    [
+      { kind: 'invalid', field: 'capture.width', message: 'x' },
+      ['problem', 'Can’t use these settings', '', 'x'],
+      idle,
+    ],
+    [
+      invalid,
+      idle,
+      ['problem', 'Can’t use these settings', identity, invalid.message],
+    ],
+    [
+      { kind: 'adapter', section: 'capture', message: 'x' },
+      ['problem', 'Video source not working', '', 'x'],
+      idle,
+    ],
+    [
+      { kind: 'adapter', section: 'output', message: 'x' },
+      idle,
+      ['problem', 'Lights not responding', identity, 'x'],
+    ],
+    // Without a side: neither section's own, as the setup path shows it.
+    [{ kind: 'adapter', message: 'x' }, idle, idle],
+    [{ kind: 'invalid', field: 'processing.gamma', message: 'x' }, idle, idle],
+  ]) {
+    const situation = lightingSituation({
+      target: 'off',
+      session: { state: 'stopped', failure },
+    });
+    const live = {
+      online: true,
+      target: 'off',
+      path: { kind: 'failed', at: failureSide(failure) },
+      failure: situationFailure(situation),
+      situation,
+      device: {},
+    };
+    for (const [section, expected] of [
+      ['capture', video],
+      ['output', lights],
+    ]) {
+      const status = sectionStatus(section, live, identity, false);
+      if (typeof expected === 'string')
+        assert.deepEqual(
+          [status.tone, status.title],
+          ['idle', expected],
+          JSON.stringify([failure, section]),
+        );
+      else
+        assert.deepEqual(
+          [status.tone, status.title, status.detail, status.details],
+          expected,
+          JSON.stringify([failure, section]),
+        );
+    }
+  }
 });
 
 test('the light card shows a failure with the lights off, without Try again', async () => {

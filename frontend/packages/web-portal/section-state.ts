@@ -81,12 +81,30 @@ export function sectionStatus(
   // Why: the fault's own words, else the failure's message.
   const reason =
     situation.kind === 'faulted' ? situation.message : failure?.message;
-  if (path.kind === 'failed') {
+  // With the lights off nothing runs: a failure is said only on the section
+  // it names (its settings do not validate, or a switch off failed); the
+  // other one is not in use.
+  const off = situation.kind === 'off';
+  if (path.kind === 'failed' && (path.at === section || !off)) {
     const plain = failure
       ? plainFailure(failure, target, effects)
       : 'Screen sync stopped.';
     if (path.at !== section && path.at !== null)
       return { tone: 'idle', title: 'Screen sync stopped', detail: plain };
+    if (off && failure?.kind === 'invalid')
+      return {
+        tone: 'problem',
+        title: 'Can’t use these settings',
+        detail: capture ? '' : identity,
+        details: reason,
+      };
+    if (off && capture)
+      return {
+        tone: 'problem',
+        title: 'Video source not working',
+        detail: '',
+        details: reason,
+      };
     return capture
       ? {
           tone: 'problem',

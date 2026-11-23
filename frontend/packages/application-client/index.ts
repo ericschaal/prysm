@@ -104,7 +104,7 @@ function sessionFailure(session: SessionReading): LightingFailure | null {
  * The side of the path a failure came from: typed for adapter failures,
  * else the section of the setting it names.
  */
-function failureSide(
+export function failureSide(
   failure: Failure | LightingFailure,
 ): FailureSection | null {
   // Only the sides this page knows: any other value reads as absent.

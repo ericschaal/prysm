@@ -1,5 +1,9 @@
 /** Pure rules of the TV UI: addresses, drafts, the status card and the screen. */
-import { unreachable, type LightingSituation } from '@prysm/application-client';
+import {
+  plainFailure,
+  unreachable,
+  type LightingSituation,
+} from '@prysm/application-client';
 import {
   captureFps,
   fullPortal,
@@ -318,6 +322,12 @@ export function tvStatus(
       if (target === 'off') {
         title = 'Lights off';
         description = 'Choose Screen sync: the lights follow the picture.';
+        // Still off, but its failure is said, as the lights card says it:
+        // settings that do not validate, or a switch off that failed.
+        if (lighting?.kind === 'off' && lighting.failure) {
+          description = plainFailure(lighting.failure, 'off', 'WLED effects');
+          attention = true;
+        }
       } else if (target === 'effects') {
         title = 'WLED effects on';
         description = 'Your lights run their own effects.';

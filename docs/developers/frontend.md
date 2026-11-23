@@ -86,8 +86,12 @@ except when the lights themselves failed, `section` `output`), or, with the effe
 for saved settings that do not validate (a note, "Prysm can’t use these
 settings."; another kind is said in its own words). Off keeps a stopped
 session's failure (settings that could not be applied, a switch off that
-failed): the light card and the TV's lights card say it, while the setup
-path and the section pages read off as off. Unknown keeps what it carries:
+failed): the light card and the TV's lights card say it, the setup path
+marks the side it names (`failureSide`) and Change setup opens that page,
+whose status says it ("Can’t use these settings" for settings that do not
+validate) while the other section stays "Not in use", the Settings row says
+it, and the full TV's "Lights off" headline gives its words with attention.
+No "Try again" is offered: trying could only switch off again. Unknown keeps what it carries:
 the note says Prysm is newer, the failure's words follow it, and its
 message goes under Details; no mode tile is chosen, and Power switches the
 lights off. A faulted session's `message` (what did not finish) is under

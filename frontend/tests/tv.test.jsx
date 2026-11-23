@@ -1845,6 +1845,28 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     );
     assert.deepEqual([status.title, status.action], [title, 'none'], target);
   }
+  // Off with its failure: still off, its words said with attention, and
+  // nothing to try again, also while the service still has the mode.
+  for (const [failure, description] of [
+    [sessionFailure, 'The lights could not be switched off.'],
+    [
+      { kind: 'invalid', field: 'output.address', message: 'x' },
+      'Prysm can’t use these settings.',
+    ],
+  ])
+    for (const service of [{ ...reported, target: 'off' }, reported]) {
+      const status = tvStatus(
+        true,
+        service,
+        draft,
+        facts({ target: 'off', session: { state: 'stopped', failure } }),
+      );
+      assert.deepEqual(
+        [status.title, status.description, status.attention, status.action],
+        ['Lights off', description, true, 'none'],
+        JSON.stringify([failure, service.target]),
+      );
+    }
   // Only a mode is tried again: nothing for a target newer than the app.
   assert.equal(
     tvStatus(true, { ...reported, target: 'unknown' }, draft).action,

@@ -1,6 +1,8 @@
 import {
+  failureSide,
   lightingSituation,
   plainFailure,
+  situationFailure,
   unreachable,
   type LightingSituation,
 } from '@prysm/application-client';
@@ -89,10 +91,15 @@ function pathOf(lighting: LightingSituation): PathState {
     }
     case 'effects':
       return { kind: 'effects' };
+    // With the lights off a failure still shows where it is: settings that
+    // do not validate, or a switch off that failed.
+    case 'off':
+      return lighting.failure
+        ? { kind: 'failed', at: failureSide(lighting.failure) }
+        : { kind: 'off' };
     // The path shows a start as off until the session runs, and a state
     // newer than this page as nothing it can name.
     case 'starting':
-    case 'off':
     case 'unknown':
       return { kind: 'off' };
     default:
@@ -174,10 +181,12 @@ function PortalFrame() {
     dispatch,
     lighting,
     path,
-    problemAt: (section) =>
-      lighting.kind === 'failed' && lighting.at === section
-        ? plainFailure(lighting.failure, snapshot.target, 'Device effects')
-        : null,
+    problemAt: (section) => {
+      const failure = situationFailure(lighting);
+      return path.kind === 'failed' && path.at === section && failure
+        ? plainFailure(failure, snapshot.target, 'Device effects')
+        : null;
+    },
     saveProcessing: (expected, processing) =>
       dispatch(commands.configureProcessing(expected, processing)),
     tryProcessing: (processing) => dispatch(commands.tryProcessing(processing)),
