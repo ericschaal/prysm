@@ -287,6 +287,12 @@ class WebosTv:
     def sample_command(self) -> Command:
         return commands.tv_sample_worker(self.target)
 
+    def colours_command(self, port: int, seconds: float) -> Command:
+        return commands.device_colours(self.target, port, seconds)
+
+    def colours(self, port: int, seconds: float) -> list[tuple[float, prysm_api.ColorsEvent]]:
+        return prysm_api.colours_on_device(self.transport, self.colours_command(port, seconds))
+
     def sample_worker(self) -> tv.Reading:
         """One reading: uptime, load average, the worker's CPU ticks and RSS (None without a worker)."""
         lines = self._run(self.sample_command()).stdout.splitlines()

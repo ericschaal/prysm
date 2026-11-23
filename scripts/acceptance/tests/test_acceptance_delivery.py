@@ -11,7 +11,7 @@ from typing import Literal, cast
 import unittest
 from unittest import mock
 
-from acceptance_fakes import FakePrysm, ok
+from acceptance_fakes import TOOLS, FakePrysm, ok
 from test_acceptance_host import EXAMPLE, runner
 
 from prysm_acceptance import commands, config, host_cells, host_deb, host_image, prepare, run, transport
@@ -332,6 +332,7 @@ class Deb(SeamTest):
         reason = self.preflight(
             ('linux.probe', ok('Linux aarch64\n')),
             ('deb.sudo', ok()),
+            TOOLS,
             ('deb.leftovers', ok('not-installed\n')),
             ('linux.device', ok('/dev/video0\n')),
             ('linux.port-free', ok()),
@@ -353,6 +354,7 @@ class Deb(SeamTest):
         reason = self.preflight(
             ('linux.probe', ok('Linux aarch64\n')),
             ('deb.sudo', ok()),
+            TOOLS,
             ('deb.leftovers', ok('/usr/bin/prysm-headless\n/var/lib/prysm\nuser prysm-headless\ninstalled\n')),
         )
         self.assertEqual(
@@ -369,6 +371,7 @@ class Deb(SeamTest):
             [
                 ('linux.probe', ok('Linux aarch64\n')),
                 ('deb.sudo', ok()),
+                TOOLS,
                 ('deb.leftovers', ok('/usr/bin/prysm-headless\ninstalled\n')),
                 ('linux.device', ok('/dev/video0\n')),
                 ('linux.port-free', ok()),
@@ -512,6 +515,7 @@ class Image(SeamTest):
         reason, seam = self.preflight(
             ('linux.probe', ok('Linux aarch64\n')),
             ('image.docker', ok('26.1.5+dfsg1\n2.26.1\n')),
+            TOOLS,
             ('image.present', ok('')),
             ('image.device', ok('44\n')),
             ('linux.port-free', ok()),
@@ -527,8 +531,11 @@ class Image(SeamTest):
         for entries, expected in (
             ([probe, ('image.docker', Result(1, '', 'permission denied ... docker.sock'))], 'docker info or docker'),
             ([probe, ('image.docker', ok('26.1.5\n2.20.2\n'))], "docker compose '2.20.2'"),
-            ([probe, docker, ('image.present', ok(IMAGE_ID + '\n'))], 'prysm-headless:local or compose project'),
-            ([probe, docker, ('image.present', ok()), ('image.device', ok('absent\n'))], f'device {DEVICE} is missing'),
+            ([probe, docker, TOOLS, ('image.present', ok(IMAGE_ID + '\n'))], 'prysm-headless:local or compose project'),
+            (
+                [probe, docker, TOOLS, ('image.present', ok()), ('image.device', ok('absent\n'))],
+                f'device {DEVICE} is missing',
+            ),
             ([('linux.probe', ok('Linux x86_64\n'))], 'prysm-headless-linux-arm64.tar is for arm64; pi@pi.example'),
         ):
             with self.subTest(expected):

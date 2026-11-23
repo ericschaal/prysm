@@ -73,12 +73,14 @@ Home has two cards.
 
 - **The light card**: whether the lights are **Off**, **On** or **Stopped**,
   the power button, the two modes **Screen sync** (the lights follow the
-  screen) and **WLED effects** (WLED plays its own patterns), brightness, and
-  your calibrations. A line under **Off** / **On** says what is happening,
+  screen) and **WLED effects** (WLED plays its own patterns), brightness, the
+  style (tap **Natural**, **Calm**, **Vivid** or **Game** to switch at once;
+  **Adjust** opens the Style page) and your calibrations (**Calibrate
+  colours** makes a new one). A line under **Off** / **On** says what is happening,
   for example what Power turns on, or that the lights follow the screen.
   While the lights are off the chosen mode is only outlined; choosing one
-  while off turns the lights on in that mode. With WLED effects, brightness and
-  calibrations do not apply (WLED controls its own effects), so they are dimmed
+  while off turns the lights on in that mode. With WLED effects, brightness, style
+  and calibrations do not apply (WLED controls its own effects), so they are dimmed
   until the lights follow the screen again. Problems show here in plain words, with the
   action that fixes them. **Open WLED** opens WLED's own page.
 - **Your setup**: the path from the video source through Prysm to the lights,
@@ -125,7 +127,8 @@ calibration in use are chosen on Home.
 Picture changes apply while you move the control; there is no Save button.
 
 **Style** sets how the lights follow the picture, in one choice. Choose it to
-see the styles; the ticked one is in use.
+see the styles; the ticked one is in use. Home's light card switches it with
+one tap too (Custom shows there once you have custom values).
 
 | Style | What it is like |
 | --- | --- |

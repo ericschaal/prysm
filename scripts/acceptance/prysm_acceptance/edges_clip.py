@@ -54,7 +54,7 @@ CHECK_SECONDS = 10.0
 # looks every 100 ms, so each change arrives up to 0.1 s late; a capture adds
 # a frame or two.
 PACE_TOLERANCE = 0.3
-# The longest a sample that is no step may last (from its arrival to the next
+# The longest a sample that is no step may last (from its time to the next
 # step's first sample) and still count as the change between two steps: two of
 # the stream's 100 ms looks and a frame or two of a capture caught mid-change.
 TRANSITION = 0.3
@@ -69,7 +69,7 @@ class Fault(StrEnum):
 
 
 class Sample(TypedDict):
-    """One event of the stream as the check read it: its arrival, its step or fault, each edge's halves."""
+    """One event of the stream as the check read it: its time, its step or fault, each edge's halves."""
 
     t: float
     step: int | None
@@ -85,7 +85,7 @@ class Stretch(TypedDict):
     before: int | None
 
 
-# [first arrival, step] of each run of samples showing one step.
+# [first time, step] of each run of samples showing one step.
 Run = list[float]
 
 
@@ -186,7 +186,8 @@ def judge(
     seconds: float,
     decoder: Callable[[ColorsEvent], tuple[int | None, str | None]] = decode,
 ) -> tuple[str, dict[str, object]]:
-    """Judge the timed colours stream: `samples` are (seconds, event) by arrival over `seconds`.
+    """Judge the timed colours stream: `samples` are (seconds since the window began, event) over `seconds`,
+    timed by the clock of the device Prysm runs on (`host.Sender.colours`).
 
     The stream sends only on change, so each sample holds until the next one.
     Every sample must be a step of the clip (`decoder`: `decode`, or with the

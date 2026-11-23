@@ -83,7 +83,8 @@ def events(
 ) -> list[Json] | list[tuple[float, Json]]:
     """The `data:` payloads (parsed JSON) a server-sent events stream gives within `seconds`.
 
-    `timed`: each as (seconds since the request, payload), by arrival."""
+    `timed`: each as (seconds since the request, payload), by arrival. A stream that ends sooner gives what it
+    gave; the reader on a device (`commands.COLOURS_READER`) fails then instead, on purpose."""
     connection, path = _connection(url, min(seconds, 5.0) + 1)
     found: list[tuple[float, Json]] = []
     start = time.monotonic()
@@ -97,7 +98,7 @@ def events(
         while time.monotonic() < deadline and (limit is None or len(found) < limit):
             sock.settimeout(max(0.05, deadline - time.monotonic()))
             try:
-                line = response.fp.readline()
+                line = response.readline()  # de-chunked: an event split across chunks is one line
             except TimeoutError:
                 break
             if not line:

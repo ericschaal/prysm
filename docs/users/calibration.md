@@ -52,6 +52,7 @@ keeps your draft. A pattern left on the TV clears itself after 10 minutes.
 ## Use calibrations
 
 - **Home:** tap a calibration to use it, or **No correction**.
+  **Calibrate colours**, beside **Calibration**, makes a new one.
 - **Settings → Calibrations:** choose a calibration to rename it, adjust its
   colours (the same sliders as when calibrating, plus **Midtones**) or delete it; make a new one with **New calibration**.
 
