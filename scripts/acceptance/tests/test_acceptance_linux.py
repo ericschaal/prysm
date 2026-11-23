@@ -8,7 +8,8 @@ import tempfile
 from typing import cast
 import unittest
 
-from acceptance_fakes import FakePrysm, ok, untyped
+from acceptance_fakes import TOOLS, FakePrysm, ok, untyped
+from test_acceptance_commands import without_uris
 
 from prysm_acceptance import commands, config, feed_chromecast, host, host_cells, transport
 from prysm_acceptance.commands import RunFile, Signal
@@ -118,8 +119,9 @@ class Templates(unittest.TestCase):
                 build()
 
     def test_linux_commands_stay_in_the_run_directory(self) -> None:
-        found = [factory() for name, factory in commands.TEMPLATES.items() if name.startswith('linux.')]
-        self.assertEqual(len(found), 14)
+        # The `device.*` templates run on a Linux target too (and on the TV): the same rules hold for them.
+        found = [factory() for name, factory in commands.TEMPLATES.items() if name.startswith(('linux.', 'device.'))]
+        self.assertEqual(len(found), 16)
         for command in found:
             with self.subTest(command.template):
                 remote = command.remote or ''
@@ -130,7 +132,7 @@ class Templates(unittest.TestCase):
                     self.assertRegex(
                         written, r'^(/dev/null|\$HOME/\.prysm-acceptance(/RUN-CELL(/[\w.-]+)?)?|[\w.-]+)$', remote
                     )
-                for path in re.findall(r'(?<![\w$*%#.])/[A-Za-z0-9_.*$/-]+', remote):
+                for path in re.findall(r'(?<![\w$*%#.])/[A-Za-z0-9_.*$/-]+', without_uris(remote)):
                     self.assertRegex(path, r'^(/dev/null|/proc/|/dev/v4l/by-id/)', remote)
                 if 'kill ' in remote:
                     self.assertIn('readlink /proc/', remote)  # only the run's own binary
@@ -157,6 +159,34 @@ class Seam(unittest.TestCase):
         seam, _ = self.seam([], listen='0.0.0.0:18787')
         self.assertEqual(seam.url, 'http://pi.example:18787')
         self.assertEqual(seam.run, RUN)
+
+    def test_the_colours_are_read_and_timed_on_the_target(self) -> None:
+        printed = '0.105 {"type": "colors"}\n2.104 {"type": "colors", "top": [[0, 255, 0]]}\n'
+        seam, recorded = self.seam([('device.colours', ok(printed))], listen='0.0.0.0:18787')
+        self.assertEqual(
+            seam.colours(10.0),
+            [(0.105, {'type': 'colors'}), (2.104, {'type': 'colors', 'top': [[0, 255, 0]]})],
+        )
+        self.remaining(recorded)
+        self.assertEqual(recorded.calls[0].argv[-2], TARGET)
+        self.assertTrue((recorded.calls[0].remote or '').endswith(' http://127.0.0.1:18787/api/v1/colors/stream 10'))
+        # Prysm on one address of the target: read there, still on the target.
+        seam, _ = self.seam([], listen='192.0.2.70:18787')
+        self.assertIn(' http://192.0.2.70:18787/', seam.colours_command(10.0).remote or '')
+        local = host.LocalBinary(transport.Refusing(), self.binary, '127.0.0.1:18787', self.out_dir, '192.0.2.40:80')
+        self.assertIsNone(local.colours_command(10.0))
+
+    def test_a_failed_read_on_the_target_fails(self) -> None:
+        for result in (
+            Result(1, '0.105 {"type": "colors"}\n', 'the stream ended 0.2 s after the start'),
+            Result(124, ''),
+        ):
+            seam, _ = self.seam([('device.colours', result)])
+            with self.subTest(result.returncode), self.assertRaisesRegex(transport.CommandFailed, 'device.colours'):
+                seam.colours(10.0)
+        seam, _ = self.seam([('device.colours', ok('Traceback (most recent call last):\n'))])
+        with self.assertRaises(ValueError):
+            seam.colours(10.0)
 
     def test_deliver_start_stop_close(self) -> None:
         seam, recorded = self.seam(
@@ -281,6 +311,7 @@ class Preflight(unittest.TestCase):
         reason, seam = self.preflight(
             Source.DEVICE,
             ('linux.probe', ok('Linux aarch64\n')),
+            TOOLS,
             ('linux.device', ok('/dev/video0\n')),
             ('linux.port-free', ok()),
         )
@@ -291,10 +322,25 @@ class Preflight(unittest.TestCase):
         reason, _ = self.preflight(
             Source.FILE,
             ('linux.probe', ok('Linux aarch64\n')),
+            TOOLS,
             ('linux.ffmpeg-version', ok('ffmpeg version 9.0 Copyright (c) 2000-2026\nbuilt with gcc\n')),
             ('linux.port-free', ok()),
         )
         self.assertIsNone(reason)
+
+    def test_no_python3_or_timeout_for_the_colour_check(self) -> None:
+        reason, _ = self.preflight(
+            Source.DEVICE,
+            ('linux.probe', ok('Linux aarch64\n')),
+            ('device.reader-tools', ok('missing python3\n/usr/bin/timeout\n')),
+        )
+        self.assertEqual(
+            reason, 'the colour check reads on pi@pi.example with python3 and timeout; missing there: python3'
+        )
+        both = transport.Transcript([('device.reader-tools', ok('missing python3\nmissing timeout\n'))])
+        self.assertIn('missing there: python3, timeout', host.reader_missing(both, 'root@tv.example') or '')
+        present = transport.Transcript([('device.reader-tools', ok('/usr/bin/python3\ntimeout\n'))])
+        self.assertIsNone(host.reader_missing(present, 'root@tv.example'))
 
     def test_unreachable(self) -> None:
         reason, _ = self.preflight(Source.DEVICE, ('linux.probe', Result(255, '', 'Permission denied (publickey).')))
@@ -310,22 +356,24 @@ class Preflight(unittest.TestCase):
         reason, _ = self.preflight(
             Source.FILE,
             ('linux.probe', ok('Linux aarch64\n')),
+            TOOLS,
             ('linux.ffmpeg-version', ok('ffmpeg version 7.1.1-1+b1 Copyright (c) 2000-2025\n')),
         )
         self.assertEqual(reason, 'the file source needs FFmpeg 9+ on the target; it has FFmpeg 7')
         reason, _ = self.preflight(
-            Source.FILE, ('linux.probe', ok('Linux aarch64\n')), ('linux.ffmpeg-version', ok('absent\n'))
+            Source.FILE, ('linux.probe', ok('Linux aarch64\n')), TOOLS, ('linux.ffmpeg-version', ok('absent\n'))
         )
         self.assertEqual(reason, "the file source needs FFmpeg 9+ on the target; found 'absent'")
 
     def test_missing_device_or_busy_port(self) -> None:
         reason, _ = self.preflight(
-            Source.DEVICE, ('linux.probe', ok('Linux aarch64\n')), ('linux.device', ok('unreadable\n'))
+            Source.DEVICE, ('linux.probe', ok('Linux aarch64\n')), TOOLS, ('linux.device', ok('unreadable\n'))
         )
         self.assertIn('capture device /dev/v4l/by-id/usb-EXAMPLE-video-index0 is missing', reason or '')
         reason, _ = self.preflight(
             Source.DEVICE,
             ('linux.probe', ok('Linux aarch64\n')),
+            TOOLS,
             ('linux.device', ok('/dev/video0\n')),
             ('linux.port-free', ok('LISTEN 0 128 0.0.0.0:18787 0.0.0.0:*\n')),
         )

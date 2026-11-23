@@ -8,12 +8,15 @@ shape fails the check that reads it, as before.
 from collections.abc import Callable, Sequence
 import copy
 from enum import StrEnum
+import json
 import re
 import statistics
 import time
 from typing import Literal, NotRequired, TypeAlias, TypedDict, cast, overload
 
 from prysm_acceptance import web
+from prysm_acceptance.commands import Command
+from prysm_acceptance.transport import Transport
 from prysm_acceptance.web import JsonObject
 
 
@@ -212,7 +215,7 @@ class Prysm:
     def colors(self, seconds: float = 3.0, timed: bool = False) -> list[ColorsEvent] | list[tuple[float, ColorsEvent]]:
         """The `ColorsEvent`s the colours stream sends within `seconds`.
 
-        `timed`: each as (seconds since the stream opened, event). The stream
+        `timed`: each as (seconds since the request, event), by its arrival here. The stream
         sends only when the colours change, so an event holds until the next."""
         url = self._url('/api/v1/colors/stream')
         if timed:
@@ -246,6 +249,22 @@ class Prysm:
             found.append(self.state().get('input'))
             time.sleep(every)
         return found
+
+
+def timed_lines(text: str) -> list[tuple[float, ColorsEvent]]:
+    """`commands.COLOURS_READER`'s output, `<seconds> <payload>` per line, as `Prysm.colors(timed=True)` gives
+    events; a line of another shape raises ValueError."""
+    found: list[tuple[float, ColorsEvent]] = []
+    for line in text.splitlines():
+        at, _, payload = line.partition(' ')
+        found.append((float(at), cast('ColorsEvent', json.loads(payload))))
+    return found
+
+
+def colours_on_device(run: Transport, command: Command) -> list[tuple[float, ColorsEvent]]:
+    """The timed colours `command` (`commands.device_colours`) reads on the device Prysm runs on; a non-zero exit
+    raises `CommandFailed`."""
+    return timed_lines(run.run(command).stdout)
 
 
 def section(settings: Settings, name: str) -> JsonObject:
