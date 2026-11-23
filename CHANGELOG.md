@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.0.0-rc.3](https://github.com/ericschaal/prysm/compare/v1.0.0-rc.2...v1.0.0-rc.3) (2026-11-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* `PreviewEvent` frames no longer have a `colors` field.
+
+### Features
+
+* device pickers end with a typed row; Style and Calibration share one segmented control ([#93](https://github.com/ericschaal/prysm/issues/93)) ([ab90167](https://github.com/ericschaal/prysm/commit/ab901678b965b697a5a3e8a9d010a8bc25b2db5a))
+* Home plays the live preview on the Your setup drawing; the Preview page is gone ([#92](https://github.com/ericschaal/prysm/issues/92)) ([0d46692](https://github.com/ericschaal/prysm/commit/0d4669284343198993263f967134cb18499cac38))
+* Home's LED band shows each edge as a gradient of its colours; the colours stream carries 16 per edge ([#96](https://github.com/ericschaal/prysm/issues/96)) ([88d9adb](https://github.com/ericschaal/prysm/commit/88d9adb181adf5e8661596830afa64c0d9583286))
+* the Home light takes only the LEDs' colours and is as strong as they are bright ([#95](https://github.com/ericschaal/prysm/issues/95)) ([7f8fff0](https://github.com/ericschaal/prysm/commit/7f8fff0d992f843f1a9868e17a5e7aeb4e5e2ca5))
+* the LED editor has its counts on the strips, one base line and the wiring in a sentence ([#94](https://github.com/ericschaal/prysm/issues/94)) ([5d2bf89](https://github.com/ericschaal/prysm/commit/5d2bf89094235e4e7f56893b916123a7515c9fee))
+* the style switches with one tap on Home, beside calibration ([#88](https://github.com/ericschaal/prysm/issues/88)) ([3c212f5](https://github.com/ericschaal/prysm/commit/3c212f5245060cfd703e1a9c80836e1521ef8f80))
+
+
+### Code Refactoring
+
+* the preview stream carries the picture and the sampled area only ([#97](https://github.com/ericschaal/prysm/issues/97)) ([c955ac6](https://github.com/ericschaal/prysm/commit/c955ac6b021491b61051cfa064ab251bad0908a5))
+
 ## [1.0.0-rc.2](https://github.com/ericschaal/prysm/compare/v1.0.0-rc.1...v1.0.0-rc.2) (2026-11-23)
 
 
