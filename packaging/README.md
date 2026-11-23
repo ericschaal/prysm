@@ -4,7 +4,8 @@ Two ways to run the [headless host](../crates/hosts/headless/src/main.rs) on Lin
 a Docker image and a Debian package with a systemd service. Both are built by
 [`docker/Dockerfile`](docker/Dockerfile) from the repository root, for
 `linux/amd64` and `linux/arm64` (Raspberry Pi OS 64-bit). They assume a machine
-without the earlier implementation's image or `prysm-led` package.
+without the earlier implementation's image or `prysm-led` package; the
+[upgrade note](../docs/users/upgrading.md) says how to move from it.
 
 Both offer the `device` (V4L2) and `remote` sources and the `wled` and `null`
 outputs. The `file` source (play a video file) is for development only: it

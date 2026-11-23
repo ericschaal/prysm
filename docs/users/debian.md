@@ -20,6 +20,8 @@ sudo apt install ./prysm-headless_*.deb
 
 This enables and starts the `prysm-headless` service. The service has no
 permanent account: systemd gives it a temporary user while it runs.
+Upgrading from 0.2.0 (`prysm-led`) or 1.0.0-rc.1? See
+[Upgrade to 1.0.0](upgrading.md) first.
 
 ## 2. Open the portal
 
