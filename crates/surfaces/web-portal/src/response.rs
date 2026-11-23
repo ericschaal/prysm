@@ -11,10 +11,11 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 /// An event stream with nothing new sends [`KEEPALIVE_COMMENT`] this often,
-/// so a reader that left is noticed (a reset fails the write; one that
-/// vanished silently once the send buffer is full and the write deadline
-/// passes, which takes long at a few bytes per comment) and releases its
-/// stream slot.
+/// so a reader that closed is noticed (its reset fails the write) and
+/// releases its stream slot. One that vanished without closing leaves
+/// these comments unacknowledged; on Linux the kernel ends the connection
+/// 30 s after the first of them (`TCP_USER_TIMEOUT`, set in `server`) and
+/// the next write fails. Elsewhere that takes TCP's retransmission timeout.
 pub(crate) const KEEPALIVE: Duration = Duration::from_secs(15);
 /// An event-stream comment: ignored by readers, written like any event.
 pub(crate) const KEEPALIVE_COMMENT: Bytes = Bytes::from_static(b":\n\n");
