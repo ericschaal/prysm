@@ -480,6 +480,31 @@ mod tests {
         }
     }
 
+    /// The chosen style, the custom values and a calibration are objects:
+    /// an array is refused at its path, not read by position.
+    #[test]
+    fn an_array_for_a_style_or_calibration_is_refused_at_its_path() {
+        for (processing, path) in [
+            (
+                serde_json::json!({ "custom_style": [0.5, 50, 0.3, 50, 50, 50, 5] }),
+                "custom_style",
+            ),
+            (serde_json::json!({ "style": ["natural"] }), "style"),
+            (
+                serde_json::json!({ "calibrations": [["a", "A"]] }),
+                "calibrations[0]",
+            ),
+        ] {
+            let error =
+                serde_path_to_error::deserialize::<_, Processing>(processing.clone()).unwrap_err();
+            assert_eq!(error.path().to_string(), path, "{processing}");
+            assert!(
+                error.inner().to_string().contains("invalid type: sequence"),
+                "{processing}: {error}"
+            );
+        }
+    }
+
     #[test]
     fn active_calibration_sets_the_processor_correction() {
         let processing: Processing = serde_json::from_value(serde_json::json!({

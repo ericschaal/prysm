@@ -7,13 +7,14 @@ use serde::{Deserialize, Serialize};
 /// with it while calibrations are edited. Engine state like the target:
 /// never persisted and not part of [`Settings`](crate::Settings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct CalibrationPattern {
     pub pattern: Pattern,
     /// Apply no calibration while the pattern shows, to compare against
     /// the uncorrected colors.
     pub uncorrected: bool,
 }
+crate::map_only!(CalibrationPattern, "a calibration pattern as an object");
 
 impl CalibrationPattern {
     /// The processing config while this pattern shows: no smoothing, so a
@@ -91,6 +92,26 @@ impl Pattern {
 mod tests {
     use super::*;
     use prysm_core::BrightnessPercent;
+
+    #[test]
+    fn only_an_object_is_a_calibration_pattern() {
+        let read = serde_json::from_value::<CalibrationPattern>;
+        let object = serde_json::json!({ "pattern": "red", "uncorrected": false });
+        assert_eq!(
+            read(object).unwrap(),
+            CalibrationPattern {
+                pattern: Pattern::Red,
+                uncorrected: false
+            }
+        );
+        let error = read(serde_json::json!(["red", false]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("a calibration pattern as an object"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn patterns_use_the_tv_clip_names() {

@@ -12,7 +12,7 @@ pub const MAX_CALIBRATION_NAME_CHARS: usize = 64;
 
 /// A named correction the user can make active, such as one per console.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct Calibration {
     /// Stable reference for `active_calibration`: 1–64 ASCII letters, digits,
     /// `-` or `_` (a UUID fits). Unique within the list.
@@ -23,6 +23,7 @@ pub struct Calibration {
     #[serde(default)]
     pub correction: CorrectionControls,
 }
+crate::map_only!(Calibration, "a calibration as an object");
 
 /// Correction controls, each -100 to 100; all zero is no correction.
 /// Converted to [`ColorCorrection`] for the processor.
@@ -280,6 +281,15 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<CorrectionControls>(unknown).is_err());
         }
+    }
+
+    #[test]
+    fn only_an_object_is_a_calibration() {
+        let read = serde_json::from_value::<Calibration>;
+        let object = serde_json::json!({ "id": "a", "name": "A" });
+        assert_eq!(read(object).unwrap(), calibration("a", "A"));
+        let error = read(serde_json::json!(["a", "A"])).unwrap_err().to_string();
+        assert!(error.contains("a calibration as an object"), "{error}");
     }
 
     #[test]
