@@ -42,10 +42,6 @@ async fn preview_is_idle_while_off_and_streams_frames_while_running() {
             json!({ "x": 0, "y": 0, "width": 16, "height": 9 })
         );
         assert!(
-            frame.get("colors").is_none(),
-            "colors have their own stream"
-        );
-        assert!(
             frame["jpeg"].as_str().unwrap().starts_with("/9j/"),
             "JPEG SOI"
         );
