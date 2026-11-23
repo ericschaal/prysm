@@ -318,8 +318,11 @@ supervisor in each of its states and play the phone's calibration part). See the
   [remote capture](packages/capture-remote-ui/index.ts),
   [webOS capture](packages/capture-webos-ui/index.ts),
   [WLED](packages/output-wled-ui/index.ts) on Home's
-  [LED drawing](packages/web-portal/led-drawing.tsx) (with its count fields,
-  wiring direction, LED 1 and total), and the
+  [LED drawing](packages/web-portal/led-drawing.tsx) (each edge's count
+  field in the middle of its strip, LED 1 badged in its corner with one
+  mark along the first lit strip, the wiring said once under the drawing,
+  for example "First LED is bottom left. The strip runs clockwise.", and the
+  total in the screen), and the
   [null output](packages/output-null-ui/index.tsx).
 - [TV UI](packages/tv-ui/app.tsx) (both packages): status card from the
   supervisor's state ([rules](packages/tv-ui/model.ts)), with the capture

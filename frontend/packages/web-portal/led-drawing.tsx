@@ -14,9 +14,9 @@ export interface Wire {
 type Point = readonly [number, number];
 
 /*
- * The TV seen from the front, in viewBox units: the screen, its band `out`
+ * Home's TV seen from the front, in viewBox units: the screen, its band `out`
  * beyond each edge and `inset` short of each screen corner, so the four
- * corners are equal empty gaps, and the stand below.
+ * corners are equal empty gaps, and the stand's base below.
  */
 const screen = { x: 60, y: 34, width: 200, height: 112 };
 const screenRadius = 7;
@@ -24,13 +24,6 @@ const out = 9;
 const inset = 6;
 /** Home's drawing, with room for the counts (the bottom one past the stand). */
 const home = { width: 320, height: 200 };
-/** The editor's drawing: this much round the band on every side. */
-const room = 20;
-/** The break at a band's middle and its direction mark (half its span). */
-const cut = 24;
-const mark = 4;
-/** LED 1's badge, centred on its corner point: 5 clear of either band. */
-const badge = 8;
 /** Lowers 11px digits so they are centred on their point. */
 const digitDrop = 4;
 
@@ -64,9 +57,8 @@ const screenBox = {
   height: percent(screen.height, home.height),
   borderRadius: `${percent(screenRadius, screen.width)} / ${percent(screenRadius, screen.height)}`,
 };
-const editorView = `${left - room} ${top - room} ${right - left + 2 * room} ${bottom - top + 2 * room}`;
-const stand = `M${cx} ${screen.y + screen.height + 17}v7M${cx - 22} ${screen.y + screen.height + 26}h44`;
-/** Each band drawn clockwise when no wiring is given. */
+const stand = `M${cx - 22} ${screen.y + screen.height + 26}h44`;
+/** Home's bands, each drawn clockwise. */
 const clockwise: readonly Wire[] = [
   { edge: 'top', from: 'top-left', to: 'top-right' },
   { edge: 'right', from: 'top-right', to: 'bottom-right' },
@@ -80,54 +72,42 @@ const screenWay: Record<Edge, readonly [Corner, Corner]> = {
   bottom: ['bottom-left', 'bottom-right'],
   left: ['top-left', 'bottom-left'],
 };
+/** The corners in clockwise order, seen from the front. */
+const aroundClockwise = clockwise.map(({ from }) => from);
 
-const along = ([x, y]: Point, [dx, dy]: Point, by: number): Point => [
-  x + dx * by,
-  y + dy * by,
-];
-const ends = ([[x1, y1], [x2, y2]]: readonly [Point, Point]) => ({
-  x1,
-  y1,
-  x2,
-  y2,
-});
+/** The band from one corner to the other, `out + inset` short of each. */
+function bandOf([x1, y1]: Point, [x2, y2]: Point) {
+  const length = Math.hypot(x2 - x1, y2 - y1);
+  const dx = ((x2 - x1) / length) * (out + inset);
+  const dy = ((y2 - y1) / length) * (out + inset);
+  return { x1: x1 + dx, y1: y1 + dy, x2: x2 - dx, y2: y2 - dy };
+}
 
-/**
- * The band from one corner to the other, `out + inset` short of each: whole,
- * in two parts round the break at its middle, and the mark in the break
- * pointing from `from` to `to`.
- */
-function bandOf(from: Point, to: Point) {
-  const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
-  const way: Point = [(to[0] - from[0]) / length, (to[1] - from[1]) / length];
-  const across: Point = [-way[1], way[0]];
-  const start = along(from, way, out + inset);
-  const end = along(to, way, -out - inset);
-  const middle = along(from, way, length / 2);
-  const back = along(middle, way, -mark / 2);
-  const points = [
-    along(back, across, mark),
-    along(middle, way, mark / 2),
-    along(back, across, -mark),
-  ];
-  return {
-    whole: [start, end] as const,
-    parts: [
-      [start, along(middle, way, -cut / 2)],
-      [along(middle, way, cut / 2), end],
-    ] as const,
-    arrow: `M${points.map((point) => point.join(' ')).join('L')}`,
-  };
+/** Which way a wire runs on the drawing, from its first corner. */
+function wayOf({ from, to }: Wire) {
+  const [fromRow, fromSide] = from.split('-');
+  if (fromRow !== to.split('-')[0]) return fromRow === 'bottom' ? 'up' : 'down';
+  return fromSide === 'left' ? 'right' : 'left';
+}
+
+/** Where LED 1 is and which way the strip runs from it, in words. */
+function directionOf(first: Wire | undefined) {
+  if (!first) return 'No LEDs yet. Enter how many are on each edge.';
+  const next = (aroundClockwise.indexOf(first.from) + 1) % 4;
+  const turn =
+    aroundClockwise[next] === first.to ? 'clockwise' : 'anticlockwise';
+  return `First LED is ${first.from.replace('-', ' ')}. The strip runs ${turn}.`;
 }
 
 /**
  * The TV seen from the front on its stand, with the LED band around it:
  * each edge's run of light (dashed and dim when it has none) and its count.
- * Home shows the counts as numbers. The editor (`editing`) puts each edge's
- * count field beside its band instead, breaks each lit band at its middle
- * for an arrow along the `wiring`, badges LED 1's corner and writes the
- * total in the screen, marked while it is refused (`invalid`). Home can lay
- * `screen` over the screen (the live preview) and put a `note` under it.
+ * Home draws it, its counts as numbers, its band lit; it can lay `screen`
+ * over the screen (the live preview) and put a `note` under it. The editor
+ * (`editing`) builds it in HTML, so the fields keep their size at any width:
+ * each edge's count field in the middle of its strip, LED 1's corner badged
+ * with one mark along the first lit strip, the total in the screen, marked
+ * while it is refused (`invalid`), and the `wiring` in words under it.
  */
 export function LedDrawing({
   edges,
@@ -150,93 +130,115 @@ export function LedDrawing({
   };
 }) {
   const id = useId();
-  const wires = editing?.wiring ?? clockwise;
-  const start = editing && wires.find(({ edge }) => edges[edge] > 0)?.from;
-  const drawing = (
-    <svg
-      viewBox={editing ? editorView : homeView}
-      aria-hidden="true"
-      focusable="false"
-    >
-      <defs>
-        {/* The light the band throws on the wall: soft, not an outline. */}
-        <filter
-          id={`${id}-blur`}
-          filterUnits="userSpaceOnUse"
-          x="0"
-          y="0"
-          width={home.width}
-          height={home.height}
-        >
-          <feGaussianBlur stdDeviation="5" />
-        </filter>
-      </defs>
-      <g className="led-map-band">
-        {wires.map(({ edge, from, to }) => {
-          const band = bandOf(corners[from], corners[to]);
-          const lit = edges[edge] > 0;
-          const arrow = editing && lit;
-          const [first, last] = screenWay[edge];
-          const paint = `url(#${id}-${edge})`;
-          const lines: readonly (readonly [Point, Point])[] = arrow
-            ? band.parts
-            : [band.whole];
-          return (
-            <g
-              key={edge}
-              className={`led-map-edge edge-${edge}${lit ? '' : ' empty'}`}
+  if (editing) {
+    const first = editing.wiring.find(({ edge }) => edges[edge] > 0);
+    return (
+      <figure className="led-layout">
+        <div className="led-tv">
+          <div className="led-map-screen">
+            <p className="screen-label" data-invalid={editing.invalid}>
+              <strong>{ledCount(edges)}</strong> <span>LEDs in total</span>
+            </p>
+          </div>
+          {editing.wiring.map((wire) => (
+            <div
+              key={wire.edge}
+              className={`led-edge led-edge-${wire.edge}${edges[wire.edge] > 0 ? '' : ' empty'}`}
+              data-way={wire === first ? wayOf(wire) : undefined}
             >
-              {/* The edge's colours along its band, in the stream's order. */}
-              <linearGradient
-                id={`${id}-${edge}`}
-                gradientUnits="userSpaceOnUse"
-                {...ends(bandOf(corners[first], corners[last]).whole)}
-              >
-                {Array.from({ length: ledStops }, (_, index) => (
-                  <stop
-                    key={index}
-                    offset={(index + 0.5) / ledStops}
-                    style={
-                      {
-                        '--led': `var(--led-${edge[0]}-${index})`,
-                      } as CSSProperties
-                    }
+              <span className="led-strip" />
+              {editing.counts[wire.edge]}
+              <span className="led-strip" />
+            </div>
+          ))}
+          {first ? (
+            <span
+              className="led-start"
+              data-corner={first.from}
+              data-way={wayOf(first)}
+              aria-hidden="true"
+            >
+              1
+              <svg viewBox="0 0 14 9" focusable="false">
+                <path d="M1 8 7 1l6 7" />
+              </svg>
+            </span>
+          ) : null}
+        </div>
+        <p className="led-way">
+          {first ? (
+            <span className="led-badge" aria-hidden="true">
+              1
+            </span>
+          ) : null}
+          {directionOf(first)}
+        </p>
+        <figcaption className="visually-hidden">{caption}</figcaption>
+      </figure>
+    );
+  }
+  return (
+    <figure className="led-map" data-preview={onScreen ? true : undefined}>
+      {/* The drawing's own box, so the screen's box can be laid over it. */}
+      <div className="led-map-tv">
+        <svg viewBox={homeView} aria-hidden="true" focusable="false">
+          <defs>
+            {/* The light the band throws on the wall: soft, not an outline. */}
+            <filter
+              id={`${id}-blur`}
+              filterUnits="userSpaceOnUse"
+              x="0"
+              y="0"
+              width={home.width}
+              height={home.height}
+            >
+              <feGaussianBlur stdDeviation="5" />
+            </filter>
+          </defs>
+          <g className="led-map-band">
+            {clockwise.map(({ edge, from, to }) => {
+              const band = bandOf(corners[from], corners[to]);
+              const [first, last] = screenWay[edge];
+              const paint = `url(#${id}-${edge})`;
+              return (
+                <g
+                  key={edge}
+                  className={`led-map-edge edge-${edge}${edges[edge] > 0 ? '' : ' empty'}`}
+                >
+                  {/* The edge's colours along its band, in the stream's order. */}
+                  <linearGradient
+                    id={`${id}-${edge}`}
+                    gradientUnits="userSpaceOnUse"
+                    {...bandOf(corners[first], corners[last])}
+                  >
+                    {Array.from({ length: ledStops }, (_, index) => (
+                      <stop
+                        key={index}
+                        offset={(index + 0.5) / ledStops}
+                        style={
+                          {
+                            '--led': `var(--led-${edge[0]}-${index})`,
+                          } as CSSProperties
+                        }
+                      />
+                    ))}
+                  </linearGradient>
+                  <line
+                    className="halo"
+                    filter={`url(#${id}-blur)`}
+                    stroke={paint}
+                    {...band}
                   />
-                ))}
-              </linearGradient>
-              <line
-                className="halo"
-                filter={`url(#${id}-blur)`}
-                stroke={paint}
-                {...ends(band.whole)}
-              />
-              {lines.map((part) => (
-                <line key={part[0].join()} stroke={paint} {...ends(part)} />
-              ))}
-              {arrow ? <path className="led-map-way" d={band.arrow} /> : null}
-            </g>
-          );
-        })}
-      </g>
-      <path className="led-map-stand" d={stand} />
-      <g className="led-map-screen">
-        <rect {...screen} rx={screenRadius} />
-        {editing ? (
-          <text
-            className="screen-label"
-            data-invalid={editing.invalid}
-            x={cx}
-            y={cy}
-            textAnchor="middle"
-            dominantBaseline="central"
-          >
-            {ledCount(edges)} LEDs
-          </text>
-        ) : null}
-      </g>
-      {editing
-        ? null
-        : clockwise.map(({ edge }) => (
+                  <line stroke={paint} {...band} />
+                </g>
+              );
+            })}
+          </g>
+          <path className="led-map-stand" d={stand} />
+          <g className="led-map-screen">
+            <rect {...screen} rx={screenRadius} />
+          </g>
+          {clockwise.map(({ edge }) => (
             <text
               key={edge}
               className="led-map-count"
@@ -247,37 +249,7 @@ export function LedDrawing({
               {edges[edge]}
             </text>
           ))}
-      {start ? (
-        <g className="led-map-start">
-          <circle cx={corners[start][0]} cy={corners[start][1]} r={badge} />
-          <text
-            x={corners[start][0]}
-            y={corners[start][1] + digitDrop}
-            textAnchor="middle"
-          >
-            1
-          </text>
-        </g>
-      ) : null}
-    </svg>
-  );
-  if (editing)
-    return (
-      <figure className="led-layout">
-        {wires.map(({ edge }) => (
-          <div key={edge} className={`led-edge led-edge-${edge}`}>
-            {editing.counts[edge]}
-          </div>
-        ))}
-        {drawing}
-        <figcaption className="visually-hidden">{caption}</figcaption>
-      </figure>
-    );
-  return (
-    <figure className="led-map" data-preview={onScreen ? true : undefined}>
-      {/* The drawing's own box, so the screen's box can be laid over it. */}
-      <div className="led-map-tv">
-        {drawing}
+        </svg>
         {onScreen ? (
           <div className="led-map-picture" style={screenBox}>
             {onScreen}

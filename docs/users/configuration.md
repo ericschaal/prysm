@@ -45,7 +45,8 @@ Nothing is saved until the last step.
    name such as `wled.local`
    or an IP address such as `192.168.1.30`, with `:PORT` only if WLED's web
    page is not on port 80. Do not type `http://`.
-   Enter the number of LEDs on each edge; use 0 for an edge without LEDs.
+   Under **LEDs per edge**, type the number of LEDs on each edge in the
+   field on that edge of the drawing; use 0 for an edge without LEDs.
    Prysm takes 1 to 16384 LEDs in total (the most a WLED device drives;
    smaller chips such as the ESP8266 stop far earlier). The edges should add
    up to WLED's own LED count: a device chosen from the list shows its
@@ -60,8 +61,10 @@ needs host networking, so in a normal container type the IP address.
 
 Wire the strip so that, seen from the front, it starts at the **bottom-left
 corner** and runs **up the left edge, across the top, down the right edge and
-back along the bottom** (clockwise). The wizard draws this layout with your
-counts.
+back along the bottom** (clockwise). The drawing shows this layout with your
+counts: a **1** marks the first LED's corner, and the line under the drawing
+says it, for example **First LED is bottom left. The strip runs clockwise.**
+If the left edge has no LEDs, the first LED is on the next edge with LEDs.
 
 **No lights (test)** runs Prysm without LEDs, for trying a video source.
 

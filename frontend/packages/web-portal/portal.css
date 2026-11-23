@@ -2912,10 +2912,12 @@ fieldset > .field-note {
 
 /* ── Found devices ────────────────────────────────────────────────────── */
 /*
- * The devices' heading carries Look again at its end, so the action takes
- * no line of its own; on a narrow screen it wraps under the heading.
+ * The devices' heading carries Look again at its end, and the LEDs' heading
+ * the side they are seen from, so neither takes a line of its own; on a
+ * narrow screen it wraps under the heading.
  */
-.device-rows > legend {
+.device-rows > legend,
+.leds > legend {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -2926,6 +2928,11 @@ fieldset > .field-note {
 .device-rows > legend > button.link {
   font-size: var(--text-small);
 }
+.leds > legend > span:last-child {
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-weight: var(--weight-regular);
+}
 /* What the lookup has to say, under the rows; nothing, no line. */
 .device-rows > .help:not(:empty) {
   margin-top: var(--space-2);
@@ -2933,45 +2940,147 @@ fieldset > .field-note {
 
 /* ── LED layout (WLED editor) ─────────────────────────────────────────── */
 /*
- * The Lights editor's drawing: a grid with each edge's count field on its
- * own edge, centred on it (the drawing is symmetric about the band), all
- * four one width and one gap away, and the bands in the accent.
+ * The Lights editor's drawing, in HTML so the count fields keep a finger's
+ * size at any width. Everything round the screen is placed in `--u`, one
+ * unit of the approved drawing, in which a field (32 units tall) is a tap
+ * target; only the screen follows the width, up to the drawing's own
+ * proportions, and keeps the height its side fields need.
  */
 .led-layout {
-  --led-count: 72px;
-  --band-top: var(--accent);
-  --band-right: var(--accent);
-  --band-bottom: var(--accent);
-  --band-left: var(--accent);
-  display: grid;
-  grid-template-columns: var(--led-count) minmax(0, 1fr) var(--led-count);
-  grid-template-areas:
-    '. top .'
-    'left screen right'
-    '. bottom .';
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 480px;
+  --u: calc(var(--hit) / 32);
+  max-width: calc(392 * var(--u));
   margin: 0 auto;
+  container-type: inline-size;
 }
-.led-edge-top {
-  grid-area: top;
+.led-tv {
+  position: relative;
+  /* The screen's ratio; on a narrow page its height holds instead. */
+  height: max(
+    calc(88 * var(--u)),
+    calc((100cqi - 92 * var(--u)) * 170 / 300)
+  );
+  margin: calc(38 * var(--u) + var(--space-3)) calc(46 * var(--u))
+    calc(54 * var(--u) + var(--space-3));
 }
-.led-edge-right {
-  grid-area: right;
+/* The stand: one base line under the TV. */
+.led-tv::after {
+  content: '';
+  position: absolute;
+  top: calc(100% + 50.5 * var(--u));
+  left: calc(50% - 40 * var(--u));
+  width: calc(80 * var(--u));
+  height: calc(3 * var(--u));
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
 }
-.led-edge-bottom {
-  grid-area: bottom;
+/* The screen, in night colours as the screen is, with the total in it. */
+.led-tv > .led-map-screen {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  border: calc(1.5 * var(--u)) solid var(--line-strong);
+  border-radius: calc(10 * var(--u));
+  background: var(--bg);
+  text-align: center;
 }
-.led-edge-left {
-  grid-area: left;
+.screen-label {
+  display: grid;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+.screen-label strong {
+  color: var(--fg);
+  font-size: var(--text-display);
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-tight);
+}
+.screen-label[data-invalid='true'] strong {
+  color: var(--alert);
+}
+/*
+ * Each edge: its strip in two parts with the count field centred between
+ * them, on a line 22 units above or below the screen (the field just clear
+ * of it) or 18 beside it (the field over its rim); the strips stop 10 short
+ * of the screen's corners.
+ */
+.led-edge {
+  position: absolute;
+  display: grid;
+  place-content: center;
+  place-items: center;
+  gap: calc(8 * var(--u));
 }
 .led-edge-top,
 .led-edge-bottom {
-  width: var(--led-count);
-  justify-self: center;
+  grid-template-columns: 1fr auto 1fr;
+  inset-inline: calc(10 * var(--u));
+  height: calc(32 * var(--u));
 }
-/* The label and note are read out; the place says which edge it is. */
+.led-edge-top {
+  top: calc(-38 * var(--u));
+}
+.led-edge-bottom {
+  bottom: calc(-38 * var(--u));
+}
+.led-edge-left,
+.led-edge-right {
+  grid-template-rows: 1fr auto 1fr;
+  inset-block: calc(10 * var(--u));
+  width: calc(56 * var(--u));
+}
+.led-edge-left {
+  left: calc(-46 * var(--u));
+}
+.led-edge-right {
+  right: calc(-46 * var(--u));
+}
+.led-strip {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.led-edge-top > .led-strip,
+.led-edge-bottom > .led-strip {
+  justify-self: stretch;
+  height: calc(4 * var(--u));
+  background-size: calc(8 * var(--u)) 100%;
+}
+.led-edge-left > .led-strip,
+.led-edge-right > .led-strip {
+  align-self: stretch;
+  width: calc(4 * var(--u));
+  background-size: 100% calc(8 * var(--u));
+}
+/* An edge with no LEDs: a dim dotted line. */
+.led-edge.empty > .led-strip {
+  border-radius: 0;
+  background-color: transparent;
+  background-image: radial-gradient(
+    circle closest-side,
+    var(--line-strong) 80%,
+    transparent
+  );
+}
+/* The first lit strip starts further from LED 1, for its mark. */
+.led-edge[data-way='up'] > .led-strip:last-child {
+  margin-bottom: calc(4 * var(--u));
+}
+.led-edge[data-way='down'] > .led-strip:first-child {
+  margin-top: calc(4 * var(--u));
+}
+.led-edge[data-way='right'] > .led-strip:first-child {
+  margin-left: calc(8 * var(--u));
+}
+.led-edge[data-way='left'] > .led-strip:last-child {
+  margin-right: calc(8 * var(--u));
+}
+/*
+ * The count field: a pill with no spinner (typed, or stepped with the arrow
+ * keys). Its label and note are read out; the place says which edge it is.
+ */
 .led-count label,
 .led-count .field-note {
   position: absolute;
@@ -2982,51 +3091,93 @@ fieldset > .field-note {
   white-space: nowrap;
 }
 .led-count.field {
+  width: calc(56 * var(--u));
   margin: 0;
 }
 .led-count.field input:not([type='checkbox'], [type='range'], [type='radio']) {
   min-height: var(--hit);
   padding-inline: var(--space-2);
+  border-radius: var(--radius-pill);
   text-align: center;
+  appearance: textfield;
 }
-.led-layout svg {
-  grid-area: screen;
-  display: block;
-  width: 100%;
-  height: auto;
-  overflow: visible;
+.led-count input::-webkit-inner-spin-button,
+.led-count input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
 }
-.leds > .field-note {
-  text-align: center;
+/* LED 1: a badge in its corner, as in the line under the drawing. */
+.led-start,
+.led-badge {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-fill);
+  font-weight: var(--weight-strong);
 }
-/*
- * The editor's additions: each band's wiring direction in the break at its
- * middle, LED 1 the badge in its corner, the total in the screen (in night
- * colours, as the screen is).
- */
-.led-map-way {
+.led-start {
+  position: absolute;
+  width: calc(22 * var(--u));
+  height: calc(22 * var(--u));
+  margin: calc(-11 * var(--u));
+  font-size: var(--text-small);
+}
+.led-start[data-corner$='left'] {
+  left: calc(-18 * var(--u));
+}
+.led-start[data-corner$='right'] {
+  left: calc(100% + 18 * var(--u));
+}
+.led-start[data-corner^='top'] {
+  top: calc(-22 * var(--u));
+}
+.led-start[data-corner^='bottom'] {
+  top: calc(100% + 22 * var(--u));
+}
+.led-start[data-way='right'] {
+  --turn: 90deg;
+}
+.led-start[data-way='down'] {
+  --turn: 180deg;
+}
+.led-start[data-way='left'] {
+  --turn: 270deg;
+}
+/* Its one mark: drawn pointing up, turned to the strip's way, moved along. */
+.led-start svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(14 * var(--u));
+  height: calc(9 * var(--u));
+  margin: calc(-4.5 * var(--u)) 0 0 calc(-7 * var(--u));
+  transform: rotate(var(--turn, 0deg)) translateY(calc(-22.5 * var(--u)));
   fill: none;
-  stroke: var(--band);
+  stroke: var(--accent);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.led-map-start circle {
-  fill: var(--accent);
+/* The wiring in words under the drawing, LED 1 badged as on it. */
+.led-way {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+  text-align: center;
 }
-.led-map-start text {
-  fill: var(--on-fill);
-  font-size: 11px;
-  font-weight: 700;
+.led-badge {
+  flex: none;
+  width: calc(var(--text-small) * var(--leading));
+  height: calc(var(--text-small) * var(--leading));
 }
-.led-map-screen .screen-label {
-  fill: var(--fg);
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.5px;
-}
-.led-map-screen .screen-label[data-invalid='true'] {
-  fill: var(--alert);
+.leds > .field-note {
+  text-align: center;
 }
 
 /* ── Motion ───────────────────────────────────────────────────────────── */
