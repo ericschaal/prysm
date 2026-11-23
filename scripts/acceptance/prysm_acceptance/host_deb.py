@@ -35,11 +35,13 @@ from prysm_acceptance.config import Installed
 from prysm_acceptance.host import (
     DEBIAN_MACHINES,
     SAMPLE_SINCE,
+    OnTarget,
     Plan,
     cleanup,
     device_node,
     listen_url,
     port_in_use,
+    reader_missing,
     route_source,
     run_name,
     save_kernel_usb,
@@ -184,7 +186,7 @@ class DebPrysm:
         return f'{commands.DEB_OPTIONS} {state} as backed up, {commands.DEB_UNIT} restarted'
 
 
-class SshDeb:
+class SshDeb(OnTarget):
     """The package from `deb` installed on `target` (USER@HOST), its unit listening on `listen`. A Prysm found
     installed is refused, or with `installed = "replace"` left for the cell to replace (`existing`, `found`)."""
 
@@ -237,7 +239,12 @@ class SshDeb:
         return Plan(
             preflight=[
                 f'{self.deb.name}: Architecture from its control file, compared with uname -m on the target',
-                *shown(commands.linux_probe(target), commands.deb_sudo(target), commands.deb_leftovers(target)),
+                *shown(
+                    commands.linux_probe(target),
+                    commands.deb_sudo(target),
+                    commands.device_reader_tools(target),
+                    commands.deb_leftovers(target),
+                ),
                 '(anything of Prysm on the target, a prysm-headless user or group included: '
                 + (
                     'refused, nothing is changed; [linux] installed = "refuse")'
@@ -296,7 +303,7 @@ class SshDeb:
             return f'{self.deb.name} is for {arch}; {self.target} is {machine}'
         if not self._run(commands.deb_sudo(self.target), check=False).ok:
             return f'sudo -n true fails on {self.target}: the package cell needs passwordless sudo'
-        return None
+        return reader_missing(self.transport, self.target)
 
     def _clean(self, device: str) -> str | None:
         """Why the bench is not ready: Prysm already there (with `refuse`), the device missing, the port taken;

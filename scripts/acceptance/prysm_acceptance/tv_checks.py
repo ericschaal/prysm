@@ -17,14 +17,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 import time
-from typing import TypedDict, TypeVar
+from typing import TypedDict, TypeVar, cast
 
 import pytest
 
-from prysm_acceptance import edges_clip, feed_cast, host_cells, prysm_api, tv
+from prysm_acceptance import edges_clip, feed_cast, host, host_cells, options, prysm_api, transport, tv
 from prysm_acceptance.bench import only
 from prysm_acceptance.checks import Answer, Bench, Failed, Skipped, ask_person, tell_person
-from prysm_acceptance.config import Config
+from prysm_acceptance.config import SSH, Config
 from prysm_acceptance.host import Host, Sender, shown
 from prysm_acceptance.host_cells import Clip, Record, screen_sync
 from prysm_acceptance.options import Flavour, TvCell
@@ -45,6 +45,8 @@ CONFIRM_SECONDS = 20
 QUIET_SECONDS = 10
 # How long the TV may still report active after a person said its screen is off.
 STANDBY_SECONDS = 60
+# The port the full package's portal listens on, as the dry run shows it; a run reads it from getState.
+PORTAL_PORT = 8787
 
 TvPlan = Callable[[Tv, TvCell, Config], list[str]]
 Check = TypeVar('Check', bound=Callable[..., object])
@@ -63,18 +65,36 @@ def planned(does: TvPlan) -> Callable[[Check], Check]:
     return record
 
 
+def receiver_seam(cell: TvCell, config: Config, run: transport.Transport, out_dir: Path) -> Host:
+    """The slim receiver: the host cells' binary seam on `[mac]` or `[linux]`, listening on the LAN (the TV must
+    reach it) on the platform's listen port."""
+    machine = config.machine(cast('options.Platform', cell.receiver))
+    binary = machine.artifact() or Path('BINARY')
+    if machine.target.startswith(SSH):
+        return host.SshBinary(run, machine.target.removeprefix(SSH), binary, machine.listen, out_dir, config.wled)
+    port = machine.listen.rsplit(':', 1)[1]
+    return host.LocalBinary(run, binary, f'0.0.0.0:{port}', out_dir, config.wled)
+
+
 @dataclass(frozen=True)
 class Lit:
-    """What lights WLED in a TV cell, for the shared checks and the failure report: the address WLED should see
-    and what to fetch (the TV's recent log from getState, and a receiver's own)."""
+    """What lights WLED in a TV cell, for the shared checks and the failure report: the address WLED should see,
+    what to fetch (the TV's recent log from getState, and a receiver's own) and where the colours stream is read
+    (the receiver, or the TV with its portal on `port`)."""
 
     tv: Tv
     address: str
     out_dir: Path
     receiver: Host | None = None
+    port: int = PORTAL_PORT
 
     def sender(self) -> str:
         return self.address
+
+    def colours(self, seconds: float) -> list[tuple[float, prysm_api.ColorsEvent]]:
+        if self.receiver is not None:
+            return self.receiver.colours(seconds)
+        return self.tv.colours(self.port, seconds)
 
     def fetch(self) -> None:
         state = self.tv.get_state() or tv.State()
@@ -306,45 +326,58 @@ def state_plan(found: Tv, wanted: Shown, config: Config, include_ui: bool = Fals
 # ---- the checks, in order: the video state first, then the UI's -------------------
 
 
-def _judged_plan(found: Tv, config: Config, include_ui: bool) -> list[str]:
+def _judged_plan(found: Tv, cell: TvCell, config: Config, include_ui: bool) -> list[str]:
+    seconds = edges_clip.CHECK_SECONDS
+    reader = (
+        receiver_seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL')).colours_command(seconds)
+        if cell.receiver
+        else found.colours_command(PORTAL_PORT, seconds)
+    )
     return [
         *state_plan(found, Shown.VIDEO, config, include_ui),
         f'GET /api/v1/state every second for {config.checks.seconds} s',
-        f'GET /api/v1/colors/stream for {edges_clip.CHECK_SECONDS:g} s',
+        *host.colours_plan(reader, seconds),
     ]
 
 
-def _video_judged(cell: TvCell, config: Config, screen: Screen, prysm: Prysm, include_ui: bool, record: Record) -> None:
-    """Check 1 and 2: the video state, the capture with or without the UI, the rate, the colours judged."""
+def _video_judged(
+    cell: TvCell, config: Config, screen: Screen, prysm: Prysm, running: Sender, include_ui: bool, record: Record
+) -> None:
+    """Check 1 and 2: the video state, the capture with or without the UI, the rate, the colours judged (timed
+    where the sampled Prysm runs: the TV, or the slim package's receiver)."""
     reached = in_state(screen, Shown.VIDEO, prysm, capture(cell.flavour, *CAPTURE, include_ui=include_ui))
     with stated(reached):
         measured = host_cells.frame_rate(prysm, config)
         seconds = edges_clip.CHECK_SECONDS
         decoder = edges_clip.decode_overlaid if include_ui else edges_clip.decode
-        detail, judged = edges_clip.judge(prysm.colors(seconds, timed=True), seconds, decoder)
+        detail, judged = edges_clip.judge(running.colours(seconds), seconds, decoder)
     record(
         f'{detail}; {host_cells.rate_detail(measured)}; {described(reached)}',
         {'state': reached, 'rates': measured, 'colours': judged},
     )
 
 
-@planned(does=lambda found, cell, config: _judged_plan(found, config, include_ui=False))
-def test_video_only(cell: TvCell, config: Config, screen: Screen, prysm: Prysm, record: Record) -> None:
+@planned(does=lambda found, cell, config: _judged_plan(found, cell, config, include_ui=False))
+def test_video_only(
+    cell: TvCell, config: Config, screen: Screen, prysm: Prysm, running: Sender, record: Record
+) -> None:
     """Video without the UI: the clip plays with the overlay over its bottom, the capture leaves the UI out.
 
     The frames arrive at the size asked, at the rate within the tolerance, and the colours follow the clip on
     every edge (the host cells' colour judgement): the overlay is not in the picture."""
-    _video_judged(cell, config, screen, prysm, False, record)
+    _video_judged(cell, config, screen, prysm, running, False, record)
 
 
-@planned(does=lambda found, cell, config: _judged_plan(found, config, include_ui=True))
-def test_video_with_overlay(cell: TvCell, config: Config, screen: Screen, prysm: Prysm, record: Record) -> None:
+@planned(does=lambda found, cell, config: _judged_plan(found, cell, config, include_ui=True))
+def test_video_with_overlay(
+    cell: TvCell, config: Config, screen: Screen, prysm: Prysm, running: Sender, record: Record
+) -> None:
     """Video with the UI: the same state, only the capture now includes the UI.
 
     The same size and rate; the colours still follow the clip on the top edge and the sides' upper halves, and
     the bottom edge shows the overlay (white) at every step: the overlay is in the picture where it is, and
     nowhere else."""
-    _video_judged(cell, config, screen, prysm, True, record)
+    _video_judged(cell, config, screen, prysm, running, True, record)
 
 
 def video_section(cell: TvCell) -> JsonObject:
