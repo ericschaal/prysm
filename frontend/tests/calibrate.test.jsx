@@ -17,6 +17,7 @@ import {
   $,
   $$,
   button,
+  click,
   edit,
   errorOf,
   field,
@@ -44,7 +45,10 @@ const zero = {
 };
 const ps5 = { id: 'ps5', name: 'PS5', correction: { ...zero, warmth: 12 } };
 const settle = () => act(async () => sleep(processingDelayMs + 100));
-/** Click and let the command finish and the stream deliver. */
+/**
+ * Click and let the command finish and the stream deliver. A navigation back
+ * takes tasks of its own: `click` waits for them.
+ */
 const press = (element) =>
   act(async () => {
     element.click();
@@ -102,7 +106,7 @@ test('Calibrate opens from the portal at #/calibrate on both hosts', async () =>
       assert.equal(document.activeElement, $('.calibrate h2'));
       assert(text().includes('calibrate in the mode you watch in'));
       assert(!field('calibration.from'), 'no question without calibrations');
-      await press(button('Leave'));
+      await click(button('Leave'));
       assert(!$('.calibrate'));
       assert(row('New calibration'), 'back in Calibrations');
       assert.deepEqual(patterns(portal.fixture), []);
@@ -351,7 +355,7 @@ test('a new calibration is made step by step and finished under its name', async
     assert.equal('calibration' in fixture.snapshot(), false);
     assert.equal(heading(), 'Calibration finished');
     assert(text().includes('“Movie night” is saved and active.'));
-    await press(button('Back to Prysm'));
+    await click(button('Back to Prysm'));
     assert(!$('.calibrate'));
   } finally {
     await portal.unmount();
@@ -651,7 +655,7 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
     });
     assert.equal(heading(), 'Calibration ended');
     assert(text().includes('Open Prysm on the TV and choose Calibrate.'));
-    await press(button('Leave'));
+    await click(button('Leave'));
     assert(!$('.calibrate'));
     assert.deepEqual(processing(fixture).calibrations, [draft]);
     assert.equal(processing(fixture).active_calibration, draft.id);
@@ -696,6 +700,140 @@ test('a refused save at Start leaves no calibration, no pattern and no draft', a
     await settle();
     assert.equal(heading(), questions.white);
     assert.equal(processing(fixture).calibrations.length, 1);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+/** What the client says when a command's answer never came. */
+const unanswered = {
+  kind: 'unavailable',
+  message:
+    'The portal did not answer. Check the current state before retrying.',
+};
+
+/**
+ * The next save runs, but its answer never comes; the returned function lets
+ * its state arrive.
+ */
+function loseNextAnswer(fixture) {
+  const { client } = fixture;
+  const replace = client.replaceSettings;
+  let land = () => Promise.resolve();
+  client.replaceSettings = async (expected, settings) => {
+    client.replaceSettings = replace;
+    land = () => replace(expected, settings);
+    throw new ApplicationError(unanswered);
+  };
+  return () => land();
+}
+
+test('a Start save that ran without an answer goes on once the state shows it', async () => {
+  // The draft was put back as not saved, and the calibration the save made
+  // stayed active in Calibrations, unknown to the user.
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    const land = loseNextAnswer(fixture);
+    await press(button('Start'));
+    assert.equal(heading(), 'Match the lights to your TV');
+    assert.deepEqual(patterns(fixture), [
+      'calibration:gray_192',
+      'calibration:end',
+    ]);
+    assert.equal(
+      $('.calibrate .notice.error').textContent,
+      'Not saved: Prysm did not answer. Try again.',
+    );
+
+    await act(async () => {
+      await land();
+      await sleep(5);
+    });
+    const [draft] = processing(fixture).calibrations;
+    assert.equal(processing(fixture).active_calibration, draft.id);
+    assert.equal(heading(), 'Calibration ended');
+    assert(text().includes('Your changes so far are kept in “Calibrated”.'));
+    assert(!$('.calibrate .notice.error'), 'the failure is answered');
+
+    fixture.calls.length = 0;
+    await press(button('Resume'));
+    assert.deepEqual(patterns(fixture), ['calibration:gray_192']);
+    assert.equal(heading(), questions.white);
+    await press(button('Cancel calibration'));
+    await act(async () => sleep(5));
+    assert.equal(heading(), 'Calibration cancelled');
+    assert.equal(processing(fixture).calibrations, undefined);
+    assert.equal(processing(fixture).active_calibration, undefined);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a second Start saves the draft of the first, whose save lands late', async () => {
+  // The second Start made a draft of its own: the first stayed as an orphan,
+  // or became the calibration Cancel made active again.
+  const portal = await openCalibrate({ calibrations: [ps5] });
+  const { fixture } = portal;
+  try {
+    const land = loseNextAnswer(fixture);
+    await press(button('Start'));
+    assert.equal(heading(), 'Match the lights to your TV');
+
+    const release = fixture.holdPatterns();
+    await act(async () => button('Start').click());
+    // The first save's state arrives while the second start waits.
+    await act(async () => {
+      await land();
+      await sleep(5);
+    });
+    release();
+    await act(async () => sleep(5));
+    await settle();
+    assert.equal(heading(), questions.white);
+    const [kept, draft] = processing(fixture).calibrations;
+    assert.deepEqual(kept, ps5);
+    assert.equal(processing(fixture).calibrations.length, 2);
+    assert.equal(processing(fixture).active_calibration, draft.id);
+
+    await press(button('Cancel calibration'));
+    await act(async () => sleep(5));
+    assert.equal(heading(), 'Calibration cancelled');
+    assert.deepEqual(processing(fixture).calibrations, [ps5]);
+    assert.equal(processing(fixture).active_calibration, 'ps5');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a Start save that did not run stays failed when a later state does not show it', async () => {
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    failNextSave(fixture, unanswered);
+    await press(button('Start'));
+    // Another phone saves something else meanwhile.
+    await act(async () => {
+      const { settings, revision } = fixture.snapshot();
+      await fixture.client.replaceSettings(revision, {
+        ...settings,
+        processing: { ...settings.processing, brightness_percent: 50 },
+      });
+      await sleep(5);
+    });
+    assert.equal(heading(), 'Match the lights to your TV');
+    assert.equal(processing(fixture).calibrations, undefined);
+    assert(
+      $('.calibrate .notice.error'),
+      'a state without the save leaves it failed',
+    );
+    assert.equal(button('Start').disabled, false);
+
+    await press(button('Start'));
+    await settle();
+    assert.equal(heading(), questions.white);
+    assert.equal(processing(fixture).calibrations.length, 1);
+    assert.equal(processing(fixture).brightness_percent, 50);
   } finally {
     await portal.unmount();
   }
@@ -886,7 +1024,12 @@ const at = (phase, problem = '') => ({ phase, problem });
 
 /** One state in each phase, and the ways a calibrating one can be. */
 const states = {
-  start: at({ kind: 'start', from: 'p' }, 'no answer'),
+  start: at({ kind: 'start', from: 'p', unconfirmed: null }, 'no answer'),
+  unconfirmed: at({
+    kind: 'start',
+    from: 'p',
+    unconfirmed: { draftId: 'd', previous: 'p' },
+  }),
   starting: at({ kind: 'starting', from: 'p' }),
   calibrating: at(calibratingPhase()),
   sending: at(
@@ -911,8 +1054,14 @@ const states = {
 const actions = {
   sourceChosen: { type: 'sourceChosen', from: 'q' },
   startRequested: { type: 'startRequested' },
-  startFailed: { type: 'startFailed', problem: 'no' },
+  startFailed: { type: 'startFailed', problem: 'no', unconfirmed: null },
+  saveUnanswered: {
+    type: 'startFailed',
+    problem: '',
+    unconfirmed: { draftId: 'd2', previous: 'p' },
+  },
   started: { type: 'started', draftId: 'd2', previous: 'p', startedWith: zero },
+  startConfirmed: { type: 'startConfirmed', startedWith: zero },
   patternSeen: { type: 'patternSeen' },
   requestSent: { type: 'requestSent', place: place(3, 4), resume: false },
   resumed: { type: 'requestSent', place: place(0), resume: true },
@@ -960,11 +1109,26 @@ function calibratingRow(phase) {
 /** Every change each action makes in each state; any other pair changes nothing. */
 const transitions = {
   start: {
-    sourceChosen: at({ kind: 'start', from: 'q' }, 'no answer'),
+    sourceChosen: at(
+      { kind: 'start', from: 'q', unconfirmed: null },
+      'no answer',
+    ),
     startRequested: at({ kind: 'starting', from: 'p' }),
   },
+  unconfirmed: {
+    sourceChosen: at({ ...states.unconfirmed.phase, from: 'q' }),
+    // `start` reads the draft first: the new start saves the same one.
+    startRequested: at({ kind: 'starting', from: 'p' }),
+    // The state shows the draft: calibration goes on, ended on the TV.
+    startConfirmed: at(calibratingPhase()),
+  },
   starting: {
-    startFailed: at({ kind: 'start', from: 'p' }, 'no'),
+    startFailed: at({ kind: 'start', from: 'p', unconfirmed: null }, 'no'),
+    saveUnanswered: at({
+      kind: 'start',
+      from: 'p',
+      unconfirmed: { draftId: 'd2', previous: 'p' },
+    }),
     started: at(calibratingPhase({ draftId: 'd2', seen: false })),
   },
   calibrating: {
@@ -1031,7 +1195,10 @@ test('the wizard: each action in each state, and no change anywhere else', () =>
       if (wanted) assert.deepEqual(next, wanted, `${name} × ${kind}`);
       else assert.equal(next, state, `${name} × ${kind} changes nothing`);
     }
-  assert.deepEqual(initialWizard, at({ kind: 'start', from: '' }));
+  assert.deepEqual(
+    initialWizard,
+    at({ kind: 'start', from: '', unconfirmed: null }),
+  );
 });
 
 test('a tap moves to a place: a new screen forgets the check unless it names one', () => {
