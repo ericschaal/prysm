@@ -2220,7 +2220,10 @@ fieldset > .field-note {
   outline: 2px solid var(--accent-ink);
   outline-offset: 2px;
 }
-/* Over the global button's hover, which would fill the whole hit area. */
+/*
+ * After the play button's own hover rule, and over the global button's:
+ * either would fill the whole hit area.
+ */
 .led-map-picture .led-map-play[data-playing='true'] {
   position: absolute;
   right: 0;

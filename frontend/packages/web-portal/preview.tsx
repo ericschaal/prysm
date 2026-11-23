@@ -27,6 +27,11 @@ function idleMessage(target: TargetReading, session: SessionReading) {
   return 'No picture yet. It appears while Screen sync is running.';
 }
 
+/** A server's reason, ended as a sentence: a button follows it. */
+function sentence(reason: string) {
+  return /[.!?…]$/.test(reason) ? reason : `${reason}.`;
+}
+
 /** The preview's state in one line, with a retry where one helps. */
 function stateLine(
   view: PreviewView,
@@ -55,7 +60,8 @@ function stateLine(
     case 'lost':
       return (
         <>
-          The preview stopped{view.message ? `: ${view.message}` : '.'} {retry}
+          The preview stopped
+          {view.message ? `: ${sentence(view.message)}` : '.'} {retry}
         </>
       );
   }

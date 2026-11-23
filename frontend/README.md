@@ -187,7 +187,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     black bars dimmed and the sampled area outlined, and one line under the
     drawing with the picture's size or the stream's state (connecting, idle
     and why, unavailable, busy or stopped with "Try again"). The LED bands
-    keep the colours stream's colours. The stream is open only while
+    go on showing the live colours. The stream is open only while
     playing, Home is shown, the browser tab is visible and the portal is
     connected (the portal counts viewers). On a phone-width card the
     drawing, otherwise hidden there, shows and takes the card's full width.

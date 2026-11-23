@@ -115,8 +115,7 @@ drawn in **Your setup**, with the colours it sends glowing on the LEDs around
 it. Use it to tell a capture problem from a lighting problem.
 
 1. Turn on **Screen sync**.
-2. Press play on the TV's screen in **Your setup**. On a phone the drawing
-   then takes the card's full width.
+2. Press play on the TV's screen in **Your setup**.
 3. Change a [picture setting](#picture) in Settings and watch the result on
    the lights, then come back and play the preview again.
 
