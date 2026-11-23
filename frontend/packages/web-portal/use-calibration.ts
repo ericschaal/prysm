@@ -145,7 +145,8 @@ export function useCalibration({
 
   async function start() {
     if (phase.kind !== 'start') return;
-    const { from } = phase;
+    // A failed start's save may still land: this start saves the same draft.
+    const { from, unconfirmed } = phase;
     dispatch({ type: 'startRequested' });
     try {
       await setCalibration({
@@ -156,7 +157,7 @@ export function useCalibration({
       dispatch({
         type: 'startFailed',
         problem: tvProblem(error),
-        unconfirmed: null,
+        unconfirmed,
       });
       return;
     }
@@ -164,8 +165,12 @@ export function useCalibration({
     const value = live.current();
     const existing = value.calibrations ?? [];
     const source = existing.find((calibration) => calibration.id === from);
-    const id = newCalibrationId(existing.map((calibration) => calibration.id));
-    const calibration = {
+    const id =
+      unconfirmed?.draftId ??
+      newCalibrationId(existing.map((calibration) => calibration.id));
+    // The failed start's save landed meanwhile: its draft is this one.
+    const landed = existing.find((calibration) => calibration.id === id);
+    const calibration = landed ?? {
       id,
       name: freeName(
         source ? `${source.name} calibrated` : 'Calibrated',
@@ -173,8 +178,15 @@ export function useCalibration({
       ),
       correction: source ? source.correction : noCorrection,
     };
-    const created = withCalibrations(value, [...existing, calibration], id);
-    const started = { draftId: id, previous: value.active_calibration };
+    const created = withCalibrations(
+      value,
+      landed ? existing : [...existing, calibration],
+      id,
+    );
+    const started = {
+      draftId: id,
+      previous: unconfirmed ? unconfirmed.previous : value.active_calibration,
+    };
     if (await live.commit(created)) {
       dispatch({
         type: 'started',

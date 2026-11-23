@@ -123,8 +123,8 @@ that sends the TV's patterns and the saves; `calibrate.tsx` only renders.
 Start shows the first pattern, then saves the draft calibration; when that
 save fails it ends the pattern and puts the draft back. A save whose answer
 never came may have run: the wizard keeps the draft's id, and when the state
-shows that calibration it goes on with it, as calibration ended on the TV
-(Resume or Leave). A failed live save is answered the same way, once a newer
+shows that calibration it goes on with it, shown as ended (Resume or
+Leave). A second Start saves the same draft. A failed live save is answered the same way, once a newer
 state shows its value.
 
 ## webOS TV app
