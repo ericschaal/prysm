@@ -16,6 +16,7 @@ import {
 import {
   $,
   $$,
+  assertFocused,
   button,
   click,
   edit,
@@ -103,7 +104,7 @@ test('Calibrate opens from the portal at #/calibrate on both hosts', async () =>
     try {
       assert.equal(window.location.hash, '#/calibrate');
       assert.equal(heading(), 'Match the lights to your TV');
-      assert.equal(document.activeElement, $('.calibrate h2'));
+      assertFocused($('.calibrate h2'));
       assert(text().includes('calibrate in the mode you watch in'));
       assert(!field('calibration.from'), 'no question without calibrations');
       await click(button('Leave'));
@@ -331,7 +332,7 @@ test('a new calibration is made step by step and finished under its name', async
     await edit(name, '   ');
     assert.equal(errorOf(name), 'Enter a name.');
     await press(button('Finish'));
-    assert.equal(document.activeElement, name);
+    assertFocused(name);
     assert.equal(heading(), questions.review, 'not finished');
     await edit(name, '  Movie night ');
     assert.equal(errorOf(name), undefined, 'the name is fine again');
@@ -484,13 +485,13 @@ test('Cancel asks before discarding changes, in its own line', async () => {
       'Discard your changes?',
     );
     assert.equal(question.getAttribute('role'), 'group');
-    assert.equal(document.activeElement, button('Keep'), 'the safe answer');
+    assertFocused(button('Keep'), 'the safe answer');
     assert.equal(heading(), questions.white, 'nothing else changed');
     assert.deepEqual(patterns(fixture), ['calibration:gray_192']);
 
     // Keep: back as it was, focus on Cancel; Escape keeps too.
     await press(button('Keep'));
-    assert.equal(document.activeElement, button('Cancel calibration'));
+    assertFocused(button('Cancel calibration'));
     assert.equal(processing(fixture).calibrations.length, 1);
     await press(button('Cancel calibration'));
     await keyDown(button('Keep'), 'Escape');
