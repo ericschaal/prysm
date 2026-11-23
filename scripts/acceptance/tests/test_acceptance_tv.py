@@ -791,6 +791,43 @@ class Restore(unittest.TestCase):
                 restart = recorded.calls[2]
                 self.assertEqual(restart.remote, 'sudo -n systemctl restart prysm-headless.service')
 
+    def test_a_linux_unit_that_fails_after_the_options_file_came_back_says_so(self) -> None:
+        """The file is already written and the unit restarted: the error says both, and the settings are not
+        sent."""
+        prysm = FakePrysm()
+        self.addCleanup(prysm.close)
+        edited = DEFAULT_OPTIONS.replace('OPTIONS=\n', 'OPTIONS="--start"\n')
+        recorded = Streamed(
+            [
+                ('deb.options', ok(DEFAULT_OPTIONS)),
+                ('deb.options-write', ok()),
+                ('deb.systemctl', ok()),
+                ('deb.unit', ok('ActiveState=failed\nResult=exit-code\n')),
+            ]
+        )
+        existing = host_deb.DebPrysm(recorded, 'pi@pi.example')
+        existing.url = f'http://{prysm.listen}'
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'prysm-headless.service failed on pi@pi.example after /etc/default/prysm-headless was written as '
+            'backed up and the unit restarted',
+        ):
+            existing.restore(linux_backup(prysm, {commands.DEB_OPTIONS: edited}))
+        self.assertEqual((recorded.streamed, prysm.saved), ([edited], []))
+
+    def test_a_linux_unit_that_does_not_answer_after_the_options_file_came_back_says_so(self) -> None:
+        recorded = Streamed(
+            [('deb.options', ok(DEFAULT_OPTIONS)), ('deb.options-remove', ok()), ('deb.systemctl', ok())]
+        )
+        existing = host_deb.DebPrysm(recorded, 'pi@pi.example')
+        existing.url = 'http://192.0.2.9:8787'
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'prysm-headless.service did not answer at http://192.0.2.9:8787 within 0 s after '
+            '/etc/default/prysm-headless was removed as backed up and the unit restarted',
+        ):
+            existing._restore_options(None, seconds=0)  # pyright: ignore[reportPrivateUsage]
+
     def test_the_linux_package_refuses_an_admin_unit_and_a_silent_prysm(self) -> None:
         existing = host_deb.DebPrysm(transport.Refusing(), 'pi@pi.example')
         with self.assertRaisesRegex(RuntimeError, 'would outlive the purge'):

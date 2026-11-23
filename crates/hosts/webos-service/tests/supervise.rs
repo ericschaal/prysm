@@ -9,7 +9,9 @@ use prysm_webos_service::preferences::MemoryStore;
 use prysm_webos_service::service::{Bus, Config, Service, Watch};
 use prysm_webos_service::state::Flavor;
 use serde_json::Value;
+use std::io::{ErrorKind, Read};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -55,20 +57,53 @@ fn worker(dir: &Path) -> std::path::PathBuf {
     path
 }
 
+/// The loop's wake, read as the Luna loop reads it: the worker's every line
+/// and, routed here as the binaries route it, its exit (SIGCHLD).
+fn reader(wake: &prysm_webos_luna_sys::Wake) -> UnixStream {
+    let pipe = wake.waker().try_clone_stream().unwrap();
+    signal_hook::low_level::pipe::register(signal_hook::consts::SIGCHLD, pipe).unwrap();
+    let reader = wake.try_clone_reader().unwrap();
+    reader.set_nonblocking(false).unwrap();
+    reader
+}
+
+/// Tick on the real clock (the worker is a real process) at each wake, until
+/// `done`. Only wakes tick, not the service's due times as the Luna loop's
+/// do: nothing in this test waits for one, so a lost wake fails it.
 fn until(
     service: &mut Service<ProcessLauncher, MemoryStore, NoInstaller>,
     bus: &mut Published,
+    mut wake: &UnixStream,
     done: impl Fn(&Published, bool) -> bool,
 ) {
-    // Ticks on the real clock: the worker is a real process.
-    prysm_testkit::eventually_or("the supervisor's state", Duration::from_secs(10), || {
+    let limit = Instant::now() + Duration::from_secs(10);
+    loop {
         let running = service.tick(bus, Instant::now());
         if done(bus, running) {
-            Ok(())
-        } else {
-            Err((running, bus.0.last().cloned()))
+            return;
         }
-    });
+        let unwoken = || {
+            panic!(
+                "the supervisor's state: no wake within 10 s; last saw {:#?}",
+                (running, bus.0.last())
+            )
+        };
+        let left = limit.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            unwoken();
+        }
+        wake.set_read_timeout(Some(left)).unwrap();
+        match wake.read(&mut [0; 64]) {
+            // A signal on this thread (SIGCHLD on Linux) ends the read
+            // early, as a wake does.
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                unwoken();
+            }
+            Err(error) => panic!("the wake socket: {error}"),
+        }
+    }
 }
 
 #[test]
@@ -91,9 +126,10 @@ fn supervises_a_real_child_process() {
         NoInstaller,
         Instant::now(),
     );
+    let woken = reader(&wake);
     let mut bus = Published::default();
     service.power(&mut bus, r#"{"state":"Active"}"#, Instant::now());
-    until(&mut service, &mut bus, |bus, _| {
+    until(&mut service, &mut bus, &woken, |bus, _| {
         bus.0
             .last()
             .is_some_and(|state| state["worker"]["portal"] == "http://10.0.0.2:8787/")
@@ -106,7 +142,7 @@ fn supervises_a_real_child_process() {
         Instant::now(),
     );
     assert!(reply.payload.contains(r#""target":"screen_sync""#));
-    until(&mut service, &mut bus, |bus, _| {
+    until(&mut service, &mut bus, &woken, |bus, _| {
         bus.0.last().is_some_and(|state| {
             state["log"]
                 .as_array()
@@ -119,14 +155,14 @@ fn supervises_a_real_child_process() {
     assert!(log[0].as_str().unwrap().contains("--target off"), "{log}");
 
     service.power(&mut bus, r#"{"state":"Active Standby"}"#, Instant::now());
-    until(&mut service, &mut bus, |bus, _| {
+    until(&mut service, &mut bus, &woken, |bus, _| {
         bus.0
             .last()
             .is_some_and(|state| state["worker"]["phase"] == "stopped")
     });
     // The next worker starts with the remembered target.
     service.power(&mut bus, r#"{"state":"Active"}"#, Instant::now());
-    until(&mut service, &mut bus, |bus, _| {
+    until(&mut service, &mut bus, &woken, |bus, _| {
         bus.0.last().is_some_and(|state| {
             state["log"]
                 .as_array()
@@ -136,7 +172,7 @@ fn supervises_a_real_child_process() {
         })
     });
     service.shutdown(&mut bus, Instant::now());
-    until(&mut service, &mut bus, |_, running| !running);
+    until(&mut service, &mut bus, &woken, |_, running| !running);
 }
 
 #[test]

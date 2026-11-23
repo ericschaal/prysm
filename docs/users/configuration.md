@@ -89,6 +89,11 @@ Good to know:
 - Prysm starts with the lights off after every restart. Turn Screen sync on
   again, or start Prysm with `--start` (see your install guide).
 - Stopping Prysm turns the lights off.
+- When Prysm turns the lights off, stops, switches to **WLED effects**, or
+  has had no picture for about 3 seconds, it tells WLED to ignore live
+  colours from every other sender. Another program that sends WLED live
+  colours, such as another DDP source, stays ignored until WLED restarts or
+  Screen sync shows a picture again.
 - When no picture arrives for about 3 seconds, WLED goes back to what it was
   showing before. Screen sync takes over again when the picture returns.
 - Closing the browser leaves Prysm running.

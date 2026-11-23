@@ -106,14 +106,6 @@ export function LightingCard({
       attention = !!failure;
     } else if (!snapshot.settings.output) {
       message = 'Set up your lights in the web portal first.';
-    } else if (
-      lighting.kind === 'effects' &&
-      failure &&
-      failure.kind === 'invalid'
-    ) {
-      // With the effects on, settings that do not validate.
-      message = 'Prysm can’t use these settings.';
-      attention = true;
     } else if (failure) {
       const still =
         lighting.kind === 'failed' && lighting.effectsOn

@@ -82,11 +82,19 @@ starting. Every pair lands on exactly one. Screen sync never carries a
 failure. An `effects` session carries one after a start of screen sync
 that failed from the effects (the situation is then failed, headed "Screen
 sync couldn’t start", and the cards add that the effects are still on,
-except when the lights themselves failed, `section` `output`), or, with
+except when the lights themselves failed, `section` `output`, and not for
+settings Prysm can't use), or, with
 the effects as the target, for saved settings that do not validate (a
 note, "Prysm can’t use these settings."; another kind is said in its own
-words). Off keeps a stopped session's failure (settings that could not be
-applied, a switch off that failed): the light card and the TV's lights
+words). Whatever the target, a failure of kind `invalid` is said as
+"Prysm can’t use these settings." (`plainFailure`): the settings do not
+validate, or the video source says it can't deliver them, and a setting is
+the fix. The page of the side its field names says "Can’t use these
+settings"; without a side (a `processing.*` field or none) both section
+pages say it. No "Try again" is offered for it, on the light card or the
+TV: trying again could not help. Off keeps a
+stopped session's failure (settings that could not be applied, a switch
+off that failed): the light card and the TV's lights
 card say it, and the full TV's "Lights off" headline gives its words with
 attention. The setup path marks a failure that names a side
 (`failureSide`), or settings that do not validate (Prysm's stop without a

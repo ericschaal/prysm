@@ -154,7 +154,8 @@ impl Pipeline {
     ///
     /// # Errors
     /// Invalid input layout, DMA failure, a rejected buffer, no output within
-    /// 1 s (with the encoder's own error when it posted one), or more than
+    /// 1 s (with the encoder's own error when it posted one), an error the
+    /// pipeline posted even though the access unit came out, or more than
     /// one output for one input. Any error ends the session: every later call
     /// returns [`Error::Failed`].
     pub fn encode(
@@ -228,6 +229,7 @@ impl Pipeline {
             .sink
             .try_pull_sample(clock(crate::OUTPUT_WAIT))
             .ok_or_else(|| self.posted_error().unwrap_or(Error::Timeout))?;
+        self.drain_bus()?;
         let buffer = sample
             .buffer()
             .ok_or(Error::Output("sample without a buffer"))?;
@@ -252,6 +254,17 @@ impl Pipeline {
             gst::MessageView::Error(error) => Some(gst_error(error.error())),
             _ => None,
         }
+    }
+
+    /// Pops every message the pipeline posted, so none accumulate; the first
+    /// error among them fails the picture.
+    fn drain_bus(&self) -> Result<(), Error> {
+        while let Some(message) = self.bus.pop() {
+            if let gst::MessageView::Error(error) = message.view() {
+                return Err(gst_error(error.error()));
+            }
+        }
+        Ok(())
     }
 }
 

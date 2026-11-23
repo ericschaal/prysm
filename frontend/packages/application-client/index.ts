@@ -223,7 +223,8 @@ export function lightingSituation({
       failure,
       at,
       fromEffects,
-      effectsOn: fromEffects && at !== 'output',
+      // Settings Prysm can't use never reached the lights.
+      effectsOn: fromEffects && (at !== 'output' || unusableSettings(failure)),
     };
   }
   return { kind: 'starting', target };
@@ -300,14 +301,12 @@ export function describeSituation(
 }
 
 /**
- * Saved settings that do not validate, with the lights off: they name a
- * section's field, yet no device was asked, so that is all there is to say.
+ * Settings Prysm can't use, whatever the lights were asked to do: they do
+ * not validate, or the video source says it can't deliver them. A setting is
+ * the fix, so that is all there is to say, even when the field names a side.
  */
-export function unusableSettings(
-  failure: Failure | LightingFailure,
-  target: TargetReading,
-) {
-  return failure.kind === 'invalid' && target === 'off';
+export function unusableSettings(failure: Failure | LightingFailure) {
+  return failure.kind === 'invalid';
 }
 
 /**
@@ -320,8 +319,7 @@ export function plainFailure(
   target: TargetReading,
   effects: string,
 ) {
-  if (unusableSettings(failure, target))
-    return 'Prysm can’t use these settings.';
+  if (unusableSettings(failure)) return 'Prysm can’t use these settings.';
   const section = failureSide(failure);
   if (section === 'capture') return 'The video source isn’t working.';
   if (section === 'output') return 'The lights aren’t responding.';
@@ -336,7 +334,6 @@ export function plainFailure(
         ? 'Prysm is busy.'
         : 'Prysm is busy. Try again in a moment.';
     case 'adapter':
-    case 'invalid':
       if (target === 'off') return 'The lights couldn’t be switched off.';
       return target === 'effects'
         ? `${effects} couldn’t start.`
