@@ -2248,7 +2248,8 @@ fieldset > .field-note {
   height: var(--space-3);
 }
 .led-map-note {
-  min-height: calc(var(--text-small) * var(--leading));
+  /* Two lines, the longest it says: the drawing stays where it is. */
+  min-height: calc(2 * var(--text-small) * var(--leading));
   margin-top: var(--space-3);
   color: var(--muted);
   font-size: var(--text-small);

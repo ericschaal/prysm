@@ -46,17 +46,12 @@ function stateLine(
       return idleMessage(source.target, source.session);
     case 'frame':
       return view.sampled
-        ? `Picture ${view.source}. Black bars removed: colours come from the outlined ${view.sampled} area.`
+        ? `Picture ${view.source}. Colours come from the outlined ${view.sampled} area.`
         : `Picture ${view.source}.`;
     case 'unavailable':
       return `This picture can’t be shown: ${view.message}`;
     case 'busy':
-      return (
-        <>
-          Too many people are watching the preview. Close it in another window.{' '}
-          {retry}
-        </>
-      );
+      return <>Too many people are watching the preview. {retry}</>;
     case 'lost':
       return (
         <>

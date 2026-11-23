@@ -123,7 +123,7 @@ test('Home’s TV plays the preview in its screen, paused on every visit', async
     await flush();
     assert.equal(
       line(),
-      'Picture 1920 × 1080. Black bars removed: colours come from the outlined 1920 × 800 area.',
+      'Picture 1920 × 1080. Colours come from the outlined 1920 × 800 area.',
     );
     assert(
       canvas.drawn.some(
@@ -223,10 +223,7 @@ test('the card says each state of the preview in one line', async () => {
     preview.refuseNext({ kind: 'busy', message: 'too many preview viewers' });
     await click(toggle());
     await flush();
-    assert.equal(
-      line(),
-      'Too many people are watching the preview. Close it in another window. Try again',
-    );
+    assert.equal(line(), 'Too many people are watching the preview. Try again');
     assert.equal(preview.open(), 0);
     await click(button('Try again', $('.led-map-note')));
     assert.equal(preview.open(), 1);
