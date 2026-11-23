@@ -31,8 +31,8 @@ const BINDINGS: [(&str, &[&str], &str, &str); 2] = [
     ),
     (
         "glib",
-        &["glib-2.0/glib.h", "glib-2.0/glib-unix.h"],
-        "g_main_context_(new|unref)|g_main_loop_(new|run|quit|unref)|g_timeout_source_new|g_unix_fd_source_new|g_source_(set_callback|attach|destroy|unref)",
+        &["glib-2.0/glib.h"],
+        "g_main_context_(new|unref)|g_main_loop_(new|run|quit|unref)|g_timeout_source_new|g_io_channel_(unix_new|set_close_on_unref|unref)|g_io_create_watch|g_source_(set_callback|attach|destroy|unref)",
         "Glib",
     ),
 ];
@@ -76,7 +76,7 @@ fn run(check: bool) -> Result<(), String> {
             .allowlist_function(functions)
             .detect_include_paths(false)
             .allowlist_type("LSHandle|LSMessage")
-            .opaque_type("LSHandle|LSMessage|GMainLoop|GMainContext|GSource")
+            .opaque_type("LSHandle|LSMessage|GMainLoop|GMainContext|GSource|GIOChannel")
             .dynamic_library_name(library)
             .dynamic_link_require_all(true)
             .wrap_unsafe_ops(true)

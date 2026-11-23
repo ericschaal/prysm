@@ -92,7 +92,10 @@ pub(crate) mod generated {
                     g_source_destroy: m::source_destroy,
                     g_source_set_callback: m::source_callback,
                     g_timeout_source_new: m::timer_new,
-                    g_unix_fd_source_new: m::watch_new,
+                    g_io_channel_unix_new: m::channel_new,
+                    g_io_channel_set_close_on_unref: m::channel_close_on_unref,
+                    g_io_channel_unref: m::channel_unref,
+                    g_io_create_watch: m::watch_new,
                 }
             }
         }

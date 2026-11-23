@@ -323,10 +323,11 @@ struct Finished {
 
 /// Run a child with stdin held open (luna-send exits without replying on
 /// EOF), kill it after `timeout`, and optionally keep up to 64 KiB of stdout.
-/// A thread blocked in the child's `wait` reaps it and reports its exit, the
-/// event waited for with the deadline. A child that is not waited for to the
-/// end (a timeout, or `waitpid` failing) is killed, and after a timeout
-/// reaped, before the error returns.
+/// A thread blocked until the child exits, without reaping it
+/// ([`await_exit`]), reports that: the event waited for with the deadline.
+/// This function keeps the `Child` and reaps it, so a kill never reaches
+/// another process. A child that is not waited for to the end (a timeout, or
+/// the wait failing) is killed and reaped before the error returns.
 fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> Result<Finished> {
     let program = command.get_program().to_string_lossy().into_owned();
     let spawn_failed = |source| InstallError::Spawn {
@@ -335,13 +336,13 @@ fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> R
     };
     // The waiting thread exists before the child, so no child is ever left
     // without one.
-    let (hand, handed) = mpsc::channel::<Child>();
+    let (hand, handed) = mpsc::channel::<u32>();
     let (report, reported) = mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("prysm-install-wait".into())
         .spawn(move || {
-            if let Ok(mut child) = handed.recv() {
-                let _ = report.send(child.wait());
+            if let Ok(pid) = handed.recv() {
+                let _ = report.send(await_exit(pid));
             }
         })
         .map_err(spawn_failed)?;
@@ -363,25 +364,23 @@ fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> R
             bytes
         })
     });
-    let pid = child.id();
-    // The thread waits in `recv` until it has the child.
-    let _ = hand.send(child);
-    let status = match reported.recv_timeout(timeout) {
-        Ok(Ok(status)) => status,
-        Ok(Err(source)) => {
-            give_up(pid, &program);
-            return Err(InstallError::Wait { program, source });
-        }
+    // The thread waits in `recv` until it has the pid.
+    let _ = hand.send(child.id());
+    let waited = match reported.recv_timeout(timeout) {
+        Ok(waited) => waited,
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            give_up(pid, &program);
-            if let Ok(Err(error)) = reported.recv() {
-                eprintln!("prysm-webos-service: cannot reap {program}: {error}");
-            }
+            kill_and_reap(&mut child, &program);
             return Err(InstallError::Timeout { program, timeout });
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            give_up(pid, &program);
-            let source = io::Error::other("the wait ended without a status");
+            Err(io::Error::other("the wait ended without a status"))
+        }
+    };
+    // It has exited, so this returns at once.
+    let status = match waited.and_then(|()| child.wait()) {
+        Ok(status) => status,
+        Err(source) => {
+            kill_and_reap(&mut child, &program);
             return Err(InstallError::Wait { program, source });
         }
     };
@@ -392,18 +391,63 @@ fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> R
     Ok(Finished { status, stdout })
 }
 
-/// SIGKILL to a child that is given up on. Its waiting thread reaps it, so
-/// its pid is another process's at most for the instant after that reap. A
-/// child that already exited is fine; another failure is reported, the
+/// Stop a child that is given up on. Not reaped yet, so the kill reaches
+/// it; one that already exited is fine. A failed reap is reported, the
 /// caller's error stands.
-fn give_up(pid: u32, program: &str) {
-    use nix::sys::signal::{Signal, kill};
-    let Ok(pid) = i32::try_from(pid) else {
-        return;
-    };
-    match kill(nix::unistd::Pid::from_raw(pid), Signal::SIGKILL) {
-        Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
-        Err(error) => eprintln!("prysm-webos-service: cannot kill {program}: {error}"),
+fn kill_and_reap(child: &mut Child, program: &str) {
+    let _ = child.kill();
+    if let Err(error) = child.wait() {
+        eprintln!("prysm-webos-service: cannot reap {program}: {error}");
+    }
+}
+
+/// Block until child `pid` has exited, leaving it to be reaped:
+/// `waitid(WNOWAIT)` on Linux (the TV).
+#[cfg(target_os = "linux")]
+fn await_exit(pid: u32) -> io::Result<()> {
+    use nix::sys::wait::{Id, WaitPidFlag, waitid};
+    let pid = nix::unistd::Pid::from_raw(i32::try_from(pid).map_err(io::Error::other)?);
+    loop {
+        match waitid(Id::Pid(pid), WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT) {
+            Ok(_) => return Ok(()),
+            Err(nix::errno::Errno::EINTR) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+/// Block until child `pid` has exited, leaving it to be reaped: a kqueue
+/// `NOTE_EXIT` on macOS (development hosts), where nix has no `waitid`.
+/// One that exited already is refused with `ESRCH`, which is its exit.
+#[cfg(target_os = "macos")]
+fn await_exit(pid: u32) -> io::Result<()> {
+    use nix::errno::Errno;
+    use nix::sys::event::{EvFlags, EventFilter, FilterFlag, KEvent, Kqueue};
+    let queue = Kqueue::new()?;
+    let watch = KEvent::new(
+        pid as usize,
+        EventFilter::EVFILT_PROC,
+        EvFlags::EV_ADD | EvFlags::EV_ONESHOT,
+        FilterFlag::NOTE_EXIT,
+        0,
+        0,
+    );
+    let mut seen = [watch];
+    loop {
+        match queue.kevent(&[watch], &mut seen, None) {
+            Ok(_) if seen[0].flags().contains(EvFlags::EV_ERROR) => {
+                return match seen[0].data() {
+                    0 => Ok(()),
+                    code if code == Errno::ESRCH as isize => Ok(()),
+                    code => Err(io::Error::from_raw_os_error(
+                        i32::try_from(code).unwrap_or(i32::MAX),
+                    )),
+                };
+            }
+            Ok(_) | Err(Errno::ESRCH) => return Ok(()),
+            Err(Errno::EINTR) => {}
+            Err(error) => return Err(error.into()),
+        }
     }
 }
 

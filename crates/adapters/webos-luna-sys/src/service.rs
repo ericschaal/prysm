@@ -11,7 +11,7 @@ use crate::Error;
 use crate::generated::glib::{self, Glib};
 use crate::generated::luna::{self as ffi, LSHandle, LSMessage, LSMethod, Luna};
 use std::cell::{Cell, RefCell};
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::io::{self, Read, Write};
 use std::mem::MaybeUninit;
 use std::os::fd::AsRawFd;
@@ -113,6 +113,16 @@ impl Wake {
     #[must_use]
     pub fn waker(&self) -> Waker {
         self.write.clone()
+    }
+
+    /// Another handle on the reading end, for a driver of its own: one byte
+    /// arrives per wake (several may come as one). It shares the
+    /// descriptor's non-blocking flag with the loop's.
+    ///
+    /// # Errors
+    /// The descriptor cannot be duplicated.
+    pub fn try_clone_reader(&self) -> io::Result<UnixStream> {
+        self.read.try_clone()
     }
 }
 
@@ -363,22 +373,36 @@ impl Service {
             }
         }
         let fd = state.wake.as_raw_fd();
-        // SAFETY: a descriptor the callbacks own until after this source is
-        // destroyed, watched for input only; a caller-owned source, kept
-        // even if attaching fails.
-        let watch = NonNull::new(unsafe {
+        // SAFETY: a descriptor the callbacks own until after the watch is
+        // destroyed. The channel (GLib 2.0 API, unlike the 2.36 unix fd
+        // source) never closes it: the callbacks' socket does, once.
+        let channel = NonNull::new(unsafe { state.glib.g_io_channel_unix_new(fd) })
+            .ok_or(Error::Glib("cannot watch the wake socket"))?;
+        // SAFETY: the live channel just made; the watch takes its own
+        // reference to it, so ours is released at once.
+        let watch = unsafe {
             state
                 .glib
-                .g_unix_fd_source_new(fd, glib::GIOCondition_G_IO_IN)
-        })
-        .ok_or(Error::Glib("cannot watch the wake socket"))?;
+                .g_io_channel_set_close_on_unref(channel.as_ptr(), 0);
+            let watch = state
+                .glib
+                .g_io_create_watch(channel.as_ptr(), glib::GIOCondition_G_IO_IN);
+            state.glib.g_io_channel_unref(channel.as_ptr());
+            watch
+        };
+        // A caller-owned source, kept even if attaching fails.
+        let watch = NonNull::new(watch).ok_or(Error::Glib("cannot watch the wake socket"))?;
         self.watch = Some(watch);
-        // SAFETY: a unix fd source calls a `GUnixFDSourceFunc`, which GLib
-        // takes cast to `GSourceFunc` (glib-unix.h); the data is live while
-        // Service owns the Rc, and no destroy notify owns it.
+        // SAFETY: an IO watch calls a `GIOFunc`, which GLib takes cast to
+        // `GSourceFunc` (giochannel.h); the data is live while Service owns
+        // the Rc, and no destroy notify owns it.
         unsafe {
             let callback = std::mem::transmute::<
-                unsafe extern "C" fn(c_int, glib::GIOCondition, *mut c_void) -> glib::gboolean,
+                unsafe extern "C" fn(
+                    *mut glib::GIOChannel,
+                    glib::GIOCondition,
+                    *mut c_void,
+                ) -> glib::gboolean,
                 unsafe extern "C" fn(*mut c_void) -> glib::gboolean,
             >(wake_callback);
             state
@@ -905,7 +929,11 @@ unsafe extern "C" fn timer_callback(data: *mut c_void) -> i32 {
 
 /// # Safety
 /// As [`timer_callback`]; GLib calls it when the [`Wake`] socket is readable.
-unsafe extern "C" fn wake_callback(_: c_int, _: glib::GIOCondition, data: *mut c_void) -> i32 {
+unsafe extern "C" fn wake_callback(
+    _: *mut glib::GIOChannel,
+    _: glib::GIOCondition,
+    data: *mut c_void,
+) -> i32 {
     guarded(|| {
         // SAFETY: as in `timer_callback`.
         let state = unsafe { data.cast::<Callbacks>().as_ref() }

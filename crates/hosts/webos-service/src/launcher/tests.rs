@@ -185,3 +185,46 @@ fn dropping_an_unreaped_worker_terminates_it() {
     });
     assert!(marker.exists(), "stopped with SIGTERM, not killed");
 }
+
+/// Each worker line wakes the loop, once it is ready to drain, and so does
+/// the end of the worker's output, once the reader has said it ended.
+#[test]
+fn each_line_and_the_end_of_output_wake_the_loop() {
+    let wake = prysm_webos_luna_sys::Wake::new().unwrap();
+    let mut wakes = wake.try_clone_reader().unwrap();
+    wakes.set_nonblocking(false).unwrap();
+    wakes.set_read_timeout(Some(LIMIT)).unwrap();
+    let mut woken = || {
+        let mut byte = [0; 1];
+        wakes.read_exact(&mut byte).expect("a wake");
+    };
+    let mut worker = ProcessLauncher::new(wake.waker())
+        .spawn(
+            Path::new("/bin/sh"),
+            &[
+                "-c".into(),
+                r#"echo '{"type":"status","flavor":"full","capturing":true,"target":"off","applied":0}'
+read line
+exec 1>&-
+read line"#
+                    .into(),
+            ],
+        )
+        .unwrap();
+    woken();
+    assert!(matches!(worker.drain()[..], [Output::Event(_)]));
+    assert!(!events_ended(&worker), "the output is still open");
+    // The worker closes its output once it reads this.
+    worker.send(&Command::ResetVideo {}).unwrap();
+    woken();
+    assert!(events_ended(&worker), "said before the wake");
+    worker.send(&Command::ResetVideo {}).unwrap();
+    assert_eq!(exit(&mut worker), Exit::Code(0));
+}
+
+fn events_ended(worker: &ProcessWorker) -> bool {
+    worker
+        .reader
+        .as_ref()
+        .is_some_and(|(_, ended)| ended.load(Ordering::Acquire))
+}

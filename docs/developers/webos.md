@@ -189,7 +189,19 @@ comes. After each of these, and at the next due time (the machine's
 exited worker's 1 s wait for its last lines, a subscription renewal after 5 s
 without a good reply, and a probe's `--run-for`), the driver drains worker
 output, reaps, ticks the machine and renews subscriptions, then arms one
-timer for the next due time. Its seams:
+timer for the next due time.
+
+The loop needs only GLib 2.0 functions, all looked up when the library
+loads, so a missing one stops the supervisor at its start: a private
+context and loop (`g_main_context_new`, `g_main_loop_new`, `_run`, `_quit`,
+`_unref`), one-shot timers (`g_timeout_source_new`, `g_source_*`) and the
+wake socket's watch (`g_io_channel_unix_new`, `g_io_create_watch`,
+`g_io_channel_set_close_on_unref`, `g_io_channel_unref`). The watch is an IO
+channel rather than `g_unix_fd_source_new`, which exists only since GLib
+2.36, because the repository records the TVs' GLib only for webOS 25
+(2.72.3). The channel never closes the socket; its owner does, once.
+
+Its seams:
 
 | Seam | On the TV | In tests |
 | --- | --- | --- |

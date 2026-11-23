@@ -24,6 +24,7 @@ pub type GMainContext = u8;
 pub type GMainLoop = u8;
 pub type GSource = __BindgenOpaqueArray<[u32; 13usize]>;
 pub type GSourceFunc = ::std::option::Option<unsafe extern "C" fn(user_data: gpointer) -> gboolean>;
+pub type GIOChannel = __BindgenOpaqueArray<[u32; 15usize]>;
 pub struct Glib {
     __library: ::libloading::Library,
     pub g_main_context_new: unsafe extern "C" fn() -> *mut GMainContext,
@@ -44,8 +45,12 @@ pub struct Glib {
         notify: GDestroyNotify,
     ),
     pub g_timeout_source_new: unsafe extern "C" fn(interval: guint) -> *mut GSource,
-    pub g_unix_fd_source_new:
-        unsafe extern "C" fn(fd: gint, condition: GIOCondition) -> *mut GSource,
+    pub g_io_channel_unref: unsafe extern "C" fn(channel: *mut GIOChannel),
+    pub g_io_create_watch:
+        unsafe extern "C" fn(channel: *mut GIOChannel, condition: GIOCondition) -> *mut GSource,
+    pub g_io_channel_set_close_on_unref:
+        unsafe extern "C" fn(channel: *mut GIOChannel, do_close: gboolean),
+    pub g_io_channel_unix_new: unsafe extern "C" fn(fd: ::std::os::raw::c_int) -> *mut GIOChannel,
 }
 impl Glib {
     pub unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
@@ -76,8 +81,13 @@ impl Glib {
             unsafe { __library.get(b"g_source_set_callback\0") }.map(|sym| *sym)?;
         let g_timeout_source_new =
             unsafe { __library.get(b"g_timeout_source_new\0") }.map(|sym| *sym)?;
-        let g_unix_fd_source_new =
-            unsafe { __library.get(b"g_unix_fd_source_new\0") }.map(|sym| *sym)?;
+        let g_io_channel_unref =
+            unsafe { __library.get(b"g_io_channel_unref\0") }.map(|sym| *sym)?;
+        let g_io_create_watch = unsafe { __library.get(b"g_io_create_watch\0") }.map(|sym| *sym)?;
+        let g_io_channel_set_close_on_unref =
+            unsafe { __library.get(b"g_io_channel_set_close_on_unref\0") }.map(|sym| *sym)?;
+        let g_io_channel_unix_new =
+            unsafe { __library.get(b"g_io_channel_unix_new\0") }.map(|sym| *sym)?;
         Ok(Glib {
             __library,
             g_main_context_new,
@@ -91,7 +101,10 @@ impl Glib {
             g_source_destroy,
             g_source_set_callback,
             g_timeout_source_new,
-            g_unix_fd_source_new,
+            g_io_channel_unref,
+            g_io_create_watch,
+            g_io_channel_set_close_on_unref,
+            g_io_channel_unix_new,
         })
     }
     pub unsafe fn g_main_context_new(&self) -> *mut GMainContext {
@@ -141,7 +154,24 @@ impl Glib {
     pub unsafe fn g_timeout_source_new(&self, interval: guint) -> *mut GSource {
         unsafe { (self.g_timeout_source_new)(interval) }
     }
-    pub unsafe fn g_unix_fd_source_new(&self, fd: gint, condition: GIOCondition) -> *mut GSource {
-        unsafe { (self.g_unix_fd_source_new)(fd, condition) }
+    pub unsafe fn g_io_channel_unref(&self, channel: *mut GIOChannel) {
+        unsafe { (self.g_io_channel_unref)(channel) }
+    }
+    pub unsafe fn g_io_create_watch(
+        &self,
+        channel: *mut GIOChannel,
+        condition: GIOCondition,
+    ) -> *mut GSource {
+        unsafe { (self.g_io_create_watch)(channel, condition) }
+    }
+    pub unsafe fn g_io_channel_set_close_on_unref(
+        &self,
+        channel: *mut GIOChannel,
+        do_close: gboolean,
+    ) {
+        unsafe { (self.g_io_channel_set_close_on_unref)(channel, do_close) }
+    }
+    pub unsafe fn g_io_channel_unix_new(&self, fd: ::std::os::raw::c_int) -> *mut GIOChannel {
+        unsafe { (self.g_io_channel_unix_new)(fd) }
     }
 }

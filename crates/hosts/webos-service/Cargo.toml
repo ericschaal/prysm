@@ -35,7 +35,7 @@ serde_json.workspace = true
 signal-hook.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-nix = { workspace = true, features = ["fs", "signal", "user"] }
+nix = { workspace = true, features = ["event", "fs", "process", "signal", "user"] }
 utoipa = { workspace = true, optional = true }
 
 [lints]

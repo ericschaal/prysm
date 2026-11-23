@@ -1,8 +1,8 @@
 //! Stand-ins for every LS2 and GLib function, recording calls per thread, so
 //! the wrapper's ownership and ordering run on the development host.
 use crate::generated::glib::{
-    GDestroyNotify, GIOCondition, GMainContext, GSource, GSourceFunc, gboolean, gint, gpointer,
-    guint,
+    GDestroyNotify, GIOChannel, GIOCondition, GMainContext, GSource, GSourceFunc, gboolean,
+    gpointer, guint,
 };
 use crate::generated::luna::{
     GMainLoop, LSError, LSFilterFunc, LSHandle, LSMessage, LSMessageToken, LSMethod,
@@ -165,14 +165,14 @@ pub fn armed() -> bool {
 /// Report the wake socket readable, as GLib would.
 pub fn invoke_wake() {
     let (callback, data) = STATE.with_borrow(|state| state.watch.expect("a wake watch"));
-    // SAFETY: the wrapper installed a `GUnixFDSourceFunc` cast to
-    // `GSourceFunc`, as GLib's unix fd sources take it.
+    // SAFETY: the wrapper installed a `GIOFunc` cast to `GSourceFunc`, as
+    // GLib's IO watches take it.
     unsafe {
         let callback = std::mem::transmute::<
             unsafe extern "C" fn(gpointer) -> gboolean,
-            unsafe extern "C" fn(gint, GIOCondition, gpointer) -> gboolean,
+            unsafe extern "C" fn(*mut GIOChannel, GIOCondition, gpointer) -> gboolean,
         >(callback.unwrap());
-        callback(0, 1, data);
+        callback(channel(), 1, data);
     }
 }
 
@@ -404,7 +404,24 @@ pub unsafe extern "C" fn timer_new(interval: guint) -> *mut GSource {
     record(format!("timer {interval}"));
     std::ptr::from_ref(&TIMER).cast_mut().cast()
 }
-pub unsafe extern "C" fn watch_new(_: gint, condition: GIOCondition) -> *mut GSource {
+/// The stand-in channel: an address, never read.
+static CHANNEL: u8 = 0;
+
+fn channel() -> *mut GIOChannel {
+    std::ptr::from_ref(&CHANNEL).cast_mut().cast()
+}
+
+pub unsafe extern "C" fn channel_new(_: std::ffi::c_int) -> *mut GIOChannel {
+    record("channel");
+    channel()
+}
+pub unsafe extern "C" fn channel_close_on_unref(_: *mut GIOChannel, close: gboolean) {
+    record(format!("channel close on unref {close}"));
+}
+pub unsafe extern "C" fn channel_unref(_: *mut GIOChannel) {
+    record("channel unref");
+}
+pub unsafe extern "C" fn watch_new(_: *mut GIOChannel, condition: GIOCondition) -> *mut GSource {
     record(format!("watch {condition}"));
     std::ptr::from_ref(&WATCH).cast_mut().cast()
 }

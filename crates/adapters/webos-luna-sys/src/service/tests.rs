@@ -110,6 +110,15 @@ fn requests_replies_and_polls_reach_the_handler_and_teardown_is_ordered() {
         calls.contains(&"watch 1".to_owned()),
         "the wake socket is watched"
     );
+    // The channel never closes the socket, and only the watch keeps it.
+    let channel = [
+        "channel",
+        "channel close on unref 0",
+        "watch 1",
+        "channel unref",
+    ]
+    .map(|call| index(&calls, call));
+    assert!(channel.is_sorted(), "{calls:#?}");
     // The first poll is due at once, inside the loop.
     assert!(index(&calls, "timer 0") < index(&calls, "run"));
     // Subscribe, then reply, then the deferred publish.
