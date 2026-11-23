@@ -169,7 +169,7 @@ class Soak(prysm_api.Rates, Load):
 
 class Tv(Protocol):
     """A TV with Prysm installed, as the shared checks drive and read it. The `*_command`s are what the dry run
-    shows for `get_state`, `foreground`, `launch_app` and `sample_worker`."""
+    shows for `get_state`, `foreground`, `launch_app`, `sample_worker` and `colours`."""
 
     @property
     def prysm_app(self) -> str:
@@ -201,6 +201,11 @@ class Tv(Protocol):
         """One reading of the TV's uptime and load and the worker's CPU ticks and RSS (None without a worker)."""
         ...
 
+    def colours(self, port: int, seconds: float) -> list[tuple[float, prysm_api.ColorsEvent]]:
+        """The full package's colours stream (its portal on `port`) read on the TV itself for `seconds`, each event
+        with its seconds since the window began by the TV's clock."""
+        ...
+
     def state_command(self) -> Command: ...
 
     def foreground_command(self) -> Command: ...
@@ -208,6 +213,8 @@ class Tv(Protocol):
     def launch_command(self) -> Command: ...
 
     def sample_command(self) -> Command: ...
+
+    def colours_command(self, port: int, seconds: float) -> Command: ...
 
 
 Read = TypeVar('Read', bound=State)

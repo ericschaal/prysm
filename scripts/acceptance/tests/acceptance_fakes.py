@@ -1,4 +1,5 @@
-"""What the runner's tests share: colours as a capture shows them, a seam's Prysm API, and typing helpers.
+"""What the runner's tests share: colours as a capture shows them, a seam's Prysm API, a colours stream, and
+typing helpers.
 
 The host cells are tested against the real prysm-headless on loopback
 (test_acceptance_host.py); `FakePrysm` only answers a seam's start.
@@ -7,6 +8,7 @@ The host cells are tested against the real prysm-headless on loopback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 from typing import Any, cast
 
 from prysm_acceptance.checks import Bench
@@ -72,6 +74,43 @@ class FakePrysm:
         self.listen = f'127.0.0.1:{self.server.server_address[1]}'
 
     def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class FakeColoursStream:
+    """`GET /api/v1/colors/stream` on loopback (`url`): each of `events`, (seconds after the request, payload), as
+    a `data:` line at its time, then the stream held open until `close` (or closed at once with `end`). Another
+    `status` than 200 is answered with no stream."""
+
+    def __init__(self, events: list[tuple[float, object]], end: bool = False, status: int = 200) -> None:
+        self.closing = threading.Event()
+        closing = self.closing
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(status)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.end_headers()
+                if status != 200:
+                    return
+                start = time.monotonic()
+                for at, payload in events:
+                    time.sleep(max(0.0, start + at - time.monotonic()))
+                    self.wfile.write(b'data: ' + json.dumps(payload).encode() + b'\n\n')
+                    self.wfile.flush()
+                if not end:
+                    closing.wait(30)
+
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}/api/v1/colors/stream'
+
+    def close(self) -> None:
+        self.closing.set()
         self.server.shutdown()
         self.server.server_close()
 

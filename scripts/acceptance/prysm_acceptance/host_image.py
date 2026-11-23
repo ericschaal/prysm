@@ -39,6 +39,7 @@ from prysm_acceptance.commands import ComposeAction, RunFile
 from prysm_acceptance.host import (
     DEBIAN_MACHINES,
     SAMPLE_SINCE,
+    OnTarget,
     Plan,
     cleanup,
     port_in_use,
@@ -106,7 +107,7 @@ def override(device: str, group: str) -> str:
     )
 
 
-class SshImage:
+class SshImage(OnTarget):
     """The image from `image` loaded on `target` (USER@HOST) and run in the run's compose project."""
 
     def __init__(self, transport: Transport, target: str, image: Path, out_dir: Path, wled: str) -> None:
@@ -115,6 +116,7 @@ class SshImage:
         self.image = image
         self.wled = wled
         self.port = commands.IMAGE_PORT
+        self.listen = f'0.0.0.0:{self.port}'  # compose.yaml publishes the port on every address
         self.run = run_name(out_dir)
         self.project = commands.compose_project(self.run)
         self.url = f'http://{self.target.rsplit("@", 1)[-1]}:{self.port}'

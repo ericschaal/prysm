@@ -26,6 +26,11 @@ the route to WLED and its own Prysm's state, signals only the process whose
 executable is the binary it copied there, and removes that directory at the
 end. The `linux.*` templates never use sudo.
 
+On a Linux target and on the TV, `device.colours` reads Prysm's colours
+stream on the device itself (python3 on its loopback, bounded by its own
+`timeout`), so the colour check times the events by that device's clock; it
+writes nothing.
+
 The Debian package cell (`deb.*`) also installs the package with apt-get,
 writes a runtime drop-in `DEB_DROPIN` under /run (gone at the next boot),
 starts and stops the unit, reads its journal and purges the package at the
@@ -45,6 +50,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 import ipaddress
 import json
+import math
 from pathlib import Path
 import re
 import shlex
@@ -671,6 +677,59 @@ def linux_remove(host: str, run: str) -> Command:
     return _ssh('linux.remove', host, remote, 60)
 
 
+# ---- Prysm's colours stream, read on the device Prysm runs on (a Linux target, the TV) -----
+
+# Reads `GET URL` (a colours stream) for SECONDS from its start, each `data:` line printed as `<seconds since the
+# start> <payload>` by the device's monotonic clock. It exits 0 at the end of the window, non-zero on another
+# status than 200, a failed connection or a stream that ends sooner. Python 3 without newer syntax, as the TV's
+# may be old; double quotes only (the shell quotes it once), no `>`, no file paths.
+COLOURS_READER = '\n'.join(
+    (
+        'import http.client, socket, sys, time',
+        'from urllib.parse import urlsplit',
+        'url = urlsplit(sys.argv[1])',
+        'start = time.monotonic()',
+        'end = start + float(sys.argv[2])',
+        'connection = http.client.HTTPConnection(url.hostname, url.port, timeout=5)',
+        'connection.request("GET", url.path, headers={"Accept": "text/event-stream"})',
+        'sock = connection.sock',
+        'response = connection.getresponse()',
+        'if response.status != 200:',
+        '    sys.exit("HTTP %d" % response.status)',
+        'while time.monotonic() < end:',
+        '    sock.settimeout(max(0.05, end - time.monotonic()))',
+        '    try:',
+        '        line = response.fp.readline()',
+        '    except socket.timeout:',
+        '        break',
+        '    if not line:',
+        '        sys.exit("the stream ended %.3f s after the start" % (time.monotonic() - start))',
+        '    if line.startswith(b"data:"):',
+        '        print("%.3f %s" % (time.monotonic() - start, line[5:].strip().decode()), flush=True)',
+    )
+)
+# How long the device's `timeout` lets the reader run past its window, and ssh past that.
+READER_GRACE = 10
+SSH_GRACE = 15
+
+
+def _window(value: object) -> None:
+    """A window of more than 0 and at most 120 s, whole or not; never a bool."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 < value <= 120:
+        raise Refused(f'seconds: {value!r}')
+
+
+def device_colours(host: str, port: int, seconds: float, address: str = '127.0.0.1') -> Command:
+    """Prysm's colours stream at `address`:`port` on the device itself (loopback unless Prysm listens on one
+    address only), read for `seconds` by `COLOURS_READER` and stamped by the device's clock; the device's
+    `timeout` ends it `READER_GRACE` s after the window at the latest."""
+    _window(seconds)
+    url = f'http://{_ipv4(address)}:{_number(port, "port", 1, 65535)}/api/v1/colors/stream'
+    bound = math.ceil(seconds) + READER_GRACE
+    remote = f'timeout {bound} python3 -c {shlex.quote(COLOURS_READER)} {url} {seconds:g}'
+    return _ssh('device.colours', host, remote, bound + SSH_GRACE)
+
+
 def _artifact_dir(run: str, file: str) -> str:
     """A new run directory with `file` from stdin in it; prints the directory's absolute path and the target's clock."""
     directory = run_dir(run)
@@ -959,6 +1018,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'linux.kernel': lambda: linux_kernel('pi@pi.example', 1763380000),
     'linux.route': lambda: linux_route('pi@pi.example', '192.0.2.40'),
     'linux.remove': lambda: linux_remove('pi@pi.example', 'RUN-CELL'),
+    'device.colours': lambda: device_colours('pi@pi.example', 18787, 10.0),
     'deb.sudo': lambda: deb_sudo('pi@pi.example'),
     'deb.installed': lambda: deb_installed('pi@pi.example'),
     'deb.unit': lambda: deb_unit('pi@pi.example'),

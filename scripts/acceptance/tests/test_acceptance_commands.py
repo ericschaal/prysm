@@ -3,14 +3,18 @@
 import os
 from pathlib import Path
 import re
+import shlex
 import socket
 import subprocess
 import sys
+import time
 from typing import cast
 import unittest
 from unittest import mock
 
-from prysm_acceptance import commands, transport
+from acceptance_fakes import FakeColoursStream
+
+from prysm_acceptance import commands, prysm_api, transport
 
 # The runner's project: scripts/acceptance.
 ACCEPTANCE = Path(__file__).resolve().parents[1]
@@ -365,6 +369,89 @@ class HeldStdin(unittest.TestCase):
         sender = sockets.return_value.__enter__.return_value
         sender.bind.assert_called_once_with(('192.0.2.10', 0))
         sender.sendto.assert_called_once_with(b'\xff' * 6 + bytes.fromhex('00005E005301') * 16, ('255.255.255.255', 9))
+
+
+COLOURS = {'type': 'colors', 'top': [[255, 0, 0]]}
+
+
+def read_here(url: str, seconds: str) -> transport.Result:
+    """`commands.COLOURS_READER` run with this Python against `url`, as `device.colours` runs it on a device (the
+    device's `timeout` aside)."""
+    command = commands.Command('device.colours', (sys.executable, '-c', commands.COLOURS_READER, url, seconds), 20)
+    return transport.Real(log=lambda line: None).run(command, check=False)
+
+
+class ColoursOnTheDevice(unittest.TestCase):
+    def test_the_template_is_bounded_on_the_device_and_here(self) -> None:
+        command = commands.device_colours('pi@pi.example', 18787, 10.0)
+        remote = command.remote or ''
+        self.assertTrue(remote.startswith('timeout 20 python3 -c '), remote)
+        self.assertTrue(remote.endswith(' http://127.0.0.1:18787/api/v1/colors/stream 10'), remote)
+        self.assertIn(shlex.quote(commands.COLOURS_READER), remote)
+        self.assertNotIn("'", commands.COLOURS_READER)  # quoted once for the shell, as it is
+        self.assertGreater(command.timeout, 20)  # the device's `timeout` ends it first
+        on_one = commands.device_colours('root@tv.example', 8787, 2.5, '192.0.2.30').remote or ''
+        self.assertIn(' http://192.0.2.30:8787/', on_one)
+        self.assertTrue((commands.device_colours('root@tv.example', 8787, 2.5).remote or '').endswith(' 2.5'))
+        for build in (
+            lambda: commands.device_colours('pi@pi.example', 18787, 0),
+            lambda: commands.device_colours('pi@pi.example', 18787, 121),
+            lambda: commands.device_colours('pi@pi.example', 18787, True),
+            lambda: commands.device_colours('pi@pi.example', 18787, cast('float', '10; reboot')),
+            lambda: commands.device_colours('pi@pi.example', 0, 10),
+            lambda: commands.device_colours('pi@pi.example', 18787, 10, 'localhost'),
+        ):
+            with self.assertRaises(commands.Refused):
+                build()
+
+    def test_it_reads_the_window_and_stops(self) -> None:
+        stream = FakeColoursStream([(0.1, COLOURS), (0.4, {'type': 'colors'})])
+        self.addCleanup(stream.close)
+        start = time.monotonic()
+        result = read_here(stream.url, '1')
+        self.assertLess(time.monotonic() - start, 3)  # the window, not the stream held open, ends it
+        self.assertEqual(result.returncode, 0, result.stderr)
+        samples = prysm_api.timed_lines(result.stdout)
+        self.assertEqual([event for _, event in samples], [COLOURS, {'type': 'colors'}])
+        times = [at for at, _ in samples]
+        self.assertEqual(times, sorted(times))
+        self.assertTrue(0.1 <= times[0] < times[1] < 1.0, times)
+
+    def test_the_remote_text_runs_in_a_shell_as_quoted(self) -> None:
+        stream = FakeColoursStream([(0.1, COLOURS)])
+        self.addCleanup(stream.close)
+        port = int(stream.url.split(':')[2].split('/')[0])
+        remote = (commands.device_colours('pi@pi.example', port, 1).remote or '').replace('python3', sys.executable)
+        # `timeout` stood in for (macOS has none): the rest is the remote text as the target's shell gets it.
+        command = commands.Command('device.colours', ('sh', '-c', 'timeout() { shift; "$@"; }; ' + remote), 20)
+        result = transport.Real(log=lambda line: None).run(command, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([event for _, event in prysm_api.timed_lines(result.stdout)], [COLOURS])
+
+    def test_a_stream_that_ends_early_fails(self) -> None:
+        stream = FakeColoursStream([(0.0, COLOURS)], end=True)
+        self.addCleanup(stream.close)
+        result = read_here(stream.url, '5')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('the stream ended', result.stderr)
+        self.assertEqual([event for _, event in prysm_api.timed_lines(result.stdout)], [COLOURS])
+
+    def test_another_status_fails(self) -> None:
+        stream = FakeColoursStream([], status=503)
+        self.addCleanup(stream.close)
+        result = read_here(stream.url, '1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('HTTP 503', result.stderr)
+
+    def test_its_lines_are_read_as_timed_events(self) -> None:
+        self.assertEqual(
+            prysm_api.timed_lines('0.105 {"type": "colors"}\n2.110 {"type": "colors", "top": [[255, 0, 0]]}\n'),
+            [(0.105, {'type': 'colors'}), (2.11, COLOURS)],
+        )
+        self.assertEqual(prysm_api.timed_lines(''), [])
+        for text in ('0.1', 'soon {"type": "colors"}', '0.1 {"type"'):
+            with self.subTest(text), self.assertRaises(ValueError):
+                prysm_api.timed_lines(text)
 
 
 if __name__ == '__main__':

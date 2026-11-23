@@ -60,7 +60,17 @@ from prysm_acceptance.host import Host, Sender, shown
 from prysm_acceptance.host_cells import Clip, Record, wled_as_found, wled_restored, wled_saved
 from prysm_acceptance.options import Flavour, TvCell
 from prysm_acceptance.prysm_api import Prysm
-from prysm_acceptance.tv_checks import CAPTURE, Check, Lit, Screen, Shown, capture, described, in_state
+from prysm_acceptance.tv_checks import (
+    CAPTURE,
+    Check,
+    Lit,
+    Screen,
+    Shown,
+    capture,
+    described,
+    in_state,
+    receiver_seam,
+)
 from prysm_acceptance.web import JsonObject
 from prysm_acceptance.webos import LunaReply, WebosTv
 from prysm_acceptance.wled_api import Wled
@@ -114,17 +124,6 @@ def _ipk(cell: TvCell, config: Config) -> Path | None:
 
 def _settings_document(config: Config, section: JsonObject) -> prysm_api.Settings:
     return host.settings(host.wled_output(config), section)
-
-
-def _receiver_seam(cell: TvCell, config: Config, run: transport.Transport, out_dir: Path) -> Host:
-    """The slim receiver: the host cells' binary seam on `[mac]` or `[linux]`, listening on the LAN (the TV must
-    reach it) on the platform's listen port."""
-    machine = config.machine(cast('options.Platform', cell.receiver))
-    binary = machine.artifact() or Path('BINARY')
-    if machine.target.startswith(SSH):
-        return host.SshBinary(run, machine.target.removeprefix(SSH), binary, machine.listen, out_dir, config.wled)
-    port = machine.listen.rsplit(':', 1)[1]
-    return host.LocalBinary(run, binary, f'0.0.0.0:{port}', out_dir, config.wled)
 
 
 def _prysm_address(seam: Host, tv_host: str) -> str:
@@ -268,7 +267,7 @@ def target(cell: TvCell, config: Config, bench: Bench, request: pytest.FixtureRe
 def _receiver_plan(cell: TvCell, config: Config) -> list[str]:
     if not cell.receiver:
         return []
-    return _receiver_seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL')).plan(None, '').preflight
+    return receiver_seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL')).plan(None, '').preflight
 
 
 @pytest.fixture(scope='module')
@@ -279,7 +278,7 @@ def receiver(cell: TvCell, config: Config, bench: Bench, request: pytest.Fixture
     Over SSH: reachable without a prompt, Linux on the binary's machine, the listen port free."""
     if not cell.receiver:
         return None
-    seam = _receiver_seam(cell, config, bench.transport, bench.out_dir)
+    seam = receiver_seam(cell, config, bench.transport, bench.out_dir)
     try:
         reason = seam.preflight(None, '')
     except transport.CommandFailed as error:
@@ -434,7 +433,7 @@ def _prysm_plan(cell: TvCell, config: Config) -> list[str]:
             f'PUT PORTAL/api/v1/settings: WLED output, neutral processing, the webos capture {width}x{height}@{fps} '
             'without the UI',
         ]
-    seam = _receiver_seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL')).plan(None, '')
+    seam = receiver_seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL')).plan(None, '')
     ssh = _ssh(config)
     return [
         f'write RUN_DIR/CELL/headless-settings.json: WLED output, neutral processing, the remote capture '
@@ -451,7 +450,7 @@ def _prysm_plan(cell: TvCell, config: Config) -> list[str]:
 def _prysm_undo(cell: TvCell, config: Config) -> list[str]:
     if cell.flavour == Flavour.FULL:
         return []
-    return _receiver_seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL')).plan(None, '').stop
+    return receiver_seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL')).plan(None, '').stop
 
 
 @pytest.fixture(scope='module')
@@ -509,7 +508,8 @@ def running(bench: Bench, target: OnTv, receiver: Host | None, prysm: Prysm) -> 
     """What lights WLED, as the shared checks see it: the address WLED should report, and the logs a failure
     fetches (the TV worker's recent lines from getState, `tv-worker.log`, and the receiver's)."""
     if receiver is None:
-        return Lit(target.tv, urlsplit(prysm.base).hostname or '', bench.out_dir)
+        portal = urlsplit(prysm.base)
+        return Lit(target.tv, portal.hostname or '', bench.out_dir, port=portal.port or 80)
     return Lit(target.tv, receiver.sender(), bench.out_dir, receiver)
 
 

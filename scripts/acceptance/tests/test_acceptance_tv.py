@@ -240,6 +240,28 @@ class TheTv(unittest.TestCase):
         self.assertEqual(first['rss_kb'], 10240)
         self.assertEqual(tv.cpu_percent(first, second), 40.0)
 
+    def test_the_colours_are_read_and_timed_on_the_tv(self) -> None:
+        found = recorded(('device.colours', ok('0.120 {"type": "colors"}\n2.130 {"type": "colors"}\n')))
+        self.assertEqual(found.colours(8787, 10.0), [(0.12, {'type': 'colors'}), (2.13, {'type': 'colors'})])
+        command = untyped(found).transport.calls[0]
+        self.assertEqual(command.argv[-2], HOST)
+        self.assertTrue(command.remote.endswith(' http://127.0.0.1:8787/api/v1/colors/stream 10'))
+        confined(self, command)
+        failed = recorded(('device.colours', Result(1, '', 'HTTP 503')))
+        with self.assertRaisesRegex(transport.CommandFailed, 'HTTP 503'):
+            failed.colours(8787, 10.0)
+
+    def test_the_colours_are_read_where_the_sampled_prysm_runs(self) -> None:
+        full = recorded(('device.colours', ok('0.120 {"type": "colors"}\n')))
+        lit = tv_checks.Lit(full, '192.0.2.50', Path(tempfile.mkdtemp()), port=8788)
+        self.assertEqual(lit.colours(10.0), [(0.12, {'type': 'colors'})])
+        self.assertIn(':8788/', untyped(full).transport.calls[0].remote)
+        receiver = mock.Mock()
+        receiver.colours.return_value = [(0.5, {'type': 'colors'})]
+        slim = tv_checks.Lit(recorded(), '192.0.2.20', Path(tempfile.mkdtemp()), receiver)
+        self.assertEqual(slim.colours(10.0), [(0.5, {'type': 'colors'})])
+        receiver.colours.assert_called_once_with(10.0)
+
 
 def front(app: str) -> Result:
     """getForegroundAppInfo's reply naming `app`."""

@@ -35,6 +35,7 @@ from prysm_acceptance.config import Installed
 from prysm_acceptance.host import (
     DEBIAN_MACHINES,
     SAMPLE_SINCE,
+    OnTarget,
     Plan,
     cleanup,
     device_node,
@@ -184,7 +185,7 @@ class DebPrysm:
         return f'{commands.DEB_OPTIONS} {state} as backed up, {commands.DEB_UNIT} restarted'
 
 
-class SshDeb:
+class SshDeb(OnTarget):
     """The package from `deb` installed on `target` (USER@HOST), its unit listening on `listen`. A Prysm found
     installed is refused, or with `installed = "replace"` left for the cell to replace (`existing`, `found`)."""
 

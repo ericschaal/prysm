@@ -208,6 +208,8 @@ machine; for the file source FFmpeg 9 or newer in the non-interactive ssh
 environment Prysm runs in (absent or older is a SKIP, so `linux-binary-file`
 is skipped on Debian 13's FFmpeg 7); for the device source the device is
 readable by the ssh user (through the link); the listen port is free (`ss`).
+The colour check also needs `python3` and `timeout` on the target, where it
+reads the colours stream ([the colour check](#the-test-clip-and-the-colour-check)).
 
 On the target the runner writes only in `~/.prysm-acceptance/RUN`, named
 after the run and the cell (`RUN` is `TIME-host-CELL`): the binary, the
@@ -326,16 +328,17 @@ may be there before the run, and nothing is left after it.
 
 Every host cell runs the same checks through one interface, `Host` in
 [`host.py`](../../scripts/acceptance/prysm_acceptance/host.py): whether the
-target can run the cell, deliver, start, stop, logs, the base URL and the
-sender address WLED should report. Whether Prysm arrives as a binary, a
-package or an image (`Delivery` in `options.py`) changes only the seam:
+target can run the cell, deliver, start, stop, logs, the base URL, the
+sender address WLED should report and the colours stream timed where Prysm
+runs (`colours`). Whether Prysm arrives as a binary, a package or an image
+(`Delivery` in `options.py`) changes only the seam:
 
-| Seam | Deliver | Start and stop | Logs |
-| --- | --- | --- | --- |
-| Binary, local (`LocalBinary`) | none | child process, SIGTERM | file |
-| Binary, SSH (`SshBinary`) | copy to a run directory | over SSH, listening on the LAN | fetched file |
-| Package, SSH (`SshDeb`) | copy, `apt-get install` | systemd unit | `journalctl` |
-| Image, SSH (`SshImage`) | copy, `docker load` | `docker compose` | `compose logs` |
+| Seam | Deliver | Start and stop | Logs | Colours stream read |
+| --- | --- | --- | --- | --- |
+| Binary, local (`LocalBinary`) | none | child process, SIGTERM | file | here |
+| Binary, SSH (`SshBinary`) | copy to a run directory | over SSH, listening on the LAN | fetched file | on the target |
+| Package, SSH (`SshDeb`) | copy, `apt-get install` | systemd unit | `journalctl` | on the target |
+| Image, SSH (`SshImage`) | copy, `docker load` | `docker compose` | `compose logs` | on the target |
 
 A remote `file` source also copies the clip to the target.
 
@@ -344,7 +347,7 @@ A remote `file` source also copies the clip to the target.
 A cell is one more `Cell` in `CELLS` in
 [`options.py`](../../scripts/acceptance/prysm_acceptance/options.py).
 A new delivery is one more implementation of `Host` (preflight, deliver,
-start, stop, logs, base URL, expected sender, close) in its own module with
+start, stop, logs, base URL, expected sender, colours stream, close) in its own module with
 its own templates, chosen in `_seam` in
 [`host_cells.py`](../../scripts/acceptance/prysm_acceptance/host_cells.py);
 the shared checks stay as they are. A check of what only that delivery adds
@@ -367,7 +370,22 @@ on, clockwise; nothing moves within a step. Read clockwise, each edge shows
 two colours and its second is the next edge's first. It is H.264 (yuv420p,
 faststart), 30 minutes long and about 2 MB.
 
-The colour check listens to the colours stream for 10 s. The stream reports
+The colour check listens to the colours stream for 10 s and times each event
+by the clock of the device Prysm runs on, as seconds since the window
+began. A Prysm on this computer is read here. A Prysm on another device (a
+Linux target over SSH, the full package's portal on the TV, a slim
+package's receiver on the Linux target) is read on that device:
+`device.colours` runs a short python3 reader over SSH against the
+stream on the device's loopback (or the one address Prysm listens on), on
+the port Prysm listens on there, and prints each event with the device's
+monotonic time. A network between that device and this computer then delays
+the events without shifting their times, so it cannot fail the pace. The
+reader stops by itself at the end of the window and exits non-zero on
+another status than 200, a failed connection or a stream that ends sooner;
+the device's `timeout` ends it 10 s after the window at the latest, and the
+run's own timeout ends ssh 15 s after that. The other checks that read the
+stream (not black, the display check, the TV's UI) judge no pace and read it
+here. The stream reports
 `top` and `bottom` left to right and `left` and `right` top to bottom, so
 each edge's halves are read in that order; only the entries between 10 and
 40 % and between 60 and 90 % of an edge count, away from the corners and the
@@ -471,7 +489,9 @@ package or Prysm's webOS app.
 `[tv]` in `config.toml`:
 
 - `target`: `"ssh://root@HOST"`, with a key that works without a prompt. HOST
-  must resolve here: the wake-on-LAN packet leaves on the route to it;
+  must resolve here: the wake-on-LAN packet leaves on the route to it. The
+  full package's colour checks read the colours stream on the TV, so it needs
+  `python3` and `timeout` ([the colour check](#the-test-clip-and-the-colour-check));
 - `ipk_full`, `ipk_slim`: the packages under test (by default the names
   `cargo xtask dist tv-full tv-slim` writes);
 - `mac` (optional): the TV's hardware address. When the TV does not answer
@@ -593,8 +613,8 @@ The checks, in order (`@only` marks a package's own):
   app, service, manifests and boot hook exist;
 - video only (video state, the capture without the UI): the frames at
   640 × 360, the frame rate within the tolerance, and the colours follow the
-  clip on every edge ([The test clip and the colour check](#the-test-clip-and-the-colour-check))
-  though the overlay is over the bottom of the screen: the UI is left out;
+  clip on every edge ([The test clip and the colour check](#the-test-clip-and-the-colour-check),
+  timed on the TV, or on the slim package's receiver) though the overlay is over the bottom of the screen: the UI is left out;
 - video with the overlay (the same state, only the UI included): the same
   size and rate; the top edge and the side edges' upper halves still follow
   the clip, and both halves of the bottom edge show the overlay (white) at
@@ -757,7 +777,8 @@ boot, its state with `getState` when `[tv] target` is set.
   install), install and remove the app through `com.webos.appInstallService`,
   run the package's `setup.sh` and the supervisor's `uninstall`, call
   Prysm's own Luna methods, ask which app is in front, launch or close
-  Prysm's own app and bring the home screen to the front (no other app); here, one wake-on-LAN packet. Nothing
+  Prysm's own app and bring the home screen to the front (no other app), and
+  read Prysm's colours stream on the TV's loopback with python3 (`device.colours`, which writes nothing); here, one wake-on-LAN packet. Nothing
   writes to system partitions or deletes `/var/lib/io.github.ericschaal.prysm`.
   [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
   enumerate every template and check the paths it names, and every TV command
@@ -768,7 +789,9 @@ boot, its state with `getState` when `[tv] target` is set.
 - **A Linux target.** The binary cells write only in the run directory under
   `~/.prysm-acceptance/` (named by a checked run name, never a path from the
   configuration), signal only their own Prysm's PID, never use sudo, and
-  remove the directory at the end. The package cell also changes, with
+  remove the directory at the end. Every Linux cell, and a slim TV cell whose
+  receiver runs there, also reads its Prysm's colours stream on the target
+  (`device.colours`: python3, writing nothing). The package cell also changes, with
   `sudo -n` in its `deb.*` templates only: the package's own files through
   apt-get (install, purge), the runtime drop-in under `/run/systemd/system/`,
   the unit's state (`systemctl`), and with `installed = "replace"` an installed
@@ -777,7 +800,8 @@ boot, its state with `getState` when `[tv] target` is set.
   project with its container, network and volume), without sudo. A test
   enumerates these templates and the paths they may write.
 - **Bounded.** Every command has a timeout; `luna-send` runs with its stdin
-  held open and a remote `timeout`, as `install-ipk.sh` does.
+  held open and a remote `timeout`, as `install-ipk.sh` does, and the colours
+  reader on a device under a remote `timeout` too.
 - **No Prysm before or after.** A Prysm found on the TV or the package
   cell's target is refused unless `installed = "replace"`, which removes it
   only after a backup that reads back as written, and never reinstalls it
