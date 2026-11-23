@@ -26,7 +26,7 @@ pub(crate) struct Deadlines {
     /// How long `close` waits for the capture to release the device. Shorter
     /// than the runtime's session stop deadline so the adapter reports first.
     /// V4L2 notices a stop within its poll timeout (1 s plus one frame
-    /// period); `AVFoundation` within 50 ms.
+    /// period); `AVFoundation` at once.
     pub release: Duration,
 }
 
@@ -72,6 +72,10 @@ impl CaptureSink for Sink {
     fn should_stop(&self, wait: Duration) -> bool {
         self.0.sleep(wait);
         self.0.stopped()
+    }
+
+    fn wake(&self) {
+        self.0.wakeup().wake();
     }
 }
 

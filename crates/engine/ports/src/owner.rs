@@ -1,7 +1,7 @@
 use crate::{Error, Pull, Result};
 use prysm_core::Frame;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -29,9 +29,18 @@ pub struct Worker {
     shared: Arc<Shared>,
 }
 
+/// Ends the owner thread's current or next [`Worker::sleep`] early: the event
+/// it waits for (a new input, a connection handed over, a native failure)
+/// came on another thread. Held by whatever delivers that event; it keeps
+/// nothing of the thread alive.
+#[derive(Debug, Clone)]
+pub struct Wakeup(Weak<Shared>);
+
 #[derive(Default)]
 struct State {
     stop: bool,
+    /// A [`Wakeup`] came since the last [`Worker::sleep`] ended.
+    woken: bool,
     ready: bool,
     frame: Option<Frame>,
     /// The watched native call in progress and when it started.
@@ -218,6 +227,18 @@ impl OwnerThread {
     }
 }
 
+impl Wakeup {
+    /// End the owner thread's sleep. `false` once the thread and its owner
+    /// are gone, so a holder can forget this handle.
+    pub fn wake(&self) -> bool {
+        let Some(shared) = self.0.upgrade() else {
+            return false;
+        };
+        shared.update(|state| state.woken = true);
+        true
+    }
+}
+
 impl std::fmt::Debug for OwnerThread {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OwnerThread")
@@ -242,12 +263,25 @@ impl Worker {
         state.stop || state.failure.is_some()
     }
 
-    /// Sleep up to `duration`, waking early when stopped.
+    /// Sleep up to `duration`, waking early when stopped or woken
+    /// ([`Self::wakeup`]). A wake-up that came while not sleeping ends the
+    /// next sleep at once, so none is lost.
     pub fn sleep(&self, duration: Duration) {
-        drop(
-            self.shared
-                .wait(duration, |state| state.stop || state.failure.is_some()),
-        );
+        let mut state = self.shared.wait(duration, |state| {
+            state.stop || state.failure.is_some() || state.woken
+        });
+        state.woken = false;
+    }
+
+    /// Sleep until stopped or woken: [`Self::sleep`] without a bound.
+    pub fn idle(&self) {
+        self.sleep(Duration::MAX);
+    }
+
+    /// A handle that ends this thread's sleep from another thread.
+    #[must_use]
+    pub fn wakeup(&self) -> Wakeup {
+        Wakeup(Arc::downgrade(&self.shared))
     }
 
     /// Native activation succeeded; [`OwnerThread::wait_ready`] returns.
@@ -324,6 +358,31 @@ mod tests {
         }
         assert!(owner.next_frame(SHORT).unwrap().is_idle());
         assert_eq!(owner.close().unwrap_err().to_string(), "buffers stuck");
+    }
+
+    /// A wake-up ends a sleep, also one that came before it; it outlives
+    /// the thread harmlessly.
+    #[test]
+    fn a_wakeup_ends_the_current_or_next_sleep() {
+        let (asleep, sleeping) = std::sync::mpsc::channel();
+        let (woke, awake) = std::sync::mpsc::channel();
+        let owner = spawn(move |worker| {
+            asleep.send(worker.wakeup()).unwrap();
+            for _ in 0..2 {
+                worker.idle();
+                woke.send(()).unwrap();
+            }
+            until_stopped(worker);
+            Ok(())
+        });
+        let wakeup = sleeping.recv_timeout(LIMIT).unwrap();
+        // Before or during the first sleep: either way it ends it.
+        assert!(wakeup.wake());
+        awake.recv_timeout(LIMIT).unwrap();
+        assert!(wakeup.wake());
+        awake.recv_timeout(LIMIT).unwrap();
+        owner.close().unwrap();
+        assert!(!wakeup.wake(), "nothing left to wake");
     }
 
     #[test]

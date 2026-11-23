@@ -7,23 +7,23 @@ use crate::service::{Bus, ErrorKind, METHODS, STATE_KEY, Service, WATCHES, Watch
 use prysm_webos_luna_sys as sys;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
-
-const TICK: Duration = Duration::from_millis(100);
+use std::time::Instant;
 
 /// Register and run until stopped (the signal number stored in `stop`,
-/// `deadline`, or uninstall).
+/// `deadline`, or uninstall). `wake` wakes the loop: the stop signals and
+/// SIGCHLD write to it, and so does the worker's every line.
 ///
 /// # Errors
 /// Registration failed or the bus is unavailable (off the TV).
 pub fn serve(
     identity: &Identity,
+    wake: &sys::Wake,
     stop: Arc<AtomicUsize>,
     deadline: Option<Instant>,
 ) -> Result<(), sys::Error> {
     let service = Service::new(
         identity.config(),
-        ProcessLauncher,
+        ProcessLauncher::new(wake.waker()),
         FileStore::new(identity.preferences()),
         FsInstaller::new(identity.layout.clone()),
         Instant::now(),
@@ -33,7 +33,7 @@ pub fn serve(
         name: &identity.service,
         methods: &METHODS,
         calls: &calls,
-        tick: TICK,
+        wake,
         refuse,
     };
     eprintln!("prysm-webos-service: registering {}", identity.service);
@@ -113,7 +113,7 @@ where
         }
     }
 
-    fn tick(&mut self, bus: &mut sys::Bus, now: Instant) -> bool {
+    fn poll(&mut self, bus: &mut sys::Bus, now: Instant) -> sys::Next {
         if !self.stopping {
             let signal = self.stop.load(Ordering::Relaxed);
             let why = if signal != 0 {
@@ -129,7 +129,15 @@ where
                 self.service.shutdown(&mut LunaBus(bus), now);
             }
         }
-        self.service.tick(&mut LunaBus(bus), now)
+        if !self.service.tick(&mut LunaBus(bus), now) {
+            return sys::Next::Stop;
+        }
+        let deadline = self.deadline.filter(|_| !self.stopping);
+        [self.service.next_due(now), deadline]
+            .into_iter()
+            .flatten()
+            .min()
+            .map_or(sys::Next::Event, sys::Next::At)
     }
 }
 
@@ -148,6 +156,7 @@ mod tests {
     use super::*;
     use crate::preferences::MemoryStore;
     use crate::service::tests::{FakeInstaller, FakeLauncher, config};
+    use std::time::Duration;
     use sys::Handler;
 
     #[test]
@@ -163,7 +172,11 @@ mod tests {
         let stop = Arc::new(AtomicUsize::new(0));
         let mut glue = Glue::new(service, stop.clone(), None);
         let mut bus = sys::Bus::default();
-        assert!(glue.tick(&mut bus, now));
+        // Nothing runs: only the subscriptions' renewal is due.
+        assert_eq!(
+            glue.poll(&mut bus, now),
+            sys::Next::At(now + crate::service::RESUBSCRIBE)
+        );
         let reply = glue.request(
             &mut bus,
             sys::Request {
@@ -175,7 +188,11 @@ mod tests {
         assert!(reply.payload.contains(r#""returnValue":true"#));
         stop.store(15, Ordering::Relaxed);
         assert_eq!(signal_name(15), "SIGTERM");
-        assert!(!glue.tick(&mut bus, now), "no worker: finished at once");
+        assert_eq!(
+            glue.poll(&mut bus, now),
+            sys::Next::Stop,
+            "no worker: finished at once"
+        );
     }
 
     #[test]
@@ -188,10 +205,11 @@ mod tests {
             FakeInstaller::default(),
             now,
         );
-        let mut glue = Glue::new(service, Arc::default(), Some(now + Duration::from_secs(1)));
+        let deadline = now + Duration::from_secs(1);
+        let mut glue = Glue::new(service, Arc::default(), Some(deadline));
         let mut bus = sys::Bus::default();
-        assert!(glue.tick(&mut bus, now));
-        assert!(!glue.tick(&mut bus, now + Duration::from_secs(1)));
+        assert_eq!(glue.poll(&mut bus, now), sys::Next::At(deadline));
+        assert_eq!(glue.poll(&mut bus, deadline), sys::Next::Stop);
     }
 
     /// The bus's own refusals carry the service's error kinds.

@@ -14,8 +14,13 @@ pub trait CaptureSink: Send + Sync {
     fn ready(&self);
     /// The newest frame. A sink keeps only the latest; capture never waits on it.
     fn frame(&self, frame: Frame);
-    /// Whether to stop, after waiting up to `wait` for a stop request.
+    /// Whether to stop, after waiting up to `wait` for a stop request or a
+    /// [`Self::wake`].
     fn should_stop(&self, wait: Duration) -> bool;
+    /// End the current or next [`Self::should_stop`] wait early: capture
+    /// learnt something on another thread (a failure, an answer). Called
+    /// from native callback threads.
+    fn wake(&self);
 }
 
 /// A video capture device present on this machine.
@@ -116,4 +121,5 @@ impl CaptureSink for Discard {
         std::thread::sleep(wait);
         false
     }
+    fn wake(&self) {}
 }

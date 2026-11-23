@@ -2,11 +2,13 @@
 //! one; tests use scripted fakes.
 use crate::machine::Exit;
 use prysm_webos_link::{Command, Event, LineReader, encode};
+use prysm_webos_luna_sys::Waker;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -59,12 +61,27 @@ pub trait Worker {
     /// # Errors
     /// `waitpid` failed.
     fn try_exit(&mut self) -> io::Result<Option<Exit>>;
+    /// When [`Worker::try_exit`] returns an exit held back for the last
+    /// lines, if no event comes first: [`LAST_WORDS`] after the reap.
+    fn due(&self) -> Option<Instant>;
 }
 
 /// Workers as child processes with piped stdio. Spawn from the supervisor's
 /// long-lived loop thread: the worker's parent-death signal follows it.
-#[derive(Debug, Default)]
-pub struct ProcessLauncher;
+/// Each line read, and the end of the worker's event stream, wakes the loop
+/// through `waker`; its exit wakes it through SIGCHLD, which the caller
+/// routes there.
+#[derive(Debug)]
+pub struct ProcessLauncher {
+    waker: Waker,
+}
+
+impl ProcessLauncher {
+    #[must_use]
+    pub fn new(waker: Waker) -> Self {
+        Self { waker }
+    }
+}
 
 impl Launcher for ProcessLauncher {
     type Worker = ProcessWorker;
@@ -81,13 +98,30 @@ impl Launcher for ProcessLauncher {
             abandon(child);
             return Err(io::Error::other("worker pipes missing"));
         };
-        let events = sender.clone();
+        let events = Outputs {
+            sender: sender.clone(),
+            waker: self.waker.clone(),
+        };
+        let logs = Outputs {
+            sender,
+            waker: self.waker.clone(),
+        };
+        let ended = Arc::new(AtomicBool::new(false));
         let reader = std::thread::Builder::new()
             .name("prysm-worker-events".into())
-            .spawn(move || read_events(stdout, &events));
+            .spawn({
+                let ended = ended.clone();
+                move || {
+                    read_events(stdout, &events);
+                    // Said before the wake, so the poll it brings sees it:
+                    // its end lets a held-back exit through.
+                    ended.store(true, Ordering::Release);
+                    events.waker.wake();
+                }
+            });
         let logger = std::thread::Builder::new()
             .name("prysm-worker-log".into())
-            .spawn(move || read_log(stderr, &sender));
+            .spawn(move || read_log(stderr, &logs));
         let reader = match (reader, logger) {
             (Ok(reader), Ok(_)) => reader,
             (Err(error), _) | (_, Err(error)) => {
@@ -99,7 +133,7 @@ impl Launcher for ProcessLauncher {
             stdin: child.stdin.take(),
             child: Some(child),
             outputs,
-            reader: Some(reader),
+            reader: Some((reader, ended)),
             exited: None,
         })
     }
@@ -117,7 +151,22 @@ fn abandon(mut child: Child) {
     }
 }
 
-fn read_events(stdout: impl Read, outputs: &mpsc::Sender<Output>) {
+/// Where a reader thread puts what it read: the channel, then a wake.
+struct Outputs {
+    sender: mpsc::Sender<Output>,
+    waker: Waker,
+}
+
+impl Outputs {
+    /// `false` once nobody reads the channel.
+    fn send(&self, output: Output) -> bool {
+        let sent = self.sender.send(output).is_ok();
+        self.waker.wake();
+        sent
+    }
+}
+
+fn read_events(stdout: impl Read, outputs: &Outputs) {
     let mut reader = LineReader::new(BufReader::new(stdout));
     loop {
         let output = match reader.read::<Event>() {
@@ -127,18 +176,18 @@ fn read_events(stdout: impl Read, outputs: &mpsc::Sender<Output>) {
             Err(error) => Output::Broken(prysm_ports::chain(&error)),
         };
         let broken = matches!(output, Output::Broken(_));
-        if outputs.send(output).is_err() || broken {
+        if !outputs.send(output) || broken {
             return;
         }
     }
 }
 
-fn read_log(stderr: impl Read, outputs: &mpsc::Sender<Output>) {
+fn read_log(stderr: impl Read, outputs: &Outputs) {
     let mut reader = BufReader::new(stderr);
     let mut line = Vec::new();
     while let Ok(true) = read_line(&mut reader, &mut line) {
         let text = String::from_utf8_lossy(&line).trim_end().to_owned();
-        if outputs.send(Output::Log(text)).is_err() {
+        if !outputs.send(Output::Log(text)) {
             return;
         }
     }
@@ -168,10 +217,11 @@ pub struct ProcessWorker {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     outputs: mpsc::Receiver<Output>,
-    /// The event reader, until joined; it ends at the event stream's EOF.
-    /// (The stderr reader is not waited for: logs are best effort, and
-    /// whatever the worker starts inherits its stderr.)
-    reader: Option<JoinHandle<()>>,
+    /// The event reader, until joined, and whether it has read its last
+    /// event: it ends at the event stream's EOF. (The stderr reader is not
+    /// waited for: logs are best effort, and whatever the worker starts
+    /// inherits its stderr.)
+    reader: Option<(JoinHandle<()>, Arc<AtomicBool>)>,
     /// Reaped at that time, its exit held back until the event reader ends
     /// or [`LAST_WORDS`] passed.
     exited: Option<(Exit, Instant)>,
@@ -226,9 +276,11 @@ impl Worker for ProcessWorker {
         let Some((exit, reaped)) = self.exited else {
             return Ok(None);
         };
-        if self.reader.as_ref().is_none_or(JoinHandle::is_finished) {
-            // Joined, so every event it sent is visible to `drain`.
-            if let Some(reader) = self.reader.take() {
+        let ended = |(_, ended): &(JoinHandle<()>, Arc<AtomicBool>)| ended.load(Ordering::Acquire);
+        if self.reader.as_ref().is_none_or(ended) {
+            // Joined (it only returns after `ended`), so every event it sent
+            // is visible to `drain`.
+            if let Some((reader, _)) = self.reader.take() {
                 let _ = reader.join();
             }
         } else if reaped.elapsed() < LAST_WORDS {
@@ -236,6 +288,10 @@ impl Worker for ProcessWorker {
         }
         self.exited = None;
         Ok(Some(exit))
+    }
+
+    fn due(&self) -> Option<Instant> {
+        self.exited.map(|(_, reaped)| reaped + LAST_WORDS)
     }
 }
 

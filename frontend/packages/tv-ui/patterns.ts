@@ -15,7 +15,10 @@ import bundled from './pattern-fragments.json';
 export const PATTERN_TYPE = 'video/mp4; codecs="avc1.42c01e"';
 /** Plays while no pattern is chosen, so the video pipeline is already running. */
 export const WAITING_PATTERN: Pattern = 'gray_192';
-/** No playback progress for this long ends the stream as failed. */
+/**
+ * No playback progress for this long ends the stream as failed. A guess: no
+ * stall of the TV's media pipeline was measured.
+ */
 export const STALL_MS = 8000;
 
 const fragments: Record<Pattern, string> = bundled;
@@ -67,15 +70,21 @@ export function streamPatterns(
   let buffer: SourceBuffer | undefined;
   let closed = false;
   let lastTime = -1;
-  let lastProgress = Date.now();
+  let stall: ReturnType<typeof setTimeout> | undefined;
 
+  /**
+   * Append when the buffer has room: at each finished append (`updateend`),
+   * as playback moves (`timeupdate`) and when it runs out (`waiting`).
+   * Progress restarts the stall wait.
+   */
   function pump() {
     if (closed) return;
     const time = video.currentTime;
     if (time !== lastTime) {
       lastTime = time;
-      lastProgress = Date.now();
-    } else if (Date.now() - lastProgress > STALL_MS) return fail();
+      clearTimeout(stall);
+      stall = setTimeout(fail, STALL_MS);
+    }
     if (!buffer || buffer.updating) return;
     try {
       const ranges = buffer.buffered;
@@ -107,11 +116,13 @@ export function streamPatterns(
   function stop() {
     if (closed) return;
     closed = true;
-    clearInterval(timer);
+    clearTimeout(stall);
     source.removeEventListener('sourceopen', open);
     buffer?.removeEventListener('error', fail);
     buffer?.removeEventListener('updateend', pump);
     video.removeEventListener('error', fail);
+    video.removeEventListener('timeupdate', pump);
+    video.removeEventListener('waiting', pump);
     video.pause();
     video.removeAttribute('src');
     video.load();
@@ -124,8 +135,11 @@ export function streamPatterns(
   }
   source.addEventListener('sourceopen', open);
   video.addEventListener('error', fail);
+  video.addEventListener('timeupdate', pump);
+  // Out of data before the next `timeupdate`: append at once.
+  video.addEventListener('waiting', pump);
   video.src = url;
-  const timer = setInterval(pump, 80);
+  stall = setTimeout(fail, STALL_MS);
   const playing = video.play() as Promise<void> | undefined;
   // Stopping while play() is pending rejects it with AbortError: not a failure.
   playing?.catch((reason: unknown) => {

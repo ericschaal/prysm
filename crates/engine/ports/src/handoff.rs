@@ -1,6 +1,7 @@
 //! The one piece a host wires between the web portal surface and the remote
 //! source: both depend on `prysm-ports`, neither on the other, and the
 //! hand-over needs nothing beyond `std`.
+use crate::Wakeup;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -79,6 +80,8 @@ struct Slot {
     /// new one, so an end it replaced neither takes nor ends its offers.
     generation: u64,
     waiting: Option<Accepted>,
+    /// Woken by each offer: the current end's thread ([`Receiving::wake`]).
+    wakeup: Option<Wakeup>,
     announced: Option<String>,
 }
 
@@ -133,6 +136,9 @@ impl Handoff {
             return Err(connection);
         }
         slot.waiting = Some(connection);
+        if let Some(wakeup) = &slot.wakeup {
+            wakeup.wake();
+        }
         Ok(())
     }
 
@@ -156,6 +162,7 @@ impl Handoff {
         let mut slot = self.lock();
         slot.receiving = true;
         slot.waiting = None;
+        slot.wakeup = None;
         slot.generation = slot.generation.wrapping_add(1);
         Receiving {
             handoff: self.clone(),
@@ -188,6 +195,16 @@ impl Receiving {
             None
         }
     }
+
+    /// Wake `wakeup` at every offer to this end, so its thread waits for one
+    /// without polling; nothing once a later [`Handoff::receive`] replaced
+    /// this end.
+    pub fn wake(&self, wakeup: Wakeup) {
+        let mut slot = self.handoff.lock();
+        if slot.generation == self.generation {
+            slot.wakeup = Some(wakeup);
+        }
+    }
 }
 
 impl Drop for Receiving {
@@ -196,6 +213,7 @@ impl Drop for Receiving {
         if slot.generation == self.generation {
             slot.receiving = false;
             slot.waiting = None;
+            slot.wakeup = None;
         }
     }
 }
@@ -205,6 +223,7 @@ mod tests {
     use super::*;
     use std::io::Read;
     use std::net::TcpListener;
+    use std::time::Duration;
 
     /// A connected socket and its peer, to tell which one arrived.
     fn connection(tag: u8) -> (Accepted, TcpStream) {
@@ -334,6 +353,37 @@ mod tests {
         let _ = handoff.answer([CAPTURE_PROTOCOL], None);
         let _ = handoff.answer([CAPTURE_PROTOCOL], Some("é"));
         assert_eq!(handoff.announcement().as_deref(), Some("second"));
+    }
+
+    /// A thread waiting for a connection sleeps until one is offered.
+    #[test]
+    fn an_offer_wakes_the_receiving_thread() {
+        let handoff = Handoff::new();
+        let receiving = handoff.receive();
+        let (asleep, sleeping) = std::sync::mpsc::channel();
+        let (taken, took) = std::sync::mpsc::channel();
+        let owner = crate::OwnerThread::spawn(
+            "prysm-test-receiver",
+            "test thread",
+            Duration::from_secs(5),
+            move |worker| {
+                receiving.wake(worker.wakeup());
+                asleep.send(()).unwrap();
+                while !worker.stopped() {
+                    if let Some(connection) = receiving.take() {
+                        taken.send(connection.buffered).unwrap();
+                    }
+                    worker.idle();
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        sleeping.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (first, _peer) = connection(1);
+        handoff.offer(first).unwrap();
+        assert_eq!(took.recv_timeout(Duration::from_secs(5)).unwrap(), [1]);
+        owner.close().unwrap();
     }
 
     #[test]

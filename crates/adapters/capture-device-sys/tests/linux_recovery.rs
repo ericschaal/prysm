@@ -59,6 +59,8 @@ impl CaptureSink for Latest {
             .0
             .1
     }
+
+    fn wake(&self) {}
 }
 
 #[test]

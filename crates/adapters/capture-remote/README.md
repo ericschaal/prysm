@@ -263,7 +263,8 @@ every connection).
   linger and one 50 ms read for a connection the new one replaces, plus
   200 ms); 2 s for each message sent, however many writes it takes (a
   receiver that reads slowly or not at all fails the send).
-  Receiver: reads wake every 50 ms to check for `close` and newer
+  Receiver: a thread without a connection sleeps until one is handed over
+  or it is closed; reads wake every 50 ms to check for `close` and newer
   connections; a quiet connection is kept open; 1 s per write. After
   closing a connection it asked for frames as *stopped*, *replaced* or
   *failed* it reads and discards the sender's frames for up to 1 s, until the sender

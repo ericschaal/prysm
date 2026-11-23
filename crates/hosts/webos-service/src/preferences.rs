@@ -16,7 +16,7 @@ pub const MAX_BYTES: usize = 65_536;
 /// `preferences`. Fields marked "Slim only" must stay unset in the full
 /// package. The file is [`PreferencesFile`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Preferences {
     /// Start when the service starts: the full package starts screen sync,
@@ -36,6 +36,7 @@ pub struct Preferences {
     )]
     pub prysm_address: Option<PrysmAddress>,
 }
+prysm_ports::map_only!(Preferences, "preferences as an object");
 
 impl Preferences {
     /// # Errors
@@ -383,6 +384,21 @@ mod tests {
             assert!(
                 error.starts_with(&format!("Prysm address `{bad}`: ")),
                 "{error}"
+            );
+        }
+    }
+
+    /// Every field has a default, so serde's derive alone would read `[]`
+    /// (and `[true]`) as preferences.
+    #[test]
+    fn only_an_object_is_preferences() {
+        for refused in ["[]", "[true]", "null", "true"] {
+            let error = serde_json::from_str::<Preferences>(refused)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("preferences as an object"),
+                "{refused}: {error}"
             );
         }
     }

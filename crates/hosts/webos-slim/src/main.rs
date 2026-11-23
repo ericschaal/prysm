@@ -129,9 +129,8 @@ async fn run(args: SlimArgs, link: Link) -> Result<()> {
             stopping.cut();
         }
     };
-    Forwarder::new(source, sink)
+    Forwarder::new(source, sink, STOP_DEADLINE)
         .surface(ForwarderLink::new(link, video, flow))
-        .stop_deadline(STOP_DEADLINE)
         .run(stopped)
         .await
 }

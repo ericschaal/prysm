@@ -5,8 +5,6 @@ use prysm_ports::{Error, FrameSink, FrameSource, Result, SessionPhase};
 use std::future::Future;
 use std::time::Duration;
 
-const STOP_DEADLINE: Duration = Duration::from_secs(5);
-
 /// A capture-only host: the session loop with a [`FrameSink`] in place of
 /// processor and output. No engine, no settings; surfaces get `()`.
 pub struct Forwarder {
@@ -17,24 +15,24 @@ pub struct Forwarder {
 }
 
 impl Forwarder {
-    pub fn new(source: impl FrameSource + 'static, sink: impl FrameSink + 'static) -> Self {
+    /// `stop_deadline` bounds a stop of the forwarding thread (the source's
+    /// close included) and, after it, the surfaces' finish.
+    pub fn new(
+        source: impl FrameSource + 'static,
+        sink: impl FrameSink + 'static,
+        stop_deadline: Duration,
+    ) -> Self {
         Self {
             source: Box::new(source),
             sink: Box::new(sink),
             surfaces: Vec::new(),
-            stop_deadline: STOP_DEADLINE,
+            stop_deadline,
         }
     }
 
     #[must_use]
     pub fn surface(mut self, surface: impl Surface<()>) -> Self {
         self.surfaces.push(Box::new(surface));
-        self
-    }
-
-    #[must_use]
-    pub fn stop_deadline(mut self, deadline: Duration) -> Self {
-        self.stop_deadline = deadline;
         self
     }
 

@@ -887,7 +887,7 @@ async fn forwarder_delivers_frames_end_to_end() {
     let mut got = None;
     let forwarded = tokio::time::timeout(
         BOUND * 2,
-        Forwarder::new(fake, sender).run(async {
+        Forwarder::new(fake, sender, BOUND).run(async {
             got = Some(received.await.unwrap());
         }),
     )

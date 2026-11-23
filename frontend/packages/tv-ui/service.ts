@@ -60,8 +60,13 @@ export type Link =
 
 export interface ServiceState {
   link: Link;
-  /** Sent with the last successful save, until the subscription shows it. */
-  pending: Saved | null;
+  /**
+   * What the last save stored, as its reply says, and the preferences shown
+   * when the reply came: an older push (showing `before`) may still arrive
+   * after the reply. The first push showing anything else ends it: the
+   * stored preferences, or a change made since.
+   */
+  pending: { stored: Saved; before: Saved | null } | null;
   changing: boolean;
   notice: string;
   error: boolean;
@@ -72,8 +77,7 @@ export interface ServiceState {
 export type ServiceAction =
   | { type: 'event'; event: ServiceEvent; at: number }
   | { type: 'removed' }
-  | { type: 'saved'; sent: Saved }
-  | { type: 'settled' }
+  | { type: 'saved'; stored: Saved }
   | { type: 'changing'; value: boolean }
   | { type: 'notice'; text: string; error: boolean }
   | { type: 'problem'; text: string };
@@ -129,7 +133,9 @@ export function serviceReducer(
           retry: wait && (known ?? { since: action.at, seconds: wait.seconds }),
         },
         pending:
-          current.pending && !same(current.pending, saved)
+          current.pending &&
+          current.pending.before &&
+          same(current.pending.before, saved)
             ? current.pending
             : null,
         ...(link.status === 'missing'
@@ -143,11 +149,17 @@ export function serviceReducer(
       // The subscription may already show what was saved.
       const state = lastState(current.link);
       const shown =
-        state && same(completePreferences(state.preferences), action.sent);
-      return { ...current, pending: shown ? null : action.sent };
+        state && same(completePreferences(state.preferences), action.stored);
+      return {
+        ...current,
+        pending: shown
+          ? null
+          : {
+              stored: action.stored,
+              before: state && completePreferences(state.preferences),
+            },
+      };
     }
-    case 'settled':
-      return { ...current, pending: null };
     case 'changing':
       return { ...current, changing: action.value };
     case 'notice':
@@ -194,19 +206,12 @@ export function useTvService(service: TvService, active: boolean) {
       dispatch({ type: 'event', event, at: Date.now() }),
     );
   }, [service, active, generation]);
-  useEffect(() => {
-    if (!current.pending) return;
-    // The subscription normally confirms within a moment; never wait forever.
-    const timer = setTimeout(() => dispatch({ type: 'settled' }), 5000);
-    return () => clearTimeout(timer);
-  }, [current.pending]);
-
   const { link } = current;
   const state = lastState(link);
   const known = link.status === 'live' || link.status === 'lost';
   const saved = completePreferences(state?.preferences ?? {});
   /** What the settings show: the saved values, or those being saved. */
-  const draft: Saved = current.pending ?? saved;
+  const draft: Saved = current.pending?.stored ?? saved;
   /**
    * The preferences a queued change applies to: the latest render's, or
    * what the change before it sent, until a render shows that.
@@ -258,11 +263,17 @@ export function useTvService(service: TvService, active: boolean) {
     return result;
   }
 
+  /**
+   * The reply is the state the service stored, and it publishes that state
+   * next, so the first push that differs from what was shown ends what is
+   * pending: no wait needs a bound.
+   */
   async function sendPreferences(patch: Edits) {
     const sent = { ...shown.current, ...patch };
-    await service.setPreferences(sentPreferences(sent));
-    shown.current = sent;
-    if (mounted.current) dispatch({ type: 'saved', sent });
+    const reply = await service.setPreferences(sentPreferences(sent));
+    const stored = completePreferences(reply.preferences);
+    shown.current = stored;
+    if (mounted.current) dispatch({ type: 'saved', stored });
   }
 
   return {

@@ -58,7 +58,7 @@ export {
   type PicturePreset,
 } from './picture-presets';
 export { PreviewPanel } from './preview';
-export { colorsRetryMs, ledProperties, ledValues } from './live-colors';
+export { ledProperties, ledValues } from './live-colors';
 export { deviceNamesKey } from './device-name';
 export { drawPreview, previewLayout } from './preview-canvas';
 export {

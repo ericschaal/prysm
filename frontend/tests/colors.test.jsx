@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { httpColorsClient } from '@prysm/application-client/http';
-import { ApplicationError } from '@prysm/application-client';
+import { ApplicationError, reconnectDelayMs } from '@prysm/application-client';
 import { act } from 'react';
-import { colorsRetryMs } from '@prysm/web-portal';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { fakeColorsClient } from '../testkit/colors';
 import { $, button, click, openSettings, renderPortal, sleep } from './dom';
@@ -253,9 +252,9 @@ test('a black scene glows faintly; a refused or ended stream falls back and retr
     assert.equal(live(), null, 'ended: the designed glow');
     assert.equal(fake.open(), 0);
     fake.refuseNext({ kind: 'busy', message: 'too many colors streams' });
-    await act(async () => sleep(colorsRetryMs(0) + 100));
+    await act(async () => sleep(reconnectDelayMs(0) + 100));
     assert.equal(fake.open(), 0, 'refused: still the designed glow');
-    await act(async () => sleep(colorsRetryMs(1) + 100));
+    await act(async () => sleep(reconnectDelayMs(1) + 100));
     assert.equal(fake.open(), 1, 'retried quietly');
   } finally {
     await portal.unmount();

@@ -70,6 +70,9 @@ impl Worker for FakeWorker {
         }
         Ok(world.exit.take())
     }
+    fn due(&self) -> Option<Instant> {
+        None
+    }
 }
 
 impl Drop for FakeWorker {
@@ -275,6 +278,11 @@ fn preferences_are_validated_persisted_and_applied() {
     assert_eq!(h.saved()["prysm_address"], "https://prysm.example.com");
     let unknown = h.app("setPreferences", r#"{"mode":"full"}"#);
     assert_eq!(unknown["errorKind"], "invalid_request");
+    for array in ["[]", "[true]"] {
+        let refused = h.app("setPreferences", array);
+        assert_eq!(refused["errorKind"], "invalid_request", "{array}");
+    }
+    assert_eq!(h.saved()["prysm_address"], "https://prysm.example.com");
     let reply = h.app(
         "setPreferences",
         r#"{"autostart":true,"prysm_address":"http://192.168.1.20:8787"}"#,
@@ -496,7 +504,10 @@ fn power_and_video_drive_the_worker_and_its_commands() {
         h.app("setTarget", r#"{"target":"effects"}"#)["target"],
         "effects"
     );
-    assert_eq!(h.log(), [r#"send {"type":"target","target":"effects"}"#]);
+    assert_eq!(
+        h.log(),
+        [r#"send {"type":"target","target":"effects","sequence":1}"#]
+    );
     let published = h.bus.published.last().unwrap();
     assert_eq!(published["subscribed"], true);
     assert_eq!(published["power"], "active");
@@ -514,6 +525,7 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
             capturing: false,
             fps: None,
             target: LightingTarget::Off,
+            applied: 0,
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
         }))),

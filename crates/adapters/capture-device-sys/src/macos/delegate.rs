@@ -94,7 +94,7 @@ define_class!(
         // returns nothing; it runs on whichever thread posts the notification.
         #[unsafe(method(captureFailed:))]
         fn capture_failed(&self, notification: &NSNotification) {
-            self.guarded("captureFailed:", || self.fail(failure(notification)));
+            self.guarded("captureFailed:", || self.fail_and_wake(failure(notification)));
         }
 
         // Not guarded: setting the ivars and NSObject's `init` do not panic.
@@ -155,7 +155,7 @@ impl Delegate {
         if let Err(payload) = panic::catch_unwind(AssertUnwindSafe(|| drop(payload))) {
             std::mem::forget(payload);
         }
-        self.fail(CaptureError::Backend(
+        self.fail_and_wake(CaptureError::Backend(
             anyhow!(message).context(format!("{method} panicked")),
         ));
     }
@@ -194,7 +194,7 @@ impl Delegate {
                 Event::Rejected(reason)
             }
         };
-        self.judge(&mut capture.health, event, now);
+        self.judge(capture, event, now);
     }
 
     /// Counts a stall when no sample arrived for the stall timeout before
@@ -212,14 +212,29 @@ impl Delegate {
         };
         if now.saturating_duration_since(capture.last_sample) >= capture.stall {
             capture.last_sample = now;
-            self.judge(&mut capture.health, Event::Stalled, now);
+            self.judge(capture, Event::Stalled, now);
         }
     }
 
-    /// Acts on what `health` makes of `event` at `now`.
-    fn judge(&self, health: &mut Health, event: Event, now: Instant) {
-        match health.on(event, now) {
-            Verdict::Fail(error) => self.fail(error),
+    /// How long from `now` until [`Self::check_stall`] can count a stall:
+    /// what the capture thread waits for, besides a stop or a failure.
+    pub(super) fn until_stall(&self, now: Instant) -> Duration {
+        let Ok(capture) = self.ivars().capture.lock() else {
+            return Duration::ZERO;
+        };
+        capture.as_ref().map_or(Duration::ZERO, |capture| {
+            (capture.last_sample + capture.stall).saturating_duration_since(now)
+        })
+    }
+
+    /// Acts on what `capture`'s health makes of `event` at `now`; a failure
+    /// wakes the capture thread.
+    fn judge(&self, capture: &mut CaptureState, event: Event, now: Instant) {
+        match capture.health.on(event, now) {
+            Verdict::Fail(error) => {
+                self.fail(error);
+                capture.sink.wake();
+            }
             // A quiet session has nothing to restart: it delivers again when
             // its source does.
             Verdict::Continue | Verdict::Restart { .. } => {}
@@ -238,6 +253,20 @@ impl Delegate {
     /// Records `error`, unless a failure is recorded already.
     fn fail(&self, error: CaptureError) {
         self.error().get_or_insert(error);
+    }
+
+    /// [`Self::fail`], then wake the capture thread, which waits for it. Not
+    /// called with the capture lock held.
+    fn fail_and_wake(&self, error: CaptureError) {
+        self.fail(error);
+        let capture = self
+            .ivars()
+            .capture
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(capture) = capture.as_ref() {
+            capture.sink.wake();
+        }
     }
 
     pub(super) fn failed(&self) -> bool {
@@ -295,6 +324,7 @@ mod tests {
     use super::*;
     use av_foundation::capture_session::AVCaptureSessionRuntimeErrorNotification;
     use objc2_foundation::NSDictionary;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn runtime_notification_preserves_native_error() {
@@ -337,8 +367,8 @@ mod tests {
         for name in names {
             let object = NSObject::new();
             let unrelated = NSObject::new();
-            let sink: Arc<dyn CaptureSink> = Arc::new(crate::device::Discard);
-            let delegate = delegate_for(sink.clone());
+            let woken = Arc::new(Count::default());
+            let delegate = delegate_for(woken.clone());
             delegate.observe_failure(name, &object);
 
             // SAFETY: These live NSObject instances identify the notification source;
@@ -351,6 +381,11 @@ mod tests {
                     .postNotificationName_object(name, Some(&object));
             }
             assert!(delegate.failed());
+            assert_eq!(
+                woken.1.load(Ordering::Relaxed),
+                1,
+                "the capture thread is woken"
+            );
             let error = delegate.ivars().error.lock().unwrap().take().unwrap();
             assert!(error.to_string().contains(&name.to_string()));
             // SAFETY: a constant NSString AVFoundation defines for the process's life.
@@ -361,7 +396,7 @@ mod tests {
             );
             drop(delegate);
             assert_eq!(
-                Arc::strong_count(&sink),
+                Arc::strong_count(&woken),
                 1,
                 "the delegate released the sink"
             );
@@ -386,17 +421,20 @@ mod tests {
         CMSampleBuffer::from_image_buffer_ready(&pixels, &description, &timing).unwrap()
     }
 
-    /// A sink that counts the frames it gets.
+    /// A sink that counts the frames it gets and its wake-ups.
     #[derive(Default)]
-    struct Count(std::sync::atomic::AtomicUsize);
+    struct Count(AtomicUsize, AtomicUsize);
 
     impl CaptureSink for Count {
         fn ready(&self) {}
         fn frame(&self, _: crate::Frame) {
-            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.0.fetch_add(1, Ordering::Relaxed);
         }
         fn should_stop(&self, _: Duration) -> bool {
             false
+        }
+        fn wake(&self) {
+            self.1.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -404,7 +442,8 @@ mod tests {
     fn a_run_of_unusable_pixel_buffers_fails_capture() {
         use core_video::pixel_buffer::kCVPixelFormatType_32BGRA;
         let start = Instant::now();
-        let delegate = Delegate::new(Arc::new(crate::device::Discard), RATE, start);
+        let sink = Arc::new(Count::default());
+        let delegate = Delegate::new(sink.clone(), RATE, start);
         let unusable = sample(kCVPixelFormatType_32BGRA);
         // A second's worth, then the rest of three seconds at the rate.
         let period = Duration::from_secs(1) / RATE.get();
@@ -413,6 +452,11 @@ mod tests {
             assert!(!delegate.failed(), "frame {frame}: within the grace");
         }
         delegate.deliver(&unusable, start + Duration::from_secs(3));
+        assert_eq!(
+            sink.1.load(Ordering::Relaxed),
+            1,
+            "the capture thread is woken"
+        );
         let error = delegate.error().take().expect("capture failed");
         let CaptureError::Unusable { rejected, source } = &error else {
             panic!("expected unusable buffers, got {error:?}");
@@ -451,7 +495,8 @@ mod tests {
             }
         }
         assert!(!delegate.failed(), "{:?}", delegate.error().take());
-        assert_eq!(sink.0.load(std::sync::atomic::Ordering::Relaxed), 5);
+        assert_eq!(sink.0.load(Ordering::Relaxed), 5);
+        assert_eq!(sink.1.load(Ordering::Relaxed), 0, "nothing failed");
     }
 
     const RATE: NonZeroU32 = NonZeroU32::new(30).unwrap();

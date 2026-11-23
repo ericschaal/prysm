@@ -42,7 +42,7 @@ impl Installer for NoInstaller {
 const WORKER: &str = r#"#!/bin/sh
 trap 'echo "TERM" >&2; exit 0' TERM
 echo "args: $*" >&2
-echo '{"type":"status","flavor":"full","capturing":false,"target":"off","portal":"http://10.0.0.2:8787/"}'
+echo '{"type":"status","flavor":"full","capturing":false,"target":"off","applied":0,"portal":"http://10.0.0.2:8787/"}'
 exec 3<&0
 while read -r line <&3; do echo "command: $line" >&2; done &
 while :; do sleep 0.05; done
@@ -83,9 +83,10 @@ fn supervises_a_real_child_process() {
             listen: "0.0.0.0:8787".parse().unwrap(),
         },
     };
+    let wake = prysm_webos_luna_sys::Wake::new().unwrap();
     let mut service = Service::new(
         config,
-        ProcessLauncher,
+        ProcessLauncher::new(wake.waker()),
         MemoryStore::default(),
         NoInstaller,
         Instant::now(),

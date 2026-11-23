@@ -28,10 +28,6 @@ use access::camera_access;
 use configure::{configure_capture, video_settings};
 use delegate::Delegate;
 
-/// How often the capture thread checks for a failure notification while it
-/// waits for a stop request.
-const FAILURE_POLL: Duration = Duration::from_millis(50);
-
 /// Keeps the `AVFoundation` objects alive for as long as frames are flowing.
 struct RunningSession {
     session: Retained<AVCaptureSession>,
@@ -225,8 +221,11 @@ pub(crate) fn run(
         return Ok(());
     }
     sink.ready();
-    // The capture thread itself waits; frames arrive on the session's queue.
-    while !session.delegate.failed() && !sink.should_stop(FAILURE_POLL) {
+    // The capture thread itself waits, for a stop, a failure (which wakes
+    // it) or the next stall check; frames arrive on the session's queue.
+    while !session.delegate.failed()
+        && !sink.should_stop(session.delegate.until_stall(Instant::now()))
+    {
         session.delegate.check_stall(Instant::now());
     }
     let error = session.delegate.error().take();

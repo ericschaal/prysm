@@ -1082,8 +1082,7 @@ test('the service link: each event in each link state', () => {
   const saved = { autostart: true, prysm_address: null };
   for (const state of Object.values(states))
     for (const [action, check] of [
-      [{ type: 'saved', sent: saved }, (next) => next.pending !== undefined],
-      [{ type: 'settled' }, (next) => next.pending === null],
+      [{ type: 'saved', stored: saved }, (next) => next.pending !== undefined],
       [{ type: 'changing', value: true }, (next) => next.changing === true],
       [
         { type: 'notice', text: 'Done.', error: true },
@@ -1095,6 +1094,38 @@ test('the service link: each event in each link state', () => {
       assert.equal(next.link, state.link, action.type);
       assert(check(next), action.type);
     }
+});
+
+test('a pending save ends at the first push that shows anything else', () => {
+  const full = fixtures['luna/State'][0];
+  const withPreferences = (preferences) => ({ ...full, preferences });
+  const off = { autostart: false, prysm_address: null };
+  const on = { autostart: true, prysm_address: null };
+  const push = (preferences) => ({
+    type: 'event',
+    event: { online: true, state: withPreferences(preferences) },
+    at: 2,
+  });
+  const live = {
+    ...initialService,
+    link: { status: 'live', state: withPreferences(off), at: 1, retry: null },
+  };
+  const saved = serviceReducer(live, { type: 'saved', stored: on });
+  assert.deepEqual(saved.pending, { stored: on, before: off });
+  // An older push, sent before the save, keeps it shown.
+  assert.deepEqual(serviceReducer(saved, push(off)).pending, saved.pending);
+  // The saved preferences end it, and so does a change made since.
+  assert.equal(serviceReducer(saved, push(on)).pending, null);
+  const elsewhere = {
+    autostart: false,
+    prysm_address: 'https://prysm.example.com',
+  };
+  assert.equal(serviceReducer(saved, push(elsewhere)).pending, null);
+  // Already shown: nothing is pending.
+  assert.equal(
+    serviceReducer(live, { type: 'saved', stored: off }).pending,
+    null,
+  );
 });
 
 test('the main screen: one place says a package mismatch and what shows', () => {
@@ -3132,7 +3163,7 @@ test('the pattern fragments are MP4 clips, one per pattern of the contract', () 
 });
 
 test('the pattern stream appends the requested pattern in sequence mode and stops on a stall', (t) => {
-  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const fragments = JSON.parse(
     readFileSync(
       resolve(process.cwd(), 'packages/tv-ui/pattern-fragments.json'),
@@ -3227,10 +3258,16 @@ test('the pattern stream appends the requested pattern in sequence mode and stop
   video.currentTime = 1.5;
   buffer.dispatchEvent(new Event('updateend'));
   assert.equal(buffer.appended.length, 5);
+  // Playback moving appends too, without a finished append.
   video.currentTime = 2.2;
-  buffer.dispatchEvent(new Event('updateend'));
+  video.dispatchEvent(new Event('timeupdate'));
   assert.equal(buffer.appended.length, 6);
   assert.deepEqual(buffer.appended.at(-1), bytes('red'));
+  // Out of data: appended at once, without waiting for playback to move.
+  video.currentTime = 2.6;
+  buffer.range = [0, 2.6];
+  video.dispatchEvent(new Event('waiting'));
+  assert.equal(buffer.appended.length, 7);
   // Played video is dropped, keeping the last ten seconds.
   video.currentTime = 40;
   buffer.range = [0, 40.3];

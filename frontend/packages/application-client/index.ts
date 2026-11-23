@@ -36,6 +36,15 @@ export type {
 export { same } from './same';
 
 /**
+ * How long a stream of the portal (state, colours) waits before it
+ * reconnects after `attempt` failures in a row since it last received
+ * (0 for the first): 250 ms doubling to 5 s. One policy for every stream of
+ * one portal; the TV app's `STALE_MS` is derived from it.
+ */
+export const reconnectDelayMs = (attempt: number) =>
+  Math.min(5000, 250 * 2 ** attempt);
+
+/**
  * Why the lights are not showing screen sync, for people. Prysm keeps
  * sending and does not switch the lights back; they follow again as soon as
  * they take its colours. An issue newer than this page gets the general line.

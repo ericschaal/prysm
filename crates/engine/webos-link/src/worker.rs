@@ -512,6 +512,7 @@ mod tests {
                 capturing: false,
                 fps: None,
                 target: prysm_ports::LightingTarget::Off,
+                applied: 0,
                 portal: Some("z".repeat(10_000)),
                 failure: long(),
             })));
@@ -568,6 +569,7 @@ mod tests {
                         capturing: true,
                         fps: Some(u16::MAX),
                         target: prysm_ports::LightingTarget::Effects,
+                        applied: u64::MAX,
                         portal: Some(text.clone()),
                         failure: failure(),
                     })),
