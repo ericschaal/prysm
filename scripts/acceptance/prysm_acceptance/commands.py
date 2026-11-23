@@ -680,9 +680,13 @@ def linux_remove(host: str, run: str) -> Command:
 # ---- Prysm's colours stream, read on the device Prysm runs on (a Linux target, the TV) -----
 
 # Reads `GET URL` (a colours stream) for SECONDS from its start, each `data:` line printed as `<seconds since the
-# start> <payload>` by the device's monotonic clock. It exits 0 at the end of the window, non-zero on another
-# status than 200, a failed connection or a stream that ends sooner. Python 3 without newer syntax, as the TV's
-# may be old; double quotes only (the shell quotes it once), no `>`, no file paths.
+# start> <payload>` by the device's monotonic clock. Lines are read through http.client's de-chunking
+# (`response.readline`), so an event split across chunks is one line and the body's last chunk ends the stream.
+# It exits 0 at the end of the window, non-zero on another status than 200, a failed connection or a stream that
+# ends sooner (the local reader, `web.events`, returns what it read then: the two differ on an early end on
+# purpose). Python 3 without newer syntax, as the TV's may be old. As the TV's remote text it obeys the
+# confinement rules (test_acceptance_commands.confined): no redirection (`>`) and no absolute path; and it holds
+# no single quote, so `shlex.quote` wraps it in one pair as it is (a test asserts that).
 COLOURS_READER = '\n'.join(
     (
         'import http.client, socket, sys, time',
@@ -699,7 +703,7 @@ COLOURS_READER = '\n'.join(
         'while time.monotonic() < end:',
         '    sock.settimeout(max(0.05, end - time.monotonic()))',
         '    try:',
-        '        line = response.fp.readline()',
+        '        line = response.readline()',
         '    except socket.timeout:',
         '        break',
         '    if not line:',
@@ -711,6 +715,13 @@ COLOURS_READER = '\n'.join(
 # How long the device's `timeout` lets the reader run past its window, and ssh past that.
 READER_GRACE = 10
 SSH_GRACE = 15
+
+
+def device_reader_tools(host: str) -> Command:
+    """Whether the device has what `device.colours` runs: one `missing NAME` line for each of python3 and
+    `timeout` the shell does not find (nothing: both there)."""
+    remote = 'for t in python3 timeout; do command -v "$t" || echo "missing $t"; done'
+    return _ssh('device.reader-tools', host, remote, 15)
 
 
 def _window(value: object) -> None:
@@ -1018,6 +1029,7 @@ TEMPLATES: dict[str, Callable[[], Command]] = {
     'linux.kernel': lambda: linux_kernel('pi@pi.example', 1763380000),
     'linux.route': lambda: linux_route('pi@pi.example', '192.0.2.40'),
     'linux.remove': lambda: linux_remove('pi@pi.example', 'RUN-CELL'),
+    'device.reader-tools': lambda: device_reader_tools('pi@pi.example'),
     'device.colours': lambda: device_colours('pi@pi.example', 18787, 10.0),
     'deb.sudo': lambda: deb_sudo('pi@pi.example'),
     'deb.installed': lambda: deb_installed('pi@pi.example'),

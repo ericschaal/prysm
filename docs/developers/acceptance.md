@@ -207,9 +207,13 @@ reachable over ssh without a prompt; `uname -sm` is Linux on the binary's
 machine; for the file source FFmpeg 9 or newer in the non-interactive ssh
 environment Prysm runs in (absent or older is a SKIP, so `linux-binary-file`
 is skipped on Debian 13's FFmpeg 7); for the device source the device is
-readable by the ssh user (through the link); the listen port is free (`ss`).
-The colour check also needs `python3` and `timeout` on the target, where it
-reads the colours stream ([the colour check](#the-test-clip-and-the-colour-check)).
+readable by the ssh user (through the link); the listen port is free (`ss`);
+`python3` and `timeout` are found (`device.reader-tools`), as the colour
+check reads the colours stream there with them
+([the colour check](#the-test-clip-and-the-colour-check)). The package and
+image cells run the same reachability, machine, `python3` and `timeout`,
+device and port checks with their own, and a slim TV cell's receiver on the
+target the binary cell's.
 
 On the target the runner writes only in `~/.prysm-acceptance/RUN`, named
 after the run and the cell (`RUN` is `TIME-host-CELL`): the binary, the
@@ -379,8 +383,10 @@ package's receiver on the Linux target) is read on that device:
 stream on the device's loopback (or the one address Prysm listens on), on
 the port Prysm listens on there, and prints each event with the device's
 monotonic time. A network between that device and this computer then delays
-the events without shifting their times, so it cannot fail the pace. The
-reader stops by itself at the end of the window and exits non-zero on
+the events without shifting their times, so it cannot fail the pace. It
+reads the chunked HTTP/1.1 body through Python's de-chunking, so an event
+split across two chunks is one event and the body's last chunk ends the
+stream. The reader stops by itself at the end of the window and exits non-zero on
 another status than 200, a failed connection or a stream that ends sooner;
 the device's `timeout` ends it 10 s after the window at the latest, and the
 run's own timeout ends ssh 15 s after that. The other checks that read the
@@ -491,7 +497,10 @@ package or Prysm's webOS app.
 - `target`: `"ssh://root@HOST"`, with a key that works without a prompt. HOST
   must resolve here: the wake-on-LAN packet leaves on the route to it. The
   full package's colour checks read the colours stream on the TV, so it needs
-  `python3` and `timeout` ([the colour check](#the-test-clip-and-the-colour-check));
+  `python3` and `timeout` ([the colour check](#the-test-clip-and-the-colour-check)):
+  the `target` fixture checks for both once the TV answers
+  (`device.reader-tools`), and a missing one skips the cell, or fails it when
+  named, before anything changes;
 - `ipk_full`, `ipk_slim`: the packages under test (by default the names
   `cargo xtask dist tv-full tv-slim` writes);
 - `mac` (optional): the TV's hardware address. When the TV does not answer
@@ -778,7 +787,7 @@ boot, its state with `getState` when `[tv] target` is set.
   run the package's `setup.sh` and the supervisor's `uninstall`, call
   Prysm's own Luna methods, ask which app is in front, launch or close
   Prysm's own app and bring the home screen to the front (no other app), and
-  read Prysm's colours stream on the TV's loopback with python3 (`device.colours`, which writes nothing); here, one wake-on-LAN packet. Nothing
+  read Prysm's colours stream on the TV's loopback with python3 (`device.colours`, after `device.reader-tools` found python3 and `timeout`; both write nothing); here, one wake-on-LAN packet. Nothing
   writes to system partitions or deletes `/var/lib/io.github.ericschaal.prysm`.
   [Tests](../../scripts/acceptance/tests/test_acceptance_commands.py)
   enumerate every template and check the paths it names, and every TV command

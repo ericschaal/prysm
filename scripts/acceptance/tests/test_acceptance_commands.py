@@ -7,14 +7,15 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from typing import cast
 import unittest
 from unittest import mock
 
-from acceptance_fakes import FakeColoursStream
+from acceptance_fakes import FakeColoursStream, sse
 
-from prysm_acceptance import commands, prysm_api, transport
+from prysm_acceptance import commands, prysm_api, transport, web
 
 # The runner's project: scripts/acceptance.
 ACCEPTANCE = Path(__file__).resolve().parents[1]
@@ -110,7 +111,10 @@ class AllowList(unittest.TestCase):
                 self.assertLessEqual(command.timeout, 3600, name)
 
     def test_tv_commands_touch_only_prysm_paths(self) -> None:
-        tv_templates = [factory() for name, factory in commands.TEMPLATES.items() if name.startswith('tv.')]
+        # The `device.*` templates run on the TV too (and on a Linux target): the same rules hold for them.
+        tv_templates = [
+            factory() for name, factory in commands.TEMPLATES.items() if name.startswith(('tv.', 'device.'))
+        ]
         self.assertTrue(tv_templates)
         for command in tv_templates:
             with self.subTest(command.template):
@@ -405,7 +409,7 @@ class ColoursOnTheDevice(unittest.TestCase):
                 build()
 
     def test_it_reads_the_window_and_stops(self) -> None:
-        stream = FakeColoursStream([(0.1, COLOURS), (0.4, {'type': 'colors'})])
+        stream = FakeColoursStream([(0.1, sse(COLOURS)), (0.4, sse({'type': 'colors'}))])
         self.addCleanup(stream.close)
         start = time.monotonic()
         result = read_here(stream.url, '1')
@@ -418,7 +422,7 @@ class ColoursOnTheDevice(unittest.TestCase):
         self.assertTrue(0.1 <= times[0] < times[1] < 1.0, times)
 
     def test_the_remote_text_runs_in_a_shell_as_quoted(self) -> None:
-        stream = FakeColoursStream([(0.1, COLOURS)])
+        stream = FakeColoursStream([(0.1, sse(COLOURS))])
         self.addCleanup(stream.close)
         port = int(stream.url.split(':')[2].split('/')[0])
         remote = (commands.device_colours('pi@pi.example', port, 1).remote or '').replace('python3', sys.executable)
@@ -428,13 +432,40 @@ class ColoursOnTheDevice(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([event for _, event in prysm_api.timed_lines(result.stdout)], [COLOURS])
 
-    def test_a_stream_that_ends_early_fails(self) -> None:
-        stream = FakeColoursStream([(0.0, COLOURS)], end=True)
+    def test_an_event_split_across_two_chunks_is_one_event(self) -> None:
+        event = sse(COLOURS)
+        stream = FakeColoursStream([(0.1, event[:12]), (0.3, event[12:]), (0.4, sse({'type': 'colors'}))])
         self.addCleanup(stream.close)
+        result = read_here(stream.url, '1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        samples = prysm_api.timed_lines(result.stdout)
+        self.assertEqual([event for _, event in samples], [COLOURS, {'type': 'colors'}])
+        self.assertGreaterEqual(samples[0][0], 0.3)  # timed when it is whole
+
+    def test_a_body_that_ends_early_fails(self) -> None:
+        # The last chunk ends the body while the connection stays open: the framing, not a close, says so.
+        stream = FakeColoursStream([(0.0, sse(COLOURS))], final=True)
+        self.addCleanup(stream.close)
+        start = time.monotonic()
         result = read_here(stream.url, '5')
+        self.assertLess(time.monotonic() - start, 3)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('the stream ended', result.stderr)
         self.assertEqual([event for _, event in prysm_api.timed_lines(result.stdout)], [COLOURS])
+
+    def test_the_local_reader_reassembles_a_split_event_too(self) -> None:
+        event = sse(COLOURS)
+        stream = FakeColoursStream([(0.1, event[:12]), (0.3, event[12:])])
+        self.addCleanup(stream.close)
+        self.assertEqual([found for _, found in web.events(stream.url, 1, timed=True)], [COLOURS])
+
+    def test_the_reader_tools_are_found_or_named_missing(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        (directory / 'python3').symlink_to(sys.executable)
+        remote = commands.device_reader_tools('pi@pi.example').remote or ''
+        command = commands.Command('device.reader-tools', ('/bin/sh', '-c', remote), 10, env={'PATH': str(directory)})
+        result = transport.Real(log=lambda line: None).run(command)
+        self.assertEqual(result.stdout, f'{directory}/python3\nmissing timeout\n')
 
     def test_another_status_fails(self) -> None:
         stream = FakeColoursStream([], status=503)

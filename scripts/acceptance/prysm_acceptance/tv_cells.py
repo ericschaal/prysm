@@ -203,6 +203,15 @@ def _target_plan(cell: TvCell, config: Config) -> list[str]:
     return [
         *shown(commands.tv_reachable(ssh)),
         *_wake_plan(config),
+        *(
+            [
+                *shown(commands.device_reader_tools(ssh)),
+                '(python3 or timeout missing, for the colour checks read on the TV: skips the cell, or fails it '
+                'when named)',
+            ]
+            if cell.flavour == Flavour.FULL
+            else []
+        ),
         *shown(commands.tv_foreground(ssh)),
         f'(saved as tv-foreground.json; with another app than {", ".join(app or "none" for app in FREE_APPS)} '
         'in front:)',
@@ -251,6 +260,10 @@ def target(cell: TvCell, config: Config, bench: Bench, request: pytest.FixtureRe
     unreachable = found.reach(config.tv.mac, lambda: host.local_address(_tv_host(config)))
     if unreachable:
         unavailable(request, cell, unreachable)
+    if cell.flavour == Flavour.FULL:  # the full package's colours are read on the TV; the slim one's on the receiver
+        missing = host.reader_missing(bench.transport, found.target)
+        if missing:
+            unavailable(request, cell, missing)
     bench.save('tv-foreground.json', {'foreground': at_home(found)})
     old = [line for line in found.processes() if commands.CAPTURE_APP in line[-1]]
     if old:

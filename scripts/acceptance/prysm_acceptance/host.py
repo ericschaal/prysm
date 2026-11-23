@@ -122,6 +122,16 @@ def target_machine(transport: Transport, target: str) -> tuple[str | None, str]:
     return machine, ''
 
 
+def reader_missing(transport: Transport, target: str) -> str | None:
+    """Why the colour check cannot read the colours stream on the target (python3 or `timeout` missing); None
+    when it can."""
+    lines = transport.run(commands.device_reader_tools(target)).stdout.splitlines()
+    missing = [line.removeprefix('missing ') for line in lines if line.startswith('missing ')]
+    if missing:
+        return f'the colour check reads on {target} with python3 and timeout; missing there: {", ".join(missing)}'
+    return None
+
+
 def device_node(transport: Transport, target: str, device: str) -> tuple[str | None, str]:
     """The node `device` resolves to on the target, or None with why it cannot be captured from."""
     node = transport.run(commands.linux_device(target, device)).stdout.strip()
@@ -460,6 +470,7 @@ class SshBinary(OnTarget):
     def plan(self, source: Source | None, device: str) -> Plan:
         checks = [
             commands.linux_probe(self.target),
+            commands.device_reader_tools(self.target),
             *([commands.linux_ffmpeg_version(self.target)] if source == Source.FILE else []),
             *([commands.linux_device(self.target, device or '/dev/DEVICE')] if source == Source.DEVICE else []),
             commands.linux_port_free(self.target, self.port),
@@ -505,7 +516,7 @@ class SshBinary(OnTarget):
         built = elf_machine(self.binary)
         if built != machine:
             return f'{self.binary.name} is built for {built or "no ELF machine"}; {self.target} is {machine}'
-        return None
+        return reader_missing(self.transport, self.target)
 
     def preflight(self, source: Source | None, device: str) -> str | None:
         reason = self._system()

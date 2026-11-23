@@ -43,6 +43,7 @@ from prysm_acceptance.host import (
     Plan,
     cleanup,
     port_in_use,
+    reader_missing,
     route_source,
     run_name,
     save_kernel_usb,
@@ -159,7 +160,7 @@ class SshImage(OnTarget):
                 f'and {commands.IMAGE_TAG}',
                 *shown(commands.linux_probe(target), commands.image_docker(target)),
                 f'(docker info and docker compose {".".join(map(str, COMPOSE_OVERRIDE))}+ as the ssh user, no sudo)',
-                *shown(commands.image_present(target, run)),
+                *shown(commands.device_reader_tools(target), commands.image_present(target, run)),
                 f'(refused while {commands.IMAGE_TAG} or project {self.project} exists: the bench starts clean)',
                 *shown(
                     commands.image_device(target, device or '/dev/DEVICE'), commands.linux_port_free(target, self.port)
@@ -211,7 +212,7 @@ class SshImage(OnTarget):
         if compose_version(reported) < COMPOSE_OVERRIDE:
             wanted = '.'.join(map(str, COMPOSE_OVERRIDE))
             return f'docker compose {reported!r} on {self.target}: the image cell needs {wanted}+ (!override)'
-        return None
+        return reader_missing(self.transport, self.target)
 
     def _clean(self, device: str) -> str | None:
         """Why the bench is not ready: the image or project already there, the device missing, the port taken."""
