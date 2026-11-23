@@ -1,7 +1,12 @@
-import { useId, useState } from 'react';
-import type { Processing, StyleValues } from '@prysm/contracts/application';
+import { useId, useState, type ReactNode } from 'react';
+import type {
+  Processing,
+  Style,
+  StyleValues,
+} from '@prysm/contracts/application';
 import { FieldScopeProvider } from './form';
 import { CheckboxField, RangeField } from './fields';
+import { arrowChoice } from './radio-group';
 import {
   processingLimits,
   styleLimits,
@@ -42,20 +47,65 @@ function Problem({ failure, retry }: { failure: string; retry?: () => void }) {
   );
 }
 
+/** Applies `style` at once; the chosen one again saves nothing. */
+function applyStyle(live: ReturnType<typeof useLiveProcessing>, style: Style) {
+  if (style !== live.value.style.kind)
+    void live.commit(chooseStyle(live.value, style), 'processing.style');
+}
+
 /**
- * The everyday screen sync controls in the light card: brightness, and the
- * calibrations as one-tap chips. Dragging brightness changes the lights as
- * it moves (unsaved) and saves where it is let go; a chip applies at once.
+ * A light card control's header, as Brightness has: its name (`id`, which
+ * names the control) and, on the right, one quiet action.
+ */
+function ControlHead({
+  id,
+  label,
+  disabled,
+  onAction,
+  children,
+}: {
+  id: string;
+  label: string;
+  disabled: boolean;
+  onAction: () => void;
+  /** The action's words. */
+  children: ReactNode;
+}) {
+  return (
+    // Laid out as a slider's heading (Brightness's): name left, item right.
+    <div className="range-heading control-head">
+      <span id={id}>{label}</span>
+      <button
+        type="button"
+        className="link"
+        disabled={disabled}
+        onClick={onAction}
+      >
+        {children}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The everyday screen sync controls in the light card, one under the other
+ * with one header each: brightness, the style as one row of segments, and
+ * the calibrations as chips. Dragging brightness changes the lights as it
+ * moves (unsaved) and saves where it is let go; a segment or a chip applies
+ * at once.
  */
 export function QuickPicture({
   processing,
   revision,
   disabled,
   save,
+  adjustStyle,
   calibrate,
   tryProcessing,
 }: PictureProps & {
-  /** Opens Calibrate, offered while there are no calibrations. */
+  /** Opens the Style page. */
+  adjustStyle: () => void;
+  /** Opens Calibrate. */
   calibrate: () => void;
   /** Light with a processing section unsaved, while brightness is dragged. */
   tryProcessing: (processing: Processing) => Promise<unknown>;
@@ -68,8 +118,14 @@ export function QuickPicture({
     tryProcessing,
   });
   const headingId = useId();
+  const styleId = useId();
   const calibrationsId = useId();
   const value = live.value;
+  const style = value.style.kind;
+  // Custom only once there is one: chosen, or its values kept.
+  const offered = styleOrder.filter(
+    (each) => each !== 'custom' || style === 'custom' || !!value.custom_style,
+  );
   const calibrations = value.calibrations ?? [];
   const active = calibrations.some(({ id }) => id === value.active_calibration)
     ? value.active_calibration
@@ -106,15 +162,59 @@ export function QuickPicture({
           />
         </div>
       </FieldScopeProvider>
-      <div
-        className="calibration-chips"
-        role="group"
-        aria-labelledby={calibrationsId}
-      >
-        <span id={calibrationsId} className="chips-label">
-          Calibration
-        </span>
-        <div className="chips">
+      <div className="card-control">
+        <ControlHead
+          id={styleId}
+          label="Style"
+          disabled={disabled}
+          onAction={adjustStyle}
+        >
+          Adjust<span className="visually-hidden"> style</span>
+        </ControlHead>
+        <div className="segments" role="radiogroup" aria-labelledby={styleId}>
+          {offered.map((each) => (
+            <button
+              type="button"
+              role="radio"
+              key={each}
+              className="segment"
+              data-style={each}
+              aria-checked={each === style}
+              aria-describedby={`${styleId}-${each}`}
+              tabIndex={each === style ? 0 : -1}
+              disabled={disabled}
+              onKeyDown={(event) =>
+                arrowChoice(event, offered, style, (next) => {
+                  applyStyle(live, next);
+                  return true;
+                })
+              }
+              onClick={() => applyStyle(live, each)}
+            >
+              {styles[each].label}
+            </button>
+          ))}
+        </div>
+        {offered.map((each) => (
+          <span
+            key={each}
+            id={`${styleId}-${each}`}
+            className="visually-hidden"
+          >
+            {styles[each].about}
+          </span>
+        ))}
+      </div>
+      <div className="card-control">
+        <ControlHead
+          id={calibrationsId}
+          label="Calibration"
+          disabled={disabled}
+          onAction={calibrate}
+        >
+          Calibrate colours
+        </ControlHead>
+        <div className="chips" role="group" aria-labelledby={calibrationsId}>
           {choices.map((choice) => (
             <button
               type="button"
@@ -134,16 +234,6 @@ export function QuickPicture({
               {choice.label}
             </button>
           ))}
-          {calibrations.length ? null : (
-            <button
-              type="button"
-              className="chip add"
-              disabled={disabled}
-              onClick={calibrate}
-            >
-              Calibrate colours
-            </button>
-          )}
         </div>
       </div>
       <Problem failure={live.failure} retry={live.retry} />
@@ -253,11 +343,7 @@ export function StyleSettings(props: LiveProps) {
               disabled={props.disabled}
               onChoose={() => {
                 if (style === 'custom') setOpen(true);
-                if (style !== chosen)
-                  void live.commit(
-                    chooseStyle(live.value, style),
-                    'processing.style',
-                  );
+                applyStyle(live, style);
               }}
             />
           ))}

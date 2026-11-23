@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useLingering } from './lingering';
+import { arrowChoice } from './radio-group';
 import {
   failureOf,
   same,
@@ -132,9 +133,9 @@ function effectsLine(effects: string | undefined) {
 }
 
 /**
- * Your lights: the state as one word and the power button, then three
- * labelled controls (what the lights follow, brightness, calibration),
- * over a light that drifts while the lights are on. Each control sets a `LightingTarget`; the state
+ * Your lights: the state as one word and the power button, then the
+ * controls (what the lights follow, then the picture's brightness, style
+ * and calibration), over a light that drifts while the lights are on. Each control sets a `LightingTarget`; the state
  * stream, not the click, decides what is shown as on.
  */
 export function LightCard({
@@ -278,24 +279,17 @@ export function LightCard({
   ] as const;
   /** Arrow keys move the choice, as in any radio group. */
   function arrow(event: KeyboardEvent<HTMLButtonElement>) {
-    const steps: Record<string, number> = {
-      ArrowRight: 1,
-      ArrowDown: 1,
-      ArrowLeft: -1,
-      ArrowUp: -1,
-    };
-    const step = steps[event.key];
-    if (!step) return;
-    event.preventDefault();
-    // From the focused tile: the chosen one, or the first while none is.
-    const from = chosen ?? tiles[0].value;
-    const index = tiles.findIndex((tile) => tile.value === from);
-    const next = tiles[(index + step + tiles.length) % tiles.length];
-    if (!next || locked || reasons[next.value]) return;
-    void choose(next.value);
-    event.currentTarget.parentElement
-      ?.querySelector<HTMLButtonElement>(`[data-target="${next.value}"]`)
-      ?.focus();
+    arrowChoice(
+      event,
+      tiles.map(({ value }) => value),
+      // From the focused tile: the chosen one, or the first while none is.
+      chosen ?? tiles[0].value,
+      (next) => {
+        if (locked || reasons[next]) return false;
+        void choose(next);
+        return true;
+      },
+    );
   }
   // One visible line per distinct reason; every tile keeps its own for AT.
   const shownReasons = new Set<string>();

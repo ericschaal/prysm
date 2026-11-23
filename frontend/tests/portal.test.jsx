@@ -366,7 +366,7 @@ test('the power button and the mode tiles set the target and show what the sessi
     // The mode: a radio group of two option cards, each saying what it does.
     assert.equal($('[role="radiogroup"]').getAttribute('aria-label'), 'Mode');
     assert.deepEqual(
-      $$('[role="radio"]').map((item) => [
+      $$('.modes [role="radio"]').map((item) => [
         $('.mode-name', item).textContent,
         $('.mode-line', item).textContent,
         item.getAttribute('aria-checked'),
@@ -3031,6 +3031,7 @@ test('calibrations swap with one tap on Home, applied at once', async () => {
       ['TV', 'PS5', 'No correction'],
     );
     assert.deepEqual(pressed(), ['TV']);
+    assert(button('Calibrate colours'), 'another can always be made');
 
     await press(chip('ps5'));
     assert.deepEqual(pressed(), ['PS5']);
@@ -3066,19 +3067,118 @@ test('calibrations swap with one tap on Home, applied at once', async () => {
   } finally {
     await portal.unmount();
   }
-  // Without calibrations, Home offers to make one.
+  // Without calibrations only No correction; Calibrate colours, beside the
+  // header, makes one.
   const empty = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
     assert.deepEqual(
       $$('.chip').map((item) => item.textContent),
-      ['No correction', 'Calibrate colours'],
+      ['No correction'],
     );
+    const label = $('.chips[role="group"]').getAttribute('aria-labelledby');
+    assert.equal(document.getElementById(label).textContent, 'Calibration');
     await press(button('Calibrate colours'));
     assert.equal(window.location.hash, '#/calibrate');
     await press(button('Leave'));
     assert(atHome(), window.location.hash);
   } finally {
     await empty.unmount();
+  }
+});
+
+test('the style swaps with one tap on Home, applied at once; Adjust opens the Style page', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture, dom } = portal;
+  const segment = (style) => $(`[data-style="${style}"]`);
+  const segments = () => $$('[data-style]');
+  const checked = () =>
+    segments()
+      .filter((item) => item.getAttribute('aria-checked') === 'true')
+      .map((item) => item.textContent);
+  const saved = () => fixture.snapshot().settings.processing;
+  const key = (element, name) =>
+    act(async () => {
+      element.dispatchEvent(
+        new dom.window.KeyboardEvent('keydown', { key: name, bubbles: true }),
+      );
+      await sleep(0);
+    });
+  try {
+    // A radio group named Style, each segment described by its style's line;
+    // Custom only once there is one.
+    const group = $('.segments');
+    assert.equal(group.getAttribute('role'), 'radiogroup');
+    const label = group.getAttribute('aria-labelledby');
+    assert.equal(document.getElementById(label).textContent, 'Style');
+    assert.deepEqual(
+      segments().map((item) => [
+        item.getAttribute('role'),
+        item.textContent,
+        hint(item),
+        item.tabIndex,
+      ]),
+      [
+        ['radio', 'Natural', 'Calm in quiet scenes, follows cuts at once.', 0],
+        ['radio', 'Calm', 'A slow, soft glow. Nothing sudden.', -1],
+        ['radio', 'Vivid', 'Stronger colours, follows the action.', -1],
+        ['radio', 'Game', 'Reacts at once, with the least delay.', -1],
+      ],
+    );
+    assert.deepEqual(checked(), ['Natural']);
+    // Under the mode, quiet with the calibrations for the lights' effects.
+    assert($('.picture-controls').contains(group));
+
+    // One tap: shown chosen at once, saved without a wait.
+    await press(segment('game'));
+    assert.deepEqual(checked(), ['Game']);
+    assert.equal(saves(fixture), 1, 'no wait');
+    assert.deepEqual(saved().style, { kind: 'game' });
+    assert.equal(segment('game').tabIndex, 0);
+    await press(segment('game'));
+    assert.equal(saves(fixture), 1, 'the chosen one again saves nothing');
+
+    // Arrow keys move the choice, wrapping, and the focus follows it.
+    segment('game').focus();
+    await key(segment('game'), 'ArrowRight');
+    assert.deepEqual(checked(), ['Natural']);
+    assertFocused(segment('natural'));
+    await key(segment('natural'), 'ArrowLeft');
+    assert.deepEqual(checked(), ['Game']);
+    assertFocused(segment('game'));
+    await settle();
+    assert.deepEqual(saved().style, { kind: 'game' });
+
+    // Kept values offer Custom, which returns to them.
+    const kept = { ...styleValues.calm, dark_floor_percent: 15 };
+    await elsewhere(fixture, {
+      processing: { ...saved(), custom_style: kept },
+    });
+    assert.deepEqual(
+      segments().map((item) => item.textContent),
+      ['Natural', 'Calm', 'Vivid', 'Game', 'Custom'],
+    );
+    await press(segment('custom'));
+    await settle();
+    assert.deepEqual(saved().style, { kind: 'custom' });
+    assert.deepEqual(saved().custom_style, kept);
+
+    // A refused change is said as a refused calibration is, under the card.
+    fixture.failNext({
+      kind: 'adapter',
+      message: 'settings file is read-only',
+    });
+    await press(segment('calm'));
+    await settle();
+    assert.equal(
+      $('.quick-picture .problem-line').textContent,
+      'Not saved. Try again',
+    );
+    assert.deepEqual(saved().style, { kind: 'custom' });
+
+    await press(button('Adjust style'));
+    assert.equal(window.location.hash, '#/settings/style');
+  } finally {
+    await portal.unmount();
   }
 });
 
@@ -3564,7 +3664,7 @@ test('a target or session state newer than the page chooses no mode, and Power s
       fixture.publish({ target: 'unknown', session: { state: 'stopped' } }),
     );
     assert(
-      $$('[role="radio"]').every(
+      $$('.modes [role="radio"]').every(
         (item) => item.getAttribute('aria-checked') === 'false',
       ),
       'no tile is chosen',
