@@ -115,7 +115,7 @@ impl OutputFactory for Wled {
     /// `stop` ends it at once (a [`Stopping`](prysm_ports::Stopping) cause).
     /// A failure is [`OpenFailure::Untouched`] when nothing reached WLED:
     /// invalid settings, a name that does not resolve, the DDP socket, or a
-    /// first request that could not connect.
+    /// live request that could not connect.
     fn open(
         &self,
         settings: &WledSettings,
@@ -196,11 +196,14 @@ enum Mode {
 }
 
 impl Mode {
+    /// The one request that enters this mode. WLED stays in the realtime
+    /// mode `live: true` put it in until it is told `live: false`, also once
+    /// the colours stop, so leaving it is part of every other mode.
     fn state(self) -> Value {
         match self {
             Self::Live => json!({"on": true, "lor": 0, "live": true, "tt": 0}),
-            Self::Off => json!({"on": false, "lor": 2, "tt": 0}),
-            Self::Native => json!({"on": true, "lor": 2, "tt": 0}),
+            Self::Off => json!({"live": false, "on": false, "lor": 2, "tt": 0}),
+            Self::Native => json!({"live": false, "on": true, "lor": 2, "tt": 0}),
         }
     }
 }

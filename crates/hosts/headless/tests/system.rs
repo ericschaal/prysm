@@ -373,8 +373,8 @@ fn wled_settings(wled: &FakeWled) -> Value {
 }
 
 const LIVE: &str = r#"{"on":true,"lor":0,"live":true,"tt":0}"#;
-const OFF: &str = r#"{"on":false,"lor":2,"tt":0}"#;
-const NATIVE: &str = r#"{"on":true,"lor":2,"tt":0}"#;
+const OFF: &str = r#"{"live":false,"on":false,"lor":2,"tt":0}"#;
+const NATIVE: &str = r#"{"live":false,"on":true,"lor":2,"tt":0}"#;
 
 fn body(text: &str) -> Value {
     serde_json::from_str(text).unwrap()

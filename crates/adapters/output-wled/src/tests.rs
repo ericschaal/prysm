@@ -225,7 +225,7 @@ fn live() -> Value {
     json!({"on": true, "lor": 0, "live": true, "tt": 0})
 }
 fn off() -> Value {
-    json!({"on": false, "lor": 2, "tt": 0})
+    json!({"live": false, "on": false, "lor": 2, "tt": 0})
 }
 fn one_each() -> LedCounts {
     LedCounts {
@@ -296,7 +296,10 @@ fn write_sends_ddp_clockwise_from_bottom_left() {
 fn idle_off_and_native_set_the_idle_state() {
     for (mode, state) in [
         (IdleMode::Off, off()),
-        (IdleMode::Native, json!({"on": true, "lor": 2, "tt": 0})),
+        (
+            IdleMode::Native,
+            json!({"live": false, "on": true, "lor": 2, "tt": 0}),
+        ),
     ] {
         let device = Device::new(vec![Reply::Json(OK); 2]);
         let output = device.open(one_each()).unwrap();
@@ -311,7 +314,10 @@ fn idle_off_and_native_set_the_idle_state() {
 fn idle_without_an_output_sets_the_mode_without_taking_the_device_over() {
     for (mode, state) in [
         (IdleMode::Off, off()),
-        (IdleMode::Native, json!({"on": true, "lor": 2, "tt": 0})),
+        (
+            IdleMode::Native,
+            json!({"live": false, "on": true, "lor": 2, "tt": 0}),
+        ),
     ] {
         let device = Device::new(vec![Reply::Json(OK)]);
         let settings = device.settings(one_each(), true);
@@ -1111,7 +1117,10 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
 fn idle_abandons_a_check_in_flight_and_restores_the_device() {
     for (mode, state) in [
         (IdleMode::Off, off()),
-        (IdleMode::Native, json!({"on": true, "lor": 2, "tt": 0})),
+        (
+            IdleMode::Native,
+            json!({"live": false, "on": true, "lor": 2, "tt": 0}),
+        ),
     ] {
         let device = Device::new(vec![Reply::Json(OK), Reply::Hang, Reply::Json(OK)]);
         let mut output = device.open(one_each()).unwrap();
@@ -1586,7 +1595,10 @@ fn a_cut_ends_an_idle_waiting_for_a_reply() {
         let hangup = hangup.clone();
         thread::spawn(move || output.idle(IdleMode::Native, &hangup))
     };
-    assert_eq!(device.call(), json!({"on": true, "lor": 2, "tt": 0}));
+    assert_eq!(
+        device.call(),
+        json!({"live": false, "on": true, "lor": 2, "tt": 0})
+    );
     hangup.cut();
     let error = prysm_testkit::within(AT_ONCE, move || idling.join().unwrap()).unwrap_err();
     assert!(stopped(&error), "{}", prysm_ports::chain(&error));
