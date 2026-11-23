@@ -2,9 +2,10 @@
 // runaway file fails alone. A thread of its own watches, because the failure
 // it guards against (a failed assert printing a DOM node in full) blocks the
 // main thread. The runner process, which has no test context, is not watched.
+// The thread samples once a second; the whole suite takes about half a minute.
 import { Worker } from 'node:worker_threads';
 
-const limitMinutes = 10;
+const limitMinutes = 3;
 const limitMegabytes = 3072;
 
 if (process.env.NODE_TEST_CONTEXT) {

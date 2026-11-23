@@ -863,11 +863,11 @@ test('the first lookup lists nothing until it answers, then each device once, in
     assert.equal($('input', saved).checked, true);
     // Looking again: the same rows, the same nodes, until and after it answers.
     await click(button('Look again'));
-    assert.equal(devices()[1], saved);
+    assertSame(devices()[1], saved, 'the same row');
     assert.equal($('.row-label', saved).textContent, 'Card');
     await answer();
     await settled();
-    assert.equal(devices()[1], saved);
+    assertSame(devices()[1], saved, 'the same row');
     assert.equal($('.row-label', saved).textContent, 'Card');
   } finally {
     await portal.unmount();

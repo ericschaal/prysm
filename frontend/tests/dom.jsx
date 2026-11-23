@@ -95,10 +95,8 @@ function nameOf(element) {
 
 /** Assert that `actual` is the element `expected`, naming both on failure. */
 export function assertSame(actual, expected, message = 'same element') {
-  assert(
-    actual === expected,
-    `${message}: ${nameOf(actual)} is not ${nameOf(expected)}`,
-  );
+  if (actual !== expected)
+    assert.fail(`${message}: ${nameOf(actual)} is not ${nameOf(expected)}`);
 }
 
 /** Assert that `element` has focus, naming what has it on failure. */
