@@ -18,6 +18,7 @@ import {
   moodOf,
   pauseOf,
 } from '../packages/web-portal/light-card-view';
+import { pathOf, sectionStatus } from '../packages/web-portal/section-state';
 import { $, navigated, renderPortal } from './dom';
 
 const failure = { kind: 'adapter', message: 'WLED cannot be reached' };
@@ -547,6 +548,11 @@ test('with the lights off a failure is still said, as off', () => {
     plainFailure({ kind: 'invalid', message: 'x' }, 'off', 'WLED effects'),
     'Prysm can’t use these settings.',
   );
+  // Nothing to try again with the lights off.
+  assert.equal(
+    plainFailure({ kind: 'busy', message: 'x' }, 'off', 'WLED effects'),
+    'Prysm is busy.',
+  );
   // As the engine reports saved settings that do not validate: the field
   // names its section, and no device was asked.
   assert.equal(
@@ -581,6 +587,110 @@ test('with the lights off a failure is still said, as off', () => {
     }),
   );
   assert.equal(refused.info.text, 'Screen sync could not start.');
+});
+
+test('with the lights off the path marks a failure only where it is', () => {
+  // A failure, then the path; a failed switch off without a side is said by
+  // the light card alone, never as a broken Prysm.
+  for (const [failure, path] of [
+    [
+      { kind: 'invalid', field: 'capture.width', message: 'x' },
+      { kind: 'failed', at: 'capture' },
+    ],
+    [invalid, { kind: 'failed', at: 'output' }],
+    [
+      { kind: 'invalid', field: 'processing.gamma', message: 'x' },
+      { kind: 'failed', at: null },
+    ],
+    [
+      { kind: 'adapter', section: 'capture', message: 'x' },
+      { kind: 'failed', at: 'capture' },
+    ],
+    [
+      { kind: 'adapter', section: 'output', message: 'x' },
+      { kind: 'failed', at: 'output' },
+    ],
+    [{ kind: 'adapter', message: 'x' }, { kind: 'off' }],
+    [{ kind: 'unavailable', message: 'x' }, { kind: 'off' }],
+    [{ kind: 'busy', message: 'x' }, { kind: 'off' }],
+    [{ kind: 'newer', message: 'x' }, { kind: 'off' }],
+  ])
+    assert.deepEqual(
+      pathOf(
+        lightingSituation({
+          target: 'off',
+          session: { state: 'stopped', failure },
+        }),
+      ),
+      path,
+      JSON.stringify(failure),
+    );
+  assert.deepEqual(
+    pathOf(lightingSituation({ target: 'off', session: { state: 'stopped' } })),
+    { kind: 'off' },
+  );
+});
+
+test('with the lights off a section page says the failure it names, else not in use', () => {
+  const identity = 'WLED at 192.0.2.1';
+  const idle = 'Not in use';
+  // A failure, then the video source's and the lights' status.
+  for (const [failure, video, lights] of [
+    [
+      { kind: 'invalid', field: 'capture.width', message: 'x' },
+      ['problem', 'Can’t use these settings', '', 'x'],
+      idle,
+    ],
+    [
+      invalid,
+      idle,
+      ['problem', 'Can’t use these settings', identity, invalid.message],
+    ],
+    [
+      { kind: 'adapter', section: 'capture', message: 'x' },
+      ['problem', 'Video source not working', '', 'x'],
+      idle,
+    ],
+    [
+      { kind: 'adapter', section: 'output', message: 'x' },
+      idle,
+      ['problem', 'Lights not responding', identity, 'x'],
+    ],
+    // Without a side: neither section's own, as the setup path shows it.
+    [{ kind: 'adapter', message: 'x' }, idle, idle],
+    [{ kind: 'invalid', field: 'processing.gamma', message: 'x' }, idle, idle],
+  ]) {
+    const situation = lightingSituation({
+      target: 'off',
+      session: { state: 'stopped', failure },
+    });
+    const live = {
+      online: true,
+      target: 'off',
+      path: pathOf(situation),
+      failure: situationFailure(situation),
+      situation,
+      device: {},
+    };
+    for (const [section, expected] of [
+      ['capture', video],
+      ['output', lights],
+    ]) {
+      const status = sectionStatus(section, live, identity, false);
+      if (typeof expected === 'string')
+        assert.deepEqual(
+          [status.tone, status.title],
+          ['idle', expected],
+          JSON.stringify([failure, section]),
+        );
+      else
+        assert.deepEqual(
+          [status.tone, status.title, status.detail, status.details],
+          expected,
+          JSON.stringify([failure, section]),
+        );
+    }
+  }
 });
 
 test('the light card shows a failure with the lights off, without Try again', async () => {

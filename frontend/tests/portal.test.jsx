@@ -2760,6 +2760,54 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
   }
 });
 
+test('with the lights off, saved lights that do not validate are said on the path, in Settings and on their page', async () => {
+  // Off read as off: the setup path, the Lights page and its row said
+  // nothing, and Change setup opened Settings.
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await act(async () =>
+      fixture.publish({
+        target: 'off',
+        session: {
+          state: 'stopped',
+          failure: {
+            kind: 'invalid',
+            field: 'output.address',
+            message: 'a unicast device address is required',
+          },
+        },
+      }),
+    );
+    assert.equal(word(), 'Off');
+    assert.equal(info(), 'Prysm can’t use these settings.');
+    assert(!button('Try again'), 'trying could only switch off again');
+    assert.equal($('.setup-card').dataset.path, 'failed');
+    assert.deepEqual(
+      $$('.path-stop').map((stop) => stop.dataset.failed),
+      ['false', 'false', 'true'],
+    );
+    await click($('.row-link', row('Change setup')));
+    assert.equal(window.location.hash, '#/settings/lights');
+    assert.equal(
+      now(),
+      'Can’t use these settings — WLED at 192.0.2.1 · 14 LEDs',
+    );
+    assert.equal($('.section-status').dataset.tone, 'problem');
+    assert(text().includes('a unicast device address is required'));
+    await leaveEditor();
+    assert.equal(problem('Lights'), 'Prysm can’t use these settings.');
+    assert.equal(problem('Video source'), '');
+    await openEditor('Video source');
+    assert.equal(
+      now(),
+      'Not in use — Screen sync is off, so this source isn’t in use.',
+    );
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('a remote capture names its encoding above the first link', async () => {
   const portal = await renderPortal(HeadlessWebPortal, {
     capture: { kind: 'remote', encoding: 'raw' },

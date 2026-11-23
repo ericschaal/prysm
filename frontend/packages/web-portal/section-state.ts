@@ -1,6 +1,9 @@
 import {
   describeOutputIssue,
+  failureSide,
   plainFailure,
+  unreachable,
+  unusableSettings,
   type LightingFailure,
   type LightingSituation,
   type TargetReading,
@@ -9,6 +12,50 @@ import type { DeviceReport, Input } from '@prysm/contracts/application';
 import { ledCountsDiffer } from './adapters';
 import { deviceBrightnessNoteBelow } from './light-card-view';
 import type { PathState } from './setup-card';
+
+/** What the signal path is doing, by what the lights are doing. */
+export function pathOf(lighting: LightingSituation): PathState {
+  switch (lighting.kind) {
+    case 'faulted':
+      return { kind: 'failed', at: null };
+    case 'failed':
+      return { kind: 'failed', at: lighting.at };
+    case 'sync': {
+      const { input } = lighting;
+      return input?.receiving
+        ? {
+            kind: 'flowing',
+            fps: input.fps,
+            latency: input.latency && {
+              captureMs: input.latency.capture_ms,
+              outputMs: input.latency.output_ms,
+            },
+            behind: input.behind,
+          }
+        : { kind: 'waiting' };
+    }
+    case 'effects':
+      return { kind: 'effects' };
+    case 'off': {
+      // With the lights off the path shows a failure only where it is: on
+      // a side, or settings that do not validate (without a side, Prysm's
+      // own). Any other one the light card says.
+      const { failure } = lighting;
+      if (!failure) return { kind: 'off' };
+      const at = failureSide(failure);
+      return at !== null || unusableSettings(failure, 'off')
+        ? { kind: 'failed', at }
+        : { kind: 'off' };
+    }
+    // The path shows a start as off until the session runs, and a state
+    // newer than this page as nothing it can name.
+    case 'starting':
+    case 'unknown':
+      return { kind: 'off' };
+    default:
+      return unreachable(lighting);
+  }
+}
 
 /** What the state says about screen sync now, for a section's status. */
 export interface LiveState {
@@ -81,12 +128,30 @@ export function sectionStatus(
   // Why: the fault's own words, else the failure's message.
   const reason =
     situation.kind === 'faulted' ? situation.message : failure?.message;
-  if (path.kind === 'failed') {
+  // With the lights off nothing runs: a failure is said only on the section
+  // it names (its settings do not validate, or a switch off failed); the
+  // other one is not in use.
+  const off = situation.kind === 'off';
+  if (path.kind === 'failed' && (path.at === section || !off)) {
     const plain = failure
       ? plainFailure(failure, target, effects)
       : 'Screen sync stopped.';
     if (path.at !== section && path.at !== null)
       return { tone: 'idle', title: 'Screen sync stopped', detail: plain };
+    if (failure && unusableSettings(failure, target))
+      return {
+        tone: 'problem',
+        title: 'Can’t use these settings',
+        detail: capture ? '' : identity,
+        details: reason,
+      };
+    if (off && capture)
+      return {
+        tone: 'problem',
+        title: 'Video source not working',
+        detail: '',
+        details: reason,
+      };
     return capture
       ? {
           tone: 'problem',
