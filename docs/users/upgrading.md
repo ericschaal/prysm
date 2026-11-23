@@ -91,13 +91,15 @@ The image `ghcr.io/ericschaal/prysm` is replaced by
 
 ### TrueNAS
 
-1. Install the 1.0 app from the current
+1. Stop or delete the 0.2.0 app. Both apps publish port 8787 and may use
+   the same dataset.
+2. Use an empty dataset, or move the 0.2.0 `settings.json` out of the old
+   one first.
+3. Install the 1.0 app from the current
    [compose.truenas.yaml](../../packaging/docker/compose.truenas.yaml), as in
    [TrueNAS](truenas.md). It mounts the dataset at `/data`, not `/config`, and
    sets its options in `command`; it has no `PRYSM_ALLOWED_HOSTS`.
-2. Use an empty dataset, or move the 0.2.0 `settings.json` out of the old
-   one first.
-3. Run the [setup wizard](configuration.md).
+4. Run the [setup wizard](configuration.md).
 
 ### LG TV
 
@@ -181,12 +183,27 @@ own volume name or host directory.
 Before upgrading:
 
 1. Stop the container: `docker stop prysm`.
-2. Edit `settings.json` in the volume: add `"format": 1,` after the first
-   `{`, and bring any value above the limits back inside them. On a Linux
-   host, a named volume is in the directory
-   `docker volume inspect prysm-data --format '{{ .Mountpoint }}'` prints,
-   readable by root only. A host directory stays owned by user ID 10001.
-3. Check the file with the 1.0 image:
+2. Back up the settings from the stopped container:
+   `docker cp prysm:/data/settings.json ./prysm-settings.json`.
+3. Edit `settings.json` in the volume: add `"format": 1,` after the first
+   `{`, and bring any value above the limits back inside them. Keep the
+   file owned by user ID 10001: Prysm runs as that user and cannot read a
+   file owned by root, and the check below then fails.
+   - On a Linux host, a named volume is in the directory
+     `docker volume inspect prysm-data --format '{{ .Mountpoint }}'` prints,
+     readable by root only. Edit the file in place, for example with
+     `sudo nano`, which keeps its owner. A host directory works the same way.
+   - On any host, edit the copy from step 2 and copy it back with
+     `docker cp ./prysm-settings.json prysm:/data/settings.json`.
+     `docker cp` may leave the file owned by root, so set the owner after
+     copying:
+
+     ```sh
+     docker run --rm -u 0 -v prysm-data:/data --entrypoint chown \
+       ghcr.io/ericschaal/prysm-headless:1.0.0 10001:10001 /data/settings.json
+     ```
+
+4. Check the file with the 1.0 image:
 
    ```sh
    docker run --rm -v prysm-data:/data \
@@ -197,7 +214,7 @@ Before upgrading:
 
 Upgrade:
 
-4. Remove the container (`docker rm prysm`) and start it again with the new
+5. Remove the container (`docker rm prysm`) and start it again with the new
    tag, as in [Docker](docker.md#1-start-prysm), with the same volume and
    options.
 
@@ -208,13 +225,15 @@ release, and `latest` the newest stable release. A pre-release, such as
 #### TrueNAS
 
 1. Stop the app.
-2. Edit `settings.json` in the dataset from the TrueNAS shell: add
+2. Take a snapshot of the dataset ([TrueNAS](truenas.md#maintenance)).
+3. Edit `settings.json` in the dataset from the TrueNAS shell: add
    `"format": 1,` after the first `{`, and bring any value above the limits
-   back inside them.
-3. Change the image tag after `prysm-headless:` to `1.0.0`, or paste the
+   back inside them. Keep the file owned by the app's `user` (568:568 in
+   the example YAML).
+4. Change the image tag after `prysm-headless:` to `1.0.0`, or paste the
    current [compose.truenas.yaml](../../packaging/docker/compose.truenas.yaml)
    again, and redeploy ([TrueNAS](truenas.md#maintenance)).
-4. If the light card says the settings file cannot be used, read why there,
+5. If the light card says the settings file cannot be used, read why there,
    fix the file and restart the app.
 
 <a id="tv-from-rc1"></a>
@@ -224,18 +243,19 @@ release, and `latest` the newest stable release. A pre-release, such as
 1.0 is a new app, `io.github.ericschaal.prysm`; the release candidate was
 `io.prysm.tv`. Installing 1.0 does not replace it.
 
-1. Remove the release candidate and install 1.0 as
+1. Slim package: upgrade Prysm on the computer first, as above. 1.0 sends
+   the picture with capture stream version 6 (`prysm-capture.v6`); rc.1
+   used version 5, so the TV and the computer only work together once both
+   are 1.0. A 1.0 TV app with an older computer says **Update Prysm or TV
+   app**. The computer still needs `--allow-origin null`.
+2. Remove the release candidate and install 1.0 as
    [LG TV](webos.md#1-install) describes under **Updating from a 1.0.0
    release candidate**.
-2. Set up again. 1.0 does not read the release candidate's files in
+3. Set up again. 1.0 does not read the release candidate's files in
    `/var/lib/io.prysm.tv/`, so there is no settings file to check:
    - full package: run the [setup wizard](configuration.md) in the TV's
      portal;
    - slim package: enter the **Prysm address** in the TV app again.
-3. Slim package: upgrade the computer to 1.0 as well. 1.0 sends the picture
-   with capture stream version 6 (`prysm-capture.v6`); rc.1 used version 5.
-   A 1.0 TV app with an older computer says **Update Prysm or TV app**.
-   The computer still needs `--allow-origin null`.
 
 ### Terminal UI (`prysm-tui`)
 
@@ -292,6 +312,7 @@ The service is `io.github.ericschaal.prysm.service` (rc.1:
   `flavor`. Full: `target` and a `worker` with `capturing`, `fps` and
   `portal`. Slim: `enabled` and a `worker` with `capturing` and its `link`,
   one object tagged by `state` that replaces rc.1's `encoding` and `paused`.
+  The `worker` stays tagged by `phase`, as in rc.1.
   The top-level `lighting`, `capturing`, `fps`, `portal`, `encoding` and
   `paused` are gone.
 - Full: `lighting` is `target`, with `off`, `screen_sync` or `effects`.
@@ -309,8 +330,9 @@ The service is `io.github.ericschaal.prysm.service` (rc.1:
 ### Exit codes
 
 `prysm-headless` and `prysm-tui` exit with 0 after a clean stop, 1 on
-failure and 2 for bad arguments, as in rc.1. New in 1.0: 101 when a panic
-ended the host and 130 when a second SIGINT or SIGTERM made it exit at once
+failure and 2 for bad arguments, as in rc.1. A panic that ends the host exits
+101, as it already did in rc.1; 1.0 documents it. New in 1.0: 130 when a
+second SIGINT or SIGTERM made the host exit at once
 ([hosts](../developers/workspace.md#hosts)). A settings file Prysm cannot
 use no longer exits 1: Prysm starts without settings. `--check-settings`
 still exits 0 when the file is valid and 1 otherwise.
