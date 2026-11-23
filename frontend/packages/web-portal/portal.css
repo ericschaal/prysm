@@ -1633,7 +1633,7 @@ fieldset > .field-note {
  * Under Brightness, Style and Calibration follow its pattern: a header (the
  * name, and one quiet action on the right), then the control, each header
  * 24 px under the control before it (the slider's thumb ends where its
- * field does; the field's own margin collapses into this one).
+ * field does).
  */
 .light-card .card-control {
   display: grid;
@@ -1659,10 +1659,9 @@ fieldset > .field-note {
 
 /*
  * The style: one row of equal segments on a quiet track, one tap each; the
- * chosen one speaks the chips' selected look. Sized by the card, not the
- * window (the card is narrowest on a phone and in the two-card layout): a
- * narrower row drops the segments' padding, then takes the small text. If
- * even that is too narrow for equal segments, each keeps its whole label.
+ * chosen one speaks the chips' selected look. Small text and no padding, so
+ * five fit the narrowest phone; where the row is too narrow for equal
+ * segments, each keeps its whole label.
  */
 .segments {
   display: grid;
