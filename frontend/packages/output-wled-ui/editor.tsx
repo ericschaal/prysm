@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { WledSettings } from '@prysm/contracts/host-desktop';
 import {
   CheckboxField,
@@ -55,6 +55,7 @@ const typedAddress = {
  */
 export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
   const scope = useFieldScopeContext();
+  const legendId = useId();
   /** The found lights last picked, with the LED count they gave. */
   const [picked, setPicked] = useState<{ address: string; leds: number }>();
   const total = ledTotal(value.leds);
@@ -99,8 +100,17 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
       }}
       onType={(typed) => onChange({ ...value, address: typed })}
       then={
-        <fieldset className="leds" data-field="output.leds" tabIndex={-1}>
-          <legend>LEDs per edge, seen from the front</legend>
+        <fieldset
+          className="leds"
+          aria-labelledby={legendId}
+          data-field="output.leds"
+          tabIndex={-1}
+        >
+          {/* Named by its label; the side it is seen from is an aside. */}
+          <legend>
+            <span id={legendId}>LEDs per edge</span>
+            <span>Seen from the front</span>
+          </legend>
           <LedDrawing
             edges={ledEdges(value.leds)}
             caption={orderCaption(value.leds)}
