@@ -524,7 +524,7 @@
         "description": "A successful state reply: [`State`] with LS2's `returnValue`."
       },
       "StreamEncoding": {
-        "description": "How the sender encodes the frames it sends. Exactly this encoder is used:\none that cannot start or fails ends the stream with a refusal, never a\nswitch to another.",
+        "description": "How the sender encodes the frames it sends: `h264_hardware`, the\nsender's hardware H.264 encoder (the webOS TV's), about 2 Mbit/s;\n`h264_software`, OpenH264 on the sender's CPU, about 2 Mbit/s; `raw`,\nuncompressed NV12 pixels, about 21 Mbit/s at 320x180 and 30 fps. Exactly\nthis encoder is used: one that cannot start or fails stops the stream,\nand the sender never switches to another.",
         "enum": [
           "h264_hardware",
           "h264_software",
