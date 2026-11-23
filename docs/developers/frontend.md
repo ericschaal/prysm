@@ -195,7 +195,7 @@ busy TV does (`--refuse REASON`), stopping after some frames
 (`--offer JSON`). A test that
 sets `devices` starts `prysm-headless`'s `fake_devices` example instead:
 the production host with stand-in video devices (`PRYSM_FAKE_DEVICES`, each
-with its name, path and modes) that discovery finds and that never capture.
+with its name, device and modes) that discovery finds and that never capture.
 Nothing leaves loopback.
 
 ```sh
