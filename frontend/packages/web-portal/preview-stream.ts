@@ -5,7 +5,7 @@ import type {
   PreviewStream,
 } from '@prysm/application-client';
 import { failureOf, same } from '@prysm/application-client';
-import { drawPreview } from './preview-canvas';
+import { sampledArea } from './preview-canvas';
 
 /** The JPEG as an image the canvas can draw; `null` if the browser cannot. */
 async function decode(frame: PreviewFrame) {
@@ -33,7 +33,7 @@ export type PreviewView =
 
 const size = (width: number, height: number) => `${width} × ${height}`;
 
-/** Draws one decoded preview on a canvas: by default with its colours. */
+/** Draws one decoded preview on a canvas. */
 type Draw = (
   canvas: HTMLCanvasElement,
   image: CanvasImageSource | null,
@@ -50,7 +50,7 @@ export function usePreviewStream(
   active: boolean,
   attempt: number,
   canvasRef: RefObject<HTMLCanvasElement | null>,
-  draw: Draw = drawPreview,
+  draw: Draw,
 ) {
   const [view, setView] = useState<PreviewView>({ kind: 'connecting' });
   useEffect(() => {
@@ -97,15 +97,12 @@ export function usePreviewStream(
             show({ kind: 'unavailable', message: event.message });
           } else {
             const { viewport, source_width, source_height } = event;
-            const whole =
-              viewport.x === 0 &&
-              viewport.y === 0 &&
-              viewport.width === source_width &&
-              viewport.height === source_height;
             show({
               kind: 'frame',
               source: size(source_width, source_height),
-              sampled: whole ? null : size(viewport.width, viewport.height),
+              sampled: sampledArea(event)
+                ? size(viewport.width, viewport.height)
+                : null,
             });
             latest = event;
             void paint();

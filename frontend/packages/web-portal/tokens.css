@@ -127,9 +127,8 @@
 
 /* Night in either theme: the light card and the picture stage. */
 .light-card,
-.preview-canvas,
-.preview-message,
-.led-map-screen {
+.led-map-screen,
+.led-map-picture {
   color-scheme: dark;
   --bg: #0b0c11;
   --fg: #ecedf3;
@@ -145,9 +144,8 @@
  */
 :root,
 .light-card,
-.preview-canvas,
-.preview-message,
-.led-map-screen {
+.led-map-screen,
+.led-map-picture {
   --surface: color-mix(in srgb, var(--fg) 5%, var(--bg));
   --surface-2: color-mix(in srgb, var(--fg) 9%, var(--bg));
   --line: color-mix(in srgb, var(--fg) 10%, transparent);
@@ -163,7 +161,6 @@
   --ring: 0 0 0 3px color-mix(in srgb, var(--accent-ink) 40%, transparent);
   /* Elevation: one level. Shadows are the absence of light, not a colour. */
   --shadow: 0 12px 32px rgb(0 0 0 / 0.3);
-  --shadow-stage: 0 20px 60px rgb(0 0 0 / 0.45);
 }
 /* The light theme's own fill text, after the roles (the roles set it to fg). */
 :root[data-theme='light'] {

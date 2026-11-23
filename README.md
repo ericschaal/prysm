@@ -66,7 +66,7 @@ The web portal has no password: keep Prysm on a trusted home network.
 </p>
 
 In the web portal you turn the lights on or off, switch between Screen sync
-and WLED's own effects, watch a [live preview](docs/users/preview.md) of the
+and WLED's own effects, watch a [live preview](docs/users/configuration.md#live-preview) of the
 picture and the LED colours, and change settings.
 
 <p align="center">

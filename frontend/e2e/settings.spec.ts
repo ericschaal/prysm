@@ -76,9 +76,4 @@ test('the video source page shows whether it works, before and after a save', as
   await sender.waitFor('connected');
   await expect(now).toContainText('Picture arriving');
   await expect(now).toContainText('320 × 180');
-  // The card itself opens the large picture.
-  await now.getByRole('button', { name: /See the picture$/ }).click();
-  await expect(page).toHaveURL(/#\/preview$/);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page).toHaveURL(/#\/settings$/);
 });
