@@ -549,7 +549,7 @@ test('a tap moves on at once; the TV pattern follows, and a refusal goes back', 
     assert.equal(compare.getAttribute('aria-pressed'), 'true');
     assert.equal(
       $('.calibrate [role="alert"]').textContent,
-      'The TV pattern did not change: no answer',
+      'The TV pattern didn’t change: no answer',
     );
     await press(button('Looks right'));
     assert.equal(heading(), questions.blue);
@@ -692,7 +692,7 @@ test('a refused save at Start leaves no calibration, no pattern and no draft', a
     assert.equal('calibration' in fixture.snapshot(), false);
     assert.equal(
       $('.calibrate .notice.error').textContent,
-      'Not saved: Prysm did not answer. Try again.',
+      'Not saved: Prysm didn’t answer. Try again.',
     );
     assert.equal(button('Start').disabled, false);
 
@@ -708,8 +708,7 @@ test('a refused save at Start leaves no calibration, no pattern and no draft', a
 /** What the client says when a command's answer never came. */
 const unanswered = {
   kind: 'unavailable',
-  message:
-    'The portal did not answer. Check the current state before retrying.',
+  message: 'Prysm didn’t answer. Check the current state before retrying.',
 };
 
 /**
@@ -743,7 +742,7 @@ test('a Start save that ran without an answer goes on once the state shows it', 
     ]);
     assert.equal(
       $('.calibrate .notice.error').textContent,
-      'Not saved: Prysm did not answer. Try again.',
+      'Not saved: Prysm didn’t answer. Try again.',
     );
 
     await act(async () => {
@@ -888,7 +887,7 @@ test('a refused Resume keeps calibration ended, with Resume and why', async () =
     await press(button('Resume'));
     assert.equal(heading(), 'Calibration ended');
     assert(button('Resume'));
-    assert(text().includes('The TV pattern did not change: no answer'));
+    assert(text().includes('The TV pattern didn’t change: no answer'));
     await press(button('Resume'));
     assert.equal(heading(), questions.white, 'resumed');
   } finally {

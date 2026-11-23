@@ -496,7 +496,7 @@ test('nothing found or a failed lookup leaves the typed field', async () => {
     );
     discovery.refuseNext({
       kind: 'unavailable',
-      message: 'The portal did not answer.',
+      message: 'Prysm didn’t answer.',
     });
     await press(button('Find lights'));
     assert.equal(

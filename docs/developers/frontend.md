@@ -61,7 +61,7 @@ has one reading.
 | | `session.failure.kind` | said by its side: an `adapter` failure of its `section`, or else of its `field`'s section (`capture`, `output`); without one, `internal` |
 | | `session.failure.section` | absent, unless `capture` or `output` |
 | Preview and colors streams | event `type` | skipped |
-| Light card, TV lights card | `device.issue` | "The lights are not showing screen sync." |
+| Light card, TV lights card | `device.issue` | "The lights aren’t showing screen sync." |
 | TV service (`decodeState` in `webos-platform`) | `power`, `video` | `unknown` |
 | | `failure.kind` | `other` |
 | | full `target` | `unknown` |
@@ -81,7 +81,7 @@ target: screen sync or effects), failed (the session carries a failure),
 starting. Every pair lands on exactly one. Screen sync never carries a
 failure. An `effects` session carries one after a start of screen sync
 that failed from the effects (the situation is then failed, headed "Screen
-sync could not start", and the cards add that the effects are still on,
+sync couldn’t start", and the cards add that the effects are still on,
 except when the lights themselves failed, `section` `output`), or, with
 the effects as the target, for saved settings that do not validate (a
 note, "Prysm can’t use these settings."; another kind is said in its own

@@ -362,7 +362,7 @@ export function SetupCard({
       ? undefined
       : {
           text: `${millis(lagMs)} behind`,
-          about: `The lights show each frame about ${millis(lagMs)} after it was captured. The lights’ own delay is not included.`,
+          about: `The lights show each frame about ${millis(lagMs)} after it was captured. The lights’ own delay isn’t included.`,
         };
   return (
     <section
@@ -421,7 +421,7 @@ export function SetupCard({
                   behind === 'output'
                     ? 'Prysm can’t keep up: sending to the lights takes longer than the time between frames, so some are skipped. '
                     : ''
-                }adds the time inside Prysm from a frame received to its colours sent, mean over the last second; the lights’ own delay is not included`
+                }adds the time inside Prysm from a frame received to its colours sent, mean over the last second; the lights’ own delay isn’t included`
               : undefined
           }
           behind={behind === 'output'}

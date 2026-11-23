@@ -179,7 +179,7 @@ export function usePortal(
     setTarget: (target: LightingTarget) =>
       runtime
         ? runtime.store.dispatch(runtime.commands.setTarget(target))
-        : Promise.reject(new Error('Prysm is not connected.')),
+        : Promise.reject(new Error('Prysm isn’t connected.')),
     /** End calibration: the lights return to the saved processing. */
     endCalibration: () =>
       runtime

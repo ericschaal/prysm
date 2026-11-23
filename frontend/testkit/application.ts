@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/require-await -- Fixtures implement async ports without I/O; thrown errors must reject promises. */
-import { createApplicationRuntime } from '@prysm/application-state';
 import {
   ApplicationError,
   type ApplicationClient,
@@ -244,12 +243,4 @@ export function fakeApplicationPort<C, O>(initial: {
       return release;
     },
   };
-}
-
-export function fakeApplication<C, O>(initial: {
-  capture?: C;
-  output?: O;
-  revision?: number;
-}) {
-  return createApplicationRuntime(fakeApplicationPort(initial).client);
 }

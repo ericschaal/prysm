@@ -9,6 +9,7 @@ import {
   type DiscoveryClient,
   type Failure,
   failureSections,
+  isObject,
   known,
   type LightingFailure,
   lightingTargets,
@@ -53,7 +54,7 @@ async function responseError(response: Response): Promise<ApplicationError> {
   )
     return new ApplicationError(detail as Failure);
   if (response.status === 403)
-    return failure('forbidden', 'The portal refuses requests from this page.');
+    return failure('forbidden', 'Prysm refuses requests from this page.');
   return failure('unavailable', `Unexpected response ${response.status}.`);
 }
 
@@ -93,7 +94,7 @@ export function httpApplicationClient<C, O>({
       // The command may still have run; the state stream shows its outcome.
       throw failure(
         'unavailable',
-        'The portal did not answer. Check the current state before retrying.',
+        'Prysm didn’t answer. Check the current state before retrying.',
       );
     }
     if (!response.ok) throw await responseError(response);
@@ -237,7 +238,7 @@ export function httpDiscoveryClient({
           },
         );
       } catch {
-        throw failure('unavailable', 'The portal did not answer.');
+        throw failure('unavailable', 'Prysm didn’t answer.');
       }
       if (!response.ok) throw await responseError(response);
       const found: unknown = await response.json().catch(() => null);
@@ -267,7 +268,7 @@ export function httpCaptureModesClient({
           redirect: 'error',
         });
       } catch {
-        throw failure('unavailable', 'The portal did not answer.');
+        throw failure('unavailable', 'Prysm didn’t answer.');
       }
       if (!response.ok) throw await responseError(response);
       const modes: unknown = await response.json().catch(() => null);
@@ -313,16 +314,14 @@ function validCandidate(value: unknown): value is Candidate {
     (candidate.detail === undefined || typeof candidate.detail === 'string') &&
     (candidate.led_count === undefined ||
       Number.isSafeInteger(candidate.led_count)) &&
-    !!candidate.fields &&
-    typeof candidate.fields === 'object' &&
-    !Array.isArray(candidate.fields)
+    isObject(candidate.fields)
   );
 }
 
 function streamError(error: unknown) {
   return error instanceof ApplicationError
     ? error
-    : failure('unavailable', 'Cannot reach the portal.');
+    : failure('unavailable', 'Can’t reach Prysm.');
 }
 
 /** Open an SSE stream; closing it or aborting `signal` cancels the request. */
@@ -368,10 +367,6 @@ async function openEvents(
  * skipped) or `invalid` (malformed, which ends the stream).
  */
 export type Decoded<T> = { event: T } | 'unknown' | 'invalid';
-
-type Fields = Partial<Record<string, unknown>>;
-const isObject = (value: unknown): value is Fields =>
-  !!value && typeof value === 'object' && !Array.isArray(value);
 
 /** Keyed by every value of the generated union, so the compiler keeps them in step. */
 const sessions: Record<Session['state'], true> = {

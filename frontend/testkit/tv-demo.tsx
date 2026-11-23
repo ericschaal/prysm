@@ -91,7 +91,7 @@ export function runDemo(
               Promise.reject(
                 new ApplicationError({
                   kind: 'unavailable',
-                  message: 'Cannot reach the portal.',
+                  message: 'Can’t reach Prysm.',
                 }),
               ),
           }
