@@ -7,6 +7,10 @@
 /// or file holding `"processing": []` would reset processing). The map goes
 /// through to the derived code as it is, so `deny_unknown_fields`, defaults
 /// and the path of an error are kept.
+///
+/// Code that names the function, such as a `with` module, calls
+/// `<T as Deserialize>::deserialize`: `T::deserialize` is the derived
+/// function and reads a sequence too.
 #[macro_export]
 macro_rules! map_only {
     ($type:ty, $expecting:literal) => {

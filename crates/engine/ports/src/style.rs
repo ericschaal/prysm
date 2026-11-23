@@ -89,20 +89,18 @@ pub(crate) mod as_object {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     #[derive(Serialize, Deserialize)]
-    #[serde(
-        deny_unknown_fields,
-        expecting = r#"a style such as { "kind": "natural" }"#
-    )]
+    #[serde(remote = "Self", deny_unknown_fields)]
     struct Object {
         kind: Style,
     }
+    crate::map_only!(Object, r#"a style such as { "kind": "natural" }"#);
 
     pub fn serialize<S: Serializer>(style: &Style, serializer: S) -> Result<S::Ok, S::Error> {
-        Object { kind: *style }.serialize(serializer)
+        <Object as Serialize>::serialize(&Object { kind: *style }, serializer)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Style, D::Error> {
-        Object::deserialize(deserializer).map(|object| object.kind)
+        <Object as Deserialize>::deserialize(deserializer).map(|object| object.kind)
     }
 }
 
@@ -110,7 +108,7 @@ pub(crate) mod as_object {
 /// row, or the user's own in `Processing::custom_style`. Each field is
 /// required, so a custom style says every value it applies.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct StyleValues {
     /// Seconds to complete most of a change, at most
     /// [`StyleValues::MAX_SMOOTHING_SECONDS`]; 0 disables smoothing.
@@ -126,6 +124,7 @@ pub struct StyleValues {
     /// At most [`StyleValues::MAX_DARK_FLOOR_PERCENT`].
     pub dark_floor_percent: u8,
 }
+crate::map_only!(StyleValues, "style values as an object");
 
 impl StyleValues {
     /// The default style's values, which a custom style without values (an
@@ -205,6 +204,22 @@ mod tests {
         }
         assert_eq!(Style::Custom.built_in(), None);
         assert_eq!(Style::default().built_in(), Some(StyleValues::DEFAULT));
+    }
+
+    /// Every value is required, but serde's derive alone would read them by
+    /// position from an array.
+    #[test]
+    fn only_an_object_is_style_values() {
+        let natural = serde_json::to_value(StyleValues::DEFAULT).unwrap();
+        assert_eq!(
+            serde_json::from_value::<StyleValues>(natural).unwrap(),
+            StyleValues::DEFAULT
+        );
+        let error =
+            serde_json::from_value::<StyleValues>(serde_json::json!([0.5, 50, 0.3, 50, 50, 50, 5]))
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("style values as an object"), "{error}");
     }
 
     #[test]

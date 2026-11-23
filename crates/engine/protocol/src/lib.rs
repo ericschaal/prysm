@@ -337,16 +337,17 @@ impl From<&Error> for Failure {
 
 /// `PUT /api/v1/target`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct TargetRequest {
     #[cfg_attr(feature = "schema", schema(value_type = schema::LightingTargetSchema))]
     pub target: LightingTarget,
 }
+prysm_ports::map_only!(TargetRequest, "a target request as an object");
 
 /// `PUT /api/v1/settings`: replace all settings if `expected` is current.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct SettingsRequest {
     #[cfg_attr(feature = "schema", schema(value_type = u64))]
@@ -354,6 +355,7 @@ pub struct SettingsRequest {
     #[cfg_attr(feature = "schema", schema(value_type = schema::SettingsSchema))]
     pub settings: Settings,
 }
+prysm_ports::map_only!(SettingsRequest, "a settings request as an object");
 
 /// Reply to a successful settings replacement. Applying them may still fail;
 /// that failure appears in the state's `session`.
@@ -683,5 +685,20 @@ mod tests {
         assert!(
             serde_json::from_value::<TargetRequest>(json!({ "target": "off", "id": 1 })).is_err()
         );
+    }
+
+    /// Serde's derive alone would read a request by position from an array.
+    #[test]
+    fn only_an_object_is_a_request() {
+        let target: TargetRequest = serde_json::from_value(json!({ "target": "off" })).unwrap();
+        assert_eq!(target.target, LightingTarget::Off);
+        let error = serde_json::from_value::<TargetRequest>(json!(["off"]))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("a target request as an object"), "{error}");
+        let error = serde_json::from_value::<SettingsRequest>(json!([0, {}]))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("a settings request as an object"), "{error}");
     }
 }
