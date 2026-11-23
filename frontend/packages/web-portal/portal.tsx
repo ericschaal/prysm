@@ -3,7 +3,7 @@ import {
   plainFailure,
   situationFailure,
 } from '@prysm/application-client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createHashRouter,
   Outlet,
@@ -14,7 +14,7 @@ import {
   type RouteObject,
 } from 'react-router';
 import { useConnection } from '@prysm/application-react';
-import type { AdapterSection } from './adapters';
+import { readSection, type AdapterSection } from './adapters';
 import { useDeveloper } from './developer';
 import { CaptureModesContext } from './capture-modes';
 import { DiscoveryContext } from './discovery-context';
@@ -74,8 +74,21 @@ function PortalFrame() {
   const { application } = host;
   const connection = useConnection(application);
   const { dispatch } = application.store;
-  // The last state (and every draft) stays shown while reconnecting.
-  const { snapshot } = connection;
+  // The last state (and every draft) stays shown while reconnecting. Every
+  // page meets the saved sections as their kinds' types have them.
+  const sent = connection.snapshot;
+  const snapshot = useMemo(() => {
+    if (!sent) return sent;
+    const { capture, output } = sent.settings;
+    return {
+      ...sent,
+      settings: {
+        ...sent.settings,
+        ...(capture && { capture: readSection(host.captures, capture) }),
+        ...(output && { output: readSection(host.outputs, output) }),
+      },
+    };
+  }, [sent, host.captures, host.outputs]);
   const online = connection.status === 'connected';
   // Setup opens by itself when the first state lacks capture or lights.
   const [setup, setSetup] = useState<'pending' | 'open' | 'closed'>('pending');

@@ -1,4 +1,4 @@
-import { use, useEffect, useId, useState } from 'react';
+import { use, useEffect, useId, useRef, useState } from 'react';
 import { describePicture, pictureFacts, type Picture } from './adapters';
 import {
   delivers,
@@ -23,12 +23,14 @@ import { RowChoice } from './rows';
  * ticked row says what it means. Nothing new is stored: the ticked row
  * follows from the size and rate. One more ticked row shows a size and rate
  * no preset sets, until a preset replaces it. Until the modes are known the
- * rows are locked on the current choice, with `unreachable` said while the
- * hardware is out of reach. A preset ticked earlier follows to this source's
- * size for it; else a size and rate the source cannot deliver moves to the
- * first preset. Either way, what could not be delivered is said in the line
- * above the rows. Nothing is drawn when
- * `nothingOffered`: the field that selects the source says why.
+ * rows are locked on the current choice. Without an answer, the line under
+ * them says why (`unreachable` while the hardware is out of reach) and
+ * offers Try again; once that brings the modes, the rows take the focus. A
+ * preset ticked earlier follows to this source's size for it; else a size
+ * and rate the source cannot deliver moves to the first preset. Either way,
+ * what could not be delivered is said in the line under the rows. Nothing
+ * is drawn when `nothingOffered`: the field that selects the source says
+ * why.
  */
 export function PictureChoice<V extends Picture>({
   value,
@@ -55,6 +57,9 @@ export function PictureChoice<V extends Picture>({
   const nameId = useId();
   const legendId = useId();
   const lineId = useId();
+  const groupRef = useRef<HTMLFieldSetElement>(null);
+  /** Try again was pressed: the rows take the focus it leaves. */
+  const askedAgainRef = useRef(false);
   const current = {
     width: value.width ?? defaults.width,
     height: value.height ?? defaults.height,
@@ -87,6 +92,12 @@ export function PictureChoice<V extends Picture>({
     const { width, height, fps } = move;
     onChange({ ...value, width, height, fps });
   }, [move, value, onChange]);
+  // Asking again keeps the last answer: the next one is its answer.
+  useEffect(() => {
+    if (!askedAgainRef.current) return;
+    askedAgainRef.current = false;
+    if (modes.state === 'known') groupRef.current?.focus();
+  }, [modes]);
 
   if (known && offered.length === 0) return null;
   const locked = scope.disabled || !known;
@@ -96,9 +107,10 @@ export function PictureChoice<V extends Picture>({
   let line: string | null = null;
   if (modes.state === 'unknown') line = unreachable;
   else if (modes.state === 'failed')
-    line = 'Prysm didn’t say what this source can do. Asking again…';
+    line = 'Prysm didn’t say what this source can do.';
   else if (known) line = moved;
   line ??= help ?? null;
+  const again = 'again' in modes ? modes.again : undefined;
 
   function choose({ width, height, fps }: Offered) {
     for (const path of picturePaths) scope.edited(path);
@@ -122,6 +134,7 @@ export function PictureChoice<V extends Picture>({
       .join(' · ');
   return (
     <fieldset
+      ref={groupRef}
       className="picture-choice"
       role="radiogroup"
       aria-labelledby={legendId}
@@ -170,6 +183,21 @@ export function PictureChoice<V extends Picture>({
       >
         <p className="help" id={`${lineId}-help`}>
           {line}
+          {again ? (
+            <>
+              {' '}
+              <button
+                type="button"
+                className="link"
+                onClick={() => {
+                  askedAgainRef.current = true;
+                  again();
+                }}
+              >
+                Try again
+              </button>
+            </>
+          ) : null}
         </p>
         <p className="field-error" id={`${lineId}-error`}>
           {error}

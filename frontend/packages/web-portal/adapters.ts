@@ -1,3 +1,4 @@
+import { isObject, type Fields } from '@prysm/application-client';
 import { refusedValue } from './form';
 import type { ComponentType } from 'react';
 
@@ -102,6 +103,11 @@ export function describeSavedPicture(
   );
 }
 
+/** The fields of a section type `S` that its sections may leave out. */
+export type OptionalField<S> = {
+  [K in keyof S]-?: Partial<Pick<S, K>> extends Pick<S, K> ? K : never;
+}[keyof S];
+
 /** One registered adapter kind: how the portal names, creates and edits it. */
 export interface AdapterUi<S extends AdapterSection> {
   label: string;
@@ -112,6 +118,11 @@ export interface AdapterUi<S extends AdapterSection> {
   developer?: boolean;
   /** A new section of this kind, before the user fills it in. */
   create: () => S;
+  /**
+   * The fields a section of this kind may leave out; `readSection` fills
+   * the others `create` sets.
+   */
+  optional: Record<OptionalField<S>, true>;
   Editor: ComponentType<EditorProps<S>>;
   /** Tidy what the user typed just before saving, e.g. trim an address. */
   normalize?: (value: S) => S;
@@ -181,6 +192,33 @@ export function createSection<S extends AdapterSection>(
   const adapter = adapterFor(adapters, kind);
   if (!adapter) throw new Error(`No panel for kind ${kind}`);
   return adapter.create();
+}
+
+/**
+ * A saved section with every required field: one `create` sets that is
+ * missing, or of another JSON type, is `create`'s, so no editor or summary
+ * of its kind meets it missing; what is inside a field is not looked at.
+ * Optional and unknown fields stay as saved, for Prysm to judge. A section
+ * with nothing to fill is returned as it is, as is one of a kind without a
+ * panel.
+ */
+export function readSection<S extends AdapterSection>(
+  adapters: AdapterUis<S>,
+  saved: S,
+): S {
+  const adapter = adapterFor(adapters, saved.kind);
+  if (!adapter) return saved;
+  // Read as JSON objects: a section's type has no index signature.
+  const fresh = adapter.create() as unknown as Fields;
+  const raw = saved as unknown as Fields;
+  const optional = Object.keys(adapter.optional);
+  const filled = Object.entries(fresh).filter(
+    ([key, like]) =>
+      !optional.includes(key) &&
+      (typeof raw[key] !== typeof like ||
+        isObject(raw[key]) !== isObject(like)),
+  );
+  return filled.length ? { ...saved, ...Object.fromEntries(filled) } : saved;
 }
 
 export function kindsOf<S extends AdapterSection>(adapters: AdapterUis<S>) {

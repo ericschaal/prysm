@@ -20,9 +20,11 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import type {
   Mode,
+  Modes,
   RemoteReceiverSettings,
   Settings as SavedSettings,
   State,
+  StreamEncoding,
 } from '@prysm/contracts/host-desktop';
 
 const root = path.resolve(import.meta.dirname, '../..');
@@ -227,6 +229,13 @@ export interface Prysm {
   state(): Promise<State>;
   /** The settings file as it is on disk now. */
   savedSettings(): Promise<SavedSettings>;
+  /**
+   * Once Prysm knows what a started sender offers in `encoding`, so a page
+   * loaded then asks once and is answered. Asked of the API until then:
+   * nothing else shows it, as the sender prints nothing while the lights
+   * are off.
+   */
+  offered(encoding: StreamEncoding): Promise<void>;
   /** Stop Prysm and start it again at the same address, as an update does. */
   restart(): Promise<void>;
 }
@@ -275,6 +284,17 @@ export const test = base.extend<{
           const response = await fetch(`${url}/api/v1/state`);
           expect(response.status).toBe(200);
           return (await response.json()) as State;
+        },
+        offered: async (encoding) => {
+          const status = async () => {
+            const response = await fetch(`${url}/api/v1/capture/modes`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ kind: 'remote', encoding }),
+            });
+            return ((await response.json()) as Modes).status;
+          };
+          await expect.poll(status, { timeout: BOUND_MS }).toBe('known');
         },
         restart: async () => {
           expect(await running.stop(), 'exits cleanly before a restart').toBe(

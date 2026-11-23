@@ -103,7 +103,8 @@ keep the TV on a trusted network.
    (recommended)** and, under **Size and rate**, **Efficient** (320 × 180 at
    30 fps) to start. Until the TV has tried to send its picture (steps 3
    and 4), the portal says **The TV isn't connected** and keeps the size and
-   rate as they are; afterwards it offers only what the TV sends that way.
+   rate as they are; afterwards choose **Try again** there (or reload the
+   page), and it offers only what the TV sends that way.
    The video chip sends at most 30 fps, so **Smooth** (60 fps) appears only
    with **Compressed by the TV's processor** or **Uncompressed**, where the
    TV offers them.

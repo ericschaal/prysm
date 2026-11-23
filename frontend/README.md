@@ -252,9 +252,9 @@ supervisor in each of its states and play the phone's calibration part). See the
     editor's width, height and frame rate as one choice in the rows pattern,
     from what the source delivers ([capture modes](packages/web-portal/capture-modes.ts):
     `POST /api/v1/capture/modes` with only the fields that select the
-    hardware, a capture card's `device` or the TV's `encoding`; asked again
-    every 3 s while not known and the page is shown (nothing announces a device
-    or a TV's offer), and when the page is shown again or regains focus;
+    hardware, a capture card's `device` or the TV's `encoding`; asked once
+    for each, and again only when Try again is pressed under an answer that
+    is not known, since nothing announces a device or a TV's offer;
     hosts pass
     `httpCaptureModesClient()`). The
     [presets](packages/web-portal/picture-presets.ts) aim for Balanced
@@ -287,7 +287,8 @@ supervisor in each of its states and play the phone's calibration part). See the
   and `prysm-tui`) and [webOS browser host](hosts/webos/web-portal/app.tsx)
   register their kinds as `AdapterUis` maps; the types are exhaustive over the
   host's generated unions.
-- Panels, each an `AdapterUi { label, create, Editor, normalize?, lighting? }`:
+- Panels, each an
+  `AdapterUi { label, create, optional, Editor, normalize?, lighting? }`:
   [video device](packages/capture-device-ui/index.ts),
   [video file](packages/capture-file-ui/index.ts),
   [remote capture](packages/capture-remote-ui/index.ts),

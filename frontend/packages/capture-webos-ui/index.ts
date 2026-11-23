@@ -12,6 +12,7 @@ const defaults = captureDefaults.webos;
 export const webosCapture: AdapterUi<WebosSettings> = {
   label: 'This TV',
   create: () => ({ kind: 'webos', ...defaults }),
+  optional: { fps: true, height: true, include_ui: true, width: true },
   Editor: WebosEditor,
   summary: (value) => describeTvPicture(value, defaults),
   facts: (value) => tvPictureFacts(value, defaults),

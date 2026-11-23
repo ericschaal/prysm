@@ -7,6 +7,7 @@ export const nullOutput: AdapterUi<NullSettings> = {
   // For checking capture and processing: offered with developer options.
   developer: true,
   create: () => ({ kind: 'null' }),
+  optional: {},
   Editor: () => (
     <p className="help">
       Screen sync runs without driving any LEDs, for checking capture and

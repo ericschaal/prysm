@@ -11,6 +11,13 @@ const defaults = captureDefaults.remote;
 export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
   label: 'LG TV on your network',
   create: () => ({ kind: 'remote', ...defaults }),
+  optional: {
+    encoding: true,
+    fps: true,
+    height: true,
+    include_ui: true,
+    width: true,
+  },
   Editor: RemoteEditor,
   summary: (value) => `From the TV, ${describeTvPicture(value, defaults)}`,
   facts: (value) => tvPictureFacts(value, defaults),

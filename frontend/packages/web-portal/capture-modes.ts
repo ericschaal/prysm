@@ -17,22 +17,17 @@ export const CaptureModesContext = createContext<CaptureModesClient | null>(
 );
 
 /**
- * How often an unanswered question is asked again while the page is shown.
- * A poll, because nothing announces the answer: the state stream carries
- * neither a device being plugged in nor the offer a capture-only TV sends
- * when it tries to connect (also with the lights off).
- */
-export const modesRetryMs = 3000;
-
-/**
  * What a capture delivers, as far as the portal knows: still asking, its
  * hardware out of reach, the question itself unanswered, or its modes
- * (none: nothing with these settings).
+ * (none: nothing with these settings). Without an answer, `again` asks
+ * once more: nothing announces one, as the state stream carries neither a
+ * device being plugged in nor the offer a capture-only TV sends when it
+ * tries to connect.
  */
 export type ModesState =
   | { state: 'loading' }
-  | { state: 'unknown' }
-  | { state: 'failed' }
+  | { state: 'unknown'; again: () => void }
+  | { state: 'failed'; again: () => void }
   | { state: 'known'; modes: readonly Mode[] };
 
 type Span = Mode['width'];
@@ -114,11 +109,11 @@ export const nothingOffered = (modes: ModesState) =>
   modes.state === 'known' && offeredPresets(modes.modes).length === 0;
 
 /**
- * Ask what each capture in `queries` delivers, again every few seconds
- * while one is not known and the page is shown, and whenever the page is
- * shown again or regains focus. A query holds only the fields that select
- * hardware (`{ kind, device }`), so the answer follows them and nothing
- * else; `null` asks nothing.
+ * Ask what each capture in `queries` delivers: once for each set of
+ * queries, and once more each time an unanswered state's `again` is
+ * called. A query holds only the fields that select hardware
+ * (`{ kind, device }`), so the answer follows them and nothing else;
+ * `null` asks nothing. While asking again the last answer stays shown.
  */
 export function useEachCaptureModes(
   queries: readonly (CaptureSettings | null)[],
@@ -126,55 +121,29 @@ export function useEachCaptureModes(
   const client = use(CaptureModesContext);
   if (!client) throw new Error('Outside the portal.');
   const key = JSON.stringify(queries);
+  /** How often the user asked again; each time asks once more. */
+  const [attempt, setAttempt] = useState(0);
   const [answer, setAnswer] = useState<{ key: string; states: ModesState[] }>();
   useEffect(() => {
     const asked = JSON.parse(key) as (CaptureSettings | null)[];
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const one = (
-      query: CaptureSettings | null,
-      signal: AbortSignal,
-    ): Promise<ModesState> =>
+    // A newer ask answers for the hardware as it is now; leaving ends it.
+    const controller = new AbortController();
+    const again = () => setAttempt((count) => count + 1);
+    const one = (query: CaptureSettings | null): Promise<ModesState> =>
       query
-        ? client.modes(query, signal).then(
+        ? client.modes(query, controller.signal).then(
             (modes) =>
               modes.status === 'known'
                 ? { state: 'known', modes: modes.modes }
-                : { state: 'unknown' },
-            () => ({ state: 'failed' }),
+                : { state: 'unknown', again },
+            () => ({ state: 'failed', again }),
           )
         : Promise.resolve({ state: 'loading' });
-    /** The ask in flight; a newer one or leaving ends it. */
-    let current: AbortController | undefined;
-    async function ask() {
-      clearTimeout(timer);
-      // A newer ask answers for the hardware as it is now.
-      current?.abort();
-      const controller = new AbortController();
-      current = controller;
-      const states = await Promise.all(
-        asked.map((query) => one(query, controller.signal)),
-      );
-      if (controller.signal.aborted) return;
-      setAnswer({ key, states });
-      // Asked and not known: there is something to ask again.
-      if (states.some((each, at) => asked[at] && each.state !== 'known'))
-        timer = setTimeout(whileShown, modesRetryMs);
-    }
-    const again = () => void ask();
-    /** A hidden page stops asking until it is shown again. */
-    const whileShown = () => {
-      if (document.visibilityState !== 'hidden') void ask();
-    };
-    window.addEventListener('focus', again);
-    document.addEventListener('visibilitychange', whileShown);
-    void ask();
-    return () => {
-      current?.abort();
-      clearTimeout(timer);
-      window.removeEventListener('focus', again);
-      document.removeEventListener('visibilitychange', whileShown);
-    };
-  }, [client, key]);
+    void Promise.all(asked.map(one)).then((states) => {
+      if (!controller.signal.aborted) setAnswer({ key, states });
+    });
+    return () => controller.abort();
+  }, [client, key, attempt]);
   return answer?.key === key
     ? answer.states
     : queries.map(() => ({ state: 'loading' }));

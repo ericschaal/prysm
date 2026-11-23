@@ -41,6 +41,7 @@ test('the video source page shows whether it works, before and after a save', as
   startSender,
 }) => {
   const sender = startSender();
+  await prysm.offered('raw');
   await page.goto('/#/settings');
   await page.getByRole('button', { name: /^Video source/ }).click();
   await expect(page).toHaveURL(/#\/settings\/video$/);

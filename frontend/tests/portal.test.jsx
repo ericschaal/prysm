@@ -1343,6 +1343,30 @@ test('server field errors land on their control and clear when it is edited', as
   }
 });
 
+test('a saved section without a field its kind requires opens its editor with that field empty', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture: { kind: 'device', path: '/dev/video0' },
+    output,
+  });
+  const { fixture } = portal;
+  try {
+    // Through Home and Settings, which show it as well.
+    await openEditor('Video source');
+    assert.equal(field('capture.device').value, '');
+    await edit(field('capture.device'), '/dev/video0');
+    await submit(form('Video source'));
+    // The rest as saved, which Prysm refuses by name.
+    assert.equal(saves(fixture), 1);
+    assert.deepEqual(fixture.snapshot().settings.capture, {
+      kind: 'device',
+      path: '/dev/video0',
+      device: '/dev/video0',
+    });
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('a section changed on another device: use theirs, or keep mine', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;

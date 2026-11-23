@@ -151,6 +151,7 @@ test.describe('a capture-only TV', () => {
 
   test('is not connected until it announces; then its offer decides the presets and encodings', async ({
     page,
+    prysm,
     startSender,
   }) => {
     await page.goto('/#/settings/video');
@@ -168,7 +169,7 @@ test.describe('a capture-only TV', () => {
     ]);
 
     // The TV's video chip streams up to 30 fps, its processor up to 60, and
-    // it sends nothing uncompressed. The page follows without a reload.
+    // it sends nothing uncompressed. Try again follows without a reload.
     startSender(
       '--offer',
       JSON.stringify({
@@ -176,6 +177,8 @@ test.describe('a capture-only TV', () => {
         h264_software: [anyMode(1920, 1080, 60)],
       }),
     );
+    await prysm.offered('h264_hardware');
+    await video.sizes.getByRole('button', { name: 'Try again' }).click();
     await expect(video.size('Balanced')).toBeEnabled();
     await expect(video.sizes).not.toContainText('isn’t connected');
     await expect(video.sizes.getByRole('radio')).toHaveCount(2);
