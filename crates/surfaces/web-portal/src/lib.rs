@@ -15,6 +15,7 @@ mod access;
 mod capture;
 mod colors;
 mod metrics;
+mod page;
 mod preview;
 mod response;
 mod routes;
@@ -40,10 +41,12 @@ pub struct FrontendAsset {
 }
 
 /// How long a browser may keep a [`FrontendAsset`]. Everything else the
-/// portal sends is never stored.
+/// portal sends is never stored, `/index.html` included: it carries the
+/// current state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Caching {
-    /// Checked again on every load: the page, which names the current files.
+    /// Checked again on every load: a file not named by its content
+    /// (`theme.js`).
     Revalidate,
     /// Kept for good: the path names the content (a hash in the file name).
     Immutable,

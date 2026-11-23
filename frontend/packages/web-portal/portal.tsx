@@ -31,6 +31,7 @@ import {
   CalibrationRoute,
   CalibrationsRoute,
   SettingsRoute,
+  WaitingPage,
 } from './pages';
 import {
   ChromeContext,
@@ -44,7 +45,7 @@ import {
   type WebPortalProps,
 } from './portal-context';
 import type { DeletedCalibration } from './calibrations';
-import { pages } from './routes';
+import { pages, showsHome } from './routes';
 import { SetupWizard } from './setup';
 import { useReplaced } from './replaced';
 import { PortalError } from './update';
@@ -54,10 +55,9 @@ import './portal.css';
 import './flows.css';
 
 /**
- * How long the connection may be missing before the page says so: the first
- * state usually arrives within a few hundred milliseconds of loading (more
- * from a TV), and a restart reconnects in about as long. Saying it at once
- * would flash a warning and swap the header's Settings button in and out.
+ * How long the connection may be missing before the page says so: the page
+ * comes with the state, and a restart reconnects within a few hundred
+ * milliseconds (more from a TV). Saying it at once would flash a warning.
  */
 export const connectionGraceMs = 1000;
 
@@ -123,17 +123,20 @@ function PortalFrame() {
     updated: useReplaced(online, host.replaced),
   };
 
+  // Normally the page comes with the state; without it (a dev server, or a
+  // state the page could not read) the page waits in its own frame, and
+  // says so only once the wait lasts.
   if (!snapshot)
     return (
       <ChromeContext value={chrome}>
-        <Page className="portal-flow" title="Prysm">
-          <section className="connecting">
-            <h2>Connecting to Prysm</h2>
-            <p>
-              {connection.error?.message ?? 'Waiting for the current state…'}
-            </p>
-          </section>
-        </Page>
+        <WaitingPage
+          home={showsHome(location.pathname)}
+          message={
+            outOfTouch
+              ? (connection.error?.message ?? 'Connecting to Prysm…')
+              : ''
+          }
+        />
       </ChromeContext>
     );
 

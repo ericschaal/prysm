@@ -489,6 +489,28 @@ export function decodeState(
   };
 }
 
+/**
+ * The state the portal puts in its page (the `prysm-state` data block), read
+ * as a streamed state is, so the first render shows it. `null` without a
+ * valid one, such as from a dev server, which serves the page as it is.
+ */
+export function embeddedState<C, O>(
+  page: Document = document,
+): ApplicationSnapshot<C, O> | null {
+  const text = page.getElementById('prysm-state')?.textContent;
+  if (!text) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const decoded = decodeState(value);
+  return typeof decoded === 'object'
+    ? (decoded.event as ApplicationSnapshot<C, O>)
+    : null;
+}
+
 const isInt = (value: unknown) => Number.isInteger(value);
 const isColors = (value: unknown) =>
   Array.isArray(value) &&

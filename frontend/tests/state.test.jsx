@@ -121,6 +121,37 @@ test('a lost stream keeps its last state but saves nothing into it', async () =>
   release();
 });
 
+test('a state the page came with is current until the stream replaces it, kept when the stream fails, gone on release', async () => {
+  const fixture = fakeApplicationPort({ capture, output });
+  const page = { ...fixture.snapshot(), target: 'screen_sync' };
+  const application = createApplicationRuntime(fixture.client, page);
+  const state = () => application.store.getState().connection;
+  assert.equal(state().status, 'connected');
+  assert.equal(state().snapshot, page);
+  // Asking for the stream keeps it, current, until the stream's first.
+  const observe = fixture.client.observe;
+  let fail = true;
+  fixture.client.observe = (signal) => {
+    if (fail) {
+      fail = false;
+      return Promise.reject(new Error('connection refused'));
+    }
+    return observe(signal);
+  };
+  const release = application.connect();
+  assert.equal(state().status, 'connected');
+  assert.equal(state().snapshot, page);
+  await tick();
+  assert.equal(state().status, 'disconnected');
+  assert.equal(state().snapshot, page, 'kept while it reconnects');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(state().status, 'connected');
+  assert.equal(state().snapshot.target, 'off', 'the stream’s own');
+  release();
+  await tick();
+  assert.equal(state().snapshot, null);
+});
+
 test('forbidden streams stop retrying', async () => {
   const fixture = fakeApplicationPort({});
   let attempts = 0;

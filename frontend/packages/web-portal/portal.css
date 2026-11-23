@@ -715,6 +715,34 @@ fieldset > .field-note {
     gap: var(--space-5);
   }
 }
+/*
+ * Before the first state: still blocks where the cards will be, about
+ * their size, in the cards' own shape. Nothing moves in them: they wait.
+ */
+.skeleton {
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  border-radius: var(--radius-3);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--line) inset,
+    var(--shadow);
+}
+.light-skeleton {
+  min-height: 36rem;
+}
+.setup-skeleton {
+  min-height: 30rem;
+}
+.page-skeleton {
+  min-height: 24rem;
+}
+.skeleton-message {
+  color: var(--muted);
+  font-size: var(--text-small);
+  text-align: center;
+}
 
 /* The light card: a night stage; its light drifts while the lights are on. */
 @property --light-a {
@@ -2932,6 +2960,17 @@ fieldset > .field-note {
   color: var(--muted);
   font-size: var(--text-small);
   font-weight: var(--weight-regular);
+}
+/*
+ * A found device's row keeps room for a line beneath its name, said or
+ * not: the row that stands in for the first one while looking says the
+ * lookup there, and the device that takes its place keeps its height.
+ */
+.device-rows .row-choice:not(.row-typed) label {
+  min-height: calc(
+    var(--space-3) * 2 + var(--text-body) * var(--leading) + 2px +
+      var(--text-small) * var(--leading)
+  );
 }
 /* What the lookup has to say, under the rows; nothing, no line. */
 .device-rows > .help:not(:empty) {

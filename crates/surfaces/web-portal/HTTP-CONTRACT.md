@@ -45,6 +45,26 @@ Prysm::builder(store).source(..).output(..).surface(portal).run(shutdown).await
   `npm run bundle` as `dist/<host>/web-portal/assets.rs`, which
   [`prysm_host::assets`](../../hosts/common/src/assets.rs) embeds.
 
+## The page
+
+`/` and `/index.html` serve the page with the current `State` in it, as an
+inert data block just before `</head>`, so the portal draws that state on its
+first render; the state stream then connects as usual:
+
+```html
+<script type="application/json" id="prysm-state">{"version":"1.0.0",…}</script>
+```
+
+- The block is `State` as `GET /api/v1/state` sends it, with `<`, `>`, `&`,
+  U+2028 and U+2029 written as `\uXXXX`, so no string in it can end the
+  element (`</script>`) or open a comment (`<!--`).
+- A browser never runs a data block, so the content security policy below
+  needs no exception for it.
+- A page without `</head>` (the "not built" page) is sent as it is. So is the
+  page a dev server serves; without the block the portal waits for the
+  stream in the page's own frame.
+- The page carries no CORS headers: another site's script cannot read it.
+
 ## Routes
 
 API routes need no credentials; the origin policy in [Access](#access) applies
@@ -53,7 +73,7 @@ into `@prysm/contracts/application`.
 
 | Method and path | Body | Success |
 | --- | --- | --- |
-| `GET` or `HEAD` `/` and exact asset paths | — | `200` asset; `/` serves `/index.html`. Unknown paths `404`; API paths never fall back to HTML. Scripts and styles (named by their content) carry `Cache-Control: public, max-age=31536000, immutable` and `Vary: accept-encoding`, and are sent with `Content-Encoding: gzip` when `Accept-Encoding` allows it; the page carries `Cache-Control: no-cache`. |
+| `GET` or `HEAD` `/` and exact asset paths | — | `200` asset; `/` serves `/index.html`. Unknown paths `404`; API paths never fall back to HTML. Scripts and styles (named by their content) carry `Cache-Control: public, max-age=31536000, immutable` and `Vary: accept-encoding`, and are sent with `Content-Encoding: gzip` when `Accept-Encoding` allows it; other files (`theme.js`) carry `Cache-Control: no-cache`. The page carries the current state (see [The page](#the-page)) and is never stored (`no-store`). |
 | `GET /api/v1/state` | — | `200 State` |
 | `GET /api/v1/state/stream` | — | `200 text/event-stream`: `data: <State>` now, then after every change |
 | `GET /api/v1/preview/stream` | — | `200 text/event-stream`: `data: <PreviewEvent>` now, then at most 8 per second; see [Preview](#preview) |
@@ -553,13 +573,14 @@ What it does not protect against:
 ## Limits
 
 - Every response (assets, API, failures, preflights, the stream) carries
-  `Cache-Control: no-store` (assets say their own, see [Routes](#routes)),
+  `Cache-Control: no-store` (assets other than the page say their own, see
+  [Routes](#routes)),
   `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: no-referrer` and
   `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'`: pages
   load only the bundle's own scripts, styles, images and API (no inline code,
   `data:` or `blob:` URLs, so a bundle that needs them must change the policy
-  here first), and no other site may frame the portal (clickjacking). A
+  here first; the page's state block is data, never run), and no other site may frame the portal (clickjacking). A
   cross-origin TV UI is unaffected: CSP applies to the documents the portal
   serves, not to pages that call its API.
 - 64 concurrent connections (the listener stops accepting at the limit), 8 state
@@ -603,7 +624,7 @@ returns; nothing is detached.
 [`tests/http/`](tests/http/main.rs), one file per subject, runs the portal on loopback against an engine
 with `prysm-runtime`'s fake adapters: construction validation, foreign origins
 refused before the engine runs (commands, stream, preflight), same-origin and
-origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, calibration (refused unless screen sync, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), processing trial (applied without saving or a revision change, validated, exact fields, origin policy), adapter failure (502),
+origin-less requests, CORS for listed and any origins, asset serving, the page's state block (the same as `GET /api/v1/state`, never stored, unreadable cross-origin), security headers on every kind of response, state read, set target, calibration (refused unless screen sync, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), processing trial (applied without saving or a revision change, validated, exact fields, origin policy), adapter failure (502),
 missing settings (422), settings replace success/stale/invalid/undecodable
 (each problem inside `settings` `422` with its `field`, the envelope and
 bodies that are not JSON `400`),
@@ -623,4 +644,5 @@ undecodable fields (422 on the field), a body without `kind` (400), `405`, the o
 and no revision change. `tests/capture.rs` checks that a refused upgrade
 (lighting off) still delivers the sender's offer. Unit tests in `src/metrics.rs` check
 the exact text; unit tests in `src/preview.rs` decode the JPEG and check its size,
-the sRGB colors and the strip bound; in `src/colors.rs` the averaged segments.
+the sRGB colors and the strip bound; in `src/colors.rs` the averaged segments; in
+`src/page.rs` the block's place and escaping (markup in a string stays a string).

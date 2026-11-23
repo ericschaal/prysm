@@ -6,6 +6,7 @@ import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
 import {
+  connectionGraceMs,
   correctionLimits,
   deviceNamesKey,
   primaryLimits,
@@ -3772,6 +3773,62 @@ for (const [name, label, value] of [
     }
   });
 }
+
+test('with the state in the page, the first render is Home, whole and live, before the stream answers', async () => {
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    undefined,
+    {},
+    { embedded: true, held: true },
+  );
+  try {
+    assert(!$('.skeleton'), 'no waiting');
+    assert($('.portal').classList.contains('wide'));
+    assert($('.light-card') && $('.setup-card'), 'both cards');
+    assert.equal(power().disabled, false, 'live at once');
+    assert(button('Settings'));
+    assert.equal($('.connection').textContent, 'Connected');
+    // The stream's first state takes over in place.
+    const card = $('.light-card');
+    await portal.answer();
+    assertSame($('.light-card'), card, 'the same card');
+    assert.deepEqual(portal.fixture.calls, ['observe']);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('without a state in the page, Home waits in its own frame, says so only once the wait lasts, and the cards take the blocks’ places', async () => {
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    undefined,
+    {},
+    { held: true },
+  );
+  const message = () => $('.skeleton-message').textContent;
+  try {
+    // Home's frame as it will be: wide, the header with Settings, a block
+    // for each card, nothing said yet.
+    assert($('.portal').classList.contains('wide'));
+    assert(button('Settings'));
+    assert.equal($$('.home-grid > .skeleton').length, 2);
+    assert(!$('.light-card'));
+    assert.equal(message(), '');
+    assert.equal($('.connection').className, 'connection online');
+    await act(async () => sleep(connectionGraceMs + 100));
+    assert.equal(message(), 'Connecting to Prysm…');
+    assert.equal($('.connection').textContent, 'Connecting…');
+    await portal.answer();
+    assert(!$('.skeleton'));
+    assert($('.portal').classList.contains('wide'));
+    assert($('.light-card') && $('.setup-card'), 'both cards');
+    assert.equal(power().disabled, false);
+  } finally {
+    await portal.unmount();
+  }
+});
 
 test('a page that fails to draw says so and offers a reload', async (t) => {
   // React reports the failure it caught; not this test's news.

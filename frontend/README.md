@@ -34,7 +34,13 @@ npm --prefix frontend run dev:webos-slim
 
 The browser portals connect at once to the same-origin
 [portal API](../crates/surfaces/web-portal/HTTP-CONTRACT.md), which needs no
-credentials. The two portal dev servers forward `/api` to a running
+credentials. The portal serves the page with the current state in it
+([the page](../crates/surfaces/web-portal/HTTP-CONTRACT.md#the-page)), which
+`embeddedState` reads, so the first render is the whole page; the state stream
+then keeps it current. A page without that state (a dev server) shows its
+own frame with still blocks where the cards will be, and says "Connecting to
+Prysm…" in it only once the wait lasts (`connectionGraceMs`).
+The two portal dev servers forward `/api` to a running
 Prysm ([dev.config.mjs](dev.config.mjs)): `http://127.0.0.1:8787` unless
 `PRYSM` names another one. Start a host first
 (`cargo run -p prysm-headless -- crates/hosts/headless/settings.example.json`);
@@ -247,8 +253,10 @@ supervisor in each of its states and play the phone's calibration part). See the
     in [calibrate-copy](packages/web-portal/calibrate-copy.ts).
   - [Devices](packages/web-portal/discovery.tsx): the video device editor
     asks the portal (`GET /api/v1/candidates/capture/device`) what is present
-    as it opens, and lists the devices as rows to tick once it answers
-    ("Looking for devices…" until then, with no row, so no row is replaced);
+    as it opens, and lists the devices as rows to tick once it answers;
+    until then one row, which nothing can tick, stands where the first found
+    device will be: the saved device, with "Looking for devices…" beneath
+    (or that line alone), so the usual answer of one device moves nothing;
     "Look again", at the end of the "Device" heading (outside the
     group's name), asks again, keeping the rows and the focus while it
     looks; the line under the rows shows only while there is something to

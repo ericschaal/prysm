@@ -7,7 +7,7 @@
 /* ── Shared ───────────────────────────────────────────────────────────── */
 .setup,
 .calibrate,
-.connecting {
+.page-problem {
   container-type: inline-size;
   padding-top: var(--space-2);
 }
@@ -141,40 +141,25 @@
   font-size: var(--text-small);
 }
 
-/* ── Connecting ───────────────────────────────────────────────────────── */
-.connecting {
+/* ── A page that failed to draw: what happened, the way on, the detail ── */
+.page-problem {
   display: grid;
   justify-items: center;
   gap: var(--space-2);
   padding-top: 18vh;
   text-align: center;
 }
-.connecting::before {
-  content: '';
-  width: calc(var(--hit) - var(--space-1));
-  height: calc(var(--hit) - var(--space-1));
-  margin-bottom: var(--space-4);
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 40px var(--aurora-3);
-  animation: breathe 2.4s var(--ease-in-out) infinite;
-}
-.connecting h2 {
+.page-problem h2 {
   font-size: var(--text-title);
 }
-.connecting p {
+.page-problem p {
   color: var(--muted);
   font-size: var(--text-small);
 }
-
-/* A page that failed to draw: no pulse, the way on, then the detail. */
-.connecting.problem::before {
-  display: none;
-}
-.connecting.problem button {
+.page-problem button {
   margin-top: var(--space-4);
 }
-.connecting.problem .detail {
+.page-problem .detail {
   margin-top: var(--space-4);
   color: var(--muted);
   overflow-wrap: anywhere;

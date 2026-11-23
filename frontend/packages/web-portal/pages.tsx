@@ -94,6 +94,46 @@ function useLiveProps() {
   };
 }
 
+/** Home's frame: wide for its two cards, with the way to Settings. */
+const homeFrame = {
+  className: 'portal-page home',
+  title: 'Prysm',
+  wide: true,
+  settingsLink: true,
+} as const;
+
+/**
+ * A page before the first state: its frame as it will be (Home's, or the
+ * narrow one of the others) and still blocks where its cards will be, so
+ * the cards take their places without moving anything. `message` (empty
+ * until the wait lasts) is said in the first block.
+ */
+export function WaitingPage({
+  home,
+  message,
+}: {
+  home: boolean;
+  message: string;
+}) {
+  const said = (
+    <p role="status" className="skeleton-message">
+      {message}
+    </p>
+  );
+  return home ? (
+    <Page {...homeFrame}>
+      <div className="home-grid">
+        <div className="skeleton light-skeleton">{said}</div>
+        <div className="skeleton setup-skeleton" />
+      </div>
+    </Page>
+  ) : (
+    <Page className="portal-page" title="Prysm">
+      <div className="skeleton page-skeleton">{said}</div>
+    </Page>
+  );
+}
+
 export function HomeRoute() {
   const portal = usePortal();
   const nav = useNav();
@@ -104,7 +144,7 @@ export function HomeRoute() {
   const syncing = portal.lighting.kind === 'sync';
   useLiveColors(host.colors, online && visible && syncing, gridRef);
   return (
-    <Page className="portal-page home" title="Prysm" wide settingsLink>
+    <Page {...homeFrame}>
       <OfflineNotice />
       <SetupNotice />
       <HomePage

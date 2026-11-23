@@ -1,4 +1,10 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import type {
   Processing,
   Style,
@@ -126,7 +132,8 @@ function Segments<T extends string>({
   const index = keys.indexOf(chosen);
   // What the row holds, so it is measured again when that changes.
   const labels = options.map((option) => option.label).join('\n');
-  useEffect(() => {
+  // Before the first paint, so the row shows centred with its pill at once.
+  useLayoutEffect(() => {
     const track = trackRef.current;
     if (!track) return;
     const chosenItem = () => track.children[index] as HTMLElement | undefined;

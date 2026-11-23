@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
+import { JSDOM } from 'jsdom';
 import {
   decodeColors,
   decodePreview,
   decodeState,
+  embeddedState,
   httpApplicationClient,
   httpCaptureModesClient,
   httpDiscoveryClient,
@@ -120,6 +122,30 @@ test('every state, preview and colors event Rust sends decodes as it is', () => 
   ])
     for (const example of examples)
       assert.deepEqual(decode(example), { event: example });
+});
+
+test('the state the portal puts in its page is read as a streamed one; none or an invalid one is no state', () => {
+  const page = (block) =>
+    new JSDOM(`<!doctype html><html><head>${block}</head><body></body></html>`)
+      .window.document;
+  const embedded = (text) =>
+    embeddedState(
+      page(`<script type="application/json" id="prysm-state">${text}</script>`),
+    );
+  // As the portal writes it: markup in a string is escaped.
+  const named = state({ version: '1.0.0 </script><!--' });
+  const escaped = JSON.stringify(named).replace(
+    /[<>&]/g,
+    (character) =>
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+  assert.deepEqual(embedded(escaped), named);
+  const newer = state({ target: 'ambient' });
+  assert.equal(embedded(JSON.stringify(newer)).target, 'unknown');
+  assert.equal(embeddedState(page('')), null, 'a dev server');
+  assert.equal(embedded(''), null);
+  assert.equal(embedded('{"revision":'), null, 'not JSON');
+  assert.equal(embedded('{"revision":1}'), null, 'not a state');
 });
 
 test('a target or session state newer than the page is read as unknown, never off or stopped', async () => {

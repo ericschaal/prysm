@@ -72,10 +72,20 @@ async fn asset_serving_and_unauthenticated_api() {
             page.headers()[header::CONTENT_TYPE],
             "text/html; charset=utf-8"
         );
-        // The page is checked on every load; it names the current script.
-        assert_secure_kept(&page, "no-cache");
+        // The page carries the current state, so it is never stored.
+        assert_secure(&page);
         assert!(!page.headers().contains_key(header::VARY));
-        assert!(page.text().await.unwrap().contains("Prysm"));
+        let page = page.text().await.unwrap();
+        let start =
+            r#"<head><title>Prysm</title><script type="application/json" id="prysm-state">"#;
+        let block = page.strip_prefix("<!doctype html><html>").unwrap();
+        let block = block.strip_prefix(start).unwrap();
+        let (state, rest) = block.split_once("</script>").unwrap();
+        assert_eq!(rest, "</head><body></body></html>");
+        assert_eq!(json_body("/", state), portal.state().await);
+        let named = client.get(url("/index.html")).send().await.unwrap();
+        assert_secure(&named);
+        assert_eq!(named.text().await.unwrap(), page);
         // A script named by its hash is kept for good, compressed or not.
         let kept = "public, max-age=31536000, immutable";
         let script = client.get(url("/assets/app.js")).send().await.unwrap();

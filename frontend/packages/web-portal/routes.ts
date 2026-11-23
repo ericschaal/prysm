@@ -1,4 +1,4 @@
-import { generatePath } from 'react-router';
+import { generatePath, matchPath } from 'react-router';
 
 /**
  * Every page's address under the hash (`#/settings`), by the page's id. The
@@ -28,3 +28,9 @@ export const pathTo = (place: Place) =>
   typeof place === 'string'
     ? pages[place]
     : generatePath(pages.calibration, { id: place.calibration });
+
+/** Whether `pathname` shows Home: its own address, or one no page has. */
+export const showsHome = (pathname: string) =>
+  !Object.values(pages).some(
+    (page) => page !== pages.home && matchPath(page, pathname),
+  );

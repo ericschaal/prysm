@@ -19,7 +19,7 @@ pub const ASSETS: &[FrontendAsset] = &[
     FrontendAsset {
         path: "/index.html",
         content_type: "text/html; charset=utf-8",
-        bytes: b"<!doctype html><title>Prysm</title>",
+        bytes: b"<!doctype html><html><head><title>Prysm</title></head><body></body></html>",
         gzip: None,
         caching: Caching::Revalidate,
     },

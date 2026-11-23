@@ -1,4 +1,5 @@
 import {
+  embeddedState,
   httpApplicationClient,
   httpCaptureModesClient,
   httpDiscoveryClient,
@@ -14,9 +15,11 @@ import {
   type HeadlessOutput,
 } from './app';
 
-// The portal serves this page, so the client uses the page's own origin.
+// The portal serves this page, so the client uses the page's own origin;
+// the page comes with the current state, so the first render shows it.
 const application = createApplicationRuntime(
   httpApplicationClient<HeadlessCapture, HeadlessOutput>(),
+  embeddedState<HeadlessCapture, HeadlessOutput>(),
 );
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing frontend root.');
