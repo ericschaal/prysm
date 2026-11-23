@@ -170,16 +170,19 @@ class DebPrysm:
                 local.write_text(text)
                 self.transport.run(commands.deb_options_write(self.target, local))
         self.transport.run(commands.deb_systemctl(self.target, UnitAction.RESTART))
+        state = 'removed' if text is None else 'written'
+        changed = (
+            f'after {commands.DEB_OPTIONS} was {state} as backed up and the unit restarted; the settings were not sent'
+        )
 
         def active() -> bool:
             unit = unit_properties(self.transport.run(commands.deb_unit(self.target)).stdout)
             if unit.get('ActiveState') == 'failed':
-                raise RuntimeError(f'{commands.DEB_UNIT} failed on {self.target} after the options file was restored')
+                raise RuntimeError(f'{commands.DEB_UNIT} failed on {self.target} {changed}')
             return unit.get('ActiveState') == 'active'
 
         if wait_for_state(self.url, seconds, 0.5, active) is None:
-            raise RuntimeError(f'{commands.DEB_UNIT} did not answer at {self.url} within {seconds} s')
-        state = 'removed' if text is None else 'written'
+            raise RuntimeError(f'{commands.DEB_UNIT} did not answer at {self.url} within {seconds} s {changed}')
         return f'{commands.DEB_OPTIONS} {state} as backed up, {commands.DEB_UNIT} restarted'
 
 

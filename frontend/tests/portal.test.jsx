@@ -616,7 +616,8 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
     );
     assert.match($('.light-details p').textContent, /does not support 640x360/);
     assert(button('Try again'));
-    // A field names the section: said as the video source.
+    // Settings that do not validate are said as such, though a field names
+    // the video source: no device was asked.
     await act(async () =>
       fixture.publish({
         session: {
@@ -631,7 +632,7 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
     );
     assert.equal(
       info(),
-      'The video source isn’t working. WLED effects are still on.',
+      'Prysm can’t use these settings. WLED effects are still on.',
     );
     // Off clears it.
     await act(async () =>

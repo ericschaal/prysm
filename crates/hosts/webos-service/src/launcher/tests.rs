@@ -27,7 +27,7 @@ fn collect(worker: &mut ProcessWorker, done: impl Fn(&[Output]) -> bool) -> Vec<
         if done(&seen) {
             Ok(())
         } else {
-            Err(format!("{seen:?}"))
+            Err(seen.clone())
         }
     });
     seen

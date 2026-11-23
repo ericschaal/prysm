@@ -11,7 +11,10 @@
 //!
 //! Development only: requires FFmpeg 9+ on `PATH` (its `scale` filter maps HDR
 //! to sRGB), which neither the Docker image nor the Debian package ships. FFmpeg
-//! paces frames by presentation time (`realtime` filter). Playback runs once:
+//! releases frames no earlier than their presentation time (`realtime`
+//! filter), and the source reads every frame it writes: one thread pulls,
+//! processes and outputs each frame, so when that is slower than the clip's
+//! rate the clip plays slower instead of dropping frames. Playback runs once:
 //! at the end of the file `next_frame` returns [`Pull::Ended`](prysm_ports::Pull::Ended),
 //! the session stops without a failure and lighting turns off; starting
 //! lighting again replays the file. With `repeat` FFmpeg loops the file and

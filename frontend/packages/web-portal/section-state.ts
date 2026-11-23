@@ -44,7 +44,7 @@ export function pathOf(lighting: LightingSituation): PathState {
       const { failure } = lighting;
       if (!failure) return { kind: 'off' };
       const at = failureSide(failure);
-      return at !== null || unusableSettings(failure, 'off')
+      return at !== null || unusableSettings(failure)
         ? { kind: 'failed', at }
         : { kind: 'off' };
     }
@@ -139,7 +139,7 @@ export function sectionStatus(
       : 'Screen sync stopped.';
     if (path.at !== section && path.at !== null)
       return { tone: 'idle', title: 'Screen sync stopped', detail: plain };
-    if (failure && unusableSettings(failure, target))
+    if (failure && unusableSettings(failure))
       return {
         tone: 'problem',
         title: 'Can’t use these settings',
