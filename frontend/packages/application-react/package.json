@@ -8,6 +8,6 @@
     "@prysm/application-state": "1.0.0-alpha.0"
   },
   "peerDependencies": {
-    "react": "19.3.0"
+    "react": "^19.3.1"
   }
 }
