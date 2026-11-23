@@ -60,7 +60,10 @@ export type Link =
 
 export interface ServiceState {
   link: Link;
-  /** Sent with the last successful save, until the subscription shows it. */
+  /**
+   * What the last save stored, as its reply says, until the subscription
+   * shows it: an older push may still arrive after the reply.
+   */
   pending: Saved | null;
   changing: boolean;
   notice: string;
@@ -72,8 +75,7 @@ export interface ServiceState {
 export type ServiceAction =
   | { type: 'event'; event: ServiceEvent; at: number }
   | { type: 'removed' }
-  | { type: 'saved'; sent: Saved }
-  | { type: 'settled' }
+  | { type: 'saved'; stored: Saved }
   | { type: 'changing'; value: boolean }
   | { type: 'notice'; text: string; error: boolean }
   | { type: 'problem'; text: string };
@@ -143,11 +145,9 @@ export function serviceReducer(
       // The subscription may already show what was saved.
       const state = lastState(current.link);
       const shown =
-        state && same(completePreferences(state.preferences), action.sent);
-      return { ...current, pending: shown ? null : action.sent };
+        state && same(completePreferences(state.preferences), action.stored);
+      return { ...current, pending: shown ? null : action.stored };
     }
-    case 'settled':
-      return { ...current, pending: null };
     case 'changing':
       return { ...current, changing: action.value };
     case 'notice':
@@ -194,13 +194,6 @@ export function useTvService(service: TvService, active: boolean) {
       dispatch({ type: 'event', event, at: Date.now() }),
     );
   }, [service, active, generation]);
-  useEffect(() => {
-    if (!current.pending) return;
-    // The subscription normally confirms within a moment; never wait forever.
-    const timer = setTimeout(() => dispatch({ type: 'settled' }), 5000);
-    return () => clearTimeout(timer);
-  }, [current.pending]);
-
   const { link } = current;
   const state = lastState(link);
   const known = link.status === 'live' || link.status === 'lost';
@@ -258,11 +251,17 @@ export function useTvService(service: TvService, active: boolean) {
     return result;
   }
 
+  /**
+   * The reply is the state the service stored, and it publishes that state
+   * next, so the subscription always comes to show what is pending: no
+   * wait needs a bound.
+   */
   async function sendPreferences(patch: Edits) {
     const sent = { ...shown.current, ...patch };
-    await service.setPreferences(sentPreferences(sent));
-    shown.current = sent;
-    if (mounted.current) dispatch({ type: 'saved', sent });
+    const reply = await service.setPreferences(sentPreferences(sent));
+    const stored = completePreferences(reply.preferences);
+    shown.current = stored;
+    if (mounted.current) dispatch({ type: 'saved', stored });
   }
 
   return {

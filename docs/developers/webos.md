@@ -43,8 +43,10 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   one JSON object per line (at most 4 KiB, unknown fields rejected). Vendor
   output is redirected to stderr, which carries logs. The commands are
   `video` (unavailable unless the TV is active), `reset_video` (input, app or
-  picture mode changed) and `target` (full only; a slim worker takes it as
-  protocol misuse); the events `status`, `failed` and `faulted`. The worker
+  picture mode changed) and `target` (full only, numbered from 1 by
+  `sequence`; a slim worker takes it as protocol misuse); the events
+  `status` (the full worker's says the `sequence` it last `applied`),
+  `failed` and `faulted`. The worker
   exits 0 when stopped (SIGTERM, stdin closed), 1 failed, 2 for bad
   arguments, 3 faulted (a hung or unconfirmed native resource). Types:
   [webos-link](../../crates/engine/webos-link/src/lib.rs).
@@ -81,13 +83,13 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 - The supervisor logs which signal stopped it. The worker logs opening and
   releasing the TV UI tap with the capture thread's kernel id (`thread`), the
   id a kernel log names as a capture lock's holder (`K_pid`).
-- Without video the capture takes the TV UI. A missing `libhalgal` (or one
-  of its symbols) or `/dev/gfx` turns that off until the worker restarts;
-  any other UI failure is retried after 5, 10, 20, 40 and 60 s (a frame
-  resets the wait), and one after that turns it off too: a UI tap can fail
-  for good (a worker that died with it open left the graphics driver's
-  lock held until a reboot). A transient UI failure, which the retries are
-  for, has not been observed. The first failure of a run logs a warning, the rest debug
+- Without video the capture takes the TV UI. Any UI failure (a missing
+  `libhalgal` or `/dev/gfx`, a failed open or capture) turns that off,
+  logged once, until the next capture source opens: a UI tap can fail for
+  good (a worker that died with it open left the graphics driver's lock
+  held until a reboot), and a UI failure that passes has not been
+  observed. The capture thread waits for a change of the video signal
+  without polling: each change wakes it
   ([native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
 - Before each video tap opens, the worker registers its two capture client
   names with Luna and removes them again. Any failure of that check ends
@@ -157,17 +159,19 @@ Every rule above is one sans-IO machine,
 [`Machine::handle(Input, now) -> Vec<Effect>`](../../crates/hosts/webos-service/src/machine.rs):
 inputs are TV power and video, preferences (already validated and
 persisted), enable, worker events, logs and exits, a broken event stream, a
-failed spawn, a tick and shutdown; effects are `Spawn`, `Send`, `Terminate`,
-`Kill`, `Abandon` (let go of a worker not reaped after its kill) and
-`Publish`. Its phases are idle, running, stopping and retrying. A worker is
+failed spawn, a tick (at the time `Machine::next_due` names) and shutdown;
+effects are `Spawn`, `Send`, `Terminate`, `Kill`, `Abandon` (let go of a
+worker not reaped after its kill) and `Publish`. Its phases are idle, running, stopping and retrying. A worker is
 spawned only from idle, and only a reaped (or let-go) exit leaves running or
 stopping, so a worker is always reaped before the next one starts. Time is an
 argument, so its tests are tables without sleeps.
 
 - A worker event line that does not decode, is too long or is cut off breaks
   the link: the supervisor stops the worker as failed.
-- After the TV app turns the full worker's lighting on or off, worker
-  reports older than 2 s (`ECHO`) do not change the published target back.
+- After the TV app sets the full worker's target, a worker report that has
+  not applied that `target` command yet (its `applied` is lower than the
+  command's `sequence`) does not change the published target back; a new
+  worker counts from 0 again.
 - While a failed worker waits to restart, the state says the whole seconds
   left, rounded up, as of when it was sent; the app counts down from when it
   received it, so no clock is shared.
@@ -175,9 +179,15 @@ argument, so its tests are tables without sleeps.
   failure (exit 1), not a fault; either way the process is restarted.
 
 The driver ([service.rs](../../crates/hosts/webos-service/src/service.rs))
-runs it on the GLib thread: requests and subscription replies arrive as
-callbacks, and a 100 ms timer drains worker output, reaps, ticks the machine
-and renews a subscription that has had no good reply for 5 s. Its seams:
+runs it on the GLib thread without polling: requests and subscription
+replies arrive as callbacks, and a socket wakes the loop when the worker
+writes a line or its output ends, a child exits (SIGCHLD) or a stop signal
+comes. After each of these, and at the next due time (the machine's
+`SILENCE`, `HEALTHY`, kill, letting go and backoff times, the end of an
+exited worker's 1 s wait for its last lines, a subscription renewal after 5 s
+without a good reply, and a probe's `--run-for`), the driver drains worker
+output, reaps, ticks the machine and renews subscriptions, then arms one
+timer for the next due time. Its seams:
 
 | Seam | On the TV | In tests |
 | --- | --- | --- |

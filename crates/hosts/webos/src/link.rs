@@ -69,12 +69,14 @@ impl EngineLink {
         let mut sent: Option<WorkerStatus> = None;
         let mut beat = Instant::now() + self.heartbeat;
         let mut retry = Retry::new(self.backoff);
+        // The last target command applied: 0 until one is.
+        let mut applied = 0;
         loop {
             // One clock read per round, so a retry and a heartbeat set in the
             // same round fall due together.
             let now = Instant::now();
             let snapshot = snapshots.borrow_and_update().clone();
-            let status = status(&snapshot, portal.as_deref());
+            let status = status(&snapshot, portal.as_deref(), applied);
             if sent.as_ref() != Some(&status) {
                 events.send(&Event::Status(status.clone()));
                 sent = Some(status);
@@ -107,9 +109,10 @@ impl EngineLink {
                     None => return Ok(()),
                     Some(Command::Video { video }) => self.video.set(video),
                     Some(Command::ResetVideo {}) => self.video.reset(),
-                    Some(Command::Target { target }) => {
+                    Some(Command::Target { target, sequence }) => {
                         retry.cancel();
                         apply(&engine, target).await;
+                        applied = sequence;
                     }
                 },
                 changed = snapshots.changed() => if changed.is_err() { return Ok(()) },
@@ -150,7 +153,8 @@ async fn wait(at: Option<Instant>) {
     }
 }
 
-fn status(snapshot: &Snapshot, portal: Option<&str>) -> WorkerStatus {
+/// The status after the target command `applied`.
+fn status(snapshot: &Snapshot, portal: Option<&str>, applied: u64) -> WorkerStatus {
     let failure = snapshot
         .session
         .failure()
@@ -161,6 +165,7 @@ fn status(snapshot: &Snapshot, portal: Option<&str>) -> WorkerStatus {
             && snapshot.input.is_some_and(|input| input.receiving),
         fps: snapshot.input.map(|input| whole_fps(input.fps)),
         target: snapshot.target,
+        applied,
         portal: portal.map(str::to_owned),
         failure: failure.map(|failure| WorkerFailure::other(chain(failure))),
     })

@@ -3,7 +3,8 @@
 //! [`check_registration`] from here.
 //!
 //! - [`run`]: register a service name with methods, keep subscription calls
-//!   to other services, tick a [`Handler`] on a timer, until it says stop.
+//!   to other services, and poll a [`Handler`] at every event (a request, a
+//!   reply, a [`Wake`]) and at the time it asks for, until it says stop.
 //! - [`check_registration`]: register and immediately unregister names, to
 //!   detect a missing role before vendor code allocates anything.
 //!
@@ -28,7 +29,7 @@ mod service;
 
 pub use check::check_registration;
 pub use library::{Loaded, load_once};
-pub use service::{Bus, Config, Handler, Refusal, Request, Response, run};
+pub use service::{Bus, Config, Handler, Next, Refusal, Request, Response, Wake, Waker, run};
 
 #[allow(
     dead_code,
@@ -88,9 +89,10 @@ pub(crate) mod generated {
                     g_main_loop_unref: m::unref,
                     g_source_unref: m::source_unref,
                     g_source_attach: m::source_attach,
-                    g_source_destroy: m::source_unref,
+                    g_source_destroy: m::source_destroy,
                     g_source_set_callback: m::source_callback,
                     g_timeout_source_new: m::timer_new,
+                    g_unix_fd_source_new: m::watch_new,
                 }
             }
         }
@@ -154,6 +156,8 @@ pub enum Error {
     },
     #[error("{0}")]
     Glib(&'static str),
+    #[error("cannot use the wake socket")]
+    Wake(#[source] std::io::Error),
     #[error("invalid name or payload: contains NUL")]
     Nul,
 }

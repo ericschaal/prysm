@@ -43,9 +43,14 @@ pub enum Command {
     /// Input, app or picture mode changed: reopen the native tap. (A struct
     /// variant, so unknown fields are rejected like everywhere else.)
     ResetVideo {},
-    /// Full only: the lighting target the TV app chose. A slim worker treats
-    /// it as protocol misuse and exits [`exit::FAILED`].
-    Target { target: LightingTarget },
+    /// Full only: the lighting target the TV app chose. `sequence` counts
+    /// the targets sent to this worker from 1; its status says the last one
+    /// it applied ([`FullStatus::applied`]). A slim worker treats it as
+    /// protocol misuse and exits [`exit::FAILED`].
+    Target {
+        target: LightingTarget,
+        sequence: u64,
+    },
 }
 
 /// The TV's main video output, as Luna `videooutput/getStatus` reports the
@@ -104,6 +109,11 @@ pub struct FullStatus {
     pub fps: Option<u16>,
     /// The engine's target, including changes made in the portal.
     pub target: LightingTarget,
+    /// The `sequence` of the last [`Command::Target`] applied before this
+    /// status; 0 before any (the worker started with the target in its
+    /// arguments). A status that applied an older one than the supervisor
+    /// sent was sent before the worker read it.
+    pub applied: u64,
     /// The portal's LAN address, such as `http://192.168.1.5:8787/`; absent
     /// while the TV has no LAN address.
     #[serde(default, skip_serializing_if = "Option::is_none")]

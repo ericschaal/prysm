@@ -13,38 +13,21 @@ enum Kind {
     Ui,
 }
 
-/// Whether the TV UI tap works in this source.
+/// Whether the TV UI tap works in this source. Any UI fault makes it
+/// unsupported until the next source: a UI tap can fail for good (on the
+/// bench TV, a worker that died with the UI tap open left the graphics
+/// driver's lock held, and every later UI open failed until a reboot,
+/// commit 4fa820eb), and a UI failure that passes has not been observed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UiSupport {
     Untried,
     Works,
-    /// It failed since its last frame (or since the start); the last wait.
-    Failing(Duration),
-    /// It cannot work in this process, or kept failing through the longest
-    /// wait: reported once, never retried.
+    /// It failed: reported once, never opened again in this source.
     Unsupported,
 }
 
-impl UiSupport {
-    /// After a TV UI fault: failing again with the next wait of its streak
-    /// ([`Limits::ui_backoff`]), or unsupported once it cannot heal or the
-    /// longest wait did not help.
-    fn after_fault(self, recovery: Recovery, limits: &Limits) -> Self {
-        let previous = match self {
-            Self::Failing(wait) => Some(wait),
-            Self::Untried | Self::Works | Self::Unsupported => None,
-        };
-        match recovery {
-            Recovery::Never => Self::Unsupported,
-            Recovery::Reopen => limits
-                .ui_backoff(previous)
-                .map_or(Self::Unsupported, Self::Failing),
-        }
-    }
-}
-
-/// When a video tap reopens after a recoverable fault. The TV UI tap follows
-/// its own backoff ([`Limits::ui_backoff`]) either way.
+/// When a video tap reopens after a recoverable fault. A TV UI fault never
+/// reopens it ([`UiSupport`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reopen {
     /// At once: the fault is a stall, which already waited
@@ -132,8 +115,10 @@ impl<B: Backend> Native<B> {
         released
     }
 
-    /// Capture until stopped or failed.
+    /// Capture until stopped or failed. A change of the video signal wakes
+    /// the thread, so it waits for one without polling.
     fn capture(&mut self) -> Result<()> {
+        self.video.wake(self.worker.wakeup());
         let period = Duration::from_secs(1) / self.settings.fps.max(1);
         let mut generation = self.video.current().generation;
         let mut next = Instant::now();
@@ -155,14 +140,14 @@ impl<B: Backend> Native<B> {
             }
             let now = Instant::now();
             let Some(kind) = kind.filter(|_| now >= self.retry_at) else {
-                // Idle: recheck the video signal every poll; retrying: wake
-                // at the retry time (at most a poll away).
-                let wake = match kind {
-                    None => self.limits.poll,
-                    Some(_) => self.retry_at.saturating_duration_since(now),
-                };
-                self.worker
-                    .sleep(wake.clamp(Duration::from_millis(1), self.limits.poll));
+                // Idle: until the video signal changes; retrying: until the
+                // retry time, or a change first.
+                match kind {
+                    None => self.worker.idle(),
+                    Some(_) => self
+                        .worker
+                        .sleep(self.retry_at.saturating_duration_since(now)),
+                }
                 continue;
             };
             self.step(kind)?;
@@ -218,8 +203,7 @@ impl<B: Backend> Native<B> {
                 if kind == Kind::Video {
                     self.video_failing = false;
                 }
-                // The first frame, or the first after failures, ends the
-                // backoff and is reported once.
+                // The first UI frame is reported once.
                 if kind == Kind::Ui && self.ui != UiSupport::Works {
                     self.ui = UiSupport::Works;
                     tracing::info!(
@@ -256,12 +240,9 @@ impl<B: Backend> Native<B> {
     }
 
     /// Fatal video faults end the source; others release the tap and retry
-    /// later. UI faults never end the source: a
-    /// fatal one, or one after the longest wait, marks UI capture
+    /// later. UI faults never end the source: each marks UI capture
     /// unsupported, reported once and not retried (lighting then idles
-    /// without video, as with `include_ui` off); others retry with a backoff
-    /// that a frame resets, so a long session without video regains the TV
-    /// UI after a transient failure.
+    /// without video, as with `include_ui` off, until the next source).
     fn recover(&mut self, kind: Kind, fault: Fault) -> Result<()> {
         self.recover_after(kind, fault, Reopen::AfterRetry)
     }
@@ -273,31 +254,17 @@ impl<B: Backend> Native<B> {
                 let Some(wait) = video_wait(fault.recovery, reopen, &self.limits) else {
                     return Err(fault.error);
                 };
-                Self::retrying(
-                    &fault.error,
-                    "webOS video capture",
-                    !self.video_failing,
-                    wait,
-                );
+                Self::retrying(&fault.error, !self.video_failing, wait);
                 self.video_failing = true;
                 wait
             }
             Kind::Ui => {
-                let first = !matches!(self.ui, UiSupport::Failing(_));
-                self.ui = self.ui.after_fault(fault.recovery, &self.limits);
-                match self.ui {
-                    UiSupport::Failing(wait) => {
-                        Self::retrying(&fault.error, "TV UI capture", first, wait);
-                        wait
-                    }
-                    _ => {
-                        tracing::warn!(
-                            error = %chain(&fault.error),
-                            "TV UI capture is unsupported; no frames while there is no video"
-                        );
-                        self.limits.retry
-                    }
-                }
+                self.ui = UiSupport::Unsupported;
+                tracing::warn!(
+                    error = %chain(&fault.error),
+                    "TV UI capture is unsupported; no frames while there is no video"
+                );
+                self.limits.retry
             }
         };
         self.release_tap()?;
@@ -306,15 +273,15 @@ impl<B: Backend> Native<B> {
         Ok(())
     }
 
-    /// Logs that `tap` failed with `error` and is retried in `wait`: the
-    /// `first` failure of a streak as a warning, the rest at debug, since
+    /// Logs that video capture failed with `error` and is retried in `wait`:
+    /// the `first` failure of a run as a warning, the rest at debug, since
     /// only the first is news.
-    fn retrying(error: &Error, tap: &str, first: bool, wait: Duration) {
+    fn retrying(error: &Error, first: bool, wait: Duration) {
         let error = chain(error);
         if first {
-            tracing::warn!(%error, retry_in = ?wait, "{tap} failed; retrying");
+            tracing::warn!(%error, retry_in = ?wait, "webOS video capture failed; retrying");
         } else {
-            tracing::debug!(%error, retry_in = ?wait, "{tap} failed; retrying");
+            tracing::debug!(%error, retry_in = ?wait, "webOS video capture failed; retrying");
         }
     }
 
@@ -338,49 +305,7 @@ impl<B: Backend> Native<B> {
 mod tests {
     use super::*;
 
-    const LIMITS: Limits = Limits {
-        ui_retry: Duration::from_secs(5),
-        ui_retry_max: Duration::from_secs(20),
-        ..Limits::TV
-    };
-    const RECOVERIES: [Recovery; 2] = [Recovery::Never, Recovery::Reopen];
-
-    fn secs(seconds: u64) -> Duration {
-        Duration::from_secs(seconds)
-    }
-
-    /// Every UI support state meets every kind of UI fault. The waits are
-    /// 5, 10 and 20 s here; a fault after the 20 s wait is the last.
-    #[test]
-    fn every_ui_state_meets_every_fault() {
-        use UiSupport::{Failing, Unsupported, Untried, Works};
-        let states = [
-            Untried,
-            Works,
-            Failing(secs(5)),
-            Failing(secs(10)),
-            Failing(secs(20)),
-            Unsupported,
-        ];
-        // Per state: after a `Never` and a `Reopen` fault.
-        let expected = [
-            [Unsupported, Failing(secs(5))],
-            [Unsupported, Failing(secs(5))],
-            [Unsupported, Failing(secs(10))],
-            [Unsupported, Failing(secs(20))],
-            [Unsupported, Unsupported],
-            [Unsupported, Failing(secs(5))],
-        ];
-        for (state, after) in states.into_iter().zip(expected) {
-            for (recovery, wanted) in RECOVERIES.into_iter().zip(after) {
-                assert_eq!(
-                    state.after_fault(recovery, &LIMITS),
-                    wanted,
-                    "{state:?} meets {recovery:?}"
-                );
-            }
-        }
-    }
+    const LIMITS: Limits = Limits::TV;
 
     /// Every video fault's recovery meets every reopen: a fatal fault ends
     /// the source, a stall reopens at once, any other after `retry`.
@@ -403,8 +328,8 @@ mod tests {
     /// An unsupported UI is never opened again; video always is.
     #[test]
     fn the_tap_follows_the_video_the_setting_and_the_ui_state() {
-        use UiSupport::{Failing, Unsupported, Untried, Works};
-        for ui in [Untried, Works, Failing(secs(5)), Unsupported] {
+        use UiSupport::{Unsupported, Untried, Works};
+        for ui in [Untried, Works, Unsupported] {
             for include_ui in [false, true] {
                 for video in [Video::Available, Video::Unknown] {
                     assert_eq!(wanted(video, include_ui, ui), Some(Kind::Video));

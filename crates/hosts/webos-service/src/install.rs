@@ -7,7 +7,8 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// Bound on `ls-control scan-services` and on activation.
 pub const CHILD_TIMEOUT: Duration = Duration::from_secs(10);
@@ -322,10 +323,28 @@ struct Finished {
 
 /// Run a child with stdin held open (luna-send exits without replying on
 /// EOF), kill it after `timeout`, and optionally keep up to 64 KiB of stdout.
-/// A child that is not waited for to the end (a timeout, or `waitpid`
-/// failing) is killed and reaped before the error returns.
+/// A thread blocked in the child's `wait` reaps it and reports its exit, the
+/// event waited for with the deadline. A child that is not waited for to the
+/// end (a timeout, or `waitpid` failing) is killed, and after a timeout
+/// reaped, before the error returns.
 fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> Result<Finished> {
     let program = command.get_program().to_string_lossy().into_owned();
+    let spawn_failed = |source| InstallError::Spawn {
+        program: program.clone(),
+        source,
+    };
+    // The waiting thread exists before the child, so no child is ever left
+    // without one.
+    let (hand, handed) = mpsc::channel::<Child>();
+    let (report, reported) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("prysm-install-wait".into())
+        .spawn(move || {
+            if let Ok(mut child) = handed.recv() {
+                let _ = report.send(child.wait());
+            }
+        })
+        .map_err(spawn_failed)?;
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(if keep_stdout {
@@ -335,10 +354,7 @@ fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> R
         })
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|source| InstallError::Spawn {
-            program: program.clone(),
-            source,
-        })?;
+        .map_err(spawn_failed)?;
     let stdin = child.stdin.take();
     let reader = child.stdout.take().map(|stdout| {
         std::thread::spawn(move || {
@@ -347,21 +363,26 @@ fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> R
             bytes
         })
     });
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(20));
+    let pid = child.id();
+    // The thread waits in `recv` until it has the child.
+    let _ = hand.send(child);
+    let status = match reported.recv_timeout(timeout) {
+        Ok(Ok(status)) => status,
+        Ok(Err(source)) => {
+            give_up(pid, &program);
+            return Err(InstallError::Wait { program, source });
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            give_up(pid, &program);
+            if let Ok(Err(error)) = reported.recv() {
+                eprintln!("prysm-webos-service: cannot reap {program}: {error}");
             }
-            Ok(None) => {
-                kill_and_reap(&mut child, &program);
-                return Err(InstallError::Timeout { program, timeout });
-            }
-            Err(source) => {
-                kill_and_reap(&mut child, &program);
-                return Err(InstallError::Wait { program, source });
-            }
+            return Err(InstallError::Timeout { program, timeout });
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            give_up(pid, &program);
+            let source = io::Error::other("the wait ended without a status");
+            return Err(InstallError::Wait { program, source });
         }
     };
     drop(stdin);
@@ -371,12 +392,18 @@ fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> R
     Ok(Finished { status, stdout })
 }
 
-/// Stop a child that is given up on. A kill that fails (it already exited)
-/// leaves the reap; a failed reap is reported, the caller's error stands.
-fn kill_and_reap(child: &mut Child, program: &str) {
-    let _ = child.kill();
-    if let Err(error) = child.wait() {
-        eprintln!("prysm-webos-service: cannot reap {program}: {error}");
+/// SIGKILL to a child that is given up on. Its waiting thread reaps it, so
+/// its pid is another process's at most for the instant after that reap. A
+/// child that already exited is fine; another failure is reported, the
+/// caller's error stands.
+fn give_up(pid: u32, program: &str) {
+    use nix::sys::signal::{Signal, kill};
+    let Ok(pid) = i32::try_from(pid) else {
+        return;
+    };
+    match kill(nix::unistd::Pid::from_raw(pid), Signal::SIGKILL) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+        Err(error) => eprintln!("prysm-webos-service: cannot kill {program}: {error}"),
     }
 }
 

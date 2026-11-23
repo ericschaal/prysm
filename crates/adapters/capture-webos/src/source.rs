@@ -90,20 +90,8 @@ pub(crate) struct Limits {
     /// Delay before reopening after a recoverable failure or between
     /// preparation attempts.
     pub retry: Duration,
-    /// Delay before reopening the TV UI tap after its first failure since a
-    /// frame; it doubles with each further failure up to `ui_retry_max`,
-    /// and a failure after that wait is the last. Bounded because a UI tap
-    /// can fail for good: on the bench TV, a worker that died with the UI
-    /// tap open left the graphics driver's lock held, and every later UI
-    /// open failed until a reboot (commit 4fa820eb). That a UI open fails
-    /// transiently, which the retries are for, or blocks while it fails,
-    /// has not been observed.
-    pub ui_retry: Duration,
-    pub ui_retry_max: Duration,
     /// How long `close` waits for certified release ([`RELEASE`]).
     pub release: Duration,
-    /// How often an idle native thread rechecks the video signal.
-    pub poll: Duration,
 }
 
 impl Limits {
@@ -112,22 +100,8 @@ impl Limits {
         preparation: Duration::from_secs(10),
         pending: Duration::from_secs(2),
         retry: Duration::from_secs(1),
-        ui_retry: Duration::from_secs(5),
-        ui_retry_max: Duration::from_secs(60),
         release: RELEASE,
-        poll: Duration::from_millis(100),
     };
-
-    /// The wait after a TV UI failure, given the previous wait of the same
-    /// streak of failures (`None`: the first since a frame); `None` once the
-    /// longest wait did not help either.
-    pub(crate) fn ui_backoff(&self, previous: Option<Duration>) -> Option<Duration> {
-        match previous {
-            None => Some(self.ui_retry),
-            Some(wait) if wait >= self.ui_retry_max => None,
-            Some(wait) => Some((wait * 2).min(self.ui_retry_max)),
-        }
-    }
 }
 
 /// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Idle`]

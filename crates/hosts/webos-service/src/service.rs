@@ -446,7 +446,10 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         self.input(bus, Input::Shutdown, now);
     }
 
-    /// Called about every 100 ms. Returns `false` once the service should exit.
+    /// Called at every event (a request, a reply, the worker said something
+    /// or exited, a signal) and at [`Self::next_due`]: reads and reaps the
+    /// worker, runs the machine's due times and renews subscriptions.
+    /// Returns `false` once the service should exit.
     pub fn tick(&mut self, bus: &mut impl Bus, now: Instant) -> bool {
         self.poll_worker(bus, now);
         self.input(bus, Input::Tick, now);
@@ -470,6 +473,22 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             eprintln!("prysm-webos-service: uninstall failed: {}", chain(&error));
         }
         false
+    }
+
+    /// When [`Self::tick`] next has something to do without an event: the
+    /// machine's next due time, a subscription renewal, or the end of the
+    /// wait for an exited worker's last lines.
+    #[must_use]
+    pub fn next_due(&self, now: Instant) -> Option<Instant> {
+        [
+            self.machine.next_due(now),
+            self.renew.power,
+            self.renew.video,
+            self.worker.as_ref().and_then(Worker::due),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     fn poll_worker(&mut self, bus: &mut impl Bus, now: Instant) {

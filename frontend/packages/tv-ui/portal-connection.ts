@@ -53,9 +53,9 @@ export type Reach = 'unknown' | 'refused' | 'unreachable';
 /**
  * How long the last portal state stays shown while its stream is away (lost,
  * or released while the page was hidden), counted while the page is shown.
- * The stream retries after 0.25, 0.5, 1 and 2 s, 3.75 s in all, before its
- * backoff reaches whole seconds: a stream that comes back soon is back
- * within 4 s, and a longer wait would hide a real outage.
+ * The stream retries after 0.25, 0.5, 1 and 2 s (`reconnectDelayMs`), 3.75 s
+ * in all, before its backoff reaches whole seconds: a stream that comes back
+ * soon is back within 4 s, and a longer wait would hide a real outage.
  */
 export const STALE_MS = 4_000;
 

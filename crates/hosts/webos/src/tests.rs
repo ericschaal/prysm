@@ -101,6 +101,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
             capturing: false,
             fps: None,
             target: LightingTarget::Off,
+            applied: 0,
             portal: Some(PORTAL.into()),
             failure: None,
         }
@@ -112,6 +113,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
     peer.send(Command::ResetVideo {});
     peer.send(Command::Target {
         target: LightingTarget::ScreenSync,
+        sequence: 1,
     });
     let running = peer
         .wait_for("a capturing status", |e| {
@@ -119,6 +121,11 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         })
         .await;
     assert_eq!(status(&running).unwrap().target, LightingTarget::ScreenSync);
+    assert_eq!(
+        status(&running).unwrap().applied,
+        1,
+        "it says what it applied"
+    );
     assert_eq!(
         feed.current(),
         Readiness {
@@ -131,6 +138,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
 
     peer.send(Command::Target {
         target: LightingTarget::Off,
+        sequence: 2,
     });
     peer.wait_for("a status that is not capturing", |e| {
         status(e).is_some_and(|s| !s.capturing)
@@ -195,6 +203,7 @@ async fn a_failed_session_is_retried_and_reported() {
 
     peer.send(Command::Target {
         target: LightingTarget::Off,
+        sequence: 1,
     });
     peer.wait_for("a status with lighting off", |e| {
         status(e).is_some_and(|s| s.target == LightingTarget::Off)
@@ -252,6 +261,7 @@ async fn the_link_retries_after_the_delay_and_not_after_off() {
 
     peer.send(Command::Target {
         target: LightingTarget::Off,
+        sequence: 1,
     });
     peer.wait_for("a status with lighting off", |e| {
         status(e).is_some_and(|s| s.target == LightingTarget::Off)
@@ -339,6 +349,7 @@ async fn an_unconfirmed_release_on_a_commanded_stop_faults_the_worker() {
     assert!(log.wait_for("output.write:", 1).await);
     peer.send(Command::Target {
         target: LightingTarget::Off,
+        sequence: 1,
     });
     let fault = loop {
         let event = peer.event().await.unwrap();
@@ -431,6 +442,7 @@ async fn a_session_waiting_for_video_is_not_capturing() {
 
     peer.send(Command::Target {
         target: LightingTarget::Off,
+        sequence: 1,
     });
     peer.wait_for("a status with lighting off", |e| {
         status(e).is_some_and(|s| s.target == LightingTarget::Off)

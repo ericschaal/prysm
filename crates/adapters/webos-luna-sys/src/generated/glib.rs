@@ -13,6 +13,13 @@ pub type gboolean = gint;
 pub type guint = ::std::os::raw::c_uint;
 pub type gpointer = *mut ::std::os::raw::c_void;
 pub type GDestroyNotify = ::std::option::Option<unsafe extern "C" fn(data: gpointer)>;
+pub const GIOCondition_G_IO_IN: GIOCondition = 1;
+pub const GIOCondition_G_IO_OUT: GIOCondition = 4;
+pub const GIOCondition_G_IO_PRI: GIOCondition = 2;
+pub const GIOCondition_G_IO_ERR: GIOCondition = 8;
+pub const GIOCondition_G_IO_HUP: GIOCondition = 16;
+pub const GIOCondition_G_IO_NVAL: GIOCondition = 32;
+pub type GIOCondition = ::std::os::raw::c_uint;
 pub type GMainContext = u8;
 pub type GMainLoop = u8;
 pub type GSource = __BindgenOpaqueArray<[u32; 13usize]>;
@@ -37,6 +44,8 @@ pub struct Glib {
         notify: GDestroyNotify,
     ),
     pub g_timeout_source_new: unsafe extern "C" fn(interval: guint) -> *mut GSource,
+    pub g_unix_fd_source_new:
+        unsafe extern "C" fn(fd: gint, condition: GIOCondition) -> *mut GSource,
 }
 impl Glib {
     pub unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
@@ -67,6 +76,8 @@ impl Glib {
             unsafe { __library.get(b"g_source_set_callback\0") }.map(|sym| *sym)?;
         let g_timeout_source_new =
             unsafe { __library.get(b"g_timeout_source_new\0") }.map(|sym| *sym)?;
+        let g_unix_fd_source_new =
+            unsafe { __library.get(b"g_unix_fd_source_new\0") }.map(|sym| *sym)?;
         Ok(Glib {
             __library,
             g_main_context_new,
@@ -80,6 +91,7 @@ impl Glib {
             g_source_destroy,
             g_source_set_callback,
             g_timeout_source_new,
+            g_unix_fd_source_new,
         })
     }
     pub unsafe fn g_main_context_new(&self) -> *mut GMainContext {
@@ -128,5 +140,8 @@ impl Glib {
     }
     pub unsafe fn g_timeout_source_new(&self, interval: guint) -> *mut GSource {
         unsafe { (self.g_timeout_source_new)(interval) }
+    }
+    pub unsafe fn g_unix_fd_source_new(&self, fd: gint, condition: GIOCondition) -> *mut GSource {
+        unsafe { (self.g_unix_fd_source_new)(fd, condition) }
     }
 }

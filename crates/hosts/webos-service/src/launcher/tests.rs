@@ -6,8 +6,15 @@ use std::time::{Duration, Instant};
 /// How long a worker may take to say something or to exit.
 const LIMIT: Duration = Duration::from_secs(5);
 
+/// A launcher whose wakes go to a socket nobody reads.
+fn launcher() -> ProcessLauncher {
+    static WAKE: std::sync::LazyLock<prysm_webos_luna_sys::Wake> =
+        std::sync::LazyLock::new(|| prysm_webos_luna_sys::Wake::new().unwrap());
+    ProcessLauncher::new(WAKE.waker())
+}
+
 fn sh(script: &str) -> ProcessWorker {
-    ProcessLauncher
+    launcher()
         .spawn(Path::new("/bin/sh"), &["-c".into(), script.into()])
         .unwrap()
 }
@@ -34,7 +41,7 @@ fn exit(worker: &mut ProcessWorker) -> Exit {
 #[test]
 fn events_logs_commands_and_exit_code() {
     let mut worker = sh(
-        r#"echo '{"type":"status","flavor":"full","capturing":true,"target":"off"}'
+        r#"echo '{"type":"status","flavor":"full","capturing":true,"target":"off","applied":0}'
 echo started >&2
 read command
 echo "got $command" >&2
@@ -155,7 +162,7 @@ fn an_endless_log_line_is_skipped_in_bounded_memory() {
 #[test]
 fn a_missing_program_fails_to_spawn() {
     assert!(
-        ProcessLauncher
+        launcher()
             .spawn(Path::new("/nonexistent/prysm-webos"), &[])
             .is_err()
     );

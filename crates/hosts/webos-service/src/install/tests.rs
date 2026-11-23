@@ -3,6 +3,7 @@
 use super::*;
 use crate::identity::APP_ID;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::time::Instant;
 
 struct Sandbox {
     dir: tempfile::TempDir,

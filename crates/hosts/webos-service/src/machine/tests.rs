@@ -61,8 +61,8 @@ fn video(video: Video) -> Effect {
     Effect::Send(Command::Video { video })
 }
 
-fn send_target(target: LightingTarget) -> Effect {
-    Effect::Send(Command::Target { target })
+fn send_target(target: LightingTarget, sequence: u64) -> Effect {
+    Effect::Send(Command::Target { target, sequence })
 }
 
 /// The published failure's message.
@@ -78,12 +78,14 @@ fn kind(state: &State) -> Option<FailureKind> {
     state.failure.as_ref().map(|failure| failure.kind)
 }
 
-/// A full worker's report of `target`: no frames, no portal, no failure.
+/// A full worker's report of `target`: no frames, no portal, no failure,
+/// no target command applied.
 fn full_report(target: LightingTarget) -> FullStatus {
     FullStatus {
         capturing: false,
         fps: None,
         target,
+        applied: 0,
         portal: None,
         failure: None,
     }
@@ -96,6 +98,14 @@ fn reported(status: WorkerStatus) -> Input {
 /// A full worker reports `target` and nothing else.
 fn status(target: LightingTarget) -> Input {
     full_status(full_report(target))
+}
+
+/// A full worker reports `target`, having applied target command `applied`.
+fn status_after(target: LightingTarget, applied: u64) -> Input {
+    full_status(FullStatus {
+        applied,
+        ..full_report(target)
+    })
 }
 
 fn full_status(status: FullStatus) -> Input {
@@ -227,10 +237,12 @@ fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
             (
                 10,
                 Target(LightingTarget::Off),
-                vec![send_target(LightingTarget::Off)],
+                vec![send_target(LightingTarget::Off, 1)],
             ),
-            // An older report within the echo window does not undo it.
+            // A report sent before the worker read the command, however
+            // late it comes, does not undo it.
             (20, status(LightingTarget::ScreenSync), vec![]),
+            (60_000, status(LightingTarget::ScreenSync), vec![]),
         ],
     );
     assert_eq!(full_state(&m.state(t)).0, LightingTarget::Off);
@@ -238,9 +250,9 @@ fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
         &mut m,
         t,
         vec![
-            (30, status(LightingTarget::Off), vec![]),
+            (60_010, status_after(LightingTarget::Off, 1), vec![]),
             // The portal turned the lights' own effects on.
-            (40, status(LightingTarget::Effects), vec![]),
+            (60_020, status_after(LightingTarget::Effects, 1), vec![]),
         ],
     );
     assert_eq!(full_state(&m.state(t)).0, LightingTarget::Effects);
@@ -248,28 +260,74 @@ fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
         &mut m,
         t,
         vec![
-            // The app's target is sent as chosen.
+            // The app's targets are sent as chosen, each with the next number.
             (
-                50,
+                60_030,
                 Target(LightingTarget::ScreenSync),
-                vec![send_target(LightingTarget::ScreenSync)],
+                vec![send_target(LightingTarget::ScreenSync, 2)],
             ),
             (
-                60,
+                60_040,
                 Target(LightingTarget::Off),
-                vec![send_target(LightingTarget::Off)],
+                vec![send_target(LightingTarget::Off, 3)],
             ),
-            (2059, status(LightingTarget::ScreenSync), vec![]),
+            (60_050, status_after(LightingTarget::ScreenSync, 2), vec![]),
         ],
     );
     assert_eq!(full_state(&m.state(t)).0, LightingTarget::Off);
-    // After the echo window the worker's report wins again.
+    // Once the worker applied the last one, its report wins again.
     script(
         &mut m,
         t,
-        vec![(2060, status(LightingTarget::ScreenSync), vec![])],
+        vec![(60_060, status_after(LightingTarget::ScreenSync, 3), vec![])],
     );
     assert_eq!(full_state(&m.state(t)).0, LightingTarget::ScreenSync);
+}
+
+/// A new worker starts with the target in its arguments and counts target
+/// commands from 1 again: its reports count from the start.
+#[test]
+fn a_new_worker_counts_target_commands_afresh() {
+    let (mut m, t) = (full(), Instant::now());
+    script(
+        &mut m,
+        t,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (
+                1,
+                Target(LightingTarget::ScreenSync),
+                vec![send_target(LightingTarget::ScreenSync, 1)],
+            ),
+            (
+                2,
+                Target(LightingTarget::Effects),
+                vec![send_target(LightingTarget::Effects, 2)],
+            ),
+            (3, Exited(Exit::Code(1)), vec![]),
+            (
+                1003,
+                Tick,
+                vec![spawn_full(LightingTarget::Effects), video(Video::Unknown)],
+            ),
+            // The portal on the new worker turned the lights off.
+            (1004, status(LightingTarget::Off), vec![]),
+        ],
+    );
+    assert_eq!(full_state(&m.state(t)).0, LightingTarget::Off);
+    script(
+        &mut m,
+        t,
+        vec![(
+            1005,
+            Target(LightingTarget::ScreenSync),
+            vec![send_target(LightingTarget::ScreenSync, 1)],
+        )],
+    );
 }
 
 #[test]
@@ -876,6 +934,7 @@ fn published_state_reflects_the_worker() {
         full_status(FullStatus {
             capturing: true,
             fps: Some(30),
+            applied: 0,
             target: LightingTarget::ScreenSync,
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
@@ -990,9 +1049,9 @@ fn only_a_running_worker_is_capturing() {
             (
                 2,
                 Target(LightingTarget::Off),
-                vec![send_target(LightingTarget::Off)],
+                vec![send_target(LightingTarget::Off, 1)],
             ),
-            (3, status(LightingTarget::Off), vec![]),
+            (3, status_after(LightingTarget::Off, 1), vec![]),
         ],
     );
     let state = m.state(t0);
@@ -1006,7 +1065,7 @@ fn only_a_running_worker_is_capturing() {
         vec![(
             4,
             Target(LightingTarget::ScreenSync),
-            vec![send_target(LightingTarget::ScreenSync)],
+            vec![send_target(LightingTarget::ScreenSync, 2)],
         )],
     );
     script(&mut m, t0, vec![(5, capturing.clone(), vec![])]);
@@ -2107,7 +2166,7 @@ fn every_full_target_takes_every_lighting_input() {
                 script(&mut m, t0, steps);
                 let running = phase == "running";
                 let (effects, intent) = match input {
-                    Target(target) if running => (vec![send_target(target)], target),
+                    Target(target) if running => (vec![send_target(target, 1)], target),
                     Target(target) => (vec![], target),
                     _ => (vec![], from),
                 };
@@ -2123,4 +2182,38 @@ fn every_full_target_takes_every_lighting_input() {
             }
         }
     }
+}
+
+/// Every phase says when `Tick` next acts, never a time already past: a
+/// running worker's healthy time, once reached, is not due again.
+#[test]
+fn every_phase_says_when_it_is_next_due() {
+    let t0 = Instant::now();
+    let at = |ms| t0 + Duration::from_millis(ms);
+    let mut m = full();
+    assert_eq!(m.next_due(t0), None, "idle: only an input changes anything");
+    m.handle(Pw(Active), t0);
+    assert_eq!(m.next_due(t0), Some(t0 + SILENCE), "running, not heard");
+    m.handle(status(LightingTarget::Off), at(50_000));
+    assert_eq!(m.next_due(at(50_000)), Some(t0 + Backoff::HEALTHY));
+    let healthy = t0 + Backoff::HEALTHY;
+    m.handle(Tick, healthy);
+    assert_eq!(m.next_due(healthy), Some(at(50_000) + SILENCE));
+    m.handle(Pw(Asleep), at(61_000));
+    assert_eq!(
+        m.next_due(at(61_000)),
+        Some(at(61_000) + KILL_AFTER),
+        "stopping: the kill"
+    );
+    m.handle(Tick, at(61_000) + KILL_AFTER);
+    assert_eq!(
+        m.next_due(at(61_000) + KILL_AFTER),
+        Some(at(61_000) + KILL_AFTER * 2),
+        "killed: letting go"
+    );
+
+    let mut m = full();
+    m.handle(Pw(Active), t0);
+    m.handle(Exited(Exit::Code(1)), at(1));
+    assert_eq!(m.next_due(at(1)), Some(at(1) + Backoff::MIN), "retrying");
 }

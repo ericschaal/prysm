@@ -104,7 +104,7 @@ fn start<S: Upstream + 'static>(
     let surface = ForwarderLink::new(link, feed.clone(), flow)
         .with_timing(Duration::from_millis(30), Duration::from_millis(100));
     let task = tokio::spawn(async move {
-        let result = Forwarder::new(source, sink)
+        let result = Forwarder::new(source, sink, crate::STOP_DEADLINE)
             .surface(surface)
             .run(stop.stopped())
             .await;
@@ -470,6 +470,7 @@ async fn a_target_is_protocol_misuse() {
     let (peer, _feed, task) = start_fake(FakeSourceSettings::default());
     peer.send(Command::Target {
         target: LightingTarget::ScreenSync,
+        sequence: 1,
     });
     let (result, stop) = task.await.unwrap();
     result.unwrap();

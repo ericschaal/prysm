@@ -1,5 +1,9 @@
 import { useEffect, useState, type RefObject } from 'react';
-import type { ColorsClient, ColorsEvent } from '@prysm/application-client';
+import {
+  reconnectDelayMs,
+  type ColorsClient,
+  type ColorsEvent,
+} from '@prysm/application-client';
 
 type Rgb = readonly number[];
 type Edge = 'top' | 'right' | 'bottom' | 'left';
@@ -211,17 +215,13 @@ export function usePageVisible() {
   return visible;
 }
 
-/** Wait before reconnecting: 1 s, 2 s, 4 s … up to 30 s. */
-export const colorsRetryMs = (attempt: number) =>
-  Math.min(30_000, 1000 * 2 ** attempt);
-
 /**
  * While `active`, stream the LEDs' colours onto `target` as CSS custom
  * properties (see `ledProperties`) and say what the glow shows in its
  * `data-live`: `colors`, or `idle` while the lights show none. Written
  * through the CSSOM, never through React state: no render per event. A
- * failed or ended stream is retried quietly with backoff; meanwhile
- * `data-live` is absent and the glow is the designed one.
+ * failed or ended stream is retried quietly after {@link reconnectDelayMs};
+ * meanwhile `data-live` is absent and the glow is the designed one.
  */
 export function useLiveColors(
   client: ColorsClient | undefined,
@@ -258,7 +258,7 @@ export function useLiveColors(
         if (signal.aborted) break;
         element.removeAttribute('data-live');
         await new Promise((resolve) => {
-          const timer = setTimeout(resolve, colorsRetryMs(attempt));
+          const timer = setTimeout(resolve, reconnectDelayMs(attempt));
           signal.addEventListener(
             'abort',
             () => {

@@ -11,8 +11,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-/// How long a sent `Target` wins over older worker reports.
-pub const ECHO: Duration = Duration::from_secs(2);
 pub const LOG_LINES: usize = 20;
 
 /// What the machine reacts to.
@@ -131,6 +129,10 @@ enum Package {
         listen: SocketAddr,
         /// The engine target, reported by the worker and used at spawn.
         target: LightingTarget,
+        /// The `sequence` of the last [`Command::Target`] sent to the
+        /// current worker; 0 before any (it started with `target`). A report
+        /// that applied an older one does not change `target` back.
+        sent: u64,
         report: Option<FullStatus>,
     },
     Slim {
@@ -188,7 +190,6 @@ impl Package {
 pub struct Machine {
     package: Package,
     preferences: Preferences,
-    echo_until: Option<Instant>,
     power: Power,
     video: Video,
     phase: Phase,
@@ -233,6 +234,7 @@ impl Machine {
                     settings,
                     listen,
                     target: intent,
+                    sent: 0,
                     report: None,
                 },
                 Spec::Slim => Package::Slim {
@@ -241,7 +243,6 @@ impl Machine {
                 },
             },
             preferences,
-            echo_until: None,
             power: Power::Unknown,
             video: Video::Unknown,
             phase: Phase::Idle,
@@ -303,7 +304,7 @@ impl Machine {
                 }
             }
             Input::Preferences(preferences) => self.set_preferences(preferences, now, &mut effects),
-            Input::Target(target) => self.set_target(target, now, &mut effects),
+            Input::Target(target) => self.set_target(target, &mut effects),
             Input::Enabled(enabled) => self.set_enabled(enabled),
             Input::Worker(event) => self.worker_event(event, now, &mut effects),
             Input::WorkerLog(line) => {
@@ -460,6 +461,9 @@ impl Machine {
     }
 
     fn spawn(&mut self, arguments: Vec<String>, now: Instant, effects: &mut Vec<Effect>) {
+        if let Package::Full { sent, .. } = &mut self.package {
+            *sent = 0;
+        }
         effects.push(Effect::Spawn(arguments));
         effects.push(Effect::Send(Command::Video {
             video: self.effective_video(),
@@ -543,19 +547,25 @@ impl Machine {
     }
 
     /// Full: the worker stays wanted whatever the target, so its failure
-    /// and backoff stay current; a running one is sent the target.
-    fn set_target(&mut self, target: LightingTarget, now: Instant, effects: &mut Vec<Effect>) {
+    /// and backoff stay current; a running one is sent the target, with the
+    /// next sequence number.
+    fn set_target(&mut self, target: LightingTarget, effects: &mut Vec<Effect>) {
         let running = self.running();
         let Package::Full {
-            target: current, ..
+            target: current,
+            sent,
+            ..
         } = &mut self.package
         else {
             return;
         };
         *current = target;
         if running {
-            effects.push(Effect::Send(Command::Target { target }));
-            self.echo_until = Some(now + ECHO);
+            *sent += 1;
+            effects.push(Effect::Send(Command::Target {
+                target,
+                sequence: *sent,
+            }));
         }
     }
 
@@ -603,7 +613,7 @@ impl Machine {
         // receiver, which takes its frames or paused the stream): the last
         // worker's failure is no longer current.
         let (up, target) = match &status {
-            WorkerStatus::Full(full) => (full.failure.is_none(), Some(full.target)),
+            WorkerStatus::Full(full) => (full.failure.is_none(), Some((full.target, full.applied))),
             WorkerStatus::Slim(slim) => (
                 matches!(slim.link, SlimLink::Sending { .. } | SlimLink::Paused {}),
                 None,
@@ -617,23 +627,23 @@ impl Machine {
         if up {
             self.failure = None;
         }
-        if let Some(target) = target {
-            self.follow(target, now);
+        if let Some((target, applied)) = target {
+            self.follow(target, applied);
         }
     }
 
-    /// Full: take the worker's target (also changed in the portal), unless a
-    /// target sent within [`ECHO`] is still on its way to the worker.
-    fn follow(&mut self, target: LightingTarget, now: Instant) {
+    /// Full: take the worker's target (also changed in the portal) from a
+    /// report that `applied` the last target sent; an older report was sent
+    /// before the worker read it.
+    fn follow(&mut self, target: LightingTarget, applied: u64) {
         if let Package::Full {
-            target: current, ..
+            target: current,
+            sent,
+            ..
         } = &mut self.package
+            && applied >= *sent
         {
-            let echoed = self.echo_until.is_none_or(|until| now >= until);
-            if echoed || target == *current {
-                *current = target;
-                self.echo_until = None;
-            }
+            *current = target;
         }
     }
 
@@ -685,6 +695,22 @@ impl Machine {
         }
     }
 
+    /// When [`Input::Tick`] next has something to do, after `now`: a
+    /// running worker's [`Backoff::HEALTHY`] and [`SILENCE`], a stopping
+    /// one's kill or letting go, the end of a backoff. `None`: only an input
+    /// changes anything.
+    #[must_use]
+    pub fn next_due(&self, now: Instant) -> Option<Instant> {
+        match self.phase {
+            Phase::Idle => None,
+            Phase::Running { since, heard } => {
+                let healthy = Some(since + Backoff::HEALTHY).filter(|&at| at > now);
+                healthy.into_iter().chain([heard + SILENCE]).min()
+            }
+            Phase::Stopping { at, .. } | Phase::Retrying { at } => Some(at),
+        }
+    }
+
     fn tick(&mut self, now: Instant, effects: &mut Vec<Effect>) {
         match self.phase {
             Phase::Running { since, heard } => {
@@ -716,9 +742,6 @@ impl Machine {
                 }
             },
             _ => {}
-        }
-        if self.echo_until.is_some_and(|until| now >= until) {
-            self.echo_until = None;
         }
     }
 }

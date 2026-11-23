@@ -1,7 +1,8 @@
 //! Stand-ins for every LS2 and GLib function, recording calls per thread, so
 //! the wrapper's ownership and ordering run on the development host.
 use crate::generated::glib::{
-    GDestroyNotify, GMainContext, GSource, GSourceFunc, gboolean, gpointer, guint,
+    GDestroyNotify, GIOCondition, GMainContext, GSource, GSourceFunc, gboolean, gint, gpointer,
+    guint,
 };
 use crate::generated::luna::{
     GMainLoop, LSError, LSFilterFunc, LSHandle, LSMessage, LSMessageToken, LSMethod,
@@ -25,7 +26,10 @@ struct State {
     method: LSMethodFunction,
     data: Option<*mut c_void>,
     lscalls: Vec<(LSFilterFunc, *mut c_void)>,
+    /// The armed timer's callback; gone once it is destroyed.
     timer: Option<(GSourceFunc, gpointer)>,
+    /// The wake watch's callback.
+    watch: Option<(GSourceFunc, gpointer)>,
     quit: bool,
     script: Option<Script>,
 }
@@ -145,12 +149,31 @@ pub fn invoke_call(index: usize, payload: &str) {
     unsafe { callback.unwrap()(NonNull::dangling().as_ptr(), message.raw(), data) };
 }
 
-/// Fire the timer; `true` once the loop was asked to quit.
+/// Fire the armed timer; `true` once the loop was asked to quit.
 pub fn invoke_timer() -> bool {
-    let (callback, data) = STATE.with_borrow(|state| state.timer.expect("a timer"));
+    let (callback, data) = STATE.with_borrow(|state| state.timer.expect("an armed timer"));
     // SAFETY: the wrapper installed this callback and data on the source.
     unsafe { callback.unwrap()(data) };
     STATE.with_borrow(|state| state.quit)
+}
+
+/// Whether a timer is armed.
+pub fn armed() -> bool {
+    STATE.with_borrow(|state| state.timer.is_some())
+}
+
+/// Report the wake socket readable, as GLib would.
+pub fn invoke_wake() {
+    let (callback, data) = STATE.with_borrow(|state| state.watch.expect("a wake watch"));
+    // SAFETY: the wrapper installed a `GUnixFDSourceFunc` cast to
+    // `GSourceFunc`, as GLib's unix fd sources take it.
+    unsafe {
+        let callback = std::mem::transmute::<
+            unsafe extern "C" fn(gpointer) -> gboolean,
+            unsafe extern "C" fn(gint, GIOCondition, gpointer) -> gboolean,
+        >(callback.unwrap());
+        callback(0, 1, data);
+    }
 }
 
 /// # Safety
@@ -338,21 +361,50 @@ pub unsafe extern "C" fn loop_quit(_: *mut GMainLoop) {
     record("quit");
     STATE.with_borrow_mut(|state| state.quit = true);
 }
+/// The timer's and the watch's stand-in sources: two addresses, never read.
+static TIMER: u8 = 0;
+static WATCH: u8 = 0;
+
+fn is(source: *mut GSource, of: &'static u8) -> bool {
+    std::ptr::eq(source.cast_const().cast::<u8>(), of)
+}
+
 pub unsafe extern "C" fn source_unref(_: *mut GSource) {
     record("source unref");
+}
+pub unsafe extern "C" fn source_destroy(source: *mut GSource) {
+    if is(source, &TIMER) {
+        record("timer destroy");
+        STATE.with_borrow_mut(|state| state.timer = None);
+    } else {
+        record("watch destroy");
+        STATE.with_borrow_mut(|state| state.watch = None);
+    }
 }
 pub unsafe extern "C" fn source_attach(_: *mut GSource, _: *mut GMainContext) -> guint {
     1
 }
 pub unsafe extern "C" fn source_callback(
-    _: *mut GSource,
+    source: *mut GSource,
     function: GSourceFunc,
     data: gpointer,
     _: GDestroyNotify,
 ) {
-    STATE.with_borrow_mut(|state| state.timer = Some((function, data)));
+    let timer = is(source, &TIMER);
+    STATE.with_borrow_mut(|state| {
+        let slot = if timer {
+            &mut state.timer
+        } else {
+            &mut state.watch
+        };
+        *slot = Some((function, data));
+    });
 }
 pub unsafe extern "C" fn timer_new(interval: guint) -> *mut GSource {
     record(format!("timer {interval}"));
-    NonNull::dangling().as_ptr()
+    std::ptr::from_ref(&TIMER).cast_mut().cast()
+}
+pub unsafe extern "C" fn watch_new(_: gint, condition: GIOCondition) -> *mut GSource {
+    record(format!("watch {condition}"));
+    std::ptr::from_ref(&WATCH).cast_mut().cast()
 }

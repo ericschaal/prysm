@@ -11,13 +11,16 @@ use crate::Error;
 use crate::generated::glib::{self, Glib};
 use crate::generated::luna::{self as ffi, LSHandle, LSMessage, LSMethod, Luna};
 use std::cell::{Cell, RefCell};
-use std::ffi::{CStr, CString, c_char, c_void};
-use std::io::Write;
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::io::{self, Read, Write};
 use std::mem::MaybeUninit;
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{self, NonNull};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Instant;
 
 /// Largest request payload passed to the handler.
 pub const MAX_PAYLOAD: usize = 4096;
@@ -64,8 +67,69 @@ pub trait Handler {
     fn request(&mut self, bus: &mut Bus, request: Request<'_>) -> Response;
     /// A reply to call `index` of [`Config::calls`].
     fn reply(&mut self, bus: &mut Bus, index: usize, payload: &str);
-    /// Called every [`Config::tick`]. `false` ends [`run`].
-    fn tick(&mut self, bus: &mut Bus, now: Instant) -> bool;
+    /// Called when the loop starts, at the loop's next turn after every
+    /// request and reply, when [woken](Waker::wake), and at the time it last
+    /// asked for. There is no timer of its own: it says when it is next due.
+    fn poll(&mut self, bus: &mut Bus, now: Instant) -> Next;
+}
+
+/// When [`Handler::poll`] wants to run again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Next {
+    /// At this time, or at an event before it.
+    At(Instant),
+    /// At the next event only.
+    Event,
+    /// Never: [`run`] ends.
+    Stop,
+}
+
+/// What wakes the loop from another thread or a signal handler: a
+/// non-blocking socket pair whose read end [`run`] watches. A [`Waker`] may
+/// outlive both, and its wakes then go nowhere.
+#[derive(Debug)]
+pub struct Wake {
+    read: UnixStream,
+    write: Waker,
+}
+
+/// The writing end of a [`Wake`]. Cheap to clone, and safe from any thread.
+#[derive(Debug, Clone)]
+pub struct Waker(Arc<UnixStream>);
+
+impl Wake {
+    /// # Errors
+    /// The socket pair cannot be created.
+    pub fn new() -> io::Result<Self> {
+        let (read, write) = UnixStream::pair()?;
+        read.set_nonblocking(true)?;
+        write.set_nonblocking(true)?;
+        Ok(Self {
+            read,
+            write: Waker(Arc::new(write)),
+        })
+    }
+
+    #[must_use]
+    pub fn waker(&self) -> Waker {
+        self.write.clone()
+    }
+}
+
+impl Waker {
+    /// Wake the loop. A full socket already holds a wake, so nothing is lost.
+    pub fn wake(&self) {
+        let _ = (&*self.0).write(&[0]);
+    }
+
+    /// Another handle on the writing end, for a signal handler that writes
+    /// to it (such as `signal_hook::low_level::pipe`).
+    ///
+    /// # Errors
+    /// The descriptor cannot be duplicated.
+    pub fn try_clone_stream(&self) -> io::Result<UnixStream> {
+        self.0.try_clone()
+    }
 }
 
 /// Why the bus answers a call itself, in place of the handler's reply.
@@ -86,13 +150,14 @@ pub struct Config<'a> {
     pub methods: &'a [&'a str],
     /// `(uri, payload)` calls kept open, normally `{"subscribe":true}`.
     pub calls: &'a [(&'a str, &'a str)],
-    pub tick: Duration,
+    /// What wakes [`Handler::poll`] besides requests, replies and its time.
+    pub wake: &'a Wake,
     /// The error reply for a [`Refusal`] and its text, in the service's
     /// own error shape.
     pub refuse: fn(Refusal, &str) -> String,
 }
 
-/// Register, run the loop until the handler's `tick` returns `false`, then
+/// Register, run the loop until [`Handler::poll`] says [`Next::Stop`], then
 /// cancel calls and unregister.
 ///
 /// # Errors
@@ -114,8 +179,10 @@ pub(crate) fn run_with(
     handler: Box<dyn Handler>,
 ) -> Result<(), Error> {
     let mut service = Service::new(luna, glib, config, handler)?;
-    service.register(config.tick)?;
+    service.register()?;
     let state = &service.callbacks;
+    // The first poll runs inside the loop: a quit before it runs is lost.
+    state.arm(Some(Instant::now()));
     // SAFETY: the private loop is live and only driven here, on its owner thread.
     unsafe {
         state.glib.g_main_loop_run(state.main_loop.as_ptr());
@@ -143,13 +210,23 @@ struct Callbacks {
     refuse: fn(Refusal, &str) -> String,
     calls: Box<[Call]>,
     closing: Cell<bool>,
+    /// A poll runs now; a request or reply during it (one LS2 delivers while
+    /// the poll's bus actions run) sets `again`.
+    polling: Cell<bool>,
+    again: Cell<bool>,
+    /// The handler's next poll ([`Next::At`]), until it fires or is
+    /// replaced.
+    timer: Cell<Option<NonNull<glib::GSource>>>,
+    /// The read end of [`Config::wake`].
+    wake: UnixStream,
 }
 
 struct Service {
     callbacks: Rc<Callbacks>,
     methods: Box<[LSMethod]>,
     _names: Box<[CString]>,
-    timer: Option<NonNull<glib::GSource>>,
+    /// Watches the [`Wake`]'s read end.
+    watch: Option<NonNull<glib::GSource>>,
 }
 
 impl Service {
@@ -160,6 +237,7 @@ impl Service {
         handler: Box<dyn Handler>,
     ) -> Result<Self, Error> {
         let name = CString::new(config.name).map_err(|_| Error::Nul)?;
+        let wake = config.wake.read.try_clone().map_err(Error::Wake)?;
         let names = config
             .methods
             .iter()
@@ -214,6 +292,10 @@ impl Service {
             refuse: config.refuse,
             calls,
             closing: Cell::new(false),
+            polling: Cell::new(false),
+            again: Cell::new(false),
+            timer: Cell::new(None),
+            wake,
         });
         for call in &callbacks.calls {
             call.owner.set(Rc::as_ptr(&callbacks));
@@ -235,11 +317,11 @@ impl Service {
             callbacks,
             methods,
             _names: names,
-            timer: None,
+            watch: None,
         })
     }
 
-    fn register(&mut self, tick: Duration) -> Result<(), Error> {
+    fn register(&mut self) -> Result<(), Error> {
         let state = &self.callbacks;
         let data = Rc::as_ptr(state).cast_mut().cast::<c_void>();
         check(state.luna, "LSRegisterCategory", |error| {
@@ -280,25 +362,37 @@ impl Service {
                 ));
             }
         }
-        let interval = u32::try_from(tick.as_millis()).unwrap_or(u32::MAX).max(1);
-        // SAFETY: a caller-owned timer source; kept even if attaching fails.
-        let timer = NonNull::new(unsafe { state.glib.g_timeout_source_new(interval) })
-            .ok_or(Error::Glib("cannot create the tick timer"))?;
-        self.timer = Some(timer);
-        // SAFETY: source and data are live; no destroy notify owns the Rc pointee.
-        unsafe {
+        let fd = state.wake.as_raw_fd();
+        // SAFETY: a descriptor the callbacks own until after this source is
+        // destroyed, watched for input only; a caller-owned source, kept
+        // even if attaching fails.
+        let watch = NonNull::new(unsafe {
             state
                 .glib
-                .g_source_set_callback(timer.as_ptr(), Some(timer_callback), data, None);
+                .g_unix_fd_source_new(fd, glib::GIOCondition_G_IO_IN)
+        })
+        .ok_or(Error::Glib("cannot watch the wake socket"))?;
+        self.watch = Some(watch);
+        // SAFETY: a unix fd source calls a `GUnixFDSourceFunc`, which GLib
+        // takes cast to `GSourceFunc` (glib-unix.h); the data is live while
+        // Service owns the Rc, and no destroy notify owns it.
+        unsafe {
+            let callback = std::mem::transmute::<
+                unsafe extern "C" fn(c_int, glib::GIOCondition, *mut c_void) -> glib::gboolean,
+                unsafe extern "C" fn(*mut c_void) -> glib::gboolean,
+            >(wake_callback);
+            state
+                .glib
+                .g_source_set_callback(watch.as_ptr(), Some(callback), data, None);
         }
         // SAFETY: attach only to our private context, never the global default.
         let id = unsafe {
             state
                 .glib
-                .g_source_attach(timer.as_ptr(), state.context.as_ptr())
+                .g_source_attach(watch.as_ptr(), state.context.as_ptr())
         };
         if id == 0 {
-            return Err(Error::Glib("cannot attach the tick timer"));
+            return Err(Error::Glib("cannot attach the wake watch"));
         }
         Ok(())
     }
@@ -417,7 +511,9 @@ impl Callbacks {
                 // The handler has run: what it asked of the bus happens
                 // whether or not its reply went out.
                 self.apply(bus);
-                sent.or_else(|error| refuse(Refusal::Internal, &error.to_string()))
+                let sent = sent.or_else(|error| refuse(Refusal::Internal, &error.to_string()));
+                self.soon();
+                sent
             }
             Err((refusal, text)) => refuse(refusal, &text),
         }
@@ -444,10 +540,22 @@ impl Callbacks {
         handler.reply(&mut bus, index, &payload);
         drop(handler);
         self.apply(bus);
+        self.soon();
         Ok(())
     }
 
-    fn tick(&self) {
+    /// Poll at the next turn of the loop, after this callback (and its reply)
+    /// is done; during a poll, once that poll is done.
+    fn soon(&self) {
+        if self.polling.get() {
+            self.again.set(true);
+        } else {
+            self.arm(Some(Instant::now()));
+        }
+    }
+
+    /// Poll the handler, then do what it asked: arm its timer, or quit.
+    fn poll(&self) {
         if self.closing.get() {
             return;
         }
@@ -455,14 +563,70 @@ impl Callbacks {
         let Ok(mut handler) = self.handler.try_borrow_mut() else {
             return;
         };
-        let keep = handler.tick(&mut bus, Instant::now());
+        self.polling.set(true);
+        let next = handler.poll(&mut bus, Instant::now());
         drop(handler);
         self.apply(bus);
-        if !keep {
-            // SAFETY: the private loop is live on this owner thread.
-            unsafe { self.glib.g_main_loop_quit(self.main_loop.as_ptr()) };
+        self.polling.set(false);
+        // A request or reply came while this poll ran: what it said is not
+        // in `next`.
+        let again = self.again.take();
+        match next {
+            Next::At(_) | Next::Event if again => self.arm(Some(Instant::now())),
+            Next::At(at) => self.arm(Some(at)),
+            Next::Event => self.arm(None),
+            Next::Stop => {
+                self.arm(None);
+                // SAFETY: the private loop is live on this owner thread.
+                unsafe { self.glib.g_main_loop_quit(self.main_loop.as_ptr()) };
+            }
         }
     }
+
+    /// Replace the timer with one that polls at `at` (rounded up to the
+    /// millisecond, so it never fires before), or with none.
+    fn arm(&self, at: Option<Instant>) {
+        if let Some(timer) = self.timer.take() {
+            // SAFETY: our reference to a source we attached; destroying one
+            // from its own dispatch is allowed, GLib holds its own reference.
+            unsafe {
+                self.glib.g_source_destroy(timer.as_ptr());
+                self.glib.g_source_unref(timer.as_ptr());
+            }
+        }
+        let Some(at) = at else {
+            return;
+        };
+        let wait = at.saturating_duration_since(Instant::now());
+        let interval = u32::try_from(wait.as_micros().div_ceil(1000)).unwrap_or(u32::MAX);
+        // SAFETY: a caller-owned timer source.
+        let Some(timer) = NonNull::new(unsafe { self.glib.g_timeout_source_new(interval) }) else {
+            log("cannot create the poll timer");
+            return;
+        };
+        let data = ptr::from_ref(self).cast_mut().cast::<c_void>();
+        // SAFETY: source and data are live; no destroy notify owns the Rc
+        // pointee, and Service destroys this source before freeing it.
+        unsafe {
+            self.glib
+                .g_source_set_callback(timer.as_ptr(), Some(timer_callback), data, None);
+        }
+        // SAFETY: attach only to our private context, never the global default.
+        if unsafe {
+            self.glib
+                .g_source_attach(timer.as_ptr(), self.context.as_ptr())
+        } == 0
+        {
+            log("cannot attach the poll timer");
+        }
+        self.timer.set(Some(timer));
+    }
+}
+
+/// Read every wake sent to `wake` so far: many wakes are one event.
+fn drain(mut wake: &UnixStream) {
+    let mut bytes = [0; 64];
+    while matches!(wake.read(&mut bytes), Ok(read) if read > 0) {}
 }
 
 /// A message borrowed from LS2 for one callback invocation.
@@ -570,11 +734,14 @@ impl Drop for Service {
         // so a synchronous callback during cancellation still sees valid state.
         let state = &self.callbacks;
         state.closing.set(true);
-        if let Some(timer) = self.timer.take() {
+        for source in [state.timer.take(), self.watch.take()]
+            .into_iter()
+            .flatten()
+        {
             // SAFETY: destroy detaches the source before our reference is released.
             unsafe {
-                state.glib.g_source_destroy(timer.as_ptr());
-                state.glib.g_source_unref(timer.as_ptr());
+                state.glib.g_source_destroy(source.as_ptr());
+                state.glib.g_source_unref(source.as_ptr());
             }
         }
         for index in 0..state.calls.len() {
@@ -729,7 +896,22 @@ unsafe extern "C" fn timer_callback(data: *mut c_void) -> i32 {
         // SAFETY: the private source keeps this non-owning pointer while Service owns the Rc.
         let state = unsafe { data.cast::<Callbacks>().as_ref() }
             .ok_or(Error::Glib("missing callback state"))?;
-        state.tick();
+        state.poll();
+        Ok(())
+    });
+    // Kept: `arm` destroys it, also when the poll was skipped.
+    1
+}
+
+/// # Safety
+/// As [`timer_callback`]; GLib calls it when the [`Wake`] socket is readable.
+unsafe extern "C" fn wake_callback(_: c_int, _: glib::GIOCondition, data: *mut c_void) -> i32 {
+    guarded(|| {
+        // SAFETY: as in `timer_callback`.
+        let state = unsafe { data.cast::<Callbacks>().as_ref() }
+            .ok_or(Error::Glib("missing callback state"))?;
+        drain(&state.wake);
+        state.poll();
         Ok(())
     });
     1

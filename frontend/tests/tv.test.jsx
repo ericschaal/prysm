@@ -1082,8 +1082,7 @@ test('the service link: each event in each link state', () => {
   const saved = { autostart: true, prysm_address: null };
   for (const state of Object.values(states))
     for (const [action, check] of [
-      [{ type: 'saved', sent: saved }, (next) => next.pending !== undefined],
-      [{ type: 'settled' }, (next) => next.pending === null],
+      [{ type: 'saved', stored: saved }, (next) => next.pending !== undefined],
       [{ type: 'changing', value: true }, (next) => next.changing === true],
       [
         { type: 'notice', text: 'Done.', error: true },
@@ -3132,7 +3131,7 @@ test('the pattern fragments are MP4 clips, one per pattern of the contract', () 
 });
 
 test('the pattern stream appends the requested pattern in sequence mode and stops on a stall', (t) => {
-  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const fragments = JSON.parse(
     readFileSync(
       resolve(process.cwd(), 'packages/tv-ui/pattern-fragments.json'),
@@ -3227,8 +3226,9 @@ test('the pattern stream appends the requested pattern in sequence mode and stop
   video.currentTime = 1.5;
   buffer.dispatchEvent(new Event('updateend'));
   assert.equal(buffer.appended.length, 5);
+  // Playback moving appends too, without a finished append.
   video.currentTime = 2.2;
-  buffer.dispatchEvent(new Event('updateend'));
+  video.dispatchEvent(new Event('timeupdate'));
   assert.equal(buffer.appended.length, 6);
   assert.deepEqual(buffer.appended.at(-1), bytes('red'));
   // Played video is dropped, keeping the last ten seconds.

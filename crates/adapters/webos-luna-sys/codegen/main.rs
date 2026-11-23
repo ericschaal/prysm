@@ -21,18 +21,18 @@ struct Cli {
     check: bool,
 }
 
-/// `(output file, header, function allowlist, library struct)`.
-const BINDINGS: [(&str, &str, &str, &str); 2] = [
+/// `(output file, headers, function allowlist, library struct)`.
+const BINDINGS: [(&str, &[&str], &str, &str); 2] = [
     (
         "luna",
-        "luna-service2/lunaservice.h",
+        &["luna-service2/lunaservice.h"],
         "LSError(Init|Free)|LS(Register|RegisterCategory|CategorySetData|Unregister|GmainAttach|MessageGetPayload|MessageGetMethod|MessageGetApplicationID|MessageGetSenderServiceName|MessageReply|SubscriptionProcess|SubscriptionReply|Call|CallCancel)",
         "Luna",
     ),
     (
         "glib",
-        "glib-2.0/glib.h",
-        "g_main_context_(new|unref)|g_main_loop_(new|run|quit|unref)|g_timeout_source_new|g_source_(set_callback|attach|destroy|unref)",
+        &["glib-2.0/glib.h", "glib-2.0/glib-unix.h"],
+        "g_main_context_(new|unref)|g_main_loop_(new|run|quit|unref)|g_timeout_source_new|g_unix_fd_source_new|g_source_(set_callback|attach|destroy|unref)",
         "Glib",
     ),
 ];
@@ -57,9 +57,12 @@ fn run(check: bool) -> Result<(), String> {
     let include = sysroot.join("usr/include");
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/generated");
     let mut generated = Vec::new();
-    for (name, header, functions, library) in BINDINGS {
-        let bindings = bindgen::Builder::default()
-            .header(include.join(header).to_string_lossy())
+    for (name, headers, functions, library) in BINDINGS {
+        let bindings = headers
+            .iter()
+            .fold(bindgen::Builder::default(), |builder, header| {
+                builder.header(include.join(header).to_string_lossy())
+            })
             .clang_args([
                 "--target=armv7-unknown-linux-gnueabi".to_owned(),
                 "-mcpu=cortex-a9".to_owned(),
@@ -87,7 +90,7 @@ fn run(check: bool) -> Result<(), String> {
             .layout_tests(false)
             .generate_comments(false)
             .generate()
-            .map_err(|error| format!("generate from {header}: {error}"))?;
+            .map_err(|error| format!("generate from {}: {error}", headers.join(", ")))?;
         generated.push((output.join(format!("{name}.rs")), bindings.to_string()));
     }
     // Every header parsed before any committed file changes.

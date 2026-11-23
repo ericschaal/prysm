@@ -9,7 +9,6 @@ use av_foundation::capture_device::{
 };
 use av_foundation::media_format::AVMediaTypeVideo;
 
-use super::FAILURE_POLL;
 use crate::{CameraAccess, CaptureError, CaptureSink, Result};
 
 /// Where macOS's camera access request stands.
@@ -53,7 +52,11 @@ pub(super) fn camera_access(sink: &Arc<dyn CaptureSink>) -> Result<bool> {
     let answered = Arc::new(AtomicBool::new(false));
     AVCaptureDevice::request_access_for_media_type(video, {
         let answered = answered.clone();
-        move |_| answered.store(true, Ordering::Release)
+        let sink = sink.clone();
+        move |_| {
+            answered.store(true, Ordering::Release);
+            sink.wake();
+        }
     });
     let Some(request) = wait_for_answer(&answered, sink.as_ref(), crate::CAMERA_ACCESS_WAIT) else {
         return Ok(false);
@@ -61,8 +64,8 @@ pub(super) fn camera_access(sink: &Arc<dyn CaptureSink>) -> Result<bool> {
     access(status(), request).map_err(CaptureError::NoCameraAccess)
 }
 
-/// Waits up to `limit` for `answered`: `Answered` or `TimedOut`, or `None`
-/// when `sink` stops first.
+/// Waits up to `limit` for `answered` (its setter wakes `sink`): `Answered`
+/// or `TimedOut`, or `None` when `sink` stops first.
 fn wait_for_answer(
     answered: &AtomicBool,
     sink: &dyn CaptureSink,
@@ -73,10 +76,11 @@ fn wait_for_answer(
         if answered.load(Ordering::Acquire) {
             return Some(Request::Answered);
         }
-        if asked.elapsed() >= limit {
+        let left = limit.saturating_sub(asked.elapsed());
+        if left.is_zero() {
             return Some(Request::TimedOut);
         }
-        if sink.should_stop(FAILURE_POLL) {
+        if sink.should_stop(left) {
             return None;
         }
     }
@@ -131,11 +135,12 @@ mod tests {
         fn should_stop(&self, _: Duration) -> bool {
             true
         }
+        fn wake(&self) {}
     }
 
     #[test]
     fn waiting_for_access_ends_answered_timed_out_or_stopped() {
-        let limit = FAILURE_POLL * 2;
+        let limit = Duration::from_millis(100);
         let answered = AtomicBool::new(true);
         assert_eq!(
             wait_for_answer(&answered, &crate::device::Discard, limit),

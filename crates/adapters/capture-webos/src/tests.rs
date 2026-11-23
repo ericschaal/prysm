@@ -18,10 +18,7 @@ const TEST: Limits = Limits {
     preparation: Duration::from_secs(2),
     pending: Duration::from_secs(2),
     retry: Duration::from_millis(5),
-    ui_retry: Duration::from_millis(5),
-    ui_retry_max: Duration::from_millis(20),
     release: Duration::from_secs(2),
-    poll: Duration::from_millis(5),
 };
 
 fn recovery(fatal: bool) -> Recovery {
@@ -68,13 +65,7 @@ struct Script {
     ui_fail_once: bool,
     ui_value: u8,
     ui_opens: usize,
-    /// When each UI open was attempted.
-    ui_opened_at: Vec<Instant>,
     ui_releases: usize,
-    /// How long each UI release takes, like a slow driver.
-    ui_release_delay: Duration,
-    /// When each UI release returned.
-    ui_released_at: Vec<Instant>,
     /// Taps open right now, and the most ever open together.
     open_taps: usize,
     most_open: usize,
@@ -114,10 +105,7 @@ impl Driver {
                 ui_fail_once: false,
                 ui_value: 200,
                 ui_opens: 0,
-                ui_opened_at: Vec::new(),
                 ui_releases: 0,
-                ui_release_delay: Duration::ZERO,
-                ui_released_at: Vec::new(),
                 open_taps: 0,
                 most_open: 0,
                 events: Vec::new(),
@@ -196,7 +184,6 @@ impl Backend for Driver {
         assert_eq!(settings.ui_size(), (320, 180));
         let mut script = self.enter("UI open");
         script.ui_opens += 1;
-        script.ui_opened_at.push(Instant::now());
         script.record("UI open");
         if let Some(fatal) = script.ui_open_fails {
             return Err(Fault {
@@ -228,14 +215,10 @@ impl Tap for FakeUiTap {
     }
 
     fn release(self: Box<Self>) -> prysm_ports::Result<()> {
-        let delay = self.0.enter("UI release").ui_release_delay;
-        // Simulated driver work, outside the script's lock.
-        thread::sleep(delay);
-        let mut script = self.0.script();
+        let mut script = self.0.enter("UI release");
         script.ui_releases += 1;
         script.open_taps -= 1;
         script.record("UI release");
-        script.ui_released_at.push(Instant::now());
         Ok(())
     }
 }
@@ -665,166 +648,46 @@ fn without_include_ui_there_are_no_frames_without_video() {
     closes_cleanly(frames);
 }
 
-/// A UI open that cannot heal: no retries, no failure, video still works,
-/// and the source idles without video from then on.
+/// A UI open that cannot heal, one that could, and a failing UI acquire
+/// alike: the UI tap is not opened again in this source, and no failure
+/// ends it. Video comes and goes as before, and its loss opens no UI tap.
 #[test]
-fn missing_ui_capture_is_unsupported_once() {
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    video.set(Video::Unavailable);
-    driver.with(|s| s.ui_open_fails = Some(true));
-    let mut frames = start_ui(&driver, &video);
-    eventually("`driver.count(|s| s.ui_opens) == 1`", LIMIT, || {
-        (driver.count(|s| s.ui_opens) == 1).then_some(())
-    });
-    thread::sleep(TEST.ui_retry_max * 5);
-    assert!(frames.next_frame(SHORT).unwrap().is_idle());
-    assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
-
-    driver.push([Step::Frame(5)]);
-    video.set(Video::Available);
-    assert_eq!(next(&mut frames).as_slice(), &[5; 96]);
-    video.set(Video::Unavailable);
-    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
-        (driver.count(|s| s.releases) == 1).then_some(())
-    });
-    thread::sleep(TEST.ui_retry_max * 5);
-    assert!(frames.next_frame(SHORT).unwrap().is_idle());
-    assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
-    closes_cleanly(frames);
-    assert_eq!(driver.count(|s| s.ui_releases), 0, "nothing was opened");
-}
-
-/// The wait before reopening counts from after the release: a release
-/// slower than the wait does not make the next open immediate.
-#[test]
-fn the_ui_retry_waits_from_after_a_slow_release() {
-    let limits = Limits {
-        ui_retry: Duration::from_millis(50),
-        ui_retry_max: Duration::from_secs(1),
-        ..TEST
-    };
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    video.set(Video::Unavailable);
-    driver.with(|s| {
-        s.ui_fail_once = true;
-        s.ui_release_delay = Duration::from_millis(100);
-    });
-    let frames = start_ui_with(&driver, &video, limits);
-    eventually("the reopen after the failed UI tap", LIMIT, || {
-        (driver.count(|s| s.ui_opens) >= 2).then_some(())
-    });
-    let script = driver.script();
-    // Lower bound only: a loaded host may wake late, never early.
-    let gap = script.ui_opened_at[1] - script.ui_released_at[0];
-    assert!(gap >= limits.ui_retry, "{gap:?} after the release");
-    drop(script);
-    closes_cleanly(frames);
-}
-
-#[test]
-fn failing_ui_capture_is_retried_until_it_works() {
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    video.set(Video::Unavailable);
-    driver.with(|s| s.ui_fails = true);
-    // Waits long enough that the retries do not end before it works.
-    let limits = Limits {
-        ui_retry_max: Duration::from_secs(1),
-        ..TEST
-    };
-    let mut frames = start_ui_with(&driver, &video, limits);
-    eventually("`driver.count(|s| s.ui_opens) >= 3`", LIMIT, || {
-        (driver.count(|s| s.ui_opens) >= 3).then_some(())
-    });
-    assert!(frames.next_frame(SHORT).unwrap().is_idle(), "no failure");
-    driver.with(|s| s.ui_fails = false);
-    assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
-    closes_cleanly(frames);
-    let script = driver.script();
-    assert_eq!(
-        script.ui_releases, script.ui_opens,
-        "a UI tap was not released"
-    );
-}
-
-/// A UI open that keeps failing through the longest wait (5, 10, 20 ms
-/// here) is not opened again.
-#[test]
-fn ui_capture_failing_through_the_longest_wait_is_unsupported() {
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    video.set(Video::Unavailable);
-    driver.with(|s| s.ui_open_fails = Some(false));
-    let mut frames = start_ui(&driver, &video);
-    eventually("`driver.count(|s| s.ui_opens) == 4`", LIMIT, || {
-        (driver.count(|s| s.ui_opens) == 4).then_some(())
-    });
-    thread::sleep(TEST.ui_retry_max * 5);
-    assert!(frames.next_frame(SHORT).unwrap().is_idle(), "no failure");
-    assert_eq!(driver.count(|s| s.ui_opens), 4, "UI capture was retried");
-    closes_cleanly(frames);
-}
-
-#[test]
-fn ui_retries_back_off_to_a_cap_and_end() {
-    let tv = Limits::TV;
-    let waits: Vec<_> =
-        std::iter::successors(tv.ui_backoff(None), |&wait| tv.ui_backoff(Some(wait)))
-            .map(|wait| wait.as_secs())
+fn any_ui_failure_makes_ui_capture_unsupported() {
+    for (open_fails, acquire_fails) in [(Some(true), false), (Some(false), false), (None, true)] {
+        let driver = Driver::new();
+        let video = VideoSignal::default();
+        video.set(Video::Unavailable);
+        driver.with(|s| {
+            s.ui_open_fails = open_fails;
+            s.ui_fails = acquire_fails;
+        });
+        let mut frames = start_ui(&driver, &video);
+        eventually("the UI tap to fail", LIMIT, || {
+            let script = driver.script();
+            (script.ui_opens == 1 && script.open_taps == 0).then_some(())
+        });
+        driver.with(|s| {
+            s.ui_open_fails = None;
+            s.ui_fails = false;
+        });
+        for value in [5, 6] {
+            driver.push([Step::Frame(value)]);
+            video.set(Video::Available);
+            assert_eq!(next(&mut frames).as_slice(), &[value; 96]);
+            video.set(Video::Unavailable);
+            eventually("the video tap's release", LIMIT, || {
+                (driver.count(|s| s.open_taps) == 0).then_some(())
+            });
+        }
+        assert!(frames.next_frame(SHORT).unwrap().is_idle(), "no failure");
+        closes_cleanly(frames);
+        let opened: Vec<_> = driver
+            .events()
+            .into_iter()
+            .filter(|event| event.ends_with("open"))
             .collect();
-    assert_eq!(waits, [5, 10, 20, 40, 60]);
-}
-
-/// The gaps between the UI open attempts from `first` on.
-fn ui_open_gaps(driver: &Driver, first: usize) -> Vec<Duration> {
-    let script = driver.script();
-    script.ui_opened_at[first..]
-        .windows(2)
-        .map(|pair| pair[1] - pair[0])
-        .collect()
-}
-
-#[test]
-fn ui_open_failures_wait_longer_each_time_and_a_frame_resets_the_wait() {
-    let limits = Limits {
-        ui_retry: Duration::from_millis(50),
-        ui_retry_max: Duration::from_millis(400),
-        ..TEST
-    };
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    video.set(Video::Unavailable);
-    driver.with(|s| s.ui_open_fails = Some(false));
-    let mut frames = start_ui_with(&driver, &video, limits);
-    eventually("`driver.count(|s| s.ui_opens) >= 4`", LIMIT, || {
-        (driver.count(|s| s.ui_opens) >= 4).then_some(())
-    });
-    // Lower bounds only: a loaded host may wake late, never early.
-    for (gap, wait) in ui_open_gaps(&driver, 0).into_iter().zip([50, 100, 200]) {
-        assert!(gap >= Duration::from_millis(wait), "{gap:?} < {wait} ms");
+        assert_eq!(opened, ["UI open", "open", "open"], "{open_fails:?}");
     }
-
-    // The next open (after at least 400 ms) works; after a frame, the next
-    // streak starts again at 50 ms, then 100 ms, not at 400 ms.
-    driver.with(|s| s.ui_open_fails = None);
-    assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
-    let base = driver.count(|s| s.ui_opens);
-    driver.with(|s| {
-        s.ui_open_fails = Some(false);
-        s.ui_fail_once = true;
-    });
-    eventually("`driver.count(|s| s.ui_opens) >= base + 2`", LIMIT, || {
-        (driver.count(|s| s.ui_opens) >= base + 2).then_some(())
-    });
-    let gap = ui_open_gaps(&driver, base)[0];
-    assert!(
-        gap >= Duration::from_millis(100) && gap < Duration::from_millis(400),
-        "{gap:?}"
-    );
-    assert!(frames.next_frame(SHORT).is_ok(), "UI failures never fail");
-    closes_cleanly(frames);
 }
 
 #[test]
@@ -950,20 +813,23 @@ fn every_failed_registration_check_is_fatal_and_names_its_cause() {
     );
 }
 
+/// A UI tap that worked and then fails is released and not reopened.
 #[test]
-fn ui_fault_after_it_worked_reopens_without_an_error() {
+fn a_ui_fault_after_it_worked_ends_ui_capture_without_an_error() {
     let driver = Driver::new();
     let video = VideoSignal::default();
     video.set(Video::Unavailable);
     let mut frames = start_ui(&driver, &video);
     next(&mut frames);
     driver.with(|s| s.ui_fail_once = true);
-    eventually("`driver.count(|s| s.ui_opens) == 2`", LIMIT, || {
-        (driver.count(|s| s.ui_opens) == 2).then_some(())
+    eventually("`driver.count(|s| s.ui_releases) == 1`", LIMIT, || {
+        (driver.count(|s| s.ui_releases) == 1).then_some(())
     });
-    assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
-    assert_eq!(driver.count(|s| s.ui_releases), 1);
+    driver.push([Step::Frame(7)]);
+    video.set(Video::Available);
+    assert_eq!(next(&mut frames).as_slice(), &[7; 96]);
     closes_cleanly(frames);
+    assert_eq!(driver.count(|s| s.ui_opens), 1);
 }
 
 #[test]

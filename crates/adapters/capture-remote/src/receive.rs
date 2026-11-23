@@ -16,7 +16,8 @@ use std::time::Duration;
 use tungstenite::WebSocket;
 use tungstenite::protocol::Role;
 
-/// How often the receive thread checks for `close` and for a newer sender.
+/// How often the receive thread, while it serves a connection, checks for
+/// `close` and for a newer sender.
 /// The thread leaves a connection within about one tick of `close`.
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -166,7 +167,8 @@ impl Receiver {
         }
     }
 
-    /// The newest connection handed over, waiting for one; `None` once stopped.
+    /// The newest connection handed over, waiting for one (each offer wakes
+    /// this thread); `None` once stopped.
     fn wait_for_sender(&self) -> Option<Accepted> {
         loop {
             if self.worker.stopped() {
@@ -175,7 +177,7 @@ impl Receiver {
             if let Some(connection) = self.receiving.take() {
                 return Some(connection);
             }
-            self.worker.sleep(POLL_INTERVAL);
+            self.worker.idle();
         }
     }
 

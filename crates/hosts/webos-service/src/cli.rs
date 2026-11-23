@@ -106,16 +106,29 @@ fn run(flavor: Flavor, action: Action) -> Result<(), String> {
         Action::Uninstall(_) => installer.uninstall().map_err(|error| chain(&error)),
         Action::Run(run) => {
             private_dir(&identity.state_dir, sandbox.is_none())?;
+            let wake = prysm_webos_luna_sys::Wake::new()
+                .map_err(|error| format!("cannot create the wake socket: {error}"))?;
             let stop = Arc::new(AtomicUsize::new(0));
+            let installed = |error| format!("cannot install signal handlers: {error}");
             for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
                 let value = usize::try_from(signal).map_err(|error| error.to_string())?;
                 signal_hook::flag::register_usize(signal, stop.clone(), value)
-                    .map_err(|error| format!("cannot install signal handlers: {error}"))?;
+                    .map_err(installed)?;
+            }
+            // Each wakes the loop: a stop after its flag is set, and a child's
+            // exit (the worker's, to reap it, or an installer child's).
+            for signal in [
+                signal_hook::consts::SIGTERM,
+                signal_hook::consts::SIGINT,
+                signal_hook::consts::SIGCHLD,
+            ] {
+                let pipe = wake.waker().try_clone_stream().map_err(installed)?;
+                signal_hook::low_level::pipe::register(signal, pipe).map_err(installed)?;
             }
             let deadline = run
                 .run_for
                 .map(|seconds| Instant::now() + Duration::from_secs(seconds));
-            crate::luna::serve(&identity, stop, deadline).map_err(|error| chain(&error))
+            crate::luna::serve(&identity, &wake, stop, deadline).map_err(|error| chain(&error))
         }
     }
 }

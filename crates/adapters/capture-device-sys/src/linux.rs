@@ -512,6 +512,7 @@ mod tests {
         fn should_stop(&self, _: Duration) -> bool {
             false
         }
+        fn wake(&self) {}
     }
 
     /// `settle` after an interruption at `start`, with restarts that give
@@ -569,6 +570,7 @@ mod tests {
             self.0.lock().unwrap().push(wait);
             false
         }
+        fn wake(&self) {}
     }
 
     /// A stall already waited, so its restart does not pause; an

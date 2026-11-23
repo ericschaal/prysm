@@ -19,8 +19,9 @@ fn commands_have_a_stable_wire_form() {
         (
             Command::Target {
                 target: LightingTarget::Effects,
+                sequence: 3,
             },
-            r#"{"type":"target","target":"effects"}"#,
+            r#"{"type":"target","target":"effects","sequence":3}"#,
         ),
     ] {
         assert_eq!(encode(&command).unwrap(), line(text));
@@ -34,6 +35,7 @@ fn events_round_trip() {
         capturing: true,
         fps: Some(30),
         target: LightingTarget::ScreenSync,
+        applied: 2,
         portal: Some("http://192.168.1.5:8787/".into()),
         failure: Some(WorkerFailure::other("output: refused")),
     }));
@@ -41,7 +43,7 @@ fn events_round_trip() {
     assert_eq!(
         String::from_utf8(text.clone()).unwrap(),
         "{\"type\":\"status\",\"flavor\":\"full\",\"capturing\":true,\"fps\":30,\
-         \"target\":\"screen_sync\",\"portal\":\"http://192.168.1.5:8787/\",\
+         \"target\":\"screen_sync\",\"applied\":2,\"portal\":\"http://192.168.1.5:8787/\",\
          \"failure\":{\"kind\":\"other\",\"message\":\"output: refused\"}}\n"
     );
     assert_eq!(decode::<Event>(&text).unwrap(), full);
@@ -123,7 +125,7 @@ fn unknown_types_and_fields_are_rejected() {
     let slim_link = |link: &str| {
         format!(r#"{{"type":"status","flavor":"slim","capturing":false,"link":{link}}}"#)
     };
-    const FULL: &str = r#""capturing":false,"target":"off""#;
+    const FULL: &str = r#""capturing":false,"target":"off","applied":0"#;
     // Both base lines are valid, so each rejection below is for its change.
     for valid in [
         format!(r#"{{"type":"status","flavor":"slim",{SLIM}}}"#),

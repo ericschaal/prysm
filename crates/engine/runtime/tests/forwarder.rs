@@ -2,11 +2,13 @@ use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSink, FakeSource, FakeSourceSettings};
 use std::time::Duration;
 
+const STOP: Duration = Duration::from_secs(5);
+
 #[tokio::test]
 async fn forwards_frames_and_closes_the_source_on_stop() {
     let log = CallLog::new();
     let source = FakeSource::new(&log, FakeSourceSettings::default());
-    let run = Forwarder::new(source, FakeSink(log.clone())).run({
+    let run = Forwarder::new(source, FakeSink(log.clone()), STOP).run({
         let log = log.clone();
         async move {
             assert!(log.wait_for("sink.send", 5).await);
@@ -39,7 +41,7 @@ async fn source_failure_ends_forwarding_with_the_failure() {
             ..Default::default()
         },
     );
-    let run = Forwarder::new(source, FakeSink(log.clone())).run(std::future::pending());
+    let run = Forwarder::new(source, FakeSink(log.clone()), STOP).run(std::future::pending());
     let result = tokio::time::timeout(Duration::from_secs(10), run)
         .await
         .expect("forwarder ends on failure");
@@ -58,7 +60,7 @@ async fn an_ended_source_finishes_forwarding_without_a_failure() {
             ..Default::default()
         },
     );
-    let run = Forwarder::new(source, FakeSink(log.clone())).run(std::future::pending());
+    let run = Forwarder::new(source, FakeSink(log.clone()), STOP).run(std::future::pending());
     tokio::time::timeout(Duration::from_secs(10), run)
         .await
         .expect("forwarder ends with its source")
@@ -93,7 +95,7 @@ async fn a_quiet_source_gives_the_sink_ticks() {
             ..Default::default()
         },
     );
-    let run = Forwarder::new(source, Counting(log.clone())).run({
+    let run = Forwarder::new(source, Counting(log.clone()), STOP).run({
         let log = log.clone();
         async move {
             assert!(log.wait_for("sink.tick", 2).await);

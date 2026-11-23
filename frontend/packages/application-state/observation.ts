@@ -6,6 +6,7 @@ import {
 } from '@reduxjs/toolkit';
 import {
   failureOf,
+  reconnectDelayMs,
   type ApplicationClient,
   type Observation,
 } from '@prysm/application-client';
@@ -19,8 +20,8 @@ export type ApplicationDispatch<C, O> = ThunkDispatch<
 
 /**
  * Owns the state stream: connects on request, feeds every state to the slice,
- * reconnects with a bounded backoff and stops on release or when the portal
- * refuses this page (`forbidden`).
+ * reconnects after {@link reconnectDelayMs} and stops on release or when the
+ * portal refuses this page (`forbidden`).
  * Closing the stream never commands lighting.
  */
 export function registerObservation<C, O>(
@@ -37,7 +38,7 @@ export function registerObservation<C, O>(
       api.cancelActiveListeners();
       if (actions.observationReleased.match(action)) return;
       const generation = api.getState().connection.generation;
-      let delay = 250;
+      let attempt = 0;
       while (!api.signal.aborted) {
         let observation: Observation<C, O> | undefined;
         const close = () => {
@@ -55,7 +56,7 @@ export function registerObservation<C, O>(
               snapshot: observation.initial,
             }),
           );
-          delay = 250;
+          attempt = 0;
           for await (const snapshot of observation.updates) {
             if (api.signal.aborted) break;
             api.dispatch(actions.snapshotReceived({ generation, snapshot }));
@@ -80,8 +81,8 @@ export function registerObservation<C, O>(
           close();
         }
         if (api.signal.aborted) return;
-        await api.delay(delay);
-        delay = Math.min(delay * 2, 5000);
+        await api.delay(reconnectDelayMs(attempt));
+        attempt++;
         api.dispatch(actions.observationRetrying(generation));
       }
     },

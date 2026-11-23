@@ -113,6 +113,7 @@ impl RemoteSource {
             "remote receive thread",
             RELEASE,
             move |worker| {
+                receiving.wake(worker.wakeup());
                 Receiver::new(receiving, worker.clone(), request).run();
                 Ok(())
             },
