@@ -13,21 +13,48 @@ enum Kind {
     Ui,
 }
 
-/// Whether the TV UI tap works in this source. Any UI fault makes it
-/// unsupported until the next source: a UI tap can fail for good (on the
-/// bench TV, a worker that died with the UI tap open left the graphics
-/// driver's lock held, and every later UI open failed until a reboot,
-/// commit 4fa820eb), and a UI failure that passes has not been observed.
+/// Whether the TV UI tap works in this source. A UI fault that cannot heal
+/// makes it unsupported until the next source. Any other one stops the
+/// tries until the video signal changes (video comes back, or the context
+/// changes): a UI tap can fail for good (on the bench TV, a worker that died
+/// with the UI tap open left the graphics driver's lock held, and every
+/// later UI open failed until a reboot, commit 4fa820eb), so it is tried
+/// again only after an event, never on a timer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UiSupport {
     Untried,
     Works,
-    /// It failed: reported once, never opened again in this source.
+    /// It failed in a way that may pass: not opened again until the video
+    /// signal changes.
+    Failed,
+    /// It cannot work in this process: never opened again in this source.
     Unsupported,
 }
 
-/// When a video tap reopens after a recoverable fault. A TV UI fault never
-/// reopens it ([`UiSupport`]).
+impl UiSupport {
+    /// After a TV UI fault.
+    fn after_fault(recovery: Recovery) -> Self {
+        match recovery {
+            Recovery::Never => Self::Unsupported,
+            Recovery::Reopen => Self::Failed,
+        }
+    }
+
+    /// After the video signal changed: a failed UI may be tried again.
+    fn after_change(self) -> Self {
+        match self {
+            Self::Failed => Self::Untried,
+            other => other,
+        }
+    }
+
+    fn may_open(self) -> bool {
+        matches!(self, Self::Untried | Self::Works)
+    }
+}
+
+/// When a video tap reopens after a recoverable fault. A TV UI tap reopens
+/// only after an event ([`UiSupport`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reopen {
     /// At once: the fault is a stall, which already waited
@@ -49,11 +76,11 @@ fn video_wait(recovery: Recovery, reopen: Reopen, limits: &Limits) -> Option<Dur
 }
 
 /// The tap for `video`: video while it is available or unknown, the TV UI
-/// without video while `include_ui` and the UI is not unsupported, else none.
+/// without video while `include_ui` and the UI may open, else none.
 fn wanted(video: Video, include_ui: bool, ui: UiSupport) -> Option<Kind> {
     match video {
         Video::Available | Video::Unknown => Some(Kind::Video),
-        Video::Unavailable if include_ui && ui != UiSupport::Unsupported => Some(Kind::Ui),
+        Video::Unavailable if include_ui && ui.may_open() => Some(Kind::Ui),
         Video::Unavailable => None,
     }
 }
@@ -77,6 +104,8 @@ pub(super) struct Native<B> {
     /// A video fault was logged since the last video frame or the start of
     /// this video period.
     video_failing: bool,
+    /// A UI fault was logged since the last UI frame.
+    ui_failing: bool,
 }
 
 impl<B: Backend> Native<B> {
@@ -100,6 +129,7 @@ impl<B: Backend> Native<B> {
             not_ready_since: None,
             pending_since: None,
             video_failing: false,
+            ui_failing: false,
         }
     }
 
@@ -120,13 +150,19 @@ impl<B: Backend> Native<B> {
     fn capture(&mut self) -> Result<()> {
         self.video.wake(self.worker.wakeup());
         let period = Duration::from_secs(1) / self.settings.fps.max(1);
-        let mut generation = self.video.current().generation;
+        let mut seen = self.video.current();
+        let mut generation = seen.generation;
         let mut next = Instant::now();
         while !self.worker.stopped() {
+            let readiness = self.video.current();
+            if readiness != seen {
+                seen = readiness;
+                self.ui = self.ui.after_change();
+            }
             let Readiness {
                 video,
                 generation: current,
-            } = self.video.current();
+            } = readiness;
             let kind = self.wanted(video);
             // A change of tap kind or video context releases the current tap;
             // the next step opens the kind that matches.
@@ -206,6 +242,7 @@ impl<B: Backend> Native<B> {
                 // The first UI frame is reported once.
                 if kind == Kind::Ui && self.ui != UiSupport::Works {
                     self.ui = UiSupport::Works;
+                    self.ui_failing = false;
                     tracing::info!(
                         width = frame.width(),
                         height = frame.height(),
@@ -240,9 +277,10 @@ impl<B: Backend> Native<B> {
     }
 
     /// Fatal video faults end the source; others release the tap and retry
-    /// later. UI faults never end the source: each marks UI capture
-    /// unsupported, reported once and not retried (lighting then idles
-    /// without video, as with `include_ui` off, until the next source).
+    /// later. UI faults never end the source: lighting idles without video,
+    /// as with `include_ui` off, until the video signal changes (a fault
+    /// that may pass) or the next source (one that cannot). The first UI
+    /// fault since a UI frame is a warning, the rest debug.
     fn recover(&mut self, kind: Kind, fault: Fault) -> Result<()> {
         self.recover_after(kind, fault, Reopen::AfterRetry)
     }
@@ -259,11 +297,19 @@ impl<B: Backend> Native<B> {
                 wait
             }
             Kind::Ui => {
-                self.ui = UiSupport::Unsupported;
-                tracing::warn!(
-                    error = %chain(&fault.error),
-                    "TV UI capture is unsupported; no frames while there is no video"
-                );
+                self.ui = UiSupport::after_fault(fault.recovery);
+                let error = chain(&fault.error);
+                let message = match self.ui {
+                    UiSupport::Unsupported => {
+                        "TV UI capture is unsupported; no frames while there is no video"
+                    }
+                    _ => "TV UI capture failed; tried again once the video signal changes",
+                };
+                if std::mem::replace(&mut self.ui_failing, true) {
+                    tracing::debug!(%error, "{message}");
+                } else {
+                    tracing::warn!(%error, "{message}");
+                }
                 self.limits.retry
             }
         };
@@ -325,16 +371,37 @@ mod tests {
         }
     }
 
-    /// An unsupported UI is never opened again; video always is.
+    /// Every UI state meets every event: a fault that cannot heal is final,
+    /// one that may pass waits for a change of the video signal.
+    #[test]
+    fn every_ui_state_meets_every_event() {
+        use UiSupport::{Failed, Unsupported, Untried, Works};
+        for (state, never, reopen, change) in [
+            (Untried, Unsupported, Failed, Untried),
+            (Works, Unsupported, Failed, Works),
+            (Failed, Unsupported, Failed, Untried),
+            (Unsupported, Unsupported, Failed, Unsupported),
+        ] {
+            assert_eq!(UiSupport::after_fault(Recovery::Never), never, "{state:?}");
+            assert_eq!(
+                UiSupport::after_fault(Recovery::Reopen),
+                reopen,
+                "{state:?}"
+            );
+            assert_eq!(state.after_change(), change, "{state:?}");
+        }
+    }
+
+    /// A failed or unsupported UI is not opened; video always is.
     #[test]
     fn the_tap_follows_the_video_the_setting_and_the_ui_state() {
-        use UiSupport::{Unsupported, Untried, Works};
-        for ui in [Untried, Works, Unsupported] {
+        use UiSupport::{Failed, Unsupported, Untried, Works};
+        for ui in [Untried, Works, Failed, Unsupported] {
             for include_ui in [false, true] {
                 for video in [Video::Available, Video::Unknown] {
                     assert_eq!(wanted(video, include_ui, ui), Some(Kind::Video));
                 }
-                let ui_tap = (include_ui && ui != Unsupported).then_some(Kind::Ui);
+                let ui_tap = (include_ui && matches!(ui, Untried | Works)).then_some(Kind::Ui);
                 assert_eq!(
                     wanted(Video::Unavailable, include_ui, ui),
                     ui_tap,

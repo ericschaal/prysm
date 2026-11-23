@@ -648,28 +648,22 @@ fn without_include_ui_there_are_no_frames_without_video() {
     closes_cleanly(frames);
 }
 
-/// A UI open that cannot heal, one that could, and a failing UI acquire
-/// alike: the UI tap is not opened again in this source, and no failure
-/// ends it. Video comes and goes as before, and its loss opens no UI tap.
+/// A UI open that cannot heal: the UI tap is not opened again in this
+/// source, and no failure ends it. Video comes and goes as before, and its
+/// loss opens no UI tap.
 #[test]
-fn any_ui_failure_makes_ui_capture_unsupported() {
-    for (open_fails, acquire_fails) in [(Some(true), false), (Some(false), false), (None, true)] {
+fn a_ui_failure_that_cannot_heal_makes_ui_capture_unsupported() {
+    {
         let driver = Driver::new();
         let video = VideoSignal::default();
         video.set(Video::Unavailable);
-        driver.with(|s| {
-            s.ui_open_fails = open_fails;
-            s.ui_fails = acquire_fails;
-        });
+        driver.with(|s| s.ui_open_fails = Some(true));
         let mut frames = start_ui(&driver, &video);
         eventually("the UI tap to fail", LIMIT, || {
             let script = driver.script();
             (script.ui_opens == 1 && script.open_taps == 0).then_some(())
         });
-        driver.with(|s| {
-            s.ui_open_fails = None;
-            s.ui_fails = false;
-        });
+        driver.with(|s| s.ui_open_fails = None);
         for value in [5, 6] {
             driver.push([Step::Frame(value)]);
             video.set(Video::Available);
@@ -686,7 +680,51 @@ fn any_ui_failure_makes_ui_capture_unsupported() {
             .into_iter()
             .filter(|event| event.ends_with("open"))
             .collect();
-        assert_eq!(opened, ["UI open", "open", "open"], "{open_fails:?}");
+        assert_eq!(opened, ["UI open", "open", "open"]);
+    }
+}
+
+/// A UI open or acquire failure that may pass stops the tries, without a
+/// failure, until the video signal changes: a new context, or video that
+/// comes back and goes again, opens the UI tap again.
+#[test]
+fn a_ui_failure_that_may_pass_waits_for_the_video_signal() {
+    for (open_fails, acquire_fails) in [(Some(false), false), (None, true)] {
+        let driver = Driver::new();
+        let video = VideoSignal::default();
+        video.set(Video::Unavailable);
+        driver.with(|s| {
+            s.ui_open_fails = open_fails;
+            s.ui_fails = acquire_fails;
+        });
+        let mut frames = start_ui(&driver, &video);
+        let failed = |opens| {
+            let script = driver.script();
+            (script.ui_opens == opens && script.open_taps == 0).then_some(())
+        };
+        eventually("the UI tap to fail", LIMIT, || failed(1));
+        video.reset();
+        eventually("the UI tap to fail again", LIMIT, || failed(2));
+        driver.with(|s| {
+            s.ui_open_fails = None;
+            s.ui_fails = false;
+        });
+        driver.push([Step::Frame(5)]);
+        video.set(Video::Available);
+        assert_eq!(next(&mut frames).as_slice(), &[5; 96]);
+        video.set(Video::Unavailable);
+        assert_eq!(next_where(&mut frames, |f| f.width() == 4).width(), 4);
+        closes_cleanly(frames);
+        let mut opened: Vec<_> = driver
+            .events()
+            .into_iter()
+            .filter(|event| event.ends_with("open"))
+            .collect();
+        // The two failed UI opens as one, as `events` collapses them when
+        // nothing came between.
+        opened.dedup();
+        assert_eq!(opened, ["UI open", "open", "UI open"], "{open_fails:?}");
+        assert_eq!(driver.count(|s| s.ui_opens), 3, "{open_fails:?}");
     }
 }
 
@@ -813,9 +851,10 @@ fn every_failed_registration_check_is_fatal_and_names_its_cause() {
     );
 }
 
-/// A UI tap that worked and then fails is released and not reopened.
+/// A UI tap that worked and then fails is released and not reopened while
+/// the video signal stays as it is.
 #[test]
-fn a_ui_fault_after_it_worked_ends_ui_capture_without_an_error() {
+fn a_ui_fault_after_it_worked_waits_without_an_error() {
     let driver = Driver::new();
     let video = VideoSignal::default();
     video.set(Video::Unavailable);

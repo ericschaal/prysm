@@ -61,10 +61,12 @@ export type Link =
 export interface ServiceState {
   link: Link;
   /**
-   * What the last save stored, as its reply says, until the subscription
-   * shows it: an older push may still arrive after the reply.
+   * What the last save stored, as its reply says, and the preferences shown
+   * when the reply came: an older push (showing `before`) may still arrive
+   * after the reply. The first push showing anything else ends it: the
+   * stored preferences, or a change made since.
    */
-  pending: Saved | null;
+  pending: { stored: Saved; before: Saved | null } | null;
   changing: boolean;
   notice: string;
   error: boolean;
@@ -131,7 +133,9 @@ export function serviceReducer(
           retry: wait && (known ?? { since: action.at, seconds: wait.seconds }),
         },
         pending:
-          current.pending && !same(current.pending, saved)
+          current.pending &&
+          current.pending.before &&
+          same(current.pending.before, saved)
             ? current.pending
             : null,
         ...(link.status === 'missing'
@@ -146,7 +150,15 @@ export function serviceReducer(
       const state = lastState(current.link);
       const shown =
         state && same(completePreferences(state.preferences), action.stored);
-      return { ...current, pending: shown ? null : action.stored };
+      return {
+        ...current,
+        pending: shown
+          ? null
+          : {
+              stored: action.stored,
+              before: state && completePreferences(state.preferences),
+            },
+      };
     }
     case 'changing':
       return { ...current, changing: action.value };
@@ -199,7 +211,7 @@ export function useTvService(service: TvService, active: boolean) {
   const known = link.status === 'live' || link.status === 'lost';
   const saved = completePreferences(state?.preferences ?? {});
   /** What the settings show: the saved values, or those being saved. */
-  const draft: Saved = current.pending ?? saved;
+  const draft: Saved = current.pending?.stored ?? saved;
   /**
    * The preferences a queued change applies to: the latest render's, or
    * what the change before it sent, until a render shows that.
@@ -253,8 +265,8 @@ export function useTvService(service: TvService, active: boolean) {
 
   /**
    * The reply is the state the service stored, and it publishes that state
-   * next, so the subscription always comes to show what is pending: no
-   * wait needs a bound.
+   * next, so the first push that differs from what was shown ends what is
+   * pending: no wait needs a bound.
    */
   async function sendPreferences(patch: Edits) {
     const sent = { ...shown.current, ...patch };

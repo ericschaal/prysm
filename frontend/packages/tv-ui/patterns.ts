@@ -73,8 +73,9 @@ export function streamPatterns(
   let stall: ReturnType<typeof setTimeout> | undefined;
 
   /**
-   * Append when the buffer has room: at each finished append (`updateend`)
-   * and as playback moves (`timeupdate`). Progress restarts the stall wait.
+   * Append when the buffer has room: at each finished append (`updateend`),
+   * as playback moves (`timeupdate`) and when it runs out (`waiting`).
+   * Progress restarts the stall wait.
    */
   function pump() {
     if (closed) return;
@@ -121,6 +122,7 @@ export function streamPatterns(
     buffer?.removeEventListener('updateend', pump);
     video.removeEventListener('error', fail);
     video.removeEventListener('timeupdate', pump);
+    video.removeEventListener('waiting', pump);
     video.pause();
     video.removeAttribute('src');
     video.load();
@@ -134,6 +136,8 @@ export function streamPatterns(
   source.addEventListener('sourceopen', open);
   video.addEventListener('error', fail);
   video.addEventListener('timeupdate', pump);
+  // Out of data before the next `timeupdate`: append at once.
+  video.addEventListener('waiting', pump);
   video.src = url;
   stall = setTimeout(fail, STALL_MS);
   const playing = video.play() as Promise<void> | undefined;

@@ -83,12 +83,14 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 - The supervisor logs which signal stopped it. The worker logs opening and
   releasing the TV UI tap with the capture thread's kernel id (`thread`), the
   id a kernel log names as a capture lock's holder (`K_pid`).
-- Without video the capture takes the TV UI. Any UI failure (a missing
-  `libhalgal` or `/dev/gfx`, a failed open or capture) turns that off,
-  logged once, until the next capture source opens: a UI tap can fail for
-  good (a worker that died with it open left the graphics driver's lock
-  held until a reboot), and a UI failure that passes has not been
-  observed. The capture thread waits for a change of the video signal
+- Without video the capture takes the TV UI. A missing `libhalgal` (or one
+  of its symbols) or `/dev/gfx` turns that off until the next capture
+  source opens. Any other UI failure (a failed open, allocation or capture)
+  stops the tries until the video signal changes: video comes back and goes
+  again, or the input, app or picture mode changes. Never on a timer: a UI
+  tap can fail for good (a worker that died with it open left the graphics
+  driver's lock held until a reboot). The first failure since a UI frame
+  logs a warning, the rest debug. The capture thread waits for a change of the video signal
   without polling: each change wakes it
   ([native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
 - Before each video tap opens, the worker registers its two capture client
