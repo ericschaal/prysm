@@ -568,6 +568,8 @@ What it does not protect against:
   events per second each), 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
   write (a reader that stops reading is disconnected once the socket's send
   buffer is full).
+- Every accepted connection has `TCP_NODELAY`, so an event goes out whole
+  without waiting for the peer to acknowledge the one before it.
 - Every accepted connection has TCP keepalive (first probe after 10 s idle,
   then every 5 s, ended after 4 unanswered), and on Linux a 30 s
   `TCP_USER_TIMEOUT`: a peer that vanishes without closing loses its
