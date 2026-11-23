@@ -1503,13 +1503,17 @@ fieldset > .field-note {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 72%, transparent) inset;
   color: var(--fg);
 }
-/* Lit, it is filled, as a chosen calibration is, in the light's colours. */
+/*
+ * Lit, it is filled in the light's colours, and so is the pill under a
+ * chosen style or calibration.
+ */
 .light-card[data-lit='true']
   .modes[data-mode='screen_sync']
   [data-target='screen_sync'],
 .light-card[data-lit='true']
   .modes[data-mode='effects']
-  [data-target='effects'] {
+  [data-target='effects'],
+.light-card[data-lit='true'] .segments-scroll[data-pill]::before {
   border-color: transparent;
   box-shadow: none;
   background: linear-gradient(
