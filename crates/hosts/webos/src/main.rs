@@ -7,8 +7,8 @@ use prysm_capture_webos::{VideoSignal, WebosCapture, WebosSettings};
 use prysm_host::assets;
 use prysm_output_wled::Wled;
 use prysm_ports::{AdapterSettings, Error, Result, Settings, SettingsStore, SourceFactory};
-use prysm_runtime::Prysm;
 use prysm_runtime::logging::{self, Logs};
+use prysm_runtime::{Builder, Prysm};
 use prysm_settings_file::SettingsFile;
 use prysm_web_portal::{Access, WebPortal, lan_url};
 use prysm_webos_link::worker::{self, Link};
@@ -60,9 +60,7 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
     );
     let video = VideoSignal::default();
     let stopped = link.stop.stopped();
-    Prysm::builder(SettingsFile::new(&args.settings))
-        .source(WebosCapture::new(video.clone()))
-        .output(Wled::default())
+    adapters(Prysm::builder(SettingsFile::new(&args.settings)), &video)
         .surface(EngineLink::new(
             link,
             video,
@@ -80,6 +78,14 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
         .shutdown_grace(SHUTDOWN_GRACE)
         .run(stopped)
         .await
+}
+
+/// What the full TV worker registers: source `webos`, following `video`,
+/// and output `wled`.
+fn adapters(prysm: Builder, video: &VideoSignal) -> Builder {
+    prysm
+        .source(WebosCapture::new(video.clone()))
+        .output(Wled::default())
 }
 
 /// A missing settings file starts as webOS capture with defaults, so the

@@ -184,6 +184,44 @@ where
     assert_eq!(&serde_json::from_value::<P>(back).unwrap(), value);
 }
 
+/// Every adapter section fixture of the checked-in host document `host`
+/// (`host-desktop`, `host-webos`), each as settings JSON with only that
+/// section: the fixtures in `fixtures.json` of each schema the document's
+/// `CaptureSettings` and `OutputSettings` name.
+///
+/// # Panics
+/// A generated file cannot be read, or a named schema has no fixture.
+pub fn host_adapter_settings(host: &str) -> Vec<Value> {
+    let read = |name: &str| -> Value {
+        let path = format!(
+            "{}/../../../frontend/packages/contracts/generated/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path}: {error}"));
+        serde_json::from_str(&text).unwrap_or_else(|error| panic!("{path}: {error}"))
+    };
+    let document = read(&format!("{host}.openapi.json"));
+    let fixtures = read("fixtures.json");
+    let mut settings = Vec::new();
+    for (section, union) in [("capture", "CaptureSettings"), ("output", "OutputSettings")] {
+        let kinds = document["components"]["schemas"][union]["oneOf"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{host} types no {union}"));
+        for kind in kinds {
+            let name = kind["$ref"]
+                .as_str()
+                .and_then(|reference| reference.strip_prefix("#/components/schemas/"))
+                .unwrap_or_else(|| panic!("{host} {union}: {kind}"));
+            let samples = fixtures[name]
+                .as_array()
+                .filter(|samples| !samples.is_empty())
+                .unwrap_or_else(|| panic!("fixtures.json has no {name}"));
+            settings.extend(samples.iter().map(|sample| json!({ section: sample })));
+        }
+    }
+    settings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

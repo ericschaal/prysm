@@ -451,3 +451,18 @@ async fn a_session_waiting_for_video_is_not_capturing() {
     peer.close();
     task.await.unwrap().0.unwrap();
 }
+
+/// Every adapter section of the `host-webos` contract decodes with the
+/// adapters the worker registers: a kind it lacks fails.
+#[test]
+fn contract_adapter_fixtures_decode_with_the_registered_adapters() {
+    for fixture in prysm_testkit::host_adapter_settings("host-webos") {
+        let settings: Settings = serde_json::from_value(fixture.clone()).unwrap();
+        crate::adapters(
+            Prysm::builder(MemoryStore::with(settings)),
+            &VideoSignal::default(),
+        )
+        .check()
+        .unwrap_or_else(|error| panic!("{fixture}: {error}"));
+    }
+}

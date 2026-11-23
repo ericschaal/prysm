@@ -97,7 +97,7 @@ class Fields(unittest.TestCase):
         sets: tuple[tuple[type[StrEnum], Any, str], ...] = (
             (Target, APPLICATION, 'LightingTarget'),
             (Target, LUNA, 'LightingTarget'),
-            (Encoding, LUNA, 'SlimEncoding'),
+            (Encoding, LUNA, 'StreamEncoding'),
             (Power, LUNA, 'Power'),
             (Video, LUNA, 'Video'),
         )

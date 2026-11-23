@@ -61,7 +61,7 @@ pub struct Options {
     prysm: Option<PrysmAddress>,
 }
 
-/// The encoders `check-encoder` can check: the slim encodings except raw.
+/// The encoders `check-encoder` can check: the H.264 encodings of `StreamEncoding`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "snake_case")]
 enum Encoding {

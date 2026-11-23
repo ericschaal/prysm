@@ -17,7 +17,7 @@ import {
   type Power,
   type Preferences,
   type ServiceBridge,
-  type SlimEncoding,
+  type StreamEncoding,
   type SlimLink,
   type SlimWorker,
   type State,
@@ -56,7 +56,7 @@ export interface FullFacts extends CommonFacts {
 export interface SlimFacts extends CommonFacts {
   flavor: 'slim';
   enabled: boolean;
-  encoding: SlimEncoding | null;
+  encoding: StreamEncoding | null;
   paused: boolean;
 }
 export type FakeFacts = FullFacts | SlimFacts;

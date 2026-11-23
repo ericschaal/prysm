@@ -17,7 +17,7 @@ import type {
   LightingTarget,
   Power,
   Preferences,
-  SlimEncoding,
+  StreamEncoding,
   SlimWorker,
   State as Sent,
   Video,
@@ -31,7 +31,7 @@ export type {
   LightingTarget,
   Power,
   Preferences,
-  SlimEncoding,
+  StreamEncoding,
   SlimWorker,
   Video,
   WorkerFailure,
@@ -115,7 +115,7 @@ function slimLink(state: State): SlimLink | null {
 }
 
 /** Slim: the encoding the running worker sends in; else `null`. */
-export function slimEncoding(state: State): SlimEncoding | null {
+export function slimEncoding(state: State): StreamEncoding | null {
   const link = slimLink(state);
   return link?.state === 'sending' ? link.encoding : null;
 }
@@ -304,7 +304,7 @@ function decodeSlimLink(value: unknown): SlimLink | null {
       return typeof value.encoding === 'string' && typeof value.fps === 'number'
         ? {
             state: 'sending',
-            encoding: value.encoding as SlimEncoding,
+            encoding: value.encoding as StreamEncoding,
             fps: value.fps,
           }
         : null;
