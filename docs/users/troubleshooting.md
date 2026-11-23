@@ -27,7 +27,7 @@ docker logs --tail 100 prysm
 
 ## Picture and lights
 
-Open [Live preview](preview.md). No or frozen picture: check the video source.
+Play the [live preview](configuration.md#live-preview) on Home. No or frozen picture: check the video source.
 Moving picture but wrong LEDs: check WLED and the LED counts.
 
 | Problem | Fix |

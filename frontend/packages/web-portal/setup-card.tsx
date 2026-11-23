@@ -14,6 +14,7 @@ import {
 import { useDeviceName, type SetupPart } from './device-name';
 import { LedDrawing } from './led-drawing';
 import { LightsIcon, PrysmIcon, VideoIcon } from './path-icons';
+import { PreviewDrawing, type PreviewSource } from './preview';
 import { RowLink } from './rows';
 
 /**
@@ -207,11 +208,17 @@ const factLine = (facts: AdapterFact[], skip: string[] = []) =>
     .map((fact) => fact.value)
     .join(' · ') || undefined;
 
+/** The drawing in words. */
+const ledCaption = (edges: LedEdges) =>
+  `Seen from the front: ${edges.top} LEDs along the top, ${edges.right} on the right, ${edges.bottom} along the bottom and ${edges.left} on the left, ${ledCount(edges)} in all.`;
+
 /**
  * Your setup, as the path the light takes: the video source, Prysm and the
  * lights, joined by two hairlines that carry what is measured (the picture
  * rate arriving) and light up while frames flow. Only what Prysm's state and
- * settings say (and discovery, for names); the forms are in Settings.
+ * settings say (and discovery, for names); the forms are in Settings. Below
+ * the path, the TV with its LEDs, and the live preview in its screen when
+ * the host offers one.
  */
 export function SetupCard({
   capture,
@@ -221,6 +228,7 @@ export function SetupCard({
   discovery,
   path,
   calibration,
+  preview,
   openSettings,
 }: {
   capture: SetupPart;
@@ -232,6 +240,8 @@ export function SetupCard({
   path: PathState;
   /** The active calibration's name, or `null` for no correction. */
   calibration: string | null;
+  /** The live preview, when this host offers one. */
+  preview?: PreviewSource;
   openSettings: () => void;
 }) {
   const headingId = useId();
@@ -353,11 +363,15 @@ export function SetupCard({
           )}
         </Named>
       </ol>
-      {edges ? (
-        <LedDrawing
+      {edges && preview ? (
+        <PreviewDrawing
           edges={edges}
-          caption={`Seen from the front: ${edges.top} LEDs along the top, ${edges.right} on the right, ${edges.bottom} along the bottom and ${edges.left} on the left, ${ledCount(edges)} in all.`}
+          caption={ledCaption(edges)}
+          source={preview}
         />
+      ) : null}
+      {edges && !preview ? (
+        <LedDrawing edges={edges} caption={ledCaption(edges)} />
       ) : null}
       {/* A row as in Settings, at the card's foot. */}
       <ul className="rows setup-change">

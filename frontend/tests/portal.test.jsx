@@ -2564,7 +2564,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     assert.equal($('.light-calm').textContent, 'Power turns on Screen sync.');
     assert.equal($('.header-link').textContent, 'Settings');
     assert(!$('.diagnostics'));
-    assert(!$('.preview'), 'no preview on Home');
+    assert(!$('.led-map-play'), 'no preview without a preview client');
     assert.deepEqual(
       $$('.light-card input').map((control) => control.name),
       ['processing.brightness_percent'],

@@ -3,16 +3,15 @@ import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
-import { previewLayout } from '@prysm/web-portal';
 import { httpPreviewClient } from '@prysm/application-client/http';
 import { ApplicationError } from '@prysm/application-client';
 import { fakePreviewClient } from '../testkit/preview';
 import {
   $,
+  assertFocused,
   button,
   click,
-  leaveEditor,
-  openEditor,
+  openSettings,
   renderPortal,
   sleep,
 } from './dom';
@@ -68,96 +67,43 @@ function fakeCanvas(window) {
   return { drawn, decoded, released: () => released };
 }
 
-test('the preview layout spreads each edge along the picture and maps the viewport', () => {
-  const layout = previewLayout(
-    frame({ viewport: { x: 0, y: 270, width: 1920, height: 540 } }),
-  );
-  assert.deepEqual([layout.width, layout.height], [36, 34]);
-  assert.deepEqual(layout.image, { x: 16, y: 16, width: 4, height: 2 });
-  const strip = (color) => layout.strips.filter((rect) => rect.color === color);
-  // Top: red then blue, left to right, above the picture.
-  assert.deepEqual(
-    layout.strips
-      .slice(0, 2)
-      .map(({ x, y, width, height, color }) => [x, y, width, height, color]),
-    [
-      [16, 0, 2, 12, red],
-      [18, 0, 2, 12, blue],
-    ],
-  );
-  // Right: one colour down the whole right edge.
-  assert.deepEqual(
-    strip(blue).map(({ x, y, width, height }) => [x, y, width, height]),
-    [
-      [18, 0, 2, 12],
-      [24, 16, 12, 2],
-    ],
-  );
-  assert.deepEqual(layout.viewport, { x: 16, y: 16.5, width: 4, height: 1 });
-  assert.equal(previewLayout(frame()).viewport, null);
-});
+const toggle = () => $('.led-map-play');
+const line = () => $('.led-map-note').textContent;
+const picture = () => $('.led-map-picture canvas');
 
-test('the preview has its own page, reached from Settings, and streams only while shown', async () => {
+test('Home’s TV plays the preview in its screen, paused on every visit', async () => {
   const preview = fakePreviewClient();
   const portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output },
     undefined,
-    {
-      preview: preview.client,
-    },
+    { preview: preview.client },
   );
   const canvas = fakeCanvas(portal.dom.window);
-  const message = () => $('.preview-message')?.textContent;
   try {
-    assert(!$('.preview'), 'not on Home');
-    assert.equal(preview.opened(), 0, 'no viewer on Home');
+    // Paused: a play button on the screen, no stream, nothing said.
+    assert.equal(toggle().getAttribute('aria-label'), 'Play preview');
+    assert.equal(preview.opened(), 0, 'no viewer until played');
+    assert.equal(line(), '');
+    assert.equal(picture().hidden, true);
 
-    // From the video source's page: its status card, while screen sync is
-    // on (off, the card opens nothing).
-    await openEditor('Video source');
-    assert(!$('button.section-status-main'), 'off: nothing to open');
-    await act(async () => portal.fixture.publish({ target: 'screen_sync' }));
-    assert.match(
-      $('button.section-status-main').textContent,
-      /See the picture$/,
-    );
-    await click($('button.section-status-main'));
-    await act(async () => portal.fixture.publish({ target: 'off' }));
-    assert.equal(window.location.hash, '#/preview');
-    assert.equal(document.activeElement.textContent, 'Live preview');
+    await click(toggle());
+    assert.equal(toggle().getAttribute('aria-label'), 'Pause preview');
     assert.equal(preview.open(), 1);
-    assert.equal(message(), 'Connecting to the preview…');
+    assert.equal(line(), 'Connecting to the preview…');
 
-    await act(async () => preview.send({ type: 'idle' }));
-    assert.equal(
-      message(),
-      'Lights are off. Turn on Screen sync to see the picture and its colours.',
-    );
-    assert.equal($('.preview-canvas').hidden, true);
-
+    // The picture in the screen; the colours stay on the LED bands.
     await act(async () => preview.send(frame()));
     await flush();
-    assert.equal($('.preview-canvas').hidden, false);
-    assert.equal($('.preview-info').textContent, 'Picture 1920 × 1080.');
+    assert.equal(picture().hidden, false);
+    assert.equal(line(), 'Picture 1920 × 1080.');
     assert.deepEqual(canvas.decoded, [['image/jpeg', [1, 2, 3]]]);
     assert.equal(canvas.released(), 1);
-    assert.equal($('.preview-canvas').width, 36);
-    const fills = canvas.drawn
-      .filter(([name]) => name === 'fillStyle=')
-      .map(([, value]) => value);
-    assert.deepEqual(fills.slice(0, 6), [
-      'rgb(255, 0, 0)',
-      'rgb(0, 0, 255)',
-      'rgb(255, 0, 0)',
-      'rgb(255, 0, 0)',
-      'rgb(255, 0, 0)',
-      'rgb(0, 0, 255)',
-    ]);
+    assert.deepEqual([picture().width, picture().height], [4, 2]);
     assert(
       canvas.drawn.some(
         ([name, , x, y, w, h]) =>
-          name === 'drawImage' && [x, y, w, h].join() === '16,16,4,2',
+          name === 'drawImage' && [x, y, w, h].join() === '0,0,4,2',
       ),
     );
     assert(
@@ -176,8 +122,8 @@ test('the preview has its own page, reached from Settings, and streams only whil
     );
     await flush();
     assert.equal(
-      $('.preview-info').textContent,
-      'Picture 1920 × 1080. Black bars removed: colours come from the outlined 1920 × 800 area.',
+      line(),
+      'Picture 1920 × 1080. Colours come from the outlined 1920 × 800 area.',
     );
     assert(
       canvas.drawn.some(
@@ -186,6 +132,71 @@ test('the preview has its own page, reached from Settings, and streams only whil
     );
     assert(canvas.drawn.some(([name]) => name === 'strokeRect'));
 
+    // Pause closes the stream; the button keeps the focus.
+    toggle().focus();
+    await click(toggle());
+    assert.equal(preview.open(), 0);
+    assert.equal(toggle().getAttribute('aria-label'), 'Play preview');
+    assertFocused(toggle());
+    assert.equal(line(), '');
+    assert.equal(picture().hidden, true);
+
+    // A hidden tab closes it too, and showing the tab reopens it.
+    await click(toggle());
+    assert.equal(preview.open(), 1);
+    const visibility = async (value) => {
+      Object.defineProperty(document, 'visibilityState', {
+        value,
+        configurable: true,
+      });
+      await act(async () =>
+        document.dispatchEvent(new portal.dom.window.Event('visibilitychange')),
+      );
+    };
+    await visibility('hidden');
+    assert.equal(preview.open(), 0);
+    await visibility('visible');
+    assert.equal(preview.open(), 1);
+
+    // Leaving Home closes it; coming back, the preview is paused again.
+    await openSettings();
+    assert.equal(preview.open(), 0);
+    await click(button('Home'));
+    assert.equal(toggle().getAttribute('aria-label'), 'Play preview');
+    assert.equal(preview.open(), 0);
+    await click(toggle());
+    assert.equal(preview.open(), 1);
+    assert.equal(preview.opened(), 4);
+  } finally {
+    await portal.unmount();
+  }
+  assert.equal(preview.open(), 0, 'unmounting closes the stream');
+  assert.equal(preview.closed(), 4);
+});
+
+test('the card says each state of the preview in one line', async () => {
+  const preview = fakePreviewClient();
+  const portal = await renderPortal(
+    WebosWebPortal,
+    { capture: { kind: 'webos' }, output },
+    undefined,
+    { preview: preview.client },
+  );
+  try {
+    await click(toggle());
+    await act(async () => preview.send({ type: 'idle' }));
+    assert.equal(
+      line(),
+      'Lights are off. Turn on Screen sync to see the picture and its colours.',
+    );
+    await act(async () =>
+      portal.fixture.publish({
+        target: 'screen_sync',
+        session: { state: 'screen_sync' },
+      }),
+    );
+    assert.equal(line(), 'Waiting for the first picture…');
+
     await act(async () =>
       preview.send({
         type: 'unavailable',
@@ -193,116 +204,47 @@ test('the preview has its own page, reached from Settings, and streams only whil
       }),
     );
     assert.equal(
-      message(),
+      line(),
       'This picture can’t be shown: MJPEG frames cannot be previewed',
     );
 
-    // Leaving the page or hiding it releases the viewer; coming back reopens.
-    await click(button('Settings'));
-    assert.equal(window.location.hash, '#/settings');
-    assert.equal(preview.open(), 0);
-    assert(!$('.preview-canvas'));
-    await openEditor('Video source');
-    await act(async () => portal.fixture.publish({ target: 'screen_sync' }));
-    await click($('button.section-status-main'));
-    await act(async () => portal.fixture.publish({ target: 'off' }));
-    assert.equal(preview.open(), 1);
-    Object.defineProperty(document, 'visibilityState', {
-      value: 'hidden',
-      configurable: true,
-    });
-    await act(async () =>
-      document.dispatchEvent(new portal.dom.window.Event('visibilitychange')),
-    );
-    assert.equal(preview.open(), 0);
-    Object.defineProperty(document, 'visibilityState', {
-      value: 'visible',
-      configurable: true,
-    });
-    await act(async () =>
-      document.dispatchEvent(new portal.dom.window.Event('visibilitychange')),
-    );
-    assert.equal(preview.open(), 1);
-    assert.equal(preview.opened(), 3);
-  } finally {
-    await portal.unmount();
-  }
-  assert.equal(preview.open(), 0, 'unmounting closes the stream');
-  assert.equal(preview.closed(), 3);
-});
-
-test('a busy or dropped preview says so, offers a retry and leaves the portal working', async () => {
-  const preview = fakePreviewClient();
-  const portal = await renderPortal(
-    WebosWebPortal,
-    { capture: { kind: 'webos' }, output },
-    undefined,
-    {
-      preview: preview.client,
-    },
-  );
-  const alert = () => $('.preview [role="alert"] p')?.textContent;
-  try {
-    preview.refuseNext({ kind: 'busy', message: 'too many preview viewers' });
-    await act(async () => {
-      window.location.hash = '#/preview';
-      await sleep(0);
-    });
-    await flush();
-    assert.equal(
-      alert(),
-      'Too many people are watching the preview. Close it in another window, then try again.',
-    );
-    assert.equal(preview.open(), 0);
-
-    await act(async () => button('Try again').click());
-    assert.equal(preview.open(), 1);
-    assert.equal(alert(), undefined);
-
+    // Dropped: said, with a retry that opens a new stream.
     await act(async () => preview.end());
     await flush();
-    assert.equal(alert(), 'The preview stopped.');
+    assert.equal(line(), 'The preview stopped. Try again');
     assert.equal(preview.open(), 0);
+    await click(button('Try again', $('.led-map-note')));
+    assert.equal(preview.open(), 1);
+    assertFocused(toggle());
+    assert.equal(line(), 'Connecting to the preview…');
 
-    // The rest of the portal is unaffected.
-    await act(async () => {
-      window.location.hash = '';
-      await sleep(0);
-    });
-    await act(async () => $('[data-target="screen_sync"]').click());
+    // Too many viewers: said, with a retry.
+    await click(toggle());
+    preview.refuseNext({ kind: 'busy', message: 'too many preview viewers' });
+    await click(toggle());
     await flush();
-    assert.equal(portal.fixture.snapshot().target, 'screen_sync');
-    await act(async () => {
-      window.location.hash = '#/preview';
-      await sleep(0);
-    });
-    assert.equal(preview.open(), 1, 'a new visit opens a new stream');
-    await act(async () => preview.send({ type: 'idle' }));
-    assert.equal(
-      $('.preview-message').textContent,
-      'Waiting for the first picture…',
-    );
+    assert.equal(line(), 'Too many people are watching the preview. Try again');
+    assert.equal(preview.open(), 0);
+    await click(button('Try again', $('.led-map-note')));
+    assert.equal(preview.open(), 1);
+
+    // Offline: the stream closes and the line says why; back, it plays on.
+    await act(async () => portal.fixture.drop());
+    assert.equal(preview.open(), 0);
+    assert.equal(line(), 'Waiting for the connection…');
+    await act(async () => sleep(400));
+    assert.equal(preview.open(), 1);
   } finally {
     await portal.unmount();
   }
 });
 
-test('without a preview client the portal offers no preview', async () => {
+test('without a preview client Home’s TV has no play button', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
-    await act(async () => portal.fixture.publish({ target: 'screen_sync' }));
-    await openEditor('Video source');
-    assert(!$('button.section-status-main'));
-    await leaveEditor();
-    await openEditor('Lights');
-    assert(!$('button.section-status-main'));
-    await leaveEditor();
-    await act(async () => {
-      window.location.hash = '#/preview';
-      await sleep(0);
-    });
-    assert(!$('.preview'));
-    assert($('.light-card'), 'Home instead');
+    assert($('.led-map'), 'the drawing');
+    assert(!toggle());
+    assert(!$('.led-map-note'));
   } finally {
     await portal.unmount();
   }

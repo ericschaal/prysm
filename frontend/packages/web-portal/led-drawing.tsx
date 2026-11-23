@@ -18,6 +18,7 @@ type Point = readonly [number, number];
  * corners are equal empty gaps, and the stand below.
  */
 const screen = { x: 60, y: 34, width: 200, height: 112 };
+const screenRadius = 7;
 const out = 9;
 const inset = 6;
 /** Home's drawing, with room for the counts (the bottom one past the stand). */
@@ -53,6 +54,15 @@ const countAt: Record<Edge, Point> = {
   left: [left - 20, cy + 4],
 };
 const homeView = `0 0 ${home.width} ${home.height}`;
+const percent = (part: number, whole: number) => `${(part / whole) * 100}%`;
+/** The screen's box on Home's drawing, for HTML laid over it. */
+const screenBox = {
+  left: percent(screen.x, home.width),
+  top: percent(screen.y, home.height),
+  width: percent(screen.width, home.width),
+  height: percent(screen.height, home.height),
+  borderRadius: `${percent(screenRadius, screen.width)} / ${percent(screenRadius, screen.height)}`,
+};
 const editorView = `${left - room} ${top - room} ${right - left + 2 * room} ${bottom - top + 2 * room}`;
 const stand = `M${cx} ${screen.y + screen.height + 17}v7M${cx - 22} ${screen.y + screen.height + 26}h44`;
 /** Each band drawn clockwise when no wiring is given. */
@@ -108,16 +118,23 @@ function bandOf(from: Point, to: Point) {
  * Home shows the counts as numbers. The editor (`editing`) puts each edge's
  * count field beside its band instead, breaks each lit band at its middle
  * for an arrow along the `wiring`, badges LED 1's corner and writes the
- * total in the screen, marked while it is refused (`invalid`).
+ * total in the screen, marked while it is refused (`invalid`). Home can lay
+ * `screen` over the screen (the live preview) and put a `note` under it.
  */
 export function LedDrawing({
   edges,
   caption,
+  screen: onScreen,
+  note,
   editing,
 }: {
   edges: LedEdges;
   /** The drawing in words, for screen readers. */
   caption: string;
+  /** Home only: HTML in the screen's box, clipped to its corners. */
+  screen?: ReactNode;
+  /** Home only: one line under the drawing. */
+  note?: ReactNode;
   editing?: {
     wiring: readonly Wire[];
     invalid: boolean;
@@ -127,101 +144,118 @@ export function LedDrawing({
   const blurId = useId();
   const wires = editing?.wiring ?? clockwise;
   const start = editing && wires.find(({ edge }) => edges[edge] > 0)?.from;
-  return (
-    <figure className={editing ? 'led-layout' : 'led-map'}>
-      {editing
-        ? wires.map(({ edge }) => (
-            <div key={edge} className={`led-edge led-edge-${edge}`}>
-              {editing.counts[edge]}
-            </div>
-          ))
-        : null}
-      <svg
-        viewBox={editing ? editorView : homeView}
-        aria-hidden="true"
-        focusable="false"
-      >
-        <defs>
-          {/* The light the band throws on the wall: soft, not an outline. */}
-          <filter
-            id={blurId}
-            filterUnits="userSpaceOnUse"
-            x="0"
-            y="0"
-            width={home.width}
-            height={home.height}
+  const drawing = (
+    <svg
+      viewBox={editing ? editorView : homeView}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        {/* The light the band throws on the wall: soft, not an outline. */}
+        <filter
+          id={blurId}
+          filterUnits="userSpaceOnUse"
+          x="0"
+          y="0"
+          width={home.width}
+          height={home.height}
+        >
+          <feGaussianBlur stdDeviation="5" />
+        </filter>
+      </defs>
+      <g className="led-map-band">
+        {wires.map(({ edge, from, to }) => {
+          const band = bandOf(corners[from], corners[to]);
+          const lit = edges[edge] > 0;
+          const arrow = editing && lit;
+          const lines: readonly (readonly [Point, Point])[] = arrow
+            ? band.parts
+            : [band.whole];
+          return (
+            <g
+              key={edge}
+              className={`led-map-edge edge-${edge}${lit ? '' : ' empty'}`}
+            >
+              <line
+                className="halo"
+                filter={`url(#${blurId})`}
+                {...ends(band.whole)}
+              />
+              {lines.map((part) => (
+                <line key={part[0].join()} {...ends(part)} />
+              ))}
+              {arrow ? <path className="led-map-way" d={band.arrow} /> : null}
+            </g>
+          );
+        })}
+      </g>
+      <path className="led-map-stand" d={stand} />
+      <g className="led-map-screen">
+        <rect {...screen} rx={screenRadius} />
+        {editing ? (
+          <text
+            className="screen-label"
+            data-invalid={editing.invalid}
+            x={cx}
+            y={cy}
+            textAnchor="middle"
+            dominantBaseline="central"
           >
-            <feGaussianBlur stdDeviation="5" />
-          </filter>
-        </defs>
-        <g className="led-map-band">
-          {wires.map(({ edge, from, to }) => {
-            const band = bandOf(corners[from], corners[to]);
-            const lit = edges[edge] > 0;
-            const arrow = editing && lit;
-            const lines: readonly (readonly [Point, Point])[] = arrow
-              ? band.parts
-              : [band.whole];
-            return (
-              <g
-                key={edge}
-                className={`led-map-edge edge-${edge}${lit ? '' : ' empty'}`}
-              >
-                <line
-                  className="halo"
-                  filter={`url(#${blurId})`}
-                  {...ends(band.whole)}
-                />
-                {lines.map((part) => (
-                  <line key={part[0].join()} {...ends(part)} />
-                ))}
-                {arrow ? <path className="led-map-way" d={band.arrow} /> : null}
-              </g>
-            );
-          })}
-        </g>
-        <path className="led-map-stand" d={stand} />
-        <g className="led-map-screen">
-          <rect {...screen} rx="7" />
-          {editing ? (
-            <text
-              className="screen-label"
-              data-invalid={editing.invalid}
-              x={cx}
-              y={cy}
-              textAnchor="middle"
-              dominantBaseline="central"
-            >
-              {ledCount(edges)} LEDs
-            </text>
-          ) : null}
-        </g>
-        {editing
-          ? null
-          : clockwise.map(({ edge }) => (
-              <text
-                key={edge}
-                className="led-map-count"
-                x={countAt[edge][0]}
-                y={countAt[edge][1] + digitDrop}
-                textAnchor="middle"
-              >
-                {edges[edge]}
-              </text>
-            ))}
-        {start ? (
-          <g className="led-map-start">
-            <circle cx={corners[start][0]} cy={corners[start][1]} r={badge} />
-            <text
-              x={corners[start][0]}
-              y={corners[start][1] + digitDrop}
-              textAnchor="middle"
-            >
-              1
-            </text>
-          </g>
+            {ledCount(edges)} LEDs
+          </text>
         ) : null}
-      </svg>
+      </g>
+      {editing
+        ? null
+        : clockwise.map(({ edge }) => (
+            <text
+              key={edge}
+              className="led-map-count"
+              x={countAt[edge][0]}
+              y={countAt[edge][1] + digitDrop}
+              textAnchor="middle"
+            >
+              {edges[edge]}
+            </text>
+          ))}
+      {start ? (
+        <g className="led-map-start">
+          <circle cx={corners[start][0]} cy={corners[start][1]} r={badge} />
+          <text
+            x={corners[start][0]}
+            y={corners[start][1] + digitDrop}
+            textAnchor="middle"
+          >
+            1
+          </text>
+        </g>
+      ) : null}
+    </svg>
+  );
+  if (editing)
+    return (
+      <figure className="led-layout">
+        {wires.map(({ edge }) => (
+          <div key={edge} className={`led-edge led-edge-${edge}`}>
+            {editing.counts[edge]}
+          </div>
+        ))}
+        {drawing}
+        <figcaption className="visually-hidden">{caption}</figcaption>
+      </figure>
+    );
+  return (
+    <figure className="led-map" data-preview={onScreen ? true : undefined}>
+      {/* The drawing's own box, so the screen's box can be laid over it. */}
+      <div className="led-map-tv">
+        {drawing}
+        {onScreen ? (
+          <div className="led-map-picture" style={screenBox}>
+            {onScreen}
+          </div>
+        ) : null}
+      </div>
+      {note}
       <figcaption className="visually-hidden">{caption}</figcaption>
     </figure>
   );

@@ -2142,10 +2142,19 @@ fieldset > .field-note {
     bottom: auto;
   }
 }
-/* The drawing is for room to spare: on a phone the path says enough. */
+/*
+ * The drawing is for room to spare: on a phone the path says enough, unless
+ * the drawing holds the live preview; then it takes the card's full width.
+ */
 @container (max-width: 399px) {
-  .setup-card .led-map {
+  .setup-card .led-map:not([data-preview]) {
     display: none;
+  }
+  /* Stretched across the card's padding (a set width would only shift). */
+  .setup-card .led-map-tv {
+    width: auto;
+    max-width: none;
+    margin-inline: calc(-1 * var(--space-5));
   }
 }
 
@@ -2161,12 +2170,16 @@ fieldset > .field-note {
   align-content: center;
   margin: var(--space-5) 0 var(--space-2);
 }
+.led-map-tv {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+}
 .led-map svg {
   display: block;
   width: 100%;
-  max-width: 400px;
   height: auto;
-  margin: 0 auto;
   overflow: visible;
 }
 .led-map-screen rect {
@@ -2202,6 +2215,90 @@ fieldset > .field-note {
 }
 .led-map-edge.empty line.halo {
   opacity: 0;
+}
+/*
+ * The live preview in the screen (night colours, as the screen is): paused,
+ * a play button in its middle; playing, the picture fills the screen to its
+ * rounded corners and the button, now pause, sits in the bottom-right
+ * corner, a smaller disc in the same hit area. Its state is a line under
+ * the drawing: one line's height is kept, so playing and pausing move
+ * nothing; a long state (black bars, too many viewers) wraps.
+ */
+.led-map-picture {
+  position: absolute;
+  display: grid;
+  place-items: center;
+}
+.led-map-picture canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+  animation: picture-in var(--duration-warm) var(--ease-out) both;
+}
+.led-map-play {
+  position: relative;
+  width: var(--hit);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  color: var(--fg);
+}
+.led-map-play svg {
+  width: var(--icon);
+  height: var(--icon);
+  fill: currentColor;
+}
+@media (hover: hover) {
+  .led-map-play:hover:enabled {
+    background-color: color-mix(in srgb, var(--fg) 24%, transparent);
+  }
+}
+.led-map-play:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+/*
+ * After the play button's own hover rule, and over the global button's:
+ * either would fill the whole hit area.
+ */
+.led-map-picture .led-map-play[data-playing='true'] {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: var(--space-2);
+  /* A dark disc with a light rim, so it reads on a black bar too. */
+  --disc: rgb(0 0 0 / 0.55);
+  background: radial-gradient(
+      closest-side,
+      var(--disc) calc(100% - 1.5px),
+      rgb(255 255 255 / 0.4) calc(100% - 1px)
+    )
+    content-box;
+}
+@media (hover: hover) {
+  .led-map-picture .led-map-play[data-playing='true']:hover:enabled {
+    --disc: rgb(0 0 0 / 0.8);
+  }
+}
+.led-map-play[data-playing='true'] svg {
+  width: var(--space-3);
+  height: var(--space-3);
+}
+.led-map-note {
+  /* Two lines, the longest it says: the drawing stays where it is. */
+  min-height: calc(2 * var(--text-small) * var(--leading));
+  margin-top: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-small);
+  text-align: center;
+  text-wrap: balance;
+}
+.led-map-note[data-view='connecting'] {
+  animation: breathe 2.4s var(--ease-in-out) infinite;
 }
 /* The band's colours follow the light card. */
 /*
@@ -2255,52 +2352,10 @@ fieldset > .field-note {
   border-bottom: 0;
 }
 
-/* ── Live preview (from Settings) ─────────────────────────────────────── */
+/* A page's opening words, under its heading. */
 .page-intro {
   max-width: 56ch;
   color: var(--muted);
-}
-.preview {
-  container-type: inline-size;
-  animation: fade-in var(--duration-slow) var(--ease-out) both;
-}
-.preview-canvas {
-  display: block;
-  width: 100%;
-  height: auto;
-  border-radius: var(--radius-2);
-  background: var(--bg);
-  box-shadow: var(--shadow-stage);
-}
-.preview[data-view='frame'] .preview-canvas {
-  box-shadow:
-    var(--shadow-stage),
-    -30px 0 70px -24px var(--aurora-1),
-    30px 0 70px -24px var(--aurora-2),
-    0 30px 70px -30px var(--aurora-3);
-  animation: picture-in var(--duration-warm) var(--ease-out) both;
-}
-.preview-message {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 16 / 9;
-  padding: var(--space-6);
-  border-radius: var(--radius-2);
-  background: var(--bg);
-  box-shadow: var(--shadow-stage);
-  color: var(--muted);
-  font-size: var(--text-small);
-  text-align: center;
-  text-wrap: balance;
-}
-.preview[data-view='connecting'] .preview-message {
-  animation: breathe 2.4s var(--ease-in-out) infinite;
-}
-.preview-info {
-  margin-top: var(--space-4);
-  color: var(--muted);
-  font-size: var(--text-small);
-  text-align: center;
 }
 
 /* ── Settings ─────────────────────────────────────────────────────────── */
@@ -2391,9 +2446,8 @@ fieldset > .field-note {
 }
 /*
  * Whether the section works, first on its page: a 16:9 tile (the live
- * picture, or the section's mark) beside a title and one line, and a
- * chevron when the whole card opens the large preview. The tile keeps the
- * card's height, so it changes in place.
+ * picture, or the section's mark) beside a title and one line. The tile
+ * keeps the card's height, so it changes in place.
  */
 .section-status {
   margin: var(--space-4) 0 var(--space-block);
@@ -2407,32 +2461,7 @@ fieldset > .field-note {
   grid-template-columns: 96px minmax(0, 1fr);
   align-items: center;
   gap: var(--space-4);
-  width: 100%;
-  min-height: 0;
   padding: var(--space-3);
-  border: 0;
-  border-radius: inherit;
-  background: none;
-  color: var(--fg);
-  font: inherit;
-  font-weight: inherit;
-  text-align: left;
-}
-button.section-status-main {
-  grid-template-columns: 96px minmax(0, 1fr) auto;
-  cursor: pointer;
-}
-@media (hover: hover) {
-  button.section-status-main:hover:enabled {
-    background: none;
-  }
-  button.section-status-main:hover .section-status-title {
-    color: var(--accent-ink);
-  }
-}
-button.section-status-main:focus-visible {
-  outline: 2px solid var(--accent-ink);
-  outline-offset: 2px;
 }
 .section-status[data-tone='problem'] {
   background: var(--alert-soft);
@@ -2452,9 +2481,6 @@ button.section-status-main:focus-visible {
 /* The lights have no picture: their mark, as on Home's path. */
 .section-status[data-section='output'] .section-status-main {
   grid-template-columns: 40px minmax(0, 1fr);
-}
-.section-status[data-section='output'] button.section-status-main {
-  grid-template-columns: 40px minmax(0, 1fr) auto;
 }
 .section-status[data-section='output'] .section-status-tile {
   aspect-ratio: 1;

@@ -75,8 +75,10 @@ supervisor in each of its states and play the phone's calibration part). See the
     (the video source and lights from the adapters' `summary`, a kind named
     without its qualifier such as "(development only)", Prysm by its active
     calibration's name beside the frame rate, the LEDs per edge
-    from an output's `edges` in a drawing that fills the card, and a
-    "Change setup" row at its foot). Problems show in the light card in plain
+    from an output's `edges` in a drawing that fills the card, the
+    [live preview](packages/web-portal/preview.tsx) in the drawing's screen
+    when the host has a preview client, and a "Change setup" row at its
+    foot). Problems show in the light card in plain
     words with the action that fixes them ("Set up Prysm"); the card keeps
     their space in every state, so nothing moves. The header names
     "Settings" beside its icon.
@@ -89,7 +91,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     black bars switch) and This device (Appearance, About this Prysm, Start
     over with setup). A row is a label, its value beneath and a chevron; the
     whole row is the link; a switch only for plain on/off. The pages under
-    Settings (editors, style, calibrations, detail, appearance, about, preview)
+    Settings (editors, style, calibrations, detail, appearance, about)
     have the same width, heading and back link, and one line under the
     heading in the same place: the save status where things save live, else
     how the page saves ("Saved when you choose …", "Kept in this browser").
@@ -183,13 +185,18 @@ supervisor in each of its states and play the phone's calibration part). See the
     with one request in flight and the latest value winning, and the value
     where it is let go is saved once; a failed step shows nothing, only the
     save's failure. A calibration segment saves at once.
-  - [Preview](packages/web-portal/preview.tsx): the captured picture drawn on
-    a canvas with each edge's colours around it and the sampled area outlined
-    when black bars are removed, on its own page (`#/preview`, from
-    Settings); the stream is open only while that page is shown, the
-    browser tab is visible and the portal is connected (the portal counts
-    viewers). Hosts pass `httpPreviewClient()`; without a preview client
-    there is none.
+  - [Preview](packages/web-portal/preview.tsx): in the screen of Home's TV
+    drawing, a play/pause button (paused on every visit); playing, the
+    captured picture drawn on a canvas clipped to the screen, the cut-off
+    black bars dimmed and the sampled area outlined, and one line under the
+    drawing with the picture's size or the stream's state (connecting, idle
+    and why, unavailable, busy or stopped with "Try again"). The LED bands
+    go on showing the live colours. The stream is open only while
+    playing, Home is shown, the browser tab is visible and the portal is
+    connected (the portal counts viewers). On a phone-width card the
+    drawing, otherwise hidden there, shows and takes the card's full width.
+    Hosts pass `httpPreviewClient()`; without a preview client there is
+    none.
   - [Section editor](packages/web-portal/section-editor.tsx) with its
     [draft](packages/web-portal/draft.ts): the video source
     (`#/settings/video`) or the lights (`#/settings/lights`) on a page of
@@ -205,8 +212,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     nothing was tried and offers "Turn on screen sync to try". While it is
     not known to work, "Go back to the previous …" saves what was there
     before. A change on another device asks: Use theirs, or Keep mine.
-    Each editor opens the live preview from a row ("See the picture",
-    "Check placement"). The rows in Settings show their side's live problem, and
+    The rows in Settings show their side's live problem, and
     Home's "Change setup" opens the editor of a failing side (else
     Settings). After a failed check the buttons are "Go back to the previous
     …" and "Keep this video source" / "Keep these lights".
