@@ -255,13 +255,14 @@ export function TvApp({
   const hidden = useEffectEvent(() => {
     if (calibrating) leaveCalibration();
   });
-  useEffect(
-    () =>
-      watchVisibility(() => {
-        if (!pageShown()) hidden();
-      }),
-    [],
-  );
+  useEffect(() => {
+    let shown = pageShown();
+    return watchVisibility(() => {
+      const now = pageShown();
+      if (shown && !now) hidden();
+      shown = now;
+    });
+  }, []);
   useLayoutEffect(() => {
     if (calibrating || !refocusRef.current) return;
     refocusRef.current = false;

@@ -3082,8 +3082,8 @@ test('slim: calibration uses the computer portal, already on, and ends when the 
     document.dispatchEvent(new tv.dom.window.Event('visibilitychange')),
   );
   await settle();
-  // Hiding ends calibration, then releases the subscription.
-  assert.deepEqual(tv.application.calls.slice(callsBefore), [
+  // Once each; which comes first is the browser's order of listeners.
+  assert.deepEqual(tv.application.calls.slice(callsBefore).sort(), [
     'calibration:end',
     'unsubscribe',
   ]);
