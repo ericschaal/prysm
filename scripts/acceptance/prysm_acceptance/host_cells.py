@@ -579,18 +579,27 @@ def test_fps(prysm: Prysm, config: Config, record: Record) -> None:
     record(rate_detail(measured), measured)
 
 
-@planned(does=lambda cell, config: [f'GET /api/v1/colors/stream for {edges_clip.CHECK_SECONDS:g} s'])
-def test_colours(prysm: Prysm, clip: Clip | None, feed_shown: Feed | None, record: Record) -> None:
+def _colours_plan(cell: Cell, config: Config) -> list[str]:
+    seconds = edges_clip.CHECK_SECONDS
+    if _local_only(cell, config):
+        return host.colours_plan(None, seconds)
+    seam = _seam(cell, config, transport.Refusing(), Path('RUN_DIR/CELL'))
+    return host.colours_plan(seam.colours_command(seconds), seconds)
+
+
+@planned(does=_colours_plan)
+def test_colours(prysm: Prysm, running: Host, clip: Clip | None, feed_shown: Feed | None, record: Record) -> None:
     """The colours follow the clip.
 
     Each edge's two halves are nearest the clip's two colours among nine, in the right direction; at least two
-    steps, in order, 2 s apart. A clip of unknown content, or a card without a feed: not black."""
+    steps, in order, 2 s apart, timed where Prysm runs (on a target over SSH, by the target's clock). A clip of
+    unknown content, or a card without a feed: not black."""
     screen_sync(prysm)
     if feed_shown:
         feed_shown.settled()
     if clip and clip.edges:
         seconds = edges_clip.CHECK_SECONDS
-        detail, evidence = edges_clip.judge(prysm.colors(seconds, timed=True), seconds)
+        detail, evidence = edges_clip.judge(running.colours(seconds), seconds)
         record(detail, evidence)
         return
     record(*not_black(prysm))

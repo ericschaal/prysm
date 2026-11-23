@@ -2,8 +2,9 @@
 
 `Host` is the interface (docs/developers/acceptance.md, The host seam):
 whether the target can run the cell, deliver, start with a settings document,
-stop, the log, the base URL, and the address WLED should report as the
-sender. `LocalBinary` runs the binary on this computer as a child process,
+stop, the log, the base URL, the address WLED should report as the
+sender, and the colours stream timed where Prysm runs (`OnTarget`: on the
+target over SSH). `LocalBinary` runs the binary on this computer as a child process,
 stopped with SIGTERM, its output in a file of the run directory.
 `SshBinary` copies it to a run directory on a Linux target and runs it there
 over SSH; every remote command is a `linux.*` template in `commands.py`. The
@@ -29,7 +30,7 @@ from prysm_acceptance import commands, web
 from prysm_acceptance.commands import Command, RunFile, Signal
 from prysm_acceptance.config import Config
 from prysm_acceptance.options import Source
-from prysm_acceptance.prysm_api import SETTINGS_FORMAT, Settings, State
+from prysm_acceptance.prysm_api import SETTINGS_FORMAT, ColorsEvent, Prysm, Settings, State, colours_on_device
 from prysm_acceptance.transport import Process, Result, Transport
 from prysm_acceptance.web import Json, JsonObject
 
@@ -121,6 +122,16 @@ def target_machine(transport: Transport, target: str) -> tuple[str | None, str]:
     return machine, ''
 
 
+def reader_missing(transport: Transport, target: str) -> str | None:
+    """Why the colour check cannot read the colours stream on the target (python3 or `timeout` missing); None
+    when it can."""
+    lines = transport.run(commands.device_reader_tools(target)).stdout.splitlines()
+    missing = [line.removeprefix('missing ') for line in lines if line.startswith('missing ')]
+    if missing:
+        return f'the colour check reads on {target} with python3 and timeout; missing there: {", ".join(missing)}'
+    return None
+
+
 def device_node(transport: Transport, target: str, device: str) -> tuple[str | None, str]:
     """The node `device` resolves to on the target, or None with why it cannot be captured from."""
     node = transport.run(commands.linux_device(target, device)).stdout.strip()
@@ -209,6 +220,22 @@ class Sender(Protocol):
         """Bring what the target keeps (Prysm's log, the kernel's USB lines) into the run directory."""
         ...
 
+    def colours(self, seconds: float) -> list[tuple[float, ColorsEvent]]:
+        """The colours stream's events over `seconds`, each with its seconds since the window began by the clock
+        of the device Prysm runs on, so a network between it and this computer does not shift them."""
+        ...
+
+
+def colours_plan(command: Command | None, seconds: float) -> list[str]:
+    """`Sender.colours`, for the dry run: `command` reads on the device, None here."""
+    if command is None:
+        return [f'GET /api/v1/colors/stream for {seconds:g} s, each event timed on its arrival here']
+    return [
+        f'the colours stream for {seconds:g} s, read where Prysm runs and timed by its clock (at most '
+        f'{command.timeout:g} s):',
+        *shown(command),
+    ]
+
 
 class Host(Sender, Protocol):
     """Prysm delivered to and running on a platform, as the checks see it.
@@ -265,6 +292,28 @@ class Host(Sender, Protocol):
     def close(self) -> None:
         """Fetch, then remove what `deliver` put on the target. Safe to repeat."""
         ...
+
+    def colours_command(self, seconds: float) -> Command | None:
+        """What `colours` runs on the target, for the dry run; None when it reads from here."""
+        ...
+
+
+class OnTarget:
+    """Prysm on `target` over SSH, listening on `listen` there: its colours stream is read on the target
+    (`commands.device_colours`), on loopback for 0.0.0.0, else on that address."""
+
+    transport: Transport
+    target: str
+    listen: str
+
+    def colours_command(self, seconds: float) -> Command:
+        address, port = self.listen.rsplit(':', 1)
+        return commands.device_colours(
+            self.target, int(port), seconds, '127.0.0.1' if address == '0.0.0.0' else address
+        )
+
+    def colours(self, seconds: float) -> list[tuple[float, ColorsEvent]]:
+        return colours_on_device(self.transport, self.colours_command(seconds))
 
 
 def tail(path: Path, lines: int) -> str:
@@ -368,6 +417,13 @@ class LocalBinary:
     def close(self) -> None:
         """Nothing was delivered."""
 
+    def colours(self, seconds: float) -> list[tuple[float, ColorsEvent]]:
+        """Read here: Prysm runs on this computer."""
+        return Prysm(self.url).colors(seconds, timed=True)
+
+    def colours_command(self, seconds: float) -> None:
+        return None
+
 
 # The PID the dry run shows in place of the one `linux.status` reports.
 SAMPLE_PID = 4242
@@ -379,7 +435,7 @@ def _code(value: str) -> int | str:
     return int(value) if value.isdigit() else value
 
 
-class SshBinary:
+class SshBinary(OnTarget):
     """The Linux binary copied to a run directory on `target` (USER@HOST) and run there over SSH.
 
     The run directory is `commands.run_dir(run)`, named after the local run and
@@ -414,6 +470,7 @@ class SshBinary:
     def plan(self, source: Source | None, device: str) -> Plan:
         checks = [
             commands.linux_probe(self.target),
+            commands.device_reader_tools(self.target),
             *([commands.linux_ffmpeg_version(self.target)] if source == Source.FILE else []),
             *([commands.linux_device(self.target, device or '/dev/DEVICE')] if source == Source.DEVICE else []),
             commands.linux_port_free(self.target, self.port),
@@ -459,7 +516,7 @@ class SshBinary:
         built = elf_machine(self.binary)
         if built != machine:
             return f'{self.binary.name} is built for {built or "no ELF machine"}; {self.target} is {machine}'
-        return None
+        return reader_missing(self.transport, self.target)
 
     def preflight(self, source: Source | None, device: str) -> str | None:
         reason = self._system()
