@@ -14,6 +14,7 @@ const defaults = captureDefaults.device;
 export const deviceCapture: AdapterUi<DeviceSettings> = {
   label: 'Capture card or camera',
   create: () => ({ kind: 'device', device: '', ...defaults }),
+  optional: { fps: true, height: true, width: true },
   Editor: DeviceEditor,
   normalize: (value) => ({ ...value, device: value.device.trim() }),
   summary: (value) =>

@@ -28,7 +28,8 @@ delivers, each with the size and rate it sets: keep **Balanced** (640 × 360
 at 30 fps, or the card's nearest larger size) to start. **Smooth** (60 fps)
 shows only for a card that captures 60 fps; **Efficient** (320 × 180 at 30
 fps) is less work for the computer. While the card is unplugged its size and
-rate stay as saved and cannot be changed. On Linux the card must offer YUYV,
+rate stay as saved and cannot be changed; once it is plugged in, choose
+**Try again** under them. On Linux the card must offer YUYV,
 RGB3 or BGR3; cards that only offer MJPEG do not work. A card with nothing
 Prysm can use, such as one that only captures at 25 or 50 fps, shows why
 under the cards instead of **Size and rate**.

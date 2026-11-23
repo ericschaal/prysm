@@ -2,12 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
-import {
-  modesRetryMs,
-  offeredPresets,
-  picturePresets,
-  resolve,
-} from '@prysm/web-portal';
+import { offeredPresets, picturePresets, resolve } from '@prysm/web-portal';
 import { typedDeviceMs } from '@prysm/capture-device-ui';
 import { fakeCaptureModesClient } from '../testkit/capture-modes';
 import { anyMode, fixedMode } from '../testkit/modes';
@@ -282,7 +277,10 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
       ['Smooth', '640 × 360 · 60 fps', true, true],
       ['Efficient', '320 × 180 · 30 fps', false, true],
     ]);
-    assert.equal(line(), 'Plug in the device to choose its size and rate.');
+    assert.equal(
+      line(),
+      'Plug in the device to choose its size and rate. Try again',
+    );
     // Typing waits under Advanced, by its own name.
     assert.equal(
       field('capture.device').labels[0].textContent,
@@ -470,7 +468,7 @@ test('while the first answer is coming the rows stay on the saved choice, locked
   }
 });
 
-test('a lookup that fails says so and is asked again', async (t) => {
+test('a lookup that fails says so, asks nothing by itself, and Try again asks once more', async (t) => {
   const modes = fakeCaptureModesClient();
   modes.refuseNext({
     kind: 'unavailable',
@@ -483,14 +481,86 @@ test('a lookup that fails says so and is asked again', async (t) => {
     { captureModes: modes.client },
   );
   try {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
     await openEditor('Video source');
+    await settled();
+    assert.equal(line(), 'Prysm didn’t say what this source can do. Try again');
+    assert.equal(radio('Balanced').disabled, true);
+    // Neither time, nor coming back to the page, asks again.
+    const asked = modes.calls.length;
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await act(async () => t.mock.timers.tick(60_000));
+    t.mock.timers.reset();
+    await act(async () =>
+      document.dispatchEvent(new window.Event('visibilitychange')),
+    );
+    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    await settled();
+    assert.equal(modes.calls.length, asked, 'asked once');
+
+    await click(button('Try again', choice()));
+    await settled();
+    assert.equal(modes.calls.length, asked + 1);
+    assert.equal(line(), '');
+    assert.equal(radio('Balanced').disabled, false);
+    assertFocused(choice(), 'the rows take the focus Try again leaves');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a known answer after Try again leaves the focus where the user moved it', async () => {
+  let answer = () => Promise.resolve(unknown);
+  const captureModes = { modes: () => answer() };
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', device }, output },
+    undefined,
+    { captureModes },
+  );
+  try {
+    await openEditor('Video source');
+    await settled();
+    let release;
+    answer = () =>
+      new Promise((resolve) => {
+        release = () => resolve(known(anyMode(1920, 1080, 60)));
+      });
+    await click(button('Try again', choice()));
+    const typed = field('capture.device');
+    typed.focus();
+    await act(async () => release());
+    await settled();
+    assert.equal(radio('Balanced').disabled, false);
+    assertFocused(typed, 'the field moved to keeps the focus');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('Look again also asks the saved device again: plugged in since, its sizes open', async () => {
+  let plugged = false;
+  const card = { label: 'Card', detail: device, fields: { device } };
+  const discovery = {
+    candidates: () => Promise.resolve(plugged ? [card] : []),
+  };
+  const modes = fakeCaptureModesClient(() =>
+    plugged ? known(anyMode(1920, 1080, 60)) : unknown,
+  );
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', device }, output },
+    undefined,
+    { captureModes: modes.client, discovery },
+  );
+  try {
+    await openEditor('Video source');
+    await settled();
     assert.equal(
       line(),
-      'Prysm didn’t say what this source can do. Asking again…',
+      'Plug in the device to choose its size and rate. Try again',
     );
-    await act(async () => t.mock.timers.tick(modesRetryMs));
-    t.mock.timers.reset();
+    plugged = true;
+    await click(button('Look again'));
     await settled();
     assert.equal(line(), '');
     assert.equal(radio('Balanced').disabled, false);
@@ -499,49 +569,52 @@ test('a lookup that fails says so and is asked again', async (t) => {
   }
 });
 
-test('a hidden page stops asking again until it is shown', async (t) => {
-  const modes = fakeCaptureModesClient(() => unknown);
+test('after a Try again that brings no answer, a picked device keeps the focus', async () => {
+  const discovery = fakeDiscoveryClient({
+    'capture/device': [
+      {
+        label: 'USB Video',
+        detail: '/dev/video2',
+        fields: { device: '/dev/video2' },
+      },
+    ],
+  });
+  const modes = fakeCaptureModesClient((capture) =>
+    capture.device === '/dev/video2' ? known(anyMode(1920, 1080, 60)) : unknown,
+  );
   const portal = await renderPortal(
     HeadlessWebPortal,
     { capture: { kind: 'device', device }, output },
     undefined,
-    { captureModes: modes.client },
+    { captureModes: modes.client, discovery: discovery.client },
   );
   try {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
     await openEditor('Video source');
-    const asked = modes.calls.length;
-    Object.defineProperty(document, 'visibilityState', {
-      value: 'hidden',
-      configurable: true,
-    });
-    await act(async () => t.mock.timers.tick(modesRetryMs));
-    await act(async () => t.mock.timers.tick(modesRetryMs));
-    t.mock.timers.reset();
     await settled();
-    assert.equal(modes.calls.length, asked, 'nothing asked while hidden');
-
-    Object.defineProperty(document, 'visibilityState', {
-      value: 'visible',
-      configurable: true,
-    });
-    await act(async () =>
-      document.dispatchEvent(new window.Event('visibilitychange')),
-    );
+    const asked = modes.calls.length;
+    await click(button('Try again', choice()));
     await settled();
     assert.equal(modes.calls.length, asked + 1);
+    assert(button('Try again', choice()), 'still no answer');
+
+    const pick = $('.device-rows input');
+    pick.focus();
+    await click(pick);
+    await settled();
+    assert.equal(radio('Balanced').disabled, false);
+    assertFocused(pick, 'the picked device keeps the focus');
   } finally {
-    delete document.visibilityState;
     await portal.unmount();
   }
 });
 
 test('a newer ask ends the one in flight, and leaving ends the last', async () => {
   const signals = [];
+  let answer = () => Promise.resolve(unknown);
   const captureModes = {
     modes: (_capture, signal) => {
       signals.push(signal);
-      return new Promise(() => {});
+      return answer();
     },
   };
   const portal = await renderPortal(
@@ -553,15 +626,15 @@ test('a newer ask ends the one in flight, and leaving ends the last', async () =
   let left = false;
   try {
     await openEditor('Video source');
+    await settled();
     const live = () => signals.filter((signal) => !signal.aborted).length;
     const asking = live();
     assert(asking > 0);
     const first = signals.length;
-    // Back to the tab: shown and focused, two asks; only the newest runs.
-    await act(async () =>
-      document.dispatchEvent(new window.Event('visibilitychange')),
-    );
-    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    // Asked again twice before an answer: only the newest runs.
+    answer = () => new Promise(() => {});
+    await click(button('Try again', choice()));
+    await click(button('Try again', choice()));
     assert.equal(signals.length, first + 2 * asking);
     assert.equal(live(), asking);
     await portal.unmount();
@@ -572,7 +645,7 @@ test('a newer ask ends the one in flight, and leaving ends the last', async () =
   }
 });
 
-test('a capture-only TV that has not connected locks the rows on the saved choice and offers every encoding; its offer then decides', async (t) => {
+test('a capture-only TV that has not connected locks the rows on the saved choice and offers every encoding; its offer then decides', async () => {
   let offer = () => unknown;
   const modes = fakeCaptureModesClient((capture) => offer(capture));
   const portal = await renderPortal(
@@ -584,7 +657,6 @@ test('a capture-only TV that has not connected locks the rows on the saved choic
   const encodings = () =>
     $$('option', field('capture.encoding')).map((option) => option.value);
   try {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
     await openEditor('Video source');
     assert.deepEqual(
       modes.calls.map((call) => call.encoding),
@@ -592,7 +664,7 @@ test('a capture-only TV that has not connected locks the rows on the saved choic
     );
     assert.equal(
       line(),
-      'The TV isn’t connected. Give the TV app the address of this page.',
+      'The TV isn’t connected. Give the TV app the address of this page. Try again',
     );
     assert.deepEqual(
       rows().map(([label, , checked, locked]) => [label, checked, locked]),
@@ -605,15 +677,14 @@ test('a capture-only TV that has not connected locks the rows on the saved choic
     assert.deepEqual(encodings(), ['h264_hardware', 'h264_software', 'raw']);
 
     // The TV announces: its video chip streams up to 30 fps, the processor
-    // up to 60, and it sends nothing uncompressed. Asked again by itself.
+    // up to 60, and it sends nothing uncompressed. Asked again on request.
     offer = ({ encoding }) =>
       ({
         h264_hardware: known(anyMode(1920, 1080, 30)),
         h264_software: known(anyMode(1920, 1080, 60)),
         raw: known(),
       })[encoding];
-    await act(async () => t.mock.timers.tick(modesRetryMs));
-    t.mock.timers.reset();
+    await click(button('Try again', choice()));
     await settled();
     assert.deepEqual(
       rows().map(([label, facts, checked]) => [label, facts, checked]),
@@ -630,16 +701,14 @@ test('a capture-only TV that has not connected locks the rows on the saved choic
     assert.deepEqual(encodings(), ['h264_hardware', 'h264_software']);
     assert(field('capture.encoding').closest('[hidden]'), 'under Advanced');
 
-    // Another encoding: its own presets, and the page asks again on focus.
+    // Another encoding: its own presets, from the answer already given.
+    const asked = modes.calls.length;
     await edit(field('capture.encoding'), 'h264_software');
     assert.deepEqual(
       rows().map(([label]) => label),
       ['Balanced', 'Smooth', 'Efficient'],
     );
-    const asked = modes.calls.length;
-    await act(async () => window.dispatchEvent(new window.Event('focus')));
-    await settled();
-    assert.equal(modes.calls.length, asked + 3);
+    assert.equal(modes.calls.length, asked);
   } finally {
     await portal.unmount();
   }
@@ -1032,9 +1101,9 @@ test('every choice row shows its ring; only the chosen one is checked', async ()
 });
 
 test('a slower lookup does not overwrite the answer of a newer one', async () => {
-  // A focus during a lookup asked again; the older answer, arriving last,
-  // was shown.
-  let answer = () => Promise.resolve(known(anyMode(1920, 1080, 60)));
+  // Try again pressed twice: the first ask's answer, arriving last, would
+  // be shown.
+  let answer = () => Promise.resolve(unknown);
   const captureModes = { modes: () => answer() };
   const portal = await renderPortal(
     HeadlessWebPortal,
@@ -1045,18 +1114,21 @@ test('a slower lookup does not overwrite the answer of a newer one', async () =>
   try {
     await openEditor('Video source');
     await settled();
-    const before = rows();
     let release;
     answer = () =>
       new Promise((resolve) => {
         release = () => resolve(known(anyMode(1920, 1080, 60)));
       });
-    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    await click(button('Try again', choice()));
     answer = () => Promise.resolve(known(fixedMode(640, 360, 30)));
-    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    await click(button('Try again', choice()));
     await settled();
     const newer = rows();
-    assert.notDeepEqual(newer, before);
+    assert.deepEqual(
+      newer.map(([label]) => label),
+      ['Balanced'],
+      'the newer answer',
+    );
     await act(async () => release());
     await settled();
     assert.deepEqual(rows(), newer, 'the newer answer stays');

@@ -208,6 +208,7 @@ export function DeviceRows({
   byHand,
   then,
   onPick,
+  onLook,
 }: {
   kind: string;
   path: string;
@@ -221,6 +222,8 @@ export function DeviceRows({
   byHand: ReactNode;
   then: ReactNode;
   onPick: (value: string) => void;
+  /** Called on each Look again, so what follows from the device is too. */
+  onLook?: () => void;
 }) {
   const discovery = use(DiscoveryContext);
   const scope = useFieldScopeContext();
@@ -303,7 +306,10 @@ export function DeviceRows({
             disabled={scope.disabled}
             aria-disabled={looking || undefined}
             aria-busy={looking}
-            onClick={() => look(discovery)}
+            onClick={() => {
+              look(discovery);
+              onLook?.();
+            }}
           >
             Look again
           </button>

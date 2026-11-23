@@ -14,6 +14,7 @@ export const fileCapture: AdapterUi<FileSettings> = {
   label: 'Video file (development only)',
   developer: true,
   create: () => ({ kind: 'file', path: '', ...defaults }),
+  optional: { fps: true, height: true, repeat: true, width: true },
   Editor: FileEditor,
   normalize: (value) => ({ ...value, path: value.path.trim() }),
   summary: (value) => `${value.path}, ${describeSavedPicture(value, defaults)}`,

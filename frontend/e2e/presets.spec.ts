@@ -10,6 +10,7 @@ test('a preset saves its size and rate; the saved custom size shows until replac
 }) => {
   // The TV announces what it streams (everything), so the rows unlock.
   startSender();
+  await prysm.offered('raw');
   await page.goto('/#/settings/video');
   const editor = page.getByRole('form', { name: 'Video source' });
   const choice = editor.getByRole('radiogroup', { name: 'Size and rate' });

@@ -34,7 +34,6 @@ export {
 export { PictureChoice } from './picture-choice';
 export {
   delivers,
-  modesRetryMs,
   nothingOffered,
   offeredPresets,
   resolve,

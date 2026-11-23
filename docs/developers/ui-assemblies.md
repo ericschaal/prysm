@@ -84,11 +84,14 @@ edge, for tinting Home. Both also pass `httpDiscoveryClient()` as the
 optional `discovery` (devices to pick) and `httpCaptureModesClient()` as the
 required `captureModes` (the sizes and rates a capture delivers, for its
 editor; `fakeCaptureModesClient()` in the testkit). A host registers each section's kinds as an `AdapterUis` map of
-`AdapterUi { label, create, Editor, normalize?, summary?, lighting?, edges? }`; the map is
+`AdapterUi { label, create, optional, Editor, normalize?, summary?, lighting?, edges? }`; the map is
 exhaustive over the host's generated union, the form shows the kinds as rows to tick when
 there is more than one, and editors are controlled components built from the
-portal's fields. Saves copy the latest observed settings and replace one
-section, so unknown fields are kept; a section changed elsewhere is reloaded
+portal's fields; `readSection` fills a saved section's missing required
+fields from `create` (`optional` names the others) before any page sees it
+([reading the state](frontend.md#reading-the-state)).
+Saves copy the latest observed settings and replace one section, so unknown
+fields are kept; a section changed elsewhere is reloaded
 instead of overwritten ([saving settings](../../frontend/README.md#saving-settings)).
 Both browser hosts also have the Calibrate page at `#/calibrate` (the TV
 links its QR code there; the main page has a "Calibrate colours" entry): a
