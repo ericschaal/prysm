@@ -128,8 +128,10 @@ supervisor in each of its states and play the phone's calibration part). See the
     `colors` client is given, the LEDs' colours (`/api/v1/colors/stream`,
     opened only while Home is shown, visible and online) become the card's
     four light fields: written as CSS custom properties on the Home grid,
-    eased, kept in an OKLCH window and blended with the designed palette for
-    dull content. WLED effects keep the designed effects palette and open no
+    eased, with the LEDs' own hue and saturation and as strong as the LEDs
+    are bright: dimmed LEDs glow lower in their colour, grey ones give white
+    light, and black ones (or no picture) a faint colourless moonlight. The
+    designed palette shows only until the first colours arrive. WLED effects keep the designed effects palette and open no
     stream. A failed or faulted session shows "Stopped" in a calm red light,
     whatever the session still reports (after a failed start from effects
     the session is still `effects`, carrying the failure), with the failure
