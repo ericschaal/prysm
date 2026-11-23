@@ -566,7 +566,7 @@ What it does not protect against:
 - 64 concurrent connections (the listener stops accepting at the limit), 8 state
   streams, 4 preview streams (8 events per second each), 8 colors streams (10
   events per second each), 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
-  write (slow or vanished readers are disconnected once the socket's send
+  write (a reader that stops reading is disconnected once the socket's send
   buffer is full).
 - Every accepted connection has TCP keepalive (first probe after 10 s idle,
   then every 5 s, ended after 4 unanswered), and on Linux a 30 s

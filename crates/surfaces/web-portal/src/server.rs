@@ -26,6 +26,8 @@ const PROBE_AFTER: Duration = Duration::from_secs(10);
 const PROBE_INTERVAL: Duration = Duration::from_secs(5);
 /// Unanswered probes before the kernel ends the connection: an idle peer
 /// that vanished is dropped 10 s + 4 x 5 s = 30 s after it last answered.
+/// Linux reaches the same 30 s through `UNACKNOWLEDGED`, which replaces
+/// the probe count there.
 const PROBES: u32 = 4;
 /// On Linux, how long sent data may stay unacknowledged before the kernel
 /// ends the connection: the same 30 s for a peer that vanished mid-write.
