@@ -149,7 +149,7 @@ test('every target and session has one lighting situation', () => {
     assert.equal(started.effectsOn, effectsOn, JSON.stringify(failed));
     assert.equal(
       describeSituation(started, 'WLED effects').headline,
-      'Screen sync could not start',
+      'Screen sync couldn’t start',
       JSON.stringify(failed),
     );
   }
@@ -208,12 +208,12 @@ test('each situation has one headline and one sentence', () => {
     sentence: 'Screen sync stopped.',
   });
   assert.deepEqual(words('screen_sync', 'effects', true), {
-    headline: 'Screen sync could not start',
-    sentence: 'Screen sync could not start.',
+    headline: 'Screen sync couldn’t start',
+    sentence: 'Screen sync couldn’t start.',
   });
   assert.deepEqual(words('effects', 'stopped', true), {
-    headline: 'WLED effects could not start',
-    sentence: 'WLED effects could not start.',
+    headline: 'WLED effects couldn’t start',
+    sentence: 'WLED effects couldn’t start.',
   });
   assert.deepEqual(words('screen_sync', 'faulted'), {
     headline: 'Prysm stopped responding',
@@ -226,7 +226,7 @@ test('each situation has one headline and one sentence', () => {
   });
   assert.equal(
     describeOutputIssue('sleeping'),
-    'The lights are not showing screen sync.',
+    'The lights aren’t showing screen sync.',
   );
 });
 
@@ -292,7 +292,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   );
   assert.deepEqual(carrying.info, {
     tone: 'note',
-    text: 'Prysm is newer than this page. Reload it to see what the lights do. The lights are not responding.',
+    text: 'Prysm is newer than this page. Reload it to see what the lights do. The lights aren’t responding.',
     details: 'gone newer',
   });
   assert.equal(
@@ -342,7 +342,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   );
   assert.deepEqual(effectsAdapter.info, {
     tone: 'problem',
-    text: 'The lights are not responding.',
+    text: 'The lights aren’t responding.',
     details: 'gone',
   });
   // A start of screen sync that failed from the effects: they are still on.
@@ -352,7 +352,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   );
   assert.equal(
     fromEffects.info.text,
-    'Screen sync could not start. WLED effects are still on.',
+    'Screen sync couldn’t start. WLED effects are still on.',
   );
   assert.equal(fromEffects.info.retry, true);
   // The lights themselves failed: not said to be still on.
@@ -365,8 +365,8 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     }),
     memory(),
   );
-  assert.equal(lightsFailed.info.text, 'The lights are not responding.');
-  assert.equal(lightsFailed.status, 'Screen sync could not start');
+  assert.equal(lightsFailed.info.text, 'The lights aren’t responding.');
+  assert.equal(lightsFailed.status, 'Screen sync couldn’t start');
   assert.equal(
     moodOf({ kind: 'starting', target: 'screen_sync' }, true),
     'starting',
@@ -399,7 +399,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   );
   assert.deepEqual(stopped.info, {
     tone: 'problem',
-    text: 'Screen sync could not start.',
+    text: 'Screen sync couldn’t start.',
     details: 'WLED cannot be reached',
     retry: true,
   });
@@ -466,13 +466,13 @@ test('a refused click is said only until the lights change', async () => {
   try {
     fixture.failNext({
       kind: 'unavailable',
-      message: 'The portal did not answer.',
+      message: 'Prysm didn’t answer.',
     });
     await press($('[data-power]'));
     assert(shown());
     assert.equal(
       $('.light-info > div > p').textContent,
-      'A device is not available right now.',
+      'A device isn’t available right now.',
     );
     // The command ran after all: the state says so, and the error goes.
     await act(async () =>
@@ -538,11 +538,11 @@ test('with the lights off a failure is still said, as off', () => {
   );
   assert.equal(
     plainFailure(lost, 'off', 'WLED effects'),
-    'The lights are not responding.',
+    'The lights aren’t responding.',
   );
   assert.equal(
     plainFailure({ kind: 'adapter', message: 'x' }, 'off', 'WLED effects'),
-    'The lights could not be switched off.',
+    'The lights couldn’t be switched off.',
   );
   assert.equal(
     plainFailure({ kind: 'invalid', message: 'x' }, 'off', 'WLED effects'),
@@ -572,7 +572,7 @@ test('with the lights off a failure is still said, as off', () => {
   );
   assert.deepEqual(view.info, {
     tone: 'problem',
-    text: 'The lights are not responding.',
+    text: 'The lights aren’t responding.',
     details: 'no answer',
     retry: false,
   });
@@ -586,7 +586,7 @@ test('with the lights off a failure is still said, as off', () => {
       },
     }),
   );
-  assert.equal(refused.info.text, 'Screen sync could not start.');
+  assert.equal(refused.info.text, 'Screen sync couldn’t start.');
 });
 
 test('with the lights off the path marks a failure only where it is', () => {
@@ -710,7 +710,7 @@ test('the light card shows a failure with the lights off, without Try again', as
     assert(shown());
     assert.equal(
       $('.light-info > div > p').textContent,
-      'The lights are not responding.',
+      'The lights aren’t responding.',
     );
     assert.equal($('.light-word [data-shown="true"]').textContent, 'Off');
     assert.equal($('.lighting-status').textContent, 'Lights are off');

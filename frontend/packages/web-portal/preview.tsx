@@ -54,7 +54,7 @@ export function PreviewPanel({
   else if (view.kind === 'unavailable')
     message = (
       <p className="preview-message">
-        This picture cannot be shown: {view.message}
+        This picture can’t be shown: {view.message}
       </p>
     );
   else if (view.kind === 'busy')

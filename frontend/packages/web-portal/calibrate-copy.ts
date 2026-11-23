@@ -135,5 +135,5 @@ export function tvProblem(error: unknown) {
   const reason = failureOf(error);
   return reason.kind === 'needs_screen_sync'
     ? needsTv
-    : `The TV pattern did not change: ${reason.message}`;
+    : `The TV pattern didn’t change: ${reason.message}`;
 }

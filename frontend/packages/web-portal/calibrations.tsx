@@ -205,7 +205,7 @@ export function CalibrationPage({
   if (!calibration)
     return (
       <p className="page-intro">
-        This calibration is not there any more.{' '}
+        This calibration isn’t there any more.{' '}
         <button type="button" className="link" onClick={leave}>
           Back to the calibrations
         </button>

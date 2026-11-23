@@ -105,7 +105,7 @@ async function mountTv(t, options = {}) {
                   options.block === true
                     ? {
                         kind: 'unavailable',
-                        message: 'Cannot reach the portal.',
+                        message: 'Can’t reach Prysm.',
                       }
                     : options.block,
                 ),
@@ -256,6 +256,10 @@ test('generated Rust states decode as they are; malformed ones do not', () => {
   assert(malformed({ ...state(), power: 3 }));
   assert(malformed({ ...state(), worker: { ...state().worker, fps: '30' } }));
   assert(malformed({ ...state(), log: [1] }));
+  assert(
+    malformed({ ...state(), preferences: [] }),
+    'preferences are an object',
+  );
   assert(malformed(null));
   // Each package has its own fields: full its target, slim `enabled` and
   // a worker that reports its stream.
@@ -1704,7 +1708,7 @@ test('the title and the lights card agree on what the lights do', async (t) => {
     tv.text('status-description'),
     'Try again, or choose another mode.',
   );
-  assert.equal(tv.text('lighting-status'), 'Screen sync could not start.');
+  assert.equal(tv.text('lighting-status'), 'Screen sync couldn’t start.');
   await act(async () =>
     tv.application.publish({
       target: 'screen_sync',
@@ -1775,7 +1779,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
         session: { state: 'effects', failure: sessionFailure },
       }),
     ).title,
-    'Screen sync could not start',
+    'Screen sync couldn’t start',
   );
   // A failed session comes before the TV's power and video (it is what
   // needs the user); lights that are fine let them speak first.
@@ -1824,7 +1828,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
         },
       }),
     ).title,
-    'Screen sync could not start',
+    'Screen sync couldn’t start',
   );
   // The portal's situation says what the reported failure means: off with
   // a switch off that failed is off, effects with invalid settings are on;
@@ -1848,7 +1852,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
   // Off with its failure: still off, its words said with attention, and
   // nothing to try again, also while the service still has the mode.
   for (const [failure, description] of [
-    [sessionFailure, 'The lights could not be switched off.'],
+    [sessionFailure, 'The lights couldn’t be switched off.'],
     [
       { kind: 'invalid', field: 'output.address', message: 'x' },
       'Prysm can’t use these settings.',
@@ -2003,7 +2007,7 @@ test('the TV lights card says a failure with the lights off', async (t) => {
     );
     await settle();
     assert.equal(tv.application.snapshot().target, 'off');
-    assert.equal(tv.text('lighting-status'), 'The lights are not responding.');
+    assert.equal(tv.text('lighting-status'), 'The lights aren’t responding.');
     assert.match(
       document.querySelector('.card.lighting').className,
       /attention/,
@@ -2020,7 +2024,7 @@ test('a refused press is said until the lights change', async (t) => {
   await tv.click('mode-screen_sync');
   assert.equal(
     tv.text('lighting-status'),
-    'A device is not available right now.',
+    'A device isn’t available right now.',
   );
   // The command ran after all: the portal's state says so.
   await act(async () =>
@@ -2427,7 +2431,7 @@ test('slim lighting buttons drive the remote Prysm; leaving never turns it off',
   await tv.click('mode-effects');
   assert.equal(
     tv.text('lighting-status'),
-    'WLED effects could not start.',
+    'WLED effects couldn’t start.',
     'in plain words, from the failure’s kind',
   );
   await tv.unmount();
@@ -3080,7 +3084,7 @@ test('calibration stays closed when screen sync cannot start; a failed video say
   });
   await tv.click('calibrate');
   assert(tv.el('app'));
-  assert.equal(tv.text('notice'), 'Screen sync could not start.');
+  assert.equal(tv.text('notice'), 'Screen sync couldn’t start.');
   assert.equal(player.plays, 0);
 
   await tv.click('calibrate');

@@ -10,7 +10,7 @@ import {
 
 /** Shown when a save was refused because the settings changed elsewhere. */
 export const staleNotice =
-  'Changed on another device, so this was not saved. The current settings are shown.';
+  'Changed on another device, so this wasn’t saved. The current settings are shown.';
 
 /** Why a save did not happen, in plain words, for a form's status line. */
 export function saveProblem(failure: Failure) {
@@ -20,7 +20,7 @@ export function saveProblem(failure: Failure) {
         ? 'Not saved. Check the marked field.'
         : 'Not saved: Prysm can’t use these settings.';
     case 'unavailable':
-      return 'Not saved: Prysm did not answer. Try again.';
+      return 'Not saved: Prysm didn’t answer. Try again.';
     case 'busy':
       return 'Not saved: Prysm is busy. Try again in a moment.';
     case 'faulted':

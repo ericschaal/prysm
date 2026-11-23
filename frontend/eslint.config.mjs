@@ -56,7 +56,7 @@ export default defineConfig(
     extends: [react.configs['recommended-type-checked']],
   },
   {
-    // The root applies these to its React app (crates/web); here that is every package.
+    // Hooks live in .ts modules too, so the hook rules cover every source file.
     files: ['**/*.{ts,tsx,jsx}'],
     extends: [reactHooks.configs.flat.recommended],
   },

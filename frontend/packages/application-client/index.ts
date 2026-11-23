@@ -56,6 +56,13 @@ export const failureSections: Record<FailureSection, true> = {
   output: true,
 };
 
+/** A decoded JSON object's fields, before each is checked. */
+export type Fields = Partial<Record<string, unknown>>;
+
+/** Whether `value` is a JSON object: not `null`, not an array. */
+export const isObject = (value: unknown): value is Fields =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
 /** `raw` if it is one of `values`, else `fallback`: a value newer than this page. */
 export function known<T extends string, F extends string | null | undefined>(
   values: Record<T, true>,
@@ -86,20 +93,16 @@ export function describeOutputIssue(issue: OutputIssue): string {
     case 'overridden':
       return 'Live override is on in the lights’ own app, so they ignore screen sync. Turn it off there.';
     case 'not_live':
-      return 'The lights are not taking Prysm’s colours. In WLED, check that Sync Interfaces receives UDP realtime (DDP).';
+      return 'The lights aren’t taking Prysm’s colours. In WLED, check that Sync Interfaces receives UDP realtime (DDP).';
     case 'other_sender':
       return 'Another program is sending colours to the lights. Stop it to see screen sync alone.';
     case 'unreachable':
-      return 'The lights do not answer. Check that they are powered and on the network.';
+      return 'The lights don’t answer. Check that they are powered and on the network.';
     default:
-      return 'The lights are not showing screen sync.';
+      return 'The lights aren’t showing screen sync.';
   }
 }
-export type {
-  LedColor,
-  LedColors,
-  PreviewFrame,
-} from '@prysm/contracts/application';
+export type { PreviewFrame } from '@prysm/contracts/application';
 
 /** What the lights show while on: screen sync or the output's own effects. */
 export type LightingMode = Exclude<LightingTarget, 'off'>;
@@ -271,10 +274,10 @@ export function describeSituation(
       return both('Lights are off');
     case 'failed':
       if (situation.target === 'effects')
-        return both(`${effects} could not start`);
+        return both(`${effects} couldn’t start`);
       return both(
         situation.fromEffects
-          ? 'Screen sync could not start'
+          ? 'Screen sync couldn’t start'
           : 'Screen sync stopped',
       );
     case 'sync':
@@ -320,13 +323,13 @@ export function plainFailure(
   if (unusableSettings(failure, target))
     return 'Prysm can’t use these settings.';
   const section = failureSide(failure);
-  if (section === 'capture') return 'The video source is not working.';
-  if (section === 'output') return 'The lights are not responding.';
+  if (section === 'capture') return 'The video source isn’t working.';
+  if (section === 'output') return 'The lights aren’t responding.';
   // What a target newer than this page tried is not known.
   if (target === 'unknown') return 'Something went wrong.';
   switch (failure.kind) {
     case 'unavailable':
-      return 'A device is not available right now.';
+      return 'A device isn’t available right now.';
     case 'busy':
       // With the lights off there is nothing to try again.
       return target === 'off'
@@ -334,18 +337,13 @@ export function plainFailure(
         : 'Prysm is busy. Try again in a moment.';
     case 'adapter':
     case 'invalid':
-      if (target === 'off') return 'The lights could not be switched off.';
+      if (target === 'off') return 'The lights couldn’t be switched off.';
       return target === 'effects'
-        ? `${effects} could not start.`
-        : 'Screen sync could not start.';
+        ? `${effects} couldn’t start.`
+        : 'Screen sync couldn’t start.';
     default:
       return 'Something went wrong.';
   }
-}
-
-/** An adapter settings section: `{ kind, ...fields }`, typed by the host. */
-export interface AdapterSettings {
-  kind: string;
 }
 
 /** Generated settings with the host's capture and output section types. */
