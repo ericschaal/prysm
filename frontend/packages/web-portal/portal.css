@@ -1503,17 +1503,13 @@ fieldset > .field-note {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 72%, transparent) inset;
   color: var(--fg);
 }
-/*
- * Lit, it is filled in the light's colours, and so is the pill under a
- * chosen style or calibration.
- */
+/* Lit, it is filled in the light's colours. */
 .light-card[data-lit='true']
   .modes[data-mode='screen_sync']
   [data-target='screen_sync'],
 .light-card[data-lit='true']
   .modes[data-mode='effects']
-  [data-target='effects'],
-.light-card[data-lit='true'] .segments-scroll[data-pill]::before {
+  [data-target='effects'] {
   border-color: transparent;
   box-shadow: none;
   background: linear-gradient(
@@ -1672,6 +1668,9 @@ fieldset > .field-note {
  * styles fit the narrowest phone (320 px); names get room of their own.
  */
 .segments {
+  /* The chosen look: glass over the track, the label staying as it is. */
+  --chosen-glass: color-mix(in srgb, var(--fg) 22%, transparent);
+  --chosen-rim: 0 0 0 1px color-mix(in srgb, var(--fg) 36%, transparent) inset;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--fg) 4%, transparent);
@@ -1693,6 +1692,17 @@ fieldset > .field-note {
 .segments-scroll::-webkit-scrollbar {
   display: none;
 }
+/* Lit, the glass is tinted in the light's colours. */
+.light-card[data-lit='true'] .segments {
+  --chosen-glass:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--light-a) 52%, transparent),
+      color-mix(in srgb, var(--light-c) 46%, transparent) 55%,
+      color-mix(in srgb, var(--light-b) 52%, transparent)
+    ),
+    color-mix(in srgb, var(--fg) 22%, transparent);
+}
 /*
  * The chosen look: one pill under the labels that slides to the chosen
  * segment, so a change is seen as a move. Drawn once it is measured (no
@@ -1706,7 +1716,8 @@ fieldset > .field-note {
   left: 0;
   width: var(--chosen-width);
   border-radius: var(--radius-pill);
-  background: var(--fg);
+  background: var(--chosen-glass);
+  box-shadow: var(--chosen-rim);
   transform: translateX(var(--chosen-x));
   transition:
     transform var(--duration-slow) var(--ease-out),
@@ -1762,17 +1773,13 @@ fieldset > .field-note {
     color: var(--fg);
   }
 }
-.segment[aria-checked='true'] {
+.segment[aria-checked='true'],
+.segment[aria-checked='true']:hover:enabled {
   border-color: transparent;
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--chosen-glass);
+  box-shadow: var(--chosen-rim);
+  color: var(--fg);
   font-weight: var(--weight-strong);
-}
-@media (hover: hover) {
-  .segment[aria-checked='true']:hover:enabled {
-    background: var(--on-fill);
-    color: var(--bg);
-  }
 }
 /* Once placed, the row glides to bring a new choice into view. */
 @media (prefers-reduced-motion: no-preference) {
@@ -1783,6 +1790,11 @@ fieldset > .field-note {
 .segments-scroll[data-pill] .segment[aria-checked='true'],
 .segments-scroll[data-pill] .segment[aria-checked='true']:hover:enabled {
   background: transparent;
+  box-shadow: none;
+}
+/* The pill dims with its disabled segments. */
+.segments-scroll:has(.segment:disabled)::before {
+  opacity: 0.4;
 }
 /* Home's problem line sits in the card's bottom padding: it takes no room. */
 .light-card .quick-picture {
@@ -2248,7 +2260,7 @@ fieldset > .field-note {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
   color: var(--fg);
 }
 .led-map-play svg {

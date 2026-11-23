@@ -129,13 +129,15 @@ function Segments<T extends string>({
   useEffect(() => {
     const track = trackRef.current;
     if (!track) return;
-    const item = track.children[index] as HTMLElement | undefined;
-    if (item)
+    const chosenItem = () => track.children[index] as HTMLElement | undefined;
+    const first = chosenItem();
+    if (first)
       track.scrollLeft =
-        item.offsetLeft - (track.clientWidth - item.offsetWidth) / 2;
+        first.offsetLeft - (track.clientWidth - first.offsetWidth) / 2;
     // The chosen look is one pill that slides to the chosen segment.
     const mark = () => {
       markMore(track);
+      const item = chosenItem();
       if (!item) return;
       track.style.setProperty('--chosen-x', `${item.offsetLeft}px`);
       track.style.setProperty('--chosen-width', `${item.offsetWidth}px`);
