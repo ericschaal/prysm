@@ -19,11 +19,20 @@ const edges: readonly Edge[] = ['top', 'right', 'bottom', 'left'];
 const floor = 40;
 
 /**
- * The CSS custom properties written: the edge averages `--led-t`… (the LED
- * drawing in Your setup) and the card's four light fields `--live-a`…`-d`.
+ * Colours drawn along each edge of the LED drawing: the most the colours
+ * stream sends per edge (`COLOR_SEGMENTS` in prysm-protocol).
+ */
+export const ledStops = 16;
+
+/**
+ * The CSS custom properties written: each edge's colours along it, `--led-t-0`
+ * to `--led-t-15`… (the LED drawing in Your setup), and the card's four light
+ * fields `--live-a`…`-d`.
  */
 export const ledProperties = [
-  ...edges.map((edge) => `--led-${edge[0]}`),
+  ...edges.flatMap((edge) =>
+    Array.from({ length: ledStops }, (_, index) => `--led-${edge[0]}-${index}`),
+  ),
   '--live-a',
   '--live-b',
   '--live-c',
@@ -42,12 +51,16 @@ function average(colors: readonly Rgb[]): Rgb | null {
   return [r, g, b].map((value) => value / colors.length);
 }
 
-/** Part `index` of `parts` equal stretches of `colors` (all of them when short). */
-function stretch(colors: readonly Rgb[], index: number, parts: number) {
-  if (colors.length < parts) return colors;
+/** Part `index` of `parts` equal stretches of `colors` (one when short). */
+function part(colors: readonly Rgb[], index: number, parts: number) {
   const from = Math.floor((index * colors.length) / parts);
   const to = Math.floor(((index + 1) * colors.length) / parts);
   return colors.slice(from, Math.max(to, from + 1));
+}
+
+/** Part `index` of `parts` equal stretches of `colors` (all of them when short). */
+function stretch(colors: readonly Rgb[], index: number, parts: number) {
+  return colors.length < parts ? colors : part(colors, index, parts);
 }
 
 function lift(color: Rgb): Rgb {
@@ -146,18 +159,23 @@ function field([L = 0, a = 0, b = 0]: readonly number[]) {
 }
 
 /**
- * The properties for one `colors` event: each edge's average for the LED
- * drawing (an edge without LEDs takes the average of all), and the card's
- * four fields from the LEDs nearest them: top-left from the top's first
- * third and the left's upper half, top-right likewise, the top-centre field
- * from the top's middle, the low middle field from the bottom and the
- * sides' lower halves (a field without LEDs takes all of them).
+ * The properties for one `colors` event: each edge's colours along it for
+ * the LED drawing, the average of each of `ledStops` equal stretches in the
+ * stream's order (one colour each for a shorter edge; an edge without LEDs
+ * takes the average of all), and the card's four fields from the LEDs
+ * nearest them: top-left from the top's first third and the left's upper
+ * half, top-right likewise, the top-centre field from the top's middle, the
+ * low middle field from the bottom and the sides' lower halves (a field
+ * without LEDs takes all of them).
  */
 export function ledValues(event: Colors) {
   const all = average(edges.flatMap((edge) => event[edge])) ?? [0, 0, 0];
   const values = fieldValues(event);
   for (const edge of edges)
-    values[`--led-${edge[0]}`] = css(lift(average(event[edge]) ?? all));
+    for (let index = 0; index < ledStops; index++)
+      values[`--led-${edge[0]}-${index}`] = css(
+        lift(average(part(event[edge], index, ledStops)) ?? all),
+      );
   return values;
 }
 

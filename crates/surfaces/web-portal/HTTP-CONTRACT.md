@@ -320,9 +320,9 @@ Server-sent events whose `data:` is a `ColorsEvent`, tagged by `type`:
 
 - Each edge is `LedColors`' `[r, g, b]` sRGB bytes in screen orientation (`top`
   and `bottom` left to right, `left` and `right` top to bottom; the output's
-  wiring order is not exposed), at most 8 entries (`COLOR_SEGMENTS`): each the average, in
-  linear light, of an equal stretch of the edge; an edge with fewer samples
-  keeps them.
+  wiring order is not exposed), at most 16 entries (`COLOR_SEGMENTS`): each
+  the average, in linear light, of an equal stretch of the edge; an edge with
+  fewer samples keeps them.
 - There is no `unavailable`: colors exist for every processed frame, also one
   the preview cannot show.
 
