@@ -8,7 +8,6 @@ import { act } from 'react';
 import {
   describeOutputIssue,
   describeSituation,
-  failureSide,
   lightingSituation,
   plainFailure,
   situationFailure,
@@ -19,7 +18,7 @@ import {
   moodOf,
   pauseOf,
 } from '../packages/web-portal/light-card-view';
-import { sectionStatus } from '../packages/web-portal/section-state';
+import { pathOf, sectionStatus } from '../packages/web-portal/section-state';
 import { $, navigated, renderPortal } from './dom';
 
 const failure = { kind: 'adapter', message: 'WLED cannot be reached' };
@@ -549,6 +548,11 @@ test('with the lights off a failure is still said, as off', () => {
     plainFailure({ kind: 'invalid', message: 'x' }, 'off', 'WLED effects'),
     'Prysm can’t use these settings.',
   );
+  // Nothing to try again with the lights off.
+  assert.equal(
+    plainFailure({ kind: 'busy', message: 'x' }, 'off', 'WLED effects'),
+    'Prysm is busy.',
+  );
   // As the engine reports saved settings that do not validate: the field
   // names its section, and no device was asked.
   assert.equal(
@@ -583,6 +587,48 @@ test('with the lights off a failure is still said, as off', () => {
     }),
   );
   assert.equal(refused.info.text, 'Screen sync could not start.');
+});
+
+test('with the lights off the path marks a failure only where it is', () => {
+  // A failure, then the path; a failed switch off without a side is said by
+  // the light card alone, never as a broken Prysm.
+  for (const [failure, path] of [
+    [
+      { kind: 'invalid', field: 'capture.width', message: 'x' },
+      { kind: 'failed', at: 'capture' },
+    ],
+    [invalid, { kind: 'failed', at: 'output' }],
+    [
+      { kind: 'invalid', field: 'processing.gamma', message: 'x' },
+      { kind: 'failed', at: null },
+    ],
+    [
+      { kind: 'adapter', section: 'capture', message: 'x' },
+      { kind: 'failed', at: 'capture' },
+    ],
+    [
+      { kind: 'adapter', section: 'output', message: 'x' },
+      { kind: 'failed', at: 'output' },
+    ],
+    [{ kind: 'adapter', message: 'x' }, { kind: 'off' }],
+    [{ kind: 'unavailable', message: 'x' }, { kind: 'off' }],
+    [{ kind: 'busy', message: 'x' }, { kind: 'off' }],
+    [{ kind: 'newer', message: 'x' }, { kind: 'off' }],
+  ])
+    assert.deepEqual(
+      pathOf(
+        lightingSituation({
+          target: 'off',
+          session: { state: 'stopped', failure },
+        }),
+      ),
+      path,
+      JSON.stringify(failure),
+    );
+  assert.deepEqual(
+    pathOf(lightingSituation({ target: 'off', session: { state: 'stopped' } })),
+    { kind: 'off' },
+  );
 });
 
 test('with the lights off a section page says the failure it names, else not in use', () => {
@@ -621,7 +667,7 @@ test('with the lights off a section page says the failure it names, else not in 
     const live = {
       online: true,
       target: 'off',
-      path: { kind: 'failed', at: failureSide(failure) },
+      path: pathOf(situation),
       failure: situationFailure(situation),
       situation,
       device: {},

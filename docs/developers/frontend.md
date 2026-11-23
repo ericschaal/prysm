@@ -82,19 +82,22 @@ starting. Every pair lands on exactly one. Screen sync never carries a
 failure. An `effects` session carries one after a start of screen sync
 that failed from the effects (the situation is then failed, headed "Screen
 sync could not start", and the cards add that the effects are still on,
-except when the lights themselves failed, `section` `output`), or, with the effects as the target,
-for saved settings that do not validate (a note, "Prysm can’t use these
-settings."; another kind is said in its own words). Off keeps a stopped
-session's failure (settings that could not be applied, a switch off that
-failed): the light card and the TV's lights card say it, the setup path
-marks the side it names (`failureSide`) and Change setup opens that page,
-whose status says it ("Can’t use these settings" for settings that do not
-validate) while the other section stays "Not in use", the Settings row says
-it, and the full TV's "Lights off" headline gives its words with attention.
-No "Try again" is offered: trying could only switch off again. Unknown keeps what it carries:
-the note says Prysm is newer, the failure's words follow it, and its
-message goes under Details; no mode tile is chosen, and Power switches the
-lights off. A faulted session's `message` (what did not finish) is under
+except when the lights themselves failed, `section` `output`), or, with
+the effects as the target, for saved settings that do not validate (a
+note, "Prysm can’t use these settings."; another kind is said in its own
+words). Off keeps a stopped session's failure (settings that could not be
+applied, a switch off that failed): the light card and the TV's lights
+card say it, and the full TV's "Lights off" headline gives its words with
+attention. The setup path marks a failure that names a side
+(`failureSide`), or settings that do not validate (Prysm's stop without a
+side); Change setup opens that side's page, whose status says it ("Can’t
+use these settings" for settings that do not validate), the Settings row
+says it, and the other section stays "Not in use". Any other failure with
+the lights off is said by the light cards alone. No "Try again" is
+offered: trying could only switch off again. Unknown keeps what it
+carries: the note says Prysm is newer, the failure's words follow it, and
+its message goes under Details; no mode tile is chosen, and Power switches
+the lights off. A faulted session's `message` (what did not finish) is under
 Details, on the light card and the section pages. All of them read that
 one situation, and `describeSituation` gives its words.
 

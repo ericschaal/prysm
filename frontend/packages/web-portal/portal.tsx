@@ -1,10 +1,7 @@
 import {
-  failureSide,
   lightingSituation,
   plainFailure,
   situationFailure,
-  unreachable,
-  type LightingSituation,
 } from '@prysm/application-client';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -55,7 +52,7 @@ import { pages } from './routes';
 import { SetupWizard } from './setup';
 import { useReplaced } from './replaced';
 import { PortalError } from './update';
-import type { PathState } from './setup-card';
+import { pathOf } from './section-state';
 import './tokens.css';
 import './portal.css';
 import './flows.css';
@@ -67,45 +64,6 @@ import './flows.css';
  * would flash a warning and swap the header's Settings button in and out.
  */
 export const connectionGraceMs = 1000;
-
-/** What the signal path is doing, by what the lights are doing. */
-function pathOf(lighting: LightingSituation): PathState {
-  switch (lighting.kind) {
-    case 'faulted':
-      return { kind: 'failed', at: null };
-    case 'failed':
-      return { kind: 'failed', at: lighting.at };
-    case 'sync': {
-      const { input } = lighting;
-      return input?.receiving
-        ? {
-            kind: 'flowing',
-            fps: input.fps,
-            latency: input.latency && {
-              captureMs: input.latency.capture_ms,
-              outputMs: input.latency.output_ms,
-            },
-            behind: input.behind,
-          }
-        : { kind: 'waiting' };
-    }
-    case 'effects':
-      return { kind: 'effects' };
-    // With the lights off a failure still shows where it is: settings that
-    // do not validate, or a switch off that failed.
-    case 'off':
-      return lighting.failure
-        ? { kind: 'failed', at: failureSide(lighting.failure) }
-        : { kind: 'off' };
-    // The path shows a start as off until the session runs, and a state
-    // newer than this page as nothing it can name.
-    case 'starting':
-    case 'unknown':
-      return { kind: 'off' };
-    default:
-      return unreachable(lighting);
-  }
-}
 
 /**
  * The frame of every page: the state, setup when it takes over, and the page

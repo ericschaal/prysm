@@ -265,6 +265,17 @@ export function describeSituation(
 }
 
 /**
+ * Saved settings that do not validate, with the lights off: they name a
+ * section's field, yet no device was asked, so that is all there is to say.
+ */
+export function unusableSettings(
+  failure: Failure | LightingFailure,
+  target: TargetReading,
+) {
+  return failure.kind === 'invalid' && target === 'off';
+}
+
+/**
  * A failure in plain words, from its typed parts only: `section` (the side
  * of the path it came from), `field` (the setting it concerns) and `kind`.
  * Without a side it is said by what stopped; the message is under Details.
@@ -274,9 +285,7 @@ export function plainFailure(
   target: TargetReading,
   effects: string,
 ) {
-  // Settings that do not validate name a section's field, yet no device
-  // was asked: with the lights off that is all there is to say.
-  if (failure.kind === 'invalid' && target === 'off')
+  if (unusableSettings(failure, target))
     return 'Prysm can’t use these settings.';
   const section = failureSide(failure);
   if (section === 'capture') return 'The video source is not working.';
@@ -287,7 +296,10 @@ export function plainFailure(
     case 'unavailable':
       return 'A device is not available right now.';
     case 'busy':
-      return 'Prysm is busy. Try again in a moment.';
+      // With the lights off there is nothing to try again.
+      return target === 'off'
+        ? 'Prysm is busy.'
+        : 'Prysm is busy. Try again in a moment.';
     case 'adapter':
     case 'invalid':
       if (target === 'off') return 'The lights could not be switched off.';
