@@ -406,7 +406,7 @@ export function CalibrateRoute() {
 }
 
 /**
- * Home: the light card (power, mode, brightness, calibration) and, once
+ * Home: the light card (power, mode, brightness, style, calibration) and, once
  * set up, the path the light takes. `gridRef` takes the live LED colours.
  */
 function HomePage<C extends AdapterSection, O extends AdapterSection>({
@@ -472,6 +472,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
           revision={revision}
           disabled={!online}
           save={save}
+          adjustStyle={() => go('style')}
           calibrate={calibrate}
           tryProcessing={tryProcessing}
         />

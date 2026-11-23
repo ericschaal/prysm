@@ -55,8 +55,13 @@ supervisor in each of its states and play the phone's calibration part). See the
     what Power turns on; on, "Following the screen." or "WLED effects are
     showing." or, for the lights' own effects, "WLED controls its own
     effects." with Open WLED; a start or a wait for the picture once it
-    lasts), then the mode, Brightness and the calibrations as chips, 32
-    px apart. The mode is a radio group ("Mode") of two option cards about
+    lasts), then the mode, Brightness, Style and Calibration. The last three
+    share one pattern, 24 px apart: a header with the name and one quiet item
+    on the right (the value, "Adjust", "Calibrate colours"), then the control.
+    Style is a radio group ("Style") of equal segments in one row, one per
+    style (Custom only while chosen or kept), each described by its style's
+    line; Calibration is wrapping chips. A chosen segment or chip is a light
+    pill with dark ink. The mode is a radio group ("Mode") of two option cards about
     72 px tall: an icon, the name ("Screen sync", the output's effects name)
     and one line written to fit a phone's half card, never cut ("Follows the
     screen", "Patterns from WLED", else "Its own patterns"). Selected speaks
