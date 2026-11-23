@@ -508,7 +508,68 @@ test('a lookup that fails says so, asks nothing by itself, and Try again asks on
   }
 });
 
-test('Try again that brings no answer leaves the focus to what is picked next', async () => {
+test('a known answer after Try again leaves the focus where the user moved it', async () => {
+  let answer = () => Promise.resolve(unknown);
+  const captureModes = { modes: () => answer() };
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', device }, output },
+    undefined,
+    { captureModes },
+  );
+  try {
+    await openEditor('Video source');
+    await settled();
+    let release;
+    answer = () =>
+      new Promise((resolve) => {
+        release = () => resolve(known(anyMode(1920, 1080, 60)));
+      });
+    await click(button('Try again', choice()));
+    const typed = field('capture.device');
+    typed.focus();
+    await act(async () => release());
+    await settled();
+    assert.equal(radio('Balanced').disabled, false);
+    assertFocused(typed, 'the field moved to keeps the focus');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('Look again also asks the saved device again: plugged in since, its sizes open', async () => {
+  let plugged = false;
+  const card = { label: 'Card', detail: device, fields: { device } };
+  const discovery = {
+    candidates: () => Promise.resolve(plugged ? [card] : []),
+  };
+  const modes = fakeCaptureModesClient(() =>
+    plugged ? known(anyMode(1920, 1080, 60)) : unknown,
+  );
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', device }, output },
+    undefined,
+    { captureModes: modes.client, discovery },
+  );
+  try {
+    await openEditor('Video source');
+    await settled();
+    assert.equal(
+      line(),
+      'Plug in the device to choose its size and rate. Try again',
+    );
+    plugged = true;
+    await click(button('Look again'));
+    await settled();
+    assert.equal(line(), '');
+    assert.equal(radio('Balanced').disabled, false);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('after a Try again that brings no answer, a picked device keeps the focus', async () => {
   const discovery = fakeDiscoveryClient({
     'capture/device': [
       {

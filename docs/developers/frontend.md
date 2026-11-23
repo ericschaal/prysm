@@ -80,7 +80,9 @@ arrives (with a failure of kind `invalid`). The portal reads each with
 required field (one `create` sets that the kind's `optional` does not name)
 that is missing or of another JSON type is `create`'s, so its editor draws
 and the field can be fixed there; every other field stays as saved, and a
-section with nothing to fill is passed on as it is. What the lights are doing is decided once, by
+section with nothing to fill is passed on as it is.
+
+What the lights are doing is decided once, by
 `lightingSituation` (`application-client`) from the target and the session
 (with the failure it carries), in this order: faulted, unknown (a target or
 session state newer than the page), off, reached (`session.state` equals the

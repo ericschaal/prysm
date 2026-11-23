@@ -55,6 +55,7 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
       missing={modes.state === 'unknown' ? 'Not plugged in' : undefined}
       problem={asked ? problemOf(modes) : undefined}
       onPick={pick}
+      onLook={'again' in modes ? modes.again : undefined}
       byHand={
         <TextField
           path="capture.device"

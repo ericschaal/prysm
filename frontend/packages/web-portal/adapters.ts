@@ -173,6 +173,8 @@ export function adapterFor<S extends AdapterSection>(
   adapters: AdapterUis<S>,
   kind: string,
 ): AdapterUi<S> | undefined {
+  // Only the host's own kinds: a saved `constructor` names none.
+  if (!Object.prototype.hasOwnProperty.call(adapters, kind)) return undefined;
   // Indexing a mapped type by a runtime kind loses the per-kind narrowing.
   return (adapters as unknown as Record<string, AdapterUi<S> | undefined>)[
     kind
@@ -211,10 +213,9 @@ export function readSection<S extends AdapterSection>(
   // Read as JSON objects: a section's type has no index signature.
   const fresh = adapter.create() as unknown as Fields;
   const raw = saved as unknown as Fields;
-  const optional = Object.keys(adapter.optional);
   const filled = Object.entries(fresh).filter(
     ([key, like]) =>
-      !optional.includes(key) &&
+      !(key in adapter.optional) &&
       (typeof raw[key] !== typeof like ||
         isObject(raw[key]) !== isObject(like)),
   );

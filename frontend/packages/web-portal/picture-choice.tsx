@@ -25,7 +25,8 @@ import { RowChoice } from './rows';
  * no preset sets, until a preset replaces it. Until the modes are known the
  * rows are locked on the current choice. Without an answer, the line under
  * them says why (`unreachable` while the hardware is out of reach) and
- * offers Try again; once that brings the modes, the rows take the focus. A
+ * offers Try again; once that brings the modes, the rows take the focus
+ * the button leaves, unless the user has moved it elsewhere meanwhile. A
  * preset ticked earlier follows to this source's size for it; else a size
  * and rate the source cannot deliver moves to the first preset. Either way,
  * what could not be delivered is said in the line under the rows. Nothing
@@ -58,8 +59,12 @@ export function PictureChoice<V extends Picture>({
   const legendId = useId();
   const lineId = useId();
   const groupRef = useRef<HTMLFieldSetElement>(null);
-  /** Try again was pressed: the rows take the focus it leaves. */
-  const askedAgainRef = useRef(false);
+  /**
+   * Try again was pressed with the focus on `from` (the button, or where
+   * a browser that does not focus buttons left it): the rows take it
+   * unless the user moved it since.
+   */
+  const askedAgainRef = useRef<{ from: Element | null } | null>(null);
   const current = {
     width: value.width ?? defaults.width,
     height: value.height ?? defaults.height,
@@ -92,11 +97,15 @@ export function PictureChoice<V extends Picture>({
     const { width, height, fps } = move;
     onChange({ ...value, width, height, fps });
   }, [move, value, onChange]);
-  // Asking again keeps the last answer: the next one is its answer.
+  // Asking again keeps the last answer: the next one is its answer. The
+  // button goes with a known one; focus moved elsewhere meanwhile stays.
   useEffect(() => {
-    if (!askedAgainRef.current) return;
-    askedAgainRef.current = false;
-    if (modes.state === 'known') groupRef.current?.focus();
+    const asked = askedAgainRef.current;
+    if (!asked) return;
+    askedAgainRef.current = null;
+    const now = document.activeElement;
+    const moved = now && now !== document.body && now !== asked.from;
+    if (modes.state === 'known' && !moved) groupRef.current?.focus();
   }, [modes]);
 
   if (known && offered.length === 0) return null;
@@ -190,7 +199,7 @@ export function PictureChoice<V extends Picture>({
                 type="button"
                 className="link"
                 onClick={() => {
-                  askedAgainRef.current = true;
+                  askedAgainRef.current = { from: document.activeElement };
                   again();
                 }}
               >

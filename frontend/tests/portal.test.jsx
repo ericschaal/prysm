@@ -1367,6 +1367,18 @@ test('a saved section without a field its kind requires opens its editor with th
   }
 });
 
+test('a saved kind named like an object property is a kind without a panel', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture: { kind: 'constructor' },
+    output,
+  });
+  try {
+    assert(!$$('h2').some((h2) => h2.textContent === 'Something went wrong'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('a section changed on another device: use theirs, or keep mine', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
