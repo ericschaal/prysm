@@ -15,7 +15,6 @@ export const pages = {
   detail: '/settings/detail',
   appearance: '/settings/appearance',
   about: '/settings/about',
-  preview: '/preview',
   calibrate: '/calibrate',
 } as const;
 

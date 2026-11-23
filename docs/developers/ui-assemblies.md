@@ -74,9 +74,10 @@ The [shared portal](../../frontend/packages/web-portal/portal.tsx) has three pag
 Home shows the light card (power, Screen sync or the output's own effects
 such as "WLED effects", brightness, the style as one-tap segments and the
 calibrations as one-tap chips)
-and a summary of the setup with the LEDs per edge. Settings (`#/settings`)
+and a summary of the setup with the LEDs per edge and the live preview in
+the TV's screen. Settings (`#/settings`)
 holds the live picture controls with calibrations, Calibrate colours, Run
-setup again, the live preview (`#/preview`), one Save form each for capture
+setup again, one Save form each for capture
 and output, the theme and the technical details. Both browser hosts
 pass `httpPreviewClient()` (same `baseUrl` option as the application client)
 as `WebPortal`'s optional `preview`. `httpColorsClient()` (a `ColorsClient`;

@@ -22,7 +22,7 @@
 
 ## Isolate the problem
 
-- **Capture or lights?** Use the [live preview](../users/preview.md), or run
+- **Capture or lights?** Use the [live preview](../users/configuration.md#live-preview), or run
   `prysm-tui` with the `null` output: its terminal shows the picture and edge
   colours without any LEDs.
 - **Capture hardware?** Replace the device with a known video file (`file`

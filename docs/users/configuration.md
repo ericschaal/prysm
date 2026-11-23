@@ -86,7 +86,8 @@ Home has two cards.
 - **Your setup**: the path from the video source through Prysm to the lights,
   with what each step is and whether pictures are flowing, and your LEDs
   around the TV. A step that failed is marked. **Change setup** opens
-  Settings, or the part that has a problem.
+  Settings, or the part that has a problem. Press play on the TV's screen
+  for the [live preview](#live-preview).
 
 Good to know:
 
@@ -106,6 +107,31 @@ Good to know:
   **On** says so, for example **WLED limits brightness to 40%**. Prysm does
   not change it; raise it in WLED, or turn on **Force max brightness** in
   WLED's **Sync Interfaces** so screen sync ignores it.
+
+### Live preview
+
+The live preview shows the picture Prysm captures in the screen of the TV
+drawn in **Your setup**, with the colours it sends glowing on the LEDs around
+it. Use it to tell a capture problem from a lighting problem.
+
+1. Turn on **Screen sync**.
+2. Press play on the TV's screen in **Your setup**. On a phone the drawing
+   then takes the card's full width.
+3. Change a [picture setting](#picture) in Settings and watch the result on
+   the lights, then come back and play the preview again.
+
+When Prysm removes black bars, the bars are dimmed and the area it samples is
+outlined. The line under the TV says the picture's size, or why there is no
+picture: the lights are off or showing WLED effects, the picture can't be
+shown, too many people are watching (close it elsewhere, then **Try again**),
+or the preview stopped (**Try again**).
+
+If the picture moves but the LEDs look wrong, check WLED and the LED counts.
+If the picture is missing or frozen, check the video source.
+
+The preview updates at most 8 times a second; judge smoothness on the real
+lights. It starts paused each time you open Home and stops when you pause it,
+leave Home or hide the browser tab. Stopping it leaves Screen sync running.
 
 ## 5. Change settings
 
@@ -176,8 +202,7 @@ colours or delete it; after **Delete calibration** the list offers **Undo** for
 a few seconds. **New calibration** makes one with test patterns on the TV; see
 [Calibrate colours](calibration.md).
 
-Use [Live preview](preview.md) to check a change: select the status at the top
-of the Video source or the Lights page.
+Use the [live preview](#live-preview) on Home to check a change.
 
 ### Video source and lights
 

@@ -60,5 +60,5 @@ observation never commands lighting.
 ## Outside Redux
 
 Form drafts, field errors, focus, clients, abort signals and preview frames
-stay out of the store (the Preview panel holds its own `PreviewClient` stream); each form shows the result of its own commands. The HTTP
+stay out of the store (Home's preview and the video source's status hold their own `PreviewClient` streams); each form shows the result of its own commands. The HTTP
 client holds only the portal's base URL; the portal needs no credentials.

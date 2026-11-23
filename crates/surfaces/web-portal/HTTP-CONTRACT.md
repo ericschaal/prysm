@@ -314,8 +314,8 @@ The portal's CSP blocks `data:` and `blob:` images, so a portal page decodes
 ## Colors
 
 `GET /api/v1/colors/stream` carries only the colors the LEDs show, for a page
-that tints with them (Home) instead of showing the picture. Server-sent events
-whose `data:` is a `ColorsEvent`, tagged by `type`:
+that tints with them (Home, whose preview, when played, adds only the picture).
+Server-sent events whose `data:` is a `ColorsEvent`, tagged by `type`:
 
 | `type` | Fields | When |
 | --- | --- | --- |

@@ -23,7 +23,7 @@ import { useLiveColors, usePageVisible } from './live-colors';
 import { OfflineNotice, Page, PageHeading, SetupNotice } from './page';
 import { useNav, usePortal } from './portal-context';
 import type { Place } from './routes';
-import { PreviewPanel } from './preview';
+import type { PreviewSource } from './preview';
 import { Detail, QuickPicture, StyleSettings } from './processing';
 import { CalibrationList, CalibrationPage } from './calibrations';
 import { SaveStatus, SaveStatusProvider } from './save-status';
@@ -113,6 +113,16 @@ export function HomeRoute() {
         outputs={host.outputs}
         discovery={host.discovery ?? null}
         hasColors={!!host.colors}
+        preview={
+          host.preview
+            ? {
+                client: host.preview,
+                online,
+                target: snapshot.target,
+                session: snapshot.session,
+              }
+            : undefined
+        }
         gridRef={gridRef}
         online={online}
         lighting={portal.lighting}
@@ -185,7 +195,6 @@ export function EditorRoute({ section }: { section: AdapterSide }) {
       device: snapshot.device,
     },
     leave: () => nav.back('settings'),
-    showPreview: host.preview ? () => nav.go('preview') : undefined,
     preview: host.preview,
   };
   return (
@@ -342,36 +351,6 @@ export function AboutRoute() {
   );
 }
 
-export function PreviewRoute() {
-  const { snapshot, host, online } = usePortal();
-  // Without a preview client there is no Preview page: Home instead.
-  if (!host.preview) return <HomeRoute />;
-  return (
-    <Page
-      className="portal-page preview-page"
-      title="Prysm live preview"
-      name="Live preview"
-    >
-      <PageHeading title="Live preview" to="settings" backLabel="Settings" />
-      {/* In the save line's place, so every page starts alike. */}
-      <p className="save-status" data-phase="local">
-        Live while this page is open
-      </p>
-      <p className="page-intro">
-        What Prysm captures, with the colours it sends to each edge around it.
-        Check black bars and LED placement here.
-      </p>
-      <OfflineNotice />
-      <PreviewPanel
-        client={host.preview}
-        online={online}
-        target={snapshot.target}
-        session={snapshot.session}
-      />
-    </Page>
-  );
-}
-
 export function CalibrateRoute() {
   const {
     snapshot,
@@ -407,7 +386,8 @@ export function CalibrateRoute() {
 
 /**
  * Home: the light card (power, mode, brightness, style, calibration) and, once
- * set up, the path the light takes. `gridRef` takes the live LED colours.
+ * set up, the path the light takes with the live preview. `gridRef` takes the
+ * live LED colours.
  */
 function HomePage<C extends AdapterSection, O extends AdapterSection>({
   snapshot,
@@ -415,6 +395,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   outputs,
   discovery,
   hasColors,
+  preview,
   gridRef,
   online,
   lighting,
@@ -432,6 +413,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   discovery: DiscoveryClient | null;
   /** Whether this host streams the LEDs' colours at all. */
   hasColors: boolean;
+  preview?: PreviewSource;
   gridRef: RefObject<HTMLDivElement | null>;
   online: boolean;
   lighting: LightingSituation;
@@ -500,6 +482,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
           discovery={discovery}
           path={path}
           calibration={activeCalibration(settings.processing)}
+          preview={preview}
           openSettings={() => {
             if (path.kind === 'failed' && path.at === 'capture') go('video');
             else if (path.kind === 'failed' && path.at === 'output')

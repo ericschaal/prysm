@@ -53,5 +53,5 @@ For the **full TV** setup, skip this step and go to [LG TV](webos.md).
 
 Open the web portal and follow the [setup wizard](configuration.md).
 
-Then: [Live preview](preview.md) · [Calibrate colours](calibration.md) ·
+Then: [Live preview](configuration.md#live-preview) · [Calibrate colours](calibration.md) ·
 [Troubleshooting](troubleshooting.md).

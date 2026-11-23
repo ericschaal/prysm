@@ -28,7 +28,6 @@ import {
   HomeRoute,
   StyleRoute,
   DetailRoute,
-  PreviewRoute,
   CalibrationRoute,
   CalibrationsRoute,
   SettingsRoute,
@@ -233,7 +232,6 @@ const portalRoutes: RouteObject[] = [
       { path: pages.detail, element: <DetailRoute /> },
       { path: pages.appearance, element: <AppearanceRoute /> },
       { path: pages.about, element: <AboutRoute /> },
-      { path: pages.preview, element: <PreviewRoute /> },
       { path: pages.calibrate, element: <CalibrateRoute /> },
       { path: '*', element: <HomeRoute /> },
     ],
@@ -242,9 +240,9 @@ const portalRoutes: RouteObject[] = [
 
 /**
  * The browser portal. Home holds the light card (power, mode, brightness,
- * calibration) and a summary of the setup; Settings (`#/settings`) holds
- * the picture tuning, the capture and lights forms, the live preview
- * (`#/preview`) and the technical details; the Calibrate page is at
+ * calibration) and a summary of the setup with the live preview; Settings
+ * (`#/settings`) holds the picture tuning, the capture and lights forms and
+ * the technical details; the Calibrate page is at
  * `#/calibrate`; the guided setup takes over while capture or lights are
  * missing. The host chooses which capture and output kinds exist.
  */

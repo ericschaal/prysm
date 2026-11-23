@@ -89,8 +89,6 @@ export interface SectionEditorProps<S extends AdapterSection> {
   setPrevious: (previous: S | null) => void;
   /** Back to Settings. */
   leave: () => void;
-  /** Open the live preview, when this host has one. */
-  showPreview?: () => void;
   /** The live picture for the video source's status, when this host has one. */
   preview?: PreviewClient;
 }
@@ -112,7 +110,6 @@ export function SectionEditor<S extends AdapterSection>({
   previous,
   setPrevious,
   leave,
-  showPreview,
   preview,
 }: SectionEditorProps<S>) {
   const copy = stepCopy[section];
@@ -317,15 +314,6 @@ export function SectionEditor<S extends AdapterSection>({
     if (status.tone === 'ok') tone = 'ok';
     if (status.tone === 'warning') tone = 'warning';
   }
-
-  // The large preview shows something only while screen sync runs.
-  const open =
-    showPreview && saved !== null && live.target === 'screen_sync'
-      ? {
-          label: section === 'capture' ? 'See the picture' : 'Check placement',
-          onOpen: showPreview,
-        }
-      : undefined;
   return (
     <form
       ref={formRef}
@@ -341,7 +329,6 @@ export function SectionEditor<S extends AdapterSection>({
         preview={preview}
         hint={hint}
         brief={outcome && failing}
-        open={open}
       />
       <FieldScopeProvider value={scope}>
         <SectionFields
