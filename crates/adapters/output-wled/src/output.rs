@@ -214,8 +214,8 @@ impl From<IdleMode> for Mode {
     }
 }
 
-/// A mode change that failed: why, and whether a request may have reached
-/// the device before (anything but a first request that could not connect).
+/// A mode change that failed: why, and whether its request may have reached
+/// the device (anything but a request that could not connect).
 struct NotEntered {
     error: http::RequestError,
     reached: bool,
@@ -246,16 +246,13 @@ struct Device {
 }
 
 impl Device {
-    /// Switch to `mode` by `deadline`, both requests included, or until
-    /// `stop` is cut. A previous realtime session can ignore `lor` until it
-    /// is released, so live mode is left first.
+    /// Switch to `mode` with one request by `deadline`, or until `stop` is
+    /// cut.
     fn enter(&self, mode: Mode, deadline: Deadline, stop: &Hangup) -> Result<(), NotEntered> {
-        let post = |state: &Value| http::post_state(self.http, &self.host, state, deadline, stop);
-        post(&json!({"live": false})).map_err(|error| {
+        http::post_state(self.http, &self.host, &mode.state(), deadline, stop).map_err(|error| {
             let reached = !matches!(error, http::RequestError::Connect(_));
             NotEntered::new(error, reached, stop)
-        })?;
-        post(&mode.state()).map_err(|error| NotEntered::new(error, true, stop))
+        })
     }
 
     fn context(&self, mode: Mode) -> String {

@@ -380,7 +380,7 @@ fn body(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
 }
 
-/// Frames from the TV reach the LEDs; on SIGTERM WLED is released and off.
+/// Frames from the TV reach the LEDs; on SIGTERM WLED is off.
 #[test]
 fn a_tv_stream_lights_wled_and_sigterm_turns_it_off() {
     let _wled = wled_lock();
@@ -391,8 +391,7 @@ fn a_tv_stream_lights_wled_and_sigterm_turns_it_off() {
 
     assert_eq!(put_target(port, "screen_sync", None).status, 204);
     sender.expect("connected");
-    // The output opens at the first frame: out of a realtime session, then live.
-    assert_eq!(wled.next_state(), json!({ "live": false }));
+    // The output opens at the first frame.
     assert_eq!(wled.next_state(), body(LIVE));
     wled.expect_colour(RED);
     wait_for_state(port, "screen_sync", |state| session(state) == "screen_sync");
@@ -406,7 +405,6 @@ fn a_tv_stream_lights_wled_and_sigterm_turns_it_off() {
 
     let (status, stderr) = host.terminate();
     assert!(status.success(), "{stderr:#?}");
-    assert_eq!(wled.next_state(), json!({ "live": false }));
     assert_eq!(wled.next_state(), body(OFF));
 }
 
