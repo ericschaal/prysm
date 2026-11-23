@@ -8,6 +8,7 @@ use hyper::{server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use prysm_ports::{Error, Result};
 use prysm_runtime::{EngineHandle, Shutdown};
+use socket2::{SockRef, TcpKeepalive};
 use std::convert::Infallible;
 use std::future::Future;
 use std::io;
@@ -18,6 +19,18 @@ use tokio::task::JoinSet;
 use tokio::time::{Instant, timeout_at};
 
 const CONNECTIONS: usize = 64;
+/// How long a connection is idle before the kernel probes its peer: under
+/// the event streams' 15 s keepalive comment, so a quiet stream is probed.
+const PROBE_AFTER: Duration = Duration::from_secs(10);
+/// How long between unanswered probes.
+const PROBE_INTERVAL: Duration = Duration::from_secs(5);
+/// Unanswered probes before the kernel ends the connection: an idle peer
+/// that vanished is dropped 10 s + 4 x 5 s = 30 s after it last answered.
+const PROBES: u32 = 4;
+/// On Linux, how long sent data may stay unacknowledged before the kernel
+/// ends the connection: the same 30 s for a peer that vanished mid-write.
+#[cfg(target_os = "linux")]
+const UNACKNOWLEDGED: Duration = Duration::from_secs(30);
 /// How long open requests may take to finish once shutdown starts.
 const DRAIN_DEADLINE: Duration = Duration::from_secs(5);
 
@@ -80,8 +93,34 @@ impl Incoming for TcpListener {
     type Socket = TcpStream;
 
     async fn accept(&mut self) -> io::Result<TcpStream> {
-        TcpListener::accept(self).await.map(|(socket, _)| socket)
+        let (socket, _) = TcpListener::accept(self).await?;
+        if let Err(error) = detect_vanished_peer(&socket) {
+            tracing::warn!(
+                "a portal connection whose peer vanishes keeps its slot until a write fails: {error}"
+            );
+        }
+        Ok(socket)
     }
+}
+
+/// Have the kernel end `socket` once its peer stops answering, so a reader
+/// that vanished without closing (a laptop asleep, Wi-Fi gone) fails its
+/// next read or write and frees its connection and stream slot. Keepalive
+/// probes cover a connection with nothing in flight, on every platform; on
+/// Linux the user timeout covers one with data unacknowledged (an event
+/// stream's keepalive comment), which otherwise waits out TCP's
+/// retransmission timeout (about 15 minutes there).
+fn detect_vanished_peer(socket: &TcpStream) -> io::Result<()> {
+    let socket = SockRef::from(socket);
+    socket.set_tcp_keepalive(
+        &TcpKeepalive::new()
+            .with_time(PROBE_AFTER)
+            .with_interval(PROBE_INTERVAL)
+            .with_retries(PROBES),
+    )?;
+    #[cfg(target_os = "linux")]
+    socket.set_tcp_user_timeout(Some(UNACKNOWLEDGED))?;
+    Ok(())
 }
 
 /// Accept connections, each served by `serve` in `connections`, until
@@ -305,6 +344,26 @@ mod tests {
         )
         .await;
         assert!(failed.is_err());
+    }
+
+    /// An accepted connection carries the kernel options that end it once
+    /// its peer stops answering.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_accepted_connection_detects_a_vanished_peer() {
+        let mut listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (_client, accepted) = tokio::join!(TcpStream::connect(address), async {
+            Incoming::accept(&mut listener).await
+        });
+        let accepted = accepted.unwrap();
+        let socket = SockRef::from(&accepted);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(socket.tcp_keepalive_time().unwrap(), PROBE_AFTER);
+        assert_eq!(socket.tcp_keepalive_interval().unwrap(), PROBE_INTERVAL);
+        assert_eq!(socket.tcp_keepalive_retries().unwrap(), PROBES);
+        #[cfg(target_os = "linux")]
+        assert_eq!(socket.tcp_user_timeout().unwrap(), Some(UNACKNOWLEDGED));
     }
 
     /// Every kind of `accept` failure, with and without open connections.

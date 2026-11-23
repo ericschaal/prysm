@@ -29,6 +29,9 @@ tungstenite = { workspace = true, features = ["handshake"] }
 tracing.workspace = true
 # The `accept` errors that mean the process is out of descriptors or memory.
 libc = "0.2"
+# Kernel keepalive on accepted connections; `all` has the probe count and
+# Linux's `TCP_USER_TIMEOUT`.
+socket2 = { workspace = true, features = ["all"] }
 
 [dev-dependencies]
 prysm-capture-remote = { workspace = true, features = ["testkit"] }

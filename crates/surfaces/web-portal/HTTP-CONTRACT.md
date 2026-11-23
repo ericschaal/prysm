@@ -568,6 +568,13 @@ What it does not protect against:
   events per second each), 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
   write (slow or vanished readers are disconnected once the socket's send
   buffer is full).
+- Every accepted connection has TCP keepalive (first probe after 10 s idle,
+  then every 5 s, ended after 4 unanswered), and on Linux a 30 s
+  `TCP_USER_TIMEOUT`: a peer that vanishes without closing loses its
+  connection, and any stream slot it held, 30 s after the first write it
+  leaves unacknowledged (at most about 45 s on a stream with nothing new,
+  whose next keepalive comment is up to 15 s away). Elsewhere such a
+  stream's peer is dropped only after TCP's retransmission timeout.
 - When `accept` finds the process out of file descriptors or memory
   (`EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`), the portal stops accepting
   until one of its own connections ends, with no timer; with no connection
