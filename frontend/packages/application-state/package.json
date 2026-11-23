@@ -6,6 +6,6 @@
   "exports": "./index.ts",
   "dependencies": {
     "@prysm/application-client": "1.0.0-alpha.0",
-    "@reduxjs/toolkit": "2.14.0"
+    "@reduxjs/toolkit": "2.15.0"
   }
 }

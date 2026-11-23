@@ -3073,6 +3073,7 @@ test('slim: calibration uses the computer portal, already on, and ends when the 
   assert.equal(tv.text('calibration-address'), '192.168.1.20:8787/#/calibrate');
   await phone(tv, { pattern: 'coast', uncorrected: false });
   assert.equal(player.pattern(), 'coast');
+  const callsBefore = tv.application.calls.length;
   Object.defineProperty(document, 'hidden', {
     value: true,
     configurable: true,
@@ -3081,7 +3082,11 @@ test('slim: calibration uses the computer portal, already on, and ends when the 
     document.dispatchEvent(new tv.dom.window.Event('visibilitychange')),
   );
   await settle();
-  assert.equal(tv.application.calls.at(-1), 'calibration:end');
+  // Once each; which comes first is the browser's order of listeners.
+  assert.deepEqual(tv.application.calls.slice(callsBefore).sort(), [
+    'calibration:end',
+    'unsubscribe',
+  ]);
   assert.equal(player.stops, 1);
   assert(tv.el('app'));
   assert.equal(tv.application.snapshot().calibration, undefined);

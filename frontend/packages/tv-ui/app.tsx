@@ -256,8 +256,13 @@ export function TvApp({
     if (calibrating) leaveCalibration();
   });
   useEffect(() => {
-    if (!visible) hidden();
-  }, [visible]);
+    let shown = pageShown();
+    return watchVisibility(() => {
+      const now = pageShown();
+      if (shown && !now) hidden();
+      shown = now;
+    });
+  }, []);
   useLayoutEffect(() => {
     if (calibrating || !refocusRef.current) return;
     refocusRef.current = false;
