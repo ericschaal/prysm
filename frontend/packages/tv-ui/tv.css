@@ -95,7 +95,7 @@
   --duration-fast: 120ms;
   --duration: 260ms;
   --duration-bloom: 520ms;
-  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1);
 
   font-family: var(--font);
   font-size: 1.5625vw;

@@ -4,7 +4,12 @@
  * replies are checked before use because the bridge hands over plain text.
  * See docs/developers/webos.md, "Luna API".
  */
-import { known, lightingTargets } from '@prysm/application-client';
+import {
+  type Fields,
+  isObject,
+  known,
+  lightingTargets,
+} from '@prysm/application-client';
 import type {
   ErrorKind,
   FailureKind,
@@ -238,10 +243,6 @@ const optionalText = (value: unknown) =>
 const optionalNumber = (value: unknown) =>
   value === undefined || typeof value === 'number';
 
-type Fields = Partial<Record<string, unknown>>;
-const isObject = (value: unknown): value is Fields =>
-  !!value && typeof value === 'object';
-
 /** A failure; an unknown kind is `other`. `null` when malformed. */
 function decodeFailure(value: unknown): WorkerFailure | null {
   if (
@@ -423,7 +424,7 @@ function decode(text: string): Reply {
     const text =
       typeof reply.errorText === 'string' && reply.errorText
         ? reply.errorText
-        : 'The TV service could not complete this action.';
+        : 'The TV service couldn’t complete this action.';
     // LS2 itself answers this way when the service is not registered.
     const missing =
       /not found|unknown service|no such service|service does not exist/i.test(
@@ -500,7 +501,7 @@ export function lunaTvService(
     };
     if (timeoutMs !== null)
       timer = setTimeout(
-        () => fail(new LunaError('timeout', 'The TV service did not respond.')),
+        () => fail(new LunaError('timeout', 'The TV service didn’t respond.')),
         timeoutMs,
       );
     pending.add(cancel);
@@ -573,7 +574,7 @@ export function lunaTvService(
             if (first && reply.subscribed !== true)
               throw new LunaError(
                 'refused',
-                'The TV service did not accept a subscription.',
+                'The TV service didn’t accept a subscription.',
               );
             first = false;
             if (!stopped) listener({ online: true, state: stateOf(reply) });

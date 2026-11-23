@@ -457,11 +457,11 @@ test('the power button and the mode tiles set the target and show what the sessi
     assert($('.lighting-status').classList.contains('visually-hidden'));
     assert.equal($$('.light-card .notice').length, 0, 'one sentence, no box');
     // Plain words from the typed failure; the message under Details.
-    assert.equal(info(), 'Screen sync could not start.');
+    assert.equal(info(), 'Screen sync couldn’t start.');
     assert.equal(word(), 'Stopped');
     assert.equal(
       $('.light-card [role="alert"]').textContent,
-      'Screen sync could not start.',
+      'Screen sync couldn’t start.',
     );
     assert.equal(
       $('.light-details p').textContent,
@@ -599,7 +599,7 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
     );
     assert.equal(
       $('.lighting-status').textContent,
-      'Screen sync could not start',
+      'Screen sync couldn’t start',
     );
     assert.equal(fixture.snapshot().session.state, 'effects');
     assert.equal(word(), 'Stopped');
@@ -612,7 +612,7 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
     );
     assert.equal(
       info(),
-      'Screen sync could not start. WLED effects are still on.',
+      'Screen sync couldn’t start. WLED effects are still on.',
     );
     assert.match($('.light-details p').textContent, /does not support 640x360/);
     assert(button('Try again'));
@@ -631,7 +631,7 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
     );
     assert.equal(
       info(),
-      'The video source is not working. WLED effects are still on.',
+      'The video source isn’t working. WLED effects are still on.',
     );
     // Off clears it.
     await act(async () =>
@@ -663,7 +663,7 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
     assert.equal(power().getAttribute('aria-busy'), 'false', 'no busy ring');
     assert.equal(
       info(),
-      'Screen sync could not start. WLED effects are still on.',
+      'Screen sync couldn’t start. WLED effects are still on.',
     );
     assert(button('Try again'));
   };
@@ -711,7 +711,7 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
       }),
     );
     assert.equal(word(), 'Off');
-    assert.equal(info(), 'The lights could not be switched off.');
+    assert.equal(info(), 'The lights couldn’t be switched off.');
     assert(!button('Try again'));
   } finally {
     await portal.unmount();
@@ -892,7 +892,7 @@ test('a picture save that fails is shown at its control, with a retry there', as
     const row = () => toggle.closest('.field');
     fixture.failNext({
       kind: 'unavailable',
-      message: 'The portal did not answer.',
+      message: 'Prysm didn’t answer.',
     });
     await click(toggle);
     await settle();
@@ -1439,9 +1439,9 @@ test('the status follows saved lights; failing ones can be swapped back', async 
 
     // Settings shows the live problem on its row; the way back stays.
     await leaveEditor();
-    assert.equal(problem('Lights'), 'The lights are not responding.');
+    assert.equal(problem('Lights'), 'The lights aren’t responding.');
     // The device stays named, before the problem.
-    assert.equal(valueOf('Lights'), 'WLED · The lights are not responding.');
+    assert.equal(valueOf('Lights'), 'WLED · The lights aren’t responding.');
     assert.equal(problem('Video source'), '');
     await openEditor('Lights');
     await click(button('Go back to the previous lights'));
@@ -2271,7 +2271,7 @@ test('the sender refusing the requested stream is shown in full with the lightin
     assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
     assert.equal(
       $('.light-card [role="alert"]').textContent,
-      'Screen sync could not start.',
+      'Screen sync couldn’t start.',
     );
     assert.equal($('.light-details p').textContent, refusal, 'not shortened');
     // The video source editor says where the fix is.
@@ -2600,7 +2600,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     assert.equal(total.textContent.split(':')[0], '91 ms behind');
     assert.equal(
       total.title,
-      'The lights show each frame about 91 ms after it was captured. The lights’ own delay is not included.',
+      'The lights show each frame about 91 ms after it was captured. The lights’ own delay isn’t included.',
     );
     assert.match(
       total.textContent,
@@ -2721,7 +2721,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     );
     assert.equal(
       info(),
-      'The video source is not working. WLED effects are still on.',
+      'The video source isn’t working. WLED effects are still on.',
     );
     // The lights' side.
     await act(async () =>
@@ -2740,7 +2740,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       ['still', undefined],
       ['failed', undefined],
     ]);
-    assert.equal(info(), 'The lights are not responding.');
+    assert.equal(info(), 'The lights aren’t responding.');
     // One without a side: the path is broken at Prysm.
     await act(async () =>
       portal.fixture.publish({

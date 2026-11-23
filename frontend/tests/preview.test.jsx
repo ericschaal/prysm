@@ -194,7 +194,7 @@ test('the preview has its own page, reached from Settings, and streams only whil
     );
     assert.equal(
       message(),
-      'This picture cannot be shown: MJPEG frames cannot be previewed',
+      'This picture can’t be shown: MJPEG frames cannot be previewed',
     );
 
     // Leaving the page or hiding it releases the viewer; coming back reopens.

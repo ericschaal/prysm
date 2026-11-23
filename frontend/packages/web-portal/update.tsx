@@ -25,7 +25,7 @@ export function PortalError() {
           <h1 className="visually-hidden">Prysm</h1>
           <h2>Something went wrong</h2>
           <p>
-            This page hit a problem. Your lights and saved settings are not
+            This page hit a problem. Your lights and saved settings aren’t
             affected. Reload to continue.
           </p>
           <button type="button" className="primary" onClick={reload}>

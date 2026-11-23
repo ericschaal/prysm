@@ -84,8 +84,11 @@ async function start(page: Page, from = 'New calibration') {
 }
 /** Looks right until the review, then name it and finish. */
 async function finish(page: Page, name: string) {
-  while ((await heading(page).textContent()) !== questions.review)
+  for (let i = 0; i < Object.keys(questions).length; i++) {
+    if ((await heading(page).textContent()) === questions.review) break;
     await looksRight(page).click();
+  }
+  await expect(heading(page)).toHaveText(questions.review);
   await page.getByRole('textbox', { name: 'Name' }).fill(name);
   await page.getByRole('button', { name: 'Finish' }).click();
   await expect(heading(page)).toHaveText('Calibration finished');

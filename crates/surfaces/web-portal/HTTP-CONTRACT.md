@@ -479,7 +479,7 @@ the values this version sends.
 | `session.state` | As `target`; a `failure` or `message` in it is still shown. |
 | `session.failure.kind`, `Failure.kind` | The general line from `section` or `field`, else "Something went wrong"; for a reply, its status class says refused (4xx) or failed (5xx); `message` is shown. |
 | `…failure.section` | Absent: the side is not known. |
-| `device.issue` | The lights are not showing screen sync. |
+| `device.issue` | The lights aren’t showing screen sync. |
 | `input.behind` | Prysm cannot keep up, without naming the step. |
 | `calibration.pattern` | A calibration pattern is shown. |
 | `settings` kinds and adapter values | Kept as sent and sent back unchanged. |

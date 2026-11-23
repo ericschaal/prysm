@@ -468,7 +468,7 @@ test('a lookup that fails says so and is asked again', async (t) => {
   const modes = fakeCaptureModesClient();
   modes.refuseNext({
     kind: 'unavailable',
-    message: 'The portal did not answer.',
+    message: 'Prysm didn’t answer.',
   });
   const portal = await renderPortal(
     HeadlessWebPortal,

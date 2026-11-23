@@ -287,7 +287,7 @@ export function tvStatus(
   } else if (lighting?.kind === 'failed') {
     // The lights card says what failed; its modes try again.
     if (lighting.target === 'effects') title = 'WLED effects stopped';
-    else title = lighting.fromEffects ? 'Screen sync could not start' : stopped;
+    else title = lighting.fromEffects ? 'Screen sync couldn’t start' : stopped;
     description = 'Try again, or choose another mode.';
     attention = true;
   } else if (unreadable) {
