@@ -10,7 +10,7 @@
 # portal's "Find lights" finds nothing.
 services:
   prysm:
-    image: ghcr.io/ericschaal/prysm-headless:1.0.0-rc.1 # x-release-please-version
+    image: ghcr.io/ericschaal/prysm-headless:1.0.0-rc.2 # x-release-please-version
     restart: unless-stopped
     user: "568:568"
     read_only: true
