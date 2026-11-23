@@ -4,6 +4,7 @@
  * replies are checked before use because the bridge hands over plain text.
  * See docs/developers/webos.md, "Luna API".
  */
+import { known, lightingTargets } from '@prysm/application-client';
 import type {
   ErrorKind,
   FailureKind,
@@ -231,19 +232,6 @@ const errorKinds: Record<ErrorKind, true> = {
   save_failed: true,
   internal: true,
 };
-const targets: Record<LightingTarget, true> = {
-  off: true,
-  screen_sync: true,
-  effects: true,
-};
-/** `raw` if it is one of `values`, else `fallback`: a value newer than this app. */
-function known<T extends string, F extends string>(
-  values: Record<T, true>,
-  raw: string,
-  fallback: F,
-): T | F {
-  return Object.keys(values).indexOf(raw) >= 0 ? (raw as T) : fallback;
-}
 // An absent value is omitted, never `null`.
 const optionalText = (value: unknown) =>
   value === undefined || typeof value === 'string';
@@ -355,7 +343,7 @@ function decodePackage(state: Fields): PackageReading | null {
       return typeof state.target === 'string' && worker
         ? {
             flavor: 'full',
-            target: known(targets, state.target, 'unknown'),
+            target: known(lightingTargets, state.target, 'unknown'),
             worker,
           }
         : null;

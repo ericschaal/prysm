@@ -1,6 +1,7 @@
 import type { Processing } from '@prysm/contracts/application';
 import {
   situationFailure,
+  type AdapterSide,
   type ApplicationSnapshot,
   type DiscoveryClient,
   type LightingSituation,
@@ -165,7 +166,7 @@ export function SettingsRoute() {
 }
 
 /** The video source or lights editor, on a page of its own. */
-export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
+export function EditorRoute({ section }: { section: AdapterSide }) {
   const portal = usePortal();
   const nav = useNav();
   const { snapshot, host, online, dispatch, commands } = portal;

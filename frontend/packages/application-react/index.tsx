@@ -1,14 +1,28 @@
-import { useDispatch, useSelector } from 'react-redux';
-import type { ApplicationRuntime } from '@prysm/application-state';
+import { useCallback, useSyncExternalStore } from 'react';
+import type { ApplicationRuntime, Connection } from '@prysm/application-state';
 
-export function useApplication<C, O>(application: ApplicationRuntime<C, O>) {
-  return useSelector(application.selectors.selectConnection);
-}
-
-export function useApplicationDispatch<C, O>() {
-  return useDispatch<ApplicationRuntime<C, O>['store']['dispatch']>();
-}
-
-export function useLastCommand<C, O>(application: ApplicationRuntime<C, O>) {
-  return useSelector(application.selectors.selectLastCommand);
+/**
+ * The connection of `application` (its status and latest state), rendered
+ * again on every change; `null` without one. It holds no observation lease:
+ * whoever shows the application calls `application.connect()`.
+ */
+export function useConnection<C, O>(
+  application: ApplicationRuntime<C, O>,
+): Connection<C, O>;
+export function useConnection<C, O>(
+  application: ApplicationRuntime<C, O> | null,
+): Connection<C, O> | null;
+export function useConnection<C, O>(
+  application: ApplicationRuntime<C, O> | null,
+): Connection<C, O> | null {
+  const subscribe = useCallback(
+    (changed: () => void) =>
+      application ? application.store.subscribe(changed) : () => {},
+    [application],
+  );
+  return useSyncExternalStore(subscribe, () =>
+    application
+      ? application.selectors.selectConnection(application.store.getState())
+      : null,
+  );
 }

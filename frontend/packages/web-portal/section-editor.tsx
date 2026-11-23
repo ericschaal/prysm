@@ -5,7 +5,11 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
-import { failureOf, type PreviewClient } from '@prysm/application-client';
+import {
+  failureOf,
+  type AdapterSide,
+  type PreviewClient,
+} from '@prysm/application-client';
 import {
   adapterFor,
   createSection,
@@ -67,7 +71,7 @@ const sentence = (words: string) =>
   /[.!?…]$/.test(words) ? words : `${words}.`;
 
 export interface SectionEditorProps<S extends AdapterSection> {
-  section: 'capture' | 'output';
+  section: AdapterSide;
   adapters: AdapterUis<S>;
   /** The observed section; `null` while unconfigured. */
   saved: S | null;

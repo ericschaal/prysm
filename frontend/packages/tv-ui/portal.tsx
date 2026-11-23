@@ -7,19 +7,15 @@ import {
   lightingSituation,
   plainFailure,
   situationFailure,
-  type ApplicationSnapshot,
   type LightingSituation,
   type LightingTarget,
   type TargetReading,
 } from '@prysm/application-client';
-import type { PortalView } from './portal-connection';
+import type { Flavor } from '@prysm/webos-platform';
+import type { PortalSnapshot, PortalView } from './portal-connection';
 
-type Snapshot = ApplicationSnapshot<unknown, unknown>;
-
-const outputKind = (snapshot: Snapshot) =>
-  (snapshot.settings.output as { kind?: string } | undefined)?.kind;
-const effectsOf = (snapshot: Snapshot) =>
-  outputKind(snapshot) === 'wled' ? 'WLED effects' : null;
+const effectsOf = (snapshot: PortalSnapshot) =>
+  snapshot.settings.output?.kind === 'wled' ? 'WLED effects' : null;
 
 /**
  * The lighting card: the three modes, always in the same place, and one
@@ -31,7 +27,7 @@ export function LightingCard({
   portal,
   connecting,
 }: {
-  flavor: 'full' | 'slim';
+  flavor: Flavor;
   portal: PortalView;
   /** The TV service has not answered yet, so where Prysm is is not known. */
   connecting: boolean;
@@ -97,8 +93,7 @@ export function LightingCard({
     said = describeSituation(lighting, effects ?? 'Device effects').sentence;
     // Said also with the lights off: settings that could not be applied.
     const failure = situationFailure(lighting);
-    const kind = (snapshot.settings.capture as { kind?: string } | undefined)
-      ?.kind;
+    const kind = snapshot.settings.capture?.kind;
     if (lighting.kind === 'faulted') {
       message = said;
       attention = true;

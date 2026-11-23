@@ -16,6 +16,10 @@
 import type { ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApplicationError } from '@prysm/application-client';
+import type {
+  CaptureSettings,
+  OutputSettings,
+} from '@prysm/contracts/application';
 import { isEnabled, lunaTvService, type Flavor } from '@prysm/webos-platform';
 import type { PortalOptions, TvAppProps } from '@prysm/tv-ui';
 import { fakeApplicationPort } from './application';
@@ -50,7 +54,7 @@ export function runDemo(
     flavor === 'full'
       ? { kind: 'webos', width: 640, height: 360, fps: 30 }
       : { kind: 'remote' };
-  const application = fakeApplicationPort<unknown, unknown>(
+  const application = fakeApplicationPort<CaptureSettings, OutputSettings>(
     flags.has('nolights') ? { capture } : { capture, output },
   );
   /** What the portal's setup wizard does when it saves (with Save only). */

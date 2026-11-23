@@ -1,5 +1,9 @@
 import { useId, type ReactNode } from 'react';
-import type { DiscoveryClient } from '@prysm/application-client';
+import type {
+  DiscoveryClient,
+  FailureSection,
+} from '@prysm/application-client';
+import type { Behind } from '@prysm/contracts/application';
 import {
   ledCount,
   unbroken,
@@ -119,11 +123,11 @@ export type PathState =
        */
       latency?: { captureMs?: number; outputMs: number };
       /** The step that keeps Prysm from keeping up, while one does. */
-      behind?: 'processing' | 'output';
+      behind?: Behind;
     }
   | { kind: 'waiting' }
   | { kind: 'effects' }
-  | { kind: 'failed'; at: 'capture' | 'output' | null };
+  | { kind: 'failed'; at: FailureSection | null };
 
 /** One stop on the path: its role (for screen readers), name and one fact. */
 function Stop({

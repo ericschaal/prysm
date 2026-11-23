@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { Candidate, DiscoveryClient } from '@prysm/application-client';
+import type {
+  AdapterSide,
+  Candidate,
+  DiscoveryClient,
+} from '@prysm/application-client';
 import type { AdapterFact, AdapterSection } from './adapters';
 
 /** A configured section for Home: what it is, and a few facts about it. */
 export interface SetupPart {
-  section: 'capture' | 'output';
+  section: AdapterSide;
   saved: AdapterSection;
   /** The kind's name, used until (or unless) the device's own is found. */
   label: string;

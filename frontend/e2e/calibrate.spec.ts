@@ -30,16 +30,8 @@ const questions = {
   review: 'Name your calibration',
 };
 
-interface Calibration {
-  id: string;
-  name?: string;
-  correction?: Record<string, unknown>;
-}
 async function calibrations(prysm: Prysm) {
-  const { processing } = (await prysm.state()).settings as unknown as {
-    processing: { calibrations?: Calibration[]; active_calibration?: string };
-  };
-  return processing;
+  return (await prysm.state()).settings.processing;
 }
 /** Every number in a correction, flattened: `red.hue` → 4. */
 function numbers(value: unknown, at = ''): Record<string, number> {
@@ -197,14 +189,7 @@ test('Show without correction toggles and says so', async ({ page, prysm }) => {
   await compare.click();
   await expect(compare).toHaveAttribute('aria-pressed', 'true');
   await expect
-    .poll(
-      async () =>
-        (
-          (await prysm.state()) as unknown as {
-            calibration?: { uncorrected: boolean };
-          }
-        ).calibration?.uncorrected,
-    )
+    .poll(async () => (await prysm.state()).calibration?.uncorrected)
     .toBe(true);
   await compare.click();
   await expect(compare).toHaveAttribute('aria-pressed', 'false');

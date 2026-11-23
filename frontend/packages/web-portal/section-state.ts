@@ -4,6 +4,7 @@ import {
   plainFailure,
   unreachable,
   unusableSettings,
+  type AdapterSide,
   type LightingFailure,
   type LightingSituation,
   type TargetReading,
@@ -98,7 +99,7 @@ export interface Status {
  * lasted too long to be a start.
  */
 export function sectionStatus(
-  section: 'capture' | 'output',
+  section: AdapterSide,
   live: LiveState,
   identity: string | null,
   stalled: boolean,

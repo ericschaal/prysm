@@ -8,7 +8,6 @@ import type {
   DiscoveryClient,
   PreviewClient,
 } from '@prysm/application-client';
-import { ApplicationProvider } from '@prysm/application-react/provider';
 import type { ApplicationRuntime } from '@prysm/application-state';
 import { WebPortal } from '@prysm/web-portal';
 import { webosCaptures, webosOutputs } from './kinds';
@@ -32,17 +31,15 @@ export function WebosWebPortal({
   replaced?: () => Promise<boolean>;
 }) {
   return (
-    <ApplicationProvider application={application}>
-      <WebPortal
-        application={application}
-        captures={webosCaptures}
-        preview={preview}
-        colors={colors}
-        discovery={discovery}
-        captureModes={captureModes}
-        replaced={replaced}
-        outputs={webosOutputs}
-      />
-    </ApplicationProvider>
+    <WebPortal
+      application={application}
+      captures={webosCaptures}
+      preview={preview}
+      colors={colors}
+      discovery={discovery}
+      captureModes={captureModes}
+      replaced={replaced}
+      outputs={webosOutputs}
+    />
   );
 }

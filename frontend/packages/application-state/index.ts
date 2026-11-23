@@ -4,12 +4,7 @@ import { createApplicationSlice, type ApplicationState } from './slice';
 import { createCommands } from './commands';
 import { registerObservation, type ApplicationDispatch } from './observation';
 
-export type {
-  ApplicationState,
-  CommandKind,
-  CommandState,
-  Connection,
-} from './slice';
+export type { ApplicationState, Connection } from './slice';
 
 /** Host-owned frontend assembly: one Redux store and one injected transport client. */
 export function createApplicationRuntime<C, O>(
@@ -44,8 +39,7 @@ export function createApplicationRuntime<C, O>(
   return {
     store,
     client,
-    actions: slice.actions,
-    commands: createCommands(slice.actions),
+    commands: createCommands<C, O>(),
     selectors: slice.getSelectors(),
     connect,
   };

@@ -8,8 +8,10 @@
  * journey checks it after every key.
  */
 import { expect, type Page } from '@playwright/test';
+import type { LightingTarget } from '@prysm/contracts/application';
+import type { State } from '@prysm/contracts/luna';
 
-export type Flavor = 'full' | 'slim';
+export type Flavor = State['flavor'];
 export type Key =
   'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Enter' | 'Back';
 export const arrows = [
@@ -366,13 +368,8 @@ export function layoutBoxes(
 /** `window.demo`: the demo's in-memory supervisor and portal (testkit/tv-demo.tsx). */
 interface Demo {
   supervisor: {
-    /** The published state, as far as these tests read it. */
-    state(): {
-      preferences: { autostart?: boolean; prysm_address?: string | null };
-    } & (
-      | { flavor: 'full'; target: 'off' | 'screen_sync' | 'effects' }
-      | { flavor: 'slim'; enabled: boolean }
-    );
+    /** The published state. */
+    state(): State;
     /** Facts of the supervisor's own package only (testkit/luna.ts). */
     publish(change: Record<string, unknown>): void;
     /** Hold every call until `release()`. */
@@ -380,7 +377,7 @@ interface Demo {
     release(): void;
   };
   application: {
-    snapshot(): { target: string };
+    snapshot(): { target: LightingTarget };
     publish(change: Record<string, unknown>): void;
   };
   addLights(): void;

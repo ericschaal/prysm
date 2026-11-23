@@ -28,14 +28,8 @@ test('a preset saves its size and rate; the saved custom size shows until replac
   await save.click();
   // Saved: the bar leaves (Cancel stays while saving).
   await expect(editor.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
-  const saved = (await prysm.savedSettings()) as {
-    capture: { width: number; height: number; fps: number };
-  };
-  expect([
-    saved.capture.width,
-    saved.capture.height,
-    saved.capture.fps,
-  ]).toEqual([320, 180, 30]);
+  const { capture } = await prysm.savedSettings();
+  expect(capture).toMatchObject({ width: 320, height: 180, fps: 30 });
 
   // Arrow keys move within the group, as native radios do.
   await choice.getByRole('radio', { name: 'Efficient' }).focus();

@@ -562,7 +562,7 @@ export const calibrationUrl = (portal: string) =>
  * `tv` is the supervisor's state; `address` the slim package's Prysm address.
  */
 export function calibrationBlocker(
-  flavor: 'full' | 'slim',
+  flavor: Flavor,
   player: PatternPlayer,
   portal: PortalView,
   tv: State | null,
@@ -577,7 +577,7 @@ export function calibrationBlocker(
   if (!snapshot) return 'Waiting for Prysm';
   if (!snapshot.settings.capture || !snapshot.settings.output)
     return 'Set up lights first';
-  const kind = (snapshot.settings.capture as { kind?: string }).kind;
-  if (flavor === 'slim' && kind !== 'remote') return 'Uses another picture';
+  if (flavor === 'slim' && snapshot.settings.capture.kind !== 'remote')
+    return 'Uses another picture';
   return null;
 }

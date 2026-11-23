@@ -24,6 +24,7 @@ export type {
   CaptureSettings,
   ColorsEvent,
   Failure,
+  FailureSection,
   LightingFailure,
   LightingTarget,
   Mode,
@@ -34,6 +35,35 @@ export type {
   Session,
 };
 export { same } from './same';
+
+/**
+ * The two sides an adapter fills, capture and output: the generated failure
+ * sides.
+ */
+export type AdapterSide = FailureSection;
+
+/**
+ * Keyed by every value of a generated union, so the compiler keeps them in
+ * step; read with {@link known}.
+ */
+export const lightingTargets: Record<LightingTarget, true> = {
+  off: true,
+  screen_sync: true,
+  effects: true,
+};
+export const failureSections: Record<FailureSection, true> = {
+  capture: true,
+  output: true,
+};
+
+/** `raw` if it is one of `values`, else `fallback`: a value newer than this page. */
+export function known<T extends string, F extends string | null | undefined>(
+  values: Record<T, true>,
+  raw: string,
+  fallback: F,
+): T | F {
+  return Object.keys(values).indexOf(raw) >= 0 ? (raw as T) : fallback;
+}
 
 /**
  * How long a stream of the portal (state, colours) waits before it
@@ -108,10 +138,12 @@ export function failureSide(
   failure: Failure | LightingFailure,
 ): FailureSection | null {
   // Only the sides this page knows: any other value reads as absent.
-  const typed = 'section' in failure ? failure.section : undefined;
-  if (typed === 'capture' || typed === 'output') return typed;
-  const named = 'field' in failure ? failure.field?.split('.')[0] : undefined;
-  return named === 'capture' || named === 'output' ? named : null;
+  const side = (raw: string | undefined) =>
+    raw === undefined ? null : known(failureSections, raw, null);
+  return (
+    side('section' in failure ? failure.section : undefined) ??
+    side('field' in failure ? failure.field?.split('.')[0] : undefined)
+  );
 }
 
 /**
@@ -403,7 +435,7 @@ export interface ColorsClient {
  */
 export interface DiscoveryClient {
   candidates(
-    section: 'capture' | 'output',
+    section: AdapterSide,
     kind: string,
     signal?: AbortSignal,
   ): Promise<Candidate[]>;

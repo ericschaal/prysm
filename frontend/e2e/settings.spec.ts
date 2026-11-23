@@ -26,9 +26,7 @@ test('Settings lists its groups in order, and says whether it is saved', async (
   await bars.click();
   await expect(page.getByText(/^(Saving…|Saved)$/)).toBeVisible();
   await expect(status).toBeVisible();
-  const state = (await prysm.state()) as unknown as {
-    settings: { processing: { remove_black_bars: boolean } };
-  };
+  const state = await prysm.state();
   expect(state.settings.processing.remove_black_bars).toBe(!before);
 
   // A row is the link: its label, then its value.
@@ -62,9 +60,7 @@ test('the video source page shows whether it works, before and after a save', as
   await expect(editor.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
   await expect(editor.getByText(/^Saved\. Screen sync is off/)).toBeVisible();
   await expect(editor.getByText(/^Saved\./)).toHaveCount(0);
-  const saved = (await prysm.state()) as unknown as {
-    settings: { capture: { width: number; height: number; fps: number } };
-  };
+  const saved = await prysm.state();
   expect(saved.settings.capture).toMatchObject({
     width: 320,
     height: 180,

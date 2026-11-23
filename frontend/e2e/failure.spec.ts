@@ -26,7 +26,10 @@ test('a refused capture is shown, and Try again starts screen sync', async ({
   // answer. The line can show the state's failure before the click's own
   // reply lands, and opening Details in between raced with that update.
   await expect
-    .poll(async () => (await prysm.state()).session.failure?.message)
+    .poll(async () => {
+      const { session } = await prysm.state();
+      return 'failure' in session ? session.failure?.message : undefined;
+    })
     .toContain(reason);
   await expect(card).not.toHaveAttribute('aria-busy', 'true');
   await card.getByText('Details').click();
@@ -46,7 +49,8 @@ test('a refused capture is shown, and Try again starts screen sync', async ({
   await expect
     .poll(async () => {
       const { session } = await prysm.state();
-      return `${session.state} ${session.failure?.message ?? 'no failure'}`;
+      const failure = 'failure' in session ? session.failure : undefined;
+      return `${session.state} ${failure?.message ?? 'no failure'}`;
     })
     .toBe('screen_sync no failure');
 });

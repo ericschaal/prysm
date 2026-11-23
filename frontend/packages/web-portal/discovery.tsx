@@ -1,5 +1,6 @@
 import { use, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
+  type AdapterSide,
   type Candidate,
   type DiscoveryClient,
 } from '@prysm/application-client';
@@ -30,7 +31,7 @@ const detailOf = ({ detail, led_count }: Candidate) =>
  */
 function useCandidates(
   discovery: DiscoveryClient | null,
-  section: 'capture' | 'output',
+  section: AdapterSide,
   kind: string,
   field: string,
   auto: boolean,
@@ -97,7 +98,7 @@ export function FindDevices({
   fallback,
   onPick,
 }: {
-  section: 'capture' | 'output';
+  section: AdapterSide;
   kind: string;
   /** The field it fills, for its errors, such as `capture.path`. */
   path: string;

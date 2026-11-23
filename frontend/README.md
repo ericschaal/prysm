@@ -252,7 +252,9 @@ supervisor in each of its states and play the phone's calibration part). See the
     from what the source delivers ([capture modes](packages/web-portal/capture-modes.ts):
     `POST /api/v1/capture/modes` with only the fields that select the
     hardware, a device's `path` or the TV's `encoding`; asked again every
-    3 s while not known and when the page regains focus; hosts pass
+    3 s while not known and the page is shown (nothing announces a device
+    or a TV's offer), and when the page is shown again or regains focus;
+    hosts pass
     `httpCaptureModesClient()`). The
     [presets](packages/web-portal/picture-presets.ts) aim for Balanced
     (640 × 360, 30 fps), Smooth (640 × 360, 60 fps) and Efficient (320 × 180,
@@ -326,7 +328,7 @@ supervisor in each of its states and play the phone's calibration part). See the
 - [Application client](packages/application-client/index.ts),
   [HTTP transport](packages/application-client/http.ts),
   [RTK state](packages/application-state/index.ts) and
-  [React bindings](packages/application-react/index.tsx).
+  [React binding](packages/application-react/index.tsx).
 - [Discovery fixture](testkit/discovery.ts): scripted candidates per
   `section/kind`, recorded calls and a scriptable refusal.
 - [Capture modes fixture](testkit/capture-modes.ts): an answer per capture

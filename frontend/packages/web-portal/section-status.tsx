@@ -1,5 +1,9 @@
 import { useRef, type RefObject } from 'react';
-import type { PreviewClient, PreviewFrame } from '@prysm/application-client';
+import type {
+  AdapterSide,
+  PreviewClient,
+  PreviewFrame,
+} from '@prysm/application-client';
 import { usePageVisible } from './live-colors';
 import { LightsIcon, VideoIcon } from './path-icons';
 import { usePreviewStream } from './preview-stream';
@@ -56,7 +60,7 @@ export function SectionStatus({
   hint,
   brief = false,
 }: {
-  section: 'capture' | 'output';
+  section: AdapterSide;
   status: Status;
   preview?: PreviewClient;
   /** What opening the card shows, such as `See the picture`, and how. */

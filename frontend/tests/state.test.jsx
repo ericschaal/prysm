@@ -22,12 +22,6 @@ test('commands resolve with the runtime result and observed state follows the st
   await application.store.dispatch(
     application.commands.setTarget('screen_sync'),
   );
-  assert.deepEqual(state().lastCommand, {
-    id: 1,
-    kind: 'setTarget',
-    phase: 'succeeded',
-    failure: null,
-  });
   await tick();
   assert.equal(state().connection.snapshot.session.state, 'screen_sync');
 
@@ -46,16 +40,18 @@ test('commands resolve with the runtime result and observed state follows the st
   release();
 });
 
-test('stale revisions and server failures are recorded on the latest command', async () => {
+test('stale revisions and server failures reject the command', async () => {
   const fixture = fakeApplicationPort({ capture, output, revision: 3 });
-  const { application, release, state } = await connected(fixture);
+  const { application, release } = await connected(fixture);
   await assert.rejects(
     application.store.dispatch(
       application.commands.configureCapture(2, capture),
     ),
-    (error) => error instanceof ApplicationError && error.failure.current === 3,
+    (error) =>
+      error instanceof ApplicationError &&
+      error.failure.kind === 'stale_revision' &&
+      error.failure.current === 3,
   );
-  assert.equal(state().lastCommand.failure.kind, 'stale_revision');
   assert.deepEqual(fixture.calls, ['observe']);
 
   fixture.failNext({
@@ -65,35 +61,13 @@ test('stale revisions and server failures are recorded on the latest command', a
   });
   await assert.rejects(
     application.store.dispatch(application.commands.configureOutput(3, output)),
+    (error) => error.failure.field === 'output.leds',
   );
-  assert.equal(state().lastCommand.failure.field, 'output.leds');
   fixture.failNext({ kind: 'faulted', message: 'runtime is faulted' });
   await assert.rejects(
     application.store.dispatch(application.commands.setTarget('off')),
+    (error) => error.failure.kind === 'faulted',
   );
-  assert.equal(state().lastCommand.kind, 'setTarget');
-  assert.equal(state().lastCommand.phase, 'failed');
-  release();
-});
-
-test('a delayed earlier command cannot overwrite newer command feedback', async () => {
-  const fixture = fakeApplicationPort({ capture, output });
-  let finish;
-  fixture.client.setTarget = () =>
-    new Promise((resolve) => {
-      finish = resolve;
-    });
-  const { application, release, state } = await connected(fixture);
-  const slow = application.store.dispatch(
-    application.commands.setTarget('off'),
-  );
-  await application.store.dispatch(
-    application.commands.configureOutput(0, output),
-  );
-  finish();
-  await slow;
-  assert.equal(state().lastCommand.kind, 'configureOutput');
-  assert.equal(state().lastCommand.id, 2);
   release();
 });
 
@@ -177,10 +151,7 @@ test('shared observation closes once after the last consumer releases it', async
   assert.equal(application.store.getState().connection.status, 'connected');
   second();
   await tick();
-  assert.equal(
-    application.selectors.selectSnapshot(application.store.getState()),
-    null,
-  );
+  assert.equal(application.store.getState().connection.snapshot, null);
   assert.deepEqual(fixture.calls, ['observe', 'unsubscribe']);
 });
 
@@ -209,9 +180,6 @@ test('an observation acquired after release is closed without replacing newer st
   });
   await tick();
   assert.equal(closed, 1);
-  assert.equal(
-    application.selectors.selectSnapshot(application.store.getState()).target,
-    'off',
-  );
+  assert.equal(application.store.getState().connection.snapshot.target, 'off');
   release();
 });

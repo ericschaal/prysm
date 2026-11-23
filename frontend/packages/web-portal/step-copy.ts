@@ -1,3 +1,5 @@
+import type { AdapterSide } from '@prysm/application-client';
+
 /**
  * One step of setting Prysm up, the same in the setup wizard and in the
  * editor Settings opens for one section: its title, what it asks, and the
@@ -20,7 +22,7 @@ export const stepCopy = {
     keep: 'Keep these lights',
   },
 } as const satisfies Record<
-  'capture' | 'output',
+  AdapterSide,
   {
     title: string;
     intro: string;

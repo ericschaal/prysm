@@ -8,9 +8,11 @@ import {
   type ColorsEvent,
   type DiscoveryClient,
   type Failure,
+  failureSections,
+  known,
   type LightingFailure,
+  lightingTargets,
   unreachable,
-  type LightingTarget,
   type Mode,
   type Modes,
   type PreviewClient,
@@ -372,26 +374,12 @@ const isObject = (value: unknown): value is Fields =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
 /** Keyed by every value of the generated union, so the compiler keeps them in step. */
-const targets: Record<LightingTarget, true> = {
-  off: true,
-  screen_sync: true,
-  effects: true,
-};
 const sessions: Record<Session['state'], true> = {
   stopped: true,
   screen_sync: true,
   effects: true,
   faulted: true,
 };
-/** `raw` if it is one of `values`, else `fallback`: a value newer than this page. */
-function known<T extends string, F extends string>(
-  values: Record<T, true>,
-  raw: string,
-  fallback: F,
-): T | F {
-  return Object.keys(values).includes(raw) ? (raw as T) : fallback;
-}
-
 /**
  * A session's failure as this page reads it, or `null` when malformed
  * (`field` and `section` are text when present). A `section` other than
@@ -410,7 +398,9 @@ function decodeFailure(value: unknown): LightingFailure | null {
   )
     return null;
   const side =
-    section === 'capture' || section === 'output' ? section : undefined;
+    typeof section === 'string'
+      ? known(failureSections, section, undefined)
+      : undefined;
   switch (kind) {
     case 'invalid':
       return typeof field === 'string'
@@ -425,7 +415,10 @@ function decodeFailure(value: unknown): LightingFailure | null {
     default: {
       const named = typeof field === 'string' ? field.split('.')[0] : undefined;
       const said =
-        side ?? (named === 'capture' || named === 'output' ? named : undefined);
+        side ??
+        (named === undefined
+          ? undefined
+          : known(failureSections, named, undefined));
       return said
         ? { kind: 'adapter', message, section: said }
         : { kind: 'internal', message };
@@ -495,7 +488,7 @@ export function decodeState(
   return {
     event: {
       ...(value as unknown as ApplicationSnapshot<unknown, unknown>),
-      target: known(targets, value.target, 'unknown'),
+      target: known(lightingTargets, value.target, 'unknown'),
       session: decoded,
     },
   };

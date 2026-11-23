@@ -3,29 +3,9 @@ import {
   type CaptureModesClient,
   type CaptureSettings,
   type Failure,
-  type Mode,
   type Modes,
 } from '@prysm/application-client';
-
-const span = (min: number, max: number, step = 1) => ({ min, max, step });
-
-/** A mode of every size and rate in these bounds. */
-export const anyMode = (width: number, height: number, fps: number): Mode => ({
-  width: span(2, width, 2),
-  height: span(2, height, 2),
-  fps: span(1, fps),
-});
-
-/** One size at one rate. */
-export const fixedMode = (
-  width: number,
-  height: number,
-  fps: number,
-): Mode => ({
-  width: span(width, width),
-  height: span(height, height),
-  fps: span(fps, fps),
-});
+import { anyMode } from './modes';
 
 /**
  * What Prysm's own adapters answer, roughly: any size and rate up to
