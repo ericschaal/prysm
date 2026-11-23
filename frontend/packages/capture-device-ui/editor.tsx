@@ -29,7 +29,7 @@ const typedDevice = {
   choice: 'Another device',
   label: 'Device path',
   placeholder: '/dev/video0',
-  empty: 'Choose a device, or enter one by hand.',
+  empty: 'Choose a device, or enter its path.',
 };
 
 /**

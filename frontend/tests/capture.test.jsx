@@ -847,7 +847,7 @@ test('with devices to pick, no device chosen is said at the typed row, which tak
     assert.equal(
       document.getElementById(typed.getAttribute('aria-describedby'))
         .textContent,
-      'Choose a device, or enter one by hand.',
+      'Choose a device, or enter its path.',
     );
     assert.equal($('.row-typed input').checked, true);
     await click($('.device-rows input'));

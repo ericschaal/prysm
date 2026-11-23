@@ -1270,7 +1270,7 @@ test('the video source editor saves the exact section once; Cancel drops the dra
     await submit(form('Video source'));
     assert.equal(
       errorOf(field('capture.device')),
-      'Choose a device, or enter one by hand.',
+      'Choose a device, or enter its path.',
     );
     assert.equal(status(), 'Fix 1 field');
     assertFocused(field('capture.device'));
@@ -1820,7 +1820,7 @@ test('an unconfigured section starts from its first kind and saves only when val
     await submit(form('Video source'));
     assert.equal(
       errorOf(field('capture.device')),
-      'Choose a device, or enter one by hand.',
+      'Choose a device, or enter its path.',
     );
     assert.equal(saves(fixture), 0);
     await edit(field('capture.device'), ' /dev/video0 ');
@@ -2022,7 +2022,7 @@ test('with lights to pick, no address is said at the typed row, which takes the 
     assertFocused(field('output.address'));
     assert.equal(
       errorOf(field('output.address')),
-      'Choose your lights, or enter their address by hand.',
+      'Choose your lights, or enter their address.',
     );
     assert.equal($('.device-rows').getAttribute('aria-invalid'), null);
     assert.equal(

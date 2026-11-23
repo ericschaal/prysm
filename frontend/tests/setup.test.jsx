@@ -106,7 +106,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     assert.equal(heading(), 'Video source');
     assert.equal(
       errorOf(field('capture.device')),
-      'Choose a device, or enter one by hand.',
+      'Choose a device, or enter its path.',
     );
     assertFocused(field('capture.device'));
     assert.equal(
@@ -127,7 +127,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     await next();
     assert.equal(
       errorOf(field('output.address')),
-      'Choose your lights, or enter their address by hand.',
+      'Choose your lights, or enter their address.',
     );
     await edit(field('output.address'), 'http://wled.local/');
     await edit(field('output.leds.top'), 30);
@@ -234,7 +234,7 @@ test('a server error sends setup back to the step with the field', async () => {
     assert.equal(heading(), 'Video source');
     assert.equal(
       errorOf(field('capture.device')),
-      'Choose a device, or enter its name by hand.',
+      'Choose a device, or enter its path.',
     );
     assertFocused(field('capture.device'));
 

@@ -72,7 +72,7 @@ test('a step with a missing value says so at its field', async ({ page }) => {
   await expect(path).toBeFocused();
   await expect(path).toHaveAttribute('aria-invalid', 'true');
   await expect(path).toHaveAccessibleDescription(
-    'Choose a device, or enter one by hand.',
+    'Choose a device, or enter its path.',
   );
   await expect(
     wizard.getByRole('status').filter({ hasText: 'Check the marked field' }),

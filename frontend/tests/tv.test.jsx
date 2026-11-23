@@ -2619,7 +2619,7 @@ test('neither package sets up capture, lights or the stream on the TV; both show
     );
     assert.doesNotMatch(
       document.body.textContent,
-      /fps|× 360|Video only|address by hand|LEDs/,
+      /fps|× 360|Video only|Other lights|LEDs/,
     );
     assert.match(tv.text('portal-address'), /on your phone/);
     assert.equal(

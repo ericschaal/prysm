@@ -46,7 +46,7 @@ const typedAddress = {
   choice: 'Other lights',
   label: 'Address',
   placeholder: 'wled.local',
-  empty: 'Choose your lights, or enter their address by hand.',
+  empty: 'Choose your lights, or enter their address.',
 };
 
 /**
