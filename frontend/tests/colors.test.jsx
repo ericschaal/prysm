@@ -137,7 +137,8 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
     assert.equal(fake.opened(), 0, 'off: no stream');
     await publish(fixture, running);
     assert.equal(fake.open(), 1);
-    assert.equal(live(), null, 'the designed glow until colours arrive');
+    assert.equal(live(), null);
+    assert.equal(led('--live-a'), moonlight, 'moonlight until colours arrive');
     // The LED band is a readout: no colours (neutral) before the first event,
     // as the CSS keys the designed band to hosts without a stream only.
     assert.equal(grid().dataset.colors, 'stream');
@@ -252,9 +253,14 @@ test('a black scene is a colourless moonlight; a refused or ended stream falls b
     assert.equal(led('--led-t'), 'rgb(40 40 40)');
     assert.equal(led('--led-b'), 'rgb(40 10 10)');
     assert.equal(led('--led-r'), 'rgb(40 25 25)');
-    // Next to nothing to show: no hue is made up from it.
-    for (const pool of ['--live-a', '--live-b', '--live-c', '--live-d'])
-      assert.match(led(pool), /^rgb\(\d+ \d+ \d+\)$/, pool);
+    // The fields by the black top are moonlight; the one by the dim red
+    // bottom is red, low.
+    for (const pool of ['--live-a', '--live-b', '--live-d'])
+      assert.equal(led(pool), moonlight, pool);
+    const [lowRed, lowGreen, lowBlue] = led('--live-c')
+      .match(/\d+/g)
+      .map(Number);
+    assert(lowRed > 2 * lowGreen && lowRed > 2 * lowBlue);
     await act(async () =>
       fake.send({
         type: 'colors',
@@ -284,11 +290,12 @@ test('a black scene is a colourless moonlight; a refused or ended stream falls b
 
     await act(async () => fake.end());
     await flush();
-    assert.equal(live(), null, 'ended: the designed glow');
+    assert.equal(live(), null);
+    assert.equal(led('--live-a'), moonlight, 'ended: the moonlight');
     assert.equal(fake.open(), 0);
     fake.refuseNext({ kind: 'busy', message: 'too many colors streams' });
     await act(async () => sleep(reconnectDelayMs(0) + 100));
-    assert.equal(fake.open(), 0, 'refused: still the designed glow');
+    assert.equal(fake.open(), 0, 'refused: still the moonlight');
     await act(async () => sleep(reconnectDelayMs(1) + 100));
     assert.equal(fake.open(), 1, 'retried quietly');
   } finally {

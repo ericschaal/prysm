@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useState, type RefObject } from 'react';
 import {
   reconnectDelayMs,
   type ColorsClient,
@@ -7,6 +7,8 @@ import {
 
 type Rgb = readonly number[];
 type Edge = 'top' | 'right' | 'bottom' | 'left';
+
+type Colors = Extract<ColorsEvent, { type: 'colors' }>;
 
 const edges: readonly Edge[] = ['top', 'right', 'bottom', 'left'];
 
@@ -109,7 +111,10 @@ function mixLab(parts: readonly [readonly Rgb[], number][]) {
 
 /** A field's lightness: black LEDs rest at `moon`, bright ones reach `full`. */
 const lightness = { moon: 0.36, full: 0.66 } as const;
-/** From this LED lightness a field is at full strength. */
+/**
+ * From this LED lightness a field is at full strength: mid grey and most
+ * full colours reach it (pure blue, the darkest, glows a little lower).
+ */
 const bright = 0.6;
 /** How fast a field sinks as the LEDs dim: more than their lightness does. */
 const sink = 1.5;
@@ -148,11 +153,17 @@ function field([L = 0, a = 0, b = 0]: readonly number[]) {
  * from the top's middle, the low middle field from the bottom and the
  * sides' lower halves (a field without LEDs takes all of them).
  */
-export function ledValues(event: Extract<ColorsEvent, { type: 'colors' }>) {
+export function ledValues(event: Colors) {
   const all = average(edges.flatMap((edge) => event[edge])) ?? [0, 0, 0];
-  const values: Record<string, string> = {};
+  const values = fieldValues(event);
   for (const edge of edges)
     values[`--led-${edge[0]}`] = css(lift(average(event[edge]) ?? all));
+  return values;
+}
+
+/** The card's four fields for the LEDs' colours in `event`. */
+function fieldValues(event: Colors) {
+  const values: Record<string, string> = {};
   const { top, right, bottom, left } = event;
   const whole = mixLab([[edges.flatMap((edge) => event[edge]), 1]]) ?? [0];
   const fields: Record<string, [readonly Rgb[], number][]> = {
@@ -177,7 +188,7 @@ export function ledValues(event: Extract<ColorsEvent, { type: 'colors' }>) {
 }
 
 /** The LEDs showing nothing. */
-const dark: Extract<ColorsEvent, { type: 'colors' }> = {
+const dark: Colors = {
   type: 'colors',
   top: [],
   right: [],
@@ -201,20 +212,27 @@ export function usePageVisible() {
 /**
  * While `active`, stream the LEDs' colours onto `target` as CSS custom
  * properties (see `ledProperties`) and say what the glow shows in its
- * `data-live`: `colors`, or `idle` while the lights show none (the
- * properties are then those of black LEDs). Written
- * through the CSSOM, never through React state: no render per event. A
- * failed or ended stream is retried quietly after {@link reconnectDelayMs};
- * meanwhile `data-live` is absent and the glow is the designed one.
+ * `data-live`: `colors`, or `idle` while the lights show none. Until the
+ * first colours, on `idle` and while the stream is lost (`data-live`
+ * absent) the card's fields are those of black LEDs: the moonlight, never
+ * colours the LEDs do not have. Written through the CSSOM, never through
+ * React state: no render per event. A failed or ended stream is retried
+ * quietly after {@link reconnectDelayMs}.
  */
 export function useLiveColors(
   client: ColorsClient | undefined,
   active: boolean,
   target: RefObject<HTMLElement | null>,
 ) {
-  useEffect(() => {
+  // Before the first paint, so the designed colours never flash.
+  useLayoutEffect(() => {
     const element = target.current;
     if (!client || !active || !element) return;
+    const show = (values: Record<string, string>) => {
+      for (const [name, value] of Object.entries(values))
+        element.style.setProperty(name, value);
+    };
+    show(fieldValues(dark));
     const abort = new AbortController();
     const { signal } = abort;
     void (async () => {
@@ -229,16 +247,15 @@ export function useLiveColors(
             if (signal.aborted) break;
             attempt = 0;
             // No picture is black LEDs: the card rests in its moonlight.
-            const shown = event.type === 'idle' ? dark : event;
-            for (const [name, value] of Object.entries(ledValues(shown)))
-              element.style.setProperty(name, value);
+            show(event.type === 'idle' ? fieldValues(dark) : ledValues(event));
             element.setAttribute('data-live', event.type);
           }
         } catch {
-          // Busy or gone: the designed glow stays; try again later.
+          // Busy or gone: try again later.
         }
         if (signal.aborted) break;
         element.removeAttribute('data-live');
+        show(fieldValues(dark));
         await new Promise((resolve) => {
           const timer = setTimeout(resolve, reconnectDelayMs(attempt));
           signal.addEventListener(

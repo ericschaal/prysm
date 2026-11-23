@@ -131,7 +131,8 @@ supervisor in each of its states and play the phone's calibration part). See the
     eased, with the LEDs' own hue and saturation and as strong as the LEDs
     are bright: dimmed LEDs glow lower in their colour, grey ones give white
     light, and black ones (or no picture) a faint colourless moonlight. The
-    designed palette shows only until the first colours arrive. WLED effects keep the designed effects palette and open no
+    moonlight shows too until the first colours arrive and while the stream
+    is lost. WLED effects keep the designed effects palette and open no
     stream. A failed or faulted session shows "Stopped" in a calm red light,
     whatever the session still reports (after a failed start from effects
     the session is still `effects`, carrying the failure), with the failure
