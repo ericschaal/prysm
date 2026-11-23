@@ -1002,7 +1002,7 @@
             "allOf": [
               {
                 "$ref": "#/components/schemas/PreviewFrame",
-                "description": "A new processed frame and the colors written for it."
+                "description": "A new processed frame."
               },
               {
                 "properties": {
@@ -1019,7 +1019,7 @@
                 "type": "object"
               }
             ],
-            "description": "A new processed frame and the colors written for it."
+            "description": "A new processed frame."
           },
           {
             "description": "Nothing to show: no session runs or it has not processed a frame yet.",
@@ -1058,12 +1058,8 @@
         ]
       },
       "PreviewFrame": {
-        "description": "A downscaled JPEG of the captured frame, the sampled area and the colors.",
+        "description": "A downscaled JPEG of the captured frame and the sampled area.",
         "properties": {
-          "colors": {
-            "$ref": "#/components/schemas/LedColors",
-            "description": "At most 256 colors per edge."
-          },
           "height": {
             "format": "int32",
             "minimum": 0,
@@ -1108,7 +1104,6 @@
           "width",
           "height",
           "viewport",
-          "colors",
           "jpeg"
         ],
         "type": "object"

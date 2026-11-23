@@ -13,7 +13,7 @@ types live in `@prysm/contracts/application` ([contracts](contracts.md)).
 | `PUT /api/v1/target` | `off`, `screen_sync` or `effects` (the output's own effects) |
 | `PUT /api/v1/settings` | Replace the whole settings document from an expected revision |
 | `PUT /api/v1/processing/trial` | Light with a processing section without saving it, while a slider is dragged |
-| `GET /api/v1/preview/stream` | Picture, sampled area and edge colours, at most 8 per second |
+| `GET /api/v1/preview/stream` | Picture and sampled area, at most 8 per second |
 | `GET /api/v1/colors/stream` | Up to 16 LED colours per edge, for Home's light and LED band |
 | `PUT`, `DELETE /api/v1/calibration` | Show or clear a calibration pattern on the TV |
 | `GET /api/v1/candidates/{section}/{kind}` | What an adapter can find: video devices, WLED lights |

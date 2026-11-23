@@ -1,5 +1,5 @@
-//! Events of `GET /api/v1/preview/stream`: what the LEDs show, for a browser.
-use crate::LedColors;
+//! Events of `GET /api/v1/preview/stream`: the captured picture and its
+//! sampled area, for a browser.
 use serde::{Deserialize, Serialize};
 
 /// One server-sent event of the preview stream.
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum PreviewEvent {
-    /// A new processed frame and the colors written for it.
+    /// A new processed frame.
     Frame(PreviewFrame),
     /// Nothing to show: no session runs or it has not processed a frame yet.
     Idle,
@@ -15,7 +15,7 @@ pub enum PreviewEvent {
     Unavailable { message: String },
 }
 
-/// A downscaled JPEG of the captured frame, the sampled area and the colors.
+/// A downscaled JPEG of the captured frame and the sampled area.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct PreviewFrame {
@@ -30,8 +30,6 @@ pub struct PreviewFrame {
     pub height: u32,
     /// The part of the frame that was sampled, after black-bar removal.
     pub viewport: PreviewViewport,
-    /// At most 256 colors per edge.
-    pub colors: LedColors,
     /// Base64 (standard alphabet, padded) baseline JPEG.
     pub jpeg: String,
 }
@@ -49,7 +47,6 @@ pub struct PreviewViewport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LedColor;
     use serde_json::json;
 
     #[test]
@@ -70,17 +67,10 @@ mod tests {
                 width: 4,
                 height: 1,
             },
-            colors: LedColors {
-                top: vec![LedColor([1, 2, 3])],
-                right: vec![],
-                bottom: vec![],
-                left: vec![],
-            },
             jpeg: "/9j/".into(),
         });
         let value = serde_json::to_value(&frame).unwrap();
         assert_eq!(value["type"], "frame");
-        assert_eq!(value["colors"]["top"], json!([[1, 2, 3]]));
         assert_eq!(value["viewport"]["y"], 1);
         assert_eq!(
             serde_json::from_value::<PreviewEvent>(value).unwrap(),

@@ -41,11 +41,6 @@ async fn preview_is_idle_while_off_and_streams_frames_while_running() {
             frame["viewport"],
             json!({ "x": 0, "y": 0, "width": 16, "height": 9 })
         );
-        for edge in ["top", "right", "bottom", "left"] {
-            let colors = frame["colors"][edge].as_array().unwrap();
-            assert!(!colors.is_empty() && colors.len() <= 256, "{edge}");
-            assert_eq!(colors[0].as_array().unwrap().len(), 3);
-        }
         assert!(
             frame["jpeg"].as_str().unwrap().starts_with("/9j/"),
             "JPEG SOI"

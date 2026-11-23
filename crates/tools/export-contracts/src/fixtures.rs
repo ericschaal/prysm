@@ -331,12 +331,6 @@ fn preview_events() -> Vec<PreviewEvent> {
                 width: 1920,
                 height: 800,
             },
-            colors: LedColors {
-                top: vec![LedColor([255, 0, 0]), LedColor([0, 255, 0])],
-                right: vec![LedColor([0, 0, 255])],
-                bottom: vec![LedColor([188, 188, 188])],
-                left: vec![LedColor([0, 0, 0])],
-            },
             jpeg: "/9j/2wBDAP/Z".into(),
         }),
     ]
