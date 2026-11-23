@@ -8,8 +8,8 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
-/// Bounds name resolution with a mode change (its exchanges together:
-/// connect, request and response) however slowly the device answers. See
+/// Bounds name resolution with a mode change (its one exchange: connect,
+/// request and response) however slowly the device answers. See
 /// [`IDLE_LIMIT`](crate::output::IDLE_LIMIT) and
 /// [`OPEN_LIMIT`](crate::output::OPEN_LIMIT), and what a stop waits for
 /// beside them.

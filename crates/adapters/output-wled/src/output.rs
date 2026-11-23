@@ -115,7 +115,7 @@ impl OutputFactory for Wled {
     /// `stop` ends it at once (a [`Stopping`](prysm_ports::Stopping) cause).
     /// A failure is [`OpenFailure::Untouched`] when nothing reached WLED:
     /// invalid settings, a name that does not resolve, the DDP socket, or a
-    /// first request that could not connect.
+    /// live request that could not connect.
     fn open(
         &self,
         settings: &WledSettings,
@@ -196,11 +196,14 @@ enum Mode {
 }
 
 impl Mode {
+    /// The one request that enters this mode. WLED stays in the realtime
+    /// mode `live: true` put it in until it is told `live: false`, also once
+    /// the colours stop, so leaving it is part of every other mode.
     fn state(self) -> Value {
         match self {
             Self::Live => json!({"on": true, "lor": 0, "live": true, "tt": 0}),
-            Self::Off => json!({"on": false, "lor": 2, "tt": 0}),
-            Self::Native => json!({"on": true, "lor": 2, "tt": 0}),
+            Self::Off => json!({"live": false, "on": false, "lor": 2, "tt": 0}),
+            Self::Native => json!({"live": false, "on": true, "lor": 2, "tt": 0}),
         }
     }
 }
@@ -214,8 +217,8 @@ impl From<IdleMode> for Mode {
     }
 }
 
-/// A mode change that failed: why, and whether a request may have reached
-/// the device before (anything but a first request that could not connect).
+/// A mode change that failed: why, and whether its request may have reached
+/// the device (anything but a request that could not connect).
 struct NotEntered {
     error: http::RequestError,
     reached: bool,
@@ -246,16 +249,13 @@ struct Device {
 }
 
 impl Device {
-    /// Switch to `mode` by `deadline`, both requests included, or until
-    /// `stop` is cut. A previous realtime session can ignore `lor` until it
-    /// is released, so live mode is left first.
+    /// Switch to `mode` with one request by `deadline`, or until `stop` is
+    /// cut.
     fn enter(&self, mode: Mode, deadline: Deadline, stop: &Hangup) -> Result<(), NotEntered> {
-        let post = |state: &Value| http::post_state(self.http, &self.host, state, deadline, stop);
-        post(&json!({"live": false})).map_err(|error| {
+        http::post_state(self.http, &self.host, &mode.state(), deadline, stop).map_err(|error| {
             let reached = !matches!(error, http::RequestError::Connect(_));
             NotEntered::new(error, reached, stop)
-        })?;
-        post(&mode.state()).map_err(|error| NotEntered::new(error, true, stop))
+        })
     }
 
     fn context(&self, mode: Mode) -> String {
