@@ -1,7 +1,7 @@
 import type {
+  AdapterSide,
   ApplicationSnapshot,
   DiscoveryClient,
-  FailureSection,
 } from '@prysm/application-client';
 import type { Processing } from '@prysm/contracts/application';
 import {
@@ -43,7 +43,7 @@ function SetupRow<S extends AdapterSection>({
   problem,
   open,
 }: {
-  section: FailureSection;
+  section: AdapterSide;
   adapters: AdapterUis<S>;
   saved: S;
   discovery: DiscoveryClient | null;
@@ -84,7 +84,7 @@ export interface SettingsPageProps<
   online: boolean;
   discovery: DiscoveryClient | null;
   /** The live problem of each side, in plain words; `null` while it works. */
-  problemAt: (section: FailureSection) => string | null;
+  problemAt: (section: AdapterSide) => string | null;
   /** Save the processing section; light with one while a slider is held. */
   save: (expected: number, processing: Processing) => Promise<number>;
   tryProcessing: (processing: Processing) => Promise<unknown>;

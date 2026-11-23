@@ -56,23 +56,7 @@ export const remoteCapture: RemoteReceiverSettings = {
  */
 export type Settings = Record<string, unknown>;
 
-/** One size at one rate. */
-export const fixedMode = (
-  width: number,
-  height: number,
-  fps: number,
-): Mode => ({
-  width: { min: width, max: width, step: 1 },
-  height: { min: height, max: height, step: 1 },
-  fps: { min: fps, max: fps, step: 1 },
-});
-
-/** Every even size up to `width` × `height`, at 1 to `fps` fps. */
-export const anyMode = (width: number, height: number, fps: number): Mode => ({
-  width: { min: 2, max: width, step: 2 },
-  height: { min: 2, max: height, step: 2 },
-  fps: { min: 1, max: fps, step: 1 },
-});
+export { anyMode, fixedMode } from '../testkit/modes';
 
 /** A stand-in video device: found by discovery, never captured from. */
 export interface FakeDevice {

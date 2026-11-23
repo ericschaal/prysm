@@ -6,7 +6,7 @@ import type {
   LightingSituation,
   ColorsClient,
   DiscoveryClient,
-  FailureSection,
+  AdapterSide,
   PreviewClient,
 } from '@prysm/application-client';
 import {
@@ -106,7 +106,7 @@ export interface Portal {
   lighting: LightingSituation;
   path: PathState;
   /** The live problem of one side, in plain words; `null` while it works. */
-  problemAt: (section: FailureSection) => string | null;
+  problemAt: (section: AdapterSide) => string | null;
   saveProcessing: (expected: number, processing: Processing) => Promise<number>;
   tryProcessing: (processing: Processing) => Promise<unknown>;
   /** How setup ended, shown on Home and Settings until setup opens again. */

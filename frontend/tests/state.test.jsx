@@ -151,10 +151,7 @@ test('shared observation closes once after the last consumer releases it', async
   assert.equal(application.store.getState().connection.status, 'connected');
   second();
   await tick();
-  assert.equal(
-    application.selectors.selectSnapshot(application.store.getState()),
-    null,
-  );
+  assert.equal(application.store.getState().connection.snapshot, null);
   assert.deepEqual(fixture.calls, ['observe', 'unsubscribe']);
 });
 
@@ -183,9 +180,6 @@ test('an observation acquired after release is closed without replacing newer st
   });
   await tick();
   assert.equal(closed, 1);
-  assert.equal(
-    application.selectors.selectSnapshot(application.store.getState()).target,
-    'off',
-  );
+  assert.equal(application.store.getState().connection.snapshot.target, 'off');
   release();
 });

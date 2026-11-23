@@ -1,4 +1,4 @@
-import type { FailureSection } from '@prysm/application-client';
+import type { AdapterSide } from '@prysm/application-client';
 
 /**
  * One step of setting Prysm up, the same in the setup wizard and in the
@@ -22,7 +22,7 @@ export const stepCopy = {
     keep: 'Keep these lights',
   },
 } as const satisfies Record<
-  FailureSection,
+  AdapterSide,
   {
     title: string;
     intro: string;

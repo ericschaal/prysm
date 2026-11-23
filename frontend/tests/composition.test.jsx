@@ -120,7 +120,7 @@ test('embedded TV and browser portal share one application; either may close', a
     await act(async () => sleep(5));
     await act(async () => document.getElementById('mode-screen_sync').click());
     assert.equal(
-      browser.selectors.selectSnapshot(browser.store.getState()).target,
+      browser.store.getState().connection.snapshot.target,
       'screen_sync',
     );
     await act(async () => tvRoot.unmount());

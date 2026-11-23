@@ -9,11 +9,8 @@ import {
   resolve,
 } from '@prysm/web-portal';
 import { typedDeviceMs } from '@prysm/capture-device-ui';
-import {
-  anyMode,
-  fakeCaptureModesClient,
-  fixedMode,
-} from '../testkit/capture-modes';
+import { fakeCaptureModesClient } from '../testkit/capture-modes';
+import { anyMode, fixedMode } from '../testkit/modes';
 import { fakeDiscoveryClient } from '../testkit/discovery';
 import {
   $,
@@ -528,7 +525,44 @@ test('a hidden page stops asking again until it is shown', async (t) => {
     await settled();
     assert.equal(modes.calls.length, asked + 1);
   } finally {
+    delete document.visibilityState;
     await portal.unmount();
+  }
+});
+
+test('a newer ask ends the one in flight, and leaving ends the last', async () => {
+  const signals = [];
+  const captureModes = {
+    modes: (_capture, signal) => {
+      signals.push(signal);
+      return new Promise(() => {});
+    },
+  };
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', path }, output },
+    undefined,
+    { captureModes },
+  );
+  let left = false;
+  try {
+    await openEditor('Video source');
+    const live = () => signals.filter((signal) => !signal.aborted).length;
+    const asking = live();
+    assert(asking > 0);
+    const first = signals.length;
+    // Back to the tab: shown and focused, two asks; only the newest runs.
+    await act(async () =>
+      document.dispatchEvent(new window.Event('visibilitychange')),
+    );
+    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    assert.equal(signals.length, first + 2 * asking);
+    assert.equal(live(), asking);
+    await portal.unmount();
+    left = true;
+    assert.equal(live(), 0);
+  } finally {
+    if (!left) await portal.unmount();
   }
 });
 

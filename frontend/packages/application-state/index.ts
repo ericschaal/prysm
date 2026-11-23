@@ -39,7 +39,6 @@ export function createApplicationRuntime<C, O>(
   return {
     store,
     client,
-    actions: slice.actions,
     commands: createCommands<C, O>(),
     selectors: slice.getSelectors(),
     connect,

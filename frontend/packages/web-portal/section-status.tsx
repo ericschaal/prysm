@@ -1,6 +1,6 @@
 import { useRef, type RefObject } from 'react';
 import type {
-  FailureSection,
+  AdapterSide,
   PreviewClient,
   PreviewFrame,
 } from '@prysm/application-client';
@@ -60,7 +60,7 @@ export function SectionStatus({
   hint,
   brief = false,
 }: {
-  section: FailureSection;
+  section: AdapterSide;
   status: Status;
   preview?: PreviewClient;
   /** What opening the card shows, such as `See the picture`, and how. */

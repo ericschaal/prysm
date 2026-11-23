@@ -7,7 +7,7 @@ import {
 } from 'react';
 import {
   failureOf,
-  type FailureSection,
+  type AdapterSide,
   type PreviewClient,
 } from '@prysm/application-client';
 import {
@@ -71,7 +71,7 @@ const sentence = (words: string) =>
   /[.!?…]$/.test(words) ? words : `${words}.`;
 
 export interface SectionEditorProps<S extends AdapterSection> {
-  section: FailureSection;
+  section: AdapterSide;
   adapters: AdapterUis<S>;
   /** The observed section; `null` while unconfigured. */
   saved: S | null;

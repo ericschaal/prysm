@@ -80,7 +80,6 @@ export function createApplicationSlice<C, O>() {
     },
     selectors: {
       selectConnection: (state) => state.connection,
-      selectSnapshot: (state) => state.connection.snapshot,
     },
   });
 }
