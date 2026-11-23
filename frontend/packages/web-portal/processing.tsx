@@ -133,7 +133,14 @@ function Segments<T extends string>({
     if (item)
       track.scrollLeft =
         item.offsetLeft - (track.clientWidth - item.offsetWidth) / 2;
-    const mark = () => markMore(track);
+    // The chosen look is one pill that slides to the chosen segment.
+    const mark = () => {
+      markMore(track);
+      if (!item) return;
+      track.style.setProperty('--chosen-x', `${item.offsetLeft}px`);
+      track.style.setProperty('--chosen-width', `${item.offsetWidth}px`);
+      track.dataset.pill = '';
+    };
     mark();
     track.addEventListener('scroll', mark, { passive: true });
     const resized =

@@ -1690,6 +1690,25 @@ fieldset > .field-note {
   display: none;
 }
 /*
+ * The chosen look: one pill under the labels that slides to the chosen
+ * segment, so a change is seen as a move. Drawn once it is measured (no
+ * slide in from the edge); until then the chosen segment wears the look.
+ */
+.segments-scroll[data-pill]::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: var(--chosen-width);
+  border-radius: var(--radius-pill);
+  background: var(--fg);
+  transform: translateX(var(--chosen-x));
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    width var(--duration-slow) var(--ease-out);
+}
+/*
  * More beyond an edge: the segments fade out towards it, wider than the
  * track's rounded end, so a name is never cut by the curve.
  */
@@ -1709,6 +1728,8 @@ fieldset > .field-note {
   );
 }
 .segment {
+  /* Over the pill. */
+  position: relative;
   min-width: 0;
   /* With the track's padding and border, the whole row is one hit tall. */
   min-height: calc(var(--hit) - 6px);
@@ -1748,6 +1769,10 @@ fieldset > .field-note {
     background: var(--on-fill);
     color: var(--bg);
   }
+}
+.segments-scroll[data-pill] .segment[aria-checked='true'],
+.segments-scroll[data-pill] .segment[aria-checked='true']:hover:enabled {
+  background: transparent;
 }
 /* Home's problem line sits in the card's bottom padding: it takes no room. */
 .light-card .quick-picture {
