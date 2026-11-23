@@ -3,10 +3,8 @@
 use crate::PrysmAddress;
 use clap::Parser;
 use prysm_ports::LightingTarget;
-use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 /// `prysm-webos --settings PATH --listen ADDR --target off|screen_sync|effects`
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
@@ -29,51 +27,6 @@ pub struct SlimArgs {
     /// The Prysm to stream to: its portal address, http:// or https://
     #[arg(long, value_name = "URL")]
     pub prysm: PrysmAddress,
-}
-
-/// The encoding of the frames a slim worker sends: the one its receiver
-/// requested. Exactly that encoder is used: one that cannot start or fails
-/// is reported, never a switch to another.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SlimEncoding {
-    /// The TV's hardware H.264 encoder (about 2 Mbit/s).
-    #[default]
-    H264Hardware,
-    /// OpenH264 on the TV's CPU (about 2 Mbit/s).
-    H264Software,
-    /// Uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).
-    Raw,
-}
-
-impl SlimEncoding {
-    const ALL: [Self; 3] = [Self::H264Hardware, Self::H264Software, Self::Raw];
-
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::H264Hardware => "h264_hardware",
-            Self::H264Software => "h264_software",
-            Self::Raw => "raw",
-        }
-    }
-}
-
-impl std::fmt::Display for SlimEncoding {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
-impl FromStr for SlimEncoding {
-    type Err = String;
-
-    fn from_str(name: &str) -> Result<Self, String> {
-        Self::ALL
-            .into_iter()
-            .find(|encoding| encoding.name() == name)
-            .ok_or_else(|| format!("expected one of {}", Self::ALL.map(Self::name).join(", ")))
-    }
 }
 
 impl FullArgs {

@@ -2102,6 +2102,7 @@ dependencies = [
  "serde_path_to_error",
  "socket2",
  "thiserror 2.0.21",
+ "utoipa",
 ]
 
 [[package]]
@@ -2282,6 +2283,7 @@ dependencies = [
  "clap",
  "nix",
  "prysm-ports",
+ "prysm-settings-file",
  "prysm-testkit",
  "prysm-version",
  "prysm-webos-link",

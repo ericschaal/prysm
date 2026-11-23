@@ -8,7 +8,7 @@ description = "Blocking WebSocket frame transport from a capture-only host to a 
 
 [features]
 # `utoipa::ToSchema` for the settings, for the contract exporter.
-schema = ["dep:utoipa"]
+schema = ["dep:utoipa", "prysm-ports/schema"]
 # A stand-in for the portal's upgrade and hand-over, for tests.
 testkit = []
 # Decoder checks for the fuzz targets in fuzz/ (src/fuzzing.rs); never shipped.

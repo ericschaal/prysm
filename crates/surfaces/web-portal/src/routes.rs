@@ -31,8 +31,6 @@ const STREAMS: usize = 8;
 const METRICS: &str = "/metrics";
 /// `GET /api/v1/candidates/{section}/{kind}`.
 const CANDIDATES: &str = "/api/v1/candidates/";
-/// `POST /api/v1/capture/modes`.
-const CAPTURE_MODES: &str = "/api/v1/capture/modes";
 
 pub(crate) struct Context {
     pub engine: EngineHandle,
@@ -180,54 +178,95 @@ fn accepts_gzip(headers: &header::HeaderMap) -> bool {
     gzip.or(any).unwrap_or(false)
 }
 
+/// An API path, each written once; a path that is none of these is `404`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route<'a> {
+    State,
+    StateStream,
+    Metrics,
+    PreviewStream,
+    ColorsStream,
+    CaptureStream,
+    Target,
+    Calibration,
+    ProcessingTrial,
+    Settings,
+    CaptureModes,
+    /// What follows [`CANDIDATES`]: `{section}/{kind}`.
+    Candidates(&'a str),
+}
+
+impl<'a> Route<'a> {
+    fn of(path: &'a str) -> Option<Self> {
+        Some(match path {
+            "/api/v1/state" => Self::State,
+            "/api/v1/state/stream" => Self::StateStream,
+            METRICS => Self::Metrics,
+            "/api/v1/preview/stream" => Self::PreviewStream,
+            "/api/v1/colors/stream" => Self::ColorsStream,
+            CAPTURE_STREAM_PATH => Self::CaptureStream,
+            "/api/v1/target" => Self::Target,
+            "/api/v1/calibration" => Self::Calibration,
+            "/api/v1/processing/trial" => Self::ProcessingTrial,
+            "/api/v1/settings" => Self::Settings,
+            "/api/v1/capture/modes" => Self::CaptureModes,
+            _ => return path.strip_prefix(CANDIDATES).map(Self::Candidates),
+        })
+    }
+}
+
 /// One API path's methods. A known path with another method is `405`, an
 /// unknown path `404`.
 async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Response {
+    let Some(route) = Route::of(path) else {
+        return not_found();
+    };
     let method = request.method().clone();
-    let get = method == Method::GET;
-    match path {
-        "/api/v1/state" if get => response::json(
+    match (route, method) {
+        (Route::State, Method::GET) => response::json(
             StatusCode::OK,
             &State::from(&*context.engine.snapshot().borrow()),
         ),
-        "/api/v1/state/stream" if get => stream_state(context),
-        METRICS if get => {
+        (Route::StateStream, Method::GET) => stream_state(context),
+        (Route::Metrics, Method::GET) => {
             let text =
                 metrics::render(&context.engine.stats(), &context.engine.snapshot().borrow());
             response::bytes(StatusCode::OK, metrics::CONTENT_TYPE, text)
         }
-        "/api/v1/preview/stream" if get => {
+        (Route::PreviewStream, Method::GET) => {
             context.previews.stream(&context.engine, &context.shutdown)
         }
-        "/api/v1/colors/stream" if get => context.colors.stream(&context.engine, &context.shutdown),
-        CAPTURE_STREAM_PATH => match &context.capture {
-            Some(handoff) if get => capture::upgrade(context, handoff, request),
+        (Route::ColorsStream, Method::GET) => {
+            context.colors.stream(&context.engine, &context.shutdown)
+        }
+        (Route::CaptureStream, method) => match &context.capture {
+            Some(handoff) if method == Method::GET => capture::upgrade(context, handoff, request),
             Some(_) => method_not_allowed(),
             None => not_found(),
         },
-        "/api/v1/target" if method == Method::PUT => {
+        (Route::Target, Method::PUT) => {
             match decode::<TargetRequest>(request, Body::Request).await {
                 Ok(body) => applied(command(context.engine.set_target(body.target)).await),
                 Err(response) => *response,
             }
         }
-        "/api/v1/calibration" if method == Method::PUT => {
+        (Route::Calibration, Method::PUT) => {
             match decode::<CalibrationPattern>(request, Body::Request).await {
                 Ok(body) => applied(command(context.engine.set_calibration(Some(body))).await),
                 Err(response) => *response,
             }
         }
-        "/api/v1/calibration" if method == Method::DELETE => {
+        (Route::Calibration, Method::DELETE) => {
             applied(command(context.engine.set_calibration(None)).await)
         }
-        "/api/v1/processing/trial" if method == Method::PUT => {
+        (Route::ProcessingTrial, Method::PUT) => {
             match decode::<Processing>(request, Body::Section(Section::Processing)).await {
                 Ok(body) => applied(command(context.engine.try_processing(body)).await),
                 Err(response) => *response,
             }
         }
-        "/api/v1/settings" if method == Method::PUT => replace_settings(context, request).await,
-        CAPTURE_MODES if method == Method::POST => {
+        (Route::Settings, Method::PUT) => replace_settings(context, request).await,
+        (Route::CaptureModes, Method::POST) => {
             match decode::<AdapterSettings>(request, Body::Section(Section::Capture)).await {
                 Ok(body) => match command(context.engine.capture_modes(body)).await {
                     Ok(modes) => response::json(StatusCode::OK, &modes),
@@ -236,20 +275,8 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
                 Err(response) => *response,
             }
         }
-        _ if path.starts_with(CANDIDATES) => {
-            candidates(context, &path[CANDIDATES.len()..], &method).await
-        }
-        "/api/v1/state"
-        | "/api/v1/state/stream"
-        | "/api/v1/preview/stream"
-        | "/api/v1/colors/stream"
-        | "/api/v1/target"
-        | "/api/v1/calibration"
-        | "/api/v1/processing/trial"
-        | "/api/v1/settings"
-        | CAPTURE_MODES
-        | METRICS => method_not_allowed(),
-        _ => not_found(),
+        (Route::Candidates(rest), method) => candidates(context, rest, &method).await,
+        _ => method_not_allowed(),
     }
 }
 

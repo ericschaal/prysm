@@ -1,7 +1,8 @@
 //! What a sender can deliver: the modes of each encoding it has. It travels
 //! in the upgrade request's [`CAPTURE_OFFER_HEADER`](prysm_ports::CAPTURE_OFFER_HEADER),
 //! so the portal learns it even while it refuses the stream.
-use crate::request::{RemoteSettings, StreamEncoding};
+use crate::request::RemoteSettings;
+use prysm_ports::StreamEncoding;
 use prysm_ports::{MAX_ANNOUNCEMENT_BYTES, Mode, Modes, Span, ValidationError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

@@ -1,6 +1,6 @@
 """The host seam: one way to deliver and run Prysm, the same for every host cell's checks.
 
-`Host` is the interface (docs/developers/acceptance-plan.md, One host seam):
+`Host` is the interface (docs/developers/acceptance.md, The host seam):
 whether the target can run the cell, deliver, start with a settings document,
 stop, the log, the base URL, and the address WLED should report as the
 sender. `LocalBinary` runs the binary on this computer as a child process,

@@ -1,6 +1,7 @@
 //! Every machine rule, as scripted inputs at explicit times.
 use super::*;
-use prysm_webos_link::{FailureKind, PrysmAddress, SlimEncoding, SlimLink, WorkerFailure};
+use prysm_ports::StreamEncoding;
+use prysm_webos_link::{FailureKind, PrysmAddress, SlimLink, WorkerFailure};
 use serde_json::json;
 
 fn full() -> Machine {
@@ -979,7 +980,7 @@ fn published_slim_state_has_only_its_own_fields() {
         slim_status(SlimStatus {
             capturing: true,
             link: SlimLink::Sending {
-                encoding: SlimEncoding::Raw,
+                encoding: StreamEncoding::Raw,
                 fps: 25,
             },
         }),
@@ -1281,7 +1282,7 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             slim_status(SlimStatus {
                 capturing: true,
                 link: SlimLink::Sending {
-                    encoding: SlimEncoding::H264Hardware,
+                    encoding: StreamEncoding::H264Hardware,
                     fps: 30,
                 },
             }),
@@ -1672,7 +1673,7 @@ fn a_connected_slim_worker_without_frames_is_up() {
             (
                 1_002,
                 slim_link(SlimLink::Sending {
-                    encoding: SlimEncoding::Raw,
+                    encoding: StreamEncoding::Raw,
                     fps: 0,
                 }),
                 vec![],
@@ -1941,7 +1942,7 @@ fn every_phase_takes_every_input() {
     let sending = worker(Event::Status(WorkerStatus::Slim(SlimStatus {
         capturing: true,
         link: SlimLink::Sending {
-            encoding: SlimEncoding::Raw,
+            encoding: StreamEncoding::Raw,
             fps: 30,
         },
     })));

@@ -550,7 +550,8 @@ mod tests {
     /// stand-in event.
     #[test]
     fn every_event_fits_one_line_whatever_its_texts_escape_to() {
-        use crate::{FailureKind, MAX_LINE, SlimEncoding, decode};
+        use crate::{FailureKind, MAX_LINE, decode};
+        use prysm_ports::StreamEncoding;
         let lines = Arc::new(Mutex::new(Vec::new()));
         let sent = Arc::clone(&lines);
         let events = Events {
@@ -582,7 +583,7 @@ mod tests {
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
                         link: SlimLink::Sending {
-                            encoding: SlimEncoding::H264Software,
+                            encoding: StreamEncoding::H264Software,
                             fps: u16::MAX,
                         },
                     })),
