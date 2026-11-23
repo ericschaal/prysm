@@ -266,7 +266,7 @@ export function DeviceRows({
       {plain ? byHand : null}
       {then}
       {plain && !advanced ? null : (
-        // While there are rows, a problem of the device is theirs to say.
+        // While the rows own `path`, a problem of the device is theirs to say.
         <Advanced
           paths={[...(plain || owns ? [] : [path]), ...(advanced?.paths ?? [])]}
         >
