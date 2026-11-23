@@ -25,6 +25,7 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 | --- | --- |
 | [Lifecycle investigation](webos-capture/2026-11-01-lifecycle/README.md) | Historical native ownership, constructor failure and cleanup analysis |
 | [Cleanup diagnosis](webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md) | Isolated HAL unload/resource growth; native release hangs still justify process isolation |
+| [Capture capability info](webos-capture/2026-11-21-capability-info/README.md) | Desk research: LG's kernel capability struct (40 bytes, no frame rate) is the likely layout of `vtCapture_capabilityInfo`; probe and decode plan ready, not yet run on a TV |
 | [Readiness](webos-capture/2026-11-01-readiness/README.md) | Readiness-driven recovery and dated validation evidence |
 | [Supervisor validation](webos-capture/supervisor-validation.md) | Staged and installed checks across earlier versions |
 | [Deployment history](webos-capture/deployment-history.md) | Version-specific installations and observations; not installation instructions |
