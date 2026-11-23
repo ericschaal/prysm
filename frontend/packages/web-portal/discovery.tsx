@@ -89,11 +89,12 @@ function useCandidates(
  * Under the rows, only while there is something to say, one line says how
  * the lookup went (looking, nothing found, failed), or
  * `problem` (what is wrong with the picked device), or the problem of
- * `path`, such as no device chosen: while there are rows they own `path`,
- * so a save goes to them. The field to type it (`byHand`) is under
- * Advanced, after what follows the device (`then`), while there are
- * devices to pick; with nothing found, or no discovery client, it is shown
- * as it is, before `then`, and owns `path` itself. The editor's other
+ * `path`, such as no device chosen: while there are rows and the field is
+ * tucked away they own `path`, so a save goes to them. The field to type it
+ * (`byHand`) is under Advanced, after what follows the device (`then`),
+ * while there are devices to pick; with nothing found, or no discovery
+ * client, it is shown as it is, before `then`, and owns `path` itself (a
+ * kept row of the saved device beside it). The editor's other
  * advanced fields (`advanced`) follow it there, in the one Advanced.
  */
 export function DeviceRows({
@@ -173,7 +174,9 @@ export function DeviceRows({
   const listed = found.some((candidate) => candidate.fields[field] === value);
   const missingRow = answered && value !== '' && !listed;
   const rows = found.length > 0 || missingRow;
-  const error = rows ? shownError(scope, path, false) : undefined;
+  // The field in plain sight says its own problem and takes the focus.
+  const owns = rows && !plain;
+  const error = owns ? shownError(scope, path, false) : undefined;
   let status: string | null = null;
   if (error) status = error;
   else if (problem) status = problem;
@@ -205,8 +208,8 @@ export function DeviceRows({
         aria-labelledby={legendId}
         aria-describedby={status ? lineId : undefined}
         aria-invalid={error ? true : undefined}
-        data-field={rows ? path : undefined}
-        tabIndex={rows ? -1 : undefined}
+        data-field={owns ? path : undefined}
+        tabIndex={owns ? -1 : undefined}
       >
         {/* The group is named by its label alone; Look again acts on it. */}
         <legend>
@@ -265,7 +268,7 @@ export function DeviceRows({
       {plain && !advanced ? null : (
         // While there are rows, a problem of the device is theirs to say.
         <Advanced
-          paths={[...(plain || rows ? [] : [path]), ...(advanced?.paths ?? [])]}
+          paths={[...(plain || owns ? [] : [path]), ...(advanced?.paths ?? [])]}
         >
           {plain ? null : byHand}
           {advanced?.fields}

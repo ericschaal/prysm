@@ -959,10 +959,16 @@ test('Open WLED derives http://host[:port]/ from the saved address', () => {
     ['https://wled.local', null],
   ])
     assert.equal(wledUrl(address), url, address);
-  assert.equal(
-    normalizeWledAddress(' http://wled.local:8080/ '),
-    'wled.local:8080',
-  );
+  for (const [typed, address] of [
+    [' http://wled.local:8080/ ', 'wled.local:8080'],
+    // Port 80 is WLED's own: the same lights as discovery names them.
+    ['192.168.1.50:80', '192.168.1.50'],
+    ['http://wled.local:80/', 'wled.local'],
+    ['192.168.1.50:8080', '192.168.1.50:8080'],
+    ['[fe80::1]:80', '[fe80::1]:80'],
+    ['2001:db8::80', '2001:db8::80'],
+  ])
+    assert.equal(normalizeWledAddress(typed), address, typed);
 });
 
 test('Settings keeps brightness and the calibration choice on Home; the picture saves live', async () => {
@@ -1968,6 +1974,84 @@ test('the WLED panel lists the lights present as rows; the saved ones keep their
     assert.deepEqual(lights(), [['Living room', undefined, true]]);
     await submit(form('Your lights'));
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.40');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('with lights to pick, no address is said at the rows, which take the focus; Advanced stays closed', async () => {
+  const discovery = fakeDiscoveryClient({
+    'output/wled': [
+      {
+        label: 'Living room',
+        detail: '192.0.2.40',
+        fields: { address: '192.0.2.40' },
+      },
+    ],
+  });
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    undefined,
+    { discovery: discovery.client },
+  );
+  const { fixture } = portal;
+  try {
+    await openEditor('Lights');
+    await act(async () => sleep(0));
+    await edit(field('output.address'), '');
+    await submit(form('Your lights'));
+    const group = $('.device-rows');
+    assertFocused(group);
+    assert.equal(group.getAttribute('aria-invalid'), 'true');
+    assert.equal(
+      document.getElementById(group.getAttribute('aria-describedby'))
+        .textContent,
+      'Choose your lights, or enter their address by hand.',
+    );
+    assert.equal(
+      button('Advanced', form('Your lights')).getAttribute('aria-expanded'),
+      'false',
+    );
+    assert.equal(fixture.snapshot().settings.output.address, output.address);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('with nothing found, a refused typed address is said once, at the field, which takes the focus', async () => {
+  const discovery = fakeDiscoveryClient();
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    undefined,
+    { discovery: discovery.client },
+  );
+  const { fixture } = portal;
+  const refused =
+    'Use the lights’ name, such as wled.local, or their number, such as 192.168.1.50.';
+  try {
+    await openEditor('Lights');
+    await act(async () => sleep(0));
+    // The saved lights keep their row; the field is in plain sight.
+    assert(!field('output.address').closest('[hidden]'));
+    fixture.failNext({
+      kind: 'invalid',
+      field: 'output.address',
+      message: 'unsupported scheme',
+    });
+    await edit(field('output.address'), 'https://wled');
+    await submit(form('Your lights'));
+    assertFocused(field('output.address'));
+    assert.equal(errorOf(field('output.address')), refused);
+    const group = $('.device-rows');
+    assert.equal(group.dataset.field, undefined, 'the field owns its path');
+    assert.equal(group.getAttribute('aria-invalid'), null);
+    assert.equal(
+      $('[role="status"]', group).textContent,
+      'No WLED lights found on this network. Enter their address below.',
+    );
+    assert.equal(text().split(refused).length, 2, 'said once');
   } finally {
     await portal.unmount();
   }

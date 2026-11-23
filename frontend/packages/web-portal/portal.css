@@ -2784,9 +2784,9 @@ button.section-status-main:focus-visible {
 
 /* ── LED layout (WLED editor) ─────────────────────────────────────────── */
 /*
- * Home's drawing of the TV, its bands in the accent, with each edge's count
- * field on its own edge, centred on it (the drawing is symmetric about the
- * band), all four one width and one gap away.
+ * The Lights editor's drawing: a grid with each edge's count field on its
+ * own edge, centred on it (the drawing is symmetric about the band), all
+ * four one width and one gap away, and the bands in the accent.
  */
 .led-layout {
   --led-count: 72px;

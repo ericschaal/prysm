@@ -52,9 +52,11 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
   /** The found lights last picked, with the LED count they gave. */
   const [picked, setPicked] = useState<{ address: string; leds: number }>();
   const total = ledTotal(value.leds);
+  // The address as the rows compare it: `http://wled.local:80/` is theirs.
+  const address = normalizeWledAddress(value.address);
   // Said under the drawing while the address is still the picked one's;
   // the edges stay the person's to fill.
-  const found = picked?.address === value.address ? picked.leds : undefined;
+  const found = picked?.address === address ? picked.leds : undefined;
   const over = total > ledTotalLimits.max;
   useCheck(
     'output.leds',
@@ -78,14 +80,14 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
       legend="Lights"
       things="lights"
       nothing="No WLED lights found on this network. Enter their address below."
-      value={normalizeWledAddress(value.address)}
-      onPick={(address, candidate) => {
+      value={address}
+      onPick={(next, candidate) => {
         setPicked(
           candidate.led_count === undefined
             ? undefined
-            : { address, leds: candidate.led_count },
+            : { address: next, leds: candidate.led_count },
         );
-        onChange({ ...value, address });
+        onChange({ ...value, address: next });
       }}
       byHand={
         <TextField

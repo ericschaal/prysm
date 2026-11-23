@@ -1,7 +1,5 @@
 import type { LedCounts } from '@prysm/contracts/host-desktop';
-import type { Corner, LedEdges, Wire } from '@prysm/web-portal';
-
-export type Edge = keyof LedCounts;
+import type { Corner, Edge, LedEdges, Wire } from '@prysm/web-portal';
 
 /**
  * The total LED count Prysm accepts: at most `MAX_LEDS` in `output-wled`,

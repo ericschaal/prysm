@@ -471,9 +471,22 @@ test('setup lists the devices and the lights present as rows as each step opens;
     await edit(field('output.leds.top'), 120);
     assert.equal(found().textContent, 'This WLED has 120 LEDs.');
     assert.equal(found().dataset.tone, undefined, 'they agree');
-    // Another address typed: the found count no longer applies.
+    // Another address typed by hand: ticked as a row of its own, and the
+    // found count no longer applies.
     await edit(field('output.address'), '192.0.2.41');
     assert.equal(found().textContent, '');
+    assert.deepEqual(
+      lights().map((input) => [plain(input.closest('label')), input.checked]),
+      [
+        ['Living room192.0.2.40, 120 LEDs', false],
+        ['192.0.2.41', true],
+      ],
+    );
+    // The found lights typed as a URL are still their row, with their count.
+    await edit(field('output.address'), 'http://192.0.2.40/');
+    assert.equal(lights()[0].checked, true);
+    assert.equal(lights().length, 1, 'no second row for the same lights');
+    assert.equal(found().textContent, 'This WLED has 120 LEDs.');
     await edit(field('output.address'), '192.0.2.40');
     await next();
     await next();

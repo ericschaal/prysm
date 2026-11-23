@@ -196,6 +196,8 @@ on the state stream.
 registered for that kind what a person could pick instead of typing: the
 video devices present, the WLED lights answering on the network. The video
 device form and the lights form call it when they open and on "Look again";
+Home's setup card and each Settings row ask it once as they show a saved
+device, to name it (`useDeviceName` in the portal's `device-name.ts`);
 nothing polls it.
 
 - `section` is `capture` or `output`; anything else, an empty or extra path

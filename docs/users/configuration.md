@@ -186,7 +186,7 @@ A part not set up yet says **Not set up yet** and opens the same page. A
 problem with either also shows in its row in Settings, in red, and **Change
 setup** on Home opens the part that has the problem.
 
-<img src="../images/portal-lights.webp" alt="The Lights page: Showing screen sync at the top, then the WLED lights and the LEDs per edge (30 top, 18 right, 30 bottom, 18 left) typed on the edges of a drawing of the screen, starting at the bottom-left corner and running clockwise." width="480">
+<img src="../images/portal-lights.webp" alt="The Lights page: Showing screen sync at the top, then the WLED address and the LEDs per edge (30 top, 18 right, 30 bottom, 18 left) typed on the edges of a drawing of the screen, starting at the bottom-left corner and running clockwise." width="480">
 
 Once you change something, a bar at the bottom offers **Use this video
 source** or **Use these lights**, which saves, and **Cancel**, which leaves
