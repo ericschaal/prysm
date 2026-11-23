@@ -285,17 +285,8 @@
         ],
         "type": "object"
       },
-      "SlimEncoding": {
-        "description": "How the slim package encodes the frames it sends: the encoding its\nreceiver requested (set in the desktop portal). Exactly this encoder is\nused; one that cannot start or fails is a failure, never a switch to\nanother. `h264_hardware`: the TV's hardware H.264 encoder (about\n2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);\n`raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).",
-        "enum": [
-          "h264_hardware",
-          "h264_software",
-          "raw"
-        ],
-        "type": "string"
-      },
       "SlimLink": {
-        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding`, `fps` per second (0 while none come). `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (`failure.kind` `receiver`).\n`failed`: the encoder, version, replaced or receiver-failed failure. The\nstate's own `failure` is the one to show.",
+        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding` (the one the receiver requested, set in the desktop\nportal), `fps` per second (0 while none come). `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (`failure.kind` `receiver`).\n`failed`: the encoder, version, replaced or receiver-failed failure. The\nstate's own `failure` is the one to show.",
         "oneOf": [
           {
             "properties": {
@@ -314,7 +305,7 @@
           {
             "properties": {
               "encoding": {
-                "$ref": "#/components/schemas/SlimEncoding"
+                "$ref": "#/components/schemas/StreamEncoding"
               },
               "fps": {
                 "description": "Frames sent per second over about the last second, rounded.",
@@ -531,6 +522,15 @@
           }
         ],
         "description": "A successful state reply: [`State`] with LS2's `returnValue`."
+      },
+      "StreamEncoding": {
+        "description": "How the sender encodes the frames it sends. Exactly this encoder is used:\none that cannot start or fails ends the stream with a refusal, never a\nswitch to another.",
+        "enum": [
+          "h264_hardware",
+          "h264_software",
+          "raw"
+        ],
+        "type": "string"
       },
       "UninstallRequest": {
         "additionalProperties": false,

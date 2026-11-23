@@ -14,19 +14,19 @@ import {
   type Flavor,
   type LightingTarget,
   type Preferences,
-  type SlimEncoding,
+  type StreamEncoding,
   type State,
   type Worker,
 } from '@prysm/webos-platform';
 import type { PatternPlayer } from './patterns';
 import type { PortalView } from './portal-connection';
 
-export type { SlimEncoding };
+export type { StreamEncoding };
 
 export const PORTAL_PORT = 8787;
 
 /** The short names of the slim stream encodings (chosen in Prysm's portal). */
-const encodingNames: Record<SlimEncoding, string> = {
+const encodingNames: Record<StreamEncoding, string> = {
   h264_hardware: 'Hardware H.264',
   h264_software: 'Software H.264',
   raw: 'Uncompressed',
@@ -36,7 +36,7 @@ const encodingNames: Record<SlimEncoding, string> = {
  * The short name of an encoding, as the status card shows it; one newer than
  * this app (the service passes it on) is shown as the service names it.
  */
-export function encodingName(encoding: SlimEncoding): string {
+export function encodingName(encoding: StreamEncoding): string {
   return encodingNames[encoding] || encoding;
 }
 

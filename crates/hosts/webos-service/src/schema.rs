@@ -3,7 +3,8 @@
 //!
 //! One document for both packages: `State` carries the installed package's
 //! own fields in `Package`, tagged by `flavor`. Types from `prysm-webos-link` and `prysm-ports` are
-//! described by schema-only mirrors, kept equal to their serde shape by tests.
+//! described by schema-only mirrors, kept equal to their serde shape by tests,
+//! except `StreamEncoding`, which derives its own schema (`prysm-ports/schema`).
 //!
 //! | Method | Request | Reply |
 //! | --- | --- | --- |
@@ -20,6 +21,7 @@ use crate::service::{
     ErrorKind, GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest,
 };
 use crate::state::{FullWorker, Package, Power, SlimWorker, State};
+use prysm_ports::StreamEncoding;
 use serde::{Deserialize, Serialize};
 pub use utoipa::openapi::OpenApi;
 use utoipa::openapi::schema::{ObjectBuilder, Type};
@@ -92,26 +94,11 @@ pub enum LightingTargetSchema {
     Effects,
 }
 
-// Mirrors `prysm_ports::StreamEncoding`.
-/// How the slim package encodes the frames it sends: the encoding its
-/// receiver requested (set in the desktop portal). Exactly this encoder is
-/// used; one that cannot start or fails is a failure, never a switch to
-/// another. `h264_hardware`: the TV's hardware H.264 encoder (about
-/// 2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);
-/// `raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = SlimEncoding)]
-#[serde(rename_all = "snake_case")]
-pub enum SlimEncodingSchema {
-    H264Hardware,
-    H264Software,
-    Raw,
-}
-
 // Mirrors `prysm_webos_link::SlimLink`.
 /// Where the slim worker's stream to the receiver stands, as `{ "state": … }`.
 /// `starting`: no connection attempt yet. `sending`: connected, frames go
-/// out in `encoding`, `fps` per second (0 while none come). `paused`: the
+/// out in `encoding` (the one the receiver requested, set in the desktop
+/// portal), `fps` per second (0 while none come). `paused`: the
 /// receiver stopped the stream because its lighting is off; the TV capture
 /// is released until a receiver takes a connection again, not a failure.
 /// `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
@@ -123,7 +110,7 @@ pub enum SlimEncodingSchema {
 pub enum SlimLinkSchema {
     Starting {},
     Sending {
-        encoding: SlimEncodingSchema,
+        encoding: StreamEncoding,
         /// Frames sent per second over about the last second, rounded.
         fps: u16,
     },
@@ -191,7 +178,7 @@ pub struct ErrorReply {
     SlimWorker,
     Power,
     Preferences,
-    SlimEncodingSchema,
+    StreamEncoding,
     SlimLinkSchema,
     FailureKindSchema,
     WorkerFailureSchema,
@@ -220,7 +207,6 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_ports::StreamEncoding;
     use prysm_webos_link::{FailureKind, LightingTarget, SlimLink, Video, WorkerFailure};
 
     use prysm_testkit::assert_mirror_round_trips;
@@ -249,7 +235,6 @@ mod tests {
             ));
         }
         for encoding in StreamEncoding::ALL {
-            assert_mirror_round_trips::<StreamEncoding, SlimEncodingSchema>(&encoding);
             assert_mirror_round_trips::<SlimLink, SlimLinkSchema>(&SlimLink::Sending {
                 encoding,
                 fps: 30,
@@ -365,7 +350,7 @@ mod tests {
             .unwrap_or_default();
         assert!(text.starts_with("Slim only"), "{described}");
         assert_eq!(
-            schemas["SlimEncoding"]["enum"],
+            schemas["StreamEncoding"]["enum"],
             json!(["h264_hardware", "h264_software", "raw"])
         );
         for name in [
