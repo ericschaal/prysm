@@ -43,7 +43,7 @@ the number: an older Prysm refuses a newer file by the unknown field's name.
   "format": 1,
   "capture": {
     "kind": "device",
-    "path": "/dev/video0"
+    "device": "/dev/video0"
   },
   "output": {
     "kind": "wled",

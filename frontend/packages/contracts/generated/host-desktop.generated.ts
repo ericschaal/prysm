@@ -34,7 +34,7 @@ export interface components {
         Candidate: {
             /** @description Where it is or what it has, such as `192.168.1.40`. */
             detail?: string;
-            /** @description The settings fields picking it fills, such as `{ "path": "/dev/video0" }`: part of the kind's settings, merged over what the person has. */
+            /** @description The settings fields picking it fills, such as `{ "device": "/dev/video0" }`: part of the kind's settings, merged over what the person has. */
             fields: {
                 [key: string]: unknown;
             };
@@ -113,12 +113,17 @@ export interface components {
             led_count?: number;
         };
         /**
-         * @description `{ "kind": "device", "path": "/dev/video0", "width": 640, "height": 360, "fps": 30 }`
+         * @description `{ "kind": "device", "device": "/dev/video0", "width": 640, "height": 360, "fps": 30 }`
          *
-         *     `path` is a V4L2 device node on Linux and an AVFoundation device unique ID
+         *     `device` is a V4L2 device node on Linux and an AVFoundation device unique ID
          *     on macOS. Size and rate default to 640×360 at 30 fps.
          */
         DeviceSettings: {
+            /**
+             * @description V4L2 device node on Linux, AVFoundation device unique ID on macOS.
+             * @example /dev/video0
+             */
+            device: string;
             /**
              * Format: int32
              * @default 30
@@ -131,11 +136,6 @@ export interface components {
             height?: number;
             /** @enum {string} */
             kind: "device";
-            /**
-             * @description V4L2 device node on Linux, AVFoundation device unique ID on macOS.
-             * @example /dev/video0
-             */
-            path: string;
             /**
              * Format: int32
              * @default 640

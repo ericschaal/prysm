@@ -70,7 +70,7 @@ import {
   kinds,
 } from './dom';
 
-const capture = { kind: 'device', path: '/dev/video0' };
+const capture = { kind: 'device', device: '/dev/video0' };
 const unchanged = { hue: 0, strength: 0 };
 /** A calibration's correction as the server sends it: every control. */
 const noCorrection = {
@@ -652,7 +652,7 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
 });
 
 test('a brightness save while stopped keeps Stopped, the red light and Try again', async () => {
-  const capture = { kind: 'device', path: '/dev/video0' };
+  const capture = { kind: 'device', device: '/dev/video0' };
   const failure = {
     kind: 'adapter',
     message:
@@ -1208,7 +1208,7 @@ test('the video source editor saves the exact section once; Cancel drops the dra
   const primary = () => button('Use this video source', form('Video source'));
   try {
     await openEditor('Video source');
-    assert.equal(field('capture.path').value, '/dev/video0');
+    assert.equal(field('capture.device').value, '/dev/video0');
     assert.equal(radio('Custom').checked, true, 'no preset is 25 fps');
     // Nothing to save yet: no bar; the way out is the page's back link.
     assert(!primary(), 'no save bar');
@@ -1225,9 +1225,9 @@ test('the video source editor saves the exact section once; Cancel drops the dra
     await openEditor('Video source');
     assert.equal(radio('Custom').checked, true, 'the draft was dropped');
     // A field edited back to its saved value leaves nothing to save.
-    await edit(field('capture.path'), '/dev/video1');
+    await edit(field('capture.device'), '/dev/video1');
     assert.equal(primary()?.disabled, false);
-    await edit(field('capture.path'), '/dev/video0');
+    await edit(field('capture.device'), '/dev/video0');
     assert(!primary(), 'the bar goes once the draft matches');
 
     await click(radio('Smooth'));
@@ -1236,7 +1236,7 @@ test('the video source editor saves the exact section once; Cancel drops the dra
     assert.deepEqual(fixture.snapshot().settings, {
       capture: {
         kind: 'device',
-        path: '/dev/video0',
+        device: '/dev/video0',
         fps: 60,
         width: 640,
         height: 360,
@@ -1251,15 +1251,15 @@ test('the video source editor saves the exact section once; Cancel drops the dra
       'Not in use — Screen sync is off, so this source isn’t in use.',
     );
 
-    // An empty path is reported once a save is tried, and never sent.
-    await edit(field('capture.path'), ' ');
+    // An empty device is reported once a save is tried, and never sent.
+    await edit(field('capture.device'), ' ');
     await submit(form('Video source'));
     assert.equal(
-      errorOf(field('capture.path')),
+      errorOf(field('capture.device')),
       'Choose a device, or enter one by hand.',
     );
     assert.equal(status(), 'Fix 1 field');
-    assertFocused(field('capture.path'));
+    assertFocused(field('capture.device'));
     assert.equal(saves(fixture), 1);
   } finally {
     await portal.unmount();
@@ -1351,19 +1351,19 @@ test('a section changed on another device: use theirs, or keep mine', async () =
   try {
     await openEditor('Video source');
     // Seen before saving: the draft is kept, and saving asks.
-    await edit(field('capture.path'), '/dev/video1');
+    await edit(field('capture.device'), '/dev/video1');
     await elsewhere(fixture, {
-      capture: { kind: 'device', path: '/dev/video9' },
+      capture: { kind: 'device', device: '/dev/video9' },
     });
-    assert.equal(field('capture.path').value, '/dev/video1');
+    assert.equal(field('capture.device').value, '/dev/video1');
     await submit(form('Video source'));
     assert.equal(saves(fixture), 1, 'only the other device saved');
     assert.equal(status(), conflict);
     await click(button('Use theirs'));
-    assert.equal(field('capture.path').value, '/dev/video9');
+    assert.equal(field('capture.device').value, '/dev/video9');
 
     // Refused by Prysm (409): the same choice; keeping mine saves it.
-    await edit(field('capture.path'), '/dev/video2');
+    await edit(field('capture.device'), '/dev/video2');
     fixture.failNext({
       kind: 'stale_revision',
       message: 'settings revision 1 is stale; current is 2',
@@ -1371,9 +1371,9 @@ test('a section changed on another device: use theirs, or keep mine', async () =
     });
     await submit(form('Video source'));
     assert.equal(status(), conflict);
-    assert.equal(field('capture.path').value, '/dev/video2');
+    assert.equal(field('capture.device').value, '/dev/video2');
     await click(button('Keep mine'));
-    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video2');
+    assert.equal(fixture.snapshot().settings.capture.device, '/dev/video2');
 
     // An editor without changes follows other devices.
     await leaveEditor();
@@ -1392,7 +1392,7 @@ test('a section changed on another device: use theirs, or keep mine', async () =
     await submit(form('Your lights'));
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.60');
     assert.equal(fixture.snapshot().settings.processing.brightness_percent, 50);
-    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video2');
+    assert.equal(fixture.snapshot().settings.capture.device, '/dev/video2');
   } finally {
     await portal.unmount();
   }
@@ -1462,7 +1462,7 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     // The video source: the picture's rate while it arrives.
     await openEditor('Video source');
     assert.equal(now(), 'Picture arriving — 30 fps');
-    await edit(field('capture.path'), '/dev/video3');
+    await edit(field('capture.device'), '/dev/video3');
     await submit(form('Video source'));
     assert(!button('Use this video source'));
     assert(!button('Go back to the previous video source'));
@@ -1477,7 +1477,7 @@ test('a source that sends nothing for a while is a problem, with the way back', 
   try {
     await press(mode('screen_sync'));
     await openEditor('Video source');
-    await edit(field('capture.path'), '/dev/video4');
+    await edit(field('capture.device'), '/dev/video4');
     await submit(form('Video source'));
     // The session restarts for the new source: stopped, then running.
     await act(async () => fixture.publish({ session: { state: 'stopped' } }));
@@ -1519,7 +1519,7 @@ test('after a save the bar stays where the user is: starting, working, then gone
     );
     await openEditor('Video source');
     assert.equal(bar().hidden, true, 'nothing to save: no bar');
-    await edit(field('capture.path'), '/dev/video5');
+    await edit(field('capture.device'), '/dev/video5');
     assert.equal(status(), 'Saving restarts screen sync.');
     await submit(form('Video source'));
     await act(async () => fixture.publish({ session: { state: 'stopped' } }));
@@ -1543,7 +1543,7 @@ test('after a save the bar stays where the user is: starting, working, then gone
     assert.equal(now(), 'Picture arriving — 30 fps', 'the card stays');
 
     // A save that fails: Prysm's reason and the way back, in the bar.
-    await edit(field('capture.path'), '/dev/video6');
+    await edit(field('capture.device'), '/dev/video6');
     await submit(form('Video source'));
     await act(async () =>
       fixture.publish({
@@ -1561,7 +1561,7 @@ test('after a save the bar stays where the user is: starting, working, then gone
     assert.equal($('.form-status').dataset.tone, 'error');
     assert(!$('.section-status-more'), 'not said twice');
     await click(button('Go back to the previous video source', bar()));
-    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video5');
+    assert.equal(fixture.snapshot().settings.capture.device, '/dev/video5');
   } finally {
     await portal.unmount();
   }
@@ -1591,7 +1591,7 @@ test('the save bar says how many fields to fix and takes the user to the first',
     assert.equal(advanced().getAttribute('aria-expanded'), 'true');
     assertFocused(field('capture.encoding'));
     assert.equal(status(), 'Fix 1 field');
-    field('capture.path')?.focus();
+    field('capture.device')?.focus();
     await click(button('Fix 1 field'));
     assertFocused(field('capture.encoding'));
   } finally {
@@ -1615,7 +1615,7 @@ test('the status never opens the source: off, it says so and shows no picture', 
       'Not in use — Screen sync is off, so this source isn’t in use.',
     );
     assert.equal(preview.opened(), 0, 'no preview stream while off');
-    await edit(field('capture.path'), '/dev/video4');
+    await edit(field('capture.device'), '/dev/video4');
     await submit(form('Video source'));
     assert.equal(fixture.snapshot().target, 'off', 'saving starts nothing');
     assert.equal(preview.opened(), 0);
@@ -1707,11 +1707,11 @@ test('kind rows swap panels without losing drafts', async () => {
       ],
     );
     await chooseKind('capture.kind', 'remote');
-    assert(!field('capture.path'));
+    assert(!field('capture.device'));
     // The TV reaches this computer at the portal's address: no address field.
     assert(!field('capture.listen'));
     await chooseKind('capture.kind', 'device');
-    assert.equal(field('capture.path').value, '/dev/video0');
+    assert.equal(field('capture.device').value, '/dev/video0');
     await chooseKind('capture.kind', 'file');
     assert.equal(field('capture.path').value, '');
     assert.equal(field('capture.path').labels[0].textContent, 'Video file');
@@ -1764,20 +1764,20 @@ test('an unconfigured section starts from its first kind and saves only when val
     assert.equal(valueOf('Video source'), 'Not set up yet');
     await openEditor('Video source');
     assert.equal(kindOf('capture.kind'), 'device');
-    assert.equal(errorOf(field('capture.path')), undefined);
+    assert.equal(errorOf(field('capture.device')), undefined);
     // An unconfigured section offers its save before any edit.
     assert(button('Use this video source', form('Video source')));
     await submit(form('Video source'));
     assert.equal(
-      errorOf(field('capture.path')),
+      errorOf(field('capture.device')),
       'Choose a device, or enter one by hand.',
     );
     assert.equal(saves(fixture), 0);
-    await edit(field('capture.path'), ' /dev/video0 ');
+    await edit(field('capture.device'), ' /dev/video0 ');
     await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'device',
-      path: '/dev/video0',
+      device: '/dev/video0',
       width: 640,
       height: 360,
       fps: 30,
@@ -2004,7 +2004,7 @@ const ticked = () =>
     .map(presetLabel);
 
 test('the saved size and rate tick their preset, omitted fields at their defaults; anything else shows as Custom', async () => {
-  const path = '/dev/video0';
+  const device = '/dev/video0';
   const presets = ['Balanced', 'Smooth', 'Efficient'];
   const custom = [...presets, 'Custom'];
   for (const [Host, saved, rows, expected] of [
@@ -2037,8 +2037,8 @@ test('the saved size and rate tick their preset, omitted fields at their default
       presets,
       'Balanced',
     ],
-    [HeadlessWebPortal, { kind: 'device', path }, presets, 'Balanced'],
-    [HeadlessWebPortal, { kind: 'device', path, fps: 60 }, presets, 'Smooth'],
+    [HeadlessWebPortal, { kind: 'device', device }, presets, 'Balanced'],
+    [HeadlessWebPortal, { kind: 'device', device, fps: 60 }, presets, 'Smooth'],
     [
       HeadlessWebPortal,
       { kind: 'file', path: '/clip.mkv', width: 320, height: 180 },
@@ -2472,8 +2472,8 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
   const id = '6C707041-05AC-0011-0008-000000000001';
   const discovery = fakeDiscoveryClient({
     'capture/device': [
-      { label: 'Elgato Cam Link 4K', fields: { path: id } },
-      { label: 'FaceTime HD Camera', fields: { path: 'other' } },
+      { label: 'Elgato Cam Link 4K', fields: { device: id } },
+      { label: 'FaceTime HD Camera', fields: { device: 'other' } },
     ],
     'output/wled': [
       { label: 'WLED-Gledopto', fields: { address: '192.0.2.1' } },
@@ -2482,7 +2482,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
   const portal = await renderPortal(
     HeadlessWebPortal,
     {
-      capture: { kind: 'device', path: id, width: 640, height: 360, fps: 30 },
+      capture: { kind: 'device', device: id, width: 640, height: 360, fps: 30 },
       output: { ...output, leds: { top: 96, right: 54, bottom: 96, left: 54 } },
     },
     undefined,

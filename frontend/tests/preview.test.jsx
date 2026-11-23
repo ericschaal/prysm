@@ -17,7 +17,7 @@ import {
   sleep,
 } from './dom';
 
-const capture = { kind: 'device', path: '/dev/video0' };
+const capture = { kind: 'device', device: '/dev/video0' };
 const output = {
   kind: 'wled',
   address: '192.0.2.1',

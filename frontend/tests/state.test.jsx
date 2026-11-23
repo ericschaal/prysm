@@ -5,7 +5,7 @@ import { ApplicationError } from '@prysm/application-client';
 import { fakeApplicationPort } from '../testkit/application';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-const capture = { kind: 'device', path: '/dev/video0' };
+const capture = { kind: 'device', device: '/dev/video0' };
 const output = { kind: 'wled', address: '192.0.2.1', leds: { top: 4 } };
 
 async function connected(fixture) {

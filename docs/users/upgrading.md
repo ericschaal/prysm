@@ -141,6 +141,12 @@ What changed:
   Prysm starts without settings, and `prysm-headless --check-settings PATH`
   says what it expected and on which line. The portal never wrote lists, so
   only a hand-edited file is affected.
+- **A capture card's `path` is now `device`.** It names the device: a node
+  such as `/dev/video0` on Linux, a device ID on macOS. A capture section
+  with `"kind": "device"` that still says `"path"` does not validate: the
+  light card says why, Screen sync does not start, and
+  `prysm-headless --check-settings PATH` names the unknown field. Rename
+  `"path"` to `"device"` in that section; a video file's `path` stays.
 - **Detail samples captures larger than 640x360 differently.** At the same
   Detail value, such a capture gets fewer samples than in rc.1, the same as
   640x360 gets. Check the picture after upgrading, and raise Detail if the
@@ -164,8 +170,8 @@ After upgrading (the 1.0 check comes with the package, so it runs now):
 
 4. Stop the service: `sudo systemctl stop prysm-headless`.
 5. Edit the file with `sudo nano /var/lib/prysm/settings.json`: add
-   `"format": 1,` after the first `{`, and bring any value above the limits
-   back inside them.
+   `"format": 1,` after the first `{`, rename a capture card's `"path"` to
+   `"device"`, and bring any value above the limits back inside them.
 6. Check it:
 
    ```sh
@@ -192,9 +198,10 @@ Before upgrading:
 2. Back up the settings from the stopped container:
    `docker cp prysm:/data/settings.json ./prysm-settings.json`.
 3. Edit `settings.json` in the volume: add `"format": 1,` after the first
-   `{`, and bring any value above the limits back inside them. Keep the
-   file owned by user ID 10001: Prysm runs as that user and cannot read a
-   file owned by root, and the check below then fails.
+   `{`, rename a capture card's `"path"` to `"device"`, and bring any value
+   above the limits back inside them. Keep the file owned by user ID
+   10001: Prysm runs as that user and cannot read a file owned by root,
+   and the check below then fails.
    - On a Linux host, a named volume is in the directory
      `docker volume inspect prysm-data --format '{{ .Mountpoint }}'` prints,
      readable by root only. Edit the file in place, for example with
@@ -233,8 +240,9 @@ release, and `latest` the newest stable release. A pre-release, such as
 1. Stop the app.
 2. Take a snapshot of the dataset ([TrueNAS](truenas.md#maintenance)).
 3. Edit `settings.json` in the dataset from the TrueNAS shell: add
-   `"format": 1,` after the first `{`, and bring any value above the limits
-   back inside them. Keep the file owned by the app's `user` (568:568 in
+   `"format": 1,` after the first `{`, rename a capture card's `"path"` to
+   `"device"`, and bring any value above the limits back inside them. Keep
+   the file owned by the app's `user` (568:568 in
    the example YAML).
 4. Change the image tag after `prysm-headless:` to `1.0.0`, or paste the
    current [compose.truenas.yaml](../../packaging/docker/compose.truenas.yaml)
@@ -286,6 +294,7 @@ already use the new shapes. These are the changes from 1.0.0-rc.1. The
 | The lighting failure | `State.failure`, `null` when none | `session.failure`, only on `stopped` and `effects`, tagged by `kind`: `invalid { message, field? }`, `adapter { message, section? }`, `internal { message }` |
 | The lights' own reports | `output_issue`, `output_brightness`, `device_led_count` | `device.issue`, `device.brightness_percent`, `device.led_count` |
 | The Prysm version | — | `version` |
+| A capture card's device, in settings, capture modes and found devices' `fields` | `path` | `device` |
 | An absent value | sometimes `null` | omitted |
 | Calibration patterns | `gray-192`, `blue-pair`, `red-pair`, `green-pair`, `review-grid` | `gray_192`, `blue_pair`, `red_pair`, `green_pair`, `review_grid` |
 | A pattern while not in screen sync | `409 not_processed` | `409 needs_screen_sync` |

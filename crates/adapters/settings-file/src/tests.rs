@@ -9,7 +9,7 @@ fn sample() -> Settings {
     Settings {
         capture: Some(AdapterSettings::new(
             "device",
-            &json!({ "path": "/dev/video0" }),
+            &json!({ "device": "/dev/video0" }),
         )),
         output: Some(AdapterSettings::new(
             "wled",

@@ -206,7 +206,7 @@ device form calls it when it opens and on "Look again"; the lights form on
   `label` is what a person recognises (a device's name), `detail` where it is
   (`/dev/video2`, `192.168.1.40`), `led_count` how many LEDs a found light
   says it has (`120`), and `fields` the
-  part of the kind's settings picking it fills (`{ "path": "/dev/video2" }`,
+  part of the kind's settings picking it fills (`{ "device": "/dev/video2" }`,
   `{ "address": "192.168.1.40" }`). Nothing found, or a kind that cannot
   look, is `[]`: the typed fields stay the way to configure it.
 - It is a lookup, not state: it is not in `State`, changes no revision and
@@ -221,7 +221,7 @@ What each adapter finds:
 
 | Kind | Finds | How |
 | --- | --- | --- |
-| `device` | Video capture devices, filling `path` | Linux: each `/dev/video*` node that reports V4L2 video capture (asked for its capabilities, not started), named by its card name. macOS: AVFoundation's video devices, by localized name, filling the unique ID. Elsewhere nothing. |
+| `device` | Video capture devices, filling `device` | Linux: each `/dev/video*` node that reports V4L2 video capture (asked for its capabilities, not started), named by its card name. macOS: AVFoundation's video devices, by localized name, filling the unique ID. Elsewhere nothing. |
 | `wled` | WLED lights, filling `address` (the IPv4 address that answered) | One multicast DNS question for `_wled._tcp.local` from an ephemeral port (a one-shot legacy unicast query, so nothing binds port 5353), answers collected for 1.2 s, then one `GET /json/info` per answer (at most 16, in parallel, 350 ms per step) for its name and LED count. Nothing else is sent to WLED. |
 
 Others (`file`, `remote`, `webos`, `null`) find nothing.
@@ -235,9 +235,9 @@ edges: the person enters the per-edge counts.
 ## Capture modes
 
 `POST /api/v1/capture/modes` with a capture section as the settings file
-holds it (`{ "kind": "device", "path": "/dev/video0", "width": 640 }`) asks
+holds it (`{ "kind": "device", "device": "/dev/video0", "width": 640 }`) asks
 that capture's adapter what its hardware delivers. Only the fields that
-select hardware count (`path`, `encoding`); the size and rate in the body
+select hardware count (`device`, `encoding`); the size and rate in the body
 need not be valid. A form can ask before saving.
 
 - The reply is `Modes`: `{ "status": "unknown" }` when the adapter cannot

@@ -192,7 +192,7 @@ fn configured() -> Settings {
     Settings {
         capture: Some(AdapterSettings::new(
             "device",
-            &json!({ "path": "/dev/video0" }),
+            &json!({ "device": "/dev/video0" }),
         )),
         output: Some(AdapterSettings::new(
             "wled",
@@ -395,7 +395,7 @@ fn application() -> Value {
             Modes::Unknown,
         ],
         "Candidate": [
-            Candidate::new("USB Video", &json!({ "path": "/dev/video0" })).detail("/dev/video0"),
+            Candidate::new("USB Video", &json!({ "device": "/dev/video0" })).detail("/dev/video0"),
             Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))
                 .detail("192.168.1.40")
                 .led_count(120),

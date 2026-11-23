@@ -2514,7 +2514,10 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
 
 test('a remote Prysm without Remote capture is explained; an old browser gets the portal address', async (t) => {
   const tv = await mountTv(t, {
-    portal: { capture: { kind: 'device', path: '/dev/video0' }, output: wled },
+    portal: {
+      capture: { kind: 'device', device: '/dev/video0' },
+      output: wled,
+    },
     supervisor: {
       preferences: {
         prysm_address: 'http://192.168.1.20:8787',
@@ -2938,7 +2941,7 @@ test('calibration is disabled with a reason while the lights are not driven from
       {
         supervisor: slimReady,
         portal: {
-          capture: { kind: 'device', path: '/dev/video0' },
+          capture: { kind: 'device', device: '/dev/video0' },
           output: wled,
         },
       },

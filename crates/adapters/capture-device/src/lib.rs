@@ -50,9 +50,9 @@ impl SourceFactory for DeviceSource {
         });
         let fps = NonZeroU32::new(settings.fps)
             .ok_or_else(|| ValidationError::new("fps", "must be a positive frame rate"))?;
-        let (path, width, height) = (settings.path.clone(), settings.width, settings.height);
+        let (device, width, height) = (settings.device.clone(), settings.width, settings.height);
         let capture: source::Capture = Box::new(move |sink| {
-            prysm_capture_device_sys::capture(Some(&path), width, height, fps, sink)
+            prysm_capture_device_sys::capture(Some(&device), width, height, fps, sink)
         });
         Ok(Box::new(source::DeviceFrames::start(
             check,
@@ -62,22 +62,24 @@ impl SourceFactory for DeviceSource {
     }
 
     /// The video devices present (V4L2 nodes that capture, `AVFoundation`
-    /// devices), each filling `path`. Listing starts no capture.
+    /// devices), each filling `device`. Listing starts no capture.
     fn candidates(&self) -> Vec<Candidate> {
         #[derive(Serialize)]
-        struct Path<'a> {
-            path: &'a str,
+        struct Fields<'a> {
+            device: &'a str,
         }
         prysm_capture_device_sys::list_devices()
             .into_iter()
-            .map(|device| Candidate::new(device.name, &Path { path: &device.id }).detail(device.id))
+            .map(|device| {
+                Candidate::new(device.name, &Fields { device: &device.id }).detail(device.id)
+            })
             .collect()
     }
 
-    /// The device at `path`'s formats, within what [`DeviceSettings::validate`]
+    /// The `device`'s formats, within what [`DeviceSettings::validate`]
     /// accepts; unknown when the device cannot be opened or asked.
     fn modes(&self, settings: &DeviceSettings) -> Modes {
-        prysm_capture_device_sys::list_formats(&settings.path)
+        prysm_capture_device_sys::list_formats(&settings.device)
             .map_or(Modes::Unknown, |listed| Modes::Known(bounded(&listed)))
     }
 }

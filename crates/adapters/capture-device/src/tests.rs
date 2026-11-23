@@ -417,7 +417,7 @@ fn drop_without_close_stops_and_waits() {
 #[test]
 fn settings_file_shape_and_defaults() {
     let settings: Settings =
-        serde_json::from_str(r#"{ "capture": { "kind": "device", "path": "/dev/video0" } }"#)
+        serde_json::from_str(r#"{ "capture": { "kind": "device", "device": "/dev/video0" } }"#)
             .unwrap();
     let mut registry = Registry::default();
     registry.add_source(DeviceSource);
@@ -432,7 +432,7 @@ fn settings_file_shape_and_defaults() {
     let encoded = AdapterSettings::new(DeviceSource::KIND, &typed);
     assert_eq!(
         serde_json::to_value(&encoded).unwrap(),
-        serde_json::json!({ "kind": "device", "path": "/dev/video0", "width": 640, "height": 360, "fps": 30 })
+        serde_json::json!({ "kind": "device", "device": "/dev/video0", "width": 640, "height": 360, "fps": 30 })
     );
 }
 
@@ -443,8 +443,8 @@ fn settings_validation_names_the_field() {
         change(&mut settings);
         DeviceSource.validate(&settings).unwrap_err().field
     };
-    assert_eq!(field(|s| s.path = " ".into()), "path");
-    assert_eq!(field(|s| s.path = "a\0b".into()), "path");
+    assert_eq!(field(|s| s.device = " ".into()), "device");
+    assert_eq!(field(|s| s.device = "a\0b".into()), "device");
     assert_eq!(field(|s| s.width = 0), "width");
     assert_eq!(field(|s| s.width = 3841), "width");
     assert_eq!(field(|s| s.height = 0), "height");
@@ -454,7 +454,7 @@ fn settings_validation_names_the_field() {
     let mut registry = Registry::default();
     registry.add_source(DeviceSource);
     let unknown: Settings = serde_json::from_str(
-        r#"{ "capture": { "kind": "device", "path": "/dev/video0", "rate": 30 } }"#,
+        r#"{ "capture": { "kind": "device", "device": "/dev/video0", "rate": 30 } }"#,
     )
     .unwrap();
     assert!(matches!(
@@ -478,10 +478,10 @@ fn real_backend_missing_device_fails_without_hanging() {
 }
 
 /// Whatever this machine has (often nothing): each found device fills a
-/// `path` that validates, and listing opens nothing. The platform's own
+/// `device` that validates, and listing opens nothing. The platform's own
 /// enumeration can take seconds (macOS with a Continuity camera).
 #[test]
-fn candidates_fill_a_valid_path() {
+fn candidates_fill_a_valid_device() {
     let found = within(Duration::from_secs(30), || {
         let mut registry = Registry::default();
         registry.add_source(DeviceSource);
@@ -492,7 +492,7 @@ fn candidates_fill_a_valid_path() {
         let settings: DeviceSettings =
             serde_json::from_value(candidate.fields.clone().into()).unwrap();
         assert_eq!(settings.validate(), Ok(()), "{candidate:?}");
-        assert_eq!(candidate.detail.as_deref(), Some(settings.path.as_str()));
+        assert_eq!(candidate.detail.as_deref(), Some(settings.device.as_str()));
         // A device found answers for its formats, and open refuses a size
         // none has before starting anything.
         assert!(

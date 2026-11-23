@@ -458,7 +458,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   );
 });
 
-const capture = { kind: 'device', path: '/dev/video0' };
+const capture = { kind: 'device', device: '/dev/video0' };
 const output = {
   kind: 'wled',
   address: '192.0.2.1',

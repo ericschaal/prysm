@@ -34,7 +34,7 @@ export interface components {
         Candidate: {
             /** @description Where it is or what it has, such as `192.168.1.40`. */
             detail?: string;
-            /** @description The settings fields picking it fills, such as `{ "path": "/dev/video0" }`: part of the kind's settings, merged over what the person has. */
+            /** @description The settings fields picking it fills, such as `{ "device": "/dev/video0" }`: part of the kind's settings, merged over what the person has. */
             fields: {
                 [key: string]: unknown;
             };

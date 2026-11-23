@@ -30,7 +30,7 @@ import {
   kinds,
 } from './dom';
 
-const capture = { kind: 'device', path: '/dev/video0' };
+const capture = { kind: 'device', device: '/dev/video0' };
 const output = {
   kind: 'wled',
   address: '192.0.2.1',
@@ -72,7 +72,10 @@ test('setup opens instead of the page while capture or lights are missing', asyn
       assertFocused($('h2', wizard()));
       assert.equal($('[aria-current="step"]').textContent, 'Video source');
       // It starts from what is saved: a configured section is shown as it is.
-      assert.equal(field('capture.path').value, initial.capture?.path ?? '');
+      assert.equal(
+        field('capture.device').value,
+        initial.capture?.device ?? '',
+      );
       await click(button('Leave setup'));
       assert(!wizard());
       assert.equal($('.light-card').tagName, 'SECTION');
@@ -102,16 +105,16 @@ test('setup steps keep the drafts, check each step and save both sections with o
     await next();
     assert.equal(heading(), 'Video source');
     assert.equal(
-      errorOf(field('capture.path')),
+      errorOf(field('capture.device')),
       'Choose a device, or enter one by hand.',
     );
-    assertFocused(field('capture.path'));
+    assertFocused(field('capture.device'));
     assert.equal(
       $('.form-status', wizard()).textContent,
       'Check the marked field to continue.',
     );
 
-    await edit(field('capture.path'), ' /dev/video2 ');
+    await edit(field('capture.device'), ' /dev/video2 ');
     // The typed device is asked about once typing pauses.
     assert(!$('.picture-choice', wizard()));
     await act(async () => sleep(typedDeviceMs + 50));
@@ -129,7 +132,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
 
     await click(button('Back'));
     assert.equal(heading(), 'Video source');
-    assert.equal(field('capture.path').value, ' /dev/video2 ');
+    assert.equal(field('capture.device').value, ' /dev/video2 ');
     assert.equal(radio('Smooth').checked, true);
     await next();
     assert.equal(field('output.address').value, 'http://wled.local/');
@@ -150,7 +153,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     assert.deepEqual(fixture.snapshot().settings, {
       capture: {
         kind: 'device',
-        path: '/dev/video2',
+        device: '/dev/video2',
         width: 640,
         height: 360,
         fps: 60,
@@ -221,16 +224,16 @@ test('a server error sends setup back to the step with the field', async () => {
     await review();
     fixture.failNext({
       kind: 'invalid',
-      field: 'capture.path',
+      field: 'capture.device',
       message: 'no such device',
     });
     await next();
     assert.equal(heading(), 'Video source');
     assert.equal(
-      errorOf(field('capture.path')),
+      errorOf(field('capture.device')),
       'Choose a device, or enter its name by hand.',
     );
-    assertFocused(field('capture.path'));
+    assertFocused(field('capture.device'));
 
     // An error without a control here stays on the review, in its alert.
     await review();
@@ -260,20 +263,20 @@ test('setup again starts from the saved settings, and leaving it saves nothing',
     await openPage('Start over with setup');
     assert.equal(heading(), 'Video source');
     assert.equal(kindOf('capture.kind'), 'device');
-    assert.equal(field('capture.path').value, '/dev/video0');
-    await edit(field('capture.path'), '/dev/video5');
+    assert.equal(field('capture.device').value, '/dev/video0');
+    await edit(field('capture.device'), '/dev/video5');
     await next();
     assert.equal(field('output.address').value, '192.0.2.1');
     assert.equal(field('output.leds.left').value, '4');
     await click(button('Leave setup'));
     assert.equal(saves(fixture), 0);
-    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video0');
+    assert.equal(fixture.snapshot().settings.capture.device, '/dev/video0');
     assert($('.settings'), 'back in Settings');
 
     // Again: a fresh start from the saved values; Save only keeps lights off.
     await act(async () => saveDeveloper(true));
     await openPage('Start over with setup');
-    assert.equal(field('capture.path').value, '/dev/video0');
+    assert.equal(field('capture.device').value, '/dev/video0');
     await next();
     await chooseKind('output.kind', 'null');
     await next();
@@ -297,7 +300,7 @@ test('setup reloads instead of overwriting settings changed elsewhere', async ()
   const portal = await renderPortal(HeadlessWebPortal, { output });
   const { fixture } = portal;
   try {
-    await edit(field('capture.path'), '/dev/video1');
+    await edit(field('capture.device'), '/dev/video1');
     await act(async () => {
       const { settings, revision } = fixture.snapshot();
       await fixture.client.replaceSettings(revision, {
@@ -397,12 +400,12 @@ test('setup lists the devices present at once and finds lights on request; the t
       {
         label: 'USB Video',
         detail: '/dev/video2',
-        fields: { path: '/dev/video2' },
+        fields: { device: '/dev/video2' },
       },
       {
         label: 'Elgato',
         detail: '/dev/video4',
-        fields: { path: '/dev/video4' },
+        fields: { device: '/dev/video4' },
       },
     ],
     'output/wled': [
@@ -435,14 +438,14 @@ test('setup lists the devices present at once and finds lights on request; the t
       [false, false],
     );
     // Typing waits under Advanced while there are devices to pick.
-    assert(field('capture.path').closest('[hidden]'));
+    assert(field('capture.device').closest('[hidden]'));
     assert(!$('.picture-choice', wizard()), 'sizes follow the device');
     await click(devices()[1]);
-    assert.equal(field('capture.path').value, '/dev/video4');
+    assert.equal(field('capture.device').value, '/dev/video4');
     assert.equal(devices()[1].checked, true);
     assert.equal(radio('Balanced').checked, true);
     // Typing still works after picking.
-    await edit(field('capture.path'), '/dev/video9');
+    await edit(field('capture.device'), '/dev/video9');
     await next();
 
     await press(button('Find lights'));
@@ -466,7 +469,7 @@ test('setup lists the devices present at once and finds lights on request; the t
     await next();
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'device',
-      path: '/dev/video9',
+      device: '/dev/video9',
       width: 640,
       height: 360,
       fps: 30,
@@ -514,8 +517,8 @@ test('without a discovery client the editors offer only typed fields', async () 
   const portal = await renderPortal(HeadlessWebPortal, {});
   try {
     assert(!$('.device-rows'));
-    assert.equal(field('capture.path').value, '');
-    assert(!field('capture.path').closest('[hidden]'), 'not under Advanced');
+    assert.equal(field('capture.device').value, '');
+    assert(!field('capture.device').closest('[hidden]'), 'not under Advanced');
   } finally {
     await portal.unmount();
   }

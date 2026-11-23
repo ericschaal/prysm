@@ -2,7 +2,7 @@
   "format": 1,
   "capture": {
     "kind": "device",
-    "path": "/dev/video0"
+    "device": "/dev/video0"
   },
   "output": {
     "kind": "null"

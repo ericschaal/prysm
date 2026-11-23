@@ -100,9 +100,9 @@ export function FindDevices({
 }: {
   section: AdapterSide;
   kind: string;
-  /** The field it fills, for its errors, such as `capture.path`. */
+  /** The field it fills, for its errors, such as `capture.device`. */
   path: string;
-  /** The key in a candidate's `fields`, such as `path`. */
+  /** The key in a candidate's `fields`, such as `device`. */
   field: string;
   label: string;
   looking: string;

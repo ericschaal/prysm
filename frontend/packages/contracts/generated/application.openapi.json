@@ -64,7 +64,7 @@
           },
           "fields": {
             "additionalProperties": true,
-            "description": "The settings fields picking it fills, such as `{ \"path\": \"/dev/video0\" }`: part of the kind's settings, merged over what the person has.",
+            "description": "The settings fields picking it fills, such as `{ \"device\": \"/dev/video0\" }`: part of the kind's settings, merged over what the person has.",
             "type": "object"
           },
           "label": {

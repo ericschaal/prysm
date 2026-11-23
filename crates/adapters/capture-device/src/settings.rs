@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 // `schema(...)` takes literals only: the rate's maximum below is spelled out.
 const _: () = assert!(MAX_FPS == 120);
 
-/// `{ "kind": "device", "path": "/dev/video0", "width": 640, "height": 360, "fps": 30 }`
+/// `{ "kind": "device", "device": "/dev/video0", "width": 640, "height": 360, "fps": 30 }`
 ///
-/// `path` is a V4L2 device node on Linux and an AVFoundation device unique ID
+/// `device` is a V4L2 device node on Linux and an AVFoundation device unique ID
 /// on macOS. Size and rate default to 640×360 at 30 fps.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -17,7 +17,7 @@ const _: () = assert!(MAX_FPS == 120);
 pub struct DeviceSettings {
     /// V4L2 device node on Linux, AVFoundation device unique ID on macOS.
     #[cfg_attr(feature = "schema", schema(min_length = 1, example = "/dev/video0"))]
-    pub path: String,
+    pub device: String,
     #[serde(default = "default_width")]
     #[cfg_attr(feature = "schema", schema(minimum = 1, maximum = 3840, default = default_width))]
     pub width: u32,
@@ -31,9 +31,9 @@ pub struct DeviceSettings {
 
 impl DeviceSettings {
     #[must_use]
-    pub fn new(path: impl Into<String>) -> Self {
+    pub fn new(device: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            device: device.into(),
             width: default_width(),
             height: default_height(),
             fps: default_fps(),
@@ -45,11 +45,8 @@ impl DeviceSettings {
     /// # Errors
     /// The first invalid field, relative to the `capture` section.
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if self.path.trim().is_empty() || self.path.contains('\0') {
-            return Err(ValidationError::new(
-                "path",
-                "a device path or identifier is required",
-            ));
+        if self.device.trim().is_empty() || self.device.contains('\0') {
+            return Err(ValidationError::new("device", "a device is required"));
         }
         validate_capture_size(self.width, self.height, self.fps)?;
         if !cfg!(any(target_os = "linux", target_os = "macos")) {
@@ -70,7 +67,7 @@ mod schema_tests {
     #[test]
     fn schema_matches_serde_shape() {
         let schema = assert_schema_matches_serde(&DeviceSettings::new("/dev/video0"));
-        assert_eq!(schema["required"], json!(["path"]));
+        assert_eq!(schema["required"], json!(["device"]));
         assert_eq!(schema["properties"]["width"]["default"], json!(640));
         assert_eq!(schema["properties"]["height"]["maximum"], json!(2160));
         assert_eq!(
