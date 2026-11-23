@@ -1865,7 +1865,7 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
       'LED 1 is at the bottom-left corner. Order: left upward: LEDs 1–4; top rightward: LEDs 5–14; right: none; bottom: none.',
     );
     // The total in the drawing's middle; the maximum only when exceeded.
-    assert.equal($('.screen-label').textContent, '14 LEDs');
+    assert.equal($('.screen-label').textContent, '14 LEDs in total');
     assert(!text().includes('16384'));
 
     for (const edge of edges) await edit(field(`output.leds.${edge}`), 0);
@@ -2091,7 +2091,7 @@ test('each edge’s LED count is typed on that edge of the drawing', async () =>
     }
     assert(!$('.led-counts'), 'no second set of fields');
     await edit(field('output.leds.right'), 6);
-    assert.equal($('.screen-label').textContent, '20 LEDs');
+    assert.equal($('.screen-label').textContent, '20 LEDs in total');
     // Too many: said at once, the total marked.
     await edit(field('output.leds.bottom'), 16384);
     assert.equal($('.screen-label').dataset.invalid, 'true');
@@ -2107,6 +2107,39 @@ test('each edge’s LED count is typed on that edge of the drawing', async () =>
       $('[data-field-message="output.leds"]').textContent,
       'Enter a whole number from 0 to 16384.',
     );
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the drawing badges LED 1 and says once where it is and which way the strip runs', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  // The sentence after the line's badge.
+  const way = () => $('.led-way').lastChild.textContent;
+  const start = () => $('.led-start');
+  try {
+    await openEditor('Lights');
+    // The first lit edge decides: left, else top, else right, else bottom.
+    for (const [edges, corner, along] of [
+      [{}, 'bottom-left', 'up'],
+      [{ left: 0 }, 'top-left', 'right'],
+      [{ right: 5, top: 0 }, 'top-right', 'down'],
+      [{ bottom: 5, right: 0 }, 'bottom-right', 'left'],
+    ]) {
+      for (const [edge, count] of Object.entries(edges))
+        await edit(field(`output.leds.${edge}`), count);
+      assert.equal(
+        way(),
+        `First LED is ${corner.replace('-', ' ')}. The strip runs clockwise.`,
+      );
+      assert.equal(start().dataset.corner, corner);
+      assert.equal(start().dataset.way, along);
+      assert.equal($('.led-edge[data-way]').dataset.way, along, 'one mark');
+    }
+    await edit(field('output.leds.bottom'), 0);
+    assert.equal(way(), 'No LEDs yet. Enter how many are on each edge.');
+    assert(!start(), 'no badge without LEDs');
+    assert(!$('.led-edge[data-way]'));
   } finally {
     await portal.unmount();
   }
