@@ -13,23 +13,8 @@ export interface Connection<C, O> {
   error: Failure | null;
 }
 
-export type CommandKind =
-  | 'configureCapture'
-  | 'configureOutput'
-  | 'configureProcessing'
-  | 'configureSetup'
-  | 'setCalibration'
-  | 'setTarget';
-export interface CommandState {
-  /** Local sequence number; only the latest command is shown. */
-  id: number;
-  kind: CommandKind;
-  phase: 'submitting' | 'succeeded' | 'failed';
-  failure: Failure | null;
-}
 export interface ApplicationState<C, O> {
   connection: Connection<C, O>;
-  lastCommand: CommandState | null;
 }
 
 export function createApplicationSlice<C, O>() {
@@ -40,7 +25,6 @@ export function createApplicationSlice<C, O>() {
       snapshot: null,
       error: null,
     },
-    lastCommand: null,
   };
   const current = (
     state: { connection: { generation: number } },
@@ -93,33 +77,10 @@ export function createApplicationSlice<C, O>() {
         state.connection.status = 'disconnected';
         state.connection.error = action.payload.failure;
       },
-      commandSubmitted(
-        state,
-        action: PayloadAction<{ id: number; kind: CommandKind }>,
-      ) {
-        state.lastCommand = {
-          ...action.payload,
-          phase: 'submitting',
-          failure: null,
-        };
-      },
-      commandSucceeded(state, action: PayloadAction<number>) {
-        if (state.lastCommand?.id === action.payload)
-          state.lastCommand.phase = 'succeeded';
-      },
-      commandFailed(
-        state,
-        action: PayloadAction<{ id: number; failure: Failure }>,
-      ) {
-        if (state.lastCommand?.id !== action.payload.id) return;
-        state.lastCommand.phase = 'failed';
-        state.lastCommand.failure = action.payload.failure;
-      },
     },
     selectors: {
       selectConnection: (state) => state.connection,
       selectSnapshot: (state) => state.connection.snapshot,
-      selectLastCommand: (state) => state.lastCommand,
     },
   });
 }

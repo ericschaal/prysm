@@ -1,17 +1,12 @@
 import type { ThunkAction, UnknownAction } from '@reduxjs/toolkit';
 import {
   ApplicationError,
-  failureOf,
   type ApplicationClient,
   type CalibrationPattern,
   type LightingTarget,
   type Settings,
 } from '@prysm/application-client';
-import type {
-  ApplicationActions,
-  ApplicationState,
-  CommandKind,
-} from './slice';
+import type { ApplicationState } from './slice';
 
 export type ApplicationThunk<C, O, Result> = ThunkAction<
   Result,
@@ -20,28 +15,18 @@ export type ApplicationThunk<C, O, Result> = ThunkAction<
   UnknownAction
 >;
 
-/** Typed command thunks. Each resolves with the runtime's own result. */
-export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
-  let sequence = 0;
+/**
+ * Typed command thunks. Each resolves with the runtime's own result and
+ * rejects with its failure; the store records neither.
+ */
+export function createCommands<C, O>() {
   function submit<T>(
-    kind: CommandKind,
     send: (
       client: ApplicationClient<C, O>,
       state: ApplicationState<C, O>,
     ) => Promise<T>,
   ): ApplicationThunk<C, O, Promise<T>> {
-    return async (dispatch, getState, client) => {
-      const id = ++sequence;
-      dispatch(actions.commandSubmitted({ id, kind }));
-      try {
-        const result = await send(client, getState());
-        dispatch(actions.commandSucceeded(id));
-        return result;
-      } catch (error) {
-        dispatch(actions.commandFailed({ id, failure: failureOf(error) }));
-        throw error;
-      }
-    };
+    return (_dispatch, getState, client) => send(client, getState());
   }
   /**
    * Replace one adapter section of the observed settings, keeping the rest.
@@ -51,11 +36,10 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
    * merged into them.
    */
   function replaceSection(
-    kind: CommandKind,
     expected: number,
     change: (settings: Settings<C, O>) => Settings<C, O>,
   ): ApplicationThunk<C, O, Promise<number>> {
-    return submit(kind, (client, state) => {
+    return submit((client, state) => {
       const { status, snapshot } = state.connection;
       const live = status === 'connected' ? snapshot : null;
       if (!live || live.revision !== expected)
@@ -76,41 +60,34 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
   }
   return {
     setTarget: (target: LightingTarget) =>
-      submit('setTarget', (client) => client.setTarget(target)),
+      submit((client) => client.setTarget(target)),
     setCalibration: (calibration: CalibrationPattern | null) =>
-      submit('setCalibration', (client) => client.setCalibration(calibration)),
+      submit((client) => client.setCalibration(calibration)),
     configureCapture: (expected: number, capture: C) =>
-      replaceSection('configureCapture', expected, (settings) => ({
+      replaceSection(expected, (settings) => ({
         ...settings,
         capture,
       })),
     configureOutput: (expected: number, output: O) =>
-      replaceSection('configureOutput', expected, (settings) => ({
+      replaceSection(expected, (settings) => ({
         ...settings,
         output,
       })),
     /** Capture and output together, as one save (the portal's guided setup). */
     configureSetup: (expected: number, capture: C, output: O) =>
-      replaceSection('configureSetup', expected, (settings) => ({
+      replaceSection(expected, (settings) => ({
         ...settings,
         capture,
         output,
       })),
-    /**
-     * Light with `processing` unsaved, as a slider moves. Not a tracked
-     * command: it changes no state and its failures are the caller's.
-     */
-    tryProcessing:
-      (
-        processing: Settings<C, O>['processing'],
-      ): ApplicationThunk<C, O, Promise<void>> =>
-      (_dispatch, _getState, client) =>
-        client.tryProcessing(processing),
+    /** Light with `processing` unsaved, as a slider moves. */
+    tryProcessing: (processing: Settings<C, O>['processing']) =>
+      submit((client) => client.tryProcessing(processing)),
     configureProcessing: (
       expected: number,
       processing: Settings<C, O>['processing'],
     ) =>
-      replaceSection('configureProcessing', expected, (settings) => ({
+      replaceSection(expected, (settings) => ({
         ...settings,
         processing,
       })),

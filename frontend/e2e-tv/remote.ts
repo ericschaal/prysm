@@ -8,8 +8,9 @@
  * journey checks it after every key.
  */
 import { expect, type Page } from '@playwright/test';
+import type { State } from '@prysm/contracts/luna';
 
-export type Flavor = 'full' | 'slim';
+export type Flavor = State['flavor'];
 export type Key =
   'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Enter' | 'Back';
 export const arrows = [

@@ -496,6 +496,42 @@ test('a lookup that fails says so and is asked again', async (t) => {
   }
 });
 
+test('a hidden page stops asking again until it is shown', async (t) => {
+  const modes = fakeCaptureModesClient(() => unknown);
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture: { kind: 'device', path }, output },
+    undefined,
+    { captureModes: modes.client },
+  );
+  try {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await openEditor('Video source');
+    const asked = modes.calls.length;
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'hidden',
+      configurable: true,
+    });
+    await act(async () => t.mock.timers.tick(modesRetryMs));
+    await act(async () => t.mock.timers.tick(modesRetryMs));
+    t.mock.timers.reset();
+    await settled();
+    assert.equal(modes.calls.length, asked, 'nothing asked while hidden');
+
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible',
+      configurable: true,
+    });
+    await act(async () =>
+      document.dispatchEvent(new window.Event('visibilitychange')),
+    );
+    await settled();
+    assert.equal(modes.calls.length, asked + 1);
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('a capture-only TV that has not connected locks the rows on the saved choice and offers every encoding; its offer then decides', async (t) => {
   let offer = () => unknown;
   const modes = fakeCaptureModesClient((capture) => offer(capture));

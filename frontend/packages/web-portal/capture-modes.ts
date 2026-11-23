@@ -16,7 +16,12 @@ export const CaptureModesContext = createContext<CaptureModesClient | null>(
   null,
 );
 
-/** How often an unanswered question is asked again. */
+/**
+ * How often an unanswered question is asked again while the page is shown.
+ * A poll, because nothing announces the answer: the state stream carries
+ * neither a device being plugged in nor the offer a capture-only TV sends
+ * when it tries to connect (also with the lights off).
+ */
 export const modesRetryMs = 3000;
 
 /**
@@ -110,9 +115,10 @@ export const nothingOffered = (modes: ModesState) =>
 
 /**
  * Ask what each capture in `queries` delivers, again every few seconds
- * while one is not known and whenever the page regains focus. A query
- * holds only the fields that select hardware (`{ kind, path }`), so the
- * answer follows them and nothing else; `null` asks nothing.
+ * while one is not known and the page is shown, and whenever the page is
+ * shown again or regains focus. A query holds only the fields that select hardware
+ * (`{ kind, path }`), so the answer follows them and nothing else; `null`
+ * asks nothing.
  */
 export function useEachCaptureModes(
   queries: readonly (CaptureSettings | null)[],
@@ -149,15 +155,21 @@ export function useEachCaptureModes(
       clearTimeout(timer);
       // Asked and not known: there is something to ask again.
       if (states.some((each, at) => asked[at] && each.state !== 'known'))
-        timer = setTimeout(() => void ask(), modesRetryMs);
+        timer = setTimeout(whileShown, modesRetryMs);
     }
     const again = () => void ask();
+    /** A hidden page stops asking until it is shown again. */
+    const whileShown = () => {
+      if (document.visibilityState !== 'hidden') void ask();
+    };
     window.addEventListener('focus', again);
+    document.addEventListener('visibilitychange', whileShown);
     void ask();
     return () => {
       controller.abort();
       clearTimeout(timer);
       window.removeEventListener('focus', again);
+      document.removeEventListener('visibilitychange', whileShown);
     };
   }, [client, key]);
   return answer?.key === key

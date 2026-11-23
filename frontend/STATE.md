@@ -2,18 +2,18 @@
 
 Each frontend host creates an `ApplicationRuntime` with one injected
 `ApplicationClient` and one Redux Toolkit store. The Rust engine is
-authoritative; the store holds the latest state it sent and feedback for the
-latest command. RTK Query is not used.
+authoritative; the store holds the connection and the latest state it sent.
+RTK Query is not used.
 
 | File | Responsibility |
 | --- | --- |
 | [Client port](packages/application-client/index.ts) | Generated wire types, `observe`/`setTarget`/`replaceSettings`/`tryProcessing`, `ApplicationError` |
 | [HTTP client](packages/application-client/http.ts) | Fetch transport and SSE decoding for the [portal API](../crates/surfaces/web-portal/HTTP-CONTRACT.md); `httpPreviewClient` for the preview stream |
-| [Slice](packages/application-state/slice.ts) | Connection status, latest state, latest command |
+| [Slice](packages/application-state/slice.ts) | Connection status, latest state |
 | [Commands](packages/application-state/commands.ts) | Typed thunks; section replacement against the observed revision |
 | [Observation listener](packages/application-state/observation.ts) | Stream lifetime and reconnect |
 | [Runtime assembly](packages/application-state/index.ts) | Store, injected client, listener, observation leases |
-| [Provider](packages/application-react/provider.tsx) and [hooks](packages/application-react/index.tsx) | React binding; the Provider holds an observation lease |
+| [Connection hook](packages/application-react/index.tsx) | React binding (`useSyncExternalStore`) of the portal and the TV app; `WebPortal` and the TV's `usePortal` each hold an observation lease |
 
 ```mermaid
 flowchart LR
@@ -35,10 +35,9 @@ const revision = await application.store.dispatch(
 
 A command resolves when the engine has finished it and rejects with the
 server's `Failure` (`invalid` with `field`, `stale_revision` with `current`,
-`faulted`, `adapter`, ...). The slice records `commandSubmitted`, then
-`commandSucceeded` or `commandFailed`, for the latest command only; a late reply
-to an earlier command cannot overwrite it. Observed state changes only when the
-stream delivers a new state.
+`faulted`, `adapter`, ...); the store records neither, so each caller shows
+the result of its own commands. Observed state changes only when the stream
+delivers a new state.
 
 `configureCapture`/`configureOutput`/`configureProcessing` copy the observed
 settings, replace one section and send `expected` (`configureSetup` replaces

@@ -1,4 +1,5 @@
 import { use, useId, useState } from 'react';
+import type { FailureSection } from '@prysm/application-client';
 import {
   adapterFor,
   createSection,
@@ -23,7 +24,7 @@ export function SectionFields<S extends AdapterSection>({
   base,
   onChange,
 }: {
-  section: 'capture' | 'output';
+  section: FailureSection;
   adapters: AdapterUis<S>;
   value: S;
   /** The saved section, offered again when its kind is chosen. */

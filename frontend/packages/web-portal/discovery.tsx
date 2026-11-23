@@ -2,6 +2,7 @@ import { use, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   type Candidate,
   type DiscoveryClient,
+  type FailureSection,
 } from '@prysm/application-client';
 import { keepNames, keptName } from './device-name';
 import { DiscoveryContext } from './discovery-context';
@@ -30,7 +31,7 @@ const detailOf = ({ detail, led_count }: Candidate) =>
  */
 function useCandidates(
   discovery: DiscoveryClient | null,
-  section: 'capture' | 'output',
+  section: FailureSection,
   kind: string,
   field: string,
   auto: boolean,
@@ -97,7 +98,7 @@ export function FindDevices({
   fallback,
   onPick,
 }: {
-  section: 'capture' | 'output';
+  section: FailureSection;
   kind: string;
   /** The field it fills, for its errors, such as `capture.path`. */
   path: string;

@@ -3,6 +3,7 @@ import {
   situationFailure,
   type ApplicationSnapshot,
   type DiscoveryClient,
+  type FailureSection,
   type LightingSituation,
   type LightingTarget,
 } from '@prysm/application-client';
@@ -165,7 +166,7 @@ export function SettingsRoute() {
 }
 
 /** The video source or lights editor, on a page of its own. */
-export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
+export function EditorRoute({ section }: { section: FailureSection }) {
   const portal = usePortal();
   const nav = useNav();
   const { snapshot, host, online, dispatch, commands } = portal;

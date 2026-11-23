@@ -18,6 +18,12 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import type {
+  Mode,
+  RemoteReceiverSettings,
+  Settings as SavedSettings,
+  State,
+} from '@prysm/contracts/host-desktop';
 
 const root = path.resolve(import.meta.dirname, '../..');
 const target = process.env.CARGO_TARGET_DIR ?? path.join(root, 'target');
@@ -36,7 +42,7 @@ const senderBin =
 const BOUND_MS = 10_000;
 
 /** A small raw picture: no encoder, little CPU. */
-export const remoteCapture = {
+export const remoteCapture: RemoteReceiverSettings = {
   kind: 'remote',
   width: 32,
   height: 18,
@@ -44,32 +50,25 @@ export const remoteCapture = {
   encoding: 'raw',
 };
 
-/** What a test's settings file holds before Prysm starts. */
+/**
+ * What a test's settings file holds before Prysm starts: any part of the
+ * settings, since Prysm fills the rest with its defaults.
+ */
 export type Settings = Record<string, unknown>;
 
-/** A span of sizes or rates, as `POST /api/v1/capture/modes` answers. */
-export interface Span {
-  min: number;
-  max: number;
-  step: number;
-}
-
-/** One size and rate a capture delivers, each a span. */
-export interface Mode {
-  width: Span;
-  height: Span;
-  fps: Span;
-}
-
 /** One size at one rate. */
-export const fixedMode = (width: number, height: number, fps: number) => ({
+export const fixedMode = (
+  width: number,
+  height: number,
+  fps: number,
+): Mode => ({
   width: { min: width, max: width, step: 1 },
   height: { min: height, max: height, step: 1 },
   fps: { min: fps, max: fps, step: 1 },
 });
 
 /** Every even size up to `width` × `height`, at 1 to `fps` fps. */
-export const anyMode = (width: number, height: number, fps: number) => ({
+export const anyMode = (width: number, height: number, fps: number): Mode => ({
   width: { min: 2, max: width, step: 2 },
   height: { min: 2, max: height, step: 2 },
   fps: { min: 1, max: fps, step: 1 },
@@ -80,14 +79,6 @@ export interface FakeDevice {
   name: string;
   path: string;
   modes: Mode[];
-}
-
-/** The parts of `GET /api/v1/state` the tests read. */
-export interface State {
-  target: string;
-  /** `failure` only while stopped or showing the lights' own effects. */
-  session: { state: string; failure?: { message: string } };
-  settings: { processing: { brightness_percent: number } };
 }
 
 /** A child process whose output lines can be awaited. */
@@ -251,7 +242,7 @@ export interface Prysm {
   /** The engine's state, read straight from the API. */
   state(): Promise<State>;
   /** The settings file as it is on disk now. */
-  savedSettings(): Promise<Settings>;
+  savedSettings(): Promise<SavedSettings>;
   /** Stop Prysm and start it again at the same address, as an update does. */
   restart(): Promise<void>;
 }
@@ -295,7 +286,7 @@ export const test = base.extend<{
       await provide({
         url,
         savedSettings: async () =>
-          JSON.parse(await readFile(file, 'utf8')) as Settings,
+          JSON.parse(await readFile(file, 'utf8')) as SavedSettings,
         state: async () => {
           const response = await fetch(`${url}/api/v1/state`);
           expect(response.status).toBe(200);

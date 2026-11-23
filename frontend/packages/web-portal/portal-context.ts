@@ -6,9 +6,9 @@ import type {
   LightingSituation,
   ColorsClient,
   DiscoveryClient,
+  FailureSection,
   PreviewClient,
 } from '@prysm/application-client';
-import type { useApplicationDispatch } from '@prysm/application-react';
 import {
   createContext,
   use,
@@ -101,12 +101,12 @@ export interface Portal {
   snapshot: ApplicationSnapshot<Section, Section>;
   online: boolean;
   commands: ApplicationRuntime<Section, Section>['commands'];
-  dispatch: ReturnType<typeof useApplicationDispatch<Section, Section>>;
+  dispatch: ApplicationRuntime<Section, Section>['store']['dispatch'];
   /** What the lights are doing, decided once for every page. */
   lighting: LightingSituation;
   path: PathState;
   /** The live problem of one side, in plain words; `null` while it works. */
-  problemAt: (section: 'capture' | 'output') => string | null;
+  problemAt: (section: FailureSection) => string | null;
   saveProcessing: (expected: number, processing: Processing) => Promise<number>;
   tryProcessing: (processing: Processing) => Promise<unknown>;
   /** How setup ended, shown on Home and Settings until setup opens again. */

@@ -3,31 +3,38 @@
  * portal on this TV, or the slim package's remote Prysm
  * (`preferences.prysm_address`).
  */
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type {
+  CaptureSettings,
+  OutputSettings,
+} from '@prysm/contracts/application';
 import {
   failureOf,
   type ApplicationClient,
   type ApplicationSnapshot,
   type LightingTarget,
 } from '@prysm/application-client';
+import { useConnection } from '@prysm/application-react';
 import {
   createApplicationRuntime,
   type ApplicationRuntime,
-  type Connection,
 } from '@prysm/application-state';
 
-type Snapshot = ApplicationSnapshot<unknown, unknown>;
-type Runtime = ApplicationRuntime<unknown, unknown>;
+/**
+ * The portal's state with the sections any Prysm sends (`{ kind, ... }`):
+ * the full package's own, or the slim package's computer's.
+ */
+export type PortalSnapshot = ApplicationSnapshot<
+  CaptureSettings,
+  OutputSettings
+>;
+type Runtime = ApplicationRuntime<CaptureSettings, OutputSettings>;
 
 export interface PortalOptions {
   /** An application client for the portal at `baseUrl` (an origin). */
-  client: (baseUrl: string) => ApplicationClient<unknown, unknown>;
+  client: (
+    baseUrl: string,
+  ) => ApplicationClient<CaptureSettings, OutputSettings>;
   /**
    * Whether the portal answers at all, ignoring CORS (a `no-cors` request):
    * tells "not allowed from the TV" from "not reachable".
@@ -106,18 +113,7 @@ export function usePortal(
       baseUrl && supported ? createApplicationRuntime(client(baseUrl)) : null,
     [baseUrl, supported, client],
   );
-  const subscribe = useCallback(
-    (changed: () => void) =>
-      runtime ? runtime.store.subscribe(changed) : () => {},
-    [runtime],
-  );
-  const connection: Connection<unknown, unknown> | null = useSyncExternalStore(
-    subscribe,
-    () =>
-      runtime
-        ? runtime.selectors.selectConnection(runtime.store.getState())
-        : null,
-  );
+  const connection = useConnection(runtime);
   useEffect(
     () => (runtime && active ? runtime.connect() : undefined),
     [runtime, active],
@@ -156,7 +152,7 @@ export function usePortal(
   // The last state of this runtime, until STALE_MS after its stream left.
   const [kept, setKept] = useState<{
     runtime: Runtime;
-    snapshot: Snapshot;
+    snapshot: PortalSnapshot;
     expired: boolean;
   } | null>(null);
   if (live && runtime && kept?.snapshot !== live)
@@ -171,7 +167,7 @@ export function usePortal(
     );
     return () => clearTimeout(timer);
   }, [stale, active]);
-  const snapshot: Snapshot | null = live ?? stale?.snapshot ?? null;
+  const snapshot: PortalSnapshot | null = live ?? stale?.snapshot ?? null;
   return {
     baseUrl,
     supported,

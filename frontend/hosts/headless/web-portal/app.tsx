@@ -8,7 +8,6 @@ import type {
   DiscoveryClient,
   PreviewClient,
 } from '@prysm/application-client';
-import { ApplicationProvider } from '@prysm/application-react/provider';
 import type { ApplicationRuntime } from '@prysm/application-state';
 import { WebPortal } from '@prysm/web-portal';
 import { headlessCaptures, headlessOutputs } from './kinds';
@@ -32,17 +31,15 @@ export function HeadlessWebPortal({
   replaced?: () => Promise<boolean>;
 }) {
   return (
-    <ApplicationProvider application={application}>
-      <WebPortal
-        application={application}
-        captures={headlessCaptures}
-        preview={preview}
-        colors={colors}
-        discovery={discovery}
-        captureModes={captureModes}
-        replaced={replaced}
-        outputs={headlessOutputs}
-      />
-    </ApplicationProvider>
+    <WebPortal
+      application={application}
+      captures={headlessCaptures}
+      preview={preview}
+      colors={colors}
+      discovery={discovery}
+      captureModes={captureModes}
+      replaced={replaced}
+      outputs={headlessOutputs}
+    />
   );
 }

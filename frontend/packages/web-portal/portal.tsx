@@ -13,10 +13,7 @@ import {
   useMatch,
   type RouteObject,
 } from 'react-router';
-import {
-  useApplication,
-  useApplicationDispatch,
-} from '@prysm/application-react';
+import { useConnection } from '@prysm/application-react';
 import type { AdapterSection } from './adapters';
 import { useDeveloper } from './developer';
 import { CaptureModesContext } from './capture-modes';
@@ -75,8 +72,8 @@ export const connectionGraceMs = 1000;
 function PortalFrame() {
   const host = useHost();
   const { application } = host;
-  const connection = useApplication(application);
-  const dispatch = useApplicationDispatch<AdapterSection, AdapterSection>();
+  const connection = useConnection(application);
+  const { dispatch } = application.store;
   // The last state (and every draft) stays shown while reconnecting.
   const { snapshot } = connection;
   const online = connection.status === 'connected';
@@ -242,6 +239,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>(
   props: WebPortalProps<C, O>,
 ) {
   const [router] = useState(() => createHashRouter(portalRoutes));
+  // Above the router: a page that fails keeps the state stream.
+  const { application } = props;
+  useEffect(() => application.connect(), [application]);
   // The pages are not generic: they pass each section back only to the
   // host's own commands and adapters, so its kinds can be forgotten here.
   return (

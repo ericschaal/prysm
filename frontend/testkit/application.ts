@@ -5,6 +5,7 @@ import {
   type ApplicationClient,
   type ApplicationSnapshot,
   type Failure,
+  type FailureSection,
 } from '@prysm/application-client';
 
 export const defaultProcessing = {
@@ -133,7 +134,7 @@ export function fakeApplicationPort<C, O>(initial: {
       calls.push(`target:${target}`);
       failIfScripted();
       const { capture, output } = snapshot.settings;
-      let missing: 'output' | 'capture' | null = null;
+      let missing: FailureSection | null = null;
       if (target !== 'off' && !output) missing = 'output';
       else if (target === 'screen_sync' && !capture) missing = 'capture';
       if (missing) {

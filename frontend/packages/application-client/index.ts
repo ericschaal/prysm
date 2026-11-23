@@ -24,6 +24,7 @@ export type {
   CaptureSettings,
   ColorsEvent,
   Failure,
+  FailureSection,
   LightingFailure,
   LightingTarget,
   Mode,
@@ -403,7 +404,7 @@ export interface ColorsClient {
  */
 export interface DiscoveryClient {
   candidates(
-    section: 'capture' | 'output',
+    section: FailureSection,
     kind: string,
     signal?: AbortSignal,
   ): Promise<Candidate[]>;
