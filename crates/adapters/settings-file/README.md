@@ -195,3 +195,8 @@ the settings the file now holds.
 
 Permissions of an existing file are kept. A newly created file is owner-only
 (`0600` on Unix).
+
+These steps are the public module `atomic` (`Staged`, `sync_directory`), and
+`atomic::write` runs them in one call with given permissions; the TV
+supervisor writes its files with it. There a failed directory sync is an
+error, although the file is already replaced.

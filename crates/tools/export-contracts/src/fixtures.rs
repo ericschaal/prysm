@@ -2,9 +2,10 @@
 //! schemas by the frontend contract tests.
 use prysm_capture_device::{DeviceSettings, DeviceSource};
 use prysm_capture_file::{FileSettings, FileSource};
-use prysm_capture_remote::{RemoteReceiver, RemoteSettings, StreamEncoding};
+use prysm_capture_remote::{RemoteReceiver, RemoteSettings};
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
+use prysm_ports::StreamEncoding;
 use prysm_ports::{
     AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
     DeviceBrightness, DeviceReport, Error, Input, Latency, LightingTarget, Mode, Modes,

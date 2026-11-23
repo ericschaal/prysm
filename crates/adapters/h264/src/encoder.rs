@@ -2,7 +2,7 @@
 use crate::software::Software;
 use crate::{BITRATE, DEFAULT_BITRATE, FORMAT, FrameKind, H264Error};
 use prysm_core::Frame;
-use prysm_ports::{Mode, Span};
+use prysm_ports::{Mode, Span, StreamEncoding};
 
 /// `min` to `max` in steps of `step`, for the limits below.
 const fn span(min: u32, max: u32, step: u32) -> Span {
@@ -19,6 +19,16 @@ pub enum Backend {
 }
 
 impl Backend {
+    /// The backend that encodes `encoding`; `None` for raw.
+    #[must_use]
+    pub const fn of(encoding: StreamEncoding) -> Option<Self> {
+        match encoding {
+            StreamEncoding::H264Hardware => Some(Self::Hardware),
+            StreamEncoding::H264Software => Some(Self::Software),
+            StreamEncoding::Raw => None,
+        }
+    }
+
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {

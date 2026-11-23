@@ -2,17 +2,14 @@
 //! keeps reconnecting to the receiver, follows its request and tells the
 //! link whether frames flow.
 use futures::future::BoxFuture;
-use prysm_capture_remote::{
-    Close, RemoteSender, RemoteSettings, SendError, StreamEncoding, WireError,
-};
+use prysm_capture_remote::{Close, RemoteSender, RemoteSettings, SendError, WireError};
 use prysm_capture_webos::VideoSignal;
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSink, Result, chain};
+use prysm_ports::{Error, FrameSink, Result, StreamEncoding, chain};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{
-    Command, Event, FailureKind, HEARTBEAT, SlimEncoding, SlimLink, SlimStatus, WorkerFailure,
-    WorkerStatus,
+    Command, Event, FailureKind, HEARTBEAT, SlimLink, SlimStatus, WorkerFailure, WorkerStatus,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -54,7 +51,7 @@ enum UplinkState {
     Starting,
     /// Connected; frames go out in this encoding. The only state with an
     /// open connection.
-    Sending(SlimEncoding),
+    Sending(StreamEncoding),
     /// The receiver stopped the stream (its lighting is off, or its capture
     /// settings changed): the capture is released until a receiver takes a
     /// connection again.
@@ -174,7 +171,7 @@ impl Report {
                 _ => {
                     let next = Self {
                         requested: Some(request),
-                        uplink: Sending(slim_encoding(request.encoding)),
+                        uplink: Sending(request.encoding),
                         refused: None,
                     };
                     (next, Action::Keep)
@@ -273,16 +270,6 @@ impl Flow {
 
     fn lock(&self) -> MutexGuard<'_, Report> {
         self.report.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-/// The Luna name of a requested encoding.
-#[must_use]
-pub fn slim_encoding(encoding: StreamEncoding) -> SlimEncoding {
-    match encoding {
-        StreamEncoding::H264Hardware => SlimEncoding::H264Hardware,
-        StreamEncoding::H264Software => SlimEncoding::H264Software,
-        StreamEncoding::Raw => SlimEncoding::Raw,
     }
 }
 
@@ -639,9 +626,9 @@ mod tests {
         let replaced = || UplinkEvent::Lost(Loss::Replaced(text("r")));
         let failed = || UplinkEvent::Lost(Loss::Failed(text("f")));
         let dropped = || UplinkEvent::Lost(Loss::Dropped(text("d")));
-        let software = Sending(SlimEncoding::H264Software);
-        let hardware = Sending(SlimEncoding::H264Hardware);
-        let raw = Sending(SlimEncoding::Raw);
+        let software = Sending(StreamEncoding::H264Software);
+        let hardware = Sending(StreamEncoding::H264Hardware);
+        let raw = Sending(StreamEncoding::Raw);
         let (keep, drop, refuse) = (Action::Keep, Action::Drop, Action::Refuse(text("busy")));
         #[rustfmt::skip]
         let table = [
@@ -805,9 +792,9 @@ mod tests {
         for (uplink, link) in [
             (Starting, SlimLink::Starting {}),
             (
-                Sending(SlimEncoding::Raw),
+                Sending(StreamEncoding::Raw),
                 SlimLink::Sending {
-                    encoding: SlimEncoding::Raw,
+                    encoding: StreamEncoding::Raw,
                     fps: 7,
                 },
             ),

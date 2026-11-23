@@ -2,12 +2,10 @@
 //! trip, recovery, keyframe requests, the stopped close and refusal. Every
 //! wait is bounded.
 use prysm_capture_remote::testkit::{BOUND, Portal, failure, receive, try_receive};
-use prysm_capture_remote::{
-    Close, RemoteSender, RemoteSettings, RemoteSource, StreamEncoding, WireError,
-};
+use prysm_capture_remote::{Close, RemoteSender, RemoteSettings, RemoteSource, WireError};
 use prysm_core::Frame;
 use prysm_h264::{Backend, Encoder, EncoderSettings, FORMAT, H264Error};
-use prysm_ports::{FrameSink, FrameSource};
+use prysm_ports::{FrameSink, FrameSource, StreamEncoding};
 use prysm_testkit::eventually;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;

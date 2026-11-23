@@ -1,7 +1,9 @@
 //! The TV capture, shaped by the receiver's request.
 use crate::link::Flow;
-use prysm_capture_remote::{Offer, RemoteSettings, StreamEncoding};
+use prysm_capture_remote::{Offer, RemoteSettings};
 use prysm_capture_webos::WebosSettings;
+use prysm_h264::Backend;
+use prysm_ports::StreamEncoding;
 use prysm_ports::{FrameSource, Mode, Pull, Result};
 use prysm_webos_link::worker::StopHandle;
 use std::sync::Arc;
@@ -12,7 +14,7 @@ use std::time::Duration;
 #[must_use]
 pub fn offer(capture: &[Mode]) -> Offer {
     Offer::new(StreamEncoding::ALL.into_iter().filter_map(|encoding| {
-        let modes = match encoding.backend() {
+        let modes = match Backend::of(encoding) {
             None => capture.to_vec(),
             Some(backend) if backend.available() => capture
                 .iter()

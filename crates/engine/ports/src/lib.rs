@@ -7,6 +7,7 @@ mod adapter;
 mod calibration;
 mod calibrations;
 pub mod capture_size;
+mod encoding;
 mod error;
 mod handoff;
 mod hangup;
@@ -28,6 +29,7 @@ pub use calibrations::{
     Calibration, CorrectionControls, MAX_CALIBRATION_ID_LEN, MAX_CALIBRATION_NAME_CHARS,
     MAX_CALIBRATIONS, PrimaryControls,
 };
+pub use encoding::StreamEncoding;
 pub use error::{Error, Result, ValidationError, chain};
 pub use handoff::{
     Accepted, Answer, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_PROTOCOL_PREFIX,

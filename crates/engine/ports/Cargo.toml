@@ -7,6 +7,8 @@ publish.workspace = true
 description = "Blocking adapter ports, settings and snapshot types for the Prysm runtime"
 
 [features]
+# `utoipa::ToSchema` for `StreamEncoding`, for the contract exporter.
+schema = ["dep:utoipa"]
 # `Hangup::waits`, so a test cuts only a call that waits.
 testkit = []
 
@@ -20,6 +22,7 @@ nix = { workspace = true, features = ["poll"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_path_to_error.workspace = true
+utoipa = { workspace = true, optional = true }
 
 [lints]
 workspace = true

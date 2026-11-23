@@ -1,4 +1,7 @@
 //! Settings persisted as one pretty-printed JSON file. See README.md for guarantees.
+pub mod atomic;
+
+use atomic::Staged;
 use prysm_ports::{Error, Result, Settings, SettingsStore};
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -8,7 +11,7 @@ use serde_json::{Number, Value};
 use std::{
     ffi::OsStr,
     fmt, fs, io,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -203,7 +206,7 @@ pub struct SettingsFile {
     unread: bool,
     sync_directory: fn(&Path) -> io::Result<()>,
     /// Renames the written temporary file over the path.
-    replace: fn(tempfile::NamedTempFile, &Path) -> io::Result<()>,
+    replace: fn(Staged, &Path) -> io::Result<()>,
     /// Gives the file a second name.
     link: fn(&Path, &Path) -> io::Result<()>,
 }
@@ -215,8 +218,8 @@ impl SettingsFile {
         Self {
             path: path.into(),
             unread: false,
-            sync_directory,
-            replace,
+            sync_directory: atomic::sync_directory,
+            replace: Staged::replace,
             link: |from, to| fs::hard_link(from, to),
         }
     }
@@ -228,10 +231,7 @@ impl SettingsFile {
     }
 
     #[cfg(test)]
-    fn with_replace(
-        mut self,
-        replace: fn(tempfile::NamedTempFile, &Path) -> io::Result<()>,
-    ) -> Self {
+    fn with_replace(mut self, replace: fn(Staged, &Path) -> io::Result<()>) -> Self {
         self.replace = replace;
         self
     }
@@ -248,10 +248,7 @@ impl SettingsFile {
     }
 
     fn directory(&self) -> &Path {
-        match self.path.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent,
-            _ => Path::new("."),
-        }
+        atomic::directory(&self.path)
     }
 
     fn failed(
@@ -387,7 +384,7 @@ impl SettingsStore for SettingsFile {
 
         // Everything before the rename only touches the temporary file, which
         // is removed on drop; the existing file stays intact.
-        let mut temporary = tempfile::NamedTempFile::new_in(self.directory())
+        let mut temporary = Staged::new(&self.path)
             .map_err(|error| self.failed("create a temporary file for", error))?;
         match fs::metadata(&self.path) {
             Ok(existing) if !existing.is_file() => {
@@ -400,15 +397,13 @@ impl SettingsStore for SettingsFile {
             // temporary file's, owner-only.
             Ok(_) if self.unread => {}
             Ok(existing) => temporary
-                .as_file()
                 .set_permissions(existing.permissions())
                 .map_err(|error| self.failed("copy permissions of", error))?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(self.failed("inspect", error)),
         }
         temporary
-            .write_all(&bytes)
-            .and_then(|()| temporary.as_file().sync_all())
+            .write(&bytes)
             .map_err(|error| self.failed("write a temporary file for", error))?;
 
         let aside = if self.unread {
@@ -467,13 +462,6 @@ impl SettingsStore for SettingsFile {
     }
 }
 
-fn replace(temporary: tempfile::NamedTempFile, path: &Path) -> io::Result<()> {
-    temporary
-        .persist(path)
-        .map(drop)
-        .map_err(|error| error.error)
-}
-
 /// Copy `from` to the new file `to`, which must not exist; nothing is left
 /// at `to` when it fails.
 fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
@@ -491,17 +479,6 @@ fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
         let _ = fs::remove_file(to);
     }
     copied
-}
-
-#[cfg(unix)]
-fn sync_directory(directory: &Path) -> io::Result<()> {
-    fs::File::open(directory)?.sync_all()
-}
-
-/// Other platforms cannot open a directory for syncing; the rename is still atomic.
-#[cfg(not(unix))]
-fn sync_directory(_: &Path) -> io::Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]

@@ -6,8 +6,9 @@
 //!
 //! Messages are read tolerantly: unknown fields and message types are
 //! ignored, so a peer of the same version may add them.
-use crate::request::{RemoteSettings, StreamEncoding};
+use crate::request::RemoteSettings;
 use prysm_core::{FrameError, PixelFormat, YuvRange, YuvStandardMatrix};
+use prysm_ports::StreamEncoding;
 use prysm_ports::{CAPTURE_PROTOCOL_PREFIX, CAPTURE_VERSION, ValidationError};
 use serde::{Deserialize, Serialize};
 use std::fmt;

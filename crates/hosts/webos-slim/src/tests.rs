@@ -1,16 +1,17 @@
 use crate::capture::{RequestedCapture, settings};
-use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
+use crate::link::{ForwarderLink, Uplink, Upstream};
 use crate::resolve::Resolver;
 use prysm_capture_remote::testkit::Portal;
-use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError, StreamEncoding};
+use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError};
 use prysm_capture_webos::{Readiness, VideoSignal, WebosSettings};
 use prysm_core::Frame;
+use prysm_ports::StreamEncoding;
 use prysm_ports::{Error, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use prysm_webos_link::worker::{Link, Peer, Stop, StopHandle};
 use prysm_webos_link::{Command, Event, LightingTarget, SlimStatus, Video, WorkerStatus};
-use prysm_webos_link::{FailureKind, SlimEncoding, SlimLink};
+use prysm_webos_link::{FailureKind, SlimLink};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -168,7 +169,7 @@ fn replaced(event: &Event) -> Option<&str> {
     failure(event, FailureKind::Replaced)
 }
 
-fn encoding(event: &Event) -> Option<SlimEncoding> {
+fn encoding(event: &Event) -> Option<StreamEncoding> {
     match link(event)? {
         SlimLink::Sending { encoding, .. } => Some(*encoding),
         _ => None,
@@ -314,7 +315,7 @@ async fn frames_reach_a_receiver_that_starts_later() {
     .unwrap();
     assert_eq!((frame.width(), frame.height()), (16, 9));
     peer.wait_for("a capturing status sending raw", |e| {
-        capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::Raw)
+        capturing(e) == Some(true) && encoding(e) == Some(StreamEncoding::Raw)
     })
     .await;
     Box::new(receiver).close().unwrap();
@@ -334,7 +335,7 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
     let opened = Opened::nv12();
     let (mut peer, _feed, task) = start(&opened, connect(&portal));
     peer.wait_for("a capturing status sending software H.264", |e| {
-        capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
+        capturing(e) == Some(true) && encoding(e) == Some(StreamEncoding::H264Software)
     })
     .await;
     let frame = tokio::task::spawn_blocking(move || {
@@ -524,7 +525,7 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
     let opened = Opened::nv12();
     let (mut peer, _feed, task) = start(&opened, connect(&portal));
     peer.wait_for("a capturing status sending software H.264", |e| {
-        capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
+        capturing(e) == Some(true) && encoding(e) == Some(StreamEncoding::H264Software)
     })
     .await;
     let (frame, receiver) = tokio::task::spawn_blocking(move || {
@@ -874,7 +875,7 @@ async fn a_failed_request_is_refused_until_the_request_changes() {
         .await;
     assert!(encoder_failure(&event).unwrap().contains("no encoder here"));
     peer.wait_for("a capturing status sending software H.264", |e| {
-        capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
+        capturing(e) == Some(true) && encoding(e) == Some(StreamEncoding::H264Software)
     })
     .await;
     let refusals: Vec<String> = log
@@ -975,21 +976,13 @@ fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
 }
 
 #[test]
-fn requests_map_to_capture_settings_and_encodings() {
+fn requests_map_to_capture_settings() {
     let shape = settings(&RemoteSettings::default());
     assert_eq!(
         (shape.width, shape.height, shape.fps, shape.include_ui),
         (320, 180, 30, true)
     );
     shape.validate().unwrap();
-    for (encoding, slim) in [
-        (StreamEncoding::H264Hardware, SlimEncoding::H264Hardware),
-        (StreamEncoding::H264Software, SlimEncoding::H264Software),
-        (StreamEncoding::Raw, SlimEncoding::Raw),
-    ] {
-        assert_eq!(slim_encoding(encoding), slim);
-        assert_eq!(encoding.name(), slim.name());
-    }
 }
 
 #[test]

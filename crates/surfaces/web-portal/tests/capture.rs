@@ -1,10 +1,8 @@
 //! The capture stream path against a real engine whose source is the remote
 //! receiver: a sender (the TV's slim worker) streams through the portal.
-use prysm_capture_remote::{
-    RemoteReceiver, RemoteSender, RemoteSettings, StreamEncoding, WireError,
-};
+use prysm_capture_remote::{RemoteReceiver, RemoteSender, RemoteSettings, WireError};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, FrameSink, LightingTarget, Modes, Settings};
+use prysm_ports::{AdapterSettings, FrameSink, LightingTarget, Modes, Settings, StreamEncoding};
 use prysm_runtime::fakes::{CallLog, FakeOutputSettings, FakeOutputs, MemoryStore};
 use prysm_runtime::{EngineHandle, Prysm, Shutdown};
 use prysm_testkit::{eventually, within_async};

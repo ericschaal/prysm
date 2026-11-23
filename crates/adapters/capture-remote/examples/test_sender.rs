@@ -19,8 +19,9 @@
 //! an [`Offer`] of those encodings' modes (`{ "raw": [Mode, ...] }`) instead
 //! of every request the portal accepts in every encoding, as a TV with fewer
 //! encoders does.
-use prysm_capture_remote::{Offer, RemoteSender, StreamEncoding};
+use prysm_capture_remote::{Offer, RemoteSender};
 use prysm_core::{Frame, PixelFormat};
+use prysm_ports::StreamEncoding;
 use prysm_ports::{FrameSink, Mode};
 use std::collections::BTreeMap;
 use std::io::Write;

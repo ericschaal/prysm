@@ -7,8 +7,18 @@ it tests the artifacts the configuration names (`cargo xtask dist`,
 [packaging](packaging.md#artifacts-in-dist)). A run writes its report and
 evidence (snapshots, logs, backups) to `work/acceptance/<time>-<stage>/`,
 which is not tracked. Copy what matters into
-[research](../../research/README.md). How it came to this shape is in the
-[plan](acceptance-plan.md).
+[research](../../research/README.md).
+
+It tests what unit and end-to-end tests cannot: real devices (a capture
+card, WLED, the TV, the feed), the artifacts as they are delivered
+(installed, started, restarted and removed on the real system), the whole
+chain from a colour on the screen to that colour on the right LEDs, and what
+takes time or a person (soaks, the `eyes` stage). A check that a fake could
+prove belongs in the unit or end-to-end tests, which run in CI. The runner
+has no copy of Prysm's API: it types only the fields its checks read, keeps
+settings as opaque JSON, checks the closed sets it names (targets,
+encodings) against the generated contracts, and re-implements no product
+logic: where a check would need some, it asks Prysm or uses explicit values.
 
 ```sh
 cp scripts/acceptance/config.example.toml scripts/acceptance/config.toml   # then fill in
@@ -311,6 +321,23 @@ may be there before the run, and nothing is left after it.
   prysm-headless:local` when the tag exists (the preflight saw none, so it is
   the run's, also after an interrupted load), the run directory removed.
   Nothing else of Docker's is touched.
+
+#### The host seam
+
+Every host cell runs the same checks through one interface, `Host` in
+[`host.py`](../../scripts/acceptance/prysm_acceptance/host.py): whether the
+target can run the cell, deliver, start, stop, logs, the base URL and the
+sender address WLED should report. Whether Prysm arrives as a binary, a
+package or an image (`Delivery` in `options.py`) changes only the seam:
+
+| Seam | Deliver | Start and stop | Logs |
+| --- | --- | --- | --- |
+| Binary, local (`LocalBinary`) | none | child process, SIGTERM | file |
+| Binary, SSH (`SshBinary`) | copy to a run directory | over SSH, listening on the LAN | fetched file |
+| Package, SSH (`SshDeb`) | copy, `apt-get install` | systemd unit | `journalctl` |
+| Image, SSH (`SshImage`) | copy, `docker load` | `docker compose` | `compose logs` |
+
+A remote `file` source also copies the clip to the target.
 
 #### Add a cell
 
@@ -764,6 +791,21 @@ boot, its state with `getState` when `[tv] target` is set.
 
 On macOS, a Local Network refusal (`EHOSTUNREACH`) means the app running the
 script needs Local Network access; the runner says so.
+
+## Limits
+
+- Capture on the Mac (`mac-binary-device`) needs the run started from a
+  terminal that has camera permission: macOS asks no process started
+  elsewhere. Prysm's open of the card then fails with `NoCameraAccess`;
+  that failure has not been run on the bench.
+- A remote Mac is not implemented, so with the runner on Linux the Mac cells
+  are unavailable. Windows as the runner's computer is not a goal.
+- Not verified on the bench: `[linux] target = "local"` on a Linux runner
+  (the binary cells use the Mac's code; the package and image cells skip it
+  as not implemented), `installed = "replace"` on the Linux package cell,
+  the runner's own wake-on-LAN packet (the TV answered each time), and on
+  the TV the retry after a failed UI capture open, which only the capture
+  adapter's tests exercise.
 
 ## Develop the runner
 
