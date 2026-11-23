@@ -69,15 +69,12 @@ const webosQuery = { kind: 'webos' } as const;
 export function WebosEditor(props: EditorProps<WebosSettings>) {
   const modes = useCaptureModes(webosQuery);
   return (
-    <>
-      <TvPictureFields
-        {...props}
-        defaults={captureDefaults.webos}
-        modes={modes}
-        source="This TV"
-        unreachable="This TV can’t say what it captures just now."
-      />
-      <p className="help">Video comes directly from this TV.</p>
-    </>
+    <TvPictureFields
+      {...props}
+      defaults={captureDefaults.webos}
+      modes={modes}
+      source="This TV"
+      unreachable="This TV can’t say what it captures just now."
+    />
   );
 }

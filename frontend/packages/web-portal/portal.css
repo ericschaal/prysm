@@ -1427,7 +1427,7 @@ fieldset > .field-note {
 
 /*
  * The mode: two option cards side by side, each an icon, its name and one
- * line on what it does. Selected speaks the calibration chips' language:
+ * line on what it does. Selected speaks the segments' chosen look:
  * a light fill with dark ink; lit, the fill takes the light's own colours.
  * Off, the chosen card is only outlined: what Power will turn on, nothing
  * that runs. The other card is quiet but plainly a button.
@@ -1503,7 +1503,7 @@ fieldset > .field-note {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 72%, transparent) inset;
   color: var(--fg);
 }
-/* Lit, it is filled, as a chosen calibration is, in the light's colours. */
+/* Lit, it is filled in the light's colours. */
 .light-card[data-lit='true']
   .modes[data-mode='screen_sync']
   [data-target='screen_sync'],
@@ -1637,6 +1637,8 @@ fieldset > .field-note {
  */
 .light-card .card-control {
   display: grid;
+  /* A track with more than fits scrolls; it never widens the card. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
   margin-top: var(--space-5);
 }
@@ -1658,86 +1660,141 @@ fieldset > .field-note {
 }
 
 /*
- * The style: one row of equal segments on a quiet track, one tap each; the
- * chosen one speaks the chips' selected look. Small text and no padding, so
- * five fit the narrowest phone; where the row is too narrow for equal
- * segments, each keeps its whole label.
+ * Style and Calibration: one row of segments on a quiet track, one tap
+ * each, the chosen one a light pill with dark ink. Equal while they fit;
+ * where they don't, each keeps its whole label (a name up to 16
+ * characters, then an ellipsis) and the row scrolls sideways on its one
+ * line, without a scrollbar. Small text and no padding, so the five
+ * styles fit the narrowest phone (320 px); names get room of their own.
  */
 .segments {
-  display: grid;
-  grid-auto-flow: column;
-  /* Equal while they fit; never cut. */
-  grid-auto-columns: minmax(max-content, 1fr);
-  gap: 2px;
-  padding: 2px;
+  /* The chosen look: glass over the track, the label staying as it is. */
+  --chosen-glass: color-mix(in srgb, var(--fg) 22%, transparent);
+  --chosen-rim: 0 0 0 1px color-mix(in srgb, var(--fg) 36%, transparent) inset;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
+.segments-scroll {
+  --fade: var(--space-6);
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(max-content, 1fr);
+  gap: 2px;
+  padding: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: var(--fade);
+  scrollbar-width: none;
+  border-radius: inherit;
+}
+.segments-scroll::-webkit-scrollbar {
+  display: none;
+}
+/* Lit, the glass is tinted in the light's colours. */
+.light-card[data-lit='true'] .segments {
+  --chosen-glass:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--light-a) 52%, transparent),
+      color-mix(in srgb, var(--light-c) 46%, transparent) 55%,
+      color-mix(in srgb, var(--light-b) 52%, transparent)
+    ),
+    color-mix(in srgb, var(--fg) 22%, transparent);
+}
+/*
+ * The chosen look: one pill under the labels that slides to the chosen
+ * segment, so a change is seen as a move. Drawn once it is measured (no
+ * slide in from the edge); until then the chosen segment wears the look.
+ */
+.segments-scroll[data-pill]::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: var(--chosen-width);
+  border-radius: var(--radius-pill);
+  background: var(--chosen-glass);
+  box-shadow: var(--chosen-rim);
+  transform: translateX(var(--chosen-x));
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    width var(--duration-slow) var(--ease-out);
+}
+/*
+ * More beyond an edge: the segments fade out towards it, wider than the
+ * track's rounded end, so a name is never cut by the curve.
+ */
+.segments-scroll[data-more~='start'] {
+  --fade-start: var(--fade);
+}
+.segments-scroll[data-more~='end'] {
+  --fade-end: var(--fade);
+}
+.segments-scroll:is([data-more~='start'], [data-more~='end']) {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--fade-start, 0px),
+    #000 calc(100% - var(--fade-end, 0px)),
+    transparent
+  );
+}
 .segment {
+  /* Over the pill. */
+  position: relative;
   min-width: 0;
   /* With the track's padding and border, the whole row is one hit tall. */
   min-height: calc(var(--hit) - 6px);
   padding: 0;
   border-color: transparent;
   color: var(--muted);
-  /* Small and unpadded, so five fit the narrowest phone (320 px). */
   font-size: var(--text-small);
   white-space: nowrap;
+}
+.segments[data-names] .segment {
+  padding-inline: var(--space-3);
+}
+.segment > span {
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .segment:focus-visible {
   outline-offset: 0;
 }
-
-/* The calibrations wrap onto more rows: every chip whole, nothing cut. */
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-.chip {
-  flex: none;
-  max-width: 16ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: block;
-  padding: 0 var(--space-4);
-  border-color: var(--line-strong);
-  background: color-mix(in srgb, var(--fg) 4%, transparent);
-  color: var(--muted);
-  font-size: var(--text-body);
-  line-height: calc(var(--hit) - 2px);
-  scroll-snap-align: start;
-}
 @media (hover: hover) {
-  .chip:hover:enabled {
-    border-color: color-mix(in srgb, var(--fg) 36%, transparent);
-  }
-  /* Segments stay borderless: the track is their edge. */
+  /* Borderless: the track is their edge. */
   .segment:hover:enabled {
     border-color: transparent;
-  }
-  .chip:hover:enabled,
-  .segment:hover:enabled {
     background: color-mix(in srgb, var(--fg) 8%, transparent);
     color: var(--fg);
   }
 }
-/* Chosen, a chip or a segment: a light pill with dark ink. */
-.chip[aria-pressed='true'],
-.segment[aria-checked='true'] {
+.segment[aria-checked='true'],
+.segment[aria-checked='true']:hover:enabled {
   border-color: transparent;
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--chosen-glass);
+  box-shadow: var(--chosen-rim);
+  color: var(--fg);
   font-weight: var(--weight-strong);
 }
-@media (hover: hover) {
-  .chip[aria-pressed='true']:hover:enabled,
-  .segment[aria-checked='true']:hover:enabled {
-    background: var(--on-fill);
-    color: var(--bg);
+/* Once placed, the row glides to bring a new choice into view. */
+@media (prefers-reduced-motion: no-preference) {
+  .segments-scroll[data-pill] {
+    scroll-behavior: smooth;
   }
+}
+.segments-scroll[data-pill] .segment[aria-checked='true'],
+.segments-scroll[data-pill] .segment[aria-checked='true']:hover:enabled {
+  background: transparent;
+  box-shadow: none;
+}
+/* The pill dims with its disabled segments. */
+.segments-scroll:has(.segment:disabled)::before {
+  opacity: 0.4;
 }
 /* Home's problem line sits in the card's bottom padding: it takes no room. */
 .light-card .quick-picture {
@@ -1749,7 +1806,7 @@ fieldset > .field-note {
   inset-inline: 0;
   margin-top: var(--space-2);
 }
-/* On Home a failed save shows once, under the chips, with its retry. */
+/* On Home a failed save shows once, under Calibration, with its retry. */
 .light-card .brightness .field-note {
   display: none;
 }
@@ -2203,7 +2260,7 @@ fieldset > .field-note {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
   color: var(--fg);
 }
 .led-map-play svg {
@@ -2626,7 +2683,7 @@ fieldset > .field-note {
   }
 }
 .row-link:focus-visible,
-.row-choice label:has(input:focus-visible) {
+.row-choice label:has(input[type='radio']:focus-visible) {
   outline: 2px solid var(--accent-ink);
   outline-offset: 2px;
 }
@@ -2712,7 +2769,7 @@ fieldset > .field-note {
   font-weight: 500;
 }
 /* A choice row: a radio drawn as a tick in the chevron's place. */
-.row-choice input {
+.row-choice input[type='radio'] {
   position: absolute;
   opacity: 0;
   pointer-events: none;
@@ -2746,7 +2803,9 @@ fieldset > .field-note {
   opacity: 1;
 }
 @media (hover: hover) {
-  .row-choice label:hover:has(input:enabled:not(:checked)) .row-ring {
+  .row-choice
+    label:hover:has(input[type='radio']:enabled:not(:checked))
+    .row-ring {
     stroke: var(--accent-ink);
   }
 }
@@ -2764,9 +2823,27 @@ fieldset > .field-note {
   }
 }
 /* Locked, as a disabled field is, until it is known what can be chosen. */
-.row-choice label:has(input:disabled) {
+.row-choice label:has(input[type='radio']:disabled) {
   opacity: 0.5;
   cursor: default;
+}
+/*
+ * The last of the found devices is one to type: its field in the label's
+ * place, its line beneath as under any field, the ring level with the
+ * field. Faded with the row while locked, not twice.
+ */
+.row-typed label {
+  align-items: flex-start;
+}
+.row-typed .field {
+  flex: 1;
+  margin: 0;
+}
+.row-typed .row-check {
+  margin-top: calc((var(--space-7) - var(--icon)) / 2);
+}
+.row-typed .field input:disabled {
+  opacity: 1;
 }
 /* A choice's line is read whole: it wraps instead of being cut. */
 .row-choice .row-text > .row-value {

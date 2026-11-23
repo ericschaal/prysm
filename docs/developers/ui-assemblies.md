@@ -72,8 +72,8 @@ feedback in one RTK store per frontend.
 
 The [shared portal](../../frontend/packages/web-portal/portal.tsx) has three pages.
 Home shows the light card (power, Screen sync or the output's own effects
-such as "WLED effects", brightness, the style as one-tap segments and the
-calibrations as one-tap chips)
+such as "WLED effects", brightness, and the style and the calibration as
+one-tap segments)
 and a summary of the setup with the LEDs per edge and the live preview in
 the TV's screen. Settings (`#/settings`)
 holds the live picture controls with calibrations, Calibrate colours, Run

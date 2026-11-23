@@ -126,12 +126,15 @@ test.describe('a saved device that is not plugged in', () => {
     },
   });
 
-  test('keeps its row and its sizes, locked, saying why', async ({ page }) => {
+  test('keeps it typed and its sizes, locked, saying why', async ({ page }) => {
     await page.goto('/#/settings/video');
     const video = editor(page);
-    const saved = video.devices.getByRole('radio', { name: '/dev/video9' });
+    const saved = video.devices.getByRole('radio', { name: 'Another device' });
     await expect(saved).toBeChecked();
     await expect(saved).toHaveAccessibleDescription('Not plugged in');
+    await expect(
+      video.devices.getByRole('textbox', { name: 'Device path' }),
+    ).toHaveValue('/dev/video9');
     await expect(video.sizes).toContainText(
       'Plug in the device to choose its size and rate.',
     );

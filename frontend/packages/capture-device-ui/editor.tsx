@@ -6,7 +6,6 @@ import {
   nothingOffered,
   PictureChoice,
   presetRates,
-  TextField,
   useCaptureModes,
   type EditorProps,
   type ModesState,
@@ -26,8 +25,15 @@ function problemOf(modes: ModesState) {
     : `This device doesn’t offer ${presetRates} at a size Prysm can use.`;
 }
 
+const typedDevice = {
+  choice: 'Another device',
+  label: 'Device path',
+  placeholder: '/dev/video0',
+  empty: 'Choose a device, or enter its path.',
+};
+
 /**
- * The device as rows from discovery (typed under Advanced), then its sizes
+ * The device as rows from discovery, the last one typed, then its sizes
  * and rates once it is known which device: asked of the device itself.
  */
 export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
@@ -53,25 +59,15 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
       field="device"
       legend="Device"
       things="devices"
-      nothing="No devices found. Plug one in, or enter it below."
+      nothing="No devices found. Plug one in, or enter its path."
       value={device}
+      text={value.device}
+      typed={typedDevice}
       missing={modes.state === 'unknown' ? 'Not plugged in' : undefined}
       problem={asked ? problemOf(modes) : undefined}
       onPick={pick}
+      onType={(typed) => onChange({ ...value, device: typed })}
       onLook={'again' in modes ? modes.again : undefined}
-      byHand={
-        <TextField
-          path="capture.device"
-          label="Enter the device by hand"
-          placeholder="/dev/video0"
-          value={value.device}
-          onChange={(typed) => onChange({ ...value, device: typed })}
-          check={(typed) =>
-            typed.trim() ? null : 'Choose a device, or enter one by hand.'
-          }
-          help="Its name, such as /dev/video0."
-        />
-      }
       then={
         // Nothing is drawn for a device that delivers nothing.
         asked ? (

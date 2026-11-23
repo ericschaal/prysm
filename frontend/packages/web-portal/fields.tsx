@@ -17,7 +17,7 @@ import { ChevronIcon } from './rows';
  * nothing below moves when a problem comes or goes. A failed save of this
  * control offers its retry here.
  */
-function Note({
+export function Note({
   id,
   help,
   helpTone,
