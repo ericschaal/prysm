@@ -104,8 +104,8 @@ function LedMap({ edges }: { edges: LedEdges }) {
 /**
  * What the path is doing, from the state: frames flowing through Prysm,
  * screen sync on without a picture, the lights' own effects (Prysm not in
- * the path), stopped by a failure (at the source, at the lights, or
- * somewhere on the way), or off.
+ * the path), a failure (at the source, at the lights, or somewhere on the
+ * way; also with the lights off), or off.
  */
 export type PathState =
   | { kind: 'off' }
