@@ -2,6 +2,7 @@
 import {
   plainFailure,
   unreachable,
+  unusableSettings,
   type LightingSituation,
 } from '@prysm/application-client';
 import {
@@ -288,7 +289,10 @@ export function tvStatus(
     // The lights card says what failed; its modes try again.
     if (lighting.target === 'effects') title = 'WLED effects stopped';
     else title = lighting.fromEffects ? 'Screen sync couldn’t start' : stopped;
-    description = 'Try again, or choose another mode.';
+    // Trying again cannot help settings Prysm can't use.
+    description = unusableSettings(lighting.failure)
+      ? 'Change the settings in the web portal.'
+      : 'Try again, or choose another mode.';
     attention = true;
   } else if (unreadable) {
     // After every failure of the lights or the worker, which need the
@@ -389,7 +393,8 @@ export function tvStatus(
       failed &&
       phase !== 'retrying' &&
       mode &&
-      (!lighting || lighting.kind === 'failed')
+      (!lighting ||
+        (lighting.kind === 'failed' && !unusableSettings(lighting.failure)))
     ) {
       label = 'Try again';
       action = 'retry';

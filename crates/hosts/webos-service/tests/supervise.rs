@@ -94,7 +94,10 @@ fn until(
         }
         wake.set_read_timeout(Some(left)).unwrap();
         match wake.read(&mut [0; 64]) {
+            // A signal on this thread (SIGCHLD on Linux) ends the read
+            // early, as a wake does.
             Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
             Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                 unwoken();
             }

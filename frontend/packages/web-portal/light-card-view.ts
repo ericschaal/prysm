@@ -8,6 +8,7 @@ import {
   plainFailure,
   situationFailure,
   unreachable,
+  unusableSettings,
   type Failure,
   type LightingFailure,
   type LightingMode,
@@ -238,7 +239,8 @@ export function lightCardView(
       tone: 'problem',
       text: `${plainFailure(problem.failure, problem.target, effects)}${stillOn}`,
       details: problem.failure.message,
-      retry: lighting.kind === 'failed',
+      // Trying again cannot help settings Prysm can't use.
+      retry: lighting.kind === 'failed' && !unusableSettings(problem.failure),
     };
   else if (lighting.kind === 'effects' && lighting.failure)
     info =

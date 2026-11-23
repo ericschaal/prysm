@@ -792,8 +792,8 @@ class Restore(unittest.TestCase):
                 self.assertEqual(restart.remote, 'sudo -n systemctl restart prysm-headless.service')
 
     def test_a_linux_unit_that_fails_after_the_options_file_came_back_says_so(self) -> None:
-        """The file is already written and the unit restarted: the error says both, and that the settings were
-        not sent."""
+        """The file is already written and the unit restarted: the error says both, and the settings are not
+        sent."""
         prysm = FakePrysm()
         self.addCleanup(prysm.close)
         edited = DEFAULT_OPTIONS.replace('OPTIONS=\n', 'OPTIONS="--start"\n')
@@ -810,10 +810,10 @@ class Restore(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError,
             'prysm-headless.service failed on pi@pi.example after /etc/default/prysm-headless was written as '
-            'backed up and the unit restarted; the settings were not sent',
+            'backed up and the unit restarted',
         ):
             existing.restore(linux_backup(prysm, {commands.DEB_OPTIONS: edited}))
-        self.assertEqual(prysm.saved, [])
+        self.assertEqual((recorded.streamed, prysm.saved), ([edited], []))
 
     def test_a_linux_unit_that_does_not_answer_after_the_options_file_came_back_says_so(self) -> None:
         recorded = Streamed(
@@ -824,7 +824,7 @@ class Restore(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError,
             'prysm-headless.service did not answer at http://192.0.2.9:8787 within 0 s after '
-            '/etc/default/prysm-headless was removed as backed up and the unit restarted; the settings were not sent',
+            '/etc/default/prysm-headless was removed as backed up and the unit restarted',
         ):
             existing._restore_options(None, seconds=0)  # pyright: ignore[reportPrivateUsage]
 

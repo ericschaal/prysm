@@ -1769,6 +1769,23 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     ).action,
     'retry',
   );
+  // Settings Prysm can't use: trying again could not help.
+  const unusable = tvStatus(
+    true,
+    reported,
+    draft,
+    facts({
+      target: 'screen_sync',
+      session: {
+        state: 'stopped',
+        failure: { kind: 'invalid', field: 'output.address', message: 'x' },
+      },
+    }),
+  );
+  assert.deepEqual(
+    [unusable.description, unusable.action],
+    ['Change the settings in the web portal.', 'none'],
+  );
   // A start of screen sync from the effects that failed leaves them on.
   assert.equal(
     tvStatus(

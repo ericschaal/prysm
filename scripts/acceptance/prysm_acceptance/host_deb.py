@@ -171,9 +171,7 @@ class DebPrysm:
                 self.transport.run(commands.deb_options_write(self.target, local))
         self.transport.run(commands.deb_systemctl(self.target, UnitAction.RESTART))
         state = 'removed' if text is None else 'written'
-        changed = (
-            f'after {commands.DEB_OPTIONS} was {state} as backed up and the unit restarted; the settings were not sent'
-        )
+        changed = f'after {commands.DEB_OPTIONS} was {state} as backed up and the unit restarted'
 
         def active() -> bool:
             unit = unit_properties(self.transport.run(commands.deb_unit(self.target)).stdout)

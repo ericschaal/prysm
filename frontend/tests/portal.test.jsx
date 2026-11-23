@@ -618,8 +618,9 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
     );
     assert.match($('.light-details p').textContent, /does not support 640x360/);
     assert(button('Try again'));
-    // Settings that do not validate are said as such, though a field names
-    // the video source: no device was asked.
+    // Settings Prysm can't use are said as such, though a field names the
+    // video source: they do not validate, or the source can't deliver them,
+    // and a setting is the fix.
     await act(async () =>
       fixture.publish({
         session: {

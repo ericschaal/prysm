@@ -223,7 +223,8 @@ export function lightingSituation({
       failure,
       at,
       fromEffects,
-      effectsOn: fromEffects && at !== 'output',
+      // Settings Prysm can't use never reached the lights.
+      effectsOn: fromEffects && (at !== 'output' || unusableSettings(failure)),
     };
   }
   return { kind: 'starting', target };
@@ -300,9 +301,9 @@ export function describeSituation(
 }
 
 /**
- * Settings that do not validate, whatever the lights were asked to do: they
- * may name a section's field, yet no device was asked, so that is all there
- * is to say.
+ * Settings Prysm can't use, whatever the lights were asked to do: they do
+ * not validate, or the video source says it can't deliver them. A setting is
+ * the fix, so that is all there is to say, even when the field names a side.
  */
 export function unusableSettings(failure: Failure | LightingFailure) {
   return failure.kind === 'invalid';

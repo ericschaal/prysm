@@ -367,6 +367,18 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   );
   assert.equal(lightsFailed.info.text, 'The lights aren’t responding.');
   assert.equal(lightsFailed.status, 'Screen sync couldn’t start');
+  // Lights settings Prysm can't use never reached the lights: the effects
+  // are still on, and trying again could not help.
+  const unusable = lightingSituation({
+    target: 'screen_sync',
+    session: { state: 'effects', failure: invalid },
+  });
+  assert.equal(unusable.kind === 'failed' && unusable.effectsOn, true);
+  const unusableCard = lightCardView(facts(unusable), memory());
+  assert.deepEqual(
+    [unusableCard.info.text, unusableCard.info.retry],
+    ['Prysm can’t use these settings. WLED effects are still on.', false],
+  );
   assert.equal(
     moodOf({ kind: 'starting', target: 'screen_sync' }, true),
     'starting',
@@ -554,7 +566,7 @@ test('with the lights off a failure is still said, as off', () => {
     'Prysm is busy.',
   );
   // As the engine reports saved settings that do not validate: the field
-  // names its section, and no device was asked.
+  // names its section, yet a setting is the fix.
   assert.equal(
     plainFailure(
       { kind: 'invalid', message: 'x', field: 'output.address' },
@@ -693,9 +705,10 @@ test('with the lights off a section page says the failure it names, else not in 
   }
 });
 
-test('settings that do not validate are said as such, whatever the target', () => {
-  // As the engine reports saved settings that do not validate at a start of
-  // screen sync: the field names a section, yet no device was asked.
+test('settings Prysm can’t use are said as such, whatever the target', () => {
+  // As the engine reports settings that do not validate at a start of screen
+  // sync, or a video source that can't deliver them: the field names a
+  // section, yet a setting is the fix.
   assert.equal(
     plainFailure(
       { kind: 'invalid', field: 'output.address', message: 'x' },
