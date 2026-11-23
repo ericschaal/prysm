@@ -96,6 +96,13 @@ impl Incoming for TcpListener {
 
     async fn accept(&mut self) -> io::Result<TcpStream> {
         let (socket, _) = TcpListener::accept(self).await?;
+        // Each event is one write: without this, its last partial segment
+        // can wait for the peer's delayed acknowledgement.
+        if let Err(error) = socket.set_nodelay(true) {
+            tracing::warn!(
+                "a portal connection's events can wait for the peer's acknowledgement: {error}"
+            );
+        }
         if let Err(error) = detect_vanished_peer(&socket) {
             tracing::warn!(
                 "a portal connection whose peer vanishes keeps its slot until a write fails: {error}"
@@ -366,6 +373,18 @@ mod tests {
         assert_eq!(socket.tcp_keepalive_retries().unwrap(), PROBES);
         #[cfg(target_os = "linux")]
         assert_eq!(socket.tcp_user_timeout().unwrap(), Some(UNACKNOWLEDGED));
+    }
+
+    /// An accepted connection sends each write without waiting to coalesce
+    /// it with the next (Nagle's algorithm off).
+    #[tokio::test]
+    async fn an_accepted_connection_sends_without_delay() {
+        let mut listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (_client, accepted) = tokio::join!(TcpStream::connect(address), async {
+            Incoming::accept(&mut listener).await
+        });
+        assert!(accepted.unwrap().nodelay().unwrap());
     }
 
     /// Every kind of `accept` failure, with and without open connections.
