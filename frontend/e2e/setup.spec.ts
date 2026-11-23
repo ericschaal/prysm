@@ -68,7 +68,7 @@ test('a step with a missing value says so at its field', async ({ page }) => {
   await expect(wizard).toContainText('No devices found.');
   await page.getByRole('button', { name: 'Next' }).click();
 
-  const path = wizard.getByLabel('Enter the device by hand');
+  const path = wizard.getByRole('textbox', { name: 'Device path' });
   await expect(path).toBeFocused();
   await expect(path).toHaveAttribute('aria-invalid', 'true');
   await expect(path).toHaveAccessibleDescription(

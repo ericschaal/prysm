@@ -95,7 +95,15 @@ const info = () =>
   $('.light-info').dataset.shown === 'true'
     ? $('.light-info > div > p').textContent
     : null;
-const chip = (id) => $(`[data-calibration="${id}"]`);
+/** Home's row of segments named `name`: Style or Calibration. */
+const segmentsOf = (name) =>
+  $$('.segments-scroll').find(
+    (group) =>
+      document.getElementById(group.getAttribute('aria-labelledby'))
+        .textContent === name,
+  );
+const chip = (id) => $(`[data-value="${id}"]`, segmentsOf('Calibration'));
+const chips = () => $$('.segment', segmentsOf('Calibration'));
 /** The card's calm line: what Power will do, a pause that lasts, what runs. */
 const note = () => $('.light-calm').textContent || null;
 const hint = (element) =>
@@ -800,7 +808,7 @@ test('modes that cannot work are disabled and say why; before setup only the pro
       assert.equal($$('[data-target]').length, 0);
       assert(!power());
       assert(!$('.light-card input'));
-      assert(!$('.chip'));
+      assert(!$('.segment'));
       assert.equal(button('Set up Prysm').disabled, false);
       assert(!$('.setup-card'));
       assert.equal(word(), 'Off');
@@ -1930,7 +1938,7 @@ test('smooth dark colours waits under Advanced in the WLED panel, on unless turn
   }
 });
 
-test('the WLED panel lists the lights present as rows; the saved ones keep their ticked row while not found', async () => {
+test('the WLED panel lists the lights present as rows, then one to type in, which holds the saved address while it is not found', async () => {
   const discovery = fakeDiscoveryClient({
     'output/wled': [
       {
@@ -1947,31 +1955,41 @@ test('the WLED panel lists the lights present as rows; the saved ones keep their
     { discovery: discovery.client },
   );
   const { fixture } = portal;
+  /** Each row: its name (the typed one: its text), its line, ticked. */
   const lights = () =>
     $$('.device-rows .row-choice').map((row) => [
-      $('.row-label', row).textContent,
+      $('.row-label', row)?.textContent ?? $('input[type="text"]', row).value,
       $('.row-value', row)?.textContent,
       $('input', row).checked,
     ]);
   try {
     await openEditor('Lights');
     await act(async () => sleep(0));
-    // Looked for as the panel opened; the saved address by itself, ticked,
-    // with nothing said against it: lights can be there and not found.
+    // Looked for as the panel opened; the saved address in the last row,
+    // ticked, with nothing said against it: lights can be there and not
+    // found. Advanced keeps only smooth dark colours.
     assert.deepEqual(lights(), [
       ['Living room', undefined, false],
       [output.address, undefined, true],
     ]);
-    // Typed by hand under the one Advanced, with smooth dark colours.
-    assert.equal($$('.advanced', form('Your lights')).length, 1);
-    assert(field('output.address').closest('[hidden]'));
-    assertSame(
-      field('output.address').closest('.advanced'),
-      field('output.dither').closest('.advanced'),
+    assert(!field('output.address').closest('.advanced'));
+    assert.equal(
+      $('.row-typed input[type="radio"]').getAttribute('aria-label'),
+      'Other lights',
     );
+    // Picking found lights keeps what was typed, to pick it again.
     await click($('.device-rows input'));
-    assert.equal(field('output.address').value, '192.0.2.40');
-    assert.deepEqual(lights(), [['Living room', undefined, true]]);
+    assert.deepEqual(lights(), [
+      ['Living room', undefined, true],
+      [output.address, undefined, false],
+    ]);
+    assert.equal(field('output.address').tabIndex, -1, 'tabbed past');
+    await click($('.row-typed input'));
+    assert.deepEqual(lights(), [
+      ['Living room', undefined, false],
+      [output.address, undefined, true],
+    ]);
+    await click($('.device-rows input'));
     await submit(form('Your lights'));
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.40');
   } finally {
@@ -1979,7 +1997,7 @@ test('the WLED panel lists the lights present as rows; the saved ones keep their
   }
 });
 
-test('with lights to pick, no address is said at the rows, which take the focus; Advanced stays closed', async () => {
+test('with lights to pick, no address is said at the typed row, which takes the focus; Advanced stays closed', async () => {
   const discovery = fakeDiscoveryClient({
     'output/wled': [
       {
@@ -2001,14 +2019,12 @@ test('with lights to pick, no address is said at the rows, which take the focus;
     await act(async () => sleep(0));
     await edit(field('output.address'), '');
     await submit(form('Your lights'));
-    const group = $('.device-rows');
-    assertFocused(group);
-    assert.equal(group.getAttribute('aria-invalid'), 'true');
+    assertFocused(field('output.address'));
     assert.equal(
-      document.getElementById(group.getAttribute('aria-describedby'))
-        .textContent,
+      errorOf(field('output.address')),
       'Choose your lights, or enter their address by hand.',
     );
+    assert.equal($('.device-rows').getAttribute('aria-invalid'), null);
     assert.equal(
       button('Advanced', form('Your lights')).getAttribute('aria-expanded'),
       'false',
@@ -2033,8 +2049,9 @@ test('with nothing found, a refused typed address is said once, at the field, wh
   try {
     await openEditor('Lights');
     await act(async () => sleep(0));
-    // The saved lights keep their row; the field is in plain sight.
-    assert(!field('output.address').closest('[hidden]'));
+    // The saved lights are in the row to type in, the only row.
+    assert.equal($$('.device-rows .row-choice').length, 1);
+    assert.equal(field('output.address').value, output.address);
     fixture.failNext({
       kind: 'invalid',
       field: 'output.address',
@@ -2049,7 +2066,7 @@ test('with nothing found, a refused typed address is said once, at the field, wh
     assert.equal(group.getAttribute('aria-invalid'), null);
     assert.equal(
       $('[role="status"]', group).textContent,
-      'No WLED lights found on this network. Enter their address below.',
+      'No WLED lights found on this network. Enter their address.',
     );
     assert.equal(text().split(refused).length, 2, 'said once');
   } finally {
@@ -3155,13 +3172,17 @@ test('calibrations swap with one tap on Home, applied at once', async () => {
   );
   const { fixture } = portal;
   const pressed = () =>
-    $$('.chip')
-      .filter((item) => item.getAttribute('aria-pressed') === 'true')
+    chips()
+      .filter((item) => item.getAttribute('aria-checked') === 'true')
       .map((item) => item.textContent);
   try {
     assert.deepEqual(
-      $$('.chip').map((item) => item.textContent),
-      ['TV', 'PS5', 'No correction'],
+      chips().map((item) => [item.getAttribute('role'), item.textContent]),
+      [
+        ['radio', 'TV'],
+        ['radio', 'PS5'],
+        ['radio', 'No correction'],
+      ],
     );
     assert.deepEqual(pressed(), ['TV']);
     assert(button('Calibrate colours'), 'another can always be made');
@@ -3205,11 +3226,10 @@ test('calibrations swap with one tap on Home, applied at once', async () => {
   const empty = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
     assert.deepEqual(
-      $$('.chip').map((item) => item.textContent),
+      chips().map((item) => item.textContent),
       ['No correction'],
     );
-    const label = $('.chips[role="group"]').getAttribute('aria-labelledby');
-    assert.equal(document.getElementById(label).textContent, 'Calibration');
+    assert.equal(segmentsOf('Calibration').getAttribute('role'), 'radiogroup');
     await press(button('Calibrate colours'));
     assert.equal(window.location.hash, '#/calibrate');
     await press(button('Leave'));
@@ -3222,8 +3242,8 @@ test('calibrations swap with one tap on Home, applied at once', async () => {
 test('the style swaps with one tap on Home, applied at once; Adjust opens the Style page', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture, dom } = portal;
-  const segment = (style) => $(`[data-style="${style}"]`);
-  const segments = () => $$('[data-style]');
+  const segment = (style) => $(`[data-value="${style}"]`, segmentsOf('Style'));
+  const segments = () => $$('.segment', segmentsOf('Style'));
   const checked = () =>
     segments()
       .filter((item) => item.getAttribute('aria-checked') === 'true')
@@ -3239,10 +3259,8 @@ test('the style swaps with one tap on Home, applied at once; Adjust opens the St
   try {
     // A radio group named Style, each segment described by its style's line;
     // Custom only once there is one.
-    const group = $('.segments');
+    const group = segmentsOf('Style');
     assert.equal(group.getAttribute('role'), 'radiogroup');
-    const label = group.getAttribute('aria-labelledby');
-    assert.equal(document.getElementById(label).textContent, 'Style');
     assert.deepEqual(
       segments().map((item) => [
         item.getAttribute('role'),

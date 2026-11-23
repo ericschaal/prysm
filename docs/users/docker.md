@@ -50,7 +50,7 @@ docker run -d --name prysm --restart unless-stopped --stop-timeout 30 \
 ```
 
 In Prysm, choose **Capture card or camera** and tick the card, or enter
-`/dev/video0` under **Advanced**. See [capture card](quickstart.md).
+`/dev/video0` in the last row. See [capture card](quickstart.md).
 
 ## Receive the picture from a TV (slim package)
 

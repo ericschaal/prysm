@@ -6,9 +6,9 @@ import {
 } from '@prysm/application-client';
 import { keepNames, keptName } from './device-name';
 import { DiscoveryContext } from './discovery-context';
-import { Advanced } from './fields';
-import { shownError, useFieldScopeContext } from './form';
-import { RowChoice } from './rows';
+import { Advanced, Note } from './fields';
+import { shownError, useCheck, useFieldScopeContext } from './form';
+import { CheckIcon, RowChoice } from './rows';
 
 type Search =
   | { state: 'idle' }
@@ -78,24 +78,31 @@ function useCandidates(
   };
 }
 
+/** The words of the row to type in. */
+export interface TypedRow {
+  /** The radio's name, such as `Another device`. */
+  choice: string;
+  /** The field's name, such as `Device path`. */
+  label: string;
+  placeholder: string;
+  /** Said when nothing is picked or typed. */
+  empty: string;
+}
+
 /**
  * The devices of `kind` present (capture devices, WLED lights), looked for
  * as the editor opens, as rows to tick, listed once the first lookup has
  * answered and kept while looking again; picking one fills `path` (its
- * field at `field`). The saved device keeps a ticked row of its own while
- * it is not found, by the name this browser last saw for it (else its
- * value), with `missing` beneath in the problem colour. "Look again" sits
- * at the end of the heading line.
- * Under the rows, only while there is something to say, one line says how
- * the lookup went (looking, nothing found, failed), or
- * `problem` (what is wrong with the picked device), or the problem of
- * `path`, such as no device chosen: while there are rows and the field is
- * tucked away they own `path`, so a save goes to them. The field to type it
- * (`byHand`) is under Advanced, after what follows the device (`then`),
- * while there are devices to pick; with nothing found, or no discovery
- * client, it is shown as it is, before `then`, and owns `path` itself (a
- * kept row of the saved device beside it). The editor's other
- * advanced fields (`advanced`) follow it there, in the one Advanced.
+ * field at `field`). "Look again" sits at the end of the heading line.
+ * The last row is always one to type in (`typed`), picked by focusing or
+ * typing in its field; it keeps what was typed while a found row is
+ * picked. A saved value the lookup does not list is in it, with the name
+ * this browser last saw for it and `missing` beneath. That row says the
+ * problem of `path` beneath it and takes the focus for it, unless a found
+ * row is picked: then the line under the rows says it, as it says how the
+ * lookup went (looking, nothing found, failed) or `problem` (what is wrong
+ * with the picked device). Then come what follows the device (`then`) and
+ * the editor's advanced fields (`advanced`) under Advanced.
  */
 export function DeviceRows({
   section,
@@ -106,12 +113,14 @@ export function DeviceRows({
   things,
   nothing,
   value,
+  text,
+  typed,
   missing,
   problem,
-  byHand,
   then,
   advanced,
   onPick,
+  onType,
   onLook,
 }: {
   section: AdapterSide;
@@ -123,16 +132,19 @@ export function DeviceRows({
   things: string;
   /** Said when nothing is found, with what to do instead. */
   nothing: string;
-  /** The picked value, such as the device path; `''`: none. */
+  /** The value as the rows compare it, such as the device path; `''`: none. */
   value: string;
-  /** Said under the saved device while it is not found; absent: nothing. */
+  /** The value as typed. */
+  text: string;
+  typed: TypedRow;
+  /** Said under a typed value while it is not found; absent: nothing. */
   missing?: string;
   problem?: string;
-  byHand: ReactNode;
   then: ReactNode;
-  /** More under Advanced, after `byHand`, and the paths of its fields. */
+  /** Fields under Advanced, and their paths. */
   advanced?: { paths: readonly string[]; fields: ReactNode };
   onPick: (value: string, candidate: Candidate) => void;
+  onType: (text: string) => void;
   /** Called on each Look again, so what follows from the device is too. */
   onLook?: () => void;
 }) {
@@ -147,43 +159,34 @@ export function DeviceRows({
     kind,
     field,
   );
-  if (!discovery)
-    return (
-      <>
-        {byHand}
-        {problem ? (
-          <p className="help" data-tone="warning" role="status">
-            {problem}
-          </p>
-        ) : null}
-        {then}
-        {advanced ? (
-          <Advanced paths={advanced.paths}>{advanced.fields}</Advanced>
-        ) : null}
-      </>
-    );
-  const found = 'found' in search ? search.found : [];
-  // Until the first answer nothing is listed, not even the saved device:
-  // which row is its row is known only then, so no row changes after.
-  const answered = !(search.state === 'looking' && !search.again);
   /**
-   * Nothing to pick once looked: typing is the way, so the field is not
-   * tucked away (and stays put while looking again).
+   * The text last typed or picked in the typed row: while it is the value,
+   * that row stays picked, even for a found value typed out.
    */
-  const plain = !found.length && answered;
+  const [mine, setMine] = useState<string | null>(null);
+  /** What was typed, kept while a found row is picked. */
+  const [draft, setDraft] = useState('');
+  const [touched, setTouched] = useState(false);
+  useCheck(path, value ? null : typed.empty);
+  const found = 'found' in search ? search.found : [];
+  // Until the first answer no row is listed, not even the typed one: which
+  // row is the saved value's is known only then, so no row changes after.
+  const answered = !(search.state === 'looking' && !search.again);
   const listed = found.some((candidate) => candidate.fields[field] === value);
-  const missingRow = answered && value !== '' && !listed;
-  const rows = found.length > 0 || missingRow;
-  // The field in plain sight says its own problem and takes the focus.
-  const owns = rows && !plain;
-  const error = owns ? shownError(scope, path, false) : undefined;
+  const typedPicked =
+    mine === text || (!listed && (value !== '' || found.length === 0));
+  // The typed row says the problem of `path` and takes the focus for it,
+  // unless a found row is picked.
+  const inRow = answered && (typedPicked || !listed);
+  const error = shownError(scope, path, touched);
+  const lineError = inRow ? undefined : error;
   let status: string | null = null;
-  if (error) status = error;
+  if (lineError) status = lineError;
   else if (problem) status = problem;
   else if (looking) status = `Looking for ${things}…`;
   else if (search.state === 'failed')
     status = `Couldn’t look for ${things} just now.`;
-  else if (!found.length) status = nothing;
+  else if (search.state === 'found' && !found.length) status = nothing;
   /**
    * A row says where its device is only when its name does not tell it
    * apart: two found under one name, or none; other details stay.
@@ -196,10 +199,28 @@ export function DeviceRows({
     // Without a name the path is the row's label already.
     return detail && (detail !== at || (shared && named)) ? detail : undefined;
   };
-  const choose = (next: string, candidate: Candidate) => {
+  const pick = (next: string, candidate: Candidate) => {
+    if (typedPicked) setDraft(text);
+    setMine(null);
     scope.edited(path);
     onPick(next, candidate);
   };
+  const type = (next: string) => {
+    setMine(next);
+    scope.edited(path);
+    onType(next);
+  };
+  // Picking the typed row brings back what was typed; nothing else changes.
+  const pickTyped = () => {
+    if (typedPicked) return;
+    if (draft === text) setMine(text);
+    else type(draft);
+  };
+  const retry =
+    inRow && scope.retry?.path === path ? scope.retry.run : undefined;
+  const shown = typedPicked && value !== '';
+  const kept = shown ? keptName(section, { kind, [field]: value }) : null;
+  const gone = shown ? missing : undefined;
   return (
     <>
       <fieldset
@@ -207,28 +228,30 @@ export function DeviceRows({
         role="radiogroup"
         aria-labelledby={legendId}
         aria-describedby={status ? lineId : undefined}
-        aria-invalid={error ? true : undefined}
-        data-field={owns ? path : undefined}
-        tabIndex={owns ? -1 : undefined}
+        aria-invalid={lineError ? true : undefined}
+        data-field={inRow ? undefined : path}
+        tabIndex={inRow ? undefined : -1}
       >
         {/* The group is named by its label alone; Look again acts on it. */}
         <legend>
           <span id={legendId}>{legend}</span>
-          <button
-            type="button"
-            className="link"
-            disabled={scope.disabled}
-            aria-disabled={looking || undefined}
-            aria-busy={looking}
-            onClick={() => {
-              look(discovery);
-              onLook?.();
-            }}
-          >
-            Look again
-          </button>
+          {discovery ? (
+            <button
+              type="button"
+              className="link"
+              disabled={scope.disabled}
+              aria-disabled={looking || undefined}
+              aria-busy={looking}
+              onClick={() => {
+                look(discovery);
+                onLook?.();
+              }}
+            >
+              Look again
+            </button>
+          ) : null}
         </legend>
-        {rows ? (
+        {answered ? (
           <ul className="rows">
             {found.map((candidate) => {
               const at = candidate.fields[field] as string;
@@ -238,66 +261,127 @@ export function DeviceRows({
                   name={nameId}
                   label={candidate.label || at}
                   about={aboutOf(candidate, at)}
-                  checked={at === value}
+                  checked={!typedPicked && at === value}
                   disabled={scope.disabled}
-                  onChoose={() => choose(at, candidate)}
+                  onChoose={() => pick(at, candidate)}
                 />
               );
             })}
-            {missingRow ? (
-              <MissingRow
-                name={nameId}
-                label={keptName(section, { kind, [field]: value })}
-                value={value}
-                missing={missing}
-              />
-            ) : null}
+            <RowTyped
+              name={nameId}
+              path={path}
+              typed={typed}
+              text={typedPicked ? text : draft}
+              checked={typedPicked}
+              disabled={scope.disabled}
+              line={
+                kept || gone ? (
+                  <>
+                    {kept}
+                    {kept && gone ? ' · ' : null}
+                    {gone ? <span className="row-problem">{gone}</span> : null}
+                  </>
+                ) : undefined
+              }
+              error={inRow ? error : undefined}
+              retry={retry}
+              onPick={pickTyped}
+              onType={type}
+              onBlur={() => setTouched(true)}
+            />
           </ul>
         ) : null}
         <p
           id={lineId}
           className="help"
           role="status"
-          data-tone={error || problem ? 'warning' : undefined}
+          data-tone={lineError || problem ? 'warning' : undefined}
         >
           {status}
         </p>
       </fieldset>
-      {plain ? byHand : null}
       {then}
-      {plain && !advanced ? null : (
-        // While the rows own `path`, a problem of the device is theirs to say.
-        <Advanced
-          paths={[...(plain || owns ? [] : [path]), ...(advanced?.paths ?? [])]}
-        >
-          {plain ? null : byHand}
-          {advanced?.fields}
-        </Advanced>
-      )}
+      {advanced ? (
+        <Advanced paths={advanced.paths}>{advanced.fields}</Advanced>
+      ) : null}
     </>
   );
 }
 
-/** The saved device that is not found: by its kept name, else its value. */
-function MissingRow({
+/**
+ * The row to type in: a radio as the others are, its field in the label's
+ * place and the ring in its own. Focusing the field picks the row; the
+ * field is in the tab order only while the row is picked, so tabbing past
+ * the choice never changes it, and in the field the arrow keys move the
+ * caret. Its help (`line`) or its problem (`error`) is on the line beneath,
+ * as under any field.
+ */
+function RowTyped({
   name,
-  label,
-  value,
-  missing,
+  path,
+  typed,
+  text,
+  checked,
+  disabled,
+  line,
+  error,
+  retry,
+  onPick,
+  onType,
+  onBlur,
 }: {
   name: string;
-  label: string | null;
-  value: string;
-  missing?: string;
+  path: string;
+  typed: TypedRow;
+  text: string;
+  checked: boolean;
+  disabled: boolean;
+  line?: ReactNode;
+  error?: string;
+  retry?: () => void;
+  onPick: () => void;
+  onType: (text: string) => void;
+  onBlur: () => void;
 }) {
+  const id = useId();
+  let described: string | undefined;
+  if (error) described = `${id}-error`;
+  else if (line) described = `${id}-help`;
   return (
-    <RowChoice
-      name={name}
-      label={label ?? value}
-      about={label === null ? undefined : value}
-      problem={missing}
-      checked
-      onChoose={() => {}}
-    />
+    <li className="row row-choice row-typed">
+      <label>
+        <input
+          type="radio"
+          name={name}
+          aria-label={typed.choice}
+          aria-describedby={described}
+          checked={checked}
+          disabled={disabled}
+          onChange={onPick}
+        />
+        <span className="field">
+          <input
+            type="text"
+            id={id}
+            name={path}
+            aria-label={typed.label}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={described}
+            value={text}
+            placeholder={typed.placeholder}
+            disabled={disabled}
+            tabIndex={checked ? undefined : -1}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            onFocus={onPick}
+            onChange={(event) => onType(event.currentTarget.value)}
+            onBlur={onBlur}
+          />
+          <Note id={id} help={line} error={error} retry={retry} />
+        </span>
+        <CheckIcon />
+      </label>
+    </li>
   );
 }

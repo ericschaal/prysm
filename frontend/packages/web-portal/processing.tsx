@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type {
   Processing,
   Style,
@@ -87,12 +87,119 @@ function ControlHead({
   );
 }
 
+/** Where a row of segments can scroll to: `start end`, `end`, or nothing. */
+function markMore(track: HTMLElement) {
+  const end = track.scrollWidth - track.clientWidth;
+  track.dataset.more = [
+    track.scrollLeft > 1 ? 'start' : '',
+    track.scrollLeft < end - 1 ? 'end' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
+ * One choice as a row of segments on a quiet track, applied at once: a
+ * radio group, the arrow keys moving the choice. Equal while they fit;
+ * where they don't, the row scrolls sideways, the chosen one centred in
+ * view, and fades towards each edge with more beyond it. `names`: the
+ * options are names of the person's own, each given room and cut with an
+ * ellipsis when long. An option's `about` describes it to screen readers.
+ */
+function Segments<T extends string>({
+  labelledBy,
+  options,
+  chosen,
+  disabled,
+  names = false,
+  onChoose,
+}: {
+  labelledBy: string;
+  options: readonly { key: T; label: string; about?: string }[];
+  chosen: T;
+  disabled: boolean;
+  names?: boolean;
+  onChoose: (key: T) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const keys = options.map((option) => option.key);
+  const index = keys.indexOf(chosen);
+  // What the row holds, so it is measured again when that changes.
+  const labels = options.map((option) => option.label).join('\n');
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const item = track.children[index] as HTMLElement | undefined;
+    if (item)
+      track.scrollLeft =
+        item.offsetLeft - (track.clientWidth - item.offsetWidth) / 2;
+    const mark = () => markMore(track);
+    mark();
+    track.addEventListener('scroll', mark, { passive: true });
+    const resized =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(mark);
+    resized?.observe(track);
+    for (const child of track.children) resized?.observe(child);
+    return () => {
+      track.removeEventListener('scroll', mark);
+      resized?.disconnect();
+    };
+  }, [index, labels]);
+  return (
+    <>
+      <div className="segments" data-names={names || undefined}>
+        <div
+          ref={trackRef}
+          className="segments-scroll"
+          role="radiogroup"
+          aria-labelledby={labelledBy}
+        >
+          {options.map((option) => (
+            <button
+              type="button"
+              role="radio"
+              key={option.key}
+              className="segment"
+              data-value={option.key}
+              aria-checked={option.key === chosen}
+              aria-describedby={
+                option.about ? `${labelledBy}-${option.key}` : undefined
+              }
+              tabIndex={option.key === chosen ? 0 : -1}
+              disabled={disabled}
+              onKeyDown={(event) =>
+                arrowChoice(event, keys, chosen, (next) => {
+                  onChoose(next);
+                  return true;
+                })
+              }
+              onClick={() => onChoose(option.key)}
+            >
+              <span>{option.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {options.map((option) =>
+        option.about ? (
+          <span
+            key={option.key}
+            id={`${labelledBy}-${option.key}`}
+            className="visually-hidden"
+          >
+            {option.about}
+          </span>
+        ) : null,
+      )}
+    </>
+  );
+}
+
 /**
  * The everyday screen sync controls in the light card, one under the other
- * with one header each: brightness, the style as one row of segments, and
- * the calibrations as chips. Dragging brightness changes the lights as it
- * moves (unsaved) and saves where it is let go; a segment or a chip applies
- * at once.
+ * with one header each: brightness, then the style and the calibration as
+ * rows of segments. Dragging brightness changes the lights as it moves
+ * (unsaved) and saves where it is let go; a segment applies at once.
  */
 export function QuickPicture({
   processing,
@@ -130,13 +237,6 @@ export function QuickPicture({
   const active = calibrations.some(({ id }) => id === value.active_calibration)
     ? value.active_calibration
     : undefined;
-  const choices = [
-    ...calibrations.map((calibration) => ({
-      id: calibration.id,
-      label: calibration.name,
-    })),
-    { id: undefined, label: 'No correction' },
-  ];
   return (
     <section className="quick-picture" aria-labelledby={headingId}>
       <h3 id={headingId} className="visually-hidden">
@@ -171,39 +271,13 @@ export function QuickPicture({
         >
           Adjust<span className="visually-hidden"> style</span>
         </ControlHead>
-        <div className="segments" role="radiogroup" aria-labelledby={styleId}>
-          {offered.map((each) => (
-            <button
-              type="button"
-              role="radio"
-              key={each}
-              className="segment"
-              data-style={each}
-              aria-checked={each === style}
-              aria-describedby={`${styleId}-${each}`}
-              tabIndex={each === style ? 0 : -1}
-              disabled={disabled}
-              onKeyDown={(event) =>
-                arrowChoice(event, offered, style, (next) => {
-                  applyStyle(live, next);
-                  return true;
-                })
-              }
-              onClick={() => applyStyle(live, each)}
-            >
-              {styles[each].label}
-            </button>
-          ))}
-        </div>
-        {offered.map((each) => (
-          <span
-            key={each}
-            id={`${styleId}-${each}`}
-            className="visually-hidden"
-          >
-            {styles[each].about}
-          </span>
-        ))}
+        <Segments
+          labelledBy={styleId}
+          options={offered.map((each) => ({ key: each, ...styles[each] }))}
+          chosen={style}
+          disabled={disabled}
+          onChoose={(next) => applyStyle(live, next)}
+        />
       </div>
       <div className="card-control">
         <ControlHead
@@ -214,27 +288,24 @@ export function QuickPicture({
         >
           Calibrate colours
         </ControlHead>
-        <div className="chips" role="group" aria-labelledby={calibrationsId}>
-          {choices.map((choice) => (
-            <button
-              type="button"
-              key={choice.id ?? ''}
-              className="chip"
-              data-calibration={choice.id ?? ''}
-              aria-pressed={choice.id === active}
-              disabled={disabled}
-              onClick={() => {
-                if (choice.id !== active)
-                  void live.commit(
-                    withCalibrations(live.value, [...calibrations], choice.id),
-                    'processing.active_calibration',
-                  );
-              }}
-            >
-              {choice.label}
-            </button>
-          ))}
-        </div>
+        <Segments
+          labelledBy={calibrationsId}
+          options={[
+            ...calibrations.map(({ id, name }) => ({ key: id, label: name })),
+            { key: '', label: 'No correction' },
+          ]}
+          chosen={active ?? ''}
+          disabled={disabled}
+          names
+          onChoose={(next) => {
+            const id = next || undefined;
+            if (id !== active)
+              void live.commit(
+                withCalibrations(live.value, [...calibrations], id),
+                'processing.active_calibration',
+              );
+          }}
+        />
       </div>
       <Problem failure={live.failure} retry={live.retry} />
     </section>

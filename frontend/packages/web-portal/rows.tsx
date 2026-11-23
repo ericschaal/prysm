@@ -102,7 +102,7 @@ export function RowFact({ label, value }: { label: string; value: string }) {
 }
 
 /** A choice's mark: a ring, filled and ticked while chosen. */
-function CheckIcon() {
+export function CheckIcon() {
   return (
     <svg
       className="row-check"

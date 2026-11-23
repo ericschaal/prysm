@@ -232,7 +232,7 @@ test('a saved size and rate the device cannot deliver moves to Balanced, and the
   }
 });
 
-test('the devices present are rows to tick; a saved one not found keeps its row, not plugged in, and locks the sizes', async () => {
+test('the devices present are rows to tick; a saved one not found is in the typed row, not plugged in, and locks the sizes', async () => {
   const discovery = fakeDiscoveryClient({
     'capture/device': [
       {
@@ -251,10 +251,11 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
     undefined,
     { captureModes: modes.client, discovery: discovery.client },
   );
+  /** Each row: its name (the typed one: its text), its line, ticked. */
   const devices = () =>
     $$('.device-rows .row-choice').map((row) => [
-      $('.row-label', row).textContent,
-      $('.row-value', row)?.textContent,
+      $('.row-label', row)?.textContent ?? $('input[type="text"]', row).value,
+      ($('.row-value', row) ?? $('.help', row))?.textContent,
       $('input', row).checked,
     ]);
   try {
@@ -262,7 +263,7 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
     await settled();
     // Looked for as the editor opened, nothing pressed.
     assert.deepEqual(devices(), [
-      // Named devices without their paths; the missing one by its ID.
+      // Named devices without their paths; the missing one typed, last.
       ['USB Video', undefined, false],
       [device, 'Not plugged in', true],
     ]);
@@ -281,17 +282,23 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
       line(),
       'Plug in the device to choose its size and rate. Try again',
     );
-    // Typing waits under Advanced, by its own name.
+    // The typed row, by its own names; nothing under Advanced.
     assert.equal(
-      field('capture.device').labels[0].textContent,
-      'Enter the device by hand',
+      field('capture.device').getAttribute('aria-label'),
+      'Device path',
     );
-    assert(field('capture.device').closest('[hidden]'));
+    assert.equal(
+      $('.row-typed input[type="radio"]').getAttribute('aria-label'),
+      'Another device',
+    );
+    assert(!$('.advanced', form('Video source')));
 
     await click($('.device-rows input'));
     await settled();
-    assert.equal(field('capture.device').value, '/dev/video2');
-    assert.deepEqual(devices(), [['USB Video', undefined, true]]);
+    assert.deepEqual(devices(), [
+      ['USB Video', undefined, true],
+      [device, '', false],
+    ]);
     assert.deepEqual(
       rows().map(([label, , checked, locked]) => [label, checked, locked]),
       [
@@ -312,12 +319,12 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
   }
 });
 
-test('nothing found shows the typed field as it is; a device that delivers nothing says why under the devices, without sizes', async () => {
+test('nothing found leaves the typed row alone; a device that delivers nothing says why under the devices, without sizes', async () => {
   for (const [found, answer, said, sizes] of [
     [
       [],
       known(anyMode(1920, 1080, 60)),
-      /^No devices found\. Plug one in, or enter it below\.$/,
+      /^No devices found\. Plug one in, or enter its path\.$/,
       true,
     ],
     [
@@ -346,9 +353,9 @@ test('nothing found shows the typed field as it is; a device that delivers nothi
       await settled();
       assert.match($('.device-rows [role="status"]').textContent, said);
       assert.equal(
-        !field('capture.device').closest('[hidden]'),
-        found.length === 0,
-        'typed in plain sight only when nothing was found',
+        $$('.device-rows .row-choice').length,
+        found.length + 1,
+        'the typed row last',
       );
       assert.equal(Boolean(choice()), sizes);
     } finally {
@@ -799,15 +806,15 @@ test('a saved device that is not found keeps the name this browser last saw for 
   // Seen once, plugged in.
   let portal = await visit([card], known(anyMode(1920, 1080, 60)));
   await portal.unmount();
-  // Unplugged on the next visit: its name, its ID, and why, in the
-  // problem colour.
+  // Unplugged on the next visit: typed, with its name and why beneath, in
+  // the problem colour.
   portal = await visit([], unknown);
   try {
     const row = $('.device-rows .row-choice');
-    assert.equal($('.row-label', row).textContent, 'Elgato Cam Link 4K');
+    assert.equal(field('capture.device').value, device);
     assert.equal(
-      $('.row-value', row).textContent,
-      `${device} · Not plugged in`,
+      $('.help', row).textContent,
+      'Elgato Cam Link 4K · Not plugged in',
     );
     assert.equal($('.row-problem', row).textContent, 'Not plugged in');
     assert.equal($('input', row).checked, true);
@@ -816,7 +823,7 @@ test('a saved device that is not found keeps the name this browser last saw for 
   }
 });
 
-test('with devices to pick, no device chosen is said at the rows, which take the focus; Advanced stays closed', async () => {
+test('with devices to pick, no device chosen is said at the typed row, which takes the focus', async () => {
   const discovery = fakeDiscoveryClient({
     'capture/device': [
       {
@@ -833,20 +840,19 @@ test('with devices to pick, no device chosen is said at the rows, which take the
   try {
     await settled();
     await submit(wizard());
-    const devices = $('.device-rows');
-    assertFocused(devices);
-    assert.equal(devices.getAttribute('aria-invalid'), 'true');
+    const typed = field('capture.device');
+    // The problem takes the focus to the typed row, which picks it.
+    assertFocused(typed);
+    assert.equal(typed.getAttribute('aria-invalid'), 'true');
     assert.equal(
-      document.getElementById(devices.getAttribute('aria-describedby'))
+      document.getElementById(typed.getAttribute('aria-describedby'))
         .textContent,
       'Choose a device, or enter one by hand.',
     );
-    assert.equal(
-      button('Advanced', wizard()).getAttribute('aria-expanded'),
-      'false',
-    );
-    await click($('input', devices));
-    assert.equal(devices.getAttribute('aria-invalid'), null);
+    assert.equal($('.row-typed input').checked, true);
+    await click($('.device-rows input'));
+    assert.equal(typed.getAttribute('aria-invalid'), null);
+    assert.equal($('.device-rows').getAttribute('aria-invalid'), null);
   } finally {
     await portal.unmount();
   }
@@ -935,9 +941,10 @@ test('the first lookup lists nothing until it answers, then each device once, in
     );
     await answer();
     await settled();
+    // The found ones, then the typed row, which has no label of its own.
     assert.deepEqual(
-      devices().map((row) => $('.row-label', row).textContent),
-      ['Webcam', 'Card'],
+      devices().map((row) => $('.row-label', row)?.textContent),
+      ['Webcam', 'Card', undefined],
     );
     const saved = devices()[1];
     assert.equal($('input', saved).checked, true);
@@ -990,7 +997,7 @@ test('device rows say where a device is only when its name does not tell it apar
     await openEditor('Video source');
     await settled();
     assert.deepEqual(
-      $$('.device-rows .row-choice').map((row) => [
+      $$('.device-rows .row-choice:not(.row-typed)').map((row) => [
         $('.row-label', row).textContent,
         $('.row-value', row)?.textContent,
       ]),

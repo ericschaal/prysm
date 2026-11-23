@@ -58,14 +58,18 @@ supervisor in each of its states and play the phone's calibration part). See the
     lasts), then the mode, Brightness, Style and Calibration. The last three
     share one pattern, 24 px apart: a header with the name and one quiet item
     on the right (the value, "Adjust", "Calibrate colours"), then the control.
-    Style is a radio group ("Style") of equal segments in one row, one per
-    style (Custom only while chosen or kept), each described by its style's
-    line; Calibration is wrapping chips. A chosen segment or chip is a light
-    pill with dark ink. The mode is a radio group ("Mode") of two option cards about
+    Style and Calibration are one control: a radio group of segments on one
+    full-width track, one per style (Custom only while chosen or kept), each
+    described by its style's line, and one per calibration and "No
+    correction". A chosen segment is a light pill with dark ink. Equal while
+    they fit; otherwise the track scrolls sideways on one line (no
+    scrollbar), the chosen one centred, and fades at an edge only while more
+    is beyond it; a calibration name is cut with an ellipsis after 16
+    characters. The mode is a radio group ("Mode") of two option cards about
     72 px tall: an icon, the name ("Screen sync", the output's effects name)
     and one line written to fit a phone's half card, never cut ("Follows the
     screen", "Patterns from WLED", else "Its own patterns"). Selected speaks
-    the chips' language, a light fill with dark ink, lit in the light's own
+    the segments' chosen look, a light fill with dark ink, lit in the light's own
     colours; off, the chosen card is only outlined. Arrow keys move the
     choice; no transitions with reduced motion) and [Your setup](packages/web-portal/setup-card.tsx)
     (the video source and lights from the adapters' `summary`, a kind named
@@ -178,7 +182,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     unsaved (`PUT /api/v1/processing/trial`), throttled to one every 100 ms
     with one request in flight and the latest value winning, and the value
     where it is let go is saved once; a failed step shows nothing, only the
-    save's failure. A calibration chip saves at once.
+    save's failure. A calibration segment saves at once.
   - [Preview](packages/web-portal/preview.tsx): the captured picture drawn on
     a canvas with each edge's colours around it and the sampled area outlined
     when black bars are removed, on its own page (`#/preview`, from
@@ -213,7 +217,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     screen sync; a refused field returns to its step.
   - [Calibrate](packages/web-portal/calibrate.tsx): the page at
     `#/calibrate` ("New calibration" in Calibrations, which it
-    returns to; Home's chip while there are no calibrations; the TV's QR code
+    returns to; Home's "Calibrate colours"; the TV's QR code
     points there, and leaving returns Home). Start shows the first pattern, then creates a draft calibration (new, or a copy of
     one) and makes it active; if that save fails, the pattern ends and nothing
     is kept. White (`gray_192`: warmth, tint), red, green
@@ -238,21 +242,23 @@ supervisor in each of its states and play the phone's calibration part). See the
     group's name), asks again, keeping the rows and the focus while it
     looks; the line under the rows shows only while there is something to
     say. A row shows its device's path only when the name does not tell it
-    apart (two of one name, no name, or missing). Every name found is kept in
-    this browser ([device names](packages/web-portal/device-name.ts), the
-    last eight per kind), so the saved device keeps a ticked row of its own
-    by its name while it is not found ("Not plugged in" in the problem colour
-    while it cannot be asked; its path only if no name was ever seen). While
-    there are rows they own the device's problem ("Choose a device, or enter
-    one by hand."), said under them, and take the focus. Typing the device is
-    under Advanced ("Enter the device by hand"), and in plain sight, owning
-    the problem, when nothing was found. The WLED editor lists its lights the
-    same way (`.../output/wled`, the "Lights" heading, "Enter the address by
-    hand" under the same Advanced as "Smooth dark colours"); the saved
-    address keeps its row without a problem line, since lights can answer
-    and not be found, and picking one notes its LED count under the drawing.
-    Hosts pass `httpDiscoveryClient()`; without one there are only the typed
-    fields.
+    apart (two of one name, or no name). The last row is always one to type
+    in: a radio ("Another device") with its field ("Device path") in the
+    label's place, in the tab order only while ticked; focusing or typing in
+    it ticks it, and ticking a found row keeps what was typed there to tick
+    again. A saved device the lookup does not list is in that row, ticked,
+    with the name this browser last saw for it beneath ([device
+    names](packages/web-portal/device-name.ts), the last eight per kind) and
+    "Not plugged in" in the problem colour while it cannot be asked. The
+    row says the device's problem ("Choose a device, or enter one by
+    hand.") beneath it and takes the focus, unless a found row is ticked:
+    then the line under the rows says it and the group takes the focus. The
+    WLED editor lists its lights the same way (`.../output/wled`, the
+    "Lights" heading, "Other lights" and "Address"; "Smooth dark colours"
+    under Advanced); the saved address has no problem line, since lights
+    can answer and not be found, and picking one notes its LED count under
+    the drawing. Hosts pass `httpDiscoveryClient()`; without one there is
+    only the typed row.
   - [Fields](packages/web-portal/fields.tsx): labelled inputs that show the
     server's `Failure.field` errors and their own range checks.
   - [Size and rate](packages/web-portal/picture-choice.tsx): every capture

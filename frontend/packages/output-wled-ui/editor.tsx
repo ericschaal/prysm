@@ -6,7 +6,6 @@ import {
   LedDrawing,
   NumberField,
   shownError,
-  TextField,
   useCheck,
   useFieldScopeContext,
   type EditorProps,
@@ -43,9 +42,16 @@ function orderCaption(leds: WledSettings['leds']) {
     : 'No LEDs yet.';
 }
 
+const typedAddress = {
+  choice: 'Other lights',
+  label: 'Address',
+  placeholder: 'wled.local',
+  empty: 'Choose your lights, or enter their address by hand.',
+};
+
 /**
- * The lights as rows from discovery (their address typed under Advanced),
- * then the LEDs on each edge of the screen.
+ * The lights as rows from discovery, the last one typed, then the LEDs on
+ * each edge of the screen.
  */
 export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
   const scope = useFieldScopeContext();
@@ -79,8 +85,10 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
       field="address"
       legend="Lights"
       things="lights"
-      nothing="No WLED lights found on this network. Enter their address below."
+      nothing="No WLED lights found on this network. Enter their address."
       value={address}
+      text={value.address}
+      typed={typedAddress}
       onPick={(next, candidate) => {
         setPicked(
           candidate.led_count === undefined
@@ -89,25 +97,7 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
         );
         onChange({ ...value, address: next });
       }}
-      byHand={
-        <TextField
-          path="output.address"
-          label="Enter the address by hand"
-          placeholder="wled.local"
-          value={value.address}
-          onChange={(address) => onChange({ ...value, address })}
-          check={(typed) =>
-            typed.trim()
-              ? null
-              : 'Choose your lights, or enter their address by hand.'
-          }
-          help={
-            <>
-              Such as <code>wled.local</code> or <code>192.168.1.50</code>
-            </>
-          }
-        />
-      }
+      onType={(typed) => onChange({ ...value, address: typed })}
       then={
         <fieldset className="leds" data-field="output.leds" tabIndex={-1}>
           <legend>LEDs per edge, seen from the front</legend>
