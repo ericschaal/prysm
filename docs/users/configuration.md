@@ -245,11 +245,10 @@ is left untouched. Fix the file and restart Prysm, or set Prysm up again in
 the portal: the first save keeps the old file beside the new one, as
 `settings.json.unreadable-` and six random characters, and the log names it.
 
-**Upgrading from a version before 1.0:** the existing file has no format
-number, so Prysm starts without settings until you add it. Stop Prysm, add
-`"format": 1,` after the file's first `{`, check it with `--check-settings`
-(below) and start Prysm again. On the TV's full package, see
-[LG TV](webos.md#1-install).
+**Upgrading from 1.0.0-rc.1 or 0.2.0:** see [Upgrade to 1.0.0](upgrading.md).
+A 1.0.0-rc.1 file has no format number, so Prysm starts without settings
+until you add `"format": 1,` after the file's first `{`. 1.0 does not read
+a 0.2.0 file at all: set Prysm up again.
 
 To check a file without starting the lights (the Debian package's file is
 readable only by root):

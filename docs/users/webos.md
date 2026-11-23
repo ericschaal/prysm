@@ -67,7 +67,8 @@ installing it does not replace the old one. Remove the old one first:
 1.0 starts without the old preferences and settings: enter the computer's
 address (slim package) or set the lights up again in the portal (full
 package). The old files stay in `/var/lib/io.prysm.tv/` until you delete
-that directory over SSH.
+that directory over SSH. [Upgrade to 1.0.0](upgrading.md#tv-from-rc1) lists
+what else changed.
 
 <a id="processing-on-this-tv-experimental"></a>
 
@@ -85,8 +86,9 @@ that directory over SSH.
    on Screen sync in the portal.
 
 The portal stays available while the TV is awake, also with the lights off or
-the app closed. On the TV, the portal also accepts requests from web pages on
-other sites, so keep the TV on a trusted network.
+the app closed. On the TV, the portal also accepts requests from pages that
+have no origin, as the TV app does; any website can embed such a page, so
+keep the TV on a trusted network.
 
 ## 2b. Slim package: the TV sends the picture
 

@@ -39,6 +39,7 @@ Then connect the picture ([capture card](docs/users/quickstart.md) or
 [LG TV](docs/users/webos.md)) and run the setup wizard in the web portal
 ([set up your lights](docs/users/configuration.md)). Start at
 [Set up Prysm](docs/users/README.md) if you are unsure which setup fits.
+Upgrading from 0.2.0 or 1.0.0-rc.1: [Upgrade to 1.0.0](docs/users/upgrading.md).
 
 The web portal has no password: keep Prysm on a trusted home network.
 

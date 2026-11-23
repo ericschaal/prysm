@@ -39,6 +39,8 @@ For the **capture card** or **slim TV** setup, install Prysm on a computer:
 
 Packages come from the
 [GitHub releases](https://github.com/ericschaal/prysm/releases) tagged `v1.*`.
+Upgrading from 0.2.0 or 1.0.0-rc.1? Read [Upgrade to 1.0.0](upgrading.md)
+first.
 
 For the **full TV** setup, skip this step and go to [LG TV](webos.md).
 
