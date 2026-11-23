@@ -2963,11 +2963,15 @@ fieldset > .field-note {
   --u: calc(var(--hit) / 32);
   max-width: calc(392 * var(--u));
   margin: 0 auto;
+  container-type: inline-size;
 }
 .led-tv {
   position: relative;
-  aspect-ratio: 300 / 170;
-  min-height: calc(88 * var(--u));
+  /* The screen's ratio; on a narrow page its height holds instead. */
+  height: max(
+    calc(88 * var(--u)),
+    calc((100cqi - 92 * var(--u)) * 170 / 300)
+  );
   margin: calc(38 * var(--u) + var(--space-3)) calc(46 * var(--u))
     calc(54 * var(--u) + var(--space-3));
 }

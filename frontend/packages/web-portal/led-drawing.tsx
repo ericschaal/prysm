@@ -78,8 +78,7 @@ function bandOf([x1, y1]: Point, [x2, y2]: Point) {
 /** Which way a wire runs on the drawing, from its first corner. */
 function wayOf({ from, to }: Wire) {
   const [fromRow, fromSide] = from.split('-');
-  if (fromRow !== to.split('-')[0])
-    return fromRow === 'bottom' ? 'up' : 'down';
+  if (fromRow !== to.split('-')[0]) return fromRow === 'bottom' ? 'up' : 'down';
   return fromSide === 'left' ? 'right' : 'left';
 }
 
@@ -160,7 +159,9 @@ export function LedDrawing({
         </div>
         <p className="led-way">
           {first ? (
-            <span className="led-badge" aria-hidden="true">1</span>
+            <span className="led-badge" aria-hidden="true">
+              1
+            </span>
           ) : null}
           {directionOf(first)}
         </p>
