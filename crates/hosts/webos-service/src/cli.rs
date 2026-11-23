@@ -58,7 +58,7 @@ struct RunArgs {
 
 /// The process entry point of both supervisor binaries.
 pub fn main(flavor: Flavor) -> ExitCode {
-    let (name, _) = identity::build_names(flavor);
+    let name = identity::SUPERVISOR;
     let cli = Cli::command().name(name).bin_name(name).get_matches();
     let cli = Cli::from_arg_matches(&cli).unwrap_or_else(|error| error.exit());
     match run(flavor, cli.action.unwrap_or(Action::Run(cli.run))) {

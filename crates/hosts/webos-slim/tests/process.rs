@@ -14,7 +14,13 @@ const BINARY: &str = env!("CARGO_BIN_EXE_prysm-webos-slim");
 #[test]
 fn bad_arguments_exit_with_usage() {
     let bare = ["--prysm", "127.0.0.1:8787"].map(str::to_owned);
-    for argv in [vec![], bare.to_vec(), vec!["slim".to_owned()]] {
+    let unknown = ["--prysm", "http://127.0.0.1:8787", "--bogus"].map(str::to_owned);
+    for argv in [
+        vec![],
+        bare.to_vec(),
+        unknown.to_vec(),
+        vec!["slim".to_owned()],
+    ] {
         let output = Command::new(BINARY).args(&argv).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{argv:?}");
         assert!(output.stdout.is_empty());

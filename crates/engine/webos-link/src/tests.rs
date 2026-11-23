@@ -296,6 +296,14 @@ fn slim_args_carry_only_the_prysm_address() {
     assert_eq!(argv, strings(&["--prysm", "http://192.168.1.20:8787"]));
     assert_eq!(parse::<SlimArgs>(&argv).unwrap(), args);
     assert!(parse::<SlimArgs>(&strings(&["--prysm", "prysm.local:8787"])).is_err());
+    assert!(
+        parse::<SlimArgs>(&strings(&[
+            "--prysm",
+            "http://192.168.1.20:8787",
+            "--bogus"
+        ]))
+        .is_err()
+    );
     let error = parse::<SlimArgs>(&[]).unwrap_err().to_string();
     assert!(error.contains("--prysm"), "{error}");
     // A host name is resolved by the worker, not here.
