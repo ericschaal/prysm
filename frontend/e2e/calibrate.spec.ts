@@ -82,9 +82,11 @@ async function start(page: Page, from = 'New calibration') {
   await page.getByRole('button', { name: 'Start' }).click();
   await expect(heading(page)).toHaveText(questions.white);
 }
+/** The wizard's screens (`screens` in calibrate-wizard.ts), review included. */
+const screenCount = 11;
 /** Looks right until the review, then name it and finish. */
 async function finish(page: Page, name: string) {
-  for (let i = 0; i < Object.keys(questions).length; i++) {
+  for (let i = 0; i < screenCount; i++) {
     if ((await heading(page).textContent()) === questions.review) break;
     await looksRight(page).click();
   }

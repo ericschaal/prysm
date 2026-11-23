@@ -414,7 +414,7 @@ function decode(text: string): Reply {
       'The TV service sent an unreadable reply.',
     );
   }
-  if (!value || typeof value !== 'object')
+  if (!isObject(value))
     throw new LunaError(
       'invalid_reply',
       'The TV service sent an unreadable reply.',
