@@ -677,9 +677,12 @@ export interface components {
             version: string;
         };
         /**
-         * @description How the sender encodes the frames it sends. Exactly this encoder is used:
-         *     one that cannot start or fails ends the stream with a refusal, never a
-         *     switch to another.
+         * @description How the sender encodes the frames it sends: `h264_hardware`, the
+         *     sender's hardware H.264 encoder (the webOS TV's), about 2 Mbit/s;
+         *     `h264_software`, OpenH264 on the sender's CPU, about 2 Mbit/s; `raw`,
+         *     uncompressed NV12 pixels, about 21 Mbit/s at 320x180 and 30 fps. Exactly
+         *     this encoder is used: one that cannot start or fails stops the stream,
+         *     and the sender never switches to another.
          * @enum {string}
          */
         StreamEncoding: "h264_hardware" | "h264_software" | "raw";

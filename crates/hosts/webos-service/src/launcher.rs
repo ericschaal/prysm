@@ -95,7 +95,7 @@ impl Launcher for ProcessLauncher {
             .spawn()?;
         let (sender, outputs) = mpsc::channel();
         let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-            abandon(child);
+            kill_and_reap(&mut child, "the worker");
             return Err(io::Error::other("worker pipes missing"));
         };
         let events = Outputs {
@@ -125,7 +125,7 @@ impl Launcher for ProcessLauncher {
         let reader = match (reader, logger) {
             (Ok(reader), Ok(_)) => reader,
             (Err(error), _) | (_, Err(error)) => {
-                abandon(child);
+                kill_and_reap(&mut child, "the worker");
                 return Err(error);
             }
         };
@@ -139,15 +139,16 @@ impl Launcher for ProcessLauncher {
     }
 }
 
-/// Kill and reap a worker that could not be set up. Its pipes are not read
-/// yet, so it cannot block on them; a kill that fails (it already exited)
-/// leaves only the reap.
-fn abandon(mut child: Child) {
+/// Kill and reap a child that is given up on, such as a worker that could
+/// not be set up (its pipes are not read yet, so it cannot block on them).
+/// Not reaped yet, so the kill reaches it. A failed kill or reap is
+/// reported; the caller's error stands.
+pub(crate) fn kill_and_reap(child: &mut Child, what: &str) {
     if let Err(error) = child.kill() {
-        eprintln!("prysm-webos-service: cannot kill the worker: {error}");
+        log!("cannot kill {what}: {error}");
     }
     if let Err(error) = child.wait() {
-        eprintln!("prysm-webos-service: cannot reap the worker: {error}");
+        log!("cannot reap {what}: {error}");
     }
 }
 
@@ -310,11 +311,11 @@ impl Drop for ProcessWorker {
                 .name("prysm-worker-reaper".into())
                 .spawn(move || {
                     if let Err(error) = child.wait() {
-                        eprintln!("prysm-webos-service: cannot reap the worker: {error}");
+                        log!("cannot reap the worker: {error}");
                     }
                 });
             if let Err(error) = reaper {
-                eprintln!("prysm-webos-service: cannot start the worker reaper: {error}");
+                log!("cannot start the worker reaper: {error}");
             }
         }
     }

@@ -34,8 +34,10 @@ The full wire mapping is in the
   fault carry none). A failure of what a command replaced (the old output of
   a restart, a session that ended as the lights' own effects were asked for)
   is logged at `warn` and is neither published nor the reply. The target
-  stays as requested, so the next settings change retries; nothing
-  reconnects on its own.
+  stays as requested, so the next settings change retries. The engine
+  does not retry on its own; on the TV, the full worker re-applies the
+  target after a session failure with a backoff
+  ([TV lifecycle](webos.md#supervisor-and-worker)).
 - An output's `idle` runs on every session exit; a failure there is reported,
   not hidden.
 - Surface failures (a portal listener that dies) are recorded in

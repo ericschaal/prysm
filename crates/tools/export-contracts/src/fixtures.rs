@@ -21,8 +21,8 @@ use prysm_runtime::{NullOutput, NullSettings};
 use prysm_webos_link::{FailureKind, SlimLink, Video, WorkerFailure};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
-    ErrorKind, GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest, error_reply,
-    state_reply,
+    ErrorKind, ErrorReply, GetStateRequest, SetEnabledRequest, SetTargetRequest, StateReply,
+    UninstallRequest,
 };
 use prysm_webos_service::state::{FullWorker, Package, Power, SlimWorker, State as TvState};
 use serde_json::{Value, json};
@@ -117,13 +117,14 @@ fn luna() -> Value {
         ),
         (ErrorKind::Internal, "the service is busy"),
     ]
-    .map(|(kind, text)| {
-        serde_json::from_str::<Value>(&error_reply(kind, text)).expect("an error reply")
-    });
+    .map(|(kind, text)| ErrorReply::new(kind, text));
     json!({
         "luna/State": states,
         "luna/Preferences": [Preferences::default(), slim_preferences],
-        "luna/StateReply": [state_reply(full, Some(true)), state_reply(slim, None)],
+        "luna/StateReply": [
+            StateReply::new(full.clone(), Some(true)),
+            StateReply::new(slim.clone(), None),
+        ],
         "luna/GetStateRequest": [GetStateRequest { subscribe: true }],
         "luna/SetTargetRequest": LightingTarget::ALL
             .map(|target| SetTargetRequest { target }),
