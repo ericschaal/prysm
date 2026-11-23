@@ -114,9 +114,17 @@ export interface Calibrating {
   closing: Closing | null;
 }
 
+/** The draft calibration a start saves, and the calibration active before it. */
+export type StartedDraft = Pick<Calibrating, 'draftId' | 'previous'>;
+
 export type WizardPhase =
-  /** Before the start: the calibration to copy (`''` for a new one). */
-  | { kind: 'start'; from: string }
+  /**
+   * Before the start: the calibration to copy (`''` for a new one).
+   * `unconfirmed`: the draft of a start whose save failed, which may have run
+   * all the same (its answer never came); once the state shows it,
+   * calibration goes on.
+   */
+  | { kind: 'start'; from: string; unconfirmed: StartedDraft | null }
   /** Start was tapped: the first pattern, then the draft calibration. */
   | { kind: 'starting'; from: string }
   | Calibrating
@@ -134,14 +142,17 @@ export interface WizardState {
 export type WizardAction =
   | { type: 'sourceChosen'; from: string }
   | { type: 'startRequested' }
-  /** The first pattern or the draft was refused; `problem` says why, if it is the TV's. */
-  | { type: 'startFailed'; problem: string }
-  | {
-      type: 'started';
-      draftId: string;
-      previous: string | undefined;
-      startedWith: CorrectionControls;
-    }
+  /**
+   * The first pattern or the draft was refused; `problem` says why, if it is
+   * the TV's. `unconfirmed`: the draft, when its save failed.
+   */
+  | { type: 'startFailed'; problem: string; unconfirmed: StartedDraft | null }
+  | ({ type: 'started' } & StartedDraft & { startedWith: CorrectionControls })
+  /**
+   * The state shows the draft of a failed start: its save ran. The TV's
+   * pattern was ended, so calibration shows as ended, with Resume.
+   */
+  | { type: 'startConfirmed'; startedWith: CorrectionControls }
   | { type: 'patternSeen' }
   /**
    * A pattern is asked of the TV. The wizard moves at once to `place`; the
@@ -167,11 +178,30 @@ export type WizardAction =
   | { type: 'ended'; title: string; message: string };
 
 export const initialWizard: WizardState = {
-  phase: { kind: 'start', from: '' },
+  phase: { kind: 'start', from: '', unconfirmed: null },
   problem: '',
 };
 
 const firstPlace: Place = { screen: 0, returnTo: null, uncorrected: false };
+
+/** Calibrating on the draft, from the first screen. */
+const calibratingFrom = (
+  { draftId, previous }: StartedDraft,
+  startedWith: CorrectionControls,
+  /** A pattern was seen, so its absence means calibration ended. */
+  seen: boolean,
+): Calibrating => ({
+  kind: 'calibrating',
+  draftId,
+  previous,
+  startedWith,
+  place: firstPlace,
+  name: null,
+  seen,
+  request: { kind: 'idle' },
+  confirming: false,
+  closing: null,
+});
 
 /**
  * Something would be lost by Cancel: a slider moved or a name typed since
@@ -200,7 +230,7 @@ export function wizardReducer(
   switch (action.type) {
     case 'sourceChosen':
       return phase.kind === 'start'
-        ? { ...state, phase: { kind: 'start', from: action.from } }
+        ? { ...state, phase: { ...phase, from: action.from } }
         : state;
     case 'startRequested':
       return phase.kind === 'start'
@@ -209,7 +239,11 @@ export function wizardReducer(
     case 'startFailed':
       return phase.kind === 'starting'
         ? {
-            phase: { kind: 'start', from: phase.from },
+            phase: {
+              kind: 'start',
+              from: phase.from,
+              unconfirmed: action.unconfirmed,
+            },
             problem: action.problem,
           }
         : state;
@@ -217,18 +251,14 @@ export function wizardReducer(
       return phase.kind === 'starting'
         ? {
             ...state,
-            phase: {
-              kind: 'calibrating',
-              draftId: action.draftId,
-              previous: action.previous,
-              startedWith: action.startedWith,
-              place: firstPlace,
-              name: null,
-              seen: false,
-              request: { kind: 'idle' },
-              confirming: false,
-              closing: null,
-            },
+            phase: calibratingFrom(action, action.startedWith, false),
+          }
+        : state;
+    case 'startConfirmed':
+      return phase.kind === 'start' && phase.unconfirmed
+        ? {
+            phase: calibratingFrom(phase.unconfirmed, action.startedWith, true),
+            problem: '',
           }
         : state;
     case 'patternSeen':

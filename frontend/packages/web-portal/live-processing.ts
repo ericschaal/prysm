@@ -231,6 +231,8 @@ interface FailedSave {
   message: string;
   /** The control where a retry is offered, when the save may work again. */
   retryAt: string | null;
+  /** The revision the state showed when it was sent. */
+  sentAt: number;
 }
 
 /**
@@ -248,7 +250,7 @@ interface FailedSave {
  * A save refused because the settings changed elsewhere is not lost: once
  * the newer settings arrive, the user's changes are moved onto them and
  * saved again. A failed save is shown at the control that was changed, with
- * a retry there.
+ * a retry there, until a newer state shows its value saved after all.
  */
 export function useLiveProcessing({
   processing,
@@ -285,6 +287,12 @@ export function useLiveProcessing({
   const [trials] = useState(() => throttled<Processing>(trialIntervalMs));
   /** Values were tried since the last save, so the lights may not match it. */
   const [tried, setTried] = useState(false);
+  // A save whose answer never came may have run all the same: a newer state
+  // that shows its value answers it.
+  if (failed && revision !== failed.sentAt && same(failed.value, saved)) {
+    setFailed(null);
+    errors.clearServer();
+  }
   /** A field's own check or the server refuses a value. */
   const invalid =
     Object.keys(errors.local).length > 0 ||
@@ -372,6 +380,7 @@ export function useLiveProcessing({
         value,
         message: saveProblem(reason),
         retryAt: at && !invalid ? at : null,
+        sentAt: current.revision,
       });
       return null;
     } finally {
@@ -405,7 +414,7 @@ export function useLiveProcessing({
               setFailed(null);
             },
           },
-    [retryAt, clearServer],
+    [retryAt, clearServer, setFailed],
   );
   const scope = useFieldScope(disabled, errors, true, retry);
 
