@@ -135,6 +135,12 @@ What changed:
   (Detail) above 512. The portal's controls never went past these, so only a
   hand-edited file is affected. Such a file still loads, but the light card
   names the field, and Screen sync does not start until it is fixed.
+- **Settings are objects, never lists.** A section, style, custom style or
+  calibration written as a list of values, such as
+  `"custom_style": [0.5, 50, 0.3, 50, 50, 50, 5]`, is a wrong value type:
+  Prysm starts without settings, and `prysm-headless --check-settings PATH`
+  says what it expected and on which line. The portal never wrote lists, so
+  only a hand-edited file is affected.
 - **Detail samples captures larger than 640x360 differently.** At the same
   Detail value, such a capture gets fewer samples than in rc.1, the same as
   640x360 gets. Check the picture after upgrading, and raise Detail if the

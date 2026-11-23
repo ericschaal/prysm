@@ -65,6 +65,10 @@ ends (see [architecture](architecture.md#shutdown-ordering)).
 - A problem inside `settings`, a `processing` body or a capture section is
   `422 invalid` with its `field`; `400 bad_request` is only for a body that
   is not JSON or a top-level field unknown, missing or of the wrong type.
+- Settings sections and request bodies are JSON objects, never arrays. On
+  input, `processing` fields and calibration controls may be omitted and take
+  their defaults, and a custom style lists all seven values; the generated
+  schema describes the response shape.
 
 See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md).
 
