@@ -32,6 +32,12 @@ async fn state_read_and_set_target() {
         let (status, body) = portal.target("sideways").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["kind"], "bad_request");
+        let (status, body) = portal
+            .json(Method::PUT, "/api/v1/target", json!(["screen_sync"]))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["kind"], "bad_request");
+        assert_eq!(portal.state().await["target"], "off");
         portal.shutdown().await.unwrap();
     })
     .await;
@@ -186,6 +192,7 @@ async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
             json!({ "pattern": "response", "uncorrected": false }),
             json!({ "pattern": "red" }),
             json!({ "pattern": "red", "uncorrected": false, "token": "x" }),
+            json!(["red", false]),
             json!(null),
         ] {
             let (status, body) = put(bad.clone()).await;
@@ -524,6 +531,24 @@ async fn invalid_settings_are_unprocessable_and_not_saved() {
                 json!([{ "id": "a", "name": "A", "correction": [] }]),
                 "processing.calibrations[0].correction",
             ),
+            (
+                Some("processing"),
+                "calibrations",
+                json!([["a", "A"]]),
+                "processing.calibrations[0]",
+            ),
+            (
+                Some("processing"),
+                "custom_style",
+                json!([0.5, 50, 0.3, 50, 50, 50, 5]),
+                "processing.custom_style",
+            ),
+            (
+                Some("processing"),
+                "style",
+                json!(["natural"]),
+                "processing.style",
+            ),
             (None, "capture", json!({ "path": "x" }), "capture"),
             (None, "output", json!(3), "output"),
         ] {
@@ -561,6 +586,7 @@ async fn a_malformed_settings_request_is_a_bad_request() {
             json!({ "expected": initial, "settings": 3 }).to_string(),
             json!({ "expected": initial, "settings": [] }).to_string(),
             json!([]).to_string(),
+            json!([initial, settings]).to_string(),
             "{".to_owned(),
             format!("{valid} {{}}"),
             r#"{ "expected": 1, "settings": { "processing": { "brightness_percent": 80, } } }"#

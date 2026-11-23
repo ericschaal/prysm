@@ -93,6 +93,7 @@ settings as a whole are at fault), `adapter { message, section? }` or
 `settings` is the settings file without its `format` number, which belongs to the file alone: a `settings` body carrying `format` is refused as an unknown setting (`422 invalid`, `field` `format`). Shape: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
 `processing.style.kind` is `natural`, `calm`, `vivid`, `game` or `custom`; a built-in style is stored by name only, and `custom` applies `processing.custom_style` (all seven knobs, required with `custom`, kept while another style is chosen). The built-in styles' values are not sent: the portal is built with them (`@prysm/contracts/constants`), and the [settings file](../../adapters/settings-file/README.md) describes the fields.
 A calibration's `correction` is `{ warmth, tint, midtones, red, green, blue }`, each primary `{ hue, strength }`, every control -100 to 100 and 0 when omitted ([settings file](../../adapters/settings-file/README.md)).
+On input, `processing`, each of its fields, a calibration's `correction` and each of its controls may be omitted and take their defaults; a `custom_style` lists all seven values. Settings sections and the objects in them (the style, a custom style, a calibration, its correction and each primary) are JSON objects, never arrays: an array inside `settings` is `422 invalid` with its `field`, such as `processing.custom_style`. The generated schema describes the response shape.
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
 Setting the target to `screen_sync` opens the capture (a failure is the
 reply); the output is opened at the first frame, so an output that cannot
@@ -430,7 +431,7 @@ lighting failure, in `State.session.failure`.
 
 | Status | `kind` | When |
 | --- | --- | --- |
-| 400 | `bad_request` | A body that is not JSON (also a number JSON cannot hold, such as `1e999`, wherever it is), or a problem outside the settings it carries: a top-level field unknown, missing or of the wrong type (`expected`, `settings` itself, `target`, a calibration pattern's fields, a `processing` or capture body of the wrong type as a whole) |
+| 400 | `bad_request` | A body that is not JSON or not a JSON object (also a number JSON cannot hold, such as `1e999`, wherever it is), or a problem outside the settings it carries: a top-level field unknown, missing or of the wrong type (`expected`, `settings` itself, `target`, a calibration pattern's fields, a `processing` or capture body of the wrong type as a whole) |
 | 403 | `forbidden` | An `Origin` that is neither the portal's own nor allowed (`origin denied`) |
 | 404 | `not_found` | Unknown route or asset (and `/metrics` when disabled), a candidates path without `capture/<kind>` or `output/<kind>` |
 | 405 | `method_not_allowed` | Known API path (or enabled `/metrics`), wrong method |

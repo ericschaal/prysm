@@ -21,7 +21,9 @@ Pretty-printed JSON (two-space indent, trailing newline) of `prysm_ports::Settin
 after the file's `format`. Saving the same settings produces the same bytes, so
 the file can be hand-edited and kept under version control. Omitted
 `capture`/`output` mean unconfigured; omitted `processing` fields take their
-defaults. Unknown fields fail `load` with the field name, line and file path.
+defaults. Unknown fields fail `load` with the field name, line and file path;
+an array where a section or an object in it belongs fails with what was
+expected (`style values as an object`), line and file path.
 Adapter fields under `kind` are decoded by the adapter's factory, not here.
 
 `format` is the file format, the constant `FORMAT` (now `1`), written by every

@@ -144,6 +144,9 @@ fn a_section_written_as_an_array_is_refused() {
         r#"{ "format": 1, "processing": [] }"#,
         r#"{ "format": 1, "processing": { "calibrations": [{ "id": "a", "name": "A", "correction": [] }] } }"#,
         r#"{ "format": 1, "processing": [80] }"#,
+        r#"{ "format": 1, "processing": { "calibrations": [["a", "A"]] } }"#,
+        r#"{ "format": 1, "processing": { "custom_style": [0.5, 50, 0.3, 50, 50, 50, 5] } }"#,
+        r#"{ "format": 1, "processing": { "style": ["natural"] } }"#,
     ] {
         fs::write(&path, text).unwrap();
         let error = SettingsFile::new(&path).load().unwrap_err();
