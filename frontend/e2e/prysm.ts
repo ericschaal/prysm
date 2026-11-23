@@ -61,7 +61,7 @@ export { anyMode, fixedMode } from '../testkit/modes';
 /** A stand-in video device: found by discovery, never captured from. */
 export interface FakeDevice {
   name: string;
-  path: string;
+  device: string;
   modes: Mode[];
 }
 

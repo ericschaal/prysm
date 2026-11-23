@@ -117,7 +117,7 @@ export const nothingOffered = (modes: ModesState) =>
  * Ask what each capture in `queries` delivers, again every few seconds
  * while one is not known and the page is shown, and whenever the page is
  * shown again or regains focus. A query holds only the fields that select
- * hardware (`{ kind, path }`), so the answer follows them and nothing
+ * hardware (`{ kind, device }`), so the answer follows them and nothing
  * else; `null` asks nothing.
  */
 export function useEachCaptureModes(

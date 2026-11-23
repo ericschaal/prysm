@@ -393,7 +393,7 @@ fn candidate_fields() -> ObjectBuilder {
         .schema_type(Type::Object)
         .additional_properties(Some(AdditionalProperties::FreeForm(true)))
         .description(Some(
-            "The settings fields picking it fills, such as `{ \"path\": \"/dev/video0\" }`: \
+            "The settings fields picking it fills, such as `{ \"device\": \"/dev/video0\" }`: \
              part of the kind's settings, merged over what the person has.",
         ))
 }
@@ -670,7 +670,7 @@ mod tests {
         assert_mirror_round_trips::<Settings, SettingsSchema>(&Settings {
             capture: Some(AdapterSettings::new(
                 "device",
-                &json!({ "path": "/dev/video0" }),
+                &json!({ "device": "/dev/video0" }),
             )),
             output: Some(AdapterSettings::new(
                 "wled",
@@ -776,7 +776,7 @@ mod tests {
         });
         assert_mirror_round_trips::<Candidate, CandidateSchema>(&Candidate::new(
             "USB Video",
-            &json!({ "path": "/dev/video0" }),
+            &json!({ "device": "/dev/video0" }),
         ));
         assert_mirror_round_trips::<Candidate, CandidateSchema>(
             &Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))

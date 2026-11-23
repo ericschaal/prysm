@@ -13,14 +13,15 @@ const defaults = captureDefaults.device;
 
 export const deviceCapture: AdapterUi<DeviceSettings> = {
   label: 'Capture card or camera',
-  create: () => ({ kind: 'device', path: '', ...defaults }),
+  create: () => ({ kind: 'device', device: '', ...defaults }),
   Editor: DeviceEditor,
-  normalize: (value) => ({ ...value, path: value.path.trim() }),
-  summary: (value) => `${value.path}, ${describeSavedPicture(value, defaults)}`,
+  normalize: (value) => ({ ...value, device: value.device.trim() }),
+  summary: (value) =>
+    `${value.device}, ${describeSavedPicture(value, defaults)}`,
   // A device on this computer: nothing travels over a network.
   transport: () => 'local',
   problems: {
-    'capture.path': 'Choose a device, or enter its name by hand.',
+    'capture.device': 'Choose a device, or enter its name by hand.',
     'capture.width': 'This device can’t capture this size. Choose another.',
     'capture.height': 'This device can’t capture this size. Choose another.',
     'capture.fps': 'This device can’t capture at this rate. Choose another.',

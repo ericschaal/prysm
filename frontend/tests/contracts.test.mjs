@@ -60,7 +60,7 @@ test('schemas reject unknown targets, untagged sections and incomplete failures'
   assert.equal(
     validate('Settings')({
       ...state.settings,
-      capture: { path: '/dev/video0' },
+      capture: { device: '/dev/video0' },
     }),
     false,
   );
@@ -103,13 +103,13 @@ test('webOS capture settings keep the ranges the adapter validates', () => {
     { width: 1922 },
     { height: 1082 },
     { include_ui: 'yes' },
-    { path: '/dev/video0' },
+    { device: '/dev/video0' },
   ])
     assert.equal(check({ ...section, ...bad }), false, JSON.stringify(bad));
   assert.equal(
     validate('host-webos/CaptureSettings')({
       kind: 'device',
-      path: '/dev/video0',
+      device: '/dev/video0',
     }),
     false,
   );

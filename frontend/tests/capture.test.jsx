@@ -34,7 +34,7 @@ const output = {
   address: '192.0.2.1',
   leds: { top: 10, left: 4 },
 };
-const path = '/dev/video0';
+const device = '/dev/video0';
 const known = (...modes) => ({ status: 'known', modes });
 const unknown = { status: 'unknown' };
 const plain = (text) => text.replace(/\u00a0/g, ' ');
@@ -136,13 +136,13 @@ test('a device’s own modes decide the presets and what they set; a deliverable
   );
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path, width: 1280, height: 720 }, output },
+    { capture: { kind: 'device', device, width: 1280, height: 720 }, output },
     undefined,
     { captureModes: modes.client },
   );
   try {
     await openEditor('Video source');
-    assert.deepEqual(modes.calls, [{ kind: 'device', path }]);
+    assert.deepEqual(modes.calls, [{ kind: 'device', device }]);
     assert.deepEqual(rows(), [
       ['Balanced', '1280 × 720 · 30 fps', true, false],
       ['Smooth', '1280 × 720 · 60 fps', false, false],
@@ -157,7 +157,7 @@ test('a device’s own modes decide the presets and what they set; a deliverable
     await submit(form('Video source'));
     assert.deepEqual(portal.fixture.snapshot().settings.capture, {
       kind: 'device',
-      path,
+      device,
       width: 1280,
       height: 720,
       fps: 60,
@@ -174,7 +174,7 @@ test('a saved size and rate no preset sets shows as one ticked Custom row until 
   const portal = await renderPortal(
     HeadlessWebPortal,
     {
-      capture: { kind: 'device', path, width: 800, height: 600, fps: 25 },
+      capture: { kind: 'device', device, width: 800, height: 600, fps: 25 },
       output,
     },
     undefined,
@@ -209,7 +209,7 @@ test('a saved size and rate the device cannot deliver moves to Balanced, and the
   const modes = fakeCaptureModesClient(() => known(fixedMode(1280, 720, 30)));
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path, fps: 60 }, output },
+    { capture: { kind: 'device', device, fps: 60 }, output },
     undefined,
     { captureModes: modes.client },
   );
@@ -227,7 +227,7 @@ test('a saved size and rate the device cannot deliver moves to Balanced, and the
     await submit(form('Video source'));
     assert.deepEqual(portal.fixture.snapshot().settings.capture, {
       kind: 'device',
-      path,
+      device,
       width: 1280,
       height: 720,
       fps: 30,
@@ -243,16 +243,16 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
       {
         label: 'USB Video',
         detail: '/dev/video2',
-        fields: { path: '/dev/video2' },
+        fields: { device: '/dev/video2' },
       },
     ],
   });
   const modes = fakeCaptureModesClient((capture) =>
-    capture.path === '/dev/video2' ? known(anyMode(1920, 1080, 60)) : unknown,
+    capture.device === '/dev/video2' ? known(anyMode(1920, 1080, 60)) : unknown,
   );
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path, fps: 60 }, output },
+    { capture: { kind: 'device', device, fps: 60 }, output },
     undefined,
     { captureModes: modes.client, discovery: discovery.client },
   );
@@ -267,9 +267,9 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
     await settled();
     // Looked for as the editor opened, nothing pressed.
     assert.deepEqual(devices(), [
-      // Named devices without their paths; the missing one by its path.
+      // Named devices without their paths; the missing one by its ID.
       ['USB Video', undefined, false],
-      [path, 'Not plugged in', true],
+      [device, 'Not plugged in', true],
     ]);
     assert.equal(
       $('.device-rows').getAttribute('role'),
@@ -285,14 +285,14 @@ test('the devices present are rows to tick; a saved one not found keeps its row,
     assert.equal(line(), 'Plug in the device to choose its size and rate.');
     // Typing waits under Advanced, by its own name.
     assert.equal(
-      field('capture.path').labels[0].textContent,
+      field('capture.device').labels[0].textContent,
       'Enter the device by hand',
     );
-    assert(field('capture.path').closest('[hidden]'));
+    assert(field('capture.device').closest('[hidden]'));
 
     await click($('.device-rows input'));
     await settled();
-    assert.equal(field('capture.path').value, '/dev/video2');
+    assert.equal(field('capture.device').value, '/dev/video2');
     assert.deepEqual(devices(), [['USB Video', undefined, true]]);
     assert.deepEqual(
       rows().map(([label, , checked, locked]) => [label, checked, locked]),
@@ -323,13 +323,13 @@ test('nothing found shows the typed field as it is; a device that delivers nothi
       true,
     ],
     [
-      [{ label: 'Old grabber', detail: path, fields: { path } }],
+      [{ label: 'Old grabber', detail: device, fields: { device } }],
       known(),
       /^This device offers no picture Prysm can use\.$/,
       false,
     ],
     [
-      [{ label: 'PAL card', detail: path, fields: { path } }],
+      [{ label: 'PAL card', detail: device, fields: { device } }],
       known(fixedMode(720, 576, 25), fixedMode(720, 576, 50)),
       /^This device doesn’t offer 30 or 60\sfps at a size Prysm can use\.$/,
       false,
@@ -339,7 +339,7 @@ test('nothing found shows the typed field as it is; a device that delivers nothi
     const modes = fakeCaptureModesClient(() => answer);
     const portal = await renderPortal(
       HeadlessWebPortal,
-      { capture: { kind: 'device', path }, output },
+      { capture: { kind: 'device', device }, output },
       undefined,
       { captureModes: modes.client, discovery: discovery.client },
     );
@@ -348,7 +348,7 @@ test('nothing found shows the typed field as it is; a device that delivers nothi
       await settled();
       assert.match($('.device-rows [role="status"]').textContent, said);
       assert.equal(
-        !field('capture.path').closest('[hidden]'),
+        !field('capture.device').closest('[hidden]'),
         found.length === 0,
         'typed in plain sight only when nothing was found',
       );
@@ -363,19 +363,19 @@ test('a typed device is asked about once typing pauses', async () => {
   const modes = fakeCaptureModesClient();
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path }, output },
+    { capture: { kind: 'device', device }, output },
     undefined,
     { captureModes: modes.client },
   );
   try {
     await openEditor('Video source');
-    await edit(field('capture.path'), '/dev/vid');
-    await edit(field('capture.path'), '/dev/video3');
+    await edit(field('capture.device'), '/dev/vid');
+    await edit(field('capture.device'), '/dev/video3');
     assert.equal(modes.calls.length, 1, 'not yet');
     await act(async () => sleep(typedDeviceMs + 50));
     assert.deepEqual(modes.calls.at(-1), {
       kind: 'device',
-      path: '/dev/video3',
+      device: '/dev/video3',
     });
     assert.equal(modes.calls.length, 2, 'once, for what was typed last');
   } finally {
@@ -386,23 +386,27 @@ test('a typed device is asked about once typing pauses', async () => {
 test('a chosen preset follows to another device’s size for it, without a line', async () => {
   const discovery = fakeDiscoveryClient({
     'capture/device': [
-      { label: 'Card', detail: '/dev/video0', fields: { path: '/dev/video0' } },
+      {
+        label: 'Card',
+        detail: '/dev/video0',
+        fields: { device: '/dev/video0' },
+      },
       {
         label: 'Webcam',
         detail: '/dev/video1',
-        fields: { path: '/dev/video1' },
+        fields: { device: '/dev/video1' },
       },
     ],
   });
   const modes = fakeCaptureModesClient((capture) =>
-    capture.path === '/dev/video0'
+    capture.device === '/dev/video0'
       ? known(fixedMode(1280, 720, 30))
       : known(anyMode(1920, 1080, 60)),
   );
   const portal = await renderPortal(
     HeadlessWebPortal,
     {
-      capture: { kind: 'device', path, width: 1280, height: 720, fps: 30 },
+      capture: { kind: 'device', device, width: 1280, height: 720, fps: 30 },
       output,
     },
     undefined,
@@ -474,7 +478,7 @@ test('a lookup that fails says so and is asked again', async (t) => {
   });
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path }, output },
+    { capture: { kind: 'device', device }, output },
     undefined,
     { captureModes: modes.client },
   );
@@ -499,7 +503,7 @@ test('a hidden page stops asking again until it is shown', async (t) => {
   const modes = fakeCaptureModesClient(() => unknown);
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path }, output },
+    { capture: { kind: 'device', device }, output },
     undefined,
     { captureModes: modes.client },
   );
@@ -542,7 +546,7 @@ test('a newer ask ends the one in flight, and leaving ends the last', async () =
   };
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path }, output },
+    { capture: { kind: 'device', device }, output },
     undefined,
     { captureModes },
   );
@@ -704,11 +708,15 @@ test('a saved device that is not found keeps the name this browser last saw for 
     });
     return snapshot;
   };
-  const card = { label: 'Elgato Cam Link 4K', detail: path, fields: { path } };
+  const card = {
+    label: 'Elgato Cam Link 4K',
+    detail: device,
+    fields: { device },
+  };
   const visit = async (found, answer) => {
     const portal = await renderPortal(
       HeadlessWebPortal,
-      { capture: { kind: 'device', path }, output },
+      { capture: { kind: 'device', device }, output },
       withStorage,
       {
         captureModes: fakeCaptureModesClient(() => answer).client,
@@ -722,13 +730,16 @@ test('a saved device that is not found keeps the name this browser last saw for 
   // Seen once, plugged in.
   let portal = await visit([card], known(anyMode(1920, 1080, 60)));
   await portal.unmount();
-  // Unplugged on the next visit: its name, its path, and why, in the
+  // Unplugged on the next visit: its name, its ID, and why, in the
   // problem colour.
   portal = await visit([], unknown);
   try {
     const row = $('.device-rows .row-choice');
     assert.equal($('.row-label', row).textContent, 'Elgato Cam Link 4K');
-    assert.equal($('.row-value', row).textContent, `${path} · Not plugged in`);
+    assert.equal(
+      $('.row-value', row).textContent,
+      `${device} · Not plugged in`,
+    );
     assert.equal($('.row-problem', row).textContent, 'Not plugged in');
     assert.equal($('input', row).checked, true);
   } finally {
@@ -742,7 +753,7 @@ test('with devices to pick, no device chosen is said at the rows, which take the
       {
         label: 'USB Video',
         detail: '/dev/video2',
-        fields: { path: '/dev/video2' },
+        fields: { device: '/dev/video2' },
       },
     ],
   });
@@ -773,7 +784,7 @@ test('with devices to pick, no device chosen is said at the rows, which take the
 });
 
 test('Look again keeps the focus while looking and ignores presses meanwhile', async () => {
-  const card = { label: 'Card', detail: path, fields: { path } };
+  const card = { label: 'Card', detail: device, fields: { device } };
   let hold = false;
   let release;
   let looks = 0;
@@ -789,7 +800,7 @@ test('Look again keeps the focus while looking and ignores presses meanwhile', a
   };
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path }, output },
+    { capture: { kind: 'device', device }, output },
     undefined,
     { discovery },
   );
@@ -821,11 +832,11 @@ test('Look again keeps the focus while looking and ignores presses meanwhile', a
 });
 
 test('the first lookup lists nothing until it answers, then each device once, in place; looking again keeps the rows', async () => {
-  const card = { label: 'Card', detail: path, fields: { path } };
+  const card = { label: 'Card', detail: device, fields: { device } };
   const webcam = {
     label: 'Webcam',
     detail: '/dev/video1',
-    fields: { path: '/dev/video1' },
+    fields: { device: '/dev/video1' },
   };
   const waiting = [];
   const discovery = {
@@ -840,7 +851,7 @@ test('the first lookup lists nothing until it answers, then each device once, in
     });
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path }, output },
+    { capture: { kind: 'device', device }, output },
     undefined,
     { discovery },
   );
@@ -880,29 +891,29 @@ test('device rows say where a device is only when its name does not tell it apar
       {
         label: 'Elgato',
         detail: '/dev/video7',
-        fields: { path: '/dev/video7' },
+        fields: { device: '/dev/video7' },
       },
       {
         label: 'USB Video',
         detail: '/dev/video8',
-        fields: { path: '/dev/video8' },
+        fields: { device: '/dev/video8' },
       },
       {
         label: 'USB Video',
         detail: '/dev/video9',
-        fields: { path: '/dev/video9' },
+        fields: { device: '/dev/video9' },
       },
-      { label: '', detail: '/dev/video3', fields: { path: '/dev/video3' } },
+      { label: '', detail: '/dev/video3', fields: { device: '/dev/video3' } },
       {
         label: 'Capture box',
         detail: 'Front HDMI',
-        fields: { path: '/dev/video4' },
+        fields: { device: '/dev/video4' },
       },
     ],
   });
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path: '/dev/video7' }, output },
+    { capture: { kind: 'device', device: '/dev/video7' }, output },
     undefined,
     { discovery: discovery.client },
   );
@@ -929,11 +940,11 @@ test('device rows say where a device is only when its name does not tell it apar
 
 test('Look again sits on the devices heading, outside the group name', async () => {
   const discovery = fakeDiscoveryClient({
-    'capture/device': [{ label: 'Elgato', detail: path, fields: { path } }],
+    'capture/device': [{ label: 'Elgato', detail: device, fields: { device } }],
   });
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path }, output },
+    { capture: { kind: 'device', device }, output },
     undefined,
     { discovery: discovery.client },
   );
@@ -960,7 +971,7 @@ test('Look again sits on the devices heading, outside the group name', async () 
 
 test('a preset above its target says it is the smallest the source offers at its rate', async () => {
   for (const [capture, source] of [
-    [{ kind: 'device', path }, 'this device'],
+    [{ kind: 'device', device }, 'this device'],
     [{ kind: 'remote' }, 'this TV'],
   ]) {
     const modes = fakeCaptureModesClient(() =>
@@ -996,7 +1007,7 @@ test('a preset above its target says it is the smallest the source offers at its
 
 test('every choice row shows its ring; only the chosen one is checked', async () => {
   const portal = await renderPortal(HeadlessWebPortal, {
-    capture: { kind: 'device', path },
+    capture: { kind: 'device', device },
     output,
   });
   try {
@@ -1027,7 +1038,7 @@ test('a slower lookup does not overwrite the answer of a newer one', async () =>
   const captureModes = { modes: () => answer() };
   const portal = await renderPortal(
     HeadlessWebPortal,
-    { capture: { kind: 'device', path }, output },
+    { capture: { kind: 'device', device }, output },
     undefined,
     { captureModes },
   );

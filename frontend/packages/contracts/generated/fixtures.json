@@ -61,7 +61,7 @@
     {
       "detail": "/dev/video0",
       "fields": {
-        "path": "/dev/video0"
+        "device": "/dev/video0"
       },
       "label": "USB Video"
     },
@@ -117,10 +117,10 @@
   ],
   "DeviceSettings": [
     {
+      "device": "/dev/video0",
       "fps": 30,
       "height": 360,
       "kind": "device",
-      "path": "/dev/video0",
       "width": 640
     }
   ],
@@ -482,8 +482,8 @@
       "expected": 7,
       "settings": {
         "capture": {
-          "kind": "device",
-          "path": "/dev/video0"
+          "device": "/dev/video0",
+          "kind": "device"
         },
         "output": {
           "address": "192.0.2.1",
@@ -605,8 +605,8 @@
       },
       "settings": {
         "capture": {
-          "kind": "device",
-          "path": "/dev/video0"
+          "device": "/dev/video0",
+          "kind": "device"
         },
         "output": {
           "address": "192.0.2.1",
@@ -736,8 +736,8 @@
       },
       "settings": {
         "capture": {
-          "kind": "device",
-          "path": "/dev/video0"
+          "device": "/dev/video0",
+          "kind": "device"
         },
         "output": {
           "address": "192.0.2.1",
@@ -773,8 +773,8 @@
       },
       "settings": {
         "capture": {
-          "kind": "device",
-          "path": "/dev/video0"
+          "device": "/dev/video0",
+          "kind": "device"
         },
         "output": {
           "address": "192.0.2.1",

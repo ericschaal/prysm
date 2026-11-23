@@ -64,7 +64,7 @@
           },
           "fields": {
             "additionalProperties": true,
-            "description": "The settings fields picking it fills, such as `{ \"path\": \"/dev/video0\" }`: part of the kind's settings, merged over what the person has.",
+            "description": "The settings fields picking it fills, such as `{ \"device\": \"/dev/video0\" }`: part of the kind's settings, merged over what the person has.",
             "type": "object"
           },
           "label": {
@@ -226,8 +226,14 @@
       },
       "DeviceSettings": {
         "additionalProperties": false,
-        "description": "`{ \"kind\": \"device\", \"path\": \"/dev/video0\", \"width\": 640, \"height\": 360, \"fps\": 30 }`\n\n`path` is a V4L2 device node on Linux and an AVFoundation device unique ID\non macOS. Size and rate default to 640×360 at 30 fps.",
+        "description": "`{ \"kind\": \"device\", \"device\": \"/dev/video0\", \"width\": 640, \"height\": 360, \"fps\": 30 }`\n\n`device` is a V4L2 device node on Linux and an AVFoundation device unique ID\non macOS. Size and rate default to 640×360 at 30 fps.",
         "properties": {
+          "device": {
+            "description": "V4L2 device node on Linux, AVFoundation device unique ID on macOS.",
+            "example": "/dev/video0",
+            "minLength": 1,
+            "type": "string"
+          },
           "fps": {
             "default": 30,
             "format": "int32",
@@ -248,12 +254,6 @@
             ],
             "type": "string"
           },
-          "path": {
-            "description": "V4L2 device node on Linux, AVFoundation device unique ID on macOS.",
-            "example": "/dev/video0",
-            "minLength": 1,
-            "type": "string"
-          },
           "width": {
             "default": 640,
             "format": "int32",
@@ -264,7 +264,7 @@
         },
         "required": [
           "kind",
-          "path"
+          "device"
         ],
         "type": "object"
       },

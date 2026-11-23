@@ -137,7 +137,7 @@ pub struct Candidate {
     /// How many LEDs a found output device says it has, when it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub led_count: Option<u32>,
-    /// The settings fields picking it fills, such as `{ "path": "/dev/video0" }`:
+    /// The settings fields picking it fills, such as `{ "device": "/dev/video0" }`:
     /// part of the kind's settings, merged over what the person has.
     pub fields: Map<String, Value>,
 }

@@ -205,7 +205,7 @@ class WrittenSettings(unittest.TestCase):
         self.assertEqual((file['kind'], file['repeat']), ('file', True))
         self.assertLessEqual(set(file), self.fields('FileSettings'))
         device = untyped(host_cells.capture_settings(Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE), bench, None))
-        self.assertEqual((device['kind'], device['path'], device['fps']), ('device', bench.mac.device, 30))
+        self.assertEqual((device['kind'], device['device'], device['fps']), ('device', bench.mac.device, 30))
         self.assertLessEqual(set(device), self.fields('DeviceSettings'))
         remote = untyped(tv_checks.capture(Flavour.SLIM, 640, 360, 30, encoding=Encoding.RAW))
         self.assertEqual(remote['encoding'], 'raw')
@@ -223,10 +223,10 @@ class Stub(prysm_api.Prysm):
         self.answer = {'status': 'known', 'modes': modes}
 
     def candidates(self, section: str, kind: str) -> list[prysm_api.Candidate]:
-        return [c for c in FIXTURES['Candidate'] if 'path' in c['fields']]
+        return [c for c in FIXTURES['Candidate'] if 'device' in c['fields']]
 
     def state(self) -> prysm_api.State:
-        capture = {'kind': 'device', 'path': '/dev/video0', 'width': 640, 'height': 360, 'fps': 30}
+        capture = {'kind': 'device', 'device': '/dev/video0', 'width': 640, 'height': 360, 'fps': 30}
         return cast('prysm_api.State', {'settings': {'capture': capture}})
 
     def modes(self, capture: dict[str, object]) -> Reply:

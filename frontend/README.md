@@ -252,8 +252,8 @@ supervisor in each of its states and play the phone's calibration part). See the
     editor's width, height and frame rate as one choice in the rows pattern,
     from what the source delivers ([capture modes](packages/web-portal/capture-modes.ts):
     `POST /api/v1/capture/modes` with only the fields that select the
-    hardware, a device's `path` or the TV's `encoding`; asked again every
-    3 s while not known and the page is shown (nothing announces a device
+    hardware, a capture card's `device` or the TV's `encoding`; asked again
+    every 3 s while not known and the page is shown (nothing announces a device
     or a TV's offer), and when the page is shown again or regains focus;
     hosts pass
     `httpCaptureModesClient()`). The

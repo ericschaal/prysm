@@ -38,8 +38,8 @@ const stoppedFailure: State['session'] = {
 const untagged: WledSettings = { address: '192.0.2.1', leds: {} };
 // Every webOS capture field is optional; Rust fills the defaults.
 const defaults: WebosSettings = { kind: 'webos' };
-// @ts-expect-error The webOS source has no device path.
-const pathed: WebosSettings = { kind: 'webos', path: '/dev/video0' };
+// @ts-expect-error The webOS source has no `device` field.
+const withDevice: WebosSettings = { kind: 'webos', device: '/dev/video0' };
 void [
   revision,
   faulted,
@@ -47,7 +47,7 @@ void [
   stoppedFailure,
   untagged,
   defaults,
-  pathed,
+  withDevice,
 ];
 
 <WebPortal

@@ -16,7 +16,7 @@ import { fakeApplicationPort } from '../testkit/application';
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const state = (change = {}) => ({
   ...fakeApplicationPort({
-    capture: { kind: 'device', path: '/dev/video0' },
+    capture: { kind: 'device', device: '/dev/video0' },
   }).snapshot(),
   ...change,
 });
@@ -54,7 +54,7 @@ test('the state stream decodes split events and comments, sends no credentials a
   stream.enqueue(first.slice(0, 9));
   stream.enqueue(first.slice(9));
   const observation = await pending;
-  assert.equal(observation.initial.settings.capture.path, '/dev/video0');
+  assert.equal(observation.initial.settings.capture.device, '/dev/video0');
   const next = observation.updates.next();
   stream.enqueue(
     encode(
@@ -398,7 +398,7 @@ test('capture modes are posted the capture section and validated', async () => {
       return reply;
     },
   });
-  const capture = { kind: 'device', path: '/dev/video0' };
+  const capture = { kind: 'device', device: '/dev/video0' };
   assert.deepEqual(await client.modes(capture), known);
   assert.deepEqual(requests, [
     ['http://192.0.2.9:8787/api/v1/capture/modes', 'POST', capture],

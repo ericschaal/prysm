@@ -109,7 +109,7 @@ test('the fake colors client delivers events, counts listeners and refuses', asy
   assert.deepEqual([fake.opened(), fake.closed()], [1, 1]);
 });
 
-const capture = { kind: 'device', path: '/dev/video0' };
+const capture = { kind: 'device', device: '/dev/video0' };
 const output = { kind: 'wled', address: '192.0.2.1', leds: { top: 10 } };
 const flush = () => act(async () => sleep(0));
 const grid = () => $('.home-grid');

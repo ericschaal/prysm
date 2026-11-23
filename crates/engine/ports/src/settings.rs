@@ -15,7 +15,7 @@ use std::fmt;
 ///
 /// ```json
 /// {
-///   "capture": { "kind": "device", "path": "/dev/video0" },
+///   "capture": { "kind": "device", "device": "/dev/video0" },
 ///   "output": { "kind": "wled", "address": "wled.local", "leds": { "top": 96 } },
 ///   "processing": {
 ///     "brightness_percent": 80,
@@ -259,11 +259,11 @@ mod tests {
     #[test]
     fn settings_file_is_kind_tagged_and_defaults_processing() {
         let settings: Settings =
-            serde_json::from_str(r#"{ "capture": { "kind": "device", "path": "/dev/video0" } }"#)
+            serde_json::from_str(r#"{ "capture": { "kind": "device", "device": "/dev/video0" } }"#)
                 .unwrap();
         let capture = settings.capture.as_ref().unwrap();
         assert_eq!(capture.kind, "device");
-        assert_eq!(capture.fields["path"], "/dev/video0");
+        assert_eq!(capture.fields["device"], "/dev/video0");
         assert_eq!(settings.processing, Processing::default());
 
         let round = serde_json::to_value(&settings).unwrap();

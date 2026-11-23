@@ -420,7 +420,7 @@ def capture_settings(cell: Cell, config: Config, clip: str | None, device: str |
             machine = _machine(cell, config)
             return {
                 'kind': 'device',
-                'path': device or machine.device,
+                'device': device or machine.device,
                 'width': machine.capture.width,
                 'height': machine.capture.height,
                 'fps': machine.capture.fps,
@@ -454,13 +454,13 @@ def device_offered(prysm: Prysm, device: str, listed_as: str | None = None) -> o
     """The configured device among Prysm's candidates (as `listed_as`: a link's node), offering the capture size
     and rate in the settings."""
     found = prysm.candidates('capture', 'device')
-    present = [candidate['fields'].get('path') for candidate in found]
+    present = [candidate['fields'].get('device') for candidate in found]
     if (listed_as or device) not in present:
-        listed = ', '.join(f'{c["label"]} ({c["fields"].get("path")})' for c in found) or 'none'
+        listed = ', '.join(f'{c["label"]} ({c["fields"].get("device")})' for c in found) or 'none'
         node = f' ({listed_as})' if listed_as and listed_as != device else ''
         raise Failed(f'no capture device {device!r}{node}; present: {listed}', found)
     size = _running_size(prysm)
-    reply = prysm.modes({'kind': 'device', 'path': device})
+    reply = prysm.modes({'kind': 'device', 'device': device})
     answer = prysm_api.modes_answer(reply)
     if reply.status != 200 or answer.get('status') != 'known':
         raise Failed(f'capture modes of {device} unknown (HTTP {reply.status})', answer)

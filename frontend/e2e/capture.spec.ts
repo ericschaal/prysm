@@ -13,7 +13,7 @@ import {
 
 const card: FakeDevice = {
   name: 'Capture card',
-  path: '/dev/video7',
+  device: '/dev/video7',
   modes: [
     fixedMode(1280, 720, 30),
     fixedMode(1280, 720, 60),
@@ -24,7 +24,7 @@ const card: FakeDevice = {
 /** A camera without a 16:9 size or 60 fps. */
 const webcam: FakeDevice = {
   name: 'Webcam',
-  path: '/dev/video8',
+  device: '/dev/video8',
   modes: [fixedMode(640, 480, 30)],
 };
 
@@ -79,7 +79,7 @@ test.describe('a capture card', () => {
     ).toHaveCount(0);
     expect((await prysm.savedSettings()).capture).toEqual({
       kind: 'device',
-      path: '/dev/video7',
+      device: '/dev/video7',
       width: 1280,
       height: 720,
       fps: 60,
@@ -93,7 +93,7 @@ test.describe('a saved size no preset sets', () => {
     settings: {
       capture: {
         kind: 'device',
-        path: '/dev/video7',
+        device: '/dev/video7',
         width: 800,
         height: 600,
         fps: 25,
@@ -121,7 +121,7 @@ test.describe('a saved device that is not plugged in', () => {
   test.use({
     devices: [card],
     settings: {
-      capture: { kind: 'device', path: '/dev/video9', fps: 60 },
+      capture: { kind: 'device', device: '/dev/video9', fps: 60 },
       output: { kind: 'null' },
     },
   });

@@ -4,12 +4,12 @@
 //! production host.
 //!
 //! ```sh
-//! PRYSM_FAKE_DEVICES='[{"name":"Capture card","path":"/dev/video7","modes":[…]}]' \
+//! PRYSM_FAKE_DEVICES='[{"name":"Capture card","device":"/dev/video7","modes":[…]}]' \
 //!     cargo run -p prysm-headless --example fake_devices -- settings.json
 //! ```
 //!
-//! Each device is `{ name, path, modes }`, `modes` as
-//! `POST /api/v1/capture/modes` answers them; any other path is unknown, as
+//! Each device is `{ name, device, modes }`, `modes` as
+//! `POST /api/v1/capture/modes` answers them; any other device is unknown, as
 //! an unplugged device is. Opening one fails: the tests do not capture.
 use prysm_capture_device::DeviceSettings;
 use prysm_host::{Program, assets};
@@ -27,7 +27,7 @@ const PROGRAM: Program = Program {
 #[derive(Deserialize)]
 struct FakeDevice {
     name: String,
-    path: String,
+    device: String,
     modes: Vec<Mode>,
 }
 
@@ -50,8 +50,11 @@ impl SourceFactory for FakeDevices {
         self.0
             .iter()
             .map(|device| {
-                Candidate::new(&device.name, &serde_json::json!({ "path": device.path }))
-                    .detail(&device.path)
+                Candidate::new(
+                    &device.name,
+                    &serde_json::json!({ "device": device.device }),
+                )
+                .detail(&device.device)
             })
             .collect()
     }
@@ -59,7 +62,7 @@ impl SourceFactory for FakeDevices {
     fn modes(&self, settings: &DeviceSettings) -> Modes {
         self.0
             .iter()
-            .find(|device| device.path == settings.path)
+            .find(|device| device.device == settings.device)
             .map_or(Modes::Unknown, |device| Modes::Known(device.modes.clone()))
     }
 }

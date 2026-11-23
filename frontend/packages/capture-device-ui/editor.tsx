@@ -31,35 +31,37 @@ function problemOf(modes: ModesState) {
  * and rates once it is known which device: asked of the device itself.
  */
 export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
-  const path = value.path.trim();
-  // A typed path is asked about once typing pauses; a picked one at once.
-  const [asked, setAsked] = useState(path);
+  const device = value.device.trim();
+  // A typed device is asked about once typing pauses; a picked one at once.
+  const [asked, setAsked] = useState(device);
   useEffect(() => {
-    const timer = setTimeout(() => setAsked(path), typedDeviceMs);
+    const timer = setTimeout(() => setAsked(device), typedDeviceMs);
     return () => clearTimeout(timer);
-  }, [path]);
-  const modes = useCaptureModes(asked ? { kind: 'device', path: asked } : null);
+  }, [device]);
+  const modes = useCaptureModes(
+    asked ? { kind: 'device', device: asked } : null,
+  );
   const pick = (next: string) => {
     setAsked(next);
-    onChange({ ...value, path: next });
+    onChange({ ...value, device: next });
   };
   return (
     <DeviceRows
       kind="device"
-      path="capture.path"
-      field="path"
+      path="capture.device"
+      field="device"
       legend="Device"
-      value={path}
+      value={device}
       missing={modes.state === 'unknown' ? 'Not plugged in' : undefined}
       problem={asked ? problemOf(modes) : undefined}
       onPick={pick}
       byHand={
         <TextField
-          path="capture.path"
+          path="capture.device"
           label="Enter the device by hand"
           placeholder="/dev/video0"
-          value={value.path}
-          onChange={(typed) => onChange({ ...value, path: typed })}
+          value={value.device}
+          onChange={(typed) => onChange({ ...value, device: typed })}
           check={(typed) =>
             typed.trim() ? null : 'Choose a device, or enter one by hand.'
           }
