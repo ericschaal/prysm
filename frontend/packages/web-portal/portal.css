@@ -1770,6 +1770,12 @@ fieldset > .field-note {
     color: var(--bg);
   }
 }
+/* Once placed, the row glides to bring a new choice into view. */
+@media (prefers-reduced-motion: no-preference) {
+  .segments-scroll[data-pill] {
+    scroll-behavior: smooth;
+  }
+}
 .segments-scroll[data-pill] .segment[aria-checked='true'],
 .segments-scroll[data-pill] .segment[aria-checked='true']:hover:enabled {
   background: transparent;
