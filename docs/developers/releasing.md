@@ -140,7 +140,8 @@ contract (timings, colours produced).
    as a pre-release. While candidates are being made,
    [release-please-config.json](../../release-please-config.json) sets
    `versioning: prerelease`, `prerelease-type: rc` and `prerelease: true`:
-   after `1.0.0-rc.2` every commit type proposes `1.0.0-rc.3`. The final
+   after `1.0.0-rc.2` the next release pull request proposes `1.0.0-rc.3`,
+   whatever the commit types. The final
    version (`1.0.0`) needs the block once. After it, remove the three options:
    with them, the next `fix:` would propose `1.0.1-rc`.
 2. Review and merge the release pull request. Release Please then creates the
