@@ -15,6 +15,8 @@ import { fakeDiscoveryClient } from '../testkit/discovery';
 import {
   $,
   $$,
+  assertFocused,
+  assertSame,
   button,
   click,
   edit,
@@ -752,7 +754,7 @@ test('with devices to pick, no device chosen is said at the rows, which take the
     await settled();
     await submit(wizard());
     const devices = $('.device-rows');
-    assert.equal(document.activeElement, devices);
+    assertFocused(devices);
     assert.equal(devices.getAttribute('aria-invalid'), 'true');
     assert.equal(
       document.getElementById(devices.getAttribute('aria-describedby'))
@@ -799,7 +801,7 @@ test('Look again keeps the focus while looking and ignores presses meanwhile', a
     again.focus();
     const before = looks;
     await click(again);
-    assert.equal(document.activeElement, again, 'still focused');
+    assertFocused(again, 'still focused');
     assert.equal(again.disabled, false);
     assert.equal(again.getAttribute('aria-busy'), 'true');
     assert.equal(again.getAttribute('aria-disabled'), 'true');
@@ -812,7 +814,7 @@ test('Look again keeps the focus while looking and ignores presses meanwhile', a
     await act(async () => release());
     await settled();
     assert.equal(again.getAttribute('aria-busy'), 'false');
-    assert.equal(document.activeElement, again);
+    assertFocused(again);
   } finally {
     await portal.unmount();
   }
@@ -861,11 +863,11 @@ test('the first lookup lists nothing until it answers, then each device once, in
     assert.equal($('input', saved).checked, true);
     // Looking again: the same rows, the same nodes, until and after it answers.
     await click(button('Look again'));
-    assert.equal(devices()[1], saved);
+    assertSame(devices()[1], saved, 'the same row');
     assert.equal($('.row-label', saved).textContent, 'Card');
     await answer();
     await settled();
-    assert.equal(devices()[1], saved);
+    assertSame(devices()[1], saved, 'the same row');
     assert.equal($('.row-label', saved).textContent, 'Card');
   } finally {
     await portal.unmount();
@@ -944,7 +946,11 @@ test('Look again sits on the devices heading, outside the group name', async () 
         .textContent,
       'Device',
     );
-    assert.equal(button('Look again').closest('legend'), $('legend', group));
+    assertSame(
+      button('Look again').closest('legend'),
+      $('legend', group),
+      'Look again sits in the legend',
+    );
     // Nothing to say under the rows: no line.
     assert.equal($('.device-rows > .help').textContent, '');
   } finally {

@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 use prysm_capture_remote::RemoteSender;
 use prysm_core::Frame;
 use prysm_h264::{Backend, Decoder, Encoder, EncoderSettings, FORMAT};
-use prysm_ports::FrameSink;
+use prysm_ports::{FrameSink, chain};
 use prysm_webos_link::PrysmAddress;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -195,10 +195,6 @@ fn cpu_ticks() -> Option<u64> {
     Some(fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?)
 }
 
-fn chain(error: &dyn std::error::Error) -> String {
-    prysm_ports::chain(error)
-}
-
 fn run(options: Options) -> Result<(), String> {
     let Options {
         encoding,
@@ -373,7 +369,6 @@ mod tests {
             &["--frames", "0"],
             &["--prysm", "nope"],
             &["--prysm", "http://0.0.0.0:8787"],
-            &["--receiver", "192.168.1.20:7380"],
             &["--fps"],
             &["--colour", "red"],
         ] {

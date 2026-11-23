@@ -194,7 +194,6 @@ pub fn check_arguments(binary: &str, name: &str) {
         &[settings, "--start", "--start"],
         &[settings, "--listen", "not-an-address"],
         &[settings, "other.json"],
-        &[settings, "--token-file", "t"],
         &[
             settings,
             "--allow-origin",

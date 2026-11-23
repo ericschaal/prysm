@@ -18,8 +18,9 @@ npm --prefix frontend run e2e:tv        # TV app with remote keys in Chromium (i
 ```
 
 `npm run bundle` builds the four entry points (and the browser bundles' Rust
-asset lists) into `dist`; `npm test` runs the schema/drift and DOM tests, and
-its TV tests read `dist`, so bundle first. Bundle before compiling a Rust host:
+asset lists) into `dist`; `npm test` runs the schema/drift and DOM tests, each
+DOM test file bundled on its own and run in its own process, and its TV tests
+read `dist`, so bundle first. Bundle before compiling a Rust host:
 [`prysm_host::assets`](../crates/hosts/common/src/assets.rs) embeds the asset lists
 (a debug build without them serves a "not built" page, a release build
 fails); Cargo never launches npm.

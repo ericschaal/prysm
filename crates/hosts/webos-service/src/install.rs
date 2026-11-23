@@ -1,6 +1,7 @@
 //! Registration with the TV: Luna manifests for the supervisor and worker
 //! roles, the webosbrew boot hook, a bounded `ls-control` rescan and a
 //! bounded activation. Never replaces files it did not write.
+use crate::launcher::kill_and_reap;
 use crate::preferences::read_private;
 use prysm_settings_file::atomic;
 use serde_json::{Value, json};
@@ -8,13 +9,16 @@ use std::fs;
 use std::io::{self, Read};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
 /// Bound on `ls-control scan-services` and on activation.
 pub const CHILD_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bound on a child's reply.
 const MAX_REPLY: usize = 65_536;
+/// Bound on reading the boot hook or a manifest.
+const MAX_FILE: usize = 65_536;
 
 /// The Luna manifests' version: the product version's major.minor.patch,
 /// the same rule as the packaged appinfo.json (`ipk.py app_version`), which
@@ -201,7 +205,7 @@ impl FsInstaller {
             path: path.clone(),
             source,
         };
-        let existing = read_private(path, MAX_REPLY).map_err(failed)?;
+        let existing = read_private(path, MAX_FILE).map_err(failed)?;
         let marker = self.layout.hook_marker();
         if let Some(bytes) = &existing
             && !bytes
@@ -288,7 +292,7 @@ fn manifest(path: &Path, value: &Value, install: bool) -> Result<()> {
         path: path.to_owned(),
         source,
     };
-    let existing = read_private(path, MAX_REPLY)
+    let existing = read_private(path, MAX_FILE)
         .map_err(failed)?
         .map(|bytes| serde_json::from_slice::<Value>(&bytes))
         .transpose()
@@ -403,16 +407,6 @@ fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> R
         .map(|reader| reader.join().unwrap_or_default())
         .unwrap_or_default();
     Ok(Finished { status, stdout })
-}
-
-/// Stop a child that is given up on. Not reaped yet, so the kill reaches
-/// it; one that already exited is fine. A failed reap is reported, the
-/// caller's error stands.
-fn kill_and_reap(child: &mut Child, program: &str) {
-    let _ = child.kill();
-    if let Err(error) = child.wait() {
-        eprintln!("prysm-webos-service: cannot reap {program}: {error}");
-    }
 }
 
 /// Block until child `pid` has exited, leaving it to be reaped:

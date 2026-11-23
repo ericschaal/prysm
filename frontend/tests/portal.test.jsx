@@ -44,6 +44,8 @@ import { fakePreviewClient } from '../testkit/preview';
 import {
   $,
   $$,
+  assertFocused,
+  assertSame,
   button,
   click,
   edit,
@@ -179,7 +181,7 @@ test('a state tick leaves Settings in place; each page has its own save line', a
     await running(29.9);
     await running(30.1);
     nodes().forEach((node, index) =>
-      assert.equal(node, before[index], `node ${index} kept across ticks`),
+      assertSame(node, before[index], `node ${index} kept across ticks`),
     );
     assert.equal($('.save-status').textContent, 'All changes saved');
 
@@ -188,7 +190,7 @@ test('a state tick leaves Settings in place; each page has its own save line', a
     await click($('input[type="checkbox"]', row('Remove black bars')));
     assert.equal($('.save-status').textContent, 'Saving…');
     await openPage('Style');
-    assert.notEqual($('.page-heading h2'), before[0], 'a page of its own');
+    assert($('.page-heading h2') !== before[0], 'a page of its own');
     assert.equal($('.save-status').textContent, 'All changes saved');
     release();
     await act(async () => sleep(50));
@@ -795,7 +797,7 @@ test('modes that cannot work are disabled and say why; before setup only the pro
       await click(button('Leave setup'));
       // A calm card: the prompt and its one action, nothing disabled to puzzle over.
       assert.equal($$('[data-target]').length, 0);
-      assert.equal(power(), null);
+      assert(!power());
       assert(!$('.light-card input'));
       assert(!$('.chip'));
       assert.equal(button('Set up Prysm').disabled, false);
@@ -929,12 +931,12 @@ test('arrow keys move what the lights follow, as in a radio group', async () => 
   try {
     await key(mode('screen_sync'), 'ArrowRight');
     assert.equal(fixture.snapshot().target, 'effects');
-    assert.equal(document.activeElement, mode('effects'));
+    assertFocused(mode('effects'));
     assert.equal(mode('effects').tabIndex, 0);
     assert.equal(mode('screen_sync').tabIndex, -1);
     await key(mode('effects'), 'ArrowLeft');
     assert.equal(fixture.snapshot().target, 'screen_sync');
-    assert.equal(document.activeElement, mode('screen_sync'));
+    assertFocused(mode('screen_sync'));
   } finally {
     await portal.unmount();
   }
@@ -985,8 +987,8 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
   try {
     await openSettings();
     // Only black bars here: brightness and the calibration choice live on Home.
-    assert.equal(control('brightness_percent'), null);
-    assert.equal(control('active_calibration'), null);
+    assert(!control('brightness_percent'));
+    assert(!control('active_calibration'));
     assert.equal(control('remove_black_bars').checked, false);
     assert.equal(valueOf('Calibrations'), '1 calibration · PS5 in use');
     await click(control('remove_black_bars'));
@@ -1208,8 +1210,8 @@ test('the video source editor saves the exact section once; Cancel drops the dra
     assert.equal(field('capture.path').value, '/dev/video0');
     assert.equal(radio('Custom').checked, true, 'no preset is 25 fps');
     // Nothing to save yet: no bar; the way out is the page's back link.
-    assert.equal(primary(), undefined);
-    assert.equal(button('Cancel', form('Video source')), undefined);
+    assert(!primary(), 'no save bar');
+    assert(!button('Cancel', form('Video source')), 'no Cancel');
     assert.equal(
       now(),
       'Not in use — Screen sync is off, so this source isn’t in use.',
@@ -1242,7 +1244,7 @@ test('the video source editor saves the exact section once; Cancel drops the dra
       processing: defaultProcessing,
     });
     // Screen sync is off: saved, the bar gone, the status unchanged.
-    assert.equal(primary(), undefined);
+    assert(!primary(), 'the bar is gone');
     assert.equal(
       now(),
       'Not in use — Screen sync is off, so this source isn’t in use.',
@@ -1256,7 +1258,7 @@ test('the video source editor saves the exact section once; Cancel drops the dra
       'Choose a device, or enter one by hand.',
     );
     assert.equal(status(), 'Fix 1 field');
-    assert.equal(document.activeElement, field('capture.path'));
+    assertFocused(field('capture.path'));
     assert.equal(saves(fixture), 1);
   } finally {
     await portal.unmount();
@@ -1283,7 +1285,7 @@ test('server field errors land on their control and clear when it is edited', as
       hint(choice),
       'This device can’t capture this size. Choose another.',
     );
-    assert.equal(document.activeElement, choice);
+    assertFocused(choice);
     assert.equal(status(), 'Fix 1 field');
     await click(radio('Efficient'));
     assert(!choice.getAttribute('aria-invalid'));
@@ -1302,7 +1304,7 @@ test('server field errors land on their control and clear when it is edited', as
       errorOf(field('output.address')),
       'Use the lights’ name, such as wled.local, or their number, such as 192.168.1.50.',
     );
-    assert.equal(document.activeElement, field('output.address'));
+    assertFocused(field('output.address'));
 
     fixture.failNext({
       kind: 'invalid',
@@ -1315,7 +1317,7 @@ test('server field errors land on their control and clear when it is edited', as
       $('[data-field-message="output.leds"]').textContent,
       'Use 1 to 16384 LEDs in total.',
     );
-    assert.equal(document.activeElement, $('[data-field="output.leds"]'));
+    assertFocused($('[data-field="output.leds"]'));
     // Editing any edge answers the group's error.
     await edit(field('output.leds.right'), 2);
     assert.equal($('[data-field-message="output.leds"]').textContent, '');
@@ -1327,10 +1329,7 @@ test('server field errors land on their control and clear when it is edited', as
       message: 'unknown field',
     });
     await submit(form('Your lights'));
-    assert.equal(
-      document.activeElement,
-      $('[data-form-alert]', form('Your lights')),
-    );
+    assertFocused($('[data-form-alert]', form('Your lights')));
     assert.equal(
       document.activeElement.textContent,
       'Not saved: Prysm can’t use these settings.',
@@ -1415,7 +1414,7 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     await submit(form('Your lights'));
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.99');
     // A plain save: the bar leaves, the status follows the new lights.
-    assert.equal(button('Use these lights'), undefined);
+    assert(!button('Use these lights'));
     assert.equal(now(), 'Starting… — WLED at 192.0.2.99 · 14 LEDs');
     assert(!button('Go back to the previous lights'), 'only when needed');
 
@@ -1464,7 +1463,7 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     assert.equal(now(), 'Picture arriving — 30 fps');
     await edit(field('capture.path'), '/dev/video3');
     await submit(form('Video source'));
-    assert.equal(button('Use this video source'), undefined);
+    assert(!button('Use this video source'));
     assert(!button('Go back to the previous video source'));
   } finally {
     await portal.unmount();
@@ -1589,11 +1588,11 @@ test('the save bar says how many fields to fix and takes the user to the first',
     await submit(form('Video source'));
     assert.equal(saves(fixture), 1, 'asked once, refused');
     assert.equal(advanced().getAttribute('aria-expanded'), 'true');
-    assert.equal(document.activeElement, field('capture.encoding'));
+    assertFocused(field('capture.encoding'));
     assert.equal(status(), 'Fix 1 field');
     field('capture.path')?.focus();
     await click(button('Fix 1 field'));
-    assert.equal(document.activeElement, field('capture.encoding'));
+    assertFocused(field('capture.encoding'));
   } finally {
     await portal.unmount();
   }
@@ -1825,7 +1824,7 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
       $('[data-field-message="output.leds"]').textContent,
       'Use 1 to 16384 LEDs in total.',
     );
-    assert.equal(document.activeElement, $('[data-field="output.leds"]'));
+    assertFocused($('[data-field="output.leds"]'));
     await edit(field('output.leds.top'), 20000);
     assert.equal(
       errorOf(field('output.leds.top')),
@@ -1900,7 +1899,7 @@ test('each edge’s LED count is typed on that edge of the drawing', async () =>
       ['left', 'Left LEDs'],
     ]) {
       const input = $(`.led-edge-${edge} input`, drawing);
-      assert.equal(input, field(`output.leds.${edge}`), `${edge} on its edge`);
+      assertSame(input, field(`output.leds.${edge}`), `${edge} on its edge`);
       assert.equal(input.labels[0].textContent, label);
     }
     assert(!$('.led-counts'), 'no second set of fields');
@@ -2132,7 +2131,7 @@ test('choosing a preset saves exactly its size and rate; a refused one is said a
     assert.deepEqual(ticked(), ['Efficient']);
     assert.equal(choice.getAttribute('aria-invalid'), 'true');
     assert.equal(hint(choice), 'Prysm can’t use this value.');
-    assert.equal(document.activeElement, choice);
+    assertFocused(choice);
     await click(radio('Balanced'));
     assert.equal(choice.getAttribute('aria-invalid'), null);
   } finally {
@@ -2245,7 +2244,7 @@ test('the remote capture form asks the TV for a stream with the same picture cho
       errorOf(input('encoding')),
       'This TV can’t send the picture this way. Choose another.',
     );
-    assert.equal(document.activeElement, input('encoding'));
+    assertFocused(input('encoding'));
   } finally {
     await portal.unmount();
   }
@@ -2557,7 +2556,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     ]);
     // Unstamped source: no total on the Lights stop, only the link's part;
     // the line keeps the LED count, which is the tooltip as well.
-    assert.equal($$('.path-stop')[2].querySelector('.path-figure'), null);
+    assert(!$$('.path-stop')[2].querySelector('.path-figure'));
     assert.equal(
       $$('.path-stop')[2].querySelector('.path-fact').textContent,
       $$('.path-stop')[2].querySelector('.path-text').title,

@@ -80,7 +80,6 @@ impl Wled {
     /// The device `settings` name, its host resolved within `wait` or
     /// until `stop` is cut.
     fn device(&self, settings: &WledSettings, wait: Duration, stop: &Hangup) -> Result<Device> {
-        settings.validate()?;
         let address = settings.device()?;
         let ip = self.names.resolve(&address, wait, stop)?;
         let label = match address.host {

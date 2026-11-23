@@ -18,7 +18,8 @@
 use crate::identity::APP_ID;
 use crate::preferences::Preferences;
 use crate::service::{
-    ErrorKind, GetStateRequest, SetEnabledRequest, SetTargetRequest, UninstallRequest,
+    DoneReply, ErrorKind, ErrorReply, GetStateRequest, SetEnabledRequest, SetTargetRequest,
+    StateReply, UninstallRequest,
 };
 use crate::state::{FullWorker, Package, Power, SlimWorker, State};
 use prysm_ports::StreamEncoding;
@@ -129,45 +130,14 @@ fn constant(value: bool) -> ObjectBuilder {
         .enum_values(Some([value]))
 }
 
-fn always_true() -> ObjectBuilder {
+/// The schema of LS2's `returnValue` on success.
+pub(crate) fn always_true() -> ObjectBuilder {
     constant(true)
 }
 
-fn always_false() -> ObjectBuilder {
+/// The schema of LS2's `returnValue` on failure.
+pub(crate) fn always_false() -> ObjectBuilder {
     constant(false)
-}
-
-/// A successful state reply: [`State`] with LS2's `returnValue`.
-#[derive(ToSchema)]
-#[allow(dead_code, non_snake_case)]
-pub struct StateReply {
-    #[serde(flatten)]
-    state: State,
-    #[schema(schema_with = always_true)]
-    returnValue: bool,
-    /// On `getState` and subscription updates: whether the caller is subscribed.
-    #[schema(nullable = false)]
-    subscribed: Option<bool>,
-}
-
-/// The `uninstall` reply.
-#[derive(ToSchema)]
-#[allow(dead_code, non_snake_case)]
-pub struct DoneReply {
-    #[schema(schema_with = always_true)]
-    returnValue: bool,
-}
-
-/// Any failed call. LS2's own replies (for example for a method that is not
-/// registered) carry no `errorKind`; an app reads that as an unknown kind.
-#[derive(ToSchema)]
-#[allow(dead_code, non_snake_case)]
-pub struct ErrorReply {
-    #[schema(schema_with = always_false)]
-    returnValue: bool,
-    errorKind: ErrorKind,
-    /// What failed, for people.
-    errorText: String,
 }
 
 #[derive(utoipa::OpenApi)]
