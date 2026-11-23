@@ -22,7 +22,7 @@ export const deviceCapture: AdapterUi<DeviceSettings> = {
   // A device on this computer: nothing travels over a network.
   transport: () => 'local',
   problems: {
-    'capture.device': 'Choose a device, or enter its name by hand.',
+    'capture.device': 'Choose a device, or enter its path.',
     'capture.width': 'This device can’t capture this size. Choose another.',
     'capture.height': 'This device can’t capture this size. Choose another.',
     'capture.fps': 'This device can’t capture at this rate. Choose another.',

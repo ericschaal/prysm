@@ -41,8 +41,8 @@ Nothing is saved until the last step.
    or **This TV** on the full TV package.
 2. **Your lights.** Choose **WLED**. The WLED devices found on your network
    are listed under **Lights**; choose yours, or select **Look again**. To
-   type the address instead, open **Advanced** (it is shown at once when
-   nothing is found): a name such as `wled.local`
+   type the address instead, use the last row, under the lights found: a
+   name such as `wled.local`
    or an IP address such as `192.168.1.30`, with `:PORT` only if WLED's web
    page is not on port 80. Do not type `http://`.
    Enter the number of LEDs on each edge; use 0 for an edge without LEDs.
