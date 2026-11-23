@@ -1,10 +1,11 @@
 //! TV-local preferences (`tv.json`): one writer, the supervisor.
 use crate::state::Flavor;
+use prysm_settings_file::atomic;
 use prysm_webos_link::{LightingTarget, PrysmAddress};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -217,33 +218,12 @@ impl FileStore {
 
 /// Write `bytes` to `path` atomically, private (0600).
 fn replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
-    write_atomic(path, bytes, 0o600, true).map_err(|source| StoreError::Save {
-        path: path.to_owned(),
-        source,
+    atomic::write(path, bytes, fs::Permissions::from_mode(0o600), true).map_err(|source| {
+        StoreError::Save {
+            path: path.to_owned(),
+            source,
+        }
     })
-}
-
-/// Write `bytes` with `mode` to a temporary file next to `path`, sync it,
-/// rename it to `path` and sync the directory: a reader sees the old file or
-/// the new one, never a partial write. Without `replace`, an existing `path`
-/// is an error and stays as it is.
-///
-/// # Errors
-/// Any step failed. An error before the rename removes the temporary file;
-/// a crash can leave it behind (a dot-file next to `path`).
-pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32, replace: bool) -> io::Result<()> {
-    let directory = path.parent().unwrap_or(Path::new("."));
-    let mut file = tempfile::NamedTempFile::new_in(directory)?;
-    file.as_file()
-        .set_permissions(fs::Permissions::from_mode(mode))?;
-    file.write_all(bytes)?;
-    file.as_file().sync_all()?;
-    if replace {
-        file.persist(path).map_err(|error| error.error)?;
-    } else {
-        file.persist_noclobber(path).map_err(|error| error.error)?;
-    }
-    fs::File::open(directory)?.sync_all()
 }
 
 impl PreferencesStore for FileStore {

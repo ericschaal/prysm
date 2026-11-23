@@ -326,7 +326,7 @@ fn stream(
     let request = sender.request();
     let checked = (Some(settings.backend), width, height, settings.fps);
     if (
-        request.encoding.backend(),
+        Backend::of(request.encoding),
         request.width,
         request.height,
         request.fps,

@@ -18,9 +18,10 @@ mod codec;
 pub mod worker;
 
 pub use address::{PrysmAddress, Scheme};
-pub use args::{FullArgs, SlimArgs, SlimEncoding};
+pub use args::{FullArgs, SlimArgs};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
 pub use prysm_ports::LightingTarget;
+use prysm_ports::StreamEncoding;
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -146,7 +147,7 @@ pub enum SlimLink {
     /// Connected: frames go out in `encoding` (always the one the receiver
     /// requested), `fps` per second over about the last second, rounded; 0
     /// while none come.
-    Sending { encoding: SlimEncoding, fps: u16 },
+    Sending { encoding: StreamEncoding, fps: u16 },
     /// The receiver stopped the stream (its lighting is off), and the TV
     /// capture is released until a receiver takes a connection again. Not a
     /// failure.

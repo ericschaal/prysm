@@ -1,4 +1,5 @@
 use super::*;
+use prysm_ports::StreamEncoding;
 use std::io::BufReader;
 use std::path::PathBuf;
 
@@ -57,7 +58,7 @@ fn events_round_trip() {
     for (link, text) in [
         (
             SlimLink::Sending {
-                encoding: SlimEncoding::Raw,
+                encoding: StreamEncoding::Raw,
                 fps: 30,
             },
             r#"{"state":"sending","encoding":"raw","fps":30}"#,
@@ -310,22 +311,6 @@ fn slim_args_carry_only_the_prysm_address() {
         named.to_args(),
         strings(&["--prysm", "https://prysm.example.com"])
     );
-}
-
-#[test]
-fn slim_encodings_have_their_serde_names() {
-    for encoding in [
-        SlimEncoding::H264Hardware,
-        SlimEncoding::H264Software,
-        SlimEncoding::Raw,
-    ] {
-        assert_eq!(encoding.to_string().parse(), Ok(encoding));
-        assert_eq!(
-            serde_json::to_value(encoding).unwrap(),
-            serde_json::Value::String(encoding.to_string())
-        );
-    }
-    assert!("h265".parse::<SlimEncoding>().is_err());
 }
 
 #[test]

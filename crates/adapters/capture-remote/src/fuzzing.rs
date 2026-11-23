@@ -4,11 +4,12 @@
 //! target finds wrong answers as well as panics. The decoders stay
 //! crate-private; only these checks are public.
 use crate::offer::Offer;
-use crate::request::{RemoteSettings, StreamEncoding};
+use crate::request::RemoteSettings;
 use crate::wire::{
     self, Encoding, FromReceiver, FromSender, KEYFRAME, MAX_HEIGHT, MAX_PAYLOAD_BYTES,
     MAX_REASON_BYTES, MAX_WIDTH, Refusal, RefusalCause, ToReceiver, ToSender, at,
 };
+use prysm_ports::StreamEncoding;
 
 /// A frame message; the first byte picks the stream's encoding. An accepted
 /// frame is within the limits, its payload fits its header, and its header

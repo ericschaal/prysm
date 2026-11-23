@@ -1,10 +1,12 @@
 //! Registration with the TV: Luna manifests for the supervisor and worker
 //! roles, the webosbrew boot hook, a bounded `ls-control` rescan and a
 //! bounded activation. Never replaces files it did not write.
-use crate::preferences::{read_private, write_atomic};
+use crate::preferences::read_private;
+use prysm_settings_file::atomic;
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{self, Read};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -215,7 +217,13 @@ impl FsInstaller {
                     .parent()
                     .ok_or_else(|| failed(io::Error::other("no directory")))?;
                 fs::create_dir_all(parent).map_err(failed)?;
-                write_atomic(path, script.as_bytes(), 0o755, existing.is_some()).map_err(failed)
+                atomic::write(
+                    path,
+                    script.as_bytes(),
+                    fs::Permissions::from_mode(0o755),
+                    existing.is_some(),
+                )
+                .map_err(failed)
             }
             (false, Some(_)) => remove(path).map_err(failed),
             (false, None) => Ok(()),
@@ -300,7 +308,13 @@ fn manifest(path: &Path, value: &Value, install: bool) -> Result<()> {
                 .map_err(io::Error::from)
                 .map_err(failed)?;
             bytes.push(b'\n');
-            write_atomic(path, &bytes, 0o644, existing.is_some()).map_err(failed)
+            atomic::write(
+                path,
+                &bytes,
+                fs::Permissions::from_mode(0o644),
+                existing.is_some(),
+            )
+            .map_err(failed)
         }
         (false, Some(_)) => remove(path).map_err(failed),
         (false, None) => Ok(()),

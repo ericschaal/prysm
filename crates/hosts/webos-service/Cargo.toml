@@ -26,6 +26,8 @@ testkit = []
 
 [dependencies]
 prysm-ports.workspace = true
+# `atomic::write`: the one atomic file replacement.
+prysm-settings-file.workspace = true
 prysm-version.workspace = true
 prysm-webos-link.workspace = true
 prysm-webos-luna-sys.workspace = true
@@ -33,7 +35,6 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 signal-hook.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
 nix = { workspace = true, features = ["event", "fs", "process", "signal", "user"] }
 utoipa = { workspace = true, optional = true }

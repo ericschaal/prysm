@@ -7,8 +7,9 @@
 use prysm_capture_remote::testkit::{
     BOUND, Portal, in_other_ca_process, in_test_ca_process, receive, tls_proxy,
 };
-use prysm_capture_remote::{Close, RemoteSender, RemoteSettings, StreamEncoding, WireError};
+use prysm_capture_remote::{Close, RemoteSender, RemoteSettings, WireError};
 use prysm_core::{Frame, PixelFormat};
+use prysm_ports::StreamEncoding;
 use prysm_ports::{FrameSink, FrameSource};
 use prysm_testkit::eventually;
 

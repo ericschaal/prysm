@@ -3,8 +3,9 @@
 //! stream path, and hand the connection over. Every wait is bounded. Also a
 //! TLS-terminating proxy with a test certificate, for `wss://`.
 use crate::wire::{MAX_FPS, MAX_HEIGHT, MAX_WIDTH};
-use crate::{Offer, RemoteSender, RemoteSettings, RemoteSource, StreamEncoding};
+use crate::{Offer, RemoteSender, RemoteSettings, RemoteSource};
 use prysm_core::Frame;
+use prysm_ports::StreamEncoding;
 use prysm_ports::{
     Accepted, Answer, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Error,
     FrameSource, Handoff, Mode, Result, Span,

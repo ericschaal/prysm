@@ -30,6 +30,6 @@ mod wire;
 
 pub use offer::Offer;
 pub use receiver::{RemoteReceiver, RemoteSource, STOP};
-pub use request::{RemoteSettings, StreamEncoding};
+pub use request::RemoteSettings;
 pub use sender::{CONNECT_DEADLINE, RemoteSender, SendError};
 pub use wire::{Close, WireError};

@@ -92,7 +92,7 @@ pub enum LightingTargetSchema {
     Effects,
 }
 
-// Mirrors `prysm_webos_link::SlimEncoding`.
+// Mirrors `prysm_ports::StreamEncoding`.
 /// How the slim package encodes the frames it sends: the encoding its
 /// receiver requested (set in the desktop portal). Exactly this encoder is
 /// used; one that cannot start or fails is a failure, never a switch to
@@ -220,9 +220,8 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{
-        FailureKind, LightingTarget, SlimEncoding, SlimLink, Video, WorkerFailure,
-    };
+    use prysm_ports::StreamEncoding;
+    use prysm_webos_link::{FailureKind, LightingTarget, SlimLink, Video, WorkerFailure};
 
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::{Value, json};
@@ -249,12 +248,8 @@ mod tests {
                 kind, "x",
             ));
         }
-        for encoding in [
-            SlimEncoding::H264Hardware,
-            SlimEncoding::H264Software,
-            SlimEncoding::Raw,
-        ] {
-            assert_mirror_round_trips::<SlimEncoding, SlimEncodingSchema>(&encoding);
+        for encoding in StreamEncoding::ALL {
+            assert_mirror_round_trips::<StreamEncoding, SlimEncodingSchema>(&encoding);
             assert_mirror_round_trips::<SlimLink, SlimLinkSchema>(&SlimLink::Sending {
                 encoding,
                 fps: 30,

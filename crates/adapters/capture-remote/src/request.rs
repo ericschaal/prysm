@@ -2,69 +2,9 @@
 //! and encoding. Its request message carries them to the sender.
 use crate::wire::{MAX_FPS, MAX_HEIGHT, MAX_WIDTH};
 use prysm_h264::{Backend, EncoderSettings};
-use prysm_ports::ValidationError;
+use prysm_ports::{StreamEncoding, ValidationError};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::str::FromStr;
-
-/// How the sender encodes the frames it sends. Exactly this encoder is used:
-/// one that cannot start or fails ends the stream with a refusal, never a
-/// switch to another.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-pub enum StreamEncoding {
-    /// The sender's hardware H.264 encoder (the webOS TV's; about 2 Mbit/s).
-    #[default]
-    H264Hardware,
-    /// OpenH264 on the sender's CPU (about 2 Mbit/s).
-    H264Software,
-    /// Uncompressed pixels (320x180 NV12 at 30 fps is about 21 Mbit/s).
-    Raw,
-}
-
-impl StreamEncoding {
-    pub const ALL: [Self; 3] = [Self::H264Hardware, Self::H264Software, Self::Raw];
-
-    /// The serialized name, such as `h264_hardware`.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::H264Hardware => "h264_hardware",
-            Self::H264Software => "h264_software",
-            Self::Raw => "raw",
-        }
-    }
-
-    /// The H.264 encoder backend; `None` for raw.
-    #[must_use]
-    pub const fn backend(self) -> Option<Backend> {
-        match self {
-            Self::H264Hardware => Some(Backend::Hardware),
-            Self::H264Software => Some(Backend::Software),
-            Self::Raw => None,
-        }
-    }
-}
-
-impl fmt::Display for StreamEncoding {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
-impl FromStr for StreamEncoding {
-    type Err = String;
-
-    fn from_str(name: &str) -> Result<Self, String> {
-        Self::ALL
-            .into_iter()
-            .find(|encoding| encoding.name() == name)
-            .ok_or_else(|| format!("expected one of {}", Self::ALL.map(Self::name).join(", ")))
-    }
-}
 
 /// The settings of kind `"remote"`, and the stream a receiver asks for:
 /// `{ "kind": "remote", "width": 320, "height": 180, "fps": 30,
@@ -147,9 +87,7 @@ impl RemoteSettings {
     /// The encoder this request names; `None` for raw.
     #[must_use]
     pub fn encoder(&self) -> Option<EncoderSettings> {
-        self.encoding
-            .backend()
-            .map(|backend| EncoderSettings::new(backend, self.fps))
+        Backend::of(self.encoding).map(|backend| EncoderSettings::new(backend, self.fps))
     }
 }
 
@@ -217,14 +155,6 @@ mod tests {
 
     #[test]
     fn encodings_name_their_encoder() {
-        for encoding in StreamEncoding::ALL {
-            assert_eq!(encoding.name().parse(), Ok(encoding));
-            assert_eq!(
-                serde_json::to_value(encoding).unwrap(),
-                serde_json::Value::String(encoding.name().into())
-            );
-        }
-        assert!("lz4".parse::<StreamEncoding>().is_err());
         let request = |encoding| RemoteSettings {
             encoding,
             ..RemoteSettings::default()
