@@ -1,9 +1,9 @@
 use super::{FormatError, SettingsFile};
 use prysm_ports::{
-    AdapterSettings, Error, Processing, Settings, SettingsStore, Style, StyleValues,
+    AdapterSettings, Processing, Settings, SettingsStore, Style, StyleValues, chain,
 };
 use serde_json::json;
-use std::{error::Error as _, fs, path::Path};
+use std::{fs, path::Path};
 
 fn sample() -> Settings {
     Settings {
@@ -31,18 +31,6 @@ fn sample() -> Settings {
             ..Processing::default()
         },
     }
-}
-
-/// The context plus every source in the chain.
-fn full_message(error: &Error) -> String {
-    let mut message = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        message.push_str(": ");
-        message.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    message
 }
 
 fn entries(directory: &Path) -> Vec<String> {
@@ -124,7 +112,7 @@ fn unknown_field_is_rejected_with_its_name_and_the_path() {
     ] {
         fs::write(&path, text).unwrap();
         let error = SettingsFile::new(&path).load().unwrap_err();
-        let message = full_message(&error);
+        let message = chain(&error);
         assert!(message.contains(&path.display().to_string()), "{message}");
         assert!(
             message.contains(&format!("unknown field `{field}`")),
@@ -147,7 +135,7 @@ fn a_section_written_as_an_array_is_refused() {
     ] {
         fs::write(&path, text).unwrap();
         let error = SettingsFile::new(&path).load().unwrap_err();
-        let message = full_message(&error);
+        let message = chain(&error);
         assert!(
             message.contains("invalid type: sequence"),
             "{text}: {message}"
@@ -166,10 +154,7 @@ fn format_error(text: &str) -> (FormatError, String) {
         error.to_string(),
         format!("cannot load settings file {}", path.display())
     );
-    (
-        error.cause::<FormatError>().unwrap().clone(),
-        full_message(&error),
-    )
+    (error.cause::<FormatError>().unwrap().clone(), chain(&error))
 }
 
 #[test]
@@ -202,7 +187,7 @@ fn an_oversized_file_is_refused_before_parsing() {
     fs::write(&path, vec![b' '; 1024 * 1024 + 1]).unwrap();
     let error = SettingsFile::new(&path).load().unwrap_err();
     assert!(
-        full_message(&error).ends_with("it is larger than 1 MiB"),
+        chain(&error).ends_with("it is larger than 1 MiB"),
         "{error}"
     );
     let io = error.cause::<std::io::Error>().unwrap();
@@ -254,7 +239,7 @@ fn only_an_object_has_a_format() {
             error.to_string().starts_with("cannot parse settings file"),
             "{text}: {error}"
         );
-        let message = full_message(&error);
+        let message = chain(&error);
         assert!(message.contains("expected a settings object"), "{message}");
     }
 }
@@ -289,7 +274,7 @@ fn save_into_missing_directory_errors_clearly() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("absent").join("settings.json");
     let error = SettingsFile::new(&path).save(&sample()).unwrap_err();
-    let message = full_message(&error);
+    let message = chain(&error);
     assert!(
         message.starts_with(&format!(
             "cannot create a temporary file for settings file {}",
@@ -402,7 +387,7 @@ fn settings_too_large_to_load_are_not_saved() {
         format!("cannot save settings file {}", path.display())
     );
     assert!(
-        full_message(&error).ends_with("it is larger than 1 MiB"),
+        chain(&error).ends_with("it is larger than 1 MiB"),
         "{error}"
     );
     let io = error.cause::<std::io::Error>().unwrap();
@@ -478,7 +463,7 @@ fn a_failed_replace_after_a_failed_load_leaves_the_unreadable_file_at_its_path()
         SettingsFile::new(&path).with_replace(|_, _| Err(std::io::Error::other("disk full")));
     let before = store.load().unwrap_err().to_string();
     let error = store.save(&sample()).unwrap_err();
-    assert!(full_message(&error).ends_with("disk full"), "{error}");
+    assert!(chain(&error).ends_with("disk full"), "{error}");
     assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
     assert_eq!(entries(directory.path()), ["settings.json"]);
     assert_eq!(store.load().unwrap_err().to_string(), before);
@@ -563,9 +548,9 @@ fn a_save_never_replaces_what_is_not_a_regular_file() {
     assert!(store.load().is_err());
     let error = store.save(&sample()).unwrap_err();
     assert!(
-        full_message(&error).ends_with("it is not a regular file"),
+        chain(&error).ends_with("it is not a regular file"),
         "{}",
-        full_message(&error)
+        chain(&error)
     );
     assert!(fs::symlink_metadata(&path).unwrap().file_type().is_socket());
     assert_eq!(entries(directory.path()), ["settings.json"]);

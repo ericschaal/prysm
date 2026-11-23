@@ -190,7 +190,8 @@ where
 /// `CaptureSettings` and `OutputSettings` name.
 ///
 /// # Panics
-/// A generated file cannot be read, or a named schema has no fixture.
+/// A generated file cannot be read, a named schema has no fixture, or the
+/// document names no adapter settings.
 pub fn host_adapter_settings(host: &str) -> Vec<Value> {
     let read = |name: &str| -> Value {
         let path = format!(
@@ -219,6 +220,7 @@ pub fn host_adapter_settings(host: &str) -> Vec<Value> {
             settings.extend(samples.iter().map(|sample| json!({ section: sample })));
         }
     }
+    assert!(!settings.is_empty(), "{host} names no adapter settings");
     settings
 }
 

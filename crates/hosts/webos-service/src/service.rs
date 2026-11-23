@@ -11,7 +11,7 @@ use crate::state::{Flavor, Power, State};
 use prysm_ports::chain;
 use prysm_webos_link::{LightingTarget, Video};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -170,11 +170,77 @@ impl Refusal {
     }
 }
 
-/// The error reply LS2 carries: `returnValue: false`, `errorKind` and
-/// `errorText`.
-#[must_use]
-pub fn error_reply(kind: ErrorKind, text: &str) -> String {
-    serde_json::json!({ "returnValue": false, "errorKind": kind, "errorText": text }).to_string()
+/// A successful state reply: [`State`] with LS2's `returnValue`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct StateReply {
+    #[serde(flatten)]
+    state: State,
+    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::always_true))]
+    return_value: bool,
+    /// On `getState` and subscription updates: whether the caller is subscribed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schema(nullable = false))]
+    subscribed: Option<bool>,
+}
+
+impl StateReply {
+    #[must_use]
+    pub fn new(state: State, subscribed: Option<bool>) -> Self {
+        Self {
+            state,
+            return_value: true,
+            subscribed,
+        }
+    }
+}
+
+/// The `uninstall` reply.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct DoneReply {
+    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::always_true))]
+    return_value: bool,
+}
+
+impl Default for DoneReply {
+    fn default() -> Self {
+        Self { return_value: true }
+    }
+}
+
+/// Any failed call. LS2's own replies (for example for a method that is not
+/// registered) carry no `errorKind`; an app reads that as an unknown kind.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct ErrorReply {
+    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::always_false))]
+    return_value: bool,
+    error_kind: ErrorKind,
+    /// What failed, for people.
+    error_text: String,
+}
+
+impl ErrorReply {
+    #[must_use]
+    pub fn new(kind: ErrorKind, text: impl Into<String>) -> Self {
+        Self {
+            return_value: false,
+            error_kind: kind,
+            error_text: text.into(),
+        }
+    }
+}
+
+/// A reply's payload: compact JSON, its keys sorted at every level (through
+/// a [`Value`]).
+pub(crate) fn encode_reply(reply: &impl Serialize) -> String {
+    serde_json::to_value(reply)
+        .expect("a Luna reply has only string keys")
+        .to_string()
 }
 
 /// Fixed facts of one service instance.
@@ -233,7 +299,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         let (file, preferences, unreadable) = match loaded {
             Ok((file, preferences)) => (file, preferences, None),
             Err(why) => {
-                eprintln!("prysm-webos-service: using the default preferences: {why}");
+                log!("using the default preferences: {why}");
                 (
                     PreferencesFile::default(),
                     Preferences::default(),
@@ -288,7 +354,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         match self.try_request(bus, method, sender, payload, now) {
             Ok(reply) => reply,
             Err(Refusal { kind, text }) => Reply {
-                payload: error_reply(kind, &text),
+                payload: encode_reply(&ErrorReply::new(kind, text)),
                 subscribe: false,
             },
         }
@@ -386,7 +452,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 self.uninstall = Uninstall::Requested;
                 self.input(bus, Input::Shutdown, now);
                 Ok(Reply {
-                    payload: r#"{"returnValue":true}"#.into(),
+                    payload: encode_reply(&DoneReply::default()),
                     subscribe: false,
                 })
             }
@@ -470,7 +536,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         if self.uninstall == Uninstall::Requested
             && let Err(error) = self.installer.uninstall()
         {
-            eprintln!("prysm-webos-service: uninstall failed: {}", chain(&error));
+            log!("uninstall failed: {}", chain(&error));
         }
         false
     }
@@ -502,7 +568,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 // Logged once per worker; the machine lets it go after its kill.
                 if !self.wait_failed {
                     self.wait_failed = true;
-                    eprintln!("prysm-webos-service: cannot wait for the worker: {error}");
+                    log!("cannot wait for the worker: {error}");
                 }
                 None
             }
@@ -533,7 +599,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             // Best effort, reported once per change.
             self.remembered = Some(intent);
             if let Err(error) = self.store.remember(intent) {
-                eprintln!("prysm-webos-service: {}", chain(&error));
+                log!("{}", chain(&error));
             }
         }
     }
@@ -564,22 +630,20 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                     if let Some(worker) = &mut self.worker
                         && let Err(error) = worker.terminate()
                     {
-                        eprintln!("prysm-webos-service: cannot stop the worker: {error}");
+                        log!("cannot stop the worker: {error}");
                     }
                 }
                 Effect::Kill => {
                     if let Some(worker) = &mut self.worker
                         && let Err(error) = worker.kill()
                     {
-                        eprintln!("prysm-webos-service: cannot kill the worker: {error}");
+                        log!("cannot kill the worker: {error}");
                     }
                 }
                 // Dropping it reaps it on a thread, if it ever can be.
                 Effect::Abandon => {
                     if self.worker.take().is_some() {
-                        eprintln!(
-                            "prysm-webos-service: letting go of a worker not reaped after its kill"
-                        );
+                        log!("letting go of a worker not reaped after its kill");
                     }
                 }
                 Effect::Publish => {
@@ -604,23 +668,8 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     }
 
     fn state_json(&self, subscribed: Option<bool>, now: Instant) -> String {
-        state_reply(&self.machine.state(now), subscribed).to_string()
+        encode_reply(&StateReply::new(self.machine.state(now), subscribed))
     }
-}
-
-/// The `getState` reply and subscription payload: [`State`] plus LS2's
-/// `returnValue` and, on `getState` and subscription updates, `subscribed`.
-#[must_use]
-pub fn state_reply(state: &State, subscribed: Option<bool>) -> Value {
-    let mut value = match serde_json::to_value(state) {
-        Ok(Value::Object(map)) => map,
-        _ => Map::new(),
-    };
-    value.insert("returnValue".into(), true.into());
-    if let Some(subscribed) = subscribed {
-        value.insert("subscribed".into(), subscribed.into());
-    }
-    Value::Object(value)
 }
 
 /// `getState` request.

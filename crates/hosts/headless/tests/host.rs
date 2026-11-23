@@ -1,4 +1,7 @@
-//! The built `prysm-headless` binary: arguments, idle start, portal, SIGTERM.
+//! The built `prysm-headless` binary: arguments, idle start, portal,
+//! SIGTERM. Also the adapters the desktop hosts register
+//! (`prysm_host::desktop_adapters`) against the example settings and the
+//! contract's adapter fixtures.
 
 use prysm_capture_device::DeviceSource;
 use prysm_ports::{Settings, SettingsStore};

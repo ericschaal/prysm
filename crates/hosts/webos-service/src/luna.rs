@@ -3,7 +3,9 @@ use crate::identity::Identity;
 use crate::install::{FsInstaller, Installer};
 use crate::launcher::{Launcher, ProcessLauncher};
 use crate::preferences::{FileStore, PreferencesStore};
-use crate::service::{Bus, ErrorKind, METHODS, STATE_KEY, Service, WATCHES, Watch, error_reply};
+use crate::service::{
+    Bus, ErrorKind, ErrorReply, METHODS, STATE_KEY, Service, WATCHES, Watch, encode_reply,
+};
 use prysm_webos_luna_sys as sys;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,7 +38,7 @@ pub fn serve(
         wake,
         refuse,
     };
-    eprintln!("prysm-webos-service: registering {}", identity.service);
+    log!("registering {}", identity.service);
     sys::run(&config, Box::new(Glue::new(service, stop, deadline)))
 }
 
@@ -46,7 +48,7 @@ fn refuse(refusal: sys::Refusal, text: &str) -> String {
         sys::Refusal::TooLarge => ErrorKind::TooLarge,
         sys::Refusal::Internal => ErrorKind::Internal,
     };
-    error_reply(kind, text)
+    encode_reply(&ErrorReply::new(kind, text))
 }
 
 /// Adapts the service to the sys crate's handler.
@@ -125,7 +127,7 @@ where
             };
             if let Some(why) = why {
                 self.stopping = true;
-                eprintln!("prysm-webos-service: stopping: {why}");
+                log!("stopping: {why}");
                 self.service.shutdown(&mut LunaBus(bus), now);
             }
         }

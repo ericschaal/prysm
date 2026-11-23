@@ -110,13 +110,15 @@ impl WledSettings {
     /// An address that is not `host[:port]` with a unicast IP literal or a valid
     /// host name, or LED counts outside their limits ([`MAX_LEDS`]).
     pub fn validate(&self) -> Result<(), ValidationError> {
-        self.device()?;
-        self.leds.validate()
+        self.device().map(drop)
     }
 
+    /// Validates these settings, returning the parsed device address.
     pub(crate) fn device(&self) -> Result<DeviceAddress, ValidationError> {
-        DeviceAddress::parse(&self.address)
-            .map_err(|reason| ValidationError::new("address", reason))
+        let address = DeviceAddress::parse(&self.address)
+            .map_err(|reason| ValidationError::new("address", reason))?;
+        self.leds.validate()?;
+        Ok(address)
     }
 }
 

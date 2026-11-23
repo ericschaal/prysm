@@ -193,7 +193,8 @@ impl FileStore {
         }
     }
 
-    /// Read the boot id from `path` instead of [`BOOT_ID`] (tests).
+    /// Read the boot id from `path` instead of [`BOOT_ID`].
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn with_boot_id(mut self, path: impl Into<PathBuf>) -> Self {
         self.boot_id = path.into();

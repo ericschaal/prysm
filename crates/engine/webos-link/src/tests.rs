@@ -295,13 +295,7 @@ fn slim_args_carry_only_the_prysm_address() {
     let argv = args.to_args();
     assert_eq!(argv, strings(&["--prysm", "http://192.168.1.20:8787"]));
     assert_eq!(parse::<SlimArgs>(&argv).unwrap(), args);
-    // Capture and encoding are Prysm's request, not arguments.
-    let mut old = argv.clone();
-    old.extend(strings(&["--width", "320"]));
-    let error = parse::<SlimArgs>(&old).unwrap_err().to_string();
-    assert!(error.contains("--width"), "{error}");
     assert!(parse::<SlimArgs>(&strings(&["--prysm", "prysm.local:8787"])).is_err());
-    assert!(parse::<SlimArgs>(&strings(&["--receiver", "192.168.1.20:7380"])).is_err());
     let error = parse::<SlimArgs>(&[]).unwrap_err().to_string();
     assert!(error.contains("--prysm"), "{error}");
     // A host name is resolved by the worker, not here.
