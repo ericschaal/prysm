@@ -1,5 +1,6 @@
 //! The preview stream: server-sent events carrying a downscaled JPEG of the
-//! latest processed frame, its sampled viewport and the LED colors.
+//! latest processed frame and its sampled viewport. The LED colors have their
+//! own stream (`colors.rs`).
 //!
 //! Demand-driven: each open stream holds a [`PreviewWatch`], so the session
 //! publishes previews only while somebody watches, and a frame is encoded only
@@ -13,8 +14,8 @@ use futures::stream;
 use hyper::{StatusCode, body::Frame as BodyFrame};
 use image::ExtendedColorType;
 use image::codecs::jpeg::JpegEncoder;
-use prysm_core::{ColorStrip, Frame, Viewport};
-use prysm_protocol::{Failure, LedColor, LedColors, PreviewEvent, PreviewFrame, PreviewViewport};
+use prysm_core::{Frame, Viewport};
+use prysm_protocol::{Failure, PreviewEvent, PreviewFrame, PreviewViewport};
 use prysm_runtime::{EngineHandle, Preview, PreviewWatch, Shutdown};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -28,8 +29,6 @@ pub(crate) const CADENCE: Duration = Duration::from_millis(125);
 /// The JPEG's longer side, at most; smaller frames are not enlarged.
 const LONGEST_SIDE: u32 = 480;
 const QUALITY: u8 = 75;
-/// Colors per edge, at most; longer strips are resampled.
-const STRIP_SAMPLES: usize = 256;
 
 /// The viewer limit and the latest encoded event, shared by all streams.
 pub(crate) struct Previews {
@@ -202,7 +201,6 @@ pub(crate) fn event(preview: &Preview) -> PreviewEvent {
         };
     }
     let viewport = preview.viewport;
-    let colors = &preview.colors;
     PreviewEvent::Frame(PreviewFrame {
         sequence: preview.sequence,
         source_width: frame.width(),
@@ -215,26 +213,8 @@ pub(crate) fn event(preview: &Preview) -> PreviewEvent {
             width: viewport.width,
             height: viewport.height,
         },
-        colors: LedColors {
-            top: srgb(&colors.top),
-            right: srgb(&colors.right),
-            bottom: srgb(&colors.bottom),
-            left: srgb(&colors.left),
-        },
         jpeg: STANDARD.encode(jpeg),
     })
-}
-
-/// The colors as written, in display space, at most [`STRIP_SAMPLES`] per edge.
-fn srgb(strip: &ColorStrip) -> Vec<LedColor> {
-    let count = strip.len().min(STRIP_SAMPLES);
-    (0..count)
-        .filter_map(|index| strip.color_at(index, count))
-        .map(|color| {
-            let color = color.to_srgb();
-            LedColor([color.r, color.g, color.b])
-        })
-        .collect()
 }
 
 pub(crate) struct Rgb {
@@ -265,10 +245,9 @@ fn scale(value: u32, numerator: u32, denominator: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_core::{EdgeColors, LinearColor, PixelFormat};
+    use prysm_core::{EdgeColors, PixelFormat};
 
     fn preview(frame: Frame) -> Preview {
-        let strip = |color| ColorStrip::new(vec![color; 600]).unwrap();
         Preview {
             viewport: Viewport {
                 x: 0,
@@ -277,12 +256,7 @@ mod tests {
                 height: 800,
             },
             frame,
-            colors: EdgeColors {
-                top: strip(LinearColor::new(1.0, 0.0, 0.0)),
-                right: strip(LinearColor::new(0.0, 1.0, 0.0)),
-                bottom: strip(LinearColor::new(0.0, 0.0, 1.0)),
-                left: strip(LinearColor::new(0.5, 0.5, 0.5)),
-            },
+            colors: EdgeColors::default(),
             sequence: 3,
         }
     }
@@ -323,17 +297,6 @@ mod tests {
         assert_eq!(decoded.dimensions(), (480, 270));
         let [r, g, b] = decoded.get_pixel(100, 100).0;
         assert!(r > 240 && g < 16 && b < 16, "BGR is converted: {r} {g} {b}");
-    }
-
-    #[test]
-    fn colors_are_srgb_and_bounded_per_edge() {
-        let encoded = frame(event(&preview(Frame::dummy(16, 9).unwrap())));
-        assert_eq!(encoded.colors.top.len(), STRIP_SAMPLES);
-        assert_eq!(encoded.colors.top[0], LedColor([255, 0, 0]));
-        assert_eq!(encoded.colors.right[0], LedColor([0, 255, 0]));
-        assert_eq!(encoded.colors.bottom[0], LedColor([0, 0, 255]));
-        // Linear 0.5 is sRGB 188, not 128.
-        assert_eq!(encoded.colors.left[0], LedColor([188, 188, 188]));
     }
 
     #[test]

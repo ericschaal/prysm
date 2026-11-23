@@ -513,7 +513,6 @@ export function decodePreview(value: unknown): Decoded<PreviewEvent> {
         Extract<PreviewEvent, { type: 'frame' }>
       >;
       const viewport = frame.viewport;
-      const colors = frame.colors;
       const valid =
         [
           frame.sequence,
@@ -524,11 +523,7 @@ export function decodePreview(value: unknown): Decoded<PreviewEvent> {
         ].every((size) => isInt(size) && (size as number) >= 0) &&
         typeof frame.jpeg === 'string' &&
         !!viewport &&
-        [viewport.x, viewport.y, viewport.width, viewport.height].every(
-          isInt,
-        ) &&
-        !!colors &&
-        [colors.top, colors.right, colors.bottom, colors.left].every(isColors);
+        [viewport.x, viewport.y, viewport.width, viewport.height].every(isInt);
       return valid ? { event } : 'invalid';
     }
     default:

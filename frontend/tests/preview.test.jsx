@@ -22,8 +22,6 @@ const output = {
   address: '192.0.2.1',
   leds: { top: 10, left: 4 },
 };
-const red = [255, 0, 0];
-const blue = [0, 0, 255];
 
 /** A 4×2 preview of a 1920×1080 frame; `viewport` defaults to the whole frame. */
 const frame = (change = {}) => ({
@@ -34,7 +32,6 @@ const frame = (change = {}) => ({
   width: 4,
   height: 2,
   viewport: { x: 0, y: 0, width: 1920, height: 1080 },
-  colors: { top: [red, blue], right: [blue], bottom: [red], left: [red, red] },
   // Bytes 1, 2, 3.
   jpeg: 'AQID',
   ...change,
@@ -268,9 +265,7 @@ test('the HTTP preview client follows the base URL, decodes events, skips newer 
         headers: { 'content-type': 'application/json' },
       },
     ),
-    sse(
-      `data: ${JSON.stringify({ ...frame(), colors: { top: [[256, 0, 0]], right: [], bottom: [], left: [] } })}\n\n`,
-    ),
+    sse(`data: ${JSON.stringify(frame({ width: -1 }))}\n\n`),
   ];
   const client = httpPreviewClient({
     baseUrl: 'http://192.168.1.20:8787/',

@@ -270,14 +270,15 @@ need not be valid. A form can ask before saving.
 
 ## Preview
 
-`GET /api/v1/preview/stream` shows what the LEDs show: server-sent events whose
-`data:` is a `PreviewEvent`, tagged by `type`:
+`GET /api/v1/preview/stream` shows the captured picture and the area sampled
+for the LEDs; their colors are in the [colors stream](#colors). Server-sent
+events whose `data:` is a `PreviewEvent`, tagged by `type`:
 
 | `type` | Fields | When |
 | --- | --- | --- |
-| `frame` | `sequence, source_width, source_height, width, height, viewport, colors, jpeg` | A frame the stream has not sent yet |
+| `frame` | `sequence, source_width, source_height, width, height, viewport, jpeg` | A frame the stream has not sent yet |
 | `idle` | — | No session runs (lighting `off`, `effects`, stopped after a failure, faulted) or it has not processed a frame yet |
-| `unavailable` | `message` | The latest frame cannot be shown (an empty frame); its colors are not sent |
+| `unavailable` | `message` | The latest frame cannot be shown (an empty frame) |
 
 - `jpeg` is a base64 baseline JPEG (quality 75) of the whole captured frame,
   scaled (nearest pixel) to at most 480 pixels on its longer side, never
@@ -286,11 +287,6 @@ need not be valid. A form can ask before saving.
   after black-bar removal, in source pixels (`source_width`×`source_height`);
   the whole frame when nothing was removed. Scale by `width / source_width` to
   draw it on the image.
-- `colors` `{ top, right, bottom, left }` are the colors written to the LEDs as
-  `[r, g, b]` sRGB bytes in screen orientation: `top` and `bottom` left to
-  right, `left` and `right` top to bottom, each spread evenly along its edge and
-  resampled to at most 256 entries. The output's physical wiring order is not
-  exposed.
 - `sequence` increases with every new frame, across sessions.
 
 Cadence and demand: the stream wakes when the session publishes a frame or
@@ -322,10 +318,11 @@ Server-sent events whose `data:` is a `ColorsEvent`, tagged by `type`:
 | `colors` | `top, right, bottom, left` | The LEDs show Prysm's colors and they differ from the last ones sent |
 | `idle` | — | They do not: no session runs (`off`, `effects`, stopped after a failure, faulted), it has not processed a frame yet, or its output was released after 3 s without frames |
 
-- Each edge is `LedColors`' `[r, g, b]` sRGB bytes in screen orientation (as in
-  the preview), but at most 8 entries (`COLOR_SEGMENTS`): each the average, in
+- Each edge is `LedColors`' `[r, g, b]` sRGB bytes in screen orientation (`top`
+  and `bottom` left to right, `left` and `right` top to bottom; the output's
+  wiring order is not exposed), at most 8 entries (`COLOR_SEGMENTS`): each the average, in
   linear light, of an equal stretch of the edge; an edge with fewer samples
-  keeps them. A tint needs a few colors, not 256 per edge.
+  keeps them.
 - There is no `unavailable`: colors exist for every processed frame, also one
   the preview cannot show.
 

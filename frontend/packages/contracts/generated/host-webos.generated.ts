@@ -375,10 +375,8 @@ export interface components {
             /** @enum {string} */
             type: "unavailable";
         };
-        /** @description A downscaled JPEG of the captured frame, the sampled area and the colors. */
+        /** @description A downscaled JPEG of the captured frame and the sampled area. */
         PreviewFrame: {
-            /** @description At most 256 colors per edge. */
-            colors: components["schemas"]["LedColors"];
             /** Format: int32 */
             height: number;
             /** @description Base64 (standard alphabet, padded) baseline JPEG. */
