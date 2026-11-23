@@ -27,6 +27,15 @@ pub enum Stop {
     Failed(String),
 }
 
+impl std::fmt::Display for Stop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Requested(why) => why,
+            Self::Faulted(why) | Self::Failed(why) => why,
+        })
+    }
+}
+
 /// Records the stop reason and wakes everything waiting for it. Cheap to clone.
 #[derive(Debug, Clone)]
 pub struct StopHandle(Arc<watch::Sender<Option<Stop>>>);
@@ -418,8 +427,7 @@ where
         events.send(&Event::Failed { cause: failure });
     }
     match stop.reason() {
-        Some(Stop::Requested(why)) => eprintln!("{name}: {why}; exit {code}"),
-        Some(Stop::Faulted(why) | Stop::Failed(why)) => eprintln!("{name}: {why}; exit {code}"),
+        Some(why) => eprintln!("{name}: {why}; exit {code}"),
         None => eprintln!("{name}: exit {code}"),
     }
     ExitCode::from(code)

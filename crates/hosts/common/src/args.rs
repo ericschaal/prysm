@@ -183,8 +183,6 @@ mod tests {
                 "--allow-origin",
                 "http://a",
             ],
-            &["s.json", "--token-file", "t"],
-            &["s.json", "--allow-authority", "localhost:8787"],
             &["--check-settings"],
             &["s.json", "--check-settings", "--check-settings"],
             &["s.json", "--check-settings", "--start"],

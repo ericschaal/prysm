@@ -772,3 +772,52 @@ fn each_package_refuses_the_other_packages_lighting_method() {
         true
     );
 }
+
+#[test]
+fn replies_keep_their_bytes() {
+    use crate::state::{FullWorker, Package, SlimWorker};
+    use prysm_webos_link::{FailureKind, WorkerFailure};
+    let full = State {
+        package: Package::Full {
+            target: LightingTarget::Off,
+            worker: FullWorker::Stopped,
+        },
+        preferences: Preferences::default(),
+        power: Power::Active,
+        video: Video::Available,
+        failure: Some(WorkerFailure::new(FailureKind::Other, "x")),
+        log: vec!["a".into()],
+    };
+    let slim = State {
+        package: Package::Slim {
+            enabled: true,
+            worker: SlimWorker::Stopped,
+        },
+        failure: None,
+        log: Vec::new(),
+        ..full.clone()
+    };
+    for (reply, expected) in [
+        (
+            encode_reply(&StateReply::new(full, Some(true))),
+            r#"{"failure":{"kind":"other","message":"x"},"flavor":"full","log":["a"],"power":"active","preferences":{"autostart":false},"returnValue":true,"subscribed":true,"target":"off","video":"available","worker":{"phase":"stopped"}}"#,
+        ),
+        (
+            encode_reply(&StateReply::new(slim, None)),
+            r#"{"enabled":true,"flavor":"slim","log":[],"power":"active","preferences":{"autostart":false},"returnValue":true,"video":"available","worker":{"phase":"stopped"}}"#,
+        ),
+        (
+            encode_reply(&ErrorReply::new(
+                ErrorKind::WrongPackage,
+                "setTarget is only for the full package",
+            )),
+            r#"{"errorKind":"wrong_package","errorText":"setTarget is only for the full package","returnValue":false}"#,
+        ),
+        (
+            encode_reply(&DoneReply::default()),
+            r#"{"returnValue":true}"#,
+        ),
+    ] {
+        assert_eq!(reply, expected);
+    }
+}

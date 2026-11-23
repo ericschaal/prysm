@@ -21,7 +21,7 @@ use std::time::Duration;
 
 const NAME: &str = "prysm-webos-slim";
 
-const ABOUT: &str = "The slim TV worker. Started by prysm-webos-slim-service: commands on stdin,
+const ABOUT: &str = "The slim TV worker. Started by prysm-webos-service: commands on stdin,
 events on stdout, logs on stderr. Prysm's request sets what is captured and how
 it is encoded.";
 

@@ -1,5 +1,5 @@
 //! The supervisor process: arguments, private directories, signals.
-use crate::identity::Identity;
+use crate::identity::{self, Identity};
 use crate::install::{FsInstaller, Installer};
 use crate::state::Flavor;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -58,10 +58,7 @@ struct RunArgs {
 
 /// The process entry point of both supervisor binaries.
 pub fn main(flavor: Flavor) -> ExitCode {
-    let name = match flavor {
-        Flavor::Full => "prysm-webos-service",
-        Flavor::Slim => "prysm-webos-slim-service",
-    };
+    let name = identity::SUPERVISOR;
     let cli = Cli::command().name(name).bin_name(name).get_matches();
     let cli = Cli::from_arg_matches(&cli).unwrap_or_else(|error| error.exit());
     match run(flavor, cli.action.unwrap_or(Action::Run(cli.run))) {
