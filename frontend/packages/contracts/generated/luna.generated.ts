@@ -151,19 +151,10 @@ export interface components {
             target: components["schemas"]["LightingTarget"];
         };
         /**
-         * @description How the slim package encodes the frames it sends: the encoding its
-         *     receiver requested (set in the desktop portal). Exactly this encoder is
-         *     used; one that cannot start or fails is a failure, never a switch to
-         *     another. `h264_hardware`: the TV's hardware H.264 encoder (about
-         *     2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);
-         *     `raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).
-         * @enum {string}
-         */
-        SlimEncoding: "h264_hardware" | "h264_software" | "raw";
-        /**
          * @description Where the slim worker's stream to the receiver stands, as `{ "state": … }`.
          *     `starting`: no connection attempt yet. `sending`: connected, frames go
-         *     out in `encoding`, `fps` per second (0 while none come). `paused`: the
+         *     out in `encoding` (the one the receiver requested, set in the desktop
+         *     portal), `fps` per second (0 while none come). `paused`: the
          *     receiver stopped the stream because its lighting is off; the TV capture
          *     is released until a receiver takes a connection again, not a failure.
          *     `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
@@ -174,7 +165,7 @@ export interface components {
             /** @enum {string} */
             state: "starting";
         } | {
-            encoding: components["schemas"]["SlimEncoding"];
+            encoding: components["schemas"]["StreamEncoding"];
             /**
              * Format: int32
              * @description Frames sent per second over about the last second, rounded.
@@ -249,6 +240,13 @@ export interface components {
             /** @description On `getState` and subscription updates: whether the caller is subscribed. */
             subscribed?: boolean;
         };
+        /**
+         * @description How the sender encodes the frames it sends. Exactly this encoder is used:
+         *     one that cannot start or fails ends the stream with a refusal, never a
+         *     switch to another.
+         * @enum {string}
+         */
+        StreamEncoding: "h264_hardware" | "h264_software" | "raw";
         /** @description `uninstall` request: an empty object. */
         UninstallRequest: Record<string, never>;
         /**
@@ -281,11 +279,11 @@ export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];
 export type SetEnabledRequest = components['schemas']['SetEnabledRequest'];
 export type SetTargetRequest = components['schemas']['SetTargetRequest'];
-export type SlimEncoding = components['schemas']['SlimEncoding'];
 export type SlimLink = components['schemas']['SlimLink'];
 export type SlimWorker = components['schemas']['SlimWorker'];
 export type State = components['schemas']['State'];
 export type StateReply = components['schemas']['StateReply'];
+export type StreamEncoding = components['schemas']['StreamEncoding'];
 export type UninstallRequest = components['schemas']['UninstallRequest'];
 export type Video = components['schemas']['Video'];
 export type WorkerFailure = components['schemas']['WorkerFailure'];

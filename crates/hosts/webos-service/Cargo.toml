@@ -20,7 +20,7 @@ path = "src/bin/prysm-webos-slim-service.rs"
 [features]
 # `utoipa::ToSchema` for the Luna API values and the `luna` document, for the
 # contract exporter.
-schema = ["dep:utoipa"]
+schema = ["dep:utoipa", "prysm-ports/schema"]
 # `preferences::MemoryStore`, for the integration tests.
 testkit = []
 

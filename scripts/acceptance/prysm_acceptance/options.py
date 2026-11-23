@@ -60,7 +60,7 @@ class TvCell:
 
 
 # Every host cell, in the order `acceptance all` runs them. The Debian package and the image have no
-# `file` source (docs/developers/acceptance.md, host).
+# `file` source (docs/developers/acceptance.md, host section).
 CELLS = (
     Cell(Platform.MAC, Delivery.BINARY, Source.FILE),
     Cell(Platform.MAC, Delivery.BINARY, Source.DEVICE),

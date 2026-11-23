@@ -5,10 +5,10 @@ are generated from OpenAPI documents the Rust exporter prints.
 
 | Owner | Declares | Frontend import |
 | --- | --- | --- |
-| `prysm-ports` | `Settings`, `Processing`, `Style`, `StyleValues`, `AdapterSettings`, `LightingTarget`, `Revision`, `Calibration`, `Pattern`, `Candidate` and their serde shape (the settings file, after its `format` number, which `prysm-settings-file` owns); the built-in styles' values (`Style::built_in`); `StreamEncoding`, the remote source's and the slim TV worker's encodings, the one type here with its own `utoipa::ToSchema` (feature `schema`, enabled by `capture-remote`'s) | — |
+| `prysm-ports` | `Settings`, `Processing`, `Style`, `StyleValues`, `AdapterSettings`, `LightingTarget`, `Revision`, `Calibration`, `Pattern`, `Candidate` and their serde shape (the settings file, after its `format` number, which `prysm-settings-file` owns); the built-in styles' values (`Style::built_in`); `StreamEncoding`, the remote source's and the slim TV worker's encodings, the one type here with its own `utoipa::ToSchema` (feature `schema`, enabled by `capture-remote`'s and `webos-service`'s) | — |
 | [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs) | `State`, `Session`, `Failure`, request/response bodies; schema mirrors of the ports types and the adapter-schema hook ([`schema.rs`](../../crates/engine/protocol/src/schema.rs), feature `schema`) | `@prysm/contracts/application` |
 | Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null), `@prysm/contracts/host-webos` (webos, wled) |
-| [`prysm-webos-service`](../../crates/hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences` (no picture settings: those are the portals'), request and reply bodies; schema mirrors of `Video`, `StreamEncoding` (as `SlimEncoding`), `FailureKind`, `LightingTarget` (feature `schema`) | `@prysm/contracts/luna` |
+| [`prysm-webos-service`](../../crates/hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences` (no picture settings: those are the portals'), request and reply bodies; schema mirrors of `Video`, `FailureKind`, `LightingTarget`, and the ports `StreamEncoding` itself (feature `schema`, which enables `prysm-ports/schema`) | `@prysm/contracts/luna` |
 | [`prysm-export-contracts`](../../crates/tools/export-contracts/src/main.rs) | Which documents exist and which adapters each host document registers; serialization fixtures; [constants](../../crates/tools/export-contracts/src/constants.rs) the frontends use as they are (the built-in styles' values, the capture kinds' defaults) | Module names, `@prysm/contracts/constants` |
 
 Ports types are the wire types: the portal sends `prysm_ports::Settings` as is.
@@ -63,7 +63,10 @@ Two different schemas with one name are rejected (`SchemaConflict`). The full
 TV worker (`prysm-webos`) has its own document, `host-webos`, registering the
 `webos` source and the `wled` output, exactly what that host registers. The
 exporter also writes a fixture of each registered section, so the frontend
-tests validate a real Rust serialization against every variant.
+tests validate a real Rust serialization against every variant. The hosts'
+tests (`prysm-headless`'s `host.rs`, `prysm-webos`'s `tests.rs`) decode every
+checked-in section fixture of their document with the adapters they register,
+so a kind the exporter lists and a host lacks fails there.
 
 Panels import their section type from the host document
 (`import type { WledSettings } from '@prysm/contracts/host-desktop'`); the

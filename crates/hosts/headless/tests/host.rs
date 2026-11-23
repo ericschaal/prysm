@@ -1,12 +1,13 @@
 //! The built `prysm-headless` binary: arguments, idle start, portal, SIGTERM.
 
 use prysm_capture_device::DeviceSource;
-use prysm_ports::SettingsStore;
+use prysm_ports::{Settings, SettingsStore};
 use prysm_runtime::Prysm;
 use prysm_settings_file::SettingsFile;
 use prysm_testkit::host::{
     Host, check_arguments, check_settings, get, null_settings, put_target, request,
 };
+use prysm_testkit::host_adapter_settings;
 use std::io::Write;
 use std::net::TcpStream;
 use std::process::Command;
@@ -185,4 +186,20 @@ fn example_settings_load_and_validate() {
     let settings = SettingsFile::new(path).load().unwrap().unwrap();
     assert_eq!(settings.capture.unwrap().kind, "device");
     assert_eq!(settings.output.unwrap().kind, "wled");
+}
+
+/// Every adapter section of the `host-desktop` contract decodes with the
+/// adapters the desktop hosts register: a kind they lack fails.
+#[test]
+fn contract_adapter_fixtures_decode_with_the_registered_adapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    for fixture in host_adapter_settings("host-desktop") {
+        let settings: Settings = serde_json::from_value(fixture.clone()).unwrap();
+        SettingsFile::new(&path).save(&settings).unwrap();
+        let (adapters, _) = prysm_host::desktop_adapters(DeviceSource);
+        adapters(Prysm::builder(SettingsFile::new(&path)))
+            .check()
+            .unwrap_or_else(|error| panic!("{fixture}: {error}"));
+    }
 }
