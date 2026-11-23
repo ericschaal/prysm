@@ -161,7 +161,17 @@ npm --prefix frontend run format:check
 npm --prefix frontend run format     # rewrite with Prettier
 ```
 
-The DOM tests use jsdom. Mobile browsers (iOS Safari, Firefox) have not been
+The DOM tests use jsdom. `npm test` bundles each `tests/*.test.jsx` on its
+own ([tests/vite.config.mjs](../../frontend/tests/vite.config.mjs)) and runs
+the bundles with `node --test`: each file in its own process with a 2 GB heap,
+four at a time, each test bounded to 60 s.
+[tests/watchdog.js](../../frontend/tests/watchdog.js) kills a file's process
+after 10 minutes or at 3 GB resident, even while its main thread is blocked,
+so that file fails and the others still run. Assertions about elements pass `assert` a
+boolean, through `assertFocused` and `assertSame` in
+[tests/dom.jsx](../../frontend/tests/dom.jsx): a failed `assert.equal` prints
+its values in full, and a DOM node in full is the whole document. ESLint
+rejects `document.activeElement` in an assertion. Mobile browsers (iOS Safari, Firefox) have not been
 checked against the portal.
 
 ## End-to-end tests

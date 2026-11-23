@@ -1,12 +1,3 @@
-import './state.test.jsx';
-import './http.test.jsx';
-import './portal.test.jsx';
-import './capture.test.jsx';
-import './setup.test.jsx';
-import './preview.test.jsx';
-import './colors.test.jsx';
-import './calibrations.test.jsx';
-import './tv.test.jsx';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { act } from 'react';
@@ -142,8 +133,3 @@ test('embedded TV and browser portal share one application; either may close', a
     dom.window.close();
   }
 });
-
-// Portal calibration wizard.
-import './calibrate.test.jsx';
-import './live-processing.test.jsx';
-import './lighting.test.jsx';

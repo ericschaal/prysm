@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -73,6 +74,36 @@ export const form = (title) =>
       item.getAttribute('aria-label') === title,
   );
 export const text = () => document.body.textContent;
+
+/*
+ * A failed `assert.equal(node, other)` prints both values in full: for a DOM
+ * node that walks the whole document and its React fibers, which takes
+ * gigabytes. Assertions about elements pass `assert` a boolean and name the
+ * elements with `nameOf`.
+ */
+
+/** A short name for an element in an assertion message: `<button> Keep`. */
+function nameOf(element) {
+  if (!element) return String(element);
+  const tag = element.tagName.toLowerCase();
+  const id = element.id ? `#${element.id}` : '';
+  const name = element.getAttribute('name');
+  const named = name ? `[name="${name}"]` : '';
+  const words = element.textContent.trim().slice(0, 40);
+  return `<${tag}${id}${named}>${words ? ` ${words}` : ''}`;
+}
+
+/** Assert that `actual` is the element `expected`, naming both on failure. */
+export function assertSame(actual, expected, message = 'same element') {
+  assert(
+    actual === expected,
+    `${message}: ${nameOf(actual)} is not ${nameOf(expected)}`,
+  );
+}
+
+/** Assert that `element` has focus, naming what has it on failure. */
+export const assertFocused = (element, message = 'focus') =>
+  assertSame(document.activeElement, element, message);
 
 /** Type into an input or choose an option the way a user would. */
 export async function edit(element, value) {

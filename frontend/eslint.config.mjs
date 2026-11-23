@@ -66,6 +66,28 @@ export default defineConfig(
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
   },
   {
+    // A failed assert prints its values in full, and a DOM node in full is
+    // the whole document with its React fibers: gigabytes.
+    files: ['tests/**/*.test.{js,jsx,mjs,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'CallExpression:matches([callee.name="assert"], [callee.object.name="assert"]) > MemberExpression[object.name="document"][property.name="activeElement"]',
+          message:
+            'Use assertFocused(element) from tests/dom.jsx: a failed assert prints the focused node in full.',
+        },
+        {
+          selector:
+            'CallExpression:matches([callee.name="assert"], [callee.object.name="assert"]) BinaryExpression > MemberExpression[object.name="document"][property.name="activeElement"]',
+          message:
+            'Use assertFocused(element) from tests/dom.jsx instead of comparing with document.activeElement.',
+        },
+      ],
+    },
+  },
+  {
     // Playwright specs and fixtures run under node.
     files: ['e2e/**/*.ts'],
     languageOptions: { globals: globals.node },

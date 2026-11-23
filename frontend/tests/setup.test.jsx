@@ -10,6 +10,7 @@ import { fakeDiscoveryClient } from '../testkit/discovery';
 import {
   $,
   $$,
+  assertFocused,
   button,
   click,
   edit,
@@ -68,12 +69,12 @@ test('setup opens instead of the page while capture or lights are missing', asyn
         continue;
       }
       assert.equal(heading(), 'Video source');
-      assert.equal(document.activeElement, $('h2', wizard()));
+      assertFocused($('h2', wizard()));
       assert.equal($('[aria-current="step"]').textContent, 'Video source');
       // It starts from what is saved: a configured section is shown as it is.
       assert.equal(field('capture.path').value, initial.capture?.path ?? '');
       await click(button('Leave setup'));
-      assert.equal(wizard(), null);
+      assert(!wizard());
       assert.equal($('.light-card').tagName, 'SECTION');
       assert.equal(
         document.activeElement.textContent,
@@ -104,7 +105,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
       errorOf(field('capture.path')),
       'Choose a device, or enter one by hand.',
     );
-    assert.equal(document.activeElement, field('capture.path'));
+    assertFocused(field('capture.path'));
     assert.equal(
       $('.form-status', wizard()).textContent,
       'Check the marked field to continue.',
@@ -118,7 +119,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     await click(radio('Smooth'));
     await next();
     assert.equal(heading(), 'Your lights');
-    assert.equal(document.activeElement, $('h2', wizard()));
+    assertFocused($('h2', wizard()));
     assert(!$('[role="alert"]', wizard()));
     await next();
     assert.equal(errorOf(field('output.address')), 'Enter a value.');
@@ -165,7 +166,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
       'replaceSettings',
       'target:screen_sync',
     ]);
-    assert.equal(wizard(), null);
+    assert(!wizard());
     assert.equal(
       document.activeElement.textContent,
       'Setup saved. Screen sync is starting.',
@@ -210,7 +211,7 @@ test('a server error sends setup back to the step with the field', async () => {
       errorOf(field('output.address')),
       'Use the lights’ name, such as wled.local, or their number, such as 192.168.1.50.',
     );
-    assert.equal(document.activeElement, field('output.address'));
+    assertFocused(field('output.address'));
     assert.equal(
       $('.form-status', wizard()).textContent,
       'Not saved. Check the marked field.',
@@ -229,7 +230,7 @@ test('a server error sends setup back to the step with the field', async () => {
       errorOf(field('capture.path')),
       'Choose a device, or enter its name by hand.',
     );
-    assert.equal(document.activeElement, field('capture.path'));
+    assertFocused(field('capture.path'));
 
     // An error without a control here stays on the review, in its alert.
     await review();
@@ -239,7 +240,7 @@ test('a server error sends setup back to the step with the field', async () => {
     });
     await press(button('Save only'));
     assert.equal(heading(), 'Review and start');
-    assert.equal(document.activeElement, $('[data-form-alert]', wizard()));
+    assertFocused($('[data-form-alert]', wizard()));
     assert.equal(
       document.activeElement.textContent,
       'Not saved: something went wrong. Try again.',

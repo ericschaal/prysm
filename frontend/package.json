@@ -13,7 +13,7 @@
     "codegen:check": "node scripts/codegen.mjs --check",
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e && tsc --noEmit -p e2e-tv",
     "bundle": "node scripts/build.mjs",
-    "test": "node --test tests/contracts.test.mjs && vite build --ssr tests/composition.test.jsx --outDir .test && NODE_OPTIONS=--max-old-space-size=2048 node --import ./tests/setup-dom.js --test --test-timeout=60000 .test/composition.test.js",
+    "test": "node --test tests/contracts.test.mjs && vite build --config tests/vite.config.mjs && NODE_OPTIONS=--max-old-space-size=2048 node --import ./tests/watchdog.js --import ./tests/setup-dom.js --test --test-concurrency=4 --test-timeout=60000 .test/*.test.js",
     "dev:headless": "vite hosts/headless/web-portal --config dev.config.mjs --host 127.0.0.1",
     "dev:webos": "vite hosts/webos/tv-ui --host 127.0.0.1",
     "dev:webos-slim": "vite hosts/webos-slim/tv-ui --host 127.0.0.1",

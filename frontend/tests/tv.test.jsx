@@ -49,6 +49,7 @@ import { qrCode } from '../packages/tv-ui/qr';
 import { STALE_MS } from '../packages/tv-ui/portal-connection';
 import { createHash } from 'node:crypto';
 import jsQR from 'jsqr';
+import { assertFocused, assertSame } from './dom';
 
 const fixtures = JSON.parse(
   readFileSync(
@@ -957,19 +958,19 @@ test('the restart bar runs on through later states of the same wait', async (t) 
     }),
   );
   await settle();
-  assert.equal(document.querySelector('.retry-bar'), bar, 'not restarted');
+  assertSame(document.querySelector('.retry-bar'), bar, 'not restarted');
   assert.equal(tv.text('status-meta'), 'Trying again in 26 s');
   // A later wait is a new one: its bar starts full.
   await act(async () =>
     tv.supervisor.publish({ worker: { phase: 'running' } }),
   );
   await settle();
-  assert.equal(document.querySelector('.retry-bar'), null);
+  assert(!document.querySelector('.retry-bar'));
   await act(async () => t.mock.timers.tick(1_000));
   await act(async () => tv.supervisor.publish(waiting));
   await settle();
   const next = document.querySelector('.retry-bar');
-  assert.notEqual(next, bar, 'a new wait, a new bar');
+  assert(next !== bar, 'a new wait, a new bar');
   assert.equal(next.style.animationDelay, '0s');
 });
 
@@ -1671,12 +1672,12 @@ test('full: saving Start with TV adds no button that would push the lights down'
   tv.el('autostart').focus();
   tv.supervisor.hold();
   await tv.click('autostart');
-  assert.equal(tv.el('primary'), null, 'no "Please wait…" button meanwhile');
+  assert(!tv.el('primary'), 'no "Please wait…" button meanwhile');
   assert.equal(tv.focus(), 'autostart');
   await act(async () => tv.supervisor.release());
   await settle();
   assert.equal(tv.text('autostart-value'), 'On');
-  assert.equal(tv.el('primary'), null);
+  assert(!tv.el('primary'));
 });
 
 test('the title follows the portal, so it agrees with the lights card', async (t) => {
@@ -2136,11 +2137,7 @@ test('before the service answers, nothing flashes and focus waits', async (t) =>
     assert.equal(tv.text('status-title'), 'Connecting…');
     assert.equal(tv.text('lighting-status'), 'Connecting to Prysm…', flavor);
     assert.equal(tv.text('calibrate-value'), 'Waiting for Prysm', flavor);
-    assert.equal(
-      document.activeElement,
-      document.body,
-      `${flavor}: no focus placed yet`,
-    );
+    assertFocused(document.body, `${flavor}: no focus placed yet`);
     // The web portal's place is kept, hidden: no address yet.
     assert(tv.el('portal-address').classList.contains('empty'), flavor);
     await act(async () => tv.supervisor.release());
@@ -2228,7 +2225,7 @@ test('removing the setup is tucked away, needs confirmation, and Back returns on
   );
   await tv.key(BACK);
   await tv.key(BACK);
-  assert.equal(tv.el('modal'), null);
+  assert(!tv.el('modal'));
   assert.equal(tv.focus(), 'service-options');
   assert(!tv.methods().includes('uninstall'));
   await tv.click('service-options');
@@ -2251,7 +2248,7 @@ test('Back on the main screen asks before closing; Tab stays inside the dialog',
   await tv.key(RIGHT);
   assert.equal(tv.focus(), 'exit', 'side by side: Right moves between them');
   await tv.key(ESCAPE);
-  assert.equal(tv.el('modal'), null);
+  assert(!tv.el('modal'));
   assert.equal(tv.exits(), 0);
   await tv.key(BACK);
   await tv.click('exit');
@@ -2525,8 +2522,8 @@ test('full: the TV portal is used over loopback and its address is shown', async
   assert.deepEqual(tv.urls, ['http://127.0.0.1:8787']);
   assert.equal(tv.text('portal-address-text'), '192.168.1.5:8787');
   assert.equal(tv.text('status-title'), 'Lights off');
-  assert.equal(tv.el('prysm-address'), null, 'no slim rows');
-  assert.equal(tv.el('capture'), null, 'capture is set in the portal only');
+  assert(!tv.el('prysm-address'), 'no slim rows');
+  assert(!tv.el('capture'), 'capture is set in the portal only');
   assert(!tv.el('primary'), 'the lighting modes are the one control');
   // After a failure the supervisor does not retry, the button restarts it.
   // As on a TV: the engine's session failed, and the worker reports it.
@@ -2809,7 +2806,7 @@ test('slim: an encoder failure shows the error and sends the user to the portal 
     tv.el('portal-address').querySelector('code').textContent,
     shown(linked.prysm_address),
   );
-  assert.equal(tv.el('encoding'), null, 'no encoding setting on the TV');
+  assert(!tv.el('encoding'), 'no encoding setting on the TV');
 });
 
 test('slim: a receiver wait or another failure does not mention the encoding', async (t) => {
@@ -2860,7 +2857,7 @@ test('full: no encoding setting, encoding in use or encoding switch', async (t) 
     },
   });
   assert.equal(tv.text('status-title'), 'Screen sync stopped');
-  assert.equal(tv.el('encoding'), null);
+  assert(!tv.el('encoding'));
   assert.doesNotMatch(document.body.textContent, /encoding/i);
 });
 
@@ -2958,18 +2955,18 @@ test('full: Calibrate turns screen sync on, shows the phone address and follows 
     tv.application.calls.filter((call) => call.startsWith('target:')),
     ['target:screen_sync'],
   );
-  assert.equal(tv.el('app'), null, 'the main screen is closed');
+  assert(!tv.el('app'), 'the main screen is closed');
   assert.equal(tv.text('calibration-address'), '192.168.1.5:8787/#/calibrate');
   assert.equal(tv.text('calibration-hint'), 'Scan with your phone to start.');
   assert(tv.el('calibration-qr'));
   // The gray pattern already plays under the waiting screen.
   assert.equal(player.plays, 1);
-  assert.equal(player.video, tv.el('pattern-video'));
+  assertSame(player.video, tv.el('pattern-video'), 'the player’s video');
   assert.equal(player.pattern(), 'gray_192');
 
   await phone(tv, { pattern: 'red', uncorrected: false });
   assert.equal(visibleText(), '', 'nothing but the video');
-  assert.equal(document.querySelector('svg'), null);
+  assert(!document.querySelector('svg'));
   assert(tv.el('pattern-video'));
   assert.equal(player.pattern(), 'red');
   await phone(tv, { pattern: 'blue_pair', uncorrected: true });
@@ -2990,7 +2987,7 @@ test('full: Calibrate turns screen sync on, shows the phone address and follows 
   assert.equal(player.stops, 1);
   assert(tv.el('app'));
   assert.equal(tv.focus(), 'calibrate');
-  assert.equal(tv.el('modal'), null, 'Back does not ask to close the app');
+  assert(!tv.el('modal'), 'Back does not ask to close the app');
   assert(!tv.application.calls.includes('target:off'));
   assert.equal(tv.application.snapshot().target, 'screen_sync');
 });
@@ -3015,7 +3012,7 @@ test('full: Calibrate does not open on a page hidden while screen sync starts', 
     await hide(true);
     await act(async () => release());
     await settle();
-    assert.equal(tv.el('calibration-address'), null);
+    assert(!tv.el('calibration-address'));
     assert(tv.el('app'));
   } finally {
     await hide(false);
@@ -3032,11 +3029,11 @@ test('a pattern stays on screen while the portal stream comes back', async (t) =
   await phone(tv, { pattern: 'red', uncorrected: false });
   await act(async () => tv.application.drop());
   await settle();
-  assert.equal(tv.el('calibration-address'), null, 'no QR code over it');
+  assert(!tv.el('calibration-address'), 'no QR code over it');
   assert.equal(player.pattern(), 'red');
   await act(async () => t.mock.timers.tick(250));
   await settle();
-  assert.equal(tv.el('calibration-address'), null);
+  assert(!tv.el('calibration-address'));
   assert.equal(player.pattern(), 'red');
 });
 
@@ -3095,7 +3092,7 @@ test('calibration stays closed when screen sync cannot start; a failed video say
     tv.text('calibration-error'),
     'The pattern video stopped. Press Back and try again.',
   );
-  assert.equal(tv.el('pattern-video'), null);
+  assert(!tv.el('pattern-video'));
   await tv.key(BACK);
   assert(tv.el('app'));
 });
