@@ -246,11 +246,13 @@ supervisor in each of its states and play the phone's calibration part). See the
     there are rows they own the device's problem ("Choose a device, or enter
     one by hand."), said under them, and take the focus. Typing the device is
     under Advanced ("Enter the device by hand"), and in plain sight, owning
-    the problem, when nothing was found. "Find lights" in the WLED editor asks
-    on request only:
-    WLED discovery takes over a second and asks the network; picking one
-    fills the address, and the typed field stays the fallback. Hosts pass
-    `httpDiscoveryClient()`; without one there are only the typed fields.
+    the problem, when nothing was found. The WLED editor lists its lights the
+    same way (`.../output/wled`, the "Lights" heading, "Enter the address by
+    hand" under the same Advanced as "Smooth dark colours"); the saved
+    address keeps its row without a problem line, since lights can answer
+    and not be found, and picking one notes its LED count under the drawing.
+    Hosts pass `httpDiscoveryClient()`; without one there are only the typed
+    fields.
   - [Fields](packages/web-portal/fields.tsx): labelled inputs that show the
     server's `Failure.field` errors and their own range checks.
   - [Size and rate](packages/web-portal/picture-choice.tsx): every capture
@@ -298,8 +300,9 @@ supervisor in each of its states and play the phone's calibration part). See the
   [video file](packages/capture-file-ui/index.ts),
   [remote capture](packages/capture-remote-ui/index.ts),
   [webOS capture](packages/capture-webos-ui/index.ts),
-  [WLED](packages/output-wled-ui/index.ts) with the
-  [LED layout](packages/output-wled-ui/layout.tsx), and the
+  [WLED](packages/output-wled-ui/index.ts) on Home's
+  [LED drawing](packages/web-portal/led-drawing.tsx) (with its count fields,
+  wiring direction, LED 1 and total), and the
   [null output](packages/output-null-ui/index.tsx).
 - [TV UI](packages/tv-ui/app.tsx) (both packages): status card from the
   supervisor's state ([rules](packages/tv-ui/model.ts)), with the capture

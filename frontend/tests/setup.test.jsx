@@ -125,7 +125,10 @@ test('setup steps keep the drafts, check each step and save both sections with o
     assertFocused($('h2', wizard()));
     assert(!$('[role="alert"]', wizard()));
     await next();
-    assert.equal(errorOf(field('output.address')), 'Enter a value.');
+    assert.equal(
+      errorOf(field('output.address')),
+      'Choose your lights, or enter their address by hand.',
+    );
     await edit(field('output.address'), 'http://wled.local/');
     await edit(field('output.leds.top'), 30);
     await edit(field('output.leds.left'), 12);
@@ -394,7 +397,7 @@ test('setup offers the same size-and-rate choice and saves the chosen preset', a
   }
 });
 
-test('setup lists the devices present at once and finds lights on request; the typed fields stay', async () => {
+test('setup lists the devices and the lights present as rows as each step opens; the typed fields stay', async () => {
   const discovery = fakeDiscoveryClient({
     'capture/device': [
       {
@@ -425,9 +428,8 @@ test('setup lists the devices present at once and finds lights on request; the t
   const { fixture } = portal;
   try {
     // The devices present are looked for at once, none ticked; the lights
-    // wait to be asked for.
+    // on their own step.
     assert.deepEqual(discovery.calls, ['capture/device']);
-    assert(!button('Find devices'));
     const devices = () => $$('input[type="radio"]', $('.device-rows'));
     assert.deepEqual(
       devices().map((input) => plain(input.closest('label'))),
@@ -448,11 +450,19 @@ test('setup lists the devices present at once and finds lights on request; the t
     await edit(field('capture.device'), '/dev/video9');
     await next();
 
-    await press(button('Find lights'));
+    // The lights present, looked for as their step opens, none ticked; the
+    // address waits under Advanced.
     assert.deepEqual(discovery.calls, ['capture/device', 'output/wled']);
-    assert.equal(plain($('.found button')), 'Living room192.0.2.40, 120 LEDs');
-    await press($('.found button'));
+    const lights = () => $$('input[type="radio"]', $('.device-rows'));
+    assert.deepEqual(
+      lights().map((input) => plain(input.closest('label'))),
+      ['Living room192.0.2.40, 120 LEDs'],
+    );
+    assert.equal(lights()[0].checked, false);
+    assert(field('output.address').closest('[hidden]'));
+    await click(lights()[0]);
     assert.equal(field('output.address').value, '192.0.2.40');
+    assert.equal(lights()[0].checked, true);
     // Per-edge counts are left to the person; the found count is beside
     // them, amber while the edges add up to another.
     assert.equal(field('output.leds.top').value, '0');
@@ -461,9 +471,22 @@ test('setup lists the devices present at once and finds lights on request; the t
     await edit(field('output.leds.top'), 120);
     assert.equal(found().textContent, 'This WLED has 120 LEDs.');
     assert.equal(found().dataset.tone, undefined, 'they agree');
-    // Another address typed: the found count no longer applies.
+    // Another address typed by hand: ticked as a row of its own, and the
+    // found count no longer applies.
     await edit(field('output.address'), '192.0.2.41');
     assert.equal(found().textContent, '');
+    assert.deepEqual(
+      lights().map((input) => [plain(input.closest('label')), input.checked]),
+      [
+        ['Living room192.0.2.40, 120 LEDs', false],
+        ['192.0.2.41', true],
+      ],
+    );
+    // The found lights typed as a URL are still their row, with their count.
+    await edit(field('output.address'), 'http://192.0.2.40/');
+    assert.equal(lights()[0].checked, true);
+    assert.equal(lights().length, 1, 'no second row for the same lights');
+    assert.equal(found().textContent, 'This WLED has 120 LEDs.');
     await edit(field('output.address'), '192.0.2.40');
     await next();
     await next();
@@ -484,29 +507,28 @@ test('setup lists the devices present at once and finds lights on request; the t
   }
 });
 
-test('nothing found or a failed lookup leaves the typed field', async () => {
+test('nothing found or a failed lookup leaves the typed field in plain sight', async () => {
   const discovery = fakeDiscoveryClient();
   const portal = await renderPortal(WebosWebPortal, {}, undefined, {
     discovery: discovery.client,
   });
+  const said = () => $('.device-rows [role="status"]').textContent;
   try {
     // This TV's capture has nothing to find.
     assert(!$('.device-rows'));
     await next();
-    await press(button('Find lights'));
     assert.equal(
-      $('.find [role="status"]').textContent,
-      'No WLED lights found on this network. Enter the address above.',
+      said(),
+      'No WLED lights found on this network. Enter their address below.',
     );
+    assert(!field('output.address').closest('[hidden]'));
     discovery.refuseNext({
       kind: 'unavailable',
       message: 'Prysm didn’t answer.',
     });
-    await press(button('Find lights'));
-    assert.equal(
-      $('.find [role="status"]').textContent,
-      'Couldn’t search just now. Enter the address above.',
-    );
+    await press(button('Look again'));
+    assert.equal(said(), 'Couldn’t look for lights just now.');
+    assert(!field('output.address').closest('[hidden]'));
     assert.equal(field('output.address').value, '');
   } finally {
     await portal.unmount();

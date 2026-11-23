@@ -39,22 +39,24 @@ Nothing is saved until the last step.
    **Capture card or camera** ([capture card](quickstart.md)),
    **LG TV on your network** ([slim TV package](webos.md#slim-package-the-tv-sends-the-picture)),
    or **This TV** on the full TV package.
-2. **Your lights.** Choose **WLED**. Select **Find lights** to list WLED
-   devices on your network, or type the address: a name such as `wled.local`
+2. **Your lights.** Choose **WLED**. The WLED devices found on your network
+   are listed under **Lights**; choose yours, or select **Look again**. To
+   type the address instead, open **Advanced** (it is shown at once when
+   nothing is found): a name such as `wled.local`
    or an IP address such as `192.168.1.30`, with `:PORT` only if WLED's web
    page is not on port 80. Do not type `http://`.
    Enter the number of LEDs on each edge; use 0 for an edge without LEDs.
    Prysm takes 1 to 16384 LEDs in total (the most a WLED device drives;
    smaller chips such as the ESP8266 stop far earlier). The edges should add
-   up to WLED's own LED count: a device picked from **Find lights** shows its
+   up to WLED's own LED count: a device chosen from the list shows its
    count under the drawing, and while screen sync runs the light card and the
    Lights page warn when the two differ, for example **The lights have 120
    LEDs, Prysm sends 96**. Prysm keeps sending either way.
 3. **Review and start.** Check the summary, then choose
    **Save and start screen sync**, or **Save only** to start later.
 
-**Find lights** only finds WLED devices on the same network segment. In
-Docker it needs host networking, so in a normal container type the IP address.
+Prysm only finds WLED devices on the same network segment. In Docker it
+needs host networking, so in a normal container type the IP address.
 
 Wire the strip so that, seen from the front, it starts at the **bottom-left
 corner** and runs **up the left edge, across the top, down the right edge and

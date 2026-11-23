@@ -24,20 +24,19 @@ const detailOf = ({ detail, led_count }: Candidate) =>
     .join(', ');
 
 /**
- * Ask the adapter for `kind` what it finds, keeping the candidates that
- * fill `field`, and keep their names in this browser. `auto` asks once at
- * once; `look` asks again, showing the last ones meanwhile. A lookup the
- * editor no longer shows is ended.
+ * Ask the adapter for `kind` what it finds, at once and again on `look`
+ * (showing the last ones meanwhile), keeping the candidates that fill
+ * `field`, and keep their names in this browser. A lookup the editor no
+ * longer shows is ended.
  */
 function useCandidates(
   discovery: DiscoveryClient | null,
   section: AdapterSide,
   kind: string,
   field: string,
-  auto: boolean,
 ) {
   const [search, setSearch] = useState<Search>(
-    auto && discovery
+    discovery
       ? { state: 'looking', found: [], again: false }
       : { state: 'idle' },
   );
@@ -60,9 +59,9 @@ function useCandidates(
   }
   const askRef = useRef(ask);
   useEffect(() => {
-    if (auto && discovery) void askRef.current(discovery);
+    if (discovery) void askRef.current(discovery);
     return () => abortRef.current?.abort();
-  }, [auto, discovery]);
+  }, [discovery]);
   return {
     search,
     looking: search.state === 'looking',
@@ -80,140 +79,50 @@ function useCandidates(
 }
 
 /**
- * A button that asks the adapter for `kind` what it finds (lights on the
- * network) and lists them; picking one fills the field `path` with the
- * candidate's `fields[field]` and hands the editor the candidate. A button
- * rather than a lookup on opening: WLED discovery takes over a second and
- * asks the network. The typed field stays the fallback.
- * Nothing is shown without a discovery client (the portal's `discovery`).
+ * The devices of `kind` present (capture devices, WLED lights), looked for
+ * as the editor opens, as rows to tick, listed once the first lookup has
+ * answered and kept while looking again; picking one fills `path` (its
+ * field at `field`). The saved device keeps a ticked row of its own while
+ * it is not found, by the name this browser last saw for it (else its
+ * value), with `missing` beneath in the problem colour. "Look again" sits
+ * at the end of the heading line.
+ * Under the rows, only while there is something to say, one line says how
+ * the lookup went (looking, nothing found, failed), or
+ * `problem` (what is wrong with the picked device), or the problem of
+ * `path`, such as no device chosen: while there are rows and the field is
+ * tucked away they own `path`, so a save goes to them. The field to type it
+ * (`byHand`) is under Advanced, after what follows the device (`then`),
+ * while there are devices to pick; with nothing found, or no discovery
+ * client, it is shown as it is, before `then`, and owns `path` itself (a
+ * kept row of the saved device beside it). The editor's other
+ * advanced fields (`advanced`) follow it there, in the one Advanced.
  */
-export function FindDevices({
+export function DeviceRows({
   section,
   kind,
   path,
   field,
-  label,
-  looking,
-  nothing,
-  fallback,
-  onPick,
-}: {
-  section: AdapterSide;
-  kind: string;
-  /** The field it fills, for its errors, such as `capture.device`. */
-  path: string;
-  /** The key in a candidate's `fields`, such as `device`. */
-  field: string;
-  label: string;
-  looking: string;
-  /** Shown when nothing is found, such as `No devices found.` */
-  nothing: string;
-  /** What to do instead, such as `Enter the path below.` */
-  fallback: string;
-  onPick: (value: string, candidate: Candidate) => void;
-}) {
-  const discovery = use(DiscoveryContext);
-  const scope = useFieldScopeContext();
-  const {
-    search,
-    looking: busy,
-    look,
-  } = useCandidates(discovery, section, kind, field, false);
-  const [picked, setPicked] = useState('');
-  if (!discovery) return null;
-
-  let result = null;
-  if (search.state === 'failed')
-    result = (
-      <p className="notice warning" role="status">
-        Couldn’t search just now. {fallback}
-      </p>
-    );
-  else if (search.state === 'found' && !search.found.length)
-    result = (
-      <p className="notice" role="status">
-        {nothing} {fallback}
-      </p>
-    );
-  else if (search.state === 'found')
-    result = (
-      <ul className="found" aria-label="Found">
-        {search.found.map((candidate) => {
-          const value = candidate.fields[field] as string;
-          const detail = detailOf(candidate);
-          return (
-            <li key={value}>
-              <button
-                type="button"
-                disabled={scope.disabled}
-                aria-pressed={picked === value}
-                onClick={() => {
-                  scope.edited(path);
-                  setPicked(value);
-                  onPick(value, candidate);
-                }}
-              >
-                <strong>{candidate.label}</strong>
-                {detail ? <span className="found-detail">{detail}</span> : null}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    );
-  return (
-    <div className="find">
-      <button
-        type="button"
-        disabled={scope.disabled}
-        aria-disabled={busy || undefined}
-        aria-busy={busy}
-        onClick={() => {
-          if (busy) return;
-          setPicked('');
-          look(discovery);
-        }}
-      >
-        {busy ? looking : label}
-      </button>
-      {result}
-    </div>
-  );
-}
-
-/**
- * The devices of `kind` present, looked for as the editor opens, as rows
- * to tick, listed once the first lookup has answered and kept while looking
- * again; picking one fills `path` (its field at `field`). The saved
- * device keeps a ticked row of its own while it is not found, by the name
- * this browser last saw for it (else its value), with `missing` beneath in
- * the problem colour. "Look again" sits at the end of the heading line.
- * Under the rows, only while there is something to say, one line says how
- * the lookup went (looking, nothing found, failed), or
- * `problem` (what is wrong with the picked device), or the problem of
- * `path`, such as no device chosen: while there are rows they own `path`,
- * so a save goes to them. The field to type it (`byHand`) is under
- * Advanced, after what follows the device (`then`), while there are
- * devices to pick; with nothing found, or no discovery client, it is shown
- * as it is, before `then`, and owns `path` itself.
- */
-export function DeviceRows({
-  kind,
-  path,
-  field,
   legend,
+  things,
+  nothing,
   value,
   missing,
   problem,
   byHand,
   then,
+  advanced,
   onPick,
   onLook,
 }: {
+  section: AdapterSide;
   kind: string;
   path: string;
   field: string;
   legend: string;
+  /** What is looked for, such as `devices`. */
+  things: string;
+  /** Said when nothing is found, with what to do instead. */
+  nothing: string;
   /** The picked value, such as the device path; `''`: none. */
   value: string;
   /** Said under the saved device while it is not found; absent: nothing. */
@@ -221,7 +130,9 @@ export function DeviceRows({
   problem?: string;
   byHand: ReactNode;
   then: ReactNode;
-  onPick: (value: string) => void;
+  /** More under Advanced, after `byHand`, and the paths of its fields. */
+  advanced?: { paths: readonly string[]; fields: ReactNode };
+  onPick: (value: string, candidate: Candidate) => void;
   /** Called on each Look again, so what follows from the device is too. */
   onLook?: () => void;
 }) {
@@ -232,10 +143,9 @@ export function DeviceRows({
   const lineId = useId();
   const { search, looking, look } = useCandidates(
     discovery,
-    'capture',
+    section,
     kind,
     field,
-    true,
   );
   if (!discovery)
     return (
@@ -247,6 +157,9 @@ export function DeviceRows({
           </p>
         ) : null}
         {then}
+        {advanced ? (
+          <Advanced paths={advanced.paths}>{advanced.fields}</Advanced>
+        ) : null}
       </>
     );
   const found = 'found' in search ? search.found : [];
@@ -261,15 +174,16 @@ export function DeviceRows({
   const listed = found.some((candidate) => candidate.fields[field] === value);
   const missingRow = answered && value !== '' && !listed;
   const rows = found.length > 0 || missingRow;
-  const error = rows ? shownError(scope, path, false) : undefined;
+  // The field in plain sight says its own problem and takes the focus.
+  const owns = rows && !plain;
+  const error = owns ? shownError(scope, path, false) : undefined;
   let status: string | null = null;
   if (error) status = error;
   else if (problem) status = problem;
-  else if (looking) status = 'Looking for devices…';
+  else if (looking) status = `Looking for ${things}…`;
   else if (search.state === 'failed')
-    status = 'Couldn’t look for devices just now.';
-  else if (!found.length)
-    status = 'No devices found. Plug one in, or enter it below.';
+    status = `Couldn’t look for ${things} just now.`;
+  else if (!found.length) status = nothing;
   /**
    * A row says where its device is only when its name does not tell it
    * apart: two found under one name, or none; other details stay.
@@ -282,9 +196,9 @@ export function DeviceRows({
     // Without a name the path is the row's label already.
     return detail && (detail !== at || (shared && named)) ? detail : undefined;
   };
-  const choose = (next: string) => {
+  const choose = (next: string, candidate: Candidate) => {
     scope.edited(path);
-    onPick(next);
+    onPick(next, candidate);
   };
   return (
     <>
@@ -294,8 +208,8 @@ export function DeviceRows({
         aria-labelledby={legendId}
         aria-describedby={status ? lineId : undefined}
         aria-invalid={error ? true : undefined}
-        data-field={rows ? path : undefined}
-        tabIndex={rows ? -1 : undefined}
+        data-field={owns ? path : undefined}
+        tabIndex={owns ? -1 : undefined}
       >
         {/* The group is named by its label alone; Look again acts on it. */}
         <legend>
@@ -326,14 +240,14 @@ export function DeviceRows({
                   about={aboutOf(candidate, at)}
                   checked={at === value}
                   disabled={scope.disabled}
-                  onChoose={() => choose(at)}
+                  onChoose={() => choose(at, candidate)}
                 />
               );
             })}
             {missingRow ? (
               <MissingRow
                 name={nameId}
-                label={keptName('capture', { kind, [field]: value })}
+                label={keptName(section, { kind, [field]: value })}
                 value={value}
                 missing={missing}
               />
@@ -351,9 +265,14 @@ export function DeviceRows({
       </fieldset>
       {plain ? byHand : null}
       {then}
-      {plain ? null : (
-        // While there are rows, a problem of the device is theirs to say.
-        <Advanced paths={rows ? [] : [path]}>{byHand}</Advanced>
+      {plain && !advanced ? null : (
+        // While the rows own `path`, a problem of the device is theirs to say.
+        <Advanced
+          paths={[...(plain || owns ? [] : [path]), ...(advanced?.paths ?? [])]}
+        >
+          {plain ? null : byHand}
+          {advanced?.fields}
+        </Advanced>
       )}
     </>
   );

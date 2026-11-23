@@ -12,98 +12,9 @@ import {
   type Transport,
 } from './adapters';
 import { useDeviceName, type SetupPart } from './device-name';
+import { LedDrawing } from './led-drawing';
 import { LightsIcon, PrysmIcon, VideoIcon } from './path-icons';
 import { RowLink } from './rows';
-
-const sides = ['top', 'right', 'bottom', 'left'] as const;
-
-/**
- * The TV seen from the front on its stand, with the LED band around it:
- * each edge's run of light and, a little further out, its count.
- */
-function LedMap({ edges }: { edges: LedEdges }) {
-  const blurId = useId();
-  const total = ledCount(edges);
-  // Screen 200 × 112 at (60, 34); the band 9 out; the counts 22 out (the
-  // bottom one past the stand).
-  const band = {
-    top: [66, 25, 254, 25],
-    right: [269, 40, 269, 140],
-    bottom: [254, 155, 66, 155],
-    left: [51, 140, 51, 40],
-  } as const;
-  const count = {
-    top: [160, 13],
-    right: [289, 94],
-    bottom: [160, 190],
-    left: [31, 94],
-  } as const;
-  return (
-    <figure className="led-map">
-      <svg viewBox="0 0 320 200" aria-hidden="true" focusable="false">
-        <defs>
-          {/* The light the band throws on the wall: soft, not an outline. */}
-          <filter
-            id={blurId}
-            filterUnits="userSpaceOnUse"
-            x="0"
-            y="0"
-            width="320"
-            height="200"
-          >
-            <feGaussianBlur stdDeviation="5" />
-          </filter>
-        </defs>
-        <g className="led-map-band">
-          {sides.map((edge) => {
-            const [x1, y1, x2, y2] = band[edge];
-            return (
-              <g
-                key={edge}
-                className={`led-map-edge edge-${edge}${edges[edge] ? '' : ' empty'}`}
-              >
-                <line
-                  className="halo"
-                  filter={`url(#${blurId})`}
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                />
-                <line x1={x1} y1={y1} x2={x2} y2={y2} />
-              </g>
-            );
-          })}
-        </g>
-        <path className="led-map-stand" d="M160 160v10M138 172h44" />
-        <rect
-          className="led-map-screen"
-          x="60"
-          y="34"
-          width="200"
-          height="112"
-          rx="7"
-        />
-        {sides.map((edge) => (
-          <text
-            key={edge}
-            className="led-map-count"
-            x={count[edge][0]}
-            y={count[edge][1] + 4}
-            textAnchor="middle"
-          >
-            {edges[edge]}
-          </text>
-        ))}
-      </svg>
-      <figcaption className="visually-hidden">
-        Seen from the front: {edges.top} LEDs along the top, {edges.right} on
-        the right, {edges.bottom} along the bottom and {edges.left} on the left,{' '}
-        {total} in all.
-      </figcaption>
-    </figure>
-  );
-}
 
 /**
  * What the path is doing, from the state: frames flowing through Prysm,
@@ -442,7 +353,12 @@ export function SetupCard({
           )}
         </Named>
       </ol>
-      {edges ? <LedMap edges={edges} /> : null}
+      {edges ? (
+        <LedDrawing
+          edges={edges}
+          caption={`Seen from the front: ${edges.top} LEDs along the top, ${edges.right} on the right, ${edges.bottom} along the bottom and ${edges.left} on the left, ${ledCount(edges)} in all.`}
+        />
+      ) : null}
       {/* A row as in Settings, at the card's foot. */}
       <ul className="rows setup-change">
         <RowLink

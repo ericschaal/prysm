@@ -1,14 +1,17 @@
 /**
  * `host[:port]` from what a user typed or pasted: surrounding spaces, a leading
- * `http://` and a trailing `/` are dropped. Everything else, including
- * `https://`, is left for the server to accept or explain.
+ * `http://`, a trailing `/` and port 80 after a name or IPv4 address (the
+ * port WLED is on anyway, so the address is the one discovery gives) are
+ * dropped. Everything else, including `https://`, is left for the server
+ * to accept or explain.
  */
 export function normalizeWledAddress(text: string): string {
   const trimmed = text.trim();
   const bare = /^http:\/\//i.test(trimmed)
     ? trimmed.slice('http://'.length)
     : trimmed;
-  return bare.endsWith('/') ? bare.slice(0, -1) : bare;
+  const host = bare.endsWith('/') ? bare.slice(0, -1) : bare;
+  return host.replace(/^([^:[\]]+):80$/, '$1');
 }
 
 /**

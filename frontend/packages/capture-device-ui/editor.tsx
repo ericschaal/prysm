@@ -47,10 +47,13 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
   };
   return (
     <DeviceRows
+      section="capture"
       kind="device"
       path="capture.device"
       field="device"
       legend="Device"
+      things="devices"
+      nothing="No devices found. Plug one in, or enter it below."
       value={device}
       missing={modes.state === 'unknown' ? 'Not plugged in' : undefined}
       problem={asked ? problemOf(modes) : undefined}
