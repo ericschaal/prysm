@@ -137,9 +137,19 @@ contract (timings, colours produced).
    description and run the workflow again.
 
    **Release candidates.** A version with a suffix (`1.0.0-rc.1`) is published
-   as a pre-release. After one, Release Please proposes the next patch
-   pre-release (`1.0.1-rc.1`), so every further candidate (`1.0.0-rc.2`) and
-   the final version (`1.0.0`) need the block.
+   as a pre-release. [release-please-config.json](../../release-please-config.json)
+   keeps Release Please's `prerelease` versioning (`prerelease-type: rc`), and
+   one setting there chooses what the release pull request proposes:
+   - `"prerelease": true`: candidates. After `1.0.0-rc.2` it proposes
+     `1.0.0-rc.3`, whatever the commit types. From a stable version the first
+     candidate has no number (`1.1.0-rc`, then `1.1.0-rc.1`).
+   - `"prerelease": false`: final versions. After `1.0.0-rc.3` it proposes
+     `1.0.0`; after `1.0.0`, `1.0.1` or `1.1.0` as usual.
+
+   Release Please has no step that turns a published candidate into the final
+   version: the final version is the next release, made by a pull request
+   that sets `"prerelease": false`. Check the version in the release pull
+   request's title before merging it.
 2. Review and merge the release pull request. Release Please then creates the
    tag `v<version>` and a draft GitHub release with the changelog.
 3. The tag starts [release.yml](../../.github/workflows/release.yml):
