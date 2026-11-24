@@ -15,6 +15,7 @@ mod access;
 mod capture;
 mod colors;
 mod metrics;
+mod page;
 mod preview;
 mod response;
 mod routes;
@@ -43,7 +44,10 @@ pub struct FrontendAsset {
 /// portal sends is never stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Caching {
-    /// Checked again on every load: the page, which names the current files.
+    /// Never stored: `/index.html` must be, as it carries the current state.
+    Never,
+    /// Checked again on every load: a file not named by its content
+    /// (`theme.js`).
     Revalidate,
     /// Kept for good: the path names the content (a hash in the file name).
     Immutable,
@@ -53,6 +57,7 @@ impl Caching {
     /// The `Cache-Control` value.
     pub(crate) const fn header(self) -> &'static str {
         match self {
+            Self::Never => "no-store",
             Self::Revalidate => "no-cache",
             Self::Immutable => "public, max-age=31536000, immutable",
         }
@@ -75,8 +80,8 @@ impl WebPortal {
     /// host starts and the port is known in advance.
     ///
     /// # Errors
-    /// [`prysm_ports::Error::Invalid`] for invalid or duplicate asset paths or
-    /// a malformed origin in `access`.
+    /// [`prysm_ports::Error::Invalid`] for invalid or duplicate asset paths, a
+    /// page that is not [`Caching::Never`], or a malformed origin in `access`.
     pub fn from_listener(
         listener: TcpListener,
         assets: &'static [FrontendAsset],

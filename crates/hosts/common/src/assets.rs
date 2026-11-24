@@ -26,7 +26,7 @@ pub const NOT_BUILT: &[FrontendAsset] = &[FrontendAsset {
     content_type: "text/html; charset=utf-8",
     bytes: include_bytes!("not-built.html"),
     gzip: None,
-    caching: Caching::Revalidate,
+    caching: Caching::Never,
 }];
 
 #[cfg(test)]
@@ -46,11 +46,18 @@ mod tests {
         serves(NOT_BUILT);
     }
 
+    /// The page has a head, where the portal puts the current state.
+    fn has_head(assets: &[FrontendAsset]) -> bool {
+        let page = assets.iter().find(|asset| asset.path == "/index.html");
+        page.is_some_and(|page| page.bytes.windows(7).any(|window| window == b"</head>"))
+    }
+
     #[test]
     #[cfg_attr(not(bundle_headless), ignore = "frontend/dist is not built")]
     fn the_desktop_portal_is_the_real_bundle() {
         serves(HEADLESS);
         assert!(HEADLESS.len() > NOT_BUILT.len());
+        assert!(has_head(HEADLESS));
     }
 
     #[test]
@@ -58,5 +65,6 @@ mod tests {
     fn the_tv_portal_is_the_real_bundle() {
         serves(WEBOS);
         assert!(WEBOS.len() > NOT_BUILT.len());
+        assert!(has_head(WEBOS));
     }
 }

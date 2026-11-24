@@ -21,7 +21,7 @@ export function PortalError() {
     <div className="portal">
       <title>Prysm</title>
       <main id="content" className="portal-flow">
-        <section className="connecting problem" role="alert">
+        <section className="page-problem" role="alert">
           <h1 className="visually-hidden">Prysm</h1>
           <h2>Something went wrong</h2>
           <p>

@@ -31,6 +31,8 @@ import {
   CalibrationRoute,
   CalibrationsRoute,
   SettingsRoute,
+  WaitingPage,
+  type WaitingFrame,
 } from './pages';
 import {
   ChromeContext,
@@ -44,7 +46,7 @@ import {
   type WebPortalProps,
 } from './portal-context';
 import type { DeletedCalibration } from './calibrations';
-import { pages } from './routes';
+import { pages, showsHome } from './routes';
 import { SetupWizard } from './setup';
 import { useReplaced } from './replaced';
 import { PortalError } from './update';
@@ -54,10 +56,9 @@ import './portal.css';
 import './flows.css';
 
 /**
- * How long the connection may be missing before the page says so: the first
- * state usually arrives within a few hundred milliseconds of loading (more
- * from a TV), and a restart reconnects in about as long. Saying it at once
- * would flash a warning and swap the header's Settings button in and out.
+ * How long the connection may be missing before the page says so: the page
+ * comes with the state, and a restart reconnects within a few hundred
+ * milliseconds (more from a TV). Saying it at once would flash a warning.
  */
 export const connectionGraceMs = 1000;
 
@@ -112,30 +113,42 @@ function PortalFrame() {
 
   // Disabled at once while offline, but said only once it lasts.
   const outOfTouch = useLingering(!online, connectionGraceMs, 0);
+  // A refusal is for good: the stream is not opened again.
+  const refusal =
+    connection.error?.kind === 'forbidden' ? connection.error.message : null;
   let connectionLabel = 'Offline';
   if (online) connectionLabel = 'Connected';
   else if (connection.status === 'connecting') connectionLabel = 'Connecting…';
-  else if (snapshot) connectionLabel = 'Reconnecting…';
+  else if (snapshot && !refusal) connectionLabel = 'Reconnecting…';
   const chrome: Chrome = {
     connectionLabel,
     outOfTouch,
+    refusal,
     developer: useDeveloper(),
     updated: useReplaced(online, host.replaced),
   };
 
-  if (!snapshot)
+  // Normally the page comes with the state; without it (a dev server, or a
+  // state the page could not read) the page waits in its route's frame, and
+  // says so only once the wait lasts. The first state may open Setup in its
+  // place (capture or lights missing), which only that state can tell.
+  if (!snapshot) {
+    let frame: WaitingFrame = 'settings';
+    if (calibrating) frame = 'calibrate';
+    else if (showsHome(location.pathname)) frame = 'home';
     return (
       <ChromeContext value={chrome}>
-        <Page className="portal-flow" title="Prysm">
-          <section className="connecting">
-            <h2>Connecting to Prysm</h2>
-            <p>
-              {connection.error?.message ?? 'Waiting for the current state…'}
-            </p>
-          </section>
-        </Page>
+        <WaitingPage
+          frame={frame}
+          message={
+            outOfTouch
+              ? (connection.error?.message ?? 'Connecting to Prysm…')
+              : ''
+          }
+        />
       </ChromeContext>
     );
+  }
 
   const lighting = lightingSituation(snapshot);
   const path = pathOf(lighting);

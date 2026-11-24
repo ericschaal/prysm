@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useChrome } from './portal-context';
 import {
   SaveContext,
   savedForMs,
@@ -63,6 +64,7 @@ export function SaveStatusProvider({ children }: { children: ReactNode }) {
  */
 export function SaveStatus({ online }: { online: boolean }) {
   const phase = use(SaveContext)?.phase ?? 'all-saved';
+  const { refusal } = useChrome();
   // Offline nothing can be saved; what was changed is kept for later.
   return (
     <p
@@ -71,7 +73,7 @@ export function SaveStatus({ online }: { online: boolean }) {
       role="status"
     >
       <span className="save-status-mark" aria-hidden="true" />
-      {online ? phaseTexts[phase] : 'Not connected. Reconnecting…'}
+      {online ? phaseTexts[phase] : (refusal ?? 'Not connected. Reconnecting…')}
     </p>
   );
 }

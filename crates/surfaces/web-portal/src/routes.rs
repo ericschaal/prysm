@@ -4,6 +4,7 @@ use crate::access::{self, Access};
 use crate::capture;
 use crate::colors::Colors;
 use crate::metrics;
+use crate::page;
 use crate::preview::Previews;
 use crate::response::{self, KEEPALIVE, KEEPALIVE_COMMENT, Response, failure};
 use bytes::Bytes;
@@ -120,15 +121,21 @@ async fn route(context: &Context, request: Request<Incoming>) -> Response {
 }
 
 /// `GET` or `HEAD` of a bundle file: gzip-compressed for clients that accept
-/// it, cached as the asset says.
+/// it, cached as the asset says. The page carries the current state, so it
+/// is never stored.
 fn asset(context: &Context, path: &str, request: &Request<Incoming>) -> Response {
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return not_found();
     }
-    let path = if path == "/" { "/index.html" } else { path };
+    let path = if path == "/" { page::PAGE } else { path };
     let Some(asset) = context.assets.iter().find(|asset| asset.path == path) else {
         return not_found();
     };
+    if asset.path == page::PAGE {
+        let state = State::from(&*context.engine.snapshot().borrow());
+        let body = page::with_state(asset.bytes, &state);
+        return response::bytes(StatusCode::OK, asset.content_type, body);
+    }
     let gzip = asset.gzip.filter(|_| accepts_gzip(request.headers()));
     let mut response = response::bytes(
         StatusCode::OK,

@@ -35,7 +35,7 @@ export interface WebPortalProps<
   preview?: PreviewClient;
   /**
    * The LEDs' colours, for the glow Home casts while screen sync runs;
-   * without one the glow is the designed one.
+   * without one the glow stays the moonlight of black LEDs.
    */
   colors?: ColorsClient;
   /**
@@ -132,6 +132,8 @@ export interface Chrome {
   connectionLabel: string;
   /** The connection has been missing long enough to say so. */
   outOfTouch: boolean;
+  /** Why the portal refuses this page (`forbidden`); no reconnect follows. */
+  refusal: string | null;
   developer: boolean;
   /** Prysm was updated under this page: every page offers a reload. */
   updated: boolean;

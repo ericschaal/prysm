@@ -5,8 +5,9 @@ export interface Connection<C, O> {
   generation: number;
   status: 'connecting' | 'connected' | 'disconnected';
   /**
-   * The newest state of this stream (`generation`), kept while it
-   * reconnects; current only while `status` is `connected`.
+   * The newest state of this stream (`generation`), or the state the page
+   * came with until the stream sends one; kept while it reconnects, current
+   * only while `status` is `connected`.
    */
   snapshot: ApplicationSnapshot<C, O> | null;
   /** Why the stream was lost; kept while it reconnects. */
@@ -17,12 +18,15 @@ export interface ApplicationState<C, O> {
   connection: Connection<C, O>;
 }
 
-export function createApplicationSlice<C, O>() {
+export function createApplicationSlice<C, O>(
+  initial: ApplicationSnapshot<C, O> | null,
+) {
   const initialState: ApplicationState<C, O> = {
     connection: {
       generation: 0,
-      status: 'disconnected',
-      snapshot: null,
+      // A state the page came with is current, as a streamed one is.
+      status: initial ? 'connected' : 'disconnected',
+      snapshot: initial,
       error: null,
     },
   };
@@ -34,10 +38,14 @@ export function createApplicationSlice<C, O>() {
     name: 'application',
     initialState,
     reducers: {
+      /**
+       * The first request after the start or a release; only a state the
+       * page came with is there, and it stays current until the stream's
+       * first replaces it.
+       */
       observationRequested(state) {
         state.connection.generation++;
-        state.connection.status = 'connecting';
-        state.connection.snapshot = null;
+        if (!state.connection.snapshot) state.connection.status = 'connecting';
         state.connection.error = null;
       },
       observationReleased(state) {

@@ -93,7 +93,10 @@ export interface TypedRow {
  * The devices of `kind` present (capture devices, WLED lights), looked for
  * as the editor opens, as rows to tick, listed once the first lookup has
  * answered and kept while looking again; picking one fills `path` (its
- * field at `field`). "Look again" sits at the end of the heading line.
+ * field at `field`). Until that answer one row stands where the first
+ * found device will be (the saved one, or none), saying the lookup, and
+ * no row can be picked, so the usual answer of one device moves nothing.
+ * "Look again" sits at the end of the heading line.
  * The last row is always one to type in (`typed`), picked by focusing or
  * typing in its field; it keeps what was typed while a found row is
  * picked. A saved value the lookup does not list is in it, with the name
@@ -169,8 +172,8 @@ export function DeviceRows({
   const [touched, setTouched] = useState(false);
   useCheck(path, value ? null : typed.empty);
   const found = 'found' in search ? search.found : [];
-  // Until the first answer no row is listed, not even the typed one: which
-  // row is the saved value's is known only then, so no row changes after.
+  // Until the first answer no row is picked or left: which row is the saved
+  // value's is known only then.
   const answered = !(search.state === 'looking' && !search.again);
   const listed = found.some((candidate) => candidate.fields[field] === value);
   const typedPicked =
@@ -180,10 +183,11 @@ export function DeviceRows({
   const inRow = answered && (typedPicked || !listed);
   const error = shownError(scope, path, touched);
   const lineError = inRow ? undefined : error;
+  const lookingFor = `Looking for ${things}…`;
   let status: string | null = null;
   if (lineError) status = lineError;
   else if (problem) status = problem;
-  else if (looking) status = `Looking for ${things}…`;
+  else if (looking && answered) status = lookingFor;
   else if (search.state === 'failed')
     status = `Couldn’t look for ${things} just now.`;
   else if (search.state === 'found' && !found.length) status = nothing;
@@ -218,8 +222,11 @@ export function DeviceRows({
   };
   const retry =
     inRow && scope.retry?.path === path ? scope.retry.run : undefined;
-  const shown = typedPicked && value !== '';
-  const kept = shown ? keptName(section, { kind, [field]: value }) : null;
+  // The typed row is ticked, and says its value's name, once answered.
+  const typedShown = answered && typedPicked;
+  const savedName = value ? keptName(section, { kind, [field]: value }) : null;
+  const shown = typedShown && value !== '';
+  const kept = shown ? savedName : null;
   const gone = shown ? missing : undefined;
   return (
     <>
@@ -228,6 +235,7 @@ export function DeviceRows({
         role="radiogroup"
         aria-labelledby={legendId}
         aria-describedby={status ? lineId : undefined}
+        aria-busy={!answered}
         aria-invalid={lineError ? true : undefined}
         data-field={inRow ? undefined : path}
         tabIndex={inRow ? undefined : -1}
@@ -251,9 +259,9 @@ export function DeviceRows({
             </button>
           ) : null}
         </legend>
-        {answered ? (
-          <ul className="rows">
-            {found.map((candidate) => {
+        <ul className="rows">
+          {answered ? (
+            found.map((candidate) => {
               const at = candidate.fields[field] as string;
               return (
                 <RowChoice
@@ -266,31 +274,41 @@ export function DeviceRows({
                   onChoose={() => pick(at, candidate)}
                 />
               );
-            })}
-            <RowTyped
+            })
+          ) : (
+            // The row says the lookup itself, so the line under the rows
+            // stays empty.
+            <RowChoice
               name={nameId}
-              path={path}
-              typed={typed}
-              text={typedPicked ? text : draft}
-              checked={typedPicked}
-              disabled={scope.disabled}
-              line={
-                kept || gone ? (
-                  <>
-                    {kept}
-                    {kept && gone ? ' · ' : null}
-                    {gone ? <span className="row-problem">{gone}</span> : null}
-                  </>
-                ) : undefined
-              }
-              error={inRow ? error : undefined}
-              retry={retry}
-              onPick={pickTyped}
-              onType={type}
-              onBlur={() => setTouched(true)}
+              label={value ? (savedName ?? value) : lookingFor}
+              about={value ? lookingFor : undefined}
+              checked={value !== ''}
+              disabled
             />
-          </ul>
-        ) : null}
+          )}
+          <RowTyped
+            name={nameId}
+            path={path}
+            typed={typed}
+            text={typedShown ? text : draft}
+            checked={typedShown}
+            disabled={scope.disabled || !answered}
+            line={
+              kept || gone ? (
+                <>
+                  {kept}
+                  {kept && gone ? ' · ' : null}
+                  {gone ? <span className="row-problem">{gone}</span> : null}
+                </>
+              ) : undefined
+            }
+            error={inRow ? error : undefined}
+            retry={retry}
+            onPick={pickTyped}
+            onType={type}
+            onBlur={() => setTouched(true)}
+          />
+        </ul>
         <p
           id={lineId}
           className="help"

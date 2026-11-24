@@ -36,6 +36,18 @@ async fn foreign_origins_are_refused_without_running_the_command() {
                 json!({ "kind": "forbidden", "message": "origin denied" })
             );
         }
+        // The page carries the state, but no other site's script may read it.
+        let page = portal
+            .request(Method::GET, "/")
+            .header(header::ORIGIN, "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            !page
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        );
         let stream = portal
             .request(Method::GET, "/api/v1/state/stream")
             .header(header::ORIGIN, "http://evil.example")

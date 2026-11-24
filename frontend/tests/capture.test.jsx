@@ -906,7 +906,7 @@ test('Look again keeps the focus while looking and ignores presses meanwhile', a
   }
 });
 
-test('the first lookup lists nothing until it answers, then each device once, in place; looking again keeps the rows', async () => {
+test('until the first lookup answers the saved device holds a row, saying so, and nothing is picked; then each device once, in place; looking again keeps the rows', async () => {
   const card = { label: 'Card', detail: device, fields: { device } };
   const webcam = {
     label: 'Webcam',
@@ -933,12 +933,32 @@ test('the first lookup lists nothing until it answers, then each device once, in
   const devices = () => $$('.device-rows .row-choice');
   try {
     await openEditor('Video source');
-    // Looking: no row yet, not even the saved device's.
-    assert.equal(devices().length, 0);
+    // Looking: the saved device where a found one will be, ticked, and the
+    // typed row; nothing can be picked yet. The row says the lookup, to a
+    // screen reader as well, so the line under them is empty.
+    assert.deepEqual(
+      devices().map((row) => [
+        $('.row-label', row)?.textContent,
+        $('.row-value', row)?.textContent,
+        $('input', row).checked,
+      ]),
+      [
+        [device, 'Looking for devices…', true],
+        [undefined, undefined, false],
+      ],
+    );
+    const radios = () => devices().map((row) => $('input', row));
+    assert(
+      radios().every((radio) => radio.disabled),
+      'nothing to pick',
+    );
     assert.equal(
-      $('.device-rows [role="status"]').textContent,
+      document.getElementById(radios()[0].getAttribute('aria-describedby'))
+        .textContent,
       'Looking for devices…',
     );
+    assert.equal($('.device-rows').getAttribute('aria-busy'), 'true');
+    assert.equal($('.device-rows [role="status"]').textContent, '');
     await answer();
     await settled();
     // The found ones, then the typed row, which has no label of its own.
@@ -948,6 +968,8 @@ test('the first lookup lists nothing until it answers, then each device once, in
     );
     const saved = devices()[1];
     assert.equal($('input', saved).checked, true);
+    assert(radios().every((radio) => !radio.disabled));
+    assert.equal($('.device-rows').getAttribute('aria-busy'), 'false');
     // Looking again: the same rows, the same nodes, until and after it answers.
     await click(button('Look again'));
     assertSame(devices()[1], saved, 'the same row');

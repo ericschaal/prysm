@@ -108,7 +108,10 @@ for (const { host, surface } of assemblies) {
       `Unexpected build filename: ${file}`,
     );
     // Vite names everything under assets/ by its content: kept for good.
+    // The page carries the current state: never stored.
     const immutable = file.startsWith('assets/');
+    let caching = immutable ? 'Immutable' : 'Revalidate';
+    if (file === 'index.html') caching = 'Never';
     // Scripts and styles are also embedded compressed (the page is tiny).
     let gzip = 'None';
     if (immutable) {
@@ -126,7 +129,7 @@ for (const { host, surface } of assemblies) {
       gzip = `Some(include_bytes!("${file}.gz"))`;
     }
     assets.push(
-      `    prysm_web_portal::FrontendAsset { path: "/${file}", content_type: "${contentType}", bytes: include_bytes!("${file}"), gzip: ${gzip}, caching: prysm_web_portal::Caching::${immutable ? 'Immutable' : 'Revalidate'} },`,
+      `    prysm_web_portal::FrontendAsset { path: "/${file}", content_type: "${contentType}", bytes: include_bytes!("${file}"), gzip: ${gzip}, caching: prysm_web_portal::Caching::${caching} },`,
     );
   }
   await writeFile(

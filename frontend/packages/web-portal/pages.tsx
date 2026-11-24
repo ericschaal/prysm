@@ -94,6 +94,59 @@ function useLiveProps() {
   };
 }
 
+/** Home's frame: wide for its two cards, with the way to Settings. */
+const homeFrame = {
+  className: 'portal-page home',
+  title: 'Prysm',
+  wide: true,
+  settingsLink: true,
+} as const;
+
+/** Calibrate's frame: a flow in the narrow column. */
+const calibrateFrame = {
+  className: 'portal-flow portal-flow-narrow',
+  title: 'Prysm calibration',
+  name: 'Calibrate',
+} as const;
+
+/** The frame a page waits in: Home's, Calibrate's or a settings page's. */
+export type WaitingFrame = 'home' | 'calibrate' | 'settings';
+
+/**
+ * A page before the first state: its frame as it will be and still blocks
+ * where its cards will be, so the cards take their places without moving
+ * anything. `message` (empty until the wait lasts) is said in the first
+ * block; the header's connection status announces the wait.
+ */
+export function WaitingPage({
+  frame,
+  message,
+}: {
+  frame: WaitingFrame;
+  message: string;
+}) {
+  const said = <p className="skeleton-message">{message}</p>;
+  if (frame === 'home')
+    return (
+      <Page {...homeFrame}>
+        <div className="home-grid">
+          <div className="skeleton light-skeleton">{said}</div>
+          <div className="skeleton setup-skeleton" />
+        </div>
+      </Page>
+    );
+  // A settings page's title comes with its page; until then, Prysm's.
+  return (
+    <Page
+      {...(frame === 'calibrate'
+        ? calibrateFrame
+        : { className: 'portal-page', title: 'Prysm' })}
+    >
+      <div className="skeleton page-skeleton">{said}</div>
+    </Page>
+  );
+}
+
 export function HomeRoute() {
   const portal = usePortal();
   const nav = useNav();
@@ -104,7 +157,7 @@ export function HomeRoute() {
   const syncing = portal.lighting.kind === 'sync';
   useLiveColors(host.colors, online && visible && syncing, gridRef);
   return (
-    <Page className="portal-page home" title="Prysm" wide settingsLink>
+    <Page {...homeFrame}>
       <OfflineNotice />
       <SetupNotice />
       <HomePage
@@ -112,7 +165,6 @@ export function HomeRoute() {
         captures={host.captures}
         outputs={host.outputs}
         discovery={host.discovery ?? null}
-        hasColors={!!host.colors}
         preview={
           host.preview
             ? {
@@ -362,11 +414,7 @@ export function CalibrateRoute() {
   } = usePortal();
   const nav = useNav();
   return (
-    <Page
-      className="portal-flow portal-flow-narrow"
-      title="Prysm calibration"
-      name="Calibrate"
-    >
+    <Page {...calibrateFrame}>
       <OfflineNotice />
       <CalibrateWizard
         processing={snapshot.settings.processing}
@@ -394,7 +442,6 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   captures,
   outputs,
   discovery,
-  hasColors,
   preview,
   gridRef,
   online,
@@ -412,7 +459,6 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   outputs: AdapterUis<O>;
   discovery: DiscoveryClient | null;
   /** Whether this host streams the LEDs' colours at all. */
-  hasColors: boolean;
   preview?: PreviewSource;
   gridRef: RefObject<HTMLDivElement | null>;
   online: boolean;
@@ -432,11 +478,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   const outputUi = output ? adapterFor(outputs, output.kind) : undefined;
   const edges = output ? outputUi?.edges?.(output) : undefined;
   return (
-    <div
-      className="home-grid"
-      ref={gridRef}
-      data-colors={hasColors ? 'stream' : 'none'}
-    >
+    <div className="home-grid" ref={gridRef}>
       <LightCard
         target={snapshot.target}
         lighting={lighting}

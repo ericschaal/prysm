@@ -1,4 +1,5 @@
 import {
+  embeddedState,
   httpApplicationClient,
   httpCaptureModesClient,
   httpDiscoveryClient,
@@ -10,9 +11,11 @@ import { scriptReplaced } from '@prysm/web-portal';
 import { createRoot } from 'react-dom/client';
 import { WebosWebPortal, type WebosCapture, type WebosOutput } from './app';
 
-// The portal serves this page, so the client uses the page's own origin.
+// The portal serves this page, so the client uses the page's own origin;
+// the page comes with the current state, so the first render shows it.
 const application = createApplicationRuntime(
   httpApplicationClient<WebosCapture, WebosOutput>(),
+  embeddedState<WebosCapture, WebosOutput>(),
 );
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing frontend root.');

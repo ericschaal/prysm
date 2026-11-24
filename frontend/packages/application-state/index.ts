@@ -1,16 +1,24 @@
 import { configureStore, createListenerMiddleware } from '@reduxjs/toolkit';
-import type { ApplicationClient } from '@prysm/application-client';
+import type {
+  ApplicationClient,
+  ApplicationSnapshot,
+} from '@prysm/application-client';
 import { createApplicationSlice, type ApplicationState } from './slice';
 import { createCommands } from './commands';
 import { registerObservation, type ApplicationDispatch } from './observation';
 
 export type { ApplicationState, Connection } from './slice';
 
-/** Host-owned frontend assembly: one Redux store and one injected transport client. */
+/**
+ * Host-owned frontend assembly: one Redux store and one injected transport
+ * client. `initial` is a state the page came with (`embeddedState`), shown
+ * as current until the stream sends its first.
+ */
 export function createApplicationRuntime<C, O>(
   client: ApplicationClient<C, O>,
+  initial: ApplicationSnapshot<C, O> | null = null,
 ) {
-  const slice = createApplicationSlice<C, O>();
+  const slice = createApplicationSlice<C, O>(initial);
   const listener = createListenerMiddleware<
     ApplicationState<C, O>,
     ApplicationDispatch<C, O>,

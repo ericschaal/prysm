@@ -1,6 +1,6 @@
 //! Construction-time validation and the per-request origin policy with CORS.
-use crate::FrontendAsset;
 use crate::response::{self, Response, failure};
+use crate::{Caching, FrontendAsset, page};
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::http::uri::Authority;
 use hyper::{StatusCode, Uri};
@@ -93,6 +93,7 @@ pub(crate) fn validate_assets(assets: &[FrontendAsset]) -> Result<(), Validation
             || path.split('/').any(|part| part == "." || part == "..")
             || assets[..index].iter().any(|other| other.path == path)
             || HeaderValue::from_str(asset.content_type).is_err()
+            || (path == page::PAGE && asset.caching != Caching::Never)
         {
             return Err(ValidationError::new(
                 "portal.assets",

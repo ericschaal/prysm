@@ -74,7 +74,7 @@ export {
 export { SectionFields } from './section-step';
 export { stepCopy } from './step-copy';
 export { SetupWizard, type SetupWizardProps } from './setup';
-export { WebPortal } from './portal';
+export { connectionGraceMs, WebPortal } from './portal';
 export { scriptReplaced } from './replaced';
 export type { WebPortalProps } from './portal-context';
 export {

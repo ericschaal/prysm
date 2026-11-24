@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ApplicationError } from '@prysm/application-client';
+import { embeddedState } from '@prysm/application-client/http';
 import { createApplicationRuntime } from '@prysm/application-state';
 import { saveDeveloper } from '@prysm/web-portal';
 import { fakeApplicationPort } from '../testkit/application';
@@ -30,13 +32,43 @@ export function mountDom(html = '<div id="root"></div>') {
  * Render `Host` over a fixture application; `change` edits the fixture's
  * settings before the first render (e.g. fields this UI does not show);
  * `props` go to `Host` as well (e.g. a preview client); without
- * `captureModes` every capture delivers any size and rate.
+ * `captureModes` every capture delivers any size and rate. `embedded`: the
+ * page comes with the state, as the portal serves it; `held`: the stream
+ * answers only on `answer()`, or refuses with `answer(failure)`.
  */
-export async function renderPortal(Host, initial, change, props = {}) {
+export async function renderPortal(
+  Host,
+  initial,
+  change,
+  props = {},
+  { embedded = false, held = false } = {},
+) {
   const dom = mountDom();
   const fixture = fakeApplicationPort(initial);
   if (change) fixture.publish(change(fixture.snapshot()));
-  const application = createApplicationRuntime(fixture.client);
+  if (embedded) {
+    const block = document.createElement('script');
+    block.type = 'application/json';
+    block.id = 'prysm-state';
+    block.textContent = JSON.stringify(fixture.snapshot());
+    document.head.append(block);
+  }
+  let answer = () => {};
+  if (held) {
+    const observe = fixture.client.observe;
+    const answered = new Promise((resolve) => {
+      answer = resolve;
+    });
+    fixture.client.observe = async (signal) => {
+      const failure = await answered;
+      if (failure) throw new ApplicationError(failure);
+      return observe(signal);
+    };
+  }
+  const application = createApplicationRuntime(
+    fixture.client,
+    embeddedState(document),
+  );
   const root = createRoot(document.getElementById('root'));
   await act(async () =>
     root.render(
@@ -51,6 +83,11 @@ export async function renderPortal(Host, initial, change, props = {}) {
     dom,
     fixture,
     application,
+    answer: (failure) =>
+      act(async () => {
+        answer(failure);
+        await sleep(0);
+      }),
     async unmount() {
       await act(async () => root.unmount());
       // Developer options outlive a page without storage: off for the next.
