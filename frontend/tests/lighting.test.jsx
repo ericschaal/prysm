@@ -99,7 +99,7 @@ test('every target and session has one lighting situation', () => {
         `${shown} keeps its failure`,
       );
     });
-  const input = { fps: 30, receiving: true };
+  const input = { fps: 30, picture: 'arriving' };
   assert.deepEqual(
     lightingSituation({
       target: 'screen_sync',
@@ -248,7 +248,7 @@ const memory = (change = {}) => ({
 });
 
 test('the light card view: mood, word, line and mode from the situation', () => {
-  const sync = { kind: 'sync', input: { fps: 30, receiving: true } };
+  const sync = { kind: 'sync', input: { fps: 30, picture: 'arriving' } };
   const failed = {
     kind: 'failed',
     target: 'screen_sync',
@@ -386,14 +386,14 @@ test('the light card view: mood, word, line and mode from the situation', () => 
   assert.equal(moodOf(sync, false), 'unset');
 
   assert.equal(
-    pauseOf({ kind: 'sync', input: { fps: 0, receiving: false } }, true),
+    pauseOf({ kind: 'sync', input: { fps: 0, picture: 'quiet' } }, true),
     'quiet',
   );
   assert.equal(
     pauseOf(
       {
         kind: 'sync',
-        input: { fps: 0, receiving: false, no_picture: 'refused' },
+        input: { fps: 0, picture: 'refused' },
       },
       true,
     ),
@@ -651,6 +651,52 @@ test('with the lights off the path marks a failure only where it is', () => {
     pathOf(lightingSituation({ target: 'off', session: { state: 'stopped' } })),
     { kind: 'off' },
   );
+  // Screen sync without a picture waits, and says why.
+  for (const [input, picture] of [
+    [undefined, 'quiet'],
+    [{ fps: 0, picture: 'quiet' }, 'quiet'],
+    [{ fps: 0, picture: 'refused' }, 'refused'],
+    [{ fps: 0, picture: 'newer' }, 'quiet'],
+  ])
+    assert.deepEqual(
+      pathOf(
+        lightingSituation({
+          target: 'screen_sync',
+          session: { state: 'screen_sync' },
+          input,
+        }),
+      ),
+      { kind: 'waiting', picture },
+      JSON.stringify(input),
+    );
+  // A refused video is never a problem, however long it lasts.
+  const refused = lightingSituation({
+    target: 'screen_sync',
+    session: { state: 'screen_sync' },
+    input: { fps: 0, picture: 'refused' },
+  });
+  for (const section of ['capture', 'output'])
+    assert.deepEqual(
+      sectionStatus(
+        section,
+        {
+          online: true,
+          target: 'screen_sync',
+          path: pathOf(refused),
+          failure: situationFailure(refused),
+          situation: refused,
+          device: {},
+        },
+        'WLED at 192.0.2.1',
+        true,
+      ),
+      {
+        tone: 'idle',
+        title: 'No picture',
+        detail: 'The TV doesn’t share this video (AirPlay, for example).',
+      },
+      section,
+    );
 });
 
 test('with the lights off a section page says the failure it names, else not in use', () => {

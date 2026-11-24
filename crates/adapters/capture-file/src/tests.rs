@@ -2,7 +2,7 @@ use super::*;
 use crate::players;
 use crate::source::{Deadlines, DecoderExit, Ended, FileFrames, STDERR_TAIL, ffmpeg};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, NoPicture, Pull, Registry, Settings, chain};
+use prysm_ports::{AdapterSettings, Pull, Registry, Settings, chain};
 use prysm_testkit::within;
 use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
@@ -35,20 +35,20 @@ fn spawn(script: &str) -> FileFrames {
     FileFrames::spawn(fake(script), WIDTH, HEIGHT, "clip.mkv", TEST).unwrap()
 }
 
-/// The next frame, waiting past any `Idle`; `None` once playback ended.
+/// The next frame, waiting past any quiet pull; `None` once playback ended.
 fn pull(frames: &mut FileFrames) -> prysm_ports::Result<Option<Frame>> {
     let deadline = Instant::now() + LIMIT;
     loop {
         match frames.next_frame(SHORT)? {
             Pull::Frame(frame) => return Ok(Some(frame)),
             Pull::Ended => return Ok(None),
-            Pull::NoPicture(NoPicture::Quiet) => assert!(Instant::now() < deadline, "no frame"),
-            Pull::NoPicture(NoPicture::Refused) => panic!("a file is never refused"),
+            Pull::Quiet => assert!(Instant::now() < deadline, "no frame"),
+            Pull::Refused => panic!("a file is never refused"),
         }
     }
 }
 
-/// The next frame, waiting past any `Idle`.
+/// The next frame, waiting past any quiet pull.
 fn next(frames: &mut FileFrames) -> prysm_ports::Result<Frame> {
     Ok(pull(frames)?.expect("playback ended"))
 }
@@ -103,10 +103,7 @@ fn frames_are_delivered_as_the_decoder_paces_them() {
         next(&mut frames).unwrap();
         let first_at = Instant::now();
         // Nothing buffered or invented between paced frames.
-        assert!(matches!(
-            frames.next_frame(SHORT),
-            Ok(Pull::NoPicture(NoPicture::Quiet))
-        ));
+        assert!(matches!(frames.next_frame(SHORT), Ok(Pull::Quiet)));
         next(&mut frames).unwrap();
         assert!(first_at.elapsed() >= Duration::from_millis(200));
         Box::new(frames).close().unwrap();
@@ -114,14 +111,11 @@ fn frames_are_delivered_as_the_decoder_paces_them() {
 }
 
 #[test]
-fn timeout_returns_idle() {
+fn timeout_returns_quiet() {
     within(LIMIT, || {
         let mut frames = spawn("exec sleep 30");
         let started = Instant::now();
-        assert!(matches!(
-            frames.next_frame(SHORT),
-            Ok(Pull::NoPicture(NoPicture::Quiet))
-        ));
+        assert!(matches!(frames.next_frame(SHORT), Ok(Pull::Quiet)));
         let waited = started.elapsed();
         assert!(
             waited >= SHORT && waited < Duration::from_secs(1),
@@ -513,8 +507,8 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
                     first_at.get_or_insert_with(Instant::now);
                     count += 1;
                 }
-                Pull::NoPicture(NoPicture::Quiet) => {}
-                Pull::NoPicture(NoPicture::Refused) => panic!("a file is never refused"),
+                Pull::Quiet => {}
+                Pull::Refused => panic!("a file is never refused"),
                 Pull::Ended => break,
             }
         }
@@ -539,8 +533,8 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
         while count < 7 {
             match source.next_frame(SHORT).unwrap() {
                 Pull::Frame(_) => count += 1,
-                Pull::NoPicture(NoPicture::Quiet) => {}
-                Pull::NoPicture(NoPicture::Refused) => panic!("a file is never refused"),
+                Pull::Quiet => {}
+                Pull::Refused => panic!("a file is never refused"),
                 Pull::Ended => break,
             }
         }

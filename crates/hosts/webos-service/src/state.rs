@@ -1,8 +1,6 @@
 //! What the TV app sees: the published state and its parts.
 use crate::preferences::Preferences;
-use prysm_webos_link::{
-    FullStatus, LightingTarget, NoPicture, SlimLink, SlimStatus, Video, WorkerFailure,
-};
+use prysm_webos_link::{FullStatus, LightingTarget, SlimLink, SlimStatus, Video, WorkerFailure};
 use serde::Serialize;
 
 /// Which package this supervisor belongs to. Published as [`Package`]'s tag.
@@ -120,14 +118,6 @@ pub enum FullWorker {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "schema", schema(nullable = false))]
         fps: Option<u16>,
-        /// While screen sync runs without frames: why, as the capture said.
-        /// Not a failure; `refused` ends once the video changes.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(
-            feature = "schema",
-            schema(value_type = Option<crate::schema::NoPictureSchema>, nullable = false)
-        )]
-        no_picture: Option<NoPicture>,
         /// The portal's LAN address once the worker reported it.
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "schema", schema(nullable = false))]
@@ -159,16 +149,6 @@ pub enum SlimWorker {
         /// Frames were sent in the last second (so also just after the
         /// stream ended).
         capturing: bool,
-        /// While the capture runs and gives no frames, so none are sent:
-        /// why, as it said. Absent while frames are sent, and while no
-        /// capture runs (the stream paused, or no request yet). Not a
-        /// failure; `refused` ends once the video changes.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(
-            feature = "schema",
-            schema(value_type = Option<crate::schema::NoPictureSchema>, nullable = false)
-        )]
-        no_picture: Option<NoPicture>,
         /// Where the uplink to the receiver stands, as the worker last
         /// reported it.
         #[cfg_attr(feature = "schema", schema(value_type = crate::schema::SlimLinkSchema))]
@@ -206,7 +186,6 @@ impl FullWorker {
             Process::Running => Self::Running {
                 capturing: report.is_some_and(|report| report.capturing),
                 fps: report.and_then(|report| report.fps),
-                no_picture: report.and_then(|report| report.no_picture),
                 portal: portal(),
             },
             Process::Stopping => Self::Stopping { portal: portal() },
@@ -223,16 +202,8 @@ impl SlimWorker {
         match process {
             Process::Stopped => Self::Stopped,
             Process::Running => {
-                let SlimStatus {
-                    capturing,
-                    no_picture,
-                    link,
-                } = report.cloned().unwrap_or_default();
-                Self::Running {
-                    capturing,
-                    no_picture,
-                    link,
-                }
+                let SlimStatus { capturing, link } = report.cloned().unwrap_or_default();
+                Self::Running { capturing, link }
             }
             Process::Stopping => Self::Stopping,
             Process::Retrying { seconds } => Self::Retrying { seconds },
@@ -243,39 +214,6 @@ impl SlimWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A running worker's reason for no picture is published as it
-    /// reported it.
-    #[test]
-    fn a_running_worker_publishes_why_there_is_no_picture() {
-        let full = FullStatus {
-            capturing: false,
-            no_picture: Some(NoPicture::Refused),
-            fps: Some(0),
-            target: LightingTarget::ScreenSync,
-            applied: 0,
-            portal: None,
-            failure: None,
-        };
-        assert!(matches!(
-            FullWorker::new(Process::Running, Some(&full)),
-            FullWorker::Running {
-                no_picture: Some(NoPicture::Refused),
-                ..
-            }
-        ));
-        let slim = SlimStatus {
-            no_picture: Some(NoPicture::Refused),
-            ..SlimStatus::default()
-        };
-        assert!(matches!(
-            SlimWorker::new(Process::Running, Some(&slim)),
-            SlimWorker::Running {
-                no_picture: Some(NoPicture::Refused),
-                ..
-            }
-        ));
-    }
 
     /// `flavor` in the state is the [`Flavor`] the rest of the service uses.
     #[test]

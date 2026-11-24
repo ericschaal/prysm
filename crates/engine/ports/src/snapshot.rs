@@ -1,6 +1,4 @@
-use crate::{
-    CalibrationPattern, DeviceBrightness, Error, NoPicture, OutputIssue, Revision, Settings,
-};
+use crate::{CalibrationPattern, DeviceBrightness, Error, OutputIssue, Revision, Settings};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -168,13 +166,8 @@ pub struct DeviceReport {
 pub struct Input {
     /// Frames per second over the last window, to one decimal.
     pub fps: f32,
-    /// At least one frame arrived in the last window. `false` right after a
-    /// session starts and while a source is quiet (no signal, no sender):
-    /// lighting is waiting for video. The session takes the output only at a
-    /// frame, and releases it to the device's own state (`IdleMode::Native`)
-    /// after a few seconds without one, so a waiting session does not hold
-    /// the LEDs.
-    pub receiving: bool,
+    /// Whether frames arrived in the last window, and if not, why.
+    pub picture: Picture,
     /// Frames per second whose colours were written to the output over the
     /// last window, to one decimal.
     #[serde(default)]
@@ -186,10 +179,32 @@ pub struct Input {
     /// Which step keeps Prysm from keeping up with its source, if one does.
     #[serde(default, skip_serializing_if = "Behind::is_none")]
     pub behind: Behind,
-    /// Why no frame arrived in the last window, as the source said; `None`
-    /// while frames arrive (`receiving`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub no_picture: Option<NoPicture>,
+}
+
+/// Whether frames arrive from the session's source over a window. The
+/// session takes the output only at a frame, and releases it to the device's
+/// own state (`IdleMode::Native`) after a few seconds without one, whatever
+/// the reason, so a session waiting for video does not hold the LEDs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Picture {
+    /// At least one frame arrived in the window.
+    Arriving,
+    /// No frame, and no reason given (no signal, no sender); also right
+    /// after a session starts. Lighting waits for video.
+    #[default]
+    Quiet,
+    /// No frame: the source's device refuses to share the video it shows (an
+    /// LG TV playing AirPlay); frames come again once the video changes.
+    /// Lighting waits for video, as while quiet.
+    Refused,
+}
+
+impl Picture {
+    #[must_use]
+    pub fn is_arriving(self) -> bool {
+        self == Self::Arriving
+    }
 }
 
 /// What makes Prysm fall behind its source: the frame loop has had no slack

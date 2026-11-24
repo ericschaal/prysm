@@ -1,4 +1,4 @@
-use crate::{Error, NoPicture, Pull, Result};
+use crate::{Error, Pull, Result};
 use prysm_core::Frame;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
@@ -43,8 +43,9 @@ struct State {
     woken: bool,
     ready: bool,
     frame: Option<Frame>,
-    /// Why pulls without a frame give none.
-    no_picture: NoPicture,
+    /// The device refuses its video: pulls without a frame are
+    /// [`Pull::Refused`], else [`Pull::Quiet`].
+    refused: bool,
     /// The watched native call in progress and when it started.
     busy: Option<(&'static str, Instant)>,
     /// The first terminal failure.
@@ -145,7 +146,8 @@ impl OwnerThread {
         }
     }
 
-    /// Wait up to `timeout` for a frame and take it; [`Pull::NoPicture`] without one.
+    /// Wait up to `timeout` for a frame and take it; [`Pull::Quiet`] or
+    /// [`Pull::Refused`] ([`Worker::refused`]) without one.
     ///
     /// # Errors
     /// The terminal failure (also a watched call past its watchdog), on every
@@ -162,10 +164,11 @@ impl OwnerThread {
         if state.released.is_some() {
             return Err(self.ended());
         }
-        Ok(state
-            .frame
-            .take()
-            .map_or(Pull::NoPicture(state.no_picture), Pull::Frame))
+        Ok(match state.frame.take() {
+            Some(frame) => Pull::Frame(frame),
+            None if state.refused => Pull::Refused,
+            None => Pull::Quiet,
+        })
     }
 
     /// The frame published and not yet taken; for adapters' tests.
@@ -300,10 +303,10 @@ impl Worker {
         drop(self.shared.update(|state| state.frame.replace(frame)));
     }
 
-    /// Why pulls without a frame give none, until said otherwise
-    /// ([`NoPicture::Quiet`] at first).
-    pub fn no_picture(&self, why: NoPicture) {
-        self.shared.update(|state| state.no_picture = why);
+    /// Whether the device refuses its video, until said otherwise (not at
+    /// first): pulls without a frame say so.
+    pub fn refused(&self, refused: bool) {
+        self.shared.update(|state| state.refused = refused);
     }
 
     /// Publish a terminal failure; the first one is kept.
@@ -367,7 +370,7 @@ mod tests {
             assert!(frame.as_slice()[0] > last);
             last = frame.as_slice()[0];
         }
-        assert!(owner.next_frame(SHORT).unwrap().is_quiet());
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Quiet));
         assert_eq!(owner.close().unwrap_err().to_string(), "buffers stuck");
     }
 
@@ -378,27 +381,24 @@ mod tests {
         let (step, steps) = std::sync::mpsc::channel::<()>();
         let (done, withdrawn) = std::sync::mpsc::channel::<()>();
         let mut owner = spawn(move |worker| {
-            worker.no_picture(NoPicture::Refused);
+            worker.refused(true);
             worker.ready();
             steps.recv().unwrap();
             worker.offer(frame(1));
             steps.recv().unwrap();
-            worker.no_picture(NoPicture::Quiet);
+            worker.refused(false);
             done.send(()).unwrap();
             until_stopped(worker);
             Ok(())
         });
         assert!(owner.wait_ready(LIMIT).unwrap());
-        assert_eq!(
-            owner.next_frame(SHORT).unwrap().no_picture(),
-            Some(NoPicture::Refused)
-        );
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Refused));
         step.send(()).unwrap();
         let frame = owner.next_frame(LIMIT).unwrap().into_frame().unwrap();
         assert_eq!(frame.as_slice()[0], 1);
         step.send(()).unwrap();
         withdrawn.recv_timeout(LIMIT).unwrap();
-        assert!(owner.next_frame(SHORT).unwrap().is_quiet());
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Quiet));
         owner.close().unwrap();
     }
 

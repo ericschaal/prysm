@@ -27,7 +27,7 @@ neither has a listener of its own:
   `/api/v1/capture/stream` and hands the connection over as a plain blocking
   socket. `open` takes those connections on one receive thread, which also
   decodes H.264. `next_frame(timeout)` returns the newest complete frame
-  (older untaken frames are replaced, never queued) or `Pull::NoPicture` on
+  (older untaken frames are replaced, never queued) or `Pull::Quiet` on
   timeout, and fails when the sender's offer excludes the request, the
   sender refuses it, its H.264 stream does not decode or no H.264 decoder
   starts here (see below), once the connection is closed (as *stopped*,

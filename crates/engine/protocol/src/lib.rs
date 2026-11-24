@@ -40,7 +40,7 @@ pub struct State {
     /// What the lights say about themselves, from the output's own checks
     /// (about once a second). Empty while no session holds the output: no
     /// session, or one that has no frame yet or released the output after 3 s
-    /// without video; `session.state` and `input.receiving` say which.
+    /// without video; `session.state` and `input.picture` say which.
     #[cfg_attr(feature = "schema", schema(value_type = schema::DeviceReportSchema))]
     pub device: DeviceReport,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
@@ -416,7 +416,7 @@ mod tests {
             session: SessionState::ScreenSync,
             input: Some(Input {
                 fps: 29.9,
-                receiving: true,
+                picture: prysm_ports::Picture::Arriving,
                 ..Input::default()
             }),
             device: DeviceReport {
@@ -441,7 +441,7 @@ mod tests {
         let back = serde_json::from_value::<State>(value.clone()).unwrap();
         assert_eq!(back.calibration, running.calibration);
         assert_eq!(back.device, running.device);
-        assert_eq!(value["input"]["receiving"], true);
+        assert_eq!(value["input"]["picture"], "arriving");
         assert_eq!(
             value["device"],
             json!({ "issue": "other_sender", "brightness_percent": 40, "led_count": 120 })

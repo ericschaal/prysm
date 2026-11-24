@@ -127,8 +127,8 @@ impl SourceFactory for Camera {
     fn validate(&self, s: &CameraSettings) -> Result<(), ValidationError> { s.validate() }
     fn open(&self, s: &CameraSettings) -> Result<Box<dyn FrameSource>> { Ok(Box::new(Frames::open(s)?)) }
 }
-// Frames: next_frame(timeout) -> Ok(Pull::Frame(f)), Ok(Pull::NoPicture(why)) on
-// timeout (NoPicture::Quiet, or Refused when the device refuses to share its video),
+// Frames: next_frame(timeout) -> Ok(Pull::Frame(f)), Ok(Pull::Quiet) on timeout
+// (Ok(Pull::Refused) when the device refuses to share its video),
 // Ok(Pull::Ended) when finished (lighting stops cleanly); close(self: Box<Self>) releases.
 // A push-style backend runs on an OwnerThread, publishes through its Worker
 // and takes the newest frame in next_frame.

@@ -5,13 +5,13 @@ use futures::future::BoxFuture;
 use prysm_capture_remote::{Close, RemoteSender, RemoteSettings, SendError, WireError};
 use prysm_capture_webos::VideoSignal;
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSink, NoPicture, Pull, Result, StreamEncoding, chain};
+use prysm_ports::{Error, FrameSink, Result, StreamEncoding, chain};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{
     Command, Event, FailureKind, HEARTBEAT, SlimLink, SlimStatus, WorkerFailure, WorkerStatus,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::time::{Instant as TokioInstant, sleep_until};
@@ -28,11 +28,9 @@ pub const RECONNECT: Duration = Duration::from_secs(1);
 #[derive(Debug, Default)]
 pub struct Flow {
     sent: AtomicU64,
-    /// Frames the capture gave.
-    pulled: AtomicU64,
-    /// Why the capture's last pull gave no frame; `None` after a frame, and
-    /// while no capture is open (nothing is pulled from the TV then).
-    no_picture: Mutex<Option<NoPicture>>,
+    /// The open capture's last pull said the TV refuses its video; `false`
+    /// while no capture is open.
+    refused: AtomicBool,
     report: Mutex<Report>,
 }
 
@@ -215,13 +213,15 @@ impl Report {
     }
 
     /// The link as the status reports it, `fps` frames sent per second
-    /// while sending. A stopped stream is paused, not a failure.
-    fn link(&self, fps: u16) -> SlimLink {
+    /// while sending, refused while sending and the capture says the TV
+    /// refuses its video. A stopped stream is paused, not a failure.
+    fn link(&self, fps: u16, refused: bool) -> SlimLink {
         let failed = |kind, why: &String| SlimLink::Failed {
             failure: WorkerFailure::new(kind, why.clone()),
         };
         match &self.uplink {
             UplinkState::Starting => SlimLink::Starting {},
+            UplinkState::Sending(_) if refused => SlimLink::Refused {},
             UplinkState::Sending(encoding) => SlimLink::Sending {
                 encoding: *encoding,
                 fps,
@@ -250,27 +250,10 @@ impl Flow {
         self.sent.load(Ordering::Relaxed)
     }
 
-    /// What a pull of the open capture gave (`Some`), or that none is open
-    /// (`None`).
-    pub fn pulled(&self, pull: Option<&Pull>) {
-        if let Some(Pull::Frame(_)) = pull {
-            self.pulled.fetch_add(1, Ordering::Relaxed);
-        }
-        *self
-            .no_picture
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = pull.and_then(Pull::no_picture);
-    }
-
-    fn frames_pulled(&self) -> u64 {
-        self.pulled.load(Ordering::Relaxed)
-    }
-
-    fn no_picture(&self) -> Option<NoPicture> {
-        *self
-            .no_picture
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    /// Whether the open capture's last pull said the TV refuses its video
+    /// (`false` while none is open).
+    pub fn refused(&self, refused: bool) {
+        self.refused.store(refused, Ordering::Relaxed);
     }
 
     /// What to capture for: the receiver's latest request, kept while it is
@@ -284,7 +267,7 @@ impl Flow {
     }
 
     fn link(&self, fps: u16) -> SlimLink {
-        self.lock().link(fps)
+        self.lock().link(fps, self.refused.load(Ordering::Relaxed))
     }
 
     /// Take `event` ([`Report::next`]) and say what to do with the
@@ -529,7 +512,6 @@ impl ForwarderLink {
             stop,
         } = self.link;
         let mut counted = self.flow.sent();
-        let mut pulled = self.flow.frames_pulled();
         let mut status = SlimStatus::default();
         events.send(&report(&status));
         let mut beat = TokioInstant::now() + self.heartbeat;
@@ -549,20 +531,11 @@ impl ForwarderLink {
                 () = sleep_until(sample) => {
                     sample = TokioInstant::now() + self.sample;
                     let now = self.flow.sent();
-                    let taken = self.flow.frames_pulled();
                     let next = SlimStatus {
                         capturing: now != counted,
-                        // Only when the capture itself gave nothing, so
-                        // nothing was sent: frames not sent (paused,
-                        // receiver away) are no reason.
-                        no_picture: self
-                            .flow
-                            .no_picture()
-                            .filter(|_| taken == pulled && now == counted),
                         link: self.flow.link(rate(now - counted, self.sample)),
                     };
                     counted = now;
-                    pulled = taken;
                     if next != status {
                         status = next;
                         events.send(&report(&status));
@@ -851,7 +824,13 @@ mod tests {
             ),
             (Replaced(text("r")), failed(FailureKind::Replaced, "r")),
         ] {
-            assert_eq!(from(uplink).link(7), link);
+            assert_eq!(from(uplink.clone()).link(7, false), link);
+            // Refused only while sending.
+            let refused = match uplink {
+                Sending(_) => SlimLink::Refused {},
+                _ => link,
+            };
+            assert_eq!(from(uplink).link(7, true), refused);
         }
     }
 

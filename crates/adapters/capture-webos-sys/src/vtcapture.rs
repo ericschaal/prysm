@@ -29,13 +29,14 @@ pub struct Options {
 pub enum Acquired<'a> {
     /// The driver's current buffer, borrowed until it is copied.
     Frame(VideoFrame<'a>),
-    /// The producer has no buffer yet (status 2). Poll again.
+    /// The producer has no current buffer yet (status 2). Poll again.
     Pending,
-    /// LG finalized the session (status 1) or it is still initializing; the
-    /// next call re-initializes. Callers wait about a second between attempts.
+    /// The capture device is not available yet, or LG finalized the session
+    /// ([`NOT_READY`]); the next call re-initializes. Callers wait about a
+    /// second between attempts.
     NotReady,
-    /// The TV refuses to capture the video it shows (`vtCapture_init` status
-    /// 17; seen with AirPlay). The driver stays created and the next call
+    /// The TV refuses to capture the video it shows ([`REFUSED`]; AirPlay
+    /// video is such a case). The driver stays created and the next call
     /// initializes again; callers wait for the video to change first, since
     /// a retry before that is refused too.
     Refused,
@@ -360,7 +361,14 @@ enum Started {
     Refused,
 }
 
-/// `vtCapture_init`'s status when the TV refuses to capture its video.
+/// The status of `vtCapture_init` when the capture device is not available
+/// yet, and of `vtCapture_preprocess` when LG finalized the session.
+const NOT_READY: i32 = 1;
+
+/// The status of `vtCapture_init` when the library's capture-permission check
+/// says no: the TV's verdict, which follows what the video output shows
+/// (pipeline permission, and the video not muted). AirPlay video is such a
+/// case.
 const REFUSED: i32 = 17;
 
 /// One native capture tap; see the crate documentation.
@@ -466,11 +474,14 @@ impl VtCapture {
             // driver would only add a release, which can hang (the vendor's
             // lost wake-up in its destructor).
             match code {
-                1 => return Ok(Started::NotReady),
+                NOT_READY => return Ok(Started::NotReady),
                 REFUSED => return Ok(Started::Refused),
                 _ => {}
             }
-            status(code, "vtCapture_init (11 = Luna permission denied)")?;
+            status(
+                code,
+                "vtCapture_init (11 = the TV's resource manager did not grant the capture resource)",
+            )?;
             self.stage = Stage::Working(Reached::Initialized);
         }
         let code = vt_call!(
@@ -480,8 +491,8 @@ impl VtCapture {
             self.client.as_mut_ptr(),
             &raw mut *self.properties
         )?;
-        if code == 1 {
-            // LG finalizes the session on status 1; preprocessing alone cannot reopen it.
+        if code == NOT_READY {
+            // LG finalized the session; preprocessing alone cannot reopen it.
             self.stage = Stage::Working(Reached::Created);
             return Ok(Started::NotReady);
         }
@@ -819,7 +830,7 @@ mod tests {
 
     #[test]
     fn finalized_session_reinitializes_without_recreating_the_driver() {
-        let fake = Fake::new(1);
+        let fake = Fake::new(NOT_READY);
         let mut capture = fake.capture(Reached::Initialized);
         assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
         assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
@@ -835,7 +846,7 @@ mod tests {
     /// initializes the same driver again.
     #[test]
     fn refused_video_keeps_the_driver_and_initializes_it_again() {
-        let fake = Fake::new(17);
+        let fake = Fake::new(REFUSED);
         let mut capture = fake.capture(Reached::Created);
         assert!(matches!(capture.acquire().unwrap(), Acquired::Refused));
         assert!(matches!(capture.acquire().unwrap(), Acquired::Refused));

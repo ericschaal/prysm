@@ -84,7 +84,6 @@ fn kind(state: &State) -> Option<FailureKind> {
 fn full_report(target: LightingTarget) -> FullStatus {
     FullStatus {
         capturing: false,
-        no_picture: None,
         fps: None,
         target,
         applied: 0,
@@ -122,7 +121,6 @@ fn slim_status(status: SlimStatus) -> Input {
 fn slim_link(link: SlimLink) -> Input {
     slim_status(SlimStatus {
         capturing: false,
-        no_picture: None,
         link,
     })
 }
@@ -936,7 +934,6 @@ fn published_state_reflects_the_worker() {
     m.handle(
         full_status(FullStatus {
             capturing: true,
-            no_picture: None,
             fps: Some(30),
             applied: 0,
             target: LightingTarget::ScreenSync,
@@ -982,7 +979,6 @@ fn published_slim_state_has_only_its_own_fields() {
     m.handle(
         slim_status(SlimStatus {
             capturing: true,
-            no_picture: None,
             link: SlimLink::Sending {
                 encoding: StreamEncoding::Raw,
                 fps: 25,
@@ -1227,7 +1223,6 @@ fn a_paused_receiver_is_published_without_a_failure() {
         slim_state(&state).1,
         &SlimWorker::Running {
             capturing: false,
-            no_picture: None,
             link: SlimLink::Paused {},
         }
     );
@@ -1249,6 +1244,41 @@ fn a_paused_receiver_is_published_without_a_failure() {
         slim_state(&m.state(t0)).1,
         &SlimWorker::Stopping,
         "a worker being stopped is not paused"
+    );
+}
+
+/// Video the TV refuses to share is not a failure either: the worker
+/// reached the receiver, so an old failure is cleared.
+#[test]
+fn a_refused_video_is_published_without_a_failure() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (1, Exited(Exit::Code(1)), vec![]),
+            (
+                1_001,
+                Tick,
+                vec![spawn_slim(&receiver()), video(Video::Unknown)],
+            ),
+            (1_002, slim_link(SlimLink::Refused {}), vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert_eq!(state.failure, None);
+    assert_eq!(
+        serde_json::to_value(&state).unwrap()["worker"]["link"],
+        json!({ "state": "refused" })
     );
 }
 
@@ -1286,7 +1316,6 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             2_000,
             slim_status(SlimStatus {
                 capturing: true,
-                no_picture: None,
                 link: SlimLink::Sending {
                     encoding: StreamEncoding::H264Hardware,
                     fps: 30,
@@ -1947,7 +1976,6 @@ fn every_phase_takes_every_input() {
     let worker = |event| Input::Worker(event);
     let sending = worker(Event::Status(WorkerStatus::Slim(SlimStatus {
         capturing: true,
-        no_picture: None,
         link: SlimLink::Sending {
             encoding: StreamEncoding::Raw,
             fps: 30,

@@ -30,7 +30,7 @@ impl VideoSignal {
     }
 
     /// The video context changed (input, app or mode): release and reopen
-    /// the native tap.
+    /// the native tap, or initialize again a tap whose video the TV refused.
     pub fn reset(&self) {
         self.change(|readiness| readiness.generation = readiness.generation.wrapping_add(1));
     }

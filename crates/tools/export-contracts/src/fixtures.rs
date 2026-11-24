@@ -8,8 +8,8 @@ use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::StreamEncoding;
 use prysm_ports::{
     AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
-    DeviceBrightness, DeviceReport, Error, Input, Latency, LightingTarget, Mode, Modes, NoPicture,
-    OutputIssue, Pattern, PrimaryControls, Processing, Revision, Section, SessionPhase,
+    DeviceBrightness, DeviceReport, Error, Input, Latency, LightingTarget, Mode, Modes,
+    OutputIssue, Pattern, Picture, PrimaryControls, Processing, Revision, Section, SessionPhase,
     SessionState, Settings, Snapshot, Span, Style, StyleValues, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
@@ -55,22 +55,11 @@ fn luna() -> Value {
         FullWorker::Running {
             capturing: true,
             fps: Some(30),
-            no_picture: None,
             portal: portal(),
         },
     );
     let full_states = [
         running.clone(),
-        // The TV refuses to share the video it shows.
-        full(
-            LightingTarget::ScreenSync,
-            FullWorker::Running {
-                capturing: false,
-                fps: Some(0),
-                no_picture: Some(NoPicture::Refused),
-                portal: portal(),
-            },
-        ),
         full(LightingTarget::Off, FullWorker::Stopped),
         full(
             LightingTarget::Effects,
@@ -103,7 +92,6 @@ fn luna() -> Value {
                 true,
                 SlimWorker::Running {
                     capturing: false,
-                    no_picture: None,
                     link: SlimLink::Paused {},
                 },
             ),
@@ -115,11 +103,7 @@ fn luna() -> Value {
                 true,
                 SlimWorker::Running {
                     capturing: false,
-                    no_picture: Some(NoPicture::Refused),
-                    link: SlimLink::Sending {
-                        encoding: StreamEncoding::Raw,
-                        fps: 0,
-                    },
+                    link: SlimLink::Refused {},
                 },
             ),
             None,
@@ -241,14 +225,13 @@ fn states() -> Vec<State> {
             revision: Revision(7),
             input: Some(Input {
                 fps: 29.9,
-                receiving: true,
+                picture: Picture::Arriving,
                 sent_fps: 29.9,
                 latency: Some(Latency {
                     capture_ms: Some(88.0),
                     output_ms: 2.4,
                 }),
                 behind: Behind::Output,
-                no_picture: None,
             }),
             device: DeviceReport {
                 issue: Some(OutputIssue::Overridden),
@@ -274,7 +257,7 @@ fn states() -> Vec<State> {
             session: SessionState::ScreenSync,
             settings: configured(),
             input: Some(Input {
-                no_picture: Some(NoPicture::Refused),
+                picture: Picture::Refused,
                 ..Input::default()
             }),
             ..Snapshot::default()

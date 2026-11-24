@@ -21,7 +21,7 @@ mod snapshot;
 mod style;
 
 pub use adapter::{
-    DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, NoPicture, OutputIssue, Pull,
+    DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull,
     SettingsStore, SourceStop,
 };
 pub use calibration::{CalibrationPattern, Pattern};
@@ -44,7 +44,8 @@ pub use registry::{
 pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
 pub use snapshot::{
-    Behind, DeviceReport, Input, Latency, LightingTarget, SessionPhase, SessionState, Snapshot,
+    Behind, DeviceReport, Input, Latency, LightingTarget, Picture, SessionPhase, SessionState,
+    Snapshot,
 };
 pub use style::{Style, StyleValues};
 

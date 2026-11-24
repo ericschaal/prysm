@@ -1,7 +1,7 @@
 use crate::Surface;
 use crate::surface::Surfaces;
 use crate::worker::{Exit, Worker};
-use prysm_ports::{Error, FrameSink, FrameSource, Result, SessionPhase};
+use prysm_ports::{Error, FrameSink, FrameSource, Pull, Result, SessionPhase};
 use std::future::Future;
 use std::time::Duration;
 
@@ -55,9 +55,9 @@ impl Forwarder {
             "forwarder thread",
             (source, sink),
             |(mut source, mut sink), flags| {
-                let exit = flags.pump(&mut *source, |pulled| match pulled {
-                    Ok(frame) => sink.send(&frame),
-                    Err(_) => sink.tick(),
+                let exit = flags.pump(&mut *source, |pull| match pull {
+                    Pull::Frame(frame) => sink.send(&frame),
+                    _ => sink.tick(),
                 });
                 flags.set_phase(SessionPhase::ClosingSource);
                 let released = source.close();

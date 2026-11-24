@@ -122,15 +122,15 @@ On input, `processing`, each of its fields, a calibration's `correction` and eac
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
 Setting the target to `screen_sync` opens the capture (a failure is the
 reply); the output is opened at the first frame, so an output that cannot
-open ends the session and appears only in `session.failure`. While no frames arrive, `input.receiving` is `false`
-(waiting for video) and after a few seconds the output is returned to its own
+open ends the session and appears only in `session.failure`. While no frames arrive, `input.picture` is `quiet` or
+`refused` (waiting for video) and after a few seconds the output is returned to its own
 state until frames return.
 
 `device` is what the lights say about themselves,
 `{ "issue"?: …, "brightness_percent"?: …, "led_count"?: … }`, each part absent
 while the output cannot tell. It is `{}` while no session holds the output:
 no session, a session before its first frame, or one that returned the output
-after 3 s without video. Read `session.state` and `input.receiving` for which;
+after 3 s without video. Read `session.state` and `input.picture` for which;
 `{}` alone does not mean lighting stopped. `issue` (absent
 when all is well) says why the lights are not showing its colours: `off`
 (switched off on the device), `overridden` (WLED's live override), `not_live`
@@ -142,7 +142,7 @@ field clears once the device shows the colours again. `brightness_percent`
 Prysm keeps sending `settings.output.leds` either way and changes none of them.
 
 `input`, while a session runs, is measured about once a second: `fps`
-(frames from the source per second), `receiving`, `sent_fps` (frames whose
+(frames from the source per second), `picture`, `sent_fps` (frames whose
 colours were written to the output per second) and `latency`. `latency` is
 `{ "capture_ms"?: …, "output_ms": … }`, each the mean per frame over the
 window: `output_ms` from Prysm receiving a frame from its source to the output
@@ -157,11 +157,12 @@ keeping up with its source: `processing` (turning frames into colours) or
 idle time between frames (busy at least 85% of each second) for 3 seconds in
 a row, and cleared after 3 seconds with slack; a source that just sends fewer
 frames leaves idle time and never sets it. Absent while Prysm keeps up.
-`no_picture` says why no frame arrived in the window (`receiving` is then
-`false`), as the source said: `quiet` (no frames: no signal, no sender) or
-`refused` (the source's device refuses to share the video it shows, as an LG
-TV playing AirPlay does; frames come again once the video changes). Neither
-is a failure: screen sync keeps running. Absent while frames arrive.
+`picture` is `arriving` (at least one frame in the window), `quiet` (none,
+and no reason given: no signal, no sender; also right after the session
+starts) or `refused` (none, because the source's device refuses to share the
+video it shows, as an LG TV playing AirPlay does; frames come again once the
+video changes). Neither `quiet` nor `refused` is a failure: screen sync keeps
+running, and the output is returned alike.
 `/metrics` has
 the received-to-flushed spans as the `prysm_frame_flush_seconds` summary.
 

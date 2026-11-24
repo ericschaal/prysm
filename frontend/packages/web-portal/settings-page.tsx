@@ -1,7 +1,8 @@
-import type {
-  AdapterSide,
-  ApplicationSnapshot,
-  DiscoveryClient,
+import {
+  pictureOf,
+  type AdapterSide,
+  type ApplicationSnapshot,
+  type DiscoveryClient,
 } from '@prysm/application-client';
 import type { Processing } from '@prysm/contracts/application';
 import {
@@ -244,7 +245,7 @@ export function AboutPage({
         <RowFact
           label="Frames per second"
           value={
-            snapshot.input?.receiving
+            snapshot.input && pictureOf(snapshot.input) === 'arriving'
               ? String(Math.round(snapshot.input.fps))
               : 'No picture'
           }

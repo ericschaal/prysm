@@ -8,24 +8,17 @@ use std::time::Duration;
 #[derive(Debug)]
 pub enum Pull {
     Frame(Frame),
-    /// No frame within the timeout, and why; the caller checks its stop flag
-    /// and asks again. Not a failure.
-    NoPicture(NoPicture),
+    /// No frame within the timeout, and no reason given (no signal, no
+    /// sender); the caller checks its stop flag and asks again. Not a failure.
+    Quiet,
+    /// No frame within the timeout because the source's device refuses to
+    /// share the video it shows (an LG TV playing AirPlay); frames come again
+    /// once the video changes. The caller asks again, as after
+    /// [`Pull::Quiet`]. Not a failure.
+    Refused,
     /// The source has finished (a file played to its end) and will produce no
     /// more frames. Not a failure: the session stops normally.
     Ended,
-}
-
-/// Why a source gives no picture.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NoPicture {
-    /// No frames (no signal, no sender).
-    #[default]
-    Quiet,
-    /// The source's device refuses to share the video it shows (an LG TV
-    /// playing AirPlay); frames come again once the video changes.
-    Refused,
 }
 
 impl Pull {
@@ -34,31 +27,8 @@ impl Pull {
     pub fn into_frame(self) -> Option<Frame> {
         match self {
             Self::Frame(frame) => Some(frame),
-            Self::NoPicture(_) | Self::Ended => None,
+            Self::Quiet | Self::Refused | Self::Ended => None,
         }
-    }
-
-    /// Why there is no picture, if that is what this says.
-    #[must_use]
-    pub fn no_picture(&self) -> Option<NoPicture> {
-        match self {
-            Self::NoPicture(why) => Some(*why),
-            Self::Frame(_) | Self::Ended => None,
-        }
-    }
-
-    /// No frames, for no reason the source gives.
-    #[must_use]
-    pub fn is_quiet(&self) -> bool {
-        self.no_picture() == Some(NoPicture::Quiet)
-    }
-}
-
-/// A frame, or [`NoPicture::Quiet`] without one: what a push-style source's
-/// newest-frame hand-off yields.
-impl From<Option<Frame>> for Pull {
-    fn from(frame: Option<Frame>) -> Self {
-        frame.map_or(Self::NoPicture(NoPicture::Quiet), Self::Frame)
     }
 }
 

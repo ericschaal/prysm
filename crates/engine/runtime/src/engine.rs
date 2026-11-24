@@ -9,8 +9,8 @@ use futures::future::{BoxFuture, Shared};
 use prysm_core::Config;
 use prysm_ports::{
     AdapterSettings, CalibrationPattern, Candidate, DeviceReport, Error, IdleMode, Input,
-    LightingTarget, Modes, NoPicture, Processing, Registry, Result, Revision, Section,
-    SessionPhase, SessionState, Settings, SettingsStore, Snapshot, ValidationError,
+    LightingTarget, Modes, Processing, Registry, Result, Revision, Section, SessionPhase,
+    SessionState, Settings, SettingsStore, Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -707,11 +707,7 @@ impl Core {
         change: impl FnOnce(&mut Snapshot),
     ) {
         let session = lighting.state(failure);
-        // A session starts with no picture yet, for no reason given.
-        let input = matches!(lighting, Lighting::ScreenSync(_)).then(|| Input {
-            no_picture: Some(NoPicture::Quiet),
-            ..Input::default()
-        });
+        let input = matches!(lighting, Lighting::ScreenSync(_)).then(Input::default);
         self.lighting = lighting;
         self.state.send_modify(|s| {
             s.session = session;

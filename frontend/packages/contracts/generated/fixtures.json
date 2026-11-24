@@ -561,7 +561,7 @@
           "capture_ms": 88,
           "output_ms": 2.4000000953674316
         },
-        "receiving": true,
+        "picture": "arriving",
         "sent_fps": 29.899999618530273
       },
       "revision": 7,
@@ -672,8 +672,7 @@
       "device": {},
       "input": {
         "fps": 0,
-        "no_picture": "refused",
-        "receiving": false,
+        "picture": "refused",
         "sent_fps": 0
       },
       "revision": 0,
@@ -995,25 +994,6 @@
       "preferences": {
         "autostart": false
       },
-      "target": "screen_sync",
-      "video": "available",
-      "worker": {
-        "capturing": false,
-        "fps": 0,
-        "no_picture": "refused",
-        "phase": "running",
-        "portal": "http://192.168.1.5:8787/"
-      }
-    },
-    {
-      "flavor": "full",
-      "log": [
-        "prysm-webos: portal on 0.0.0.0:8787"
-      ],
-      "power": "active",
-      "preferences": {
-        "autostart": false
-      },
       "target": "off",
       "video": "available",
       "worker": {
@@ -1102,11 +1082,8 @@
       "worker": {
         "capturing": false,
         "link": {
-          "encoding": "raw",
-          "fps": 0,
-          "state": "sending"
+          "state": "refused"
         },
-        "no_picture": "refused",
         "phase": "running"
       }
     },

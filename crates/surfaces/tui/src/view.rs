@@ -2,7 +2,7 @@
 use crate::input::{Notice, Severity, Ui, clean};
 use crate::video::{self, HalfBlocks};
 use prysm_core::{ColorStrip, EdgeColors};
-use prysm_ports::{AdapterSettings, SessionState, Snapshot, chain};
+use prysm_ports::{AdapterSettings, Picture, SessionState, Snapshot, chain};
 use prysm_runtime::Preview;
 use ratatui::{
     Frame,
@@ -264,15 +264,13 @@ fn session_color(state: &SessionState) -> Color {
     }
 }
 
-/// Frame rate while frames arrive, "waiting for frames" while the running
-/// source is quiet, nothing without a session.
+/// Frame rate while frames arrive, why not while the running source gives
+/// none, nothing without a session.
 pub(crate) fn input_label(snapshot: &Snapshot) -> Option<String> {
-    snapshot.input.map(|input| {
-        if input.receiving {
-            format!("{:.1} fps", input.fps)
-        } else {
-            "waiting for frames".to_owned()
-        }
+    snapshot.input.map(|input| match input.picture {
+        Picture::Arriving => format!("{:.1} fps", input.fps),
+        Picture::Quiet => "waiting for frames".to_owned(),
+        Picture::Refused => "TV doesn’t share video".to_owned(),
     })
 }
 
@@ -645,7 +643,7 @@ mod tests {
         let mut snapshot = running();
         snapshot.input = Some(prysm_ports::Input {
             fps: 29.94,
-            receiving: true,
+            picture: Picture::Arriving,
             ..prysm_ports::Input::default()
         });
         let ui = Ui::default();
@@ -673,6 +671,21 @@ mod tests {
             &view,
         );
         assert!(text.contains("waiting for frames"), "{text}");
+
+        snapshot.input = Some(prysm_ports::Input {
+            picture: Picture::Refused,
+            ..prysm_ports::Input::default()
+        });
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(text.contains("TV doesn’t share video"), "{text}");
 
         snapshot.input = None;
         let view = View {

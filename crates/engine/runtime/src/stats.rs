@@ -2,7 +2,6 @@
 //! the portal's opt-in `/metrics`. Every total lives behind one mutex: the
 //! session thread locks it once per frame and once per output write, only to
 //! add; readers lock it to copy.
-use prysm_ports::NoPicture;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -77,9 +76,10 @@ pub(crate) struct Totals {
     /// For flushed frames, the loop's time for each, waiting for it included.
     /// Not a metric: against it the engine judges whether the loop has slack.
     pub(crate) cycles: Timing,
-    /// Why the last pull without a frame gave none. Not a metric: the
+    /// The source's last word without a frame was that its device refuses
+    /// the video; a frame or a new source clears it. Not a metric: the
     /// engine reports it with the input while no frame arrives.
-    pub(crate) no_picture: NoPicture,
+    pub(crate) refused: bool,
 }
 
 impl Stats {
@@ -115,6 +115,7 @@ impl Stats {
             )
         });
         let mut totals = self.lock();
+        totals.refused = false;
         totals.counters.frames_received += 1;
         totals.counters.processing.add(processing);
         if let Some((flushed, cycle, captured)) = flushed {
@@ -136,16 +137,17 @@ impl Stats {
         }
     }
 
-    /// A pull without a frame, and why ([`Totals::no_picture`]).
-    pub(crate) fn no_picture(&self, why: NoPicture) {
-        self.lock().no_picture = why;
+    /// A pull without a frame, and whether it said the video is refused
+    /// ([`Totals::refused`]).
+    pub(crate) fn no_frame(&self, refused: bool) {
+        self.lock().refused = refused;
     }
 
     /// A new source has given no reason yet.
     pub(crate) fn source_opened(&self) {
         let mut totals = self.lock();
         totals.counters.source_opens += 1;
-        totals.no_picture = NoPicture::Quiet;
+        totals.refused = false;
     }
 
     pub(crate) fn output_opened(&self) {

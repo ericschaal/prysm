@@ -3,7 +3,7 @@
 //! its [`Worker`].
 use super::{Acquired, Backend, Fault, Limits, Recovery, Tap};
 use crate::{Readiness, Video, VideoSignal, WebosSettings};
-use prysm_ports::{Error, NoPicture, Result, Worker, chain};
+use prysm_ports::{Error, Result, Worker, chain};
 use std::time::{Duration, Instant};
 
 /// Which tap the native thread holds. The two never run together.
@@ -106,9 +106,9 @@ pub(super) struct Native<B> {
     video_failing: bool,
     /// A UI fault was logged since the last UI frame.
     ui_failing: bool,
-    /// The TV refused the video: the tap is kept and initialized again only
-    /// after the video signal changes, never on a timer, as a retry before
-    /// then is refused too.
+    /// The TV refused the video: the tap, its driver only created, is kept
+    /// and initialized again only after the video signal changes, never on a
+    /// timer, as a retry before then is refused too.
     refused: bool,
 }
 
@@ -160,9 +160,11 @@ impl<B: Backend> Native<B> {
         let mut next = Instant::now();
         while !self.worker.stopped() {
             let readiness = self.video.current();
+            let mut was_refused = false;
             if readiness != seen {
                 seen = readiness;
                 self.ui = self.ui.after_change();
+                was_refused = self.refused;
                 self.refuse(false);
             }
             let Readiness {
@@ -170,14 +172,20 @@ impl<B: Backend> Native<B> {
                 generation: current,
             } = readiness;
             let kind = self.wanted(video);
-            // A change of tap kind or video context releases the current tap;
-            // the next step opens the kind that matches.
+            // A change of tap kind or video context starts a new period: the
+            // next step opens the kind that matches. The current tap is
+            // released, except a refused video's after a change of context
+            // alone: that driver is only created, so it holds nothing of the
+            // old context and is initialized again, while its release can
+            // hang.
             if kind != self.kind || current != generation {
+                if kind != self.kind || !was_refused {
+                    self.release_tap()?;
+                }
                 generation = current;
                 self.kind = kind;
                 // A new period: its first video failure is news again.
                 self.video_failing = false;
-                self.release_tap()?;
                 self.retry_at = Instant::now();
             }
             let now = Instant::now();
@@ -353,11 +361,7 @@ impl<B: Backend> Native<B> {
     /// Whether the TV refuses the video, for this thread and its pulls.
     fn refuse(&mut self, refused: bool) {
         self.refused = refused;
-        self.worker.no_picture(if refused {
-            NoPicture::Refused
-        } else {
-            NoPicture::Quiet
-        });
+        self.worker.refused(refused);
     }
 
     fn release_tap(&mut self) -> Result<()> {

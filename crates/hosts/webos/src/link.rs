@@ -162,12 +162,10 @@ fn status(snapshot: &Snapshot, portal: Option<&str>, applied: u64) -> WorkerStat
     WorkerStatus::Full(FullStatus {
         // Running and frames arriving: false while waiting for video.
         capturing: matches!(snapshot.session, SessionState::ScreenSync)
-            && snapshot.input.is_some_and(|input| input.receiving),
+            && snapshot
+                .input
+                .is_some_and(|input| input.picture.is_arriving()),
         fps: snapshot.input.map(|input| whole_fps(input.fps)),
-        no_picture: snapshot
-            .input
-            .and_then(|input| input.no_picture)
-            .filter(|_| matches!(snapshot.session, SessionState::ScreenSync)),
         target: snapshot.target,
         applied,
         portal: portal.map(str::to_owned),
@@ -335,42 +333,6 @@ mod tests {
         for seen in [Seen::Off, Seen::Running, Seen::Failed, Seen::Invalid] {
             assert_eq!(needs_restart(&snapshot(seen)), None, "{seen:?}");
         }
-    }
-
-    /// Why there is no picture is reported while screen sync runs, as the
-    /// input says it, and only then.
-    #[test]
-    fn no_picture_is_reported_only_while_screen_sync_runs() {
-        use prysm_ports::{Input, NoPicture};
-        let without = |why| Input {
-            no_picture: Some(why),
-            ..Input::default()
-        };
-        let running = |input| Snapshot {
-            target: LightingTarget::ScreenSync,
-            session: SessionState::ScreenSync,
-            input: Some(input),
-            ..Snapshot::default()
-        };
-        let reported = |snapshot: &Snapshot| {
-            let WorkerStatus::Full(full) = status(snapshot, None, 0) else {
-                panic!("the full worker reports full");
-            };
-            (full.capturing, full.no_picture, full.failure)
-        };
-        for why in [NoPicture::Quiet, NoPicture::Refused] {
-            assert_eq!(reported(&running(without(why))), (false, Some(why), None));
-        }
-        let receiving = Input {
-            receiving: true,
-            ..Input::default()
-        };
-        assert_eq!(reported(&running(receiving)), (true, None, None));
-        let stopped = Snapshot {
-            session: SessionState::Stopped { failure: None },
-            ..running(without(NoPicture::Refused))
-        };
-        assert_eq!(reported(&stopped).1, None);
     }
 
     fn apply(retry: &mut Retry, event: Event, now: Instant) {

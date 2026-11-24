@@ -4,9 +4,9 @@ use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
     AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, FrameSink, FrameSource,
-    Hangup, IdleMode, LedOutput, LightingTarget, Mode, Modes, NoPicture, OpenFailure,
-    OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory, Span,
-    Stopping, ValidationError,
+    Hangup, IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure, OutputFactory,
+    OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory, Span, Stopping,
+    ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -96,8 +96,8 @@ pub struct FakeSourceSettings {
     pub quiet_after: Option<u32>,
     /// How long the quiet spell lasts; 0: forever.
     pub quiet_for_ms: u64,
-    /// Why the quiet spell gives no picture.
-    pub no_picture: NoPicture,
+    /// The quiet spell says the device refuses its video ([`Pull::Refused`]).
+    pub refused: bool,
     /// Report [`Pull::Ended`] after this many frames, like a file at its end.
     pub end_after: Option<u32>,
     pub fail_open: bool,
@@ -229,7 +229,11 @@ impl FrameSource for FakeSource {
             let length = Duration::from_millis(self.settings.quiet_for_ms);
             if self.settings.quiet_for_ms == 0 || since.elapsed() < length {
                 thread::sleep(timeout);
-                return Ok(Pull::NoPicture(self.settings.no_picture));
+                return Ok(if self.settings.refused {
+                    Pull::Refused
+                } else {
+                    Pull::Quiet
+                });
             }
             self.quiet_done = true;
         }

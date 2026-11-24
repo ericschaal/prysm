@@ -85,7 +85,7 @@ export interface components {
          * @description What the lights say about themselves, from the output's own checks. Each
          *     part is absent while the output cannot tell, and all are while no session
          *     holds the output (no session, no frame yet, or released after 3 s without
-         *     video; see `session.state` and `input.receiving`). Prysm reports them and
+         *     video; see `session.state` and `input.picture`). Prysm reports them and
          *     changes none.
          */
         DeviceReport: {
@@ -286,16 +286,8 @@ export interface components {
              *     second. Absent when no frame reached the output.
              */
             latency?: components["schemas"]["Latency"];
-            /**
-             * @description Why no frame arrived in the last second, as the source said: absent
-             *     while frames arrive (`receiving`).
-             */
-            no_picture?: components["schemas"]["NoPicture"];
-            /**
-             * @description At least one frame arrived in the last second. `false` right after
-             *     lighting starts and while the source is quiet (no signal, no sender).
-             */
-            receiving: boolean;
+            /** @description Whether frames arrived in the last second, and if not, why. */
+            picture: components["schemas"]["Picture"];
             /**
              * Format: float
              * @description Frames per second whose colours were written to the output over the
@@ -423,11 +415,6 @@ export interface components {
             /** @enum {string} */
             status: "known";
         };
-        /**
-         * @description Why no picture arrives. Not a failure: lighting keeps running.
-         * @enum {string}
-         */
-        NoPicture: "quiet" | "refused";
         /** @description The null output takes no settings. */
         NullSettings: {
             /** @enum {string} */
@@ -445,6 +432,17 @@ export interface components {
          * @enum {string}
          */
         Pattern: "gray_192" | "red" | "yellow" | "green" | "cyan" | "blue" | "magenta" | "blue_pair" | "red_pair" | "green_pair" | "coast" | "garden" | "dusk" | "review_grid";
+        /**
+         * @description Whether frames arrive from the source. `arriving`: at least one frame in
+         *     the last second. `quiet`: none, and no reason given (no signal, no
+         *     sender); also right after lighting starts. `refused`: none, because the
+         *     source's device refuses to share the video it shows (an LG TV playing
+         *     AirPlay); frames come again once the video changes. Neither `quiet` nor
+         *     `refused` is a failure: lighting waits for video, and releases the lights
+         *     after 3 s without it.
+         * @enum {string}
+         */
+        Picture: "arriving" | "quiet" | "refused";
         /** @description One server-sent event of the preview stream. */
         PreviewEvent: (components["schemas"]["PreviewFrame"] & {
             /** @enum {string} */
@@ -660,7 +658,7 @@ export interface components {
              * @description What the lights say about themselves, from the output's own checks
              *     (about once a second). Empty while no session holds the output: no
              *     session, or one that has no frame yet or released the output after 3 s
-             *     without video; `session.state` and `input.receiving` say which.
+             *     without video; `session.state` and `input.picture` say which.
              */
             device: components["schemas"]["DeviceReport"];
             /**
@@ -808,11 +806,11 @@ export type LightingFailure = components['schemas']['LightingFailure'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type Mode = components['schemas']['Mode'];
 export type Modes = components['schemas']['Modes'];
-export type NoPicture = components['schemas']['NoPicture'];
 export type NullSettings = components['schemas']['NullSettings'];
 export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Pattern = components['schemas']['Pattern'];
+export type Picture = components['schemas']['Picture'];
 export type PreviewEvent = components['schemas']['PreviewEvent'];
 export type PreviewFrame = components['schemas']['PreviewFrame'];
 export type PreviewViewport = components['schemas']['PreviewViewport'];

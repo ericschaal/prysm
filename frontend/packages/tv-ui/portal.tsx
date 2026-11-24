@@ -5,13 +5,13 @@ import {
   describeSituation,
   failureOf,
   lightingSituation,
-  noPictureOf,
+  pictureOf,
   plainFailure,
   REFUSED_VIDEO,
   situationFailure,
   type LightingSituation,
   type LightingTarget,
-  type NoPicture,
+  type Picture,
   type TargetReading,
 } from '@prysm/application-client';
 import type { Flavor } from '@prysm/webos-platform';
@@ -21,7 +21,7 @@ const effectsOf = (snapshot: PortalSnapshot) =>
   snapshot.settings.output?.kind === 'wled' ? 'WLED effects' : null;
 
 /** The message while screen sync runs without a picture; not a problem. */
-const noPictureMessage: Record<NoPicture, string> = {
+const waitingMessage: Record<Exclude<Picture, 'arriving'>, string> = {
   quiet: 'No picture arriving yet.',
   refused: REFUSED_VIDEO,
 };
@@ -135,12 +135,9 @@ export function LightingCard({
       attention = true;
     } else if (lighting.kind === 'starting') {
       message = said;
-    } else if (
-      lighting.kind === 'sync' &&
-      lighting.input &&
-      !lighting.input.receiving
-    ) {
-      message = noPictureMessage[noPictureOf(lighting.input)];
+    } else if (lighting.kind === 'sync' && lighting.input) {
+      const picture = pictureOf(lighting.input);
+      if (picture !== 'arriving') message = waitingMessage[picture];
     }
   } else if (portal.reach === 'refused') {
     message = full

@@ -7,7 +7,7 @@ use crate::stats::{FrameTimes, Stats};
 use crate::worker::{Exit, Flags, Worker, guarded};
 use prysm_core::{Config, EdgeColors, Frame};
 use prysm_ports::{
-    DeviceReport, Error, FrameSource, Hangup, IdleMode, NoPicture, Result, Section, SessionPhase,
+    DeviceReport, Error, FrameSource, Hangup, IdleMode, Pull, Result, Section, SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -185,9 +185,10 @@ impl SessionLoop {
         Ok(())
     }
 
-    /// No frame within a tick, for the reason the source gave.
-    fn on_quiet(&mut self, why: NoPicture, stop: &Hangup) -> Result<()> {
-        self.stats.no_picture(why);
+    /// No frame within a tick; `refused`: the source said its device refuses
+    /// the video. The output is released alike either way.
+    fn on_quiet(&mut self, refused: bool, stop: &Hangup) -> Result<()> {
+        self.stats.no_frame(refused);
         if !self.leds.is_held() {
             return Ok(());
         }
@@ -286,9 +287,9 @@ impl Session {
             "session thread",
             (source, session),
             |(mut source, mut session), flags| {
-                let exit = flags.pump(&mut *source, |pulled| match pulled {
-                    Ok(frame) => session.on_frame(frame, flags.stopping()),
-                    Err(why) => session.on_quiet(why, flags.stopping()),
+                let exit = flags.pump(&mut *source, |pull| match pull {
+                    Pull::Frame(frame) => session.on_frame(frame, flags.stopping()),
+                    quiet => session.on_quiet(matches!(quiet, Pull::Refused), flags.stopping()),
                 });
                 session.finish(exit, source, flags)
             },

@@ -99,7 +99,6 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         status(&first).unwrap(),
         &FullStatus {
             capturing: false,
-            no_picture: None,
             fps: None,
             target: LightingTarget::Off,
             applied: 0,

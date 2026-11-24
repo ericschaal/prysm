@@ -6,7 +6,7 @@ use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError};
 use prysm_capture_webos::{Readiness, VideoSignal, WebosSettings};
 use prysm_core::Frame;
 use prysm_ports::StreamEncoding;
-use prysm_ports::{Error, FrameSource, NoPicture, Pull, Result};
+use prysm_ports::{Error, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use prysm_webos_link::worker::{Link, Peer, Stop, StopHandle};
@@ -279,23 +279,33 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
     result.unwrap();
 }
 
-/// While the capture gives no picture the status says why, and frames that
-/// come again withdraw it.
+/// While the capture says the TV refuses its video the connected link is
+/// refused, and frames that come again make it sending; a capture that is
+/// just quiet stays sending.
 #[tokio::test]
-async fn no_picture_is_reported_until_frames_are_sent_again() {
-    for why in [NoPicture::Quiet, NoPicture::Refused] {
+async fn a_refused_video_is_reported_until_frames_are_sent_again() {
+    for refused in [false, true] {
         let (mut peer, _feed, task) = start_fake(FakeSourceSettings {
             quiet_after: Some(0),
             quiet_for_ms: 600,
-            no_picture: why,
+            refused,
             ..FakeSourceSettings::default()
         });
-        peer.wait_for("a status without a picture", |e| {
-            status(e).is_some_and(|status| status.no_picture == Some(why) && !status.capturing)
+        peer.wait_for("a status without frames", |e| {
+            status(e).is_some_and(|status| {
+                !status.capturing
+                    && match status.link {
+                        SlimLink::Refused {} => refused,
+                        SlimLink::Sending { fps, .. } => !refused && fps == 0,
+                        _ => false,
+                    }
+            })
         })
         .await;
         peer.wait_for("frames again", |e| {
-            status(e).is_some_and(|status| status.capturing && status.no_picture.is_none())
+            status(e).is_some_and(|status| {
+                status.capturing && matches!(status.link, SlimLink::Sending { .. })
+            })
         })
         .await;
         peer.close();
@@ -833,7 +843,7 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
                     Box::new(receiver).close().unwrap();
                     return error;
                 }
-                Ok(pull) => assert!(pull.is_quiet(), "a frame was sent"),
+                Ok(pull) => assert!(matches!(pull, Pull::Quiet), "a frame was sent"),
             }
         }
     })
@@ -954,7 +964,7 @@ struct StopsWhileClosing(StopHandle);
 
 impl FrameSource for StopsWhileClosing {
     fn next_frame(&mut self, _timeout: Duration) -> Result<Pull> {
-        Ok(Pull::NoPicture(NoPicture::Quiet))
+        Ok(Pull::Quiet)
     }
 
     fn close(self: Box<Self>) -> Result<()> {
@@ -987,15 +997,24 @@ fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
         }
     });
     uplink.tick().unwrap();
-    assert!(source.next_frame(Duration::ZERO).unwrap().is_quiet());
+    assert!(matches!(
+        source.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
     assert_eq!(*opened.lock().unwrap(), [settings(&RAW)]);
     // The receiver drops, then asks for another shape.
     uplink.send(&crate::check::picture(16, 16, 1)).unwrap();
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), Some(SOFTWARE));
-    assert!(source.next_frame(Duration::ZERO).unwrap().is_quiet());
+    assert!(matches!(
+        source.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
     assert!(stop.reason().is_some());
-    assert!(source.next_frame(Duration::ZERO).unwrap().is_quiet());
+    assert!(matches!(
+        source.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
     assert_eq!(*opened.lock().unwrap(), [settings(&RAW)], "nothing opened");
     Box::new(source).close().unwrap();
 }

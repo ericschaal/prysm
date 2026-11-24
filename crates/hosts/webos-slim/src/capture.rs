@@ -4,7 +4,7 @@ use prysm_capture_remote::{Offer, RemoteSettings};
 use prysm_capture_webos::WebosSettings;
 use prysm_h264::Backend;
 use prysm_ports::StreamEncoding;
-use prysm_ports::{FrameSource, Mode, NoPicture, Pull, Result};
+use prysm_ports::{FrameSource, Mode, Pull, Result};
 use prysm_webos_link::worker::StopHandle;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,7 +45,7 @@ pub fn settings(request: &RemoteSettings) -> WebosSettings {
 /// until a receiver takes a connection again, or for good once another
 /// sender replaced this one. It keeps running while a receiver that did not say so is away, so a
 /// dropped connection does not restart the TV capture. With nothing open,
-/// `next_frame` waits out its timeout and reports idle, which keeps the
+/// `next_frame` waits out its timeout and reports quiet, which keeps the
 /// uplink reconnecting and reading the receiver's messages. Once the worker
 /// is asked to stop (`stop` has a reason) nothing is opened any more, so a
 /// stop costs at most one release: of the capture being replaced, or of the
@@ -90,14 +90,14 @@ where
         match &mut self.current {
             Some((_, source)) => {
                 let pull = source.next_frame(timeout);
-                self.flow.pulled(pull.as_ref().ok());
+                self.flow.refused(matches!(pull, Ok(Pull::Refused)));
                 pull
             }
             // Waits like any idle pull, so a stop cannot make it spin.
             None => {
-                self.flow.pulled(None);
+                self.flow.refused(false);
                 std::thread::sleep(timeout);
-                Ok(Pull::NoPicture(NoPicture::Quiet))
+                Ok(Pull::Quiet)
             }
         }
     }

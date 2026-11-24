@@ -1,7 +1,9 @@
 import { useId, type ReactNode } from 'react';
-import type {
-  DiscoveryClient,
-  FailureSection,
+import {
+  REFUSED_VIDEO,
+  type DiscoveryClient,
+  type FailureSection,
+  type Picture,
 } from '@prysm/application-client';
 import type { Behind } from '@prysm/contracts/application';
 import {
@@ -37,9 +39,19 @@ export type PathState =
       /** The step that keeps Prysm from keeping up, while one does. */
       behind?: Behind;
     }
-  | { kind: 'waiting' }
+  | {
+      kind: 'waiting';
+      /** Why no picture: none given, or the TV refuses to share it. */
+      picture: Exclude<Picture, 'arriving'>;
+    }
   | { kind: 'effects' }
   | { kind: 'failed'; at: FailureSection | null };
+
+/** The Video source fact while no picture arrives, by why. */
+const waitingFact: Record<Exclude<Picture, 'arriving'>, string> = {
+  quiet: 'Waiting for picture',
+  refused: REFUSED_VIDEO,
+};
 
 /** One stop on the path: its role (for screen readers), name and one fact. */
 function Stop({
@@ -304,7 +316,7 @@ export function SetupCard({
               // Waiting replaces the fact line; it never adds one.
               fact={
                 path.kind === 'waiting'
-                  ? 'Waiting for picture'
+                  ? waitingFact[path.picture]
                   : factLine(capture.facts, ['Rate', 'Menus'])
               }
               failed={failedAt === 'capture'}

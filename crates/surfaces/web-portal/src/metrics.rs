@@ -190,7 +190,7 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_ports::{Input, Revision, SessionPhase};
+    use prysm_ports::{Input, Picture, Revision, SessionPhase};
     use std::time::Duration;
 
     #[test]
@@ -220,7 +220,7 @@ mod tests {
             revision: Revision(42),
             input: Some(Input {
                 fps: 29.9,
-                receiving: true,
+                picture: Picture::Arriving,
                 ..Input::default()
             }),
             ..Snapshot::default()

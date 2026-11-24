@@ -173,7 +173,7 @@ test('a state tick leaves Settings in place; each page has its own save line', a
       fixture.publish({
         target: 'screen_sync',
         session: { state: 'screen_sync' },
-        input: { fps, receiving: true, latency: { output_ms: fps / 10 } },
+        input: { fps, picture: 'arriving', latency: { output_ms: fps / 10 } },
       }),
     );
   try {
@@ -220,7 +220,7 @@ test('the lighting card names a low WLED brightness while screen sync shows', as
     const running = {
       target: 'screen_sync',
       session: { state: 'screen_sync' },
-      input: { fps: 30, receiving: true },
+      input: { fps: 30, picture: 'arriving' },
     };
     await act(async () =>
       fixture.publish({ ...running, device: { brightness_percent: 40 } }),
@@ -269,7 +269,7 @@ test('LED counts that differ are said on Home and on the Lights page', async () 
     await publish({
       target: 'screen_sync',
       session: { state: 'screen_sync' },
-      input: { fps: 30, receiving: true },
+      input: { fps: 30, picture: 'arriving' },
       device: { led_count: 120 },
     });
     assert.equal(info(), differ);
@@ -319,7 +319,7 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       fixture.publish({
         target: 'screen_sync',
         session: { state: 'screen_sync' },
-        input: { fps: 0, receiving: false },
+        input: { fps: 0, picture: 'quiet' },
       }),
     );
     assert.equal(
@@ -341,7 +341,7 @@ test('Home says when video is awaited; the capture rate is in the technical deta
     // a problem, once it lasts.
     await act(async () =>
       fixture.publish({
-        input: { fps: 0, receiving: false, no_picture: 'refused' },
+        input: { fps: 0, picture: 'refused' },
       }),
     );
     await act(async () => sleep(slowStartMs + 50));
@@ -350,9 +350,14 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       note(),
       'The TV doesn’t share this video (AirPlay, for example).',
     );
+    assert.equal(
+      $$('.path-fact')[0].textContent,
+      'The TV doesn’t share this video (AirPlay, for example).',
+      'the Video fact says it, not waiting',
+    );
 
     await act(async () =>
-      fixture.publish({ input: { fps: 29.9, receiving: true } }),
+      fixture.publish({ input: { fps: 29.9, picture: 'arriving' } }),
     );
     assert.equal(info(), null);
     assert.equal(note(), 'Following the screen.');
@@ -1515,7 +1520,7 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     await act(async () =>
       fixture.publish({
         session: { state: 'screen_sync' },
-        input: { fps: 30, receiving: true },
+        input: { fps: 30, picture: 'arriving' },
       }),
     );
     assert.equal(now(), 'Showing screen sync — WLED at 192.0.2.1 · 14 LEDs');
@@ -1549,7 +1554,7 @@ test('a source that sends nothing for a while is a problem, with the way back', 
     await act(async () =>
       fixture.publish({
         session: { state: 'screen_sync' },
-        input: { fps: 0, receiving: false },
+        input: { fps: 0, picture: 'quiet' },
       }),
     );
     assert.equal(now(), 'Starting… — Waiting for the picture.');
@@ -1578,7 +1583,7 @@ test('after a save the bar stays where the user is: starting, working, then gone
     await act(async () =>
       fixture.publish({
         session: { state: 'screen_sync' },
-        input: { fps: 30, receiving: true },
+        input: { fps: 30, picture: 'arriving' },
       }),
     );
     await openEditor('Video source');
@@ -1590,7 +1595,7 @@ test('after a save the bar stays where the user is: starting, working, then gone
     await act(async () =>
       fixture.publish({
         session: { state: 'screen_sync' },
-        input: { fps: 0, receiving: false },
+        input: { fps: 0, picture: 'quiet' },
       }),
     );
     assert.equal(status(), 'Saved. Starting…');
@@ -1598,7 +1603,7 @@ test('after a save the bar stays where the user is: starting, working, then gone
     assert(!button('Use this video source'), 'no button to press again');
     t.mock.timers.enable({ apis: ['setTimeout'] });
     await act(async () =>
-      fixture.publish({ input: { fps: 30, receiving: true } }),
+      fixture.publish({ input: { fps: 30, picture: 'arriving' } }),
     );
     assert.equal(status(), 'Saved. Picture arriving.');
     await act(async () => t.mock.timers.tick(outcomeForMs));
@@ -1687,7 +1692,7 @@ test('the status never opens the source: off, it says so and shows no picture', 
       fixture.publish({
         target: 'screen_sync',
         session: { state: 'screen_sync' },
-        input: { fps: 29.9, receiving: true },
+        input: { fps: 29.9, picture: 'arriving' },
       }),
     );
     assert.equal(preview.opened(), 1, 'watched while the picture flows');
@@ -2769,7 +2774,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
         session: { state: 'screen_sync' },
         input: {
           fps: 29.9,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 29.97,
           latency: { output_ms: 11.6 },
         },
@@ -2818,7 +2823,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       portal.fixture.publish({
         input: {
           fps: 29.97,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 29.97,
           latency: { capture_ms: 88.4, output_ms: 2.4 },
         },
@@ -2869,7 +2874,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       portal.fixture.publish({
         input: {
           fps: 29.97,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 29.97,
           latency: { output_ms: 0.4 },
         },
@@ -2882,7 +2887,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     // No frame flushed in the window: the rate only, no number made up.
     await act(async () =>
       portal.fixture.publish({
-        input: { fps: 29.97, receiving: true, sent_fps: 0 },
+        input: { fps: 29.97, picture: 'arriving', sent_fps: 0 },
       }),
     );
     assert.deepEqual(links()[1], ['flowing', undefined], 'no delay made up');
@@ -2890,14 +2895,14 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       portal.fixture.publish({
         input: {
           fps: 29.97,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 29.97,
           latency: { output_ms: 11.6 },
         },
       }),
     );
     await act(async () =>
-      portal.fixture.publish({ input: { fps: 0, receiving: false } }),
+      portal.fixture.publish({ input: { fps: 0, picture: 'quiet' } }),
     );
     assert.deepEqual(links()[0], ['still', undefined]);
     assert.equal(stops()[0][1], 'Waiting for picture');
@@ -3071,7 +3076,7 @@ test('the step that keeps Prysm behind shows in orange; a failure stays red', as
         session: { state: 'screen_sync' },
         input: {
           fps: 24.3,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 24.3,
           latency: { output_ms: 38.2 },
           ...(behind ? { behind } : {}),

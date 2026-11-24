@@ -1,7 +1,7 @@
 //! What the snapshot reports about a running session: rates, latency, issues, the slow step.
 use crate::common::*;
 use prysm_ports::{
-    Behind, DeviceBrightness, DeviceReport, Latency, LightingTarget, NoPicture, OutputIssue,
+    Behind, DeviceBrightness, DeviceReport, Latency, LightingTarget, OutputIssue, Picture,
     SessionState,
 };
 use prysm_runtime::EngineHandle;
@@ -26,11 +26,10 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let started = tokio::time::Instant::now();
         let waiting = handle.snapshot().borrow().input.unwrap();
-        assert!(!waiting.receiving, "nothing measured yet");
-        assert_eq!(waiting.no_picture, Some(NoPicture::Quiet));
+        assert_eq!(waiting.picture, Picture::Quiet, "nothing measured yet");
 
         // The fake delivers a frame about every 2 ms.
-        let receiving = snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
+        let receiving = snapshot_until(&handle, |s| arriving(s.input)).await;
         assert!(
             started.elapsed() >= Duration::from_millis(900),
             "sampled per second"
@@ -41,11 +40,11 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
         assert!(fps > 0.0, "{fps}");
 
         // After 150 frames it goes quiet.
-        let quiet = snapshot_until(&handle, |s| s.input.is_some_and(|i| !i.receiving)).await;
+        let quiet = snapshot_until(&handle, |s| !arriving(s.input)).await;
         assert!(quiet.input.unwrap().fps.abs() < f32::EPSILON);
         assert_eq!(
-            quiet.input.unwrap().no_picture,
-            Some(NoPicture::Quiet),
+            quiet.input.unwrap().picture,
+            Picture::Quiet,
             "quiet, for no reason given"
         );
         assert!(
@@ -61,8 +60,12 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
     .await;
 }
 
+fn arriving(input: Option<prysm_ports::Input>) -> bool {
+    input.is_some_and(|i| i.picture.is_arriving())
+}
+
 /// A source whose device refuses to share its video: the input says so
-/// while no frame arrives, and a frame withdraws it.
+/// while no frame arrives, and frames withdraw it.
 #[tokio::test]
 async fn input_reports_a_refused_video_until_frames_come_again() {
     within_async(LIMIT, async {
@@ -72,7 +75,7 @@ async fn input_reports_a_refused_video_until_frames_come_again() {
                 name: "a".into(),
                 quiet_after: Some(0),
                 quiet_for_ms: 1500,
-                no_picture: NoPicture::Refused,
+                refused: true,
                 ..Default::default()
             },
             FakeOutputSettings::default(),
@@ -80,15 +83,12 @@ async fn input_reports_a_refused_video_until_frames_come_again() {
         let (handle, engine, _) = start(&log, refused, DEADLINE).await;
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let waiting = snapshot_until(&handle, |s| {
-            s.input
-                .is_some_and(|i| i.no_picture == Some(NoPicture::Refused))
+            s.input.is_some_and(|i| i.picture == Picture::Refused)
         })
         .await;
-        assert!(!waiting.input.unwrap().receiving);
         assert!(matches!(waiting.session, SessionState::ScreenSync));
 
-        let receiving = snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
-        assert_eq!(receiving.input.unwrap().no_picture, None);
+        snapshot_until(&handle, |s| arriving(s.input)).await;
         engine.shutdown().await.unwrap();
     })
     .await;

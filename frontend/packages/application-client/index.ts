@@ -10,9 +10,9 @@ import type {
   LightingTarget,
   Mode,
   Modes,
-  NoPicture,
   OutputIssue,
   Pattern,
+  Picture,
   PreviewEvent,
   Session,
   Settings as GeneratedSettings,
@@ -30,9 +30,9 @@ export type {
   LightingTarget,
   Mode,
   Modes,
-  NoPicture,
   OutputIssue,
   Pattern,
+  Picture,
   PreviewEvent,
   Session,
 };
@@ -57,17 +57,18 @@ export const failureSections: Record<FailureSection, true> = {
   capture: true,
   output: true,
 };
-export const noPictures: Record<NoPicture, true> = {
+export const pictures: Record<Picture, true> = {
+  arriving: true,
   quiet: true,
   refused: true,
 };
 
 /**
- * Why no frame arrives, as `input` says it; absent, or a reason newer than
- * this page, is `quiet` (none given).
+ * Whether frames arrive, as `input` says it; a value newer than this page
+ * is `quiet` (no frames, no reason given).
  */
-export const noPictureOf = (input: Input): NoPicture =>
-  known(noPictures, input.no_picture ?? 'quiet', 'quiet');
+export const pictureOf = (input: Input): Picture =>
+  known(pictures, input.picture, 'quiet');
 
 /** A decoded JSON object's fields, before each is checked. */
 export type Fields = Partial<Record<string, unknown>>;
@@ -96,7 +97,7 @@ export const reconnectDelayMs = (attempt: number) =>
 
 /**
  * Why no picture arrives while the source's device refuses to share the
- * video it shows (`no_picture` is `refused`), for people.
+ * video it shows (`picture` is `refused`), for people.
  */
 export const REFUSED_VIDEO =
   'The TV doesn’t share this video (AirPlay, for example).';

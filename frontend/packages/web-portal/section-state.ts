@@ -1,7 +1,9 @@
 import {
   describeOutputIssue,
   failureSide,
+  pictureOf,
   plainFailure,
+  REFUSED_VIDEO,
   unreachable,
   unusableSettings,
   type AdapterSide,
@@ -23,7 +25,10 @@ export function pathOf(lighting: LightingSituation): PathState {
       return { kind: 'failed', at: lighting.at };
     case 'sync': {
       const { input } = lighting;
-      return input?.receiving
+      // Not measured yet is quiet: no picture, no reason given.
+      if (!input) return { kind: 'waiting', picture: 'quiet' };
+      const picture = pictureOf(input);
+      return picture === 'arriving'
         ? {
             kind: 'flowing',
             fps: input.fps,
@@ -33,7 +38,7 @@ export function pathOf(lighting: LightingSituation): PathState {
             },
             behind: input.behind,
           }
-        : { kind: 'waiting' };
+        : { kind: 'waiting', picture };
     }
     case 'effects':
       return { kind: 'effects' };
@@ -220,6 +225,9 @@ export function sectionStatus(
           : identity,
     };
   }
+  // Not a problem, however long it lasts: it ends when the video changes.
+  if (path.kind === 'waiting' && path.picture === 'refused')
+    return { tone: 'idle', title: 'No picture', detail: REFUSED_VIDEO };
   if (path.kind === 'waiting' && stalled)
     return capture
       ? {

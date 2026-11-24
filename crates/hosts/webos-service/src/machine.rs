@@ -610,12 +610,16 @@ impl Machine {
     /// A running worker's report.
     fn report(&mut self, status: WorkerStatus, now: Instant, effects: &mut Vec<Effect>) {
         // Up again (full: reporting without a failure; slim: it reached the
-        // receiver, which takes its frames or paused the stream): the last
+        // receiver, which takes its frames, waits for video the TV refuses to
+        // share or paused the stream): the last
         // worker's failure is no longer current.
         let (up, target) = match &status {
             WorkerStatus::Full(full) => (full.failure.is_none(), Some((full.target, full.applied))),
             WorkerStatus::Slim(slim) => (
-                matches!(slim.link, SlimLink::Sending { .. } | SlimLink::Paused {}),
+                matches!(
+                    slim.link,
+                    SlimLink::Sending { .. } | SlimLink::Refused {} | SlimLink::Paused {}
+                ),
                 None,
             ),
         };

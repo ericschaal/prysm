@@ -20,8 +20,8 @@ pub mod worker;
 pub use address::{PrysmAddress, Scheme};
 pub use args::{FullArgs, SlimArgs};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
+pub use prysm_ports::LightingTarget;
 use prysm_ports::StreamEncoding;
-pub use prysm_ports::{LightingTarget, NoPicture};
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -108,10 +108,6 @@ pub struct FullStatus {
     /// lighting session runs; `Some(0)` while it waits for frames.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fps: Option<u16>,
-    /// While lighting runs without frames (`capturing` is `false`): why,
-    /// as the capture said. Not a failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub no_picture: Option<NoPicture>,
     /// The engine's target, including changes made in the portal.
     pub target: LightingTarget,
     /// The `sequence` of the last [`Command::Target`] applied before this
@@ -136,11 +132,6 @@ pub struct SlimStatus {
     /// Frames were sent in the last second (so also just after the stream
     /// ended).
     pub capturing: bool,
-    /// While the capture runs and gives no frames, so none are sent: why,
-    /// as it said. Absent while frames are sent, and while no capture runs
-    /// (the stream paused, or no request yet). Not a failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub no_picture: Option<NoPicture>,
     /// Where the uplink to the receiver stands.
     pub link: SlimLink,
 }
@@ -157,6 +148,9 @@ pub enum SlimLink {
     /// requested), `fps` per second over about the last second, rounded; 0
     /// while none come.
     Sending { encoding: StreamEncoding, fps: u16 },
+    /// Connected, but the TV refuses to share the video it shows, so no
+    /// frames go out until the video changes. Not a failure.
+    Refused {},
     /// The receiver stopped the stream (its lighting is off), and the TV
     /// capture is released until a receiver takes a connection again. Not a
     /// failure.
@@ -174,7 +168,7 @@ impl SlimLink {
     pub fn failure(&self) -> Option<&WorkerFailure> {
         match self {
             Self::Waiting { failure } | Self::Failed { failure } => Some(failure),
-            Self::Starting {} | Self::Sending { .. } | Self::Paused {} => None,
+            Self::Starting {} | Self::Sending { .. } | Self::Refused {} | Self::Paused {} => None,
         }
     }
 }

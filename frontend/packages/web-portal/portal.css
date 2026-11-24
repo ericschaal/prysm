@@ -3020,10 +3020,7 @@ fieldset > .field-note {
 .led-tv {
   position: relative;
   /* The screen's ratio; on a narrow page its height holds instead. */
-  height: max(
-    calc(88 * var(--u)),
-    calc((100cqi - 92 * var(--u)) * 170 / 300)
-  );
+  height: max(calc(88 * var(--u)), calc((100cqi - 92 * var(--u)) * 170 / 300));
   margin: calc(38 * var(--u) + var(--space-3)) calc(46 * var(--u))
     calc(54 * var(--u) + var(--space-3));
 }

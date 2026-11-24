@@ -266,9 +266,8 @@ pub struct InputSchema {
     /// Frames per second over the last second, to one decimal.
     #[schema(minimum = 0, example = 29.9)]
     fps: f32,
-    /// At least one frame arrived in the last second. `false` right after
-    /// lighting starts and while the source is quiet (no signal, no sender).
-    receiving: bool,
+    /// Whether frames arrived in the last second, and if not, why.
+    picture: PictureSchema,
     /// Frames per second whose colours were written to the output over the
     /// last second, to one decimal.
     #[schema(minimum = 0, example = 29.9)]
@@ -284,23 +283,22 @@ pub struct InputSchema {
     #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     behind: Option<BehindSchema>,
-    /// Why no frame arrived in the last second, as the source said: absent
-    /// while frames arrive (`receiving`).
-    #[schema(nullable = false)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    no_picture: Option<NoPictureSchema>,
 }
 
-// Mirrors `prysm_ports::NoPicture`.
-/// Why no picture arrives. Not a failure: lighting keeps running.
+// Mirrors `prysm_ports::Picture`.
+/// Whether frames arrive from the source. `arriving`: at least one frame in
+/// the last second. `quiet`: none, and no reason given (no signal, no
+/// sender); also right after lighting starts. `refused`: none, because the
+/// source's device refuses to share the video it shows (an LG TV playing
+/// AirPlay); frames come again once the video changes. Neither `quiet` nor
+/// `refused` is a failure: lighting waits for video, and releases the lights
+/// after 3 s without it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = NoPicture)]
+#[schema(as = Picture)]
 #[serde(rename_all = "snake_case")]
-pub enum NoPictureSchema {
-    /// No frames (no signal, no sender).
+pub enum PictureSchema {
+    Arriving,
     Quiet,
-    /// The source's device refuses to share the video it shows (an LG TV
-    /// playing AirPlay); frames come again once the video changes.
     Refused,
 }
 
@@ -360,7 +358,7 @@ pub enum OutputIssueSchema {
 /// What the lights say about themselves, from the output's own checks. Each
 /// part is absent while the output cannot tell, and all are while no session
 /// holds the output (no session, no frame yet, or released after 3 s without
-/// video; see `session.state` and `input.receiving`). Prysm reports them and
+/// video; see `session.state` and `input.picture`). Prysm reports them and
 /// changes none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = DeviceReport)]
@@ -501,7 +499,7 @@ impl ToSchema for OutputSettings {}
     InputSchema,
     LatencySchema,
     BehindSchema,
-    NoPictureSchema,
+    PictureSchema,
     OutputIssueSchema,
     DeviceReportSchema,
     Session,
@@ -677,8 +675,8 @@ mod tests {
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
         DeviceBrightness, DeviceReport, FrameSource, Input, Latency, LightingTarget, Mode, Modes,
-        NoPicture, OutputIssue, Pattern, PrimaryControls, Processing, Result, Settings, Span,
-        Style, StyleValues, ValidationError,
+        OutputIssue, Pattern, Picture, PrimaryControls, Processing, Result, Settings, Span, Style,
+        StyleValues, ValidationError,
     };
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::json;
@@ -758,25 +756,24 @@ mod tests {
         }
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             fps: 29.5,
-            receiving: true,
+            picture: Picture::Arriving,
             sent_fps: 29.5,
             latency: Some(Latency {
                 capture_ms: Some(88.0),
                 output_ms: 2.4,
             }),
             behind: Behind::Output,
-            no_picture: None,
         });
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             behind: Behind::Processing,
             ..Input::default()
         });
-        for why in [NoPicture::Quiet, NoPicture::Refused] {
+        for picture in [Picture::Arriving, Picture::Quiet, Picture::Refused] {
             assert_mirror_round_trips::<Input, InputSchema>(&Input {
-                no_picture: Some(why),
+                picture,
                 ..Input::default()
             });
-            assert_mirror_round_trips::<NoPicture, NoPictureSchema>(&why);
+            assert_mirror_round_trips::<Picture, PictureSchema>(&picture);
         }
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             latency: Some(Latency {

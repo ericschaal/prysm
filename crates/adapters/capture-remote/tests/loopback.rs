@@ -5,7 +5,7 @@ use prysm_capture_remote::{
     Close, Offer, RemoteReceiver, RemoteSender, RemoteSettings, RemoteSource, SendError, WireError,
 };
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
-use prysm_ports::{FrameSink, FrameSource, Mode, Modes, SourceFactory, Span, StreamEncoding};
+use prysm_ports::{FrameSink, FrameSource, Mode, Modes, Pull, SourceFactory, Span, StreamEncoding};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use prysm_testkit::eventually;
@@ -145,15 +145,13 @@ fn round_trip_preserves_dimensions_format_and_pixels() {
 }
 
 #[test]
-fn next_frame_times_out_idle() {
+fn next_frame_times_out_quiet() {
     let (_portal, mut source) = open();
     let started = Instant::now();
-    assert!(
-        source
-            .next_frame(Duration::from_millis(30))
-            .unwrap()
-            .is_quiet()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(30)).unwrap(),
+        Pull::Quiet
+    ));
     assert!(started.elapsed() >= Duration::from_millis(30));
     Box::new(source).close().unwrap();
 }
@@ -172,12 +170,10 @@ fn a_slow_consumer_sees_only_the_newest_frame() {
             .filter(|frame| frame.as_slice()[0] == 20)
     });
     assert_eq!(receive(&mut source).as_slice()[0], 20, "frames were queued");
-    assert!(
-        source
-            .next_frame(Duration::from_millis(100))
-            .unwrap()
-            .is_quiet()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(100)).unwrap(),
+        Pull::Quiet
+    ));
     Box::new(source).close().unwrap();
 }
 
@@ -190,12 +186,10 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
     drop(first);
 
     // A disconnect is not an error.
-    assert!(
-        source
-            .next_frame(Duration::from_millis(200))
-            .unwrap()
-            .is_quiet()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(200)).unwrap(),
+        Pull::Quiet
+    ));
 
     let mut second = portal.connect().unwrap();
     second.send(&frame(2, 4, 4)).unwrap();
@@ -309,12 +303,10 @@ fn malformed_and_oversized_messages_drop_only_that_connection() {
         .send(Message::text(r#"{"refused":"request","reason":"x"}"#))
         .unwrap();
     assert!(assert_dropped(untyped).is_empty());
-    assert!(
-        source
-            .next_frame(Duration::from_millis(50))
-            .unwrap()
-            .is_quiet()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(50)).unwrap(),
+        Pull::Quiet
+    ));
 
     let mut sender = portal.connect().unwrap();
     sender.send(&frame(4, 4, 4)).unwrap();
@@ -862,12 +854,10 @@ fn factory_decodes_validates_and_opens() {
     }
 
     let mut source = factory.open(&RAW).unwrap();
-    assert!(
-        source
-            .next_frame(Duration::from_millis(10))
-            .unwrap()
-            .is_quiet()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(10)).unwrap(),
+        Pull::Quiet
+    ));
     source.close().unwrap();
 }
 
