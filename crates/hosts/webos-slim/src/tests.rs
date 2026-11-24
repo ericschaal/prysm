@@ -487,6 +487,7 @@ async fn reports_frame_flow_and_forwards_video_commands() {
         video: Video::Unavailable,
     });
     peer.send(Command::ResetVideo {});
+    peer.send(Command::CapturePermissionChanged {});
     peer.close();
     let (result, stop) = task.await.unwrap();
     result.unwrap();
@@ -495,9 +496,10 @@ async fn reports_frame_flow_and_forwards_video_commands() {
         feed.current(),
         Readiness {
             video: Video::Unavailable,
-            generation: 1
+            generation: 1,
+            sequence: 3
         },
-        "set, then one reset"
+        "set, one reset, one permission change"
     );
 }
 

@@ -44,6 +44,10 @@ pub enum Command {
     /// Input, app or picture mode changed: reopen the native tap. (A struct
     /// variant, so unknown fields are rejected like everywhere else.)
     ResetVideo {},
+    /// The TV's capture permission changed. It carries no verdict: a
+    /// capture the TV refused initializes its driver once more, and nothing
+    /// else follows from it.
+    CapturePermissionChanged {},
     /// Full only: the lighting target the TV app chose. `sequence` counts
     /// the targets sent to this worker from 1; its status says the last one
     /// it applied ([`FullStatus::applied`]). A slim worker treats it as
@@ -55,9 +59,8 @@ pub enum Command {
 }
 
 /// The TV's main video output, as Luna `videooutput/getStatus` reports the
-/// `MAIN` sink, refined by the TV's capture permission
-/// (`capturepermission/checkPermission`). Also the webOS capture adapter's
-/// readiness input (`prysm_capture_webos::VideoSignal`).
+/// `MAIN` sink. Also the webOS capture adapter's readiness input
+/// (`prysm_capture_webos::VideoSignal`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Video {
@@ -67,14 +70,8 @@ pub enum Video {
     Unknown,
     /// Disconnected or zero-sized. The native tap is released and frames stop.
     Unavailable,
-    /// Connected with a size and frame rate, and the TV does not refuse its
-    /// capture (or its permission is not observed). The TV refuses muted
-    /// video, as it does between videos.
+    /// Connected with a size and frame rate. Muted video still counts.
     Available,
-    /// Connected with a size and frame rate, but the TV's permission verdict
-    /// says it may not be captured. No tap is opened; frames stop until the
-    /// signal changes.
-    Refused,
 }
 
 /// Worker → supervisor.

@@ -125,12 +125,9 @@ export function isPaused(state: State): boolean {
   return slimLink(state)?.state === 'paused';
 }
 
-/**
- * The TV refuses to share the video it shows: the service says so (both
- * packages), or slim's connected link does.
- */
+/** Slim: connected, but the TV refuses to share the video it shows. */
 export function isRefused(state: State): boolean {
-  return state.video === 'refused' || slimLink(state)?.state === 'refused';
+  return slimLink(state)?.state === 'refused';
 }
 
 /** The TV app of both packages; its service is `<APP_ID>.service`. */
@@ -224,7 +221,6 @@ const videos: Record<Video, true> = {
   unknown: true,
   unavailable: true,
   available: true,
-  refused: true,
 };
 const failureKinds: Record<FailureKind, true> = {
   encoder: true,

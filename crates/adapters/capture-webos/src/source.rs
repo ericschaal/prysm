@@ -11,7 +11,7 @@ mod native;
 use crate::{VideoSignal, WebosSettings};
 use native::Native;
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result, Schedule};
+use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result};
 use std::time::Duration;
 
 /// One acquisition attempt.
@@ -23,34 +23,8 @@ pub(crate) enum Acquired {
     NotReady,
     /// The driver refuses to capture this video (`vtCapture_init`
     /// answered 17); its driver stays created, and the next acquisition
-    /// initializes it again ([`Retry`]).
+    /// initializes it again.
     Refused,
-}
-
-/// Why the native thread initializes a refused driver again before the
-/// video signal changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Retry {
-    /// The driver refused video the supervisor reports as available. The
-    /// library answers from its own copy of the TV's permission verdict,
-    /// which follows the TV's permission event, so a refusal in the moment
-    /// the video starts can be that copy being a moment behind. Bounded,
-    /// because the evidence is thin: one such refusal was seen on one TV
-    /// (a YouTube video start), and under AirPlay the library kept refusing
-    /// past the bound while the TV's verdict said allowed. Once the bound
-    /// runs out, the capture waits for the next change of the video signal.
-    LibraryCatchingUp,
-}
-
-impl Retry {
-    pub(crate) const fn schedule(self) -> Schedule {
-        match self {
-            Self::LibraryCatchingUp => Schedule::Within {
-                every: Duration::from_millis(100),
-                limit: Duration::from_secs(2),
-            },
-        }
-    }
 }
 
 /// A native failure. Recoverable ones release the tap and reopen it.
@@ -91,6 +65,13 @@ impl Fault {
 /// An open native tap. Created, used and released on the native thread.
 pub(crate) trait Tap {
     fn acquire(&mut self) -> Result<Acquired, Fault>;
+    /// Its driver is created and not initialized, as the driver itself
+    /// says: releasing it undoes only the creation, and the next
+    /// acquisition initializes it. A tap without a separate initialization
+    /// (the TV UI) never is.
+    fn created_only(&self) -> bool {
+        false
+    }
     /// `Ok` certifies the driver released the tap.
     fn release(self: Box<Self>) -> Result<()>;
 }
@@ -122,9 +103,6 @@ pub(crate) struct Limits {
     pub retry: Duration,
     /// How long `close` waits for certified release ([`RELEASE`]).
     pub release: Duration,
-    /// When a driver that refused video the supervisor reports as
-    /// capturable is initialized again ([`Retry::LibraryCatchingUp`]).
-    pub refused: Schedule,
 }
 
 impl Limits {
@@ -134,15 +112,14 @@ impl Limits {
         pending: Duration::from_secs(2),
         retry: Duration::from_secs(1),
         release: RELEASE,
-        refused: Retry::LibraryCatchingUp.schedule(),
     };
 }
 
 /// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Quiet`]
-/// while video is unavailable or the driver is preparing (or initialized
-/// again after a refusal), [`Pull::Refused`] while the TV refuses the video,
-/// and `Err` on a terminal native failure or a native call that exceeds its
-/// watchdog.
+/// while video is unavailable or the driver is preparing, [`Pull::Refused`]
+/// from a refused initialization until another answer or until video is
+/// unavailable, and `Err` on a terminal native failure or a native call that
+/// exceeds its watchdog.
 pub struct WebosFrames {
     thread: OwnerThread,
 }

@@ -551,14 +551,10 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             if slot.is_some_and(|at| now >= at) {
                 *slot = Some(now + RESUBSCRIBE);
                 bus.resubscribe(watch);
-                match watch {
-                    Watch::Power => {}
+                // A renewed permission was already unobserved: nothing changes.
+                if watch == Watch::Video {
                     // Unknown video still lets capture try, bounded by the adapter.
-                    Watch::Video => self.input(bus, Input::Video(Video::Unknown), now),
-                    // A lost verdict refuses nothing: the driver's own answer counts.
-                    Watch::Permission => {
-                        self.input(bus, Input::Permission(Permission::Unobserved), now);
-                    }
+                    self.input(bus, Input::Video(Video::Unknown), now);
                 }
             }
         }

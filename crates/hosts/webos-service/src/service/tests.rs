@@ -527,51 +527,56 @@ fn power_and_video_drive_the_worker_and_its_commands() {
 const REFUSED: &str = r#"{"status":false,"whitelist":[],"coreStatus":true,"returnValue":true}"#;
 const ALLOWED: &str = r#"{"status":true,"whitelist":[],"coreStatus":true,"returnValue":true}"#;
 
-/// The worker is told, and the app shown, that available video the TV
-/// refuses is refused; a verdict that is not observed refuses nothing.
+const WAKE: &str = r#"send {"type":"capture_permission_changed"}"#;
+
+/// Each change of the permission reading wakes the worker once, and an
+/// identical reading does not; no reading, a refusal or an error, changes
+/// the video sent or published.
 #[test]
-fn the_capture_permission_refines_the_video_sent_and_published() {
+fn a_change_of_the_capture_permission_wakes_the_worker_and_changes_no_video() {
     let mut h = Harness::new(config(), None);
     h.power("Active", 0);
-    h.log();
-    h.permission(REFUSED, 1);
-    assert!(h.log().is_empty(), "no video yet");
     h.video(ACTIVE_VIDEO, 1);
-    assert_eq!(h.log(), [r#"send {"type":"video","video":"refused"}"#]);
-    assert_eq!(h.bus.published.last().unwrap()["video"], "refused");
-
-    h.permission(ALLOWED, 2);
-    assert_eq!(h.log(), [r#"send {"type":"video","video":"available"}"#]);
-    assert_eq!(h.bus.published.last().unwrap()["video"], "available");
-
-    h.permission(REFUSED, 3);
     h.log();
-    h.permission(r#"{"returnValue":false,"errorText":"denied"}"#, 4);
-    assert_eq!(h.log(), [r#"send {"type":"video","video":"available"}"#]);
+    h.permission(REFUSED, 2);
+    assert_eq!(h.log(), [WAKE]);
+    h.permission(REFUSED, 3);
+    assert!(h.log().is_empty(), "the same reading");
+    h.permission(ALLOWED, 4);
+    assert_eq!(h.log(), [WAKE]);
+    h.permission(REFUSED, 5);
+    h.log();
+    h.permission(r#"{"returnValue":false,"errorText":"denied"}"#, 6);
+    assert_eq!(h.log(), [WAKE], "an error is a change too");
+    h.permission(r#"{"returnValue":true,"subscribed":false}"#, 7);
+    assert!(h.log().is_empty(), "still unobserved");
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["video"], "available");
 }
 
-/// A verdict settles the subscription; a reply without one renews it after
-/// [`RESUBSCRIBE`], and a renewal forgets the old verdict.
+/// A reading settles the subscription; a reply without one renews it after
+/// [`RESUBSCRIBE`], and the renewal changes nothing by itself.
 #[test]
 fn the_capture_permission_subscription_is_renewed_until_it_answers() {
     let mut h = Harness::new(config(), None);
     h.power("Active", 0);
     h.video(ACTIVE_VIDEO, 0);
     h.permission(REFUSED, 100);
-    h.video(ACTIVE_VIDEO, 100);
     h.log();
     assert!(h.tick(5_000));
     assert!(h.bus.resubscribed.is_empty(), "every subscription settled");
     h.permission(r#"{"returnValue":true,"coreStatus":true}"#, 5_100);
-    assert_eq!(h.log(), [r#"send {"type":"video","video":"available"}"#]);
+    assert_eq!(h.log(), [WAKE]);
     assert!(h.tick(10_099));
     assert!(h.bus.resubscribed.is_empty());
     assert!(h.tick(10_100));
     assert_eq!(h.bus.resubscribed, [Watch::Permission]);
+    assert!(h.log().is_empty(), "a renewal is no change");
     h.permission(REFUSED, 10_200);
-    assert_eq!(h.log(), [r#"send {"type":"video","video":"refused"}"#]);
+    assert_eq!(h.log(), [WAKE]);
     assert!(h.tick(20_000));
     assert_eq!(h.bus.resubscribed, [Watch::Permission], "settled again");
+    assert_eq!(h.bus.published.last().unwrap()["video"], "available");
 }
 
 #[test]

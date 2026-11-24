@@ -194,9 +194,9 @@ pub enum Picture {
     /// after a session starts. Lighting waits for video.
     #[default]
     Quiet,
-    /// No frame: the source's device refuses to share the video it shows (an
-    /// LG TV that does not allow its capture); frames come again once it does.
-    /// Lighting waits for video, as while quiet.
+    /// No frame: the source's device refuses to share the video it shows;
+    /// frames come again once it shares it. Lighting waits for video, as
+    /// while quiet.
     Refused,
 }
 

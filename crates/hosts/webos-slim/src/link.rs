@@ -523,6 +523,7 @@ impl ForwarderLink {
                     None => return Ok(()),
                     Some(Command::Video { video }) => self.video.set(video),
                     Some(Command::ResetVideo {}) => self.video.reset(),
+                    Some(Command::CapturePermissionChanged {}) => self.video.permission_changed(),
                     Some(Command::Target { .. }) => {
                         stop.request(Stop::Failed("`target` is not a slim worker command".into()));
                         return Ok(());

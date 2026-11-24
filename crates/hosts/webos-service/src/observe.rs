@@ -39,8 +39,7 @@ pub fn video(payload: &Value) -> VideoReading {
         if !main["connected"].as_bool()? {
             return Some(false);
         }
-        // Muted video can be legitimate black; it still counts here (the
-        // capture permission may refuse it).
+        // Muted video can be legitimate black; it still counts.
         Some(
             main["width"].as_u64()? > 0
                 && main["height"].as_u64()? > 0
@@ -67,18 +66,19 @@ pub fn video(payload: &Value) -> VideoReading {
     }
 }
 
-/// The TV's verdict on capturing the video it shows, as
-/// `com.webos.service.capturepermission/checkPermission` reports it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The TV's capture permission, as
+/// `com.webos.service.capturepermission/checkPermission` reports it. Only
+/// its changes are used, as a moment to initialize a refused capture again;
+/// no value is acted on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Permission {
-    /// `status` true: the TV lets the video be captured.
+    /// `status` true.
     Allowed,
-    /// `status` false: the TV refuses (also between videos, while muted).
+    /// `status` false. Observed on one TV only between videos, while the
+    /// video output reported no frames.
     Refused,
-    /// No usable reply (an error, a missing or malformed `status`, the
-    /// service absent, the subscription lost): neither allowed nor refused,
-    /// so the capture relies on what the driver itself answers.
-    #[default]
+    /// No usable reply: an error, a missing or malformed `status`, the
+    /// service absent.
     Unobserved,
 }
 

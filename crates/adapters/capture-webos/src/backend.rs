@@ -214,6 +214,10 @@ impl Tap for LgTap {
         Ok(Acquired::Frame(frame.finish()))
     }
 
+    fn created_only(&self) -> bool {
+        self.capture.created_only()
+    }
+
     fn release(self: Box<Self>) -> Result<()> {
         self.capture
             .release()

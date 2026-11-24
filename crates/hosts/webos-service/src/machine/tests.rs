@@ -215,13 +215,14 @@ fn full_runs_while_awake_and_gates_video_on_active() {
     ));
 }
 
-/// Available video the TV refuses to capture is sent and published as
-/// refused; an unobserved permission refuses nothing, and video that is not
-/// available stays as it is.
+/// Each change of the capture permission wakes a running worker once; a
+/// repeated reading wakes nothing, and no reading changes the video sent or
+/// published. A change while no worker runs is not kept for the next one.
 #[test]
-fn the_capture_permission_refines_available_video() {
+fn a_change_of_the_capture_permission_wakes_the_capture() {
     use crate::observe::Permission::{Allowed, Refused, Unobserved};
     use Input::Permission as P;
+    let wake = || Effect::Send(Command::CapturePermissionChanged {});
     let (mut m, t) = (full(), Instant::now());
     script(
         &mut m,
@@ -233,23 +234,19 @@ fn the_capture_permission_refines_available_video() {
                 Pw(Active),
                 vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
             ),
-            (1, V(Video::Available), vec![video(Video::Refused)]),
-            (2, P(Allowed), vec![video(Video::Available)]),
-            (3, P(Refused), vec![video(Video::Refused)]),
-            (4, P(Unobserved), vec![video(Video::Available)]),
-            (5, P(Refused), vec![video(Video::Refused)]),
-            (6, V(Video::Unavailable), vec![video(Video::Unavailable)]),
-            (7, V(Video::Available), vec![video(Video::Refused)]),
-            (8, Pw(ScreenSaver), vec![video(Video::Unavailable)]),
-            (9, Pw(Active), vec![video(Video::Refused)]),
+            (1, V(Video::Available), vec![video(Video::Available)]),
+            (2, P(Refused), vec![]),
+            (3, P(Allowed), vec![wake()]),
+            (4, P(Allowed), vec![]),
+            (5, P(Refused), vec![wake()]),
+            (6, P(Unobserved), vec![wake()]),
+            (7, P(Unobserved), vec![]),
+            (8, P(Allowed), vec![wake()]),
         ],
     );
-    assert_eq!(m.state(t).video, Video::Refused);
-    m.handle(P(Allowed), t);
     assert_eq!(m.state(t).video, Video::Available);
-    m.handle(V(Video::Unknown), t);
     m.handle(P(Refused), t);
-    assert_eq!(m.state(t).video, Video::Unknown, "only available video");
+    assert_eq!(m.state(t).video, Video::Available, "never a verdict");
 }
 
 #[test]
@@ -2042,11 +2039,15 @@ fn every_phase_takes_every_input() {
             false,
             only_running((vec![video(Video::Available)], running, None)),
         ),
-        // The video is still unknown: a verdict alone changes nothing.
+        // A change of the reading: a wake while running, nothing else.
         (
             Input::Permission(crate::observe::Permission::Refused),
             false,
-            unchanged(),
+            only_running((
+                vec![Effect::Send(Command::CapturePermissionChanged {})],
+                running,
+                None,
+            )),
         ),
         (
             Input::VideoContextChanged,

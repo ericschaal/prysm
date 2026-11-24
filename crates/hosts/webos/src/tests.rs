@@ -111,6 +111,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         video: Video::Available,
     });
     peer.send(Command::ResetVideo {});
+    peer.send(Command::CapturePermissionChanged {});
     peer.send(Command::Target {
         target: LightingTarget::ScreenSync,
         sequence: 1,
@@ -130,9 +131,10 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         feed.current(),
         Readiness {
             video: Video::Available,
-            generation: 1
+            generation: 1,
+            sequence: 3
         },
-        "set, then one reset"
+        "set, one reset, one permission change"
     );
     assert!(log.wait_for("output.write:", 1).await);
 

@@ -33,11 +33,7 @@ use utoipa::{OpenApi as _, ToSchema};
 pub const API_VERSION: &str = "4";
 
 // Mirrors `prysm_webos_link::Video`.
-/// The TV's main video output. `unknown`: no report yet. `unavailable`:
-/// disconnected, or no picture. `available`: video plays and the TV does not
-/// refuse its capture. `refused`: video plays, but the TV's permission
-/// verdict says it may not be captured. Open: an app reads a value it does
-/// not know as `unknown`.
+/// The TV's main video output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = Video)]
 #[serde(rename_all = "snake_case")]
@@ -45,7 +41,6 @@ pub enum VideoSchema {
     Unknown,
     Unavailable,
     Available,
-    Refused,
 }
 
 // Mirrors `prysm_webos_link::FailureKind`.
@@ -192,12 +187,7 @@ mod tests {
 
     #[test]
     fn mirrors_match_the_wire_types() {
-        for video in [
-            Video::Unknown,
-            Video::Unavailable,
-            Video::Available,
-            Video::Refused,
-        ] {
+        for video in [Video::Unknown, Video::Unavailable, Video::Available] {
             assert_mirror_round_trips::<Video, VideoSchema>(&video);
         }
         for target in LightingTarget::ALL {

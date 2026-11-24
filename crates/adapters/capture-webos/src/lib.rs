@@ -3,8 +3,8 @@
 //! - [`WebosCapture`]: the factory registered under kind `"webos"`.
 //! - [`WebosSettings`]: size, rate and UI blending, with typed validation.
 //! - [`VideoSignal`]: the host feeds Luna `videooutput` readiness and context
-//!   changes here; the source releases the video tap while video is
-//!   unavailable.
+//!   changes, and capture permission wakes, here; the source releases the
+//!   video tap while video is unavailable.
 //! - [`WebosFrames`]: the open source. A private native thread owns the LG
 //!   tap; watchdogs, retries and release certification live here.
 //!

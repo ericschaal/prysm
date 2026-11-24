@@ -109,6 +109,7 @@ impl EngineLink {
                     None => return Ok(()),
                     Some(Command::Video { video }) => self.video.set(video),
                     Some(Command::ResetVideo {}) => self.video.reset(),
+                    Some(Command::CapturePermissionChanged {}) => self.video.permission_changed(),
                     Some(Command::Target { target, sequence }) => {
                         retry.cancel();
                         apply(&engine, target).await;

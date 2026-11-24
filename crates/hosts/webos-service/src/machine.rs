@@ -18,10 +18,10 @@ pub const LOG_LINES: usize = 20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     Power(Power),
-    /// The video output; never [`Video::Refused`], which only the
-    /// permission makes of available video.
     Video(Video),
     VideoContextChanged,
+    /// The TV's capture permission as last read. Only its changes count:
+    /// each wakes a running worker's capture, and none changes the video.
     Permission(Permission),
     /// Already validated and persisted.
     Preferences(Preferences),
@@ -195,8 +195,8 @@ pub struct Machine {
     package: Package,
     preferences: Preferences,
     power: Power,
-    /// What the video output says, before the permission refines it.
     video: Video,
+    /// The last [`Input::Permission`], to tell its changes.
     permission: Permission,
     phase: Phase,
     /// Restart delays: reset by a worker that ran [`Backoff::HEALTHY`] and by
@@ -305,7 +305,12 @@ impl Machine {
                 self.power = power;
             }
             Input::Video(video) => self.video = video,
-            Input::Permission(permission) => self.permission = permission,
+            Input::Permission(permission) => {
+                let changed = std::mem::replace(&mut self.permission, permission) != permission;
+                if changed && self.running() {
+                    effects.push(Effect::Send(Command::CapturePermissionChanged {}));
+                }
+            }
             Input::VideoContextChanged => {
                 if self.running() {
                     effects.push(Effect::Send(Command::ResetVideo {}));
@@ -357,7 +362,7 @@ impl Machine {
             package: self.package.published(self.process(now)),
             preferences: self.preferences.clone(),
             power: self.power,
-            video: self.video(),
+            video: self.video,
             failure: self.current_failure(),
             log: self.log.iter().cloned().collect(),
         }
@@ -399,20 +404,9 @@ impl Machine {
         matches!(self.phase, Phase::Running { .. })
     }
 
-    /// The video, with the TV's verdict on its capture: available video the
-    /// TV refuses is [`Video::Refused`]. An unobserved permission refuses
-    /// nothing; the capture then goes by what the driver answers.
-    fn video(&self) -> Video {
-        match (self.video, self.permission) {
-            (Video::Available, Permission::Refused) => Video::Refused,
-            (video, _) => video,
-        }
-    }
-
-    /// What the worker is told: [`Self::video`] while the TV is active.
     fn effective_video(&self) -> Video {
         if self.power == Power::Active {
-            self.video()
+            self.video
         } else {
             Video::Unavailable
         }

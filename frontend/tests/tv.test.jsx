@@ -301,8 +301,6 @@ test('values newer than the app have one reading each', () => {
     power: 'unknown',
     video: 'unknown',
   });
-  // Video the TV refuses to capture is known to this app.
-  assert.equal(decodeState({ ...state(), video: 'refused' }).video, 'refused');
   assert.deepEqual(
     decodeState({ ...state(), failure: { kind: 'overheated', message: 'x' } }),
     { ...state(), failure: { kind: 'other', message: 'x' } },
@@ -683,19 +681,6 @@ test('status card covers the supervisor states for both packages', () => {
       'disable',
     ],
   );
-  // The service says the TV refuses the video: both packages say so before
-  // the worker's link or the portal does.
-  for (const state of [
-    full({ capturing: false, video: 'refused' }),
-    slim({ video: 'refused' }),
-  ]) {
-    const status = tvStatus(true, state, draft());
-    assert.deepEqual(
-      [status.title, status.attention],
-      ['Video can’t be captured', false],
-      state.flavor,
-    );
-  }
   assert.equal(
     title(true, full({ capturing: false, portal: null })),
     'Starting screen sync…',
@@ -726,7 +711,6 @@ test('status card covers the supervisor states for both packages', () => {
       full({ capturing: true }),
       full({ target: 'effects' }),
       slim({ refused: true }),
-      full({ capturing: false, video: 'refused' }),
       full({ failure: { kind: 'other', message: 'x' } }),
       full({ failure: { kind: 'preferences', message: 'x' } }),
     ].map((value) => tvStatus(true, value, draft())),
@@ -837,7 +821,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   );
   assert.match(
     diagnostics(slim({ refused: true })),
-    /Capturing: no, the TV refuses to share the video it shows/,
+    /Capturing: no\. The TV doesn’t let Prysm capture this video\./,
   );
   assert.match(diagnostics(slim()), /Capturing: no\n/);
   const wait = status(

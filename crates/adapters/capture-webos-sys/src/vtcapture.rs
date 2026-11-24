@@ -363,10 +363,13 @@ enum Started {
 /// yet, and of `vtCapture_preprocess` when LG finalized the session.
 const NOT_READY: i32 = 1;
 
-/// The status of `vtCapture_init` when the library's capture-permission check
-/// says no. The library answers from its own copy of the TV's permission
-/// verdict (`capturepermission/checkPermission`: pipeline permission, and
-/// the video not muted), which its own subscription updates.
+/// The status of `vtCapture_init` that refuses the capture of the video the
+/// TV shows. Observed on one TV: AirPlay video got it on every
+/// initialization while `capturepermission/checkPermission` said `status`
+/// true, and one YouTube start got it in the same second `status` turned
+/// true. Static reading of the library on that TV (webOS 10.3.2) suggests
+/// it answers from its own copy of that permission, kept by its own
+/// subscription; not verified.
 const REFUSED: i32 = 17;
 
 /// One native capture tap; see the crate documentation.
@@ -478,7 +481,7 @@ impl VtCapture {
             }
             status(
                 code,
-                "vtCapture_init (11 = the TV's resource manager did not grant the capture resource)",
+                "vtCapture_init (11: on webOS 10.3.2 the library's code suggests the TV's resource manager did not grant the capture resource)",
             )?;
             self.stage = Stage::Working(Reached::Initialized);
         }
@@ -596,6 +599,15 @@ impl VtCapture {
             height: u32::from(height.cast_unsigned()),
             stride: usize::try_from(self.plane.stride).map_err(|_| Error::Invalid("stride"))?,
         })
+    }
+
+    /// The driver is created and not initialized: its open or last
+    /// acquisition answered [`Acquired::NotReady`] or [`Acquired::Refused`],
+    /// so releasing it undoes only its creation, and the next acquisition
+    /// initializes it. `false` once a driver call failed.
+    #[must_use]
+    pub fn created_only(&self) -> bool {
+        self.stage == Stage::Working(Reached::Created)
     }
 
     /// Stop, postprocess, finalize and release the driver.
@@ -831,10 +843,12 @@ mod tests {
         let fake = Fake::new(NOT_READY);
         let mut capture = fake.capture(Reached::Initialized);
         assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
+        assert!(capture.created_only(), "finalized: back to created");
         assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
         assert_eq!(fake.with(|driver| driver.initializations), 1);
         fake.with(|driver| driver.code = 0);
         assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
+        assert!(!capture.created_only());
         assert_eq!(fake.with(|driver| driver.initializations), 2);
         capture.release().unwrap();
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
@@ -848,10 +862,12 @@ mod tests {
         let mut capture = fake.capture(Reached::Created);
         assert!(matches!(capture.acquire().unwrap(), Acquired::Refused));
         assert!(matches!(capture.acquire().unwrap(), Acquired::Refused));
+        assert!(capture.created_only());
         assert_eq!(fake.with(|driver| driver.initializations), 2);
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), []);
         fake.with(|driver| driver.code = 0);
         assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
+        assert!(!capture.created_only());
         assert_eq!(fake.with(|driver| driver.initializations), 3);
         capture.release().unwrap();
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);

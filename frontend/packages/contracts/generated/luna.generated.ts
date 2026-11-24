@@ -258,14 +258,10 @@ export interface components {
         /** @description `uninstall` request: an empty object. */
         UninstallRequest: Record<string, never>;
         /**
-         * @description The TV's main video output. `unknown`: no report yet. `unavailable`:
-         *     disconnected, or no picture. `available`: video plays and the TV does not
-         *     refuse its capture. `refused`: video plays, but the TV's permission
-         *     verdict says it may not be captured. Open: an app reads a value it does
-         *     not know as `unknown`.
+         * @description The TV's main video output.
          * @enum {string}
          */
-        Video: "unknown" | "unavailable" | "available" | "refused";
+        Video: "unknown" | "unavailable" | "available";
         /** @description A failure: what it is and its message with the causes. */
         WorkerFailure: {
             kind: components["schemas"]["FailureKind"];

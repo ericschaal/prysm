@@ -270,7 +270,7 @@ pub(crate) fn input_label(snapshot: &Snapshot) -> Option<String> {
     snapshot.input.map(|input| match input.picture {
         Picture::Arriving => format!("{:.1} fps", input.fps),
         Picture::Quiet => "waiting for frames".to_owned(),
-        Picture::Refused => "TV doesn’t share video".to_owned(),
+        Picture::Refused => "TV won’t allow capture".to_owned(),
     })
 }
 
@@ -685,7 +685,7 @@ mod tests {
             &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
             &view,
         );
-        assert!(text.contains("TV doesn’t share video"), "{text}");
+        assert!(text.contains("TV won’t allow capture"), "{text}");
 
         snapshot.input = None;
         let view = View {

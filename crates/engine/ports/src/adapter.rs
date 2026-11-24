@@ -12,9 +12,8 @@ pub enum Pull {
     /// sender); the caller checks its stop flag and asks again. Not a failure.
     Quiet,
     /// No frame within the timeout because the source's device refuses to
-    /// share the video it shows (an LG TV that does not allow its capture);
-    /// frames come again once it does. The caller asks again, as after
-    /// [`Pull::Quiet`]. Not a failure.
+    /// share the video it shows; frames come again once it shares it. The
+    /// caller asks again, as after [`Pull::Quiet`]. Not a failure.
     Refused,
     /// The source has finished (a file played to its end) and will produce no
     /// more frames. Not a failure: the session stops normally.
