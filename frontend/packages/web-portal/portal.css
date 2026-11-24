@@ -765,6 +765,15 @@ fieldset > .field-note {
   inherits: true;
   initial-value: rgb(61 61 61);
 }
+/*
+ * A field's own colour (one of the four above), on the field alone: live
+ * screen sync eases it there and nowhere else (see `.aurora span`).
+ */
+@property --field {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: rgb(61 61 61);
+}
 /* The frame holds the light's colours for the card and the LED drawing. */
 .light-frame {
   --light-a: var(--live-a);
@@ -808,6 +817,19 @@ fieldset > .field-note {
     --light-b var(--duration-led) var(--ease-out),
     --light-c var(--duration-led) var(--ease-out),
     --light-d var(--duration-led) var(--ease-out);
+}
+/*
+ * Live, the colours change up to 10 times a second: the frame takes each
+ * at once, and only the four fields ease to it (each its own `--field`),
+ * so an easing restyles four elements, not the whole card. The small
+ * tints (the glow, the ignition's crest and wave, the chosen mode, the
+ * slider, the chosen segment) follow each update directly.
+ */
+.home-grid[data-live='colors'] .light-frame[data-palette='sync'] {
+  transition: none;
+}
+.home-grid[data-live='colors'] .light-frame[data-palette='sync'] .aurora span {
+  transition: --field var(--duration-led) var(--ease-out);
 }
 .light-card {
   --pad: var(--space-5);
@@ -864,37 +886,38 @@ fieldset > .field-note {
   position: absolute;
   aspect-ratio: 1;
   border-radius: 50%;
+  background: radial-gradient(closest-side, var(--field), transparent);
   will-change: transform;
   animation: drift-a 23s var(--ease-in-out) infinite alternate;
 }
 .aurora span:nth-child(1) {
+  --field: var(--light-a);
   top: -38%;
   left: -30%;
   width: 95%;
-  background: radial-gradient(closest-side, var(--light-a), transparent);
 }
 .aurora span:nth-child(2) {
+  --field: var(--light-b);
   top: -30%;
   right: -32%;
   width: 90%;
-  background: radial-gradient(closest-side, var(--light-b), transparent);
   animation-name: drift-b;
   animation-duration: 29s;
 }
 .aurora span:nth-child(3) {
+  --field: var(--light-c);
   top: 8%;
   left: 10%;
   width: 85%;
-  background: radial-gradient(closest-side, var(--light-c), transparent);
   animation-name: drift-c;
   animation-duration: 37s;
 }
 .aurora span:nth-child(4) {
+  --field: var(--light-d);
   top: -42%;
   left: 28%;
   width: 55%;
   opacity: 0.7;
-  background: radial-gradient(closest-side, var(--light-d), transparent);
   animation-name: drift-d;
   animation-duration: 19s;
 }
@@ -1858,8 +1881,9 @@ fieldset > .field-note {
 /*
  * Live light: the LEDs' colours arrive (at most 10 a second) as custom
  * properties on the Home grid, written by useLiveColors; nothing re-renders.
- * The card's fields and the LED drawing in Your setup read them. Until the
- * first write the fields are the moonlight of black LEDs (the colour
+ * The card's fields (eased on the fields alone, see the live `.light-frame`
+ * rule) and the LED drawing in Your setup (set, not eased) read them. Until
+ * the first write the fields are the moonlight of black LEDs (the colour
  * fieldValues gives for no colours), so no other colour shows first.
  */
 @property --live-a {
@@ -2228,7 +2252,7 @@ fieldset > .field-note {
   stroke-width: 4;
   stroke-linecap: round;
 }
-/* A band's gradient (led-drawing.tsx): its one colour unless live. */
+/* A band's gradient (led-drawing.tsx): its one colour unless live, eased. */
 .led-map-edge stop {
   stop-color: var(--band, var(--line-strong));
   transition: stop-color var(--duration-led) var(--ease-out);
@@ -2349,6 +2373,11 @@ fieldset > .field-note {
   .led-map-edge:not(.empty)
   stop {
   stop-color: var(--led, var(--band, var(--line-strong)));
+  /*
+   * Set, not eased: easing every stop 10 times a second redraws the band on
+   * every frame, and the style's smoothing already smooths the colours.
+   */
+  transition: none;
 }
 .edge-top {
   --band: var(--band-top);

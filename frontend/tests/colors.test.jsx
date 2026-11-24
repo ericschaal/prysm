@@ -316,10 +316,10 @@ test('before any colours are written the stylesheet starts the fields in the sam
   );
   const starts = [
     ...css.matchAll(
-      /@property --(?:live|light)-[a-d] \{[^}]*initial-value: ([^;]+);/g,
+      /@property --(?:(?:live|light)-[a-d]|field) \{[^}]*initial-value: ([^;]+);/g,
     ),
   ].map((match) => match[1]);
-  assert.equal(starts.length, 8);
+  assert.equal(starts.length, 9);
   assert(starts.every((value) => value === moonlight));
 });
 
