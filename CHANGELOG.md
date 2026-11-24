@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.0-rc.4](https://github.com/ericschaal/prysm/compare/v1.0.0-rc.3...v1.0.0-rc.4) (2026-11-24)
+
+
+### Features
+
+* the portal's page comes with the current state, so Home draws whole on its first render ([#98](https://github.com/ericschaal/prysm/issues/98)) ([1d2f2a8](https://github.com/ericschaal/prysm/commit/1d2f2a82198b08309bb5ede2e7056e2639dd0284))
+
+
+### Performance Improvements
+
+* live colours ease on the four fields alone; the LED band takes them as they arrive ([#100](https://github.com/ericschaal/prysm/issues/100)) ([f9a6a65](https://github.com/ericschaal/prysm/commit/f9a6a65b0abe50beffbc125115d03e9265086394))
+
 ## [1.0.0-rc.3](https://github.com/ericschaal/prysm/compare/v1.0.0-rc.2...v1.0.0-rc.3) (2026-11-23)
 
 
