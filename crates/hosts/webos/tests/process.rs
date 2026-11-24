@@ -21,6 +21,15 @@ fn bad_arguments_exit_with_usage() {
     }
 }
 
+/// Taken over before parsing, fd 1 is stderr by the time clap prints help.
+#[test]
+fn help_goes_to_stderr() {
+    let output = Command::new(BINARY).arg("--help").output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Usage:"));
+}
+
 fn spawn(settings: &std::path::Path) -> std::process::Child {
     Command::new(BINARY)
         .args(["--settings", settings.to_str().unwrap()])

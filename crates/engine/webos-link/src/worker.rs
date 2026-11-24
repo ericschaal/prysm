@@ -1,10 +1,12 @@
 //! The worker side of the link: stdio plumbing, why the worker stops, the
 //! exit code that follows, and a `main` that wires them together.
 //!
-//! At startup the worker keeps a duplicate of its original stdout for
-//! [`Event`]s and points fd 1 at stderr, so vendor libraries that print
-//! cannot corrupt the stream. A reader thread decodes [`Command`]s from stdin;
-//! stdin EOF or a bad line stops the worker.
+//! The worker's first statement is [`take_stdio`]: it keeps a duplicate of
+//! the original stdout for [`Event`]s and points fd 1 at stderr, so nothing
+//! that prints (argument parsing, logging, vendor libraries) can corrupt the
+//! stream; `clippy::print_stdout` is denied in the workspace besides. A
+//! reader thread decodes [`Command`]s from stdin; stdin EOF or a bad line
+//! stops the worker.
 use crate::{
     Command, Event, FullStatus, LineReader, LinkError, SlimLink, SlimStatus, WorkerFailure,
     WorkerStatus, encode, exit,
@@ -257,17 +259,13 @@ impl Link {
         (link, peer)
     }
 
-    /// Take over the process's stdio: events go to the original stdout, fd 1
-    /// becomes stderr, and a thread reads commands from stdin.
+    /// The link over the taken-over stdio: events go to the original stdout,
+    /// and a thread reads commands from stdin.
     ///
     /// # Errors
-    /// The descriptors cannot be duplicated or the thread cannot start.
-    pub fn stdio() -> io::Result<Self> {
-        use nix::fcntl::{FcntlArg, FdFlag, fcntl};
-        let original = nix::unistd::dup(io::stdout())?;
-        fcntl(&original, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
-        nix::unistd::dup2_stdout(io::stderr())?;
-        let out = Mutex::new(std::fs::File::from(original));
+    /// The thread cannot start.
+    pub fn stdio(stdio: Stdio) -> io::Result<Self> {
+        let out = Mutex::new(stdio.events);
         let sink: Sink = Arc::new(move |line: &[u8]| {
             let mut out = out.lock().unwrap_or_else(PoisonError::into_inner);
             out.write_all(line)?;
@@ -288,6 +286,39 @@ impl Link {
             stop,
         })
     }
+}
+
+/// The process's original stdout, kept for events after [`take_stdio`].
+#[derive(Debug)]
+pub struct Stdio {
+    events: std::fs::File,
+}
+
+impl Stdio {
+    /// Keep a duplicate of the original stdout (closed on exec) and point
+    /// fd 1 at stderr.
+    ///
+    /// # Errors
+    /// The descriptors cannot be duplicated.
+    pub fn take() -> io::Result<Self> {
+        use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+        let original = nix::unistd::dup(io::stdout())?;
+        fcntl(&original, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
+        nix::unistd::dup2_stdout(io::stderr())?;
+        Ok(Self {
+            events: original.into(),
+        })
+    }
+}
+
+/// [`Stdio::take`] for the program `name`; prints the error and exits
+/// [`exit::FAILED`] when it cannot.
+#[must_use]
+pub fn take_stdio(name: &'static str) -> Stdio {
+    Stdio::take().unwrap_or_else(|error| {
+        eprintln!("{name}: cannot take over stdio: {error}");
+        std::process::exit(exit::FAILED.into())
+    })
 }
 
 fn read_commands(
@@ -361,8 +392,9 @@ pub fn guard_parent() -> Result<(), String> {
 }
 
 /// The worker's arguments, parsed by clap for the program `name`. Prints help
-/// and exits 0 on `--help`; prints the error and exits [`exit::USAGE`] on
-/// arguments the worker does not accept (a packaging bug).
+/// (to stderr after [`take_stdio`]) and exits 0 on `--help`; prints the error
+/// and exits [`exit::USAGE`] on arguments the worker does not accept (a
+/// packaging bug).
 #[must_use]
 pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
     let mut command = A::command().name(name).bin_name(name).about(about);
@@ -380,12 +412,13 @@ pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
     })
 }
 
-/// Take over stdio, run `body` with the parsed `options` (see [`args`]) on a
-/// current-thread runtime until it returns, and exit with the code for how it
+/// Link to the supervisor over `stdio` (see [`take_stdio`]), run `body` with
+/// the parsed `options` (see [`args`]) on a current-thread runtime until it
+/// returns, and exit with the code for how it
 /// ended. An error from `body`, or a runtime that cannot start, is sent as a
 /// final [`Event::Failed`] first; a stop reason alone (protocol misuse, a lost
 /// link) is not, and nothing is sent before the link exists.
-pub fn main<A, F, Fut>(name: &'static str, options: A, body: F) -> ExitCode
+pub fn main<A, F, Fut>(name: &'static str, stdio: Stdio, options: A, body: F) -> ExitCode
 where
     F: FnOnce(A, Link) -> Fut,
     Fut: Future<Output = prysm_ports::Result<()>>,
@@ -394,7 +427,7 @@ where
         eprintln!("{name}: {message}");
         return ExitCode::from(exit::FAILED);
     }
-    let link = match Link::stdio() {
+    let link = match Link::stdio(stdio) {
         Ok(link) => link,
         Err(error) => {
             eprintln!("{name}: cannot set up the supervisor link: {error}");

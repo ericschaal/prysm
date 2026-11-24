@@ -10,6 +10,7 @@
 //! `--check` fails when a committed file differs and changes nothing.
 #![forbid(unsafe_code)]
 use clap::Parser;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -109,11 +110,13 @@ fn emit(path: &Path, bindings: &str, check: bool) -> Result<(), String> {
                 path.display()
             ));
         }
-        println!("{} is current", path.display());
+        writeln!(io::stdout().lock(), "{} is current", path.display())
+            .map_err(|error| error.to_string())?;
     } else if committed.as_deref() != Some(bindings) {
         std::fs::write(path, bindings)
             .map_err(|error| format!("write {}: {error}", path.display()))?;
-        println!("wrote {}", path.display());
+        writeln!(io::stdout().lock(), "wrote {}", path.display())
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

@@ -10,6 +10,7 @@ use prysm_processor::PrysmProcessor;
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     hint::black_box,
+    io::{self, Write},
     sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
@@ -50,7 +51,13 @@ static ALLOCATOR: CountedAllocator = CountedAllocator;
     clippy::cast_precision_loss,
     reason = "small benchmark counters converted for reporting"
 )]
-fn measure(width: u32, height: u32, format: PixelFormat, processing: bool, recycle: bool) -> u64 {
+fn measure(
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    processing: bool,
+    recycle: bool,
+) -> io::Result<u64> {
     const FRAMES: usize = 120;
     let size = format.expected_size(width, height).unwrap();
     let source: Vec<_> = (0..size).map(|i| i.to_le_bytes()[0]).collect();
@@ -100,16 +107,17 @@ fn measure(width: u32, height: u32, format: PixelFormat, processing: bool, recyc
             "steady-state capture must reuse both pixel and Arc storage"
         );
     }
-    println!(
+    writeln!(
+        io::stdout().lock(),
         "{width}x{height} {format} {} {}: {elapsed:.3} ms/frame, {:.1} allocations/frame, {:.0} allocated bytes/frame",
         if processing { "copy+process" } else { "copy" },
         if recycle { "recycled" } else { "fresh" },
         allocations as f64 / FRAMES as f64,
         bytes as f64 / FRAMES as f64
-    );
-    checksum
+    )?;
+    Ok(checksum)
 }
-fn main() {
+fn main() -> io::Result<()> {
     for (width, height) in [(1280, 720), (1920, 1080)] {
         for format in [
             PixelFormat::RGB24,
@@ -119,10 +127,11 @@ fn main() {
             },
         ] {
             for processing in [false, true] {
-                let fresh = measure(width, height, format, processing, false);
-                let recycled = measure(width, height, format, processing, true);
+                let fresh = measure(width, height, format, processing, false)?;
+                let recycled = measure(width, height, format, processing, true)?;
                 assert_eq!(fresh, recycled, "recycling changed output");
             }
         }
     }
+    Ok(())
 }

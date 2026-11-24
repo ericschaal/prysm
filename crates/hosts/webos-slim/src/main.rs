@@ -81,13 +81,15 @@ const _: () = assert!(
 );
 
 fn main() -> ExitCode {
-    // stdout carries the supervisor protocol; log lines go to stderr only.
+    // First: until fd 1 points at stderr, anything that prints reaches the
+    // supervisor's event stream.
+    let stdio = worker::take_stdio(NAME);
     logging::init(NAME, Logs::Stderr);
     let cli: Cli = worker::args(NAME, ABOUT);
     match cli.check {
         Some(Check::CheckEncoder(options)) => check::main(options),
         // Without a subcommand clap requires --prysm.
-        None => worker::main(NAME, cli.worker.expect("--prysm is required"), run),
+        None => worker::main(NAME, stdio, cli.worker.expect("--prysm is required"), run),
     }
 }
 

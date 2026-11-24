@@ -249,7 +249,7 @@ mod tests {
     fn the_first_camera_lists_its_formats() {
         let device = crate::list_devices().into_iter().next().expect("a camera");
         let formats = crate::list_formats(&device.id).expect("listed");
-        println!("{}: {formats:#?}", device.name);
+        eprintln!("{}: {formats:#?}", device.name);
         assert!(!formats.is_empty());
     }
 

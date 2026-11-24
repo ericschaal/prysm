@@ -40,8 +40,11 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   path, listen address and lighting target (`--target`); the slim worker its
   Prysm address (`--prysm`).
 - Commands go to the worker's stdin; events come back on its original stdout,
-  one JSON object per line (at most 4 KiB, unknown fields rejected). Vendor
-  output is redirected to stderr, which carries logs. The commands are
+  one JSON object per line (at most 4 KiB, unknown fields rejected). The
+  worker's first statement keeps that stdout for events and points fd 1 at
+  stderr, which carries logs, so argument parsing, logging and vendor output
+  cannot reach the stream; `clippy::print_stdout` is denied in the workspace
+  besides. The commands are
   `video` (`unknown`, `unavailable` or `available`; unavailable unless the
   TV is active), `reset_video` (input, app or picture mode changed),
   `capture_permission_changed` (a wake, without a value) and `target`

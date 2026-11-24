@@ -28,3 +28,4 @@ unsafe_code = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+print_stdout = "deny"
