@@ -33,7 +33,11 @@ use utoipa::{OpenApi as _, ToSchema};
 pub const API_VERSION: &str = "4";
 
 // Mirrors `prysm_webos_link::Video`.
-/// The TV's main video output.
+/// The TV's main video output. `unknown`: no report yet. `unavailable`:
+/// disconnected, or no picture. `available`: video plays and the TV does not
+/// refuse its capture. `refused`: video plays, but the TV's permission
+/// verdict says it may not be captured. Open: an app reads a value it does
+/// not know as `unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = Video)]
 #[serde(rename_all = "snake_case")]
@@ -41,6 +45,7 @@ pub enum VideoSchema {
     Unknown,
     Unavailable,
     Available,
+    Refused,
 }
 
 // Mirrors `prysm_webos_link::FailureKind`.
@@ -100,8 +105,8 @@ pub enum LightingTargetSchema {
 /// `starting`: no connection attempt yet. `sending`: connected, frames go
 /// out in `encoding` (the one the receiver requested, set in the desktop
 /// portal), `fps` per second (0 while none come). `refused`: connected, but
-/// the TV refuses to share the video it shows (AirPlay, for example), so no
-/// frames go out until the video changes; not a failure. `paused`: the
+/// the TV refuses to share the video it shows, so no frames go out until it
+/// allows it again; not a failure. `paused`: the
 /// receiver stopped the stream because its lighting is off; the TV capture
 /// is released until a receiver takes a connection again, not a failure.
 /// `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
@@ -187,7 +192,12 @@ mod tests {
 
     #[test]
     fn mirrors_match_the_wire_types() {
-        for video in [Video::Unknown, Video::Unavailable, Video::Available] {
+        for video in [
+            Video::Unknown,
+            Video::Unavailable,
+            Video::Available,
+            Video::Refused,
+        ] {
             assert_mirror_round_trips::<Video, VideoSchema>(&video);
         }
         for target in LightingTarget::ALL {

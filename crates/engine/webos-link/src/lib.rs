@@ -55,8 +55,9 @@ pub enum Command {
 }
 
 /// The TV's main video output, as Luna `videooutput/getStatus` reports the
-/// `MAIN` sink. Also the webOS capture adapter's readiness input
-/// (`prysm_capture_webos::VideoSignal`).
+/// `MAIN` sink, refined by the TV's capture permission
+/// (`capturepermission/checkPermission`). Also the webOS capture adapter's
+/// readiness input (`prysm_capture_webos::VideoSignal`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Video {
@@ -66,8 +67,14 @@ pub enum Video {
     Unknown,
     /// Disconnected or zero-sized. The native tap is released and frames stop.
     Unavailable,
-    /// Connected with a size and frame rate. Muted video still counts.
+    /// Connected with a size and frame rate, and the TV does not refuse its
+    /// capture (or its permission is not observed). The TV refuses muted
+    /// video, as it does between videos.
     Available,
+    /// Connected with a size and frame rate, but the TV's permission verdict
+    /// says it may not be captured. No tap is opened; frames stop until the
+    /// signal changes.
+    Refused,
 }
 
 /// Worker → supervisor.
@@ -149,7 +156,7 @@ pub enum SlimLink {
     /// while none come.
     Sending { encoding: StreamEncoding, fps: u16 },
     /// Connected, but the TV refuses to share the video it shows, so no
-    /// frames go out until the video changes. Not a failure.
+    /// frames go out until it allows it again. Not a failure.
     Refused {},
     /// The receiver stopped the stream (its lighting is off), and the TV
     /// capture is released until a receiver takes a connection again. Not a

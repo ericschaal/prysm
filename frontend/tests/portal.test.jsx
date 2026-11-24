@@ -346,13 +346,10 @@ test('Home says when video is awaited; the capture rate is in the technical deta
     );
     await act(async () => sleep(slowStartMs + 50));
     assert.equal(info(), null, 'a refusal is not a problem');
-    assert.equal(
-      note(),
-      'The TV doesn’t share this video (AirPlay, for example).',
-    );
+    assert.equal(note(), 'The TV doesn’t let Prysm capture this video.');
     assert.equal(
       $$('.path-fact')[0].textContent,
-      'The TV doesn’t share this video (AirPlay, for example).',
+      'The TV doesn’t let Prysm capture this video.',
       'the Video fact says it, not waiting',
     );
 

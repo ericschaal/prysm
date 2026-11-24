@@ -852,7 +852,7 @@
         "type": "string"
       },
       "Picture": {
-        "description": "Whether frames arrive from the source. `arriving`: at least one frame in\nthe last second. `quiet`: none, and no reason given (no signal, no\nsender); also right after lighting starts. `refused`: none, because the\nsource's device refuses to share the video it shows (an LG TV playing\nAirPlay); frames come again once the video changes. Neither `quiet` nor\n`refused` is a failure: lighting waits for video, and releases the lights\nafter 3 s without it.",
+        "description": "Whether frames arrive from the source. `arriving`: at least one frame in\nthe last second. `quiet`: none, and no reason given (no signal, no\nsender); also right after lighting starts. `refused`: none, because the\nsource's device refuses to share the video it shows (an LG TV that does\nnot allow its capture); frames come again once it does. Neither `quiet` nor\n`refused` is a failure: lighting waits for video, and releases the lights\nafter 3 s without it.",
         "enum": [
           "arriving",
           "quiet",

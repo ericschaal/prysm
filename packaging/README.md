@@ -245,7 +245,7 @@ Installed layout (`/media/developer/apps/usr/palm/…`):
 | `services/io.github.ericschaal.prysm.service/prysm-webos-service` | the flavour's supervisor (Luna-activated, root) |
 | `services/io.github.ericschaal.prysm.service/prysm-webos-worker` | the flavour's worker |
 | `services/io.github.ericschaal.prysm.service/setup.sh` | run after every install or update (TV app via Homebrew Channel, `install-ipk.sh`, or ssh): `prysm-webos-service setup` |
-| `services/io.github.ericschaal.prysm.service/*.json`, `supervisor.service` | [Luna files](webos/service/): supervisor role (name `io.github.ericschaal.prysm.service`, inbound any, outbound `tvpower`, `videooutput`), worker role (capture and resource-manager clients), public API `getState setPreferences setTarget setEnabled uninstall`, client groups, D-Bus service |
+| `services/io.github.ericschaal.prysm.service/*.json`, `supervisor.service` | [Luna files](webos/service/): supervisor role (name `io.github.ericschaal.prysm.service`, inbound any, outbound `tvpower`, `videooutput`, `capturepermission`), worker role (capture and resource-manager clients), public API `getState setPreferences setTarget setEnabled uninstall`, client groups, D-Bus service |
 | `services/io.github.ericschaal.prysm.service/licenses/` | Prysm, hyperion-webos and TV native API notices, `javascript.txt` for the bundled JavaScript; slim also OpenH264, gstreamer-rs and gtk-rs |
 
 `setup` writes `/var/luna-service2/manifests.d/io.github.ericschaal.prysm.{supervisor,worker}.json`

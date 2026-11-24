@@ -3,7 +3,7 @@
 //! its [`Worker`].
 use super::{Acquired, Backend, Fault, Limits, Recovery, Tap};
 use crate::{Readiness, Video, VideoSignal, WebosSettings};
-use prysm_ports::{Error, Result, Worker, chain};
+use prysm_ports::{Attempts, Error, Result, Worker, chain};
 use std::time::{Duration, Instant};
 
 /// Which tap the native thread holds. The two never run together.
@@ -76,13 +76,57 @@ fn video_wait(recovery: Recovery, reopen: Reopen, limits: &Limits) -> Option<Dur
 }
 
 /// The tap for `video`: video while it is available or unknown, the TV UI
-/// without video while `include_ui` and the UI may open, else none.
+/// without video while `include_ui` and the UI may open, else none. Video
+/// the TV refuses gets neither: menus must not light as if video worked.
 fn wanted(video: Video, include_ui: bool, ui: UiSupport) -> Option<Kind> {
     match video {
         Video::Available | Video::Unknown => Some(Kind::Video),
         Video::Unavailable if include_ui && ui.may_open() => Some(Kind::Ui),
-        Video::Unavailable => None,
+        Video::Unavailable | Video::Refused => None,
     }
+}
+
+/// What a video acquisition says of the driver's initialization, logged for
+/// each try of a [`Refusal::Retrying`] series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    /// `vtCapture_init` refused (status 17).
+    Refused,
+    /// Not ready yet (status 1).
+    NotReady,
+    /// Initialized: a frame or a pending buffer.
+    Accepted,
+    /// A native failure.
+    Failed,
+}
+
+impl Answer {
+    fn of(acquired: &Result<Acquired, Fault>) -> Self {
+        match acquired {
+            Ok(Acquired::Refused) => Self::Refused,
+            Ok(Acquired::NotReady) => Self::NotReady,
+            Ok(Acquired::Frame(_) | Acquired::Pending) => Self::Accepted,
+            Err(_) => Self::Failed,
+        }
+    }
+}
+
+/// The message of each [`Answer`] logged while retrying.
+const ANSWERED: &str = "webOS video initialization answered for capturable video";
+
+/// Video the TV refuses to capture, as the native thread handles it.
+#[derive(Debug)]
+enum Refusal {
+    /// Nothing is refused.
+    None,
+    /// The driver refused video the supervisor reports as capturable: it is
+    /// initialized again on [`Limits::refused`]. Pulls stay quiet meanwhile,
+    /// as the refusal is expected to pass.
+    Retrying(Attempts),
+    /// Until the video signal changes: the supervisor reports the video
+    /// refused, the driver refused video whose state is unknown, or the
+    /// retries ran out.
+    Waiting,
 }
 
 pub(super) struct Native<B> {
@@ -106,10 +150,14 @@ pub(super) struct Native<B> {
     video_failing: bool,
     /// A UI fault was logged since the last UI frame.
     ui_failing: bool,
-    /// The TV refused the video: the tap, its driver only created, is kept
-    /// and initialized again only after the video signal changes, never on a
-    /// timer, as a retry before then is refused too.
-    refused: bool,
+    /// Set only through [`Self::refuse`], which tells the pulls.
+    refusal: Refusal,
+    /// The held video tap's last answer was a refusal: its driver is only
+    /// created, so it holds nothing of a video context and is initialized
+    /// again instead of released, as its release can hang.
+    created_only: bool,
+    /// When the video signal last changed, as the capture thread saw it.
+    changed_at: Instant,
 }
 
 impl<B: Backend> Native<B> {
@@ -134,7 +182,9 @@ impl<B: Backend> Native<B> {
             pending_since: None,
             video_failing: false,
             ui_failing: false,
-            refused: false,
+            refusal: Refusal::None,
+            created_only: false,
+            changed_at: Instant::now(),
         }
     }
 
@@ -155,31 +205,38 @@ impl<B: Backend> Native<B> {
     fn capture(&mut self) -> Result<()> {
         self.video.wake(self.worker.wakeup());
         let period = Duration::from_secs(1) / self.settings.fps.max(1);
-        let mut seen = self.video.current();
-        let mut generation = seen.generation;
+        // `None`: the signal at the start counts as a change.
+        let mut seen = None;
+        let mut generation = self.video.current().generation;
         let mut next = Instant::now();
         while !self.worker.stopped() {
             let readiness = self.video.current();
-            let mut was_refused = false;
-            if readiness != seen {
-                seen = readiness;
-                self.ui = self.ui.after_change();
-                was_refused = self.refused;
-                self.refuse(false);
-            }
             let Readiness {
                 video,
                 generation: current,
             } = readiness;
+            if seen != Some(readiness) {
+                seen = Some(readiness);
+                self.changed_at = Instant::now();
+                tracing::info!(?video, generation = current, "video signal changed");
+                self.ui = self.ui.after_change();
+                // A created-only driver is kept for its next initialization,
+                // unless video is gone (the UI tap may take its place).
+                if self.created_only && video == Video::Unavailable {
+                    self.release_tap()?;
+                }
+                self.refuse(if video == Video::Refused {
+                    Refusal::Waiting
+                } else {
+                    Refusal::None
+                });
+            }
             let kind = self.wanted(video);
             // A change of tap kind or video context starts a new period: the
-            // next step opens the kind that matches. The current tap is
-            // released, except a refused video's after a change of context
-            // alone: that driver is only created, so it holds nothing of the
-            // old context and is initialized again, while its release can
-            // hang.
+            // next step opens the kind that matches, or initializes a kept
+            // created-only driver again.
             if kind != self.kind || current != generation {
-                if kind != self.kind || !was_refused {
+                if !self.created_only {
                     self.release_tap()?;
                 }
                 generation = current;
@@ -189,10 +246,11 @@ impl<B: Backend> Native<B> {
                 self.retry_at = Instant::now();
             }
             let now = Instant::now();
-            let Some(kind) = kind.filter(|_| !self.refused && now >= self.retry_at) else {
+            let waiting = matches!(self.refusal, Refusal::Waiting);
+            let Some(kind) = kind.filter(|_| !waiting && now >= self.retry_at) else {
                 // Idle or refused: until the video signal changes; retrying:
                 // until the retry time, or a change first.
-                if kind.is_none() || self.refused {
+                if kind.is_none() || waiting {
                     self.worker.idle();
                 } else {
                     self.worker
@@ -200,7 +258,7 @@ impl<B: Backend> Native<B> {
                 }
                 continue;
             };
-            self.step(kind)?;
+            self.step(kind, video)?;
             // Pace on a fixed clock; skip missed ticks instead of bursting.
             next += period;
             let now = Instant::now();
@@ -219,7 +277,7 @@ impl<B: Backend> Native<B> {
     }
 
     /// Open if needed, then acquire once.
-    fn step(&mut self, kind: Kind) -> Result<()> {
+    fn step(&mut self, kind: Kind, video: Video) -> Result<()> {
         let worker = self.worker.clone();
         let tap = match &mut self.tap {
             Some((_, tap)) => tap,
@@ -239,13 +297,34 @@ impl<B: Backend> Native<B> {
             Kind::Ui => "UI acquire",
         };
         let acquired = worker.watch(operation, || tap.acquire());
-        self.acquired(kind, acquired)
+        self.acquired(kind, video, acquired)
     }
 
     /// Act on one acquisition: publish a frame, time a pending or preparing
-    /// driver, wait out a refusal, or recover from a fault.
-    fn acquired(&mut self, kind: Kind, acquired: Result<Acquired, Fault>) -> Result<()> {
+    /// driver, handle a refusal, or recover from a fault.
+    fn acquired(
+        &mut self,
+        kind: Kind,
+        video: Video,
+        acquired: Result<Acquired, Fault>,
+    ) -> Result<()> {
         let now = Instant::now();
+        let answer = Answer::of(&acquired);
+        if answer != Answer::Refused {
+            self.created_only = false;
+            if let Refusal::Retrying(attempts) = &self.refusal {
+                tracing::info!(
+                    attempt = attempts.failures() + 1,
+                    since_change_ms = self.since_change(now),
+                    ?answer,
+                    "{ANSWERED}"
+                );
+                // Not ready yet stays in the series, so its bound holds.
+                if answer != Answer::NotReady {
+                    self.refuse(Refusal::None);
+                }
+            }
+        }
         match acquired {
             Ok(Acquired::Frame(frame)) => {
                 self.not_ready_since = None;
@@ -289,18 +368,54 @@ impl<B: Backend> Native<B> {
                 // Not preparation: no deadline runs while the TV refuses.
                 self.not_ready_since = None;
                 self.pending_since = None;
-                self.refuse(true);
-                let message = "the TV refuses to capture this video; \
-                               tried again once the video signal changes";
-                if std::mem::replace(&mut self.video_failing, true) {
-                    tracing::debug!("{message}");
-                } else {
-                    tracing::warn!("{message}");
-                }
+                self.created_only = true;
+                self.refused(video, now);
             }
             Err(fault) => return self.recover(kind, fault),
         }
         Ok(())
+    }
+
+    /// The driver refused `video` at `now`. Video the supervisor reports as
+    /// capturable is initialized again on [`Limits::refused`] and, once that
+    /// runs out, waits like any other refusal for the video signal to change.
+    fn refused(&mut self, video: Video, now: Instant) {
+        let since_change_ms = self.since_change(now);
+        if video == Video::Available {
+            let mut attempts = match std::mem::replace(&mut self.refusal, Refusal::None) {
+                Refusal::Retrying(attempts) => attempts,
+                Refusal::None | Refusal::Waiting => Attempts::new(self.limits.refused),
+            };
+            let retry = attempts.failed(now);
+            let attempt = attempts.failures();
+            tracing::info!(attempt, since_change_ms, answer = ?Answer::Refused, "{ANSWERED}");
+            if let Some(at) = retry {
+                self.retry_at = at;
+                self.refuse(Refusal::Retrying(attempts));
+                return;
+            }
+            tracing::warn!(
+                attempts = attempt,
+                elapsed_ms = since_change_ms,
+                "the TV reported the video as capturable, but the capture library kept \
+                 refusing it; tried again once the video signal changes"
+            );
+            self.video_failing = true;
+        } else {
+            let message = "the TV refuses to capture this video; \
+                           tried again once the video signal changes";
+            if std::mem::replace(&mut self.video_failing, true) {
+                tracing::debug!("{message}");
+            } else {
+                tracing::warn!("{message}");
+            }
+        }
+        self.refuse(Refusal::Waiting);
+    }
+
+    /// Whole milliseconds from the last change of the video signal to `now`.
+    fn since_change(&self, now: Instant) -> u128 {
+        now.saturating_duration_since(self.changed_at).as_millis()
     }
 
     /// Fatal video faults end the source; others release the tap and retry
@@ -358,15 +473,16 @@ impl<B: Backend> Native<B> {
         }
     }
 
-    /// Whether the TV refuses the video, for this thread and its pulls.
-    fn refuse(&mut self, refused: bool) {
-        self.refused = refused;
-        self.worker.refused(refused);
+    /// What this thread does about a refused video, and what its pulls say.
+    fn refuse(&mut self, refusal: Refusal) {
+        self.worker.refused(matches!(refusal, Refusal::Waiting));
+        self.refusal = refusal;
     }
 
     fn release_tap(&mut self) -> Result<()> {
         self.not_ready_since = None;
         self.pending_since = None;
+        self.created_only = false;
         let Some((kind, tap)) = self.tap.take() else {
             return Ok(());
         };
@@ -425,7 +541,8 @@ mod tests {
         }
     }
 
-    /// A failed or unsupported UI is not opened; video always is.
+    /// A failed or unsupported UI is not opened; video always is, unless the
+    /// TV refuses it, which opens nothing.
     #[test]
     fn the_tap_follows_the_video_the_setting_and_the_ui_state() {
         use UiSupport::{Failed, Unsupported, Untried, Works};
@@ -440,6 +557,7 @@ mod tests {
                     ui_tap,
                     "{ui:?}, include_ui {include_ui}"
                 );
+                assert_eq!(wanted(Video::Refused, include_ui, ui), None);
             }
         }
     }

@@ -24,7 +24,7 @@ it. Capture therefore runs in a worker process under a supervisor.
 
 | Installed as | Full package | Slim package | Owns |
 | --- | --- | --- | --- |
-| `prysm-webos-service` (Luna-activated, root) | bin `prysm-webos-service` | bin `prysm-webos-slim-service` | Luna name `io.github.ericschaal.prysm.service`, TV power and video, preferences, the intent, worker start/stop/kill, setup and uninstall |
+| `prysm-webos-service` (Luna-activated, root) | bin `prysm-webos-service` | bin `prysm-webos-slim-service` | Luna name `io.github.ericschaal.prysm.service`, TV power, video and capture permission, preferences, the intent, worker start/stop/kill, setup and uninstall |
 | `prysm-webos-worker` (child) | `prysm-webos`: engine, webOS capture, WLED, portal on `0.0.0.0:8787` | `prysm-webos-slim`: webOS capture, H.264 or raw stream to a desktop Prysm | Capture and everything after it |
 
 The flavour is compiled into each supervisor binary, and each package ships
@@ -42,8 +42,9 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 - Commands go to the worker's stdin; events come back on its original stdout,
   one JSON object per line (at most 4 KiB, unknown fields rejected). Vendor
   output is redirected to stderr, which carries logs. The commands are
-  `video` (unavailable unless the TV is active), `reset_video` (input, app or
-  picture mode changed) and `target` (full only, numbered from 1 by
+  `video` (`unknown`, `unavailable`, `available` or `refused`; unavailable
+  unless the TV is active), `reset_video` (input, app or picture mode
+  changed) and `target` (full only, numbered from 1 by
   `sequence`; a slim worker takes it as protocol misuse); the events
   `status` (the full worker's says the `sequence` it last `applied`),
   `failed` and `faulted`. The worker
@@ -109,28 +110,53 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   accepts nothing but its release
   ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs),
   [native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
-- The TV can refuse to capture the video it shows: `vtCapture_init`
-  returns 17 when the library's capture-permission check says no, a
-  verdict that follows what the video output shows (AirPlay video is such a
-  case). The tap is kept, with its driver only created, and initialized
-  again only after the video signal changes, never on a timer and without
-  the preparation limit. A change of availability, or of input, app or
-  picture mode (the app is MAIN's `appId`, so a new app is the usual way
-  out of AirPlay), initializes the same driver again: a driver that is only
-  created holds nothing of the old context (not yet verified on hardware
-  after a change of app). Its release can hang in the
-  vendor's destructor ([cleanup diagnosis](../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md#video-release-has-a-reproduced-lost-wakeup-race)),
+- The TV can refuse to capture the video it shows. The supervisor
+  subscribes to the TV's capture permission
+  (`com.webos.service.capturepermission/checkPermission`) beside power and
+  video. Its `status` is the TV's verdict; observed on one TV: it is false
+  between videos (the TV mutes them) and turns true in the same second the
+  video output reports frames. `coreStatus` is only logged; `whitelist` is
+  not read. A reply without a boolean `status` (an error, a lost
+  subscription) leaves the permission unobserved, which refuses nothing.
+  Available video the TV refuses is sent to the worker, and published, as
+  `video` `refused`: the capture then holds no tap at all (no TV UI either,
+  so menus never light as if video worked), and its pulls are
+  `Pull::Refused` until the signal changes. When moving there from a
+  running tap, that tap is released; a driver that is only created is kept.
+- `vtCapture_init` returns 17 when the LG library's own copy of that
+  verdict says no; the library keeps its copy through its own subscription
+  to the same service. On one TV, a video start got 17 in the same second
+  the service published `status` true, so the copy may lag the event (not
+  proven: the timestamps were whole seconds). So while the supervisor
+  reports the video `available`, a 17 initializes the same driver again
+  every 100 ms for at most 2 s
+  ([`Retry`](../../crates/adapters/capture-webos/src/source.rs)), with
+  quiet pulls meanwhile; this bound is a guess to be tuned from
+  measurement. When it runs out, nothing fails: the capture waits as for a
+  refusal, its pulls `Pull::Refused`, until the video signal changes. A 17
+  for video whose state is `unknown` waits at once. Any change of the
+  signal (availability, permission, or input, app or picture mode)
+  initializes the same driver again: a driver that is only created holds
+  nothing of the old context (not yet verified on hardware after a change
+  of app). Its release can hang in the vendor's destructor
+  ([cleanup diagnosis](../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md#video-release-has-a-reproduced-lost-wakeup-race)),
   so it is released only when it must be: when video becomes unavailable
   (the tap kind changes) and when capture stops, which can still hang and
-  fault the worker. The session runs without frames meanwhile; its pulls
-  are `Pull::Refused`, which the engine reports as `input.picture`
-  `refused`. The full TV app reads that from its portal, the slim worker
-  reports its connected `link` as `refused`; the TV app then shows **Video
-  can’t be captured** with no Try again (slim keeps its Stop capture), and
-  the portal's light card says the TV doesn't share this video. Neither is
-  a failure, and both clear once frames come again. A slim stream carries
-  no reason, so its receiver's portal only waits for the picture. The
-  first refusal of a run logs a warning, the rest debug.
+  fault the worker. The engine reports refused pulls as `input.picture`
+  `refused`. The full TV app reads that from its portal (and the service's
+  `video` before the portal answers), the slim worker reports its
+  connected `link` as `refused`; the TV app then shows **Video can’t be
+  captured** with no Try again (slim keeps its Stop capture), and the
+  portal's light card says the TV doesn't let Prysm capture this video.
+  Neither is a failure, and both clear once frames come again. A slim
+  stream carries no reason, so its receiver's portal only waits for the
+  picture. The capture thread logs every change of the signal it sees and,
+  while it initializes again, every answer with its attempt and the
+  milliseconds since that change; a run of refusals that outlasts the bound
+  logs one warning. A fresh tap's open already ran one initialization whose
+  answer is not logged, so the first logged attempt is the driver's second.
+  Unverified on hardware: whether LG lets the supervisor subscribe to the
+  capture permission at all.
 - The supervisor reaps a worker before starting another (or lets go of one
   still not reaped 8 s after its KILL). Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.
@@ -183,8 +209,8 @@ protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
 Every rule above is one sans-IO machine,
 [`Machine::handle(Input, now) -> Vec<Effect>`](../../crates/hosts/webos-service/src/machine.rs):
-inputs are TV power and video, preferences (already validated and
-persisted), enable, worker events, logs and exits, a broken event stream, a
+inputs are TV power, video and capture permission, preferences (already
+validated and persisted), enable, worker events, logs and exits, a broken event stream, a
 failed spawn, a tick (at the time `Machine::next_due` names) and shutdown;
 effects are `Spawn`, `Send`, `Terminate`, `Kill`, `Abandon` (let go of a
 worker not reaped after its kill) and `Publish`. Its phases are idle, running, stopping and retrying. A worker is
@@ -244,7 +270,8 @@ or `effects` and replies with the state; the TV app retries a failure with
 `setTarget off` and then the target that failed. `setEnabled { enabled }`
 says whether slim capture streams; slim has no target, since the desktop
 Prysm decides what the lights do. The state has the fields both packages
-share (`preferences`, `power`, `video`, `failure`, `log`) and the installed
+share (`preferences`, `power`, `video` with the capture permission applied,
+`failure`, `log`) and the installed
 package's own, tagged by `flavor`: full `target` and a `worker` that reports
 `capturing`, `fps` and `portal` while it runs (`portal` also while it
 stops); slim `enabled` and a `worker` that reports `capturing` and its

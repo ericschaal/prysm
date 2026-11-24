@@ -215,6 +215,43 @@ fn full_runs_while_awake_and_gates_video_on_active() {
     ));
 }
 
+/// Available video the TV refuses to capture is sent and published as
+/// refused; an unobserved permission refuses nothing, and video that is not
+/// available stays as it is.
+#[test]
+fn the_capture_permission_refines_available_video() {
+    use crate::observe::Permission::{Allowed, Refused, Unobserved};
+    use Input::Permission as P;
+    let (mut m, t) = (full(), Instant::now());
+    script(
+        &mut m,
+        t,
+        vec![
+            (0, P(Refused), vec![]),
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (1, V(Video::Available), vec![video(Video::Refused)]),
+            (2, P(Allowed), vec![video(Video::Available)]),
+            (3, P(Refused), vec![video(Video::Refused)]),
+            (4, P(Unobserved), vec![video(Video::Available)]),
+            (5, P(Refused), vec![video(Video::Refused)]),
+            (6, V(Video::Unavailable), vec![video(Video::Unavailable)]),
+            (7, V(Video::Available), vec![video(Video::Refused)]),
+            (8, Pw(ScreenSaver), vec![video(Video::Unavailable)]),
+            (9, Pw(Active), vec![video(Video::Refused)]),
+        ],
+    );
+    assert_eq!(m.state(t).video, Video::Refused);
+    m.handle(P(Allowed), t);
+    assert_eq!(m.state(t).video, Video::Available);
+    m.handle(V(Video::Unknown), t);
+    m.handle(P(Refused), t);
+    assert_eq!(m.state(t).video, Video::Unknown, "only available video");
+}
+
 #[test]
 fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
     let mut m = full_with(Preferences {
@@ -2004,6 +2041,12 @@ fn every_phase_takes_every_input() {
             V(Video::Available),
             false,
             only_running((vec![video(Video::Available)], running, None)),
+        ),
+        // The video is still unknown: a verdict alone changes nothing.
+        (
+            Input::Permission(crate::observe::Permission::Refused),
+            false,
+            unchanged(),
         ),
         (
             Input::VideoContextChanged,

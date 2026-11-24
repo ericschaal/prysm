@@ -160,8 +160,8 @@ frames leaves idle time and never sets it. Absent while Prysm keeps up.
 `picture` is `arriving` (at least one frame in the window), `quiet` (none,
 and no reason given: no signal, no sender; also right after the session
 starts) or `refused` (none, because the source's device refuses to share the
-video it shows, as an LG TV playing AirPlay does; frames come again once the
-video changes). Neither `quiet` nor `refused` is a failure: screen sync keeps
+video it shows, as an LG TV does for video it does not allow to be captured;
+frames come again once it allows it). Neither `quiet` nor `refused` is a failure: screen sync keeps
 running, and the output is returned alike.
 `/metrics` has
 the received-to-flushed spans as the `prysm_frame_flush_seconds` summary.

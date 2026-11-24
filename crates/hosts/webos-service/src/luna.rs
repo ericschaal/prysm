@@ -108,10 +108,12 @@ where
 
     fn reply(&mut self, bus: &mut sys::Bus, index: usize, payload: &str) {
         let now = Instant::now();
-        if index == Watch::Power as usize {
-            self.service.power(&mut LunaBus(bus), payload, now);
-        } else if index == Watch::Video as usize {
-            self.service.video(&mut LunaBus(bus), payload, now);
+        let bus = &mut LunaBus(bus);
+        match Watch::ALL.get(index) {
+            Some(Watch::Power) => self.service.power(bus, payload, now),
+            Some(Watch::Video) => self.service.video(bus, payload, now),
+            Some(Watch::Permission) => self.service.permission(bus, payload, now),
+            None => {}
         }
     }
 

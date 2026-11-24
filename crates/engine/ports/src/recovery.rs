@@ -54,6 +54,8 @@ pub struct Attempts {
     schedule: Schedule,
     /// The first failure since the last success.
     since: Option<Instant>,
+    /// Failures since the last success.
+    failures: u32,
 }
 
 impl Attempts {
@@ -62,31 +64,37 @@ impl Attempts {
         Self {
             schedule,
             since: None,
+            failures: 0,
         }
     }
 
-    /// After a failure at `now`: when to try again.
-    ///
-    /// # Errors
-    /// [`Escalation::FAIL_FAST`] once the schedule gives up; a give-up is
-    /// never another retry.
-    pub fn failed(&mut self, now: Instant) -> Result<Instant, Escalation> {
+    /// After a failure at `now`: when to try again, or `None` once the
+    /// schedule gives up. A give-up is never another retry; what follows it
+    /// (an [`Escalation`], or a wait for an event) is the owner's.
+    pub fn failed(&mut self, now: Instant) -> Option<Instant> {
+        self.failures = self.failures.saturating_add(1);
         let first = self.since.is_none();
         let since = *self.since.get_or_insert(now);
-        let retry = match self.schedule {
+        match self.schedule {
             Schedule::Within { every, limit } => {
                 let deadline = since + limit;
                 (now < deadline).then(|| (now + every).min(deadline))
             }
             Schedule::Once => first.then_some(now),
-        };
-        retry.ok_or(Escalation::FAIL_FAST)
+        }
+    }
+
+    /// Failures since the last success, the latest included.
+    #[must_use]
+    pub const fn failures(&self) -> u32 {
+        self.failures
     }
 
     /// The operation really worked, so the next failure starts the schedule
     /// over.
     pub fn succeeded(&mut self) {
         self.since = None;
+        self.failures = 0;
     }
 }
 
@@ -106,7 +114,7 @@ mod tests {
         (0..failures)
             .map(|n| {
                 let now = start + apart * n;
-                attempts.failed(now).ok().map(|at| at - now)
+                attempts.failed(now).map(|at| at - now)
             })
             .collect()
     }
@@ -125,9 +133,9 @@ mod tests {
         let late = now + Duration::from_secs(10);
         let mut attempts = Attempts::new(WITHIN);
         attempts.failed(now).unwrap();
-        assert_eq!(attempts.failed(late), Err(Escalation::FAIL_FAST));
+        assert_eq!(attempts.failed(late), None);
         attempts.succeeded();
-        assert_eq!(attempts.failed(late), Ok(late + Duration::from_secs(1)));
+        assert_eq!(attempts.failed(late), Some(late + Duration::from_secs(1)));
     }
 
     #[test]
@@ -137,8 +145,8 @@ mod tests {
         let mut attempts = Attempts::new(WITHIN);
         attempts.failed(now).unwrap();
         let just_under = deadline - Duration::from_millis(1);
-        assert_eq!(attempts.failed(just_under), Ok(deadline));
-        assert_eq!(attempts.failed(deadline), Err(Escalation::FAIL_FAST));
+        assert_eq!(attempts.failed(just_under), Some(deadline));
+        assert_eq!(attempts.failed(deadline), None);
     }
 
     #[test]
@@ -149,10 +157,25 @@ mod tests {
         attempts.failed(now).unwrap();
         assert_eq!(
             attempts.failed(earlier),
-            Ok(earlier + Duration::from_secs(1))
+            Some(earlier + Duration::from_secs(1))
         );
         let deadline = now + Duration::from_secs(10);
-        assert_eq!(attempts.failed(deadline), Err(Escalation::FAIL_FAST));
+        assert_eq!(attempts.failed(deadline), None);
+    }
+
+    #[test]
+    fn failures_count_until_a_success() {
+        let now = Instant::now();
+        let mut attempts = Attempts::new(WITHIN);
+        assert_eq!(attempts.failures(), 0);
+        for failures in 1..=3 {
+            attempts.failed(now);
+            assert_eq!(attempts.failures(), failures);
+        }
+        attempts.failed(now + Duration::from_secs(10));
+        assert_eq!(attempts.failures(), 4, "a give-up counts too");
+        attempts.succeeded();
+        assert_eq!(attempts.failures(), 0);
     }
 
     #[test]
@@ -164,8 +187,8 @@ mod tests {
         let now = Instant::now();
         let mut attempts = Attempts::new(Schedule::Once);
         attempts.failed(now).unwrap();
-        assert_eq!(attempts.failed(now), Err(Escalation::FAIL_FAST));
+        assert_eq!(attempts.failed(now), None);
         attempts.succeeded();
-        assert_eq!(attempts.failed(now), Ok(now));
+        assert_eq!(attempts.failed(now), Some(now));
     }
 }

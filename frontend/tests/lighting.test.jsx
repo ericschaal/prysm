@@ -693,7 +693,7 @@ test('with the lights off the path marks a failure only where it is', () => {
       {
         tone: 'idle',
         title: 'No picture',
-        detail: 'The TV doesn’t share this video (AirPlay, for example).',
+        detail: 'The TV doesn’t let Prysm capture this video.',
       },
       section,
     );

@@ -56,7 +56,8 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(role['allowedNames'], [info['id']])
         self.assertEqual(role['permissions'], [{
             'service': info['id'], 'inbound': ['*'],
-            'outbound': ['com.webos.service.tvpower', 'com.webos.service.videooutput']}])
+            'outbound': ['com.webos.service.tvpower', 'com.webos.service.videooutput',
+                         'com.webos.service.capturepermission']}])
         self.assertEqual(worker_role['exeName'], INSTALLED + worker)
         self.assertEqual(worker_role['allowedNames'], ['com.webos.service.capture.client*', 'com.webos.rm.client.*'])
         self.assertEqual(api, {'public': [info['id'] + '/' + method for method in methods]})

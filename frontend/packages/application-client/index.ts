@@ -99,8 +99,7 @@ export const reconnectDelayMs = (attempt: number) =>
  * Why no picture arrives while the source's device refuses to share the
  * video it shows (`picture` is `refused`), for people.
  */
-export const REFUSED_VIDEO =
-  'The TV doesn’t share this video (AirPlay, for example).';
+export const REFUSED_VIDEO = 'The TV doesn’t let Prysm capture this video.';
 
 /**
  * Why the lights are not showing screen sync, for people. Prysm keeps

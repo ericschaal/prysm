@@ -286,7 +286,7 @@
         "type": "object"
       },
       "SlimLink": {
-        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding` (the one the receiver requested, set in the desktop\nportal), `fps` per second (0 while none come). `refused`: connected, but\nthe TV refuses to share the video it shows (AirPlay, for example), so no\nframes go out until the video changes; not a failure. `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (`failure.kind` `receiver`).\n`failed`: the encoder, version, replaced or receiver-failed failure. The\nstate's own `failure` is the one to show.",
+        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding` (the one the receiver requested, set in the desktop\nportal), `fps` per second (0 while none come). `refused`: connected, but\nthe TV refuses to share the video it shows, so no frames go out until it\nallows it again; not a failure. `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (`failure.kind` `receiver`).\n`failed`: the encoder, version, replaced or receiver-failed failure. The\nstate's own `failure` is the one to show.",
         "oneOf": [
           {
             "properties": {
@@ -552,11 +552,12 @@
         "type": "object"
       },
       "Video": {
-        "description": "The TV's main video output.",
+        "description": "The TV's main video output. `unknown`: no report yet. `unavailable`:\ndisconnected, or no picture. `available`: video plays and the TV does not\nrefuse its capture. `refused`: video plays, but the TV's permission\nverdict says it may not be captured. Open: an app reads a value it does\nnot know as `unknown`.",
         "enum": [
           "unknown",
           "unavailable",
-          "available"
+          "available",
+          "refused"
         ],
         "type": "string"
       },

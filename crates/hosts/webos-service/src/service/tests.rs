@@ -187,6 +187,16 @@ impl Harness {
         self.service.power(&mut self.bus, &payload, now);
     }
 
+    fn video(&mut self, payload: &str, ms: u64) {
+        let now = self.at(ms);
+        self.service.video(&mut self.bus, payload, now);
+    }
+
+    fn permission(&mut self, payload: &str, ms: u64) {
+        let now = self.at(ms);
+        self.service.permission(&mut self.bus, payload, now);
+    }
+
     fn tick(&mut self, ms: u64) -> bool {
         let now = self.at(ms);
         self.service.tick(&mut self.bus, now)
@@ -514,6 +524,56 @@ fn power_and_video_drive_the_worker_and_its_commands() {
     assert_eq!(published["video"], "available");
 }
 
+const REFUSED: &str = r#"{"status":false,"whitelist":[],"coreStatus":true,"returnValue":true}"#;
+const ALLOWED: &str = r#"{"status":true,"whitelist":[],"coreStatus":true,"returnValue":true}"#;
+
+/// The worker is told, and the app shown, that available video the TV
+/// refuses is refused; a verdict that is not observed refuses nothing.
+#[test]
+fn the_capture_permission_refines_the_video_sent_and_published() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    h.permission(REFUSED, 1);
+    assert!(h.log().is_empty(), "no video yet");
+    h.video(ACTIVE_VIDEO, 1);
+    assert_eq!(h.log(), [r#"send {"type":"video","video":"refused"}"#]);
+    assert_eq!(h.bus.published.last().unwrap()["video"], "refused");
+
+    h.permission(ALLOWED, 2);
+    assert_eq!(h.log(), [r#"send {"type":"video","video":"available"}"#]);
+    assert_eq!(h.bus.published.last().unwrap()["video"], "available");
+
+    h.permission(REFUSED, 3);
+    h.log();
+    h.permission(r#"{"returnValue":false,"errorText":"denied"}"#, 4);
+    assert_eq!(h.log(), [r#"send {"type":"video","video":"available"}"#]);
+}
+
+/// A verdict settles the subscription; a reply without one renews it after
+/// [`RESUBSCRIBE`], and a renewal forgets the old verdict.
+#[test]
+fn the_capture_permission_subscription_is_renewed_until_it_answers() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.video(ACTIVE_VIDEO, 0);
+    h.permission(REFUSED, 100);
+    h.video(ACTIVE_VIDEO, 100);
+    h.log();
+    assert!(h.tick(5_000));
+    assert!(h.bus.resubscribed.is_empty(), "every subscription settled");
+    h.permission(r#"{"returnValue":true,"coreStatus":true}"#, 5_100);
+    assert_eq!(h.log(), [r#"send {"type":"video","video":"available"}"#]);
+    assert!(h.tick(10_099));
+    assert!(h.bus.resubscribed.is_empty());
+    assert!(h.tick(10_100));
+    assert_eq!(h.bus.resubscribed, [Watch::Permission]);
+    h.permission(REFUSED, 10_200);
+    assert_eq!(h.log(), [r#"send {"type":"video","video":"refused"}"#]);
+    assert!(h.tick(20_000));
+    assert_eq!(h.bus.resubscribed, [Watch::Permission], "settled again");
+}
+
 #[test]
 fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
     let mut h = Harness::new(config(), None);
@@ -589,7 +649,7 @@ fn silent_subscriptions_are_renewed() {
     assert!(h.tick(4_999));
     assert!(h.bus.resubscribed.is_empty());
     assert!(h.tick(5_000));
-    assert_eq!(h.bus.resubscribed, [Watch::Power, Watch::Video]);
+    assert_eq!(h.bus.resubscribed, Watch::ALL);
     // A good power reply settles; an error reply fails closed and renews later.
     h.power("Active", 5_100);
     h.log();
@@ -606,7 +666,13 @@ fn silent_subscriptions_are_renewed() {
     assert!(h.tick(10_000));
     assert_eq!(
         h.bus.resubscribed,
-        [Watch::Power, Watch::Video, Watch::Video]
+        [
+            Watch::Power,
+            Watch::Video,
+            Watch::Permission,
+            Watch::Video,
+            Watch::Permission
+        ]
     );
     assert!(h.tick(10_200));
     assert_eq!(h.bus.resubscribed.last(), Some(&Watch::Power));

@@ -16,6 +16,12 @@ fn commands_have_a_stable_wire_form() {
             },
             r#"{"type":"video","video":"available"}"#,
         ),
+        (
+            Command::Video {
+                video: Video::Refused,
+            },
+            r#"{"type":"video","video":"refused"}"#,
+        ),
         (Command::ResetVideo {}, r#"{"type":"reset_video"}"#),
         (
             Command::Target {

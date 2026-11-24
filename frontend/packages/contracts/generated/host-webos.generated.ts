@@ -364,8 +364,8 @@ export interface components {
          * @description Whether frames arrive from the source. `arriving`: at least one frame in
          *     the last second. `quiet`: none, and no reason given (no signal, no
          *     sender); also right after lighting starts. `refused`: none, because the
-         *     source's device refuses to share the video it shows (an LG TV playing
-         *     AirPlay); frames come again once the video changes. Neither `quiet` nor
+         *     source's device refuses to share the video it shows (an LG TV that does
+         *     not allow its capture); frames come again once it does. Neither `quiet` nor
          *     `refused` is a failure: lighting waits for video, and releases the lights
          *     after 3 s without it.
          * @enum {string}

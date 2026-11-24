@@ -11,7 +11,7 @@ mod native;
 use crate::{VideoSignal, WebosSettings};
 use native::Native;
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result};
+use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result, Schedule};
 use std::time::Duration;
 
 /// One acquisition attempt.
@@ -21,9 +21,36 @@ pub(crate) enum Acquired {
     Pending,
     /// The driver is (re)initializing; try again after [`Limits::retry`].
     NotReady,
-    /// The TV refuses to capture this video; try again once the video
-    /// signal changes, on the same tap.
+    /// The driver refuses to capture this video (`vtCapture_init`
+    /// answered 17); its driver stays created, and the next acquisition
+    /// initializes it again ([`Retry`]).
     Refused,
+}
+
+/// Why the native thread initializes a refused driver again before the
+/// video signal changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Retry {
+    /// The driver refused video the supervisor reports as available. The
+    /// library answers from its own copy of the TV's permission verdict,
+    /// which follows the TV's permission event; when the supervisor observed
+    /// that event, it reported the video as capturable from it, so the
+    /// library's copy follows within moments. Bounded, as this argument is a
+    /// hypothesis from one TV and does not hold where the supervisor could
+    /// not observe the verdict: once the bound runs out, the capture waits
+    /// for the next change of the video signal.
+    LibraryCatchingUp,
+}
+
+impl Retry {
+    pub(crate) const fn schedule(self) -> Schedule {
+        match self {
+            Self::LibraryCatchingUp => Schedule::Within {
+                every: Duration::from_millis(100),
+                limit: Duration::from_secs(2),
+            },
+        }
+    }
 }
 
 /// A native failure. Recoverable ones release the tap and reopen it.
@@ -95,6 +122,9 @@ pub(crate) struct Limits {
     pub retry: Duration,
     /// How long `close` waits for certified release ([`RELEASE`]).
     pub release: Duration,
+    /// When a driver that refused video the supervisor reports as
+    /// capturable is initialized again ([`Retry::LibraryCatchingUp`]).
+    pub refused: Schedule,
 }
 
 impl Limits {
@@ -104,13 +134,15 @@ impl Limits {
         pending: Duration::from_secs(2),
         retry: Duration::from_secs(1),
         release: RELEASE,
+        refused: Retry::LibraryCatchingUp.schedule(),
     };
 }
 
 /// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Quiet`]
-/// while video is unavailable or the driver is preparing, [`Pull::Refused`]
-/// while the TV refuses the video, and `Err` on a terminal native failure or
-/// a native call that exceeds its watchdog.
+/// while video is unavailable or the driver is preparing (or initialized
+/// again after a refusal), [`Pull::Refused`] while the TV refuses the video,
+/// and `Err` on a terminal native failure or a native call that exceeds its
+/// watchdog.
 pub struct WebosFrames {
     thread: OwnerThread,
 }

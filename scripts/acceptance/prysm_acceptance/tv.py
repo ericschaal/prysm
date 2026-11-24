@@ -36,6 +36,7 @@ class Video(StrEnum):
     UNKNOWN = 'unknown'
     UNAVAILABLE = 'unavailable'
     AVAILABLE = 'available'
+    REFUSED = 'refused'  # video plays, but the TV does not allow its capture
 
 
 class StoppedWorker(TypedDict):

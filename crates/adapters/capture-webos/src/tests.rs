@@ -3,7 +3,7 @@
 use super::*;
 use crate::source::{Acquired, Backend, Fault, Limits, Recovery, Tap};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, Error, Pull, Registry, Settings, chain};
+use prysm_ports::{AdapterSettings, Error, Pull, Registry, Schedule, Settings, chain};
 use prysm_testkit::{eventually, within};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
@@ -19,6 +19,10 @@ const TEST: Limits = Limits {
     pending: Duration::from_secs(2),
     retry: Duration::from_millis(5),
     release: Duration::from_secs(2),
+    refused: Schedule::Within {
+        every: Duration::from_millis(5),
+        limit: Duration::from_millis(100),
+    },
 };
 
 fn recovery(fatal: bool) -> Recovery {
@@ -435,58 +439,193 @@ fn preparation_limit_is_a_failure_and_release_is_still_certified() {
     assert_eq!(driver.count(|s| s.releases), 1);
 }
 
-/// A refused video keeps its tap and is tried again only after the video
-/// signal changes, without a deadline: on the same tap after a change of
-/// availability or of context, and released only when the tap kind changes
-/// (here, video becoming unavailable).
+/// The driver's opens, acquisitions and releases so far.
+fn calls(driver: &Driver) -> (usize, usize, usize) {
+    let script = driver.script();
+    (script.opens, script.acquires, script.releases)
+}
+
+/// Pull until a frame arrives, failing the test after [`LIMIT`] or at a
+/// refusal.
+fn next_unrefused(frames: &mut WebosFrames) -> Frame {
+    let deadline = Instant::now() + LIMIT;
+    loop {
+        match frames.next_frame(SHORT).unwrap() {
+            Pull::Refused => panic!("a pull said refused"),
+            pull => {
+                if let Some(frame) = pull.into_frame() {
+                    return frame;
+                }
+            }
+        }
+        assert!(Instant::now() < deadline, "no frame");
+    }
+}
+
+/// A refusal of video whose state is unknown keeps its tap and waits for
+/// the video signal, without a deadline; the change initializes the same
+/// driver again.
 #[test]
-fn a_refused_video_waits_for_the_video_signal() {
+fn a_refused_unknown_video_waits_for_the_video_signal() {
     let driver = Driver::new();
     let video = VideoSignal::default();
-    driver.push([Step::Refused, Step::Frame(6), Step::Refused, Step::Refused]);
+    driver.push([Step::Refused, Step::Frame(6)]);
     let limits = Limits {
         preparation: Duration::from_millis(50),
         ..TEST
     };
     let mut frames = start_with(&driver, &video, limits);
-    eventually("`driver.count(|s| s.acquires) == 1`", LIMIT, || {
+    eventually("the refusal", LIMIT, || {
         (driver.count(|s| s.acquires) == 1).then_some(())
     });
-    // Past the retry and preparation limits: still waiting, nothing failed,
-    // and the pulls say why.
+    // Past the retry, preparation and refusal limits: still waiting,
+    // nothing failed, and the pulls say why.
     assert!(matches!(
         frames.next_frame(SHORT * 4).unwrap(),
         Pull::Refused
     ));
-    let calls = || {
-        let script = driver.script();
-        (script.opens, script.acquires, script.releases)
-    };
-    assert_eq!(calls(), (1, 1, 0));
+    assert_eq!(calls(&driver), (1, 1, 0));
 
     video.set(Video::Available);
     assert_eq!(next(&mut frames).as_slice(), &[6; 96]);
-    assert_eq!((calls().0, calls().2), (1, 0), "same tap");
+    assert_eq!((calls(&driver).0, calls(&driver).2), (1, 0), "same tap");
+    closes_cleanly(frames);
+}
 
-    eventually("the second refusal", LIMIT, || {
-        (driver.count(|s| s.acquires) == 3).then_some(())
+/// Video the TV refuses opens neither tap, also with menus included, and
+/// its pulls say refused; a running tap is released for it, and the TV UI
+/// takes over only once video is gone.
+#[test]
+fn video_the_tv_refuses_opens_no_tap() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Refused);
+    let mut frames = start_ui(&driver, &video);
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Refused));
+    assert_eq!(driver.count(|s| s.opens + s.ui_opens), 0);
+
+    driver.push([Step::Frame(3)]);
+    video.set(Video::Available);
+    assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
+    video.set(Video::Refused);
+    eventually("the release", LIMIT, || {
+        (driver.count(|s| s.releases) == 1).then_some(())
     });
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Refused));
+    assert_eq!(
+        driver.count(|s| s.ui_opens),
+        0,
+        "no menus over refused video"
+    );
+
+    video.set(Video::Unavailable);
+    assert_eq!(next_where(&mut frames, |f| f.width() == 4).width(), 4);
+    closes_cleanly(frames);
+    assert_eq!(driver.count(|s| s.most_open), 1);
+}
+
+/// Video the supervisor reports as capturable that the driver refuses is
+/// initialized again on the same driver, without a release, and its pulls
+/// stay quiet meanwhile.
+#[test]
+fn a_refusal_of_capturable_video_initializes_the_same_driver_again() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Available);
+    driver.push([Step::Refused, Step::Refused, Step::Refused, Step::Frame(4)]);
+    let limits = Limits {
+        refused: Schedule::Within {
+            every: Duration::from_millis(5),
+            limit: LIMIT,
+        },
+        ..TEST
+    };
+    let mut frames = start_with(&driver, &video, limits);
+    assert_eq!(next_unrefused(&mut frames).as_slice(), &[4; 96]);
+    let (opens, acquires, releases) = calls(&driver);
+    assert_eq!((opens, releases), (1, 0));
+    assert!(acquires >= 4, "{acquires}");
+    closes_cleanly(frames);
+}
+
+/// Refusals that outlast [`Limits::refused`] are no failure: the pulls say
+/// refused and the created driver is kept until the video signal changes. A
+/// change of context, or video the TV refuses and then allows, initializes
+/// the same driver again; only video that is gone releases it.
+#[test]
+fn refusals_past_their_bound_wait_for_the_video_signal() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Available);
+    driver.with(|s| s.idle = Step::Refused);
+    let mut frames = start(&driver, &video);
+    let refused = |frames: &mut WebosFrames| {
+        let deadline = Instant::now() + LIMIT;
+        while !matches!(frames.next_frame(SHORT).unwrap(), Pull::Refused) {
+            assert!(Instant::now() < deadline, "no refusal");
+        }
+    };
+    refused(&mut frames);
+    let (opens, given_up, releases) = calls(&driver);
+    assert_eq!((opens, releases), (1, 0));
+    assert!(given_up >= 2, "{given_up}");
+    thread::sleep(SHORT);
+    assert_eq!(calls(&driver).1, given_up, "no tries after the bound");
+
+    // A new context: a new series of tries on the same driver.
     video.reset();
-    eventually("the third refusal", LIMIT, || {
-        (driver.count(|s| s.acquires) == 4).then_some(())
+    eventually("the tries after the change", LIMIT, || {
+        (calls(&driver).1 > given_up + 1).then_some(())
     });
-    assert_eq!(calls(), (1, 4, 0), "a new context initializes the same tap");
+    refused(&mut frames);
+    assert_eq!((calls(&driver).0, calls(&driver).2), (1, 0), "same tap");
+
+    // Refused by the TV, then allowed: still the same driver.
+    video.set(Video::Refused);
+    thread::sleep(SHORT);
+    assert_eq!(calls(&driver).2, 0, "a created-only driver is kept");
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Refused));
+    driver.with(|s| s.idle = Step::Pending);
+    driver.push([Step::Frame(9)]);
+    video.set(Video::Available);
+    assert_eq!(next(&mut frames).as_slice(), &[9; 96]);
+    assert_eq!((calls(&driver).0, calls(&driver).2), (1, 0));
+
+    video.set(Video::Unavailable);
+    eventually("the release", LIMIT, || {
+        (calls(&driver).2 == 1).then_some(())
+    });
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
+    closes_cleanly(frames);
+    assert_eq!(calls(&driver).0, 1);
+}
+
+/// A created-only driver kept while the TV refuses the video is released
+/// once video is gone, also when no TV UI tap takes its place.
+#[test]
+fn a_kept_created_driver_is_released_when_video_is_gone() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Available);
+    driver.with(|s| s.idle = Step::Refused);
+    let mut frames = start(&driver, &video);
+    // A second try: the first refusal was taken.
+    eventually("a refusal", LIMIT, || {
+        (driver.count(|s| s.acquires) >= 2).then_some(())
+    });
+    video.set(Video::Refused);
     assert!(matches!(
         frames.next_frame(SHORT * 4).unwrap(),
         Pull::Refused
     ));
-
+    assert_eq!((calls(&driver).0, calls(&driver).2), (1, 0), "kept");
     video.set(Video::Unavailable);
-    eventually("the release", LIMIT, || (calls().2 == 1).then_some(()));
-    // The change withdrew the refusal.
+    eventually("the release", LIMIT, || {
+        (calls(&driver).2 == 1).then_some(())
+    });
     assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
-    assert_eq!(calls(), (1, 4, 1));
     closes_cleanly(frames);
+    assert_eq!(calls(&driver), (1, calls(&driver).1, 1));
 }
 
 #[test]

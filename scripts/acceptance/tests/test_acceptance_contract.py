@@ -154,11 +154,12 @@ class Examples(unittest.TestCase):
             self.assertIsInstance(tv.capturing(reply), bool)
             if reply['worker']['phase'] != 'running':
                 self.assertEqual((tv.capturing(reply), tv.fps(reply)), (False, None))
-            # Full reports its portal while running or stopping; the slim example runs paused.
+            # Full reports its portal while running or stopping; one slim example runs paused.
             shown = (reply['flavor'], reply['worker']['phase'])
             portal = 'http://192.168.1.5:8787/' if shown in {('full', 'running'), ('full', 'stopping')} else None
             self.assertEqual(tv.portal(reply), portal, shown)
-            self.assertEqual(tv.paused(reply), shown == ('slim', 'running'), shown)
+            link = reply['worker'].get('link') or {}
+            self.assertEqual(tv.paused(reply), link.get('state') == 'paused', shown)
 
 
 def sent(call: Callable[[prysm_api.Prysm], object]) -> Any:

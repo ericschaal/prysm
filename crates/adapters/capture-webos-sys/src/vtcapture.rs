@@ -35,10 +35,8 @@ pub enum Acquired<'a> {
     /// ([`NOT_READY`]); the next call re-initializes. Callers wait about a
     /// second between attempts.
     NotReady,
-    /// The TV refuses to capture the video it shows ([`REFUSED`]; AirPlay
-    /// video is such a case). The driver stays created and the next call
-    /// initializes again; callers wait for the video to change first, since
-    /// a retry before that is refused too.
+    /// The library refuses to capture the video the TV shows ([`REFUSED`]).
+    /// The driver stays created and the next call initializes again.
     Refused,
 }
 
@@ -366,9 +364,9 @@ enum Started {
 const NOT_READY: i32 = 1;
 
 /// The status of `vtCapture_init` when the library's capture-permission check
-/// says no: the TV's verdict, which follows what the video output shows
-/// (pipeline permission, and the video not muted). AirPlay video is such a
-/// case.
+/// says no. The library answers from its own copy of the TV's permission
+/// verdict (`capturepermission/checkPermission`: pipeline permission, and
+/// the video not muted), which its own subscription updates.
 const REFUSED: i32 = 17;
 
 /// One native capture tap; see the crate documentation.

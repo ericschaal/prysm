@@ -1,4 +1,4 @@
-//! Typed readings of the two Luna subscriptions the supervisor depends on.
+//! Typed readings of the three Luna subscriptions the supervisor depends on.
 use crate::state::Power;
 use prysm_webos_link::Video;
 use serde_json::Value;
@@ -22,8 +22,7 @@ pub fn power(payload: &Value) -> Option<Power> {
 pub struct VideoReading {
     pub video: Video,
     /// Source, port, context and app of available video; a change resets
-    /// capture. The app counts because media apps can share the rest, and the
-    /// capture of one the TV refuses (AirPlay) waits for such a change.
+    /// capture. The app counts because media apps can share the rest.
     pub context: Option<Value>,
     /// A good subscription reply: stop retrying the subscription.
     pub settled: bool,
@@ -40,7 +39,8 @@ pub fn video(payload: &Value) -> VideoReading {
         if !main["connected"].as_bool()? {
             return Some(false);
         }
-        // Muted video can be legitimate black; it still counts.
+        // Muted video can be legitimate black; it still counts here (the
+        // capture permission may refuse it).
         Some(
             main["width"].as_u64()? > 0
                 && main["height"].as_u64()? > 0
@@ -67,10 +67,99 @@ pub fn video(payload: &Value) -> VideoReading {
     }
 }
 
+/// The TV's verdict on capturing the video it shows, as
+/// `com.webos.service.capturepermission/checkPermission` reports it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Permission {
+    /// `status` true: the TV lets the video be captured.
+    Allowed,
+    /// `status` false: the TV refuses (also between videos, while muted).
+    Refused,
+    /// No usable reply (an error, a missing or malformed `status`, the
+    /// service absent, the subscription lost): neither allowed nor refused,
+    /// so the capture relies on what the driver itself answers.
+    #[default]
+    Unobserved,
+}
+
+/// What `capturepermission/checkPermission` says: the verdict, and
+/// `coreStatus` beside it, which is only logged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PermissionReading {
+    pub permission: Permission,
+    pub core: Option<bool>,
+}
+
+#[must_use]
+pub fn permission(payload: &Value) -> PermissionReading {
+    let permission = match payload["status"].as_bool() {
+        _ if payload["returnValue"] != true => Permission::Unobserved,
+        Some(true) => Permission::Allowed,
+        Some(false) => Permission::Refused,
+        None => Permission::Unobserved,
+    };
+    PermissionReading {
+        permission,
+        core: payload["coreStatus"].as_bool(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn permission_is_only_what_a_good_reply_says() {
+        for (payload, expected, core) in [
+            (
+                json!({"status": true, "whitelist": [], "coreStatus": true, "returnValue": true}),
+                Permission::Allowed,
+                Some(true),
+            ),
+            (
+                json!({"status": false, "whitelist": [], "coreStatus": true, "returnValue": true}),
+                Permission::Refused,
+                Some(true),
+            ),
+            (
+                json!({"status": false, "coreStatus": false, "returnValue": true}),
+                Permission::Refused,
+                Some(false),
+            ),
+            (
+                json!({"returnValue": false, "errorCode": -1, "errorText": "Unknown method"}),
+                Permission::Unobserved,
+                None,
+            ),
+            (
+                json!({"status": true, "returnValue": false}),
+                Permission::Unobserved,
+                None,
+            ),
+            (
+                json!({"coreStatus": true, "returnValue": true}),
+                Permission::Unobserved,
+                Some(true),
+            ),
+            (
+                json!({"status": "true", "returnValue": true}),
+                Permission::Unobserved,
+                None,
+            ),
+            (json!({"status": true}), Permission::Unobserved, None),
+            (Value::Null, Permission::Unobserved, None),
+        ] {
+            assert_eq!(
+                permission(&payload),
+                PermissionReading {
+                    permission: expected,
+                    core
+                },
+                "{payload}"
+            );
+        }
+    }
 
     #[test]
     fn power_states_fail_closed() {

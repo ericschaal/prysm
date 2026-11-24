@@ -195,7 +195,7 @@ pub enum Picture {
     #[default]
     Quiet,
     /// No frame: the source's device refuses to share the video it shows (an
-    /// LG TV playing AirPlay); frames come again once the video changes.
+    /// LG TV that does not allow its capture); frames come again once it does.
     /// Lighting waits for video, as while quiet.
     Refused,
 }

@@ -39,7 +39,7 @@ const REFUSED = 'Video can’t be captured';
  * The status card while the capture gives no picture, by why and package
  * (slim's `quiet` also while its worker has not reported yet). Neither is a
  * failure: no button but slim's usual one, and a refusal ends by itself
- * when the video changes.
+ * when the TV allows capture again.
  */
 const waitingStatus: Record<
   Exclude<Picture, 'arriving'>,
@@ -58,11 +58,11 @@ const waitingStatus: Record<
   refused: {
     full: {
       title: REFUSED,
-      description: 'Screen sync continues when another source plays.',
+      description: 'Screen sync continues when the TV allows it.',
     },
     slim: {
       title: REFUSED,
-      description: 'Capture continues when another source plays.',
+      description: 'Capture continues when the TV allows it.',
     },
   },
 };
@@ -360,11 +360,13 @@ export function tvStatus(
     } else {
       // The supervisor hears of a change made in the portal a moment later.
       const target = lighting ? targetOf(lighting) : state.target;
-      // The portal's measure; it alone says why no picture arrives.
+      // The portal's measure says why no picture arrives; without it yet,
+      // the TV's own word on a refused video.
       const picture =
         lighting?.kind === 'sync' && lighting.input
           ? pictureOf(lighting.input)
           : undefined;
+      const refused = picture ? picture === 'refused' : isRefused(state);
       // Without the portal's measure yet, the TV's own word.
       const flowing = lighting
         ? lighting.kind === 'sync' &&
@@ -385,7 +387,7 @@ export function tvStatus(
       } else if (flowing) {
         title = 'Screen sync on';
         description = 'Your lights follow the picture.';
-      } else if (picture === 'refused') {
+      } else if (refused) {
         ({ title, description } = waitingStatus.refused.full);
       } else if (fullPortal(state) && phase === 'running') {
         // Lighting is on but no frames arrive: the lights are released to WLED.

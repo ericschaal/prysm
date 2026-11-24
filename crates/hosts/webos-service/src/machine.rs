@@ -1,5 +1,6 @@
 //! The supervisor's decisions as a pure state machine: inputs and the current
 //! time in, effects out. No I/O, no clock; every rule is table-tested.
+use crate::observe::Permission;
 use crate::preferences::Preferences;
 use crate::state::{self, FullWorker, Power, Process, SlimWorker, State};
 use prysm_webos_link::{
@@ -17,8 +18,11 @@ pub const LOG_LINES: usize = 20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     Power(Power),
+    /// The video output; never [`Video::Refused`], which only the
+    /// permission makes of available video.
     Video(Video),
     VideoContextChanged,
+    Permission(Permission),
     /// Already validated and persisted.
     Preferences(Preferences),
     /// Full only: the lighting target the app chose. Slim ignores it (the
@@ -191,7 +195,9 @@ pub struct Machine {
     package: Package,
     preferences: Preferences,
     power: Power,
+    /// What the video output says, before the permission refines it.
     video: Video,
+    permission: Permission,
     phase: Phase,
     /// Restart delays: reset by a worker that ran [`Backoff::HEALTHY`] and by
     /// a dismissal ([`Machine::dismiss`]).
@@ -245,6 +251,7 @@ impl Machine {
             preferences,
             power: Power::Unknown,
             video: Video::Unknown,
+            permission: Permission::Unobserved,
             phase: Phase::Idle,
             backoff: Backoff::default(),
             failed: None,
@@ -298,6 +305,7 @@ impl Machine {
                 self.power = power;
             }
             Input::Video(video) => self.video = video,
+            Input::Permission(permission) => self.permission = permission,
             Input::VideoContextChanged => {
                 if self.running() {
                     effects.push(Effect::Send(Command::ResetVideo {}));
@@ -349,7 +357,7 @@ impl Machine {
             package: self.package.published(self.process(now)),
             preferences: self.preferences.clone(),
             power: self.power,
-            video: self.video,
+            video: self.video(),
             failure: self.current_failure(),
             log: self.log.iter().cloned().collect(),
         }
@@ -391,9 +399,20 @@ impl Machine {
         matches!(self.phase, Phase::Running { .. })
     }
 
+    /// The video, with the TV's verdict on its capture: available video the
+    /// TV refuses is [`Video::Refused`]. An unobserved permission refuses
+    /// nothing; the capture then goes by what the driver answers.
+    fn video(&self) -> Video {
+        match (self.video, self.permission) {
+            (Video::Available, Permission::Refused) => Video::Refused,
+            (video, _) => video,
+        }
+    }
+
+    /// What the worker is told: [`Self::video`] while the TV is active.
     fn effective_video(&self) -> Video {
         if self.power == Power::Active {
-            self.video
+            self.video()
         } else {
             Video::Unavailable
         }
