@@ -40,9 +40,11 @@ const _: () = assert!(
 );
 
 fn main() -> ExitCode {
-    // stdout carries the supervisor protocol; log lines go to stderr only.
+    // First: until fd 1 points at stderr, anything that prints reaches the
+    // supervisor's event stream.
+    let stdio = worker::take_stdio(NAME);
     logging::init(NAME, Logs::Stderr);
-    worker::main(NAME, worker::args::<FullArgs>(NAME, ABOUT), run)
+    worker::main(NAME, stdio, worker::args::<FullArgs>(NAME, ABOUT), run)
 }
 
 async fn run(args: FullArgs, link: Link) -> Result<()> {

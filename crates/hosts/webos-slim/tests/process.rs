@@ -115,7 +115,8 @@ fn capture_off_the_tv_fails_with_its_cause() {
 }
 
 /// The on-TV encoder check runs the software encoder anywhere; off the TV the
-/// hardware one fails with its cause.
+/// hardware one fails with its cause. Like everything the worker prints, its
+/// report is on stderr.
 #[test]
 fn check_encoder_reports_the_encoder_it_used() {
     let output = Command::new(BINARY)
@@ -130,7 +131,8 @@ fn check_encoder_reports_the_encoder_it_used() {
         ])
         .output()
         .unwrap();
-    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.stdout.is_empty(), "stdout is the supervisor's");
+    let text = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
         text.contains("check-encoder: ok encoder=software H.264"),
@@ -141,7 +143,8 @@ fn check_encoder_reports_the_encoder_it_used() {
         .args(["check-encoder", "--frames", "2"])
         .output()
         .unwrap();
-    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.stdout.is_empty(), "stdout is the supervisor's");
+    let text = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{text}");
     assert!(
         text.contains("FAILED") && text.contains("hardware"),

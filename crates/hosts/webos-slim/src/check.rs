@@ -90,7 +90,7 @@ pub fn main(options: Options) -> ExitCode {
     match run(options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            println!("check-encoder: FAILED: {error}");
+            eprintln!("check-encoder: FAILED: {error}");
             ExitCode::FAILURE
         }
     }
@@ -211,7 +211,7 @@ fn run(options: Options) -> Result<(), String> {
         fps,
         bitrate,
     };
-    println!(
+    eprintln!(
         "check-encoder: encoder={} {width}x{height} fps={fps} bitrate={bitrate} frames={frames}",
         backend.name()
     );
@@ -261,7 +261,7 @@ fn run(options: Options) -> Result<(), String> {
             .map_err(|error| format!("frame {index}: {error} (keyframe: {})", picture.keyframe))?;
         worst = worst.max(error);
         if index < 3 || picture.keyframe {
-            println!(
+            eprintln!(
                 "check-encoder: frame={index} keyframe={} bytes={} encode_us={} error={error:.2}",
                 picture.keyframe,
                 picture.data.len(),
@@ -277,7 +277,7 @@ fn run(options: Options) -> Result<(), String> {
         || "n/a".to_owned(),
         |(before, after)| format!("{:.1}", (after - before) as f64 / seconds),
     );
-    println!(
+    eprintln!(
         "check-encoder: ok encoder={} frames={frames} encoded={encoded} skipped={skipped} \
          keyframes={keyframes} bytes={bytes} mbit_s={:.2} encode_ms_mean={:.2} \
          encode_ms_max={:.2} worst_error={worst:.2} cpu_percent={cpu} wall_ms={}",
@@ -289,7 +289,7 @@ fn run(options: Options) -> Result<(), String> {
     );
     let started = Instant::now();
     drop(encoder);
-    println!(
+    eprintln!(
         "check-encoder: released in {} ms",
         started.elapsed().as_millis()
     );
@@ -342,7 +342,7 @@ fn stream(
             .map_err(|error| format!("frame {index}: {}", chain(&error)))?;
         std::thread::sleep(interval.saturating_sub(tick.elapsed()));
     }
-    println!("check-encoder: streamed {frames} frames to {prysm}");
+    eprintln!("check-encoder: streamed {frames} frames to {prysm}");
     Ok(())
 }
 

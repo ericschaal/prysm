@@ -39,4 +39,5 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+print_stdout = "deny"
 undocumented_unsafe_blocks = "deny"
