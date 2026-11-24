@@ -2,7 +2,7 @@
 use crate::common::*;
 use prysm_ports::{AdapterSettings, Settings};
 use prysm_runtime::fakes::{self, FakeSourceSettings};
-use prysm_web_portal::{Access, FrontendAsset, WebPortal};
+use prysm_web_portal::{Access, Caching, FrontendAsset, WebPortal};
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -57,6 +57,12 @@ async fn construction_rejects_bad_assets_and_origins() {
         ]));
         assert_eq!(field(portal(assets, Access::SameOrigin)), "portal.assets");
     }
+    // The page carries the current state: it is never stored.
+    let assets: &'static [FrontendAsset] = Box::leak(Box::new([FrontendAsset {
+        caching: Caching::Revalidate,
+        ..ASSETS[0].clone()
+    }]));
+    assert_eq!(field(portal(assets, Access::SameOrigin)), "portal.assets");
 }
 
 #[tokio::test]

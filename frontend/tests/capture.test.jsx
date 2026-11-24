@@ -934,7 +934,8 @@ test('until the first lookup answers the saved device holds a row, saying so, an
   try {
     await openEditor('Video source');
     // Looking: the saved device where a found one will be, ticked, and the
-    // typed row; nothing can be picked yet and the line under them is empty.
+    // typed row; nothing can be picked yet. The row says the lookup, to a
+    // screen reader as well, so the line under them is empty.
     assert.deepEqual(
       devices().map((row) => [
         $('.row-label', row)?.textContent,
@@ -946,7 +947,16 @@ test('until the first lookup answers the saved device holds a row, saying so, an
         [undefined, undefined, false],
       ],
     );
-    assert($('.device-rows .rows').hasAttribute('inert'), 'nothing to pick');
+    const radios = () => devices().map((row) => $('input', row));
+    assert(
+      radios().every((radio) => radio.disabled),
+      'nothing to pick',
+    );
+    assert.equal(
+      document.getElementById(radios()[0].getAttribute('aria-describedby'))
+        .textContent,
+      'Looking for devices…',
+    );
     assert.equal($('.device-rows').getAttribute('aria-busy'), 'true');
     assert.equal($('.device-rows [role="status"]').textContent, '');
     await answer();
@@ -958,7 +968,7 @@ test('until the first lookup answers the saved device holds a row, saying so, an
     );
     const saved = devices()[1];
     assert.equal($('input', saved).checked, true);
-    assert(!$('.device-rows .rows').hasAttribute('inert'));
+    assert(radios().every((radio) => !radio.disabled));
     assert.equal($('.device-rows').getAttribute('aria-busy'), 'false');
     // Looking again: the same rows, the same nodes, until and after it answers.
     await click(button('Look again'));

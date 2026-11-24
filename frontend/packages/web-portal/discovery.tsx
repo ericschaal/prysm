@@ -95,7 +95,8 @@ export interface TypedRow {
  * answered and kept while looking again; picking one fills `path` (its
  * field at `field`). Until that answer one row stands where the first
  * found device will be (the saved one, or none), saying the lookup, and
- * no row can be picked, so the usual answer of one device moves nothing. "Look again" sits at the end of the heading line.
+ * no row can be picked, so the usual answer of one device moves nothing.
+ * "Look again" sits at the end of the heading line.
  * The last row is always one to type in (`typed`), picked by focusing or
  * typing in its field; it keeps what was typed while a found row is
  * picked. A saved value the lookup does not list is in it, with the name
@@ -223,9 +224,9 @@ export function DeviceRows({
     inRow && scope.retry?.path === path ? scope.retry.run : undefined;
   // The typed row is ticked, and says its value's name, once answered.
   const typedShown = answered && typedPicked;
-  const saved = { kind, [field]: value };
+  const savedName = value ? keptName(section, { kind, [field]: value }) : null;
   const shown = typedShown && value !== '';
-  const kept = shown ? keptName(section, saved) : null;
+  const kept = shown ? savedName : null;
   const gone = shown ? missing : undefined;
   return (
     <>
@@ -258,7 +259,7 @@ export function DeviceRows({
             </button>
           ) : null}
         </legend>
-        <ul className="rows" inert={!answered}>
+        <ul className="rows">
           {answered ? (
             found.map((candidate) => {
               const at = candidate.fields[field] as string;
@@ -275,12 +276,14 @@ export function DeviceRows({
               );
             })
           ) : (
+            // The row says the lookup itself, so the line under the rows
+            // stays empty.
             <RowChoice
               name={nameId}
-              label={value ? (keptName(section, saved) ?? value) : lookingFor}
+              label={value ? (savedName ?? value) : lookingFor}
               about={value ? lookingFor : undefined}
               checked={value !== ''}
-              onChoose={() => {}}
+              disabled
             />
           )}
           <RowTyped
@@ -289,7 +292,7 @@ export function DeviceRows({
             typed={typed}
             text={typedShown ? text : draft}
             checked={typedShown}
-            disabled={scope.disabled}
+            disabled={scope.disabled || !answered}
             line={
               kept || gone ? (
                 <>

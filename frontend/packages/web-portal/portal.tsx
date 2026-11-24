@@ -32,6 +32,7 @@ import {
   CalibrationsRoute,
   SettingsRoute,
   WaitingPage,
+  type WaitingFrame,
 } from './pages';
 import {
   ChromeContext,
@@ -112,25 +113,33 @@ function PortalFrame() {
 
   // Disabled at once while offline, but said only once it lasts.
   const outOfTouch = useLingering(!online, connectionGraceMs, 0);
+  // A refusal is for good: the stream is not opened again.
+  const refusal =
+    connection.error?.kind === 'forbidden' ? connection.error.message : null;
   let connectionLabel = 'Offline';
   if (online) connectionLabel = 'Connected';
   else if (connection.status === 'connecting') connectionLabel = 'Connecting…';
-  else if (snapshot) connectionLabel = 'Reconnecting…';
+  else if (snapshot && !refusal) connectionLabel = 'Reconnecting…';
   const chrome: Chrome = {
     connectionLabel,
     outOfTouch,
+    refusal,
     developer: useDeveloper(),
     updated: useReplaced(online, host.replaced),
   };
 
   // Normally the page comes with the state; without it (a dev server, or a
-  // state the page could not read) the page waits in its own frame, and
-  // says so only once the wait lasts.
-  if (!snapshot)
+  // state the page could not read) the page waits in its route's frame, and
+  // says so only once the wait lasts. The first state may open Setup in its
+  // place (capture or lights missing), which only that state can tell.
+  if (!snapshot) {
+    let frame: WaitingFrame = 'settings';
+    if (calibrating) frame = 'calibrate';
+    else if (showsHome(location.pathname)) frame = 'home';
     return (
       <ChromeContext value={chrome}>
         <WaitingPage
-          home={showsHome(location.pathname)}
+          frame={frame}
           message={
             outOfTouch
               ? (connection.error?.message ?? 'Connecting to Prysm…')
@@ -139,6 +148,7 @@ function PortalFrame() {
         />
       </ChromeContext>
     );
+  }
 
   const lighting = lightingSituation(snapshot);
   const path = pathOf(lighting);

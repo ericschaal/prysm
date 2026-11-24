@@ -52,7 +52,9 @@ conflicts with another; see [saving settings](README.md#saving-settings).
 A host may pass a state the page came with
 (`createApplicationRuntime(client, embeddedState())`): the store starts
 `connected` with it, so the first render shows it, and it stays until the
-stream's first state replaces it. The first lease dispatches
+stream's first state replaces it. So the portal starts connected before the
+stream opens, and the state shown may be a moment old until then; commands
+are guarded by revision as always. The first lease dispatches
 `observationRequested`; the listener opens the stream and dispatches
 `snapshotReceived` for the initial and every later state.
 Each state is complete, so there are no cursors or resynchronization. On loss

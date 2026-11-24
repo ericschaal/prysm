@@ -2843,6 +2843,13 @@ fieldset > .field-note {
   cursor: default;
 }
 /*
+ * Not faded during the first lookup, which is usually short: the rows that
+ * follow look the same, so nothing flashes.
+ */
+.device-rows[aria-busy='true'] label:has(input[type='radio']:disabled) {
+  opacity: 1;
+}
+/*
  * The last of the found devices is one to type: its field in the label's
  * place, its line beneath as under any field, the ring level with the
  * field. Faded with the row while locked, not twice.
@@ -2965,6 +2972,7 @@ fieldset > .field-note {
  * A found device's row keeps room for a line beneath its name, said or
  * not: the row that stands in for the first one while looking says the
  * lookup there, and the device that takes its place keeps its height.
+ * Every found row is that tall, so the rows stay alike.
  */
 .device-rows .row-choice:not(.row-typed) label {
   min-height: calc(

@@ -120,7 +120,8 @@ export function CheckIcon() {
  * One option of a choice in the rows pattern: a radio drawn as a ring in
  * the chevron's place, filled and ticked while chosen. Its label names it; the line beneath (and `facts`
  * beside the label, if given) describe it, so a screen reader reads the
- * name first and the trade after it.
+ * name first and the trade after it. A row that is never chosen (always
+ * disabled) needs no `onChoose`.
  */
 export function RowChoice({
   name,
@@ -142,9 +143,10 @@ export function RowChoice({
   /** What the option sets, quietly beside its label: `640 × 360 · 30 fps`. */
   facts?: string;
   checked: boolean;
-  disabled?: boolean;
-  onChoose: () => void;
-}) {
+} & (
+  | { disabled?: boolean; onChoose: () => void }
+  | { disabled: true; onChoose?: undefined }
+)) {
   const id = useId();
   return (
     <li className="row row-choice">

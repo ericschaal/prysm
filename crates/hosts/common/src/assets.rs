@@ -26,7 +26,7 @@ pub const NOT_BUILT: &[FrontendAsset] = &[FrontendAsset {
     content_type: "text/html; charset=utf-8",
     bytes: include_bytes!("not-built.html"),
     gzip: None,
-    caching: Caching::Revalidate,
+    caching: Caching::Never,
 }];
 
 #[cfg(test)]

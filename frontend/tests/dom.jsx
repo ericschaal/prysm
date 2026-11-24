@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ApplicationError } from '@prysm/application-client';
 import { embeddedState } from '@prysm/application-client/http';
 import { createApplicationRuntime } from '@prysm/application-state';
 import { saveDeveloper } from '@prysm/web-portal';
@@ -33,7 +34,7 @@ export function mountDom(html = '<div id="root"></div>') {
  * `props` go to `Host` as well (e.g. a preview client); without
  * `captureModes` every capture delivers any size and rate. `embedded`: the
  * page comes with the state, as the portal serves it; `held`: the stream
- * answers only on `answer()`.
+ * answers only on `answer()`, or refuses with `answer(failure)`.
  */
 export async function renderPortal(
   Host,
@@ -59,7 +60,8 @@ export async function renderPortal(
       answer = resolve;
     });
     fixture.client.observe = async (signal) => {
-      await answered;
+      const failure = await answered;
+      if (failure) throw new ApplicationError(failure);
       return observe(signal);
     };
   }
@@ -81,9 +83,9 @@ export async function renderPortal(
     dom,
     fixture,
     application,
-    answer: () =>
+    answer: (failure) =>
       act(async () => {
-        answer();
+        answer(failure);
         await sleep(0);
       }),
     async unmount() {

@@ -3799,6 +3799,27 @@ test('with the state in the page, the first render is Home, whole and live, befo
   }
 });
 
+test('with the state in the page, a refused stream keeps Home and says the refusal, not a reconnect', async () => {
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    undefined,
+    {},
+    { embedded: true, held: true },
+  );
+  const refusal = 'Prysm refuses requests from this page.';
+  try {
+    await portal.answer({ kind: 'forbidden', message: refusal });
+    await act(async () => sleep(connectionGraceMs + 100));
+    assert($('.light-card') && $('.setup-card'), 'Home stays');
+    assert.equal($('.notice[role="alert"]').textContent, refusal);
+    assert.equal($('.connection').textContent, 'Offline');
+    assert(!document.body.textContent.includes('Reconnecting'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('without a state in the page, Home waits in its own frame, says so only once the wait lasts, and the cards take the blocks’ places', async () => {
   const portal = await renderPortal(
     HeadlessWebPortal,

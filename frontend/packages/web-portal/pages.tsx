@@ -102,33 +102,46 @@ const homeFrame = {
   settingsLink: true,
 } as const;
 
+/** Calibrate's frame: a flow in the narrow column. */
+const calibrateFrame = {
+  className: 'portal-flow portal-flow-narrow',
+  title: 'Prysm calibration',
+  name: 'Calibrate',
+} as const;
+
+/** The frame a page waits in: Home's, Calibrate's or a settings page's. */
+export type WaitingFrame = 'home' | 'calibrate' | 'settings';
+
 /**
- * A page before the first state: its frame as it will be (Home's, or the
- * narrow one of the others) and still blocks where its cards will be, so
- * the cards take their places without moving anything. `message` (empty
- * until the wait lasts) is said in the first block.
+ * A page before the first state: its frame as it will be and still blocks
+ * where its cards will be, so the cards take their places without moving
+ * anything. `message` (empty until the wait lasts) is said in the first
+ * block; the header's connection status announces the wait.
  */
 export function WaitingPage({
-  home,
+  frame,
   message,
 }: {
-  home: boolean;
+  frame: WaitingFrame;
   message: string;
 }) {
-  const said = (
-    <p role="status" className="skeleton-message">
-      {message}
-    </p>
-  );
-  return home ? (
-    <Page {...homeFrame}>
-      <div className="home-grid">
-        <div className="skeleton light-skeleton">{said}</div>
-        <div className="skeleton setup-skeleton" />
-      </div>
-    </Page>
-  ) : (
-    <Page className="portal-page" title="Prysm">
+  const said = <p className="skeleton-message">{message}</p>;
+  if (frame === 'home')
+    return (
+      <Page {...homeFrame}>
+        <div className="home-grid">
+          <div className="skeleton light-skeleton">{said}</div>
+          <div className="skeleton setup-skeleton" />
+        </div>
+      </Page>
+    );
+  // A settings page's title comes with its page; until then, Prysm's.
+  return (
+    <Page
+      {...(frame === 'calibrate'
+        ? calibrateFrame
+        : { className: 'portal-page', title: 'Prysm' })}
+    >
       <div className="skeleton page-skeleton">{said}</div>
     </Page>
   );
@@ -402,11 +415,7 @@ export function CalibrateRoute() {
   } = usePortal();
   const nav = useNav();
   return (
-    <Page
-      className="portal-flow portal-flow-narrow"
-      title="Prysm calibration"
-      name="Calibrate"
-    >
+    <Page {...calibrateFrame}>
       <OfflineNotice />
       <CalibrateWizard
         processing={snapshot.settings.processing}

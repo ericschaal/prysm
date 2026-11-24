@@ -21,7 +21,7 @@ pub const ASSETS: &[FrontendAsset] = &[
         content_type: "text/html; charset=utf-8",
         bytes: b"<!doctype html><html><head><title>Prysm</title></head><body></body></html>",
         gzip: None,
-        caching: Caching::Revalidate,
+        caching: Caching::Never,
     },
     FrontendAsset {
         path: "/assets/app.js",
