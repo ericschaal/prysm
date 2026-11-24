@@ -948,7 +948,7 @@ fn context_changes_reset_only_a_running_worker() {
 fn log_keeps_the_latest_lines_and_publish_follows_changes_only() {
     let (mut m, t0) = (full(), Instant::now());
     for line in 0..25 {
-        m.handle(Input::WorkerLog(format!("line {line}")), t0);
+        m.handle(Input::Log(format!("line {line}")), t0);
     }
     let log = m.state(t0).log;
     assert_eq!(log.len(), LOG_LINES);
@@ -956,7 +956,7 @@ fn log_keeps_the_latest_lines_and_publish_follows_changes_only() {
     assert!(!m.handle(Pw(Unknown), t0).contains(&Effect::Publish));
     assert!(m.handle(Pw(Asleep), t0).contains(&Effect::Publish));
     assert!(
-        m.handle(Input::WorkerLog("x".into()), t0)
+        m.handle(Input::Log("x".into()), t0)
             .contains(&Effect::Publish)
     );
 }
@@ -2102,7 +2102,7 @@ fn every_phase_takes_every_input() {
             false,
             last_word((terminate(), failing, Some("worker faulted: c"))),
         ),
-        (Input::WorkerLog("l".into()), false, unchanged()),
+        (Input::Log("l".into()), false, unchanged()),
         (
             Input::WorkerBroken("y".into()),
             false,

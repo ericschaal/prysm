@@ -39,6 +39,15 @@ where
     }
 }
 
+/// What [`init`] installs, with [`DEFAULT_FILTER`], for a test to scope
+/// with `tracing::subscriber::with_default` (`init` is process-wide).
+pub fn default_subscriber<W>(name: &'static str, writer: W) -> impl Subscriber + Send + Sync
+where
+    W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
+{
+    subscriber(name, filter(None).0, writer)
+}
+
 /// The filter for a `RUST_LOG` value, and why it was rejected if it was.
 fn filter(rust_log: Option<&str>) -> (Targets, Option<String>) {
     let default = || DEFAULT_FILTER.parse().expect("valid default filter");

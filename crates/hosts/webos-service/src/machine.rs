@@ -32,7 +32,8 @@ pub enum Input {
     /// it first).
     Enabled(bool),
     Worker(Event),
-    WorkerLog(String),
+    /// A line for the state's tail: the supervisor's or the worker's log.
+    Log(String),
     /// The worker's event stream broke (bad line, oversized, truncated).
     WorkerBroken(String),
     SpawnFailed(String),
@@ -320,7 +321,7 @@ impl Machine {
             Input::Target(target) => self.set_target(target, &mut effects),
             Input::Enabled(enabled) => self.set_enabled(enabled),
             Input::Worker(event) => self.worker_event(event, now, &mut effects),
-            Input::WorkerLog(line) => {
+            Input::Log(line) => {
                 if self.log.len() == LOG_LINES {
                     self.log.pop_front();
                 }

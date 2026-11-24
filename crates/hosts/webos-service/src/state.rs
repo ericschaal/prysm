@@ -66,7 +66,8 @@ pub struct State {
         schema(value_type = Option<crate::schema::WorkerFailureSchema>, nullable = false)
     )]
     pub failure: Option<WorkerFailure>,
-    /// The latest worker stderr lines, oldest first (at most 20).
+    /// The latest log lines of the supervisor and the worker, oldest first
+    /// (at most 20).
     pub log: Vec<String>,
 }
 

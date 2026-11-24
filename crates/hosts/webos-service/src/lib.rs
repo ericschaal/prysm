@@ -21,5 +21,6 @@ pub mod preferences;
 pub mod schema;
 pub mod service;
 pub mod state;
+mod tail;
 
 pub use cli::main;

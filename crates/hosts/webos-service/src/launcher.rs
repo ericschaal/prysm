@@ -13,10 +13,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-/// Longest stderr line kept, in bytes; the rest of the line is dropped. A
+/// Longest log line the tail keeps, in bytes; the rest of the line is dropped. A
 /// cut inside a character becomes U+FFFD, so the text can be up to two bytes
 /// longer.
-const MAX_LOG_LINE: usize = 512;
+pub(crate) const MAX_LOG_LINE: usize = 512;
 /// How long after its exit a worker's last lines are waited for. Only a
 /// process the worker left behind, holding its pipes, makes the wait last.
 pub const LAST_WORDS: Duration = Duration::from_secs(1);
@@ -122,7 +122,7 @@ impl Launcher for ProcessLauncher {
             });
         let logger = std::thread::Builder::new()
             .name("prysm-worker-log".into())
-            .spawn(move || read_log(stderr, &logs));
+            .spawn(move || read_log(stderr, |line| logs.send(Output::Log(line))));
         let reader = match (reader, logger) {
             (Ok(reader), Ok(_)) => reader,
             (Err(error), _) | (_, Err(error)) => {
@@ -184,12 +184,13 @@ fn read_events(stdout: impl Read, outputs: &Outputs) {
     }
 }
 
-fn read_log(stderr: impl Read, outputs: &Outputs) {
-    let mut reader = BufReader::new(stderr);
+/// Each line of `log` as the state's tail shows it, until `keep` returns
+/// `false`: cut to [`MAX_LOG_LINE`], trailing whitespace trimmed.
+pub(crate) fn read_log(log: impl Read, mut keep: impl FnMut(String) -> bool) {
+    let mut reader = BufReader::new(log);
     let mut line = Vec::new();
     while let Ok(true) = read_line(&mut reader, &mut line) {
-        let text = String::from_utf8_lossy(&line).trim_end().to_owned();
-        if !outputs.send(Output::Log(text)) {
+        if !keep(String::from_utf8_lossy(&line).trim_end().to_owned()) {
             return;
         }
     }

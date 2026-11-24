@@ -537,6 +537,11 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         self.input(bus, Input::Permission(reading.permission), now);
     }
 
+    /// A line for the state's tail.
+    pub fn log(&mut self, bus: &mut impl Bus, line: String, now: Instant) {
+        self.input(bus, Input::Log(line), now);
+    }
+
     /// Stop the worker and then the service.
     pub fn shutdown(&mut self, bus: &mut impl Bus, now: Instant) {
         self.input(bus, Input::Shutdown, now);
@@ -612,7 +617,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         for output in outputs {
             let input = match output {
                 Output::Event(event) => Input::Worker(event),
-                Output::Log(line) => Input::WorkerLog(line),
+                Output::Log(line) => Input::Log(line),
                 Output::Broken(why) => Input::WorkerBroken(why),
             };
             self.input(bus, input, now);

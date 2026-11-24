@@ -44,7 +44,12 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   worker's first statement keeps that stdout for events and points fd 1 at
   stderr, which carries logs, so argument parsing, logging and vendor output
   cannot reach the stream; `clippy::print_stdout` is denied in the workspace
-  besides. The commands are
+  besides. The supervisor keeps the last 20 lines of the worker's stderr and
+  of its own log in the state's `log` (the app's **View diagnostics**): the
+  TV starts the supervisor with stderr on `/dev/null`, so that tail is where
+  its lines show. Its log writer only queues them (at most 20, the oldest
+  dropped) and wakes the loop, which adds them to the tail at its next poll,
+  before the worker lines it reads then. The commands are
   `video` (`unknown`, `unavailable` or `available`; unavailable unless the
   TV is active), `reset_video` (input, app or picture mode changed),
   `capture_permission_changed` (a wake, without a value) and `target`

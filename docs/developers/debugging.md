@@ -48,14 +48,15 @@ RUST_LOG=debug cargo run -p prysm-headless -- settings.json
 
 While `prysm-tui` shows its preview on the terminal stderr writes to, logs go
 only to `--log-file PATH`; a panic's message is printed once the terminal is
-restored. The TV
-workers log to stderr, which the supervisor keeps (the last 20 lines show in
-the TV app's **View diagnostics**). The supervisor logs to its own stderr,
-which the diagnostics do not show: under Luna activation that is wherever
-the Luna hub sends it; the boot hook's `setup` writes to
-`/tmp/io.github.ericschaal.prysm-setup.log`, and a failed setup from the app
-shows its stderr as the failure. Its subscription renewals and the TV's
-`coreStatus` are `debug`.
+restored. On the TV, the last 20 lines of the supervisor and its worker,
+oldest first, show in the TV app's **View diagnostics** (the state's `log`;
+[how](webos.md#supervisor-and-worker)). The TV starts the supervisor with
+stderr on `/dev/null`, so that is the only place its lines show under Luna
+activation. The boot hook's `setup` runs without the service and writes to
+`/tmp/io.github.ericschaal.prysm-setup.log`; a failed setup from the app
+shows its stderr as the failure. Each new line is published to `getState`
+subscribers, so nothing the supervisor logs at `info` or above repeats on
+its own: its subscription renewals and the TV's `coreStatus` are `debug`.
 
 For rates and timing over time, enable [metrics](monitoring.md).
 
