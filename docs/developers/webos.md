@@ -115,7 +115,7 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   (`com.webos.service.capturepermission/checkPermission`) beside power and
   video. Its `status` is the TV's verdict; observed on one TV: it is false
   between videos (the TV mutes them) and turns true in the same second the
-  video output reports frames. `coreStatus` is only logged; `whitelist` is
+  video output reports frames. `coreStatus` is only logged (`debug`); `whitelist` is
   not read. A reply without a boolean `status` (an error, a lost
   subscription) leaves the permission unobserved, which refuses nothing.
   Available video the TV refuses is sent to the worker, and published, as

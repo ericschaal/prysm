@@ -38,7 +38,9 @@
 ## Logs
 
 Log lines are `tracing` events, including those of the shared capture and
-processing crates, filtered by `RUST_LOG` (default `warn,prysm=info`):
+processing crates, one per line as `<process>: <level> <target>: <message>
+<field>=<value>...`, filtered by `RUST_LOG` (default `warn,prysm=info`)
+([prysm-logging](../../crates/engine/logging/src/lib.rs)):
 
 ```sh
 RUST_LOG=debug cargo run -p prysm-headless -- settings.json
@@ -48,7 +50,12 @@ While `prysm-tui` shows its preview on the terminal stderr writes to, logs go
 only to `--log-file PATH`; a panic's message is printed once the terminal is
 restored. The TV
 workers log to stderr, which the supervisor keeps (the last 20 lines show in
-the TV app's **View diagnostics**).
+the TV app's **View diagnostics**). The supervisor logs to its own stderr,
+which the diagnostics do not show: under Luna activation that is wherever
+the Luna hub sends it; the boot hook's `setup` writes to
+`/tmp/io.github.ericschaal.prysm-setup.log`, and a failed setup from the app
+shows its stderr as the failure. Its subscription renewals and the TV's
+`coreStatus` are `debug`.
 
 For rates and timing over time, enable [metrics](monitoring.md).
 

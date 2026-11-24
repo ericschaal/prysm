@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use tracing::warn;
 
 /// Longest stderr line kept, in bytes; the rest of the line is dropped. A
 /// cut inside a character becomes U+FFFD, so the text can be up to two bytes
@@ -145,10 +146,10 @@ impl Launcher for ProcessLauncher {
 /// reported; the caller's error stands.
 pub(crate) fn kill_and_reap(child: &mut Child, what: &str) {
     if let Err(error) = child.kill() {
-        log!("cannot kill {what}: {error}");
+        warn!(child = what, %error, "cannot kill");
     }
     if let Err(error) = child.wait() {
-        log!("cannot reap {what}: {error}");
+        warn!(child = what, %error, "cannot reap");
     }
 }
 
@@ -311,11 +312,11 @@ impl Drop for ProcessWorker {
                 .name("prysm-worker-reaper".into())
                 .spawn(move || {
                     if let Err(error) = child.wait() {
-                        log!("cannot reap the worker: {error}");
+                        warn!(%error, "cannot reap the worker");
                     }
                 });
             if let Err(error) = reaper {
-                log!("cannot start the worker reaper: {error}");
+                warn!(%error, "cannot start the worker reaper");
             }
         }
     }
