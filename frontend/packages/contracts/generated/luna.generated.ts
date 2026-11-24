@@ -232,7 +232,10 @@ export interface components {
              *     its message with the causes.
              */
             failure?: components["schemas"]["WorkerFailure"];
-            /** @description The latest worker stderr lines, oldest first (at most 20). */
+            /**
+             * @description The latest log lines of the supervisor and the worker, oldest first
+             *     (at most 20).
+             */
             log: string[];
             power: components["schemas"]["Power"];
             preferences: components["schemas"]["Preferences"];

@@ -484,7 +484,7 @@
                 "description": "The current failure (or, slim, the receiver wait): what it is and\nits message with the causes."
               },
               "log": {
-                "description": "The latest worker stderr lines, oldest first (at most 20).",
+                "description": "The latest log lines of the supervisor and the worker, oldest first\n(at most 20).",
                 "items": {
                   "type": "string"
                 },

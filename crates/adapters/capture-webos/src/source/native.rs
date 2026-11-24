@@ -280,6 +280,11 @@ impl<B: Backend> Native<B> {
         }
         if let Some(refusal) = &mut self.refusal {
             refusal.waiting = false;
+            tracing::info!(
+                ?video,
+                generation,
+                "the video signal changed while the TV refuses; initializing the driver again"
+            );
         }
     }
 
@@ -419,6 +424,11 @@ impl<B: Backend> Native<B> {
         if let Some(refusal) = &mut self.refusal {
             refusal.initializations += 1;
             refusal.waiting = true;
+            tracing::info!(
+                initializations = refusal.initializations,
+                since_change_ms = self.changed_at.elapsed().as_millis(),
+                "the TV refused again"
+            );
             return;
         }
         tracing::info!(
