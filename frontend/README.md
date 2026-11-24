@@ -134,12 +134,15 @@ supervisor in each of its states and play the phone's calibration part). See the
     `colors` client is given, the LEDs' colours (`/api/v1/colors/stream`,
     opened only while Home is shown, visible and online) become the card's
     four light fields: written as CSS custom properties on the Home grid,
-    eased, with the LEDs' own hue and saturation and as strong as the LEDs
-    are bright: dimmed LEDs glow lower in their colour, grey ones give white
-    light, and black ones (or no picture) a faint colourless moonlight. The
-    moonlight shows too until the first colours arrive and while the stream
-    is lost. The TV drawing's LED band shows them too: each edge a gradient
-    of its colours in screen order (left to right, top to bottom), eased.
+    eased on the four fields alone (the card's small tints follow each
+    update directly), with the LEDs' own hue and saturation and as strong
+    as the LEDs are bright: dimmed LEDs glow lower in their colour, grey
+    ones give white light, and black ones (or no picture) a faint
+    colourless moonlight. The moonlight shows too until the first colours
+    arrive and while the stream is lost. The TV drawing's LED band shows
+    them too: each edge a gradient of its colours in screen order (left to
+    right, top to bottom), set as they arrive (each update would cancel an
+    easing).
     WLED effects keep the designed effects palette and open no
     stream. A failed or faulted session shows "Stopped" in a calm red light,
     whatever the session still reports (after a failed start from effects
