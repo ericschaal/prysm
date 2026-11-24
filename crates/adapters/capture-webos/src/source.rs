@@ -33,12 +33,12 @@ pub(crate) enum Acquired {
 pub(crate) enum Retry {
     /// The driver refused video the supervisor reports as available. The
     /// library answers from its own copy of the TV's permission verdict,
-    /// which follows the TV's permission event; when the supervisor observed
-    /// that event, it reported the video as capturable from it, so the
-    /// library's copy follows within moments. Bounded, as this argument is a
-    /// hypothesis from one TV and does not hold where the supervisor could
-    /// not observe the verdict: once the bound runs out, the capture waits
-    /// for the next change of the video signal.
+    /// which follows the TV's permission event, so a refusal in the moment
+    /// the video starts can be that copy being a moment behind. Bounded,
+    /// because the evidence is thin: one such refusal was seen on one TV
+    /// (a YouTube video start), and under AirPlay the library kept refusing
+    /// past the bound while the TV's verdict said allowed. Once the bound
+    /// runs out, the capture waits for the next change of the video signal.
     LibraryCatchingUp,
 }
 

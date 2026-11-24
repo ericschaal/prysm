@@ -131,8 +131,10 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   reports the video `available`, a 17 initializes the same driver again
   every 100 ms for at most 2 s
   ([`Retry`](../../crates/adapters/capture-webos/src/source.rs)), with
-  quiet pulls meanwhile; this bound is a guess to be tuned from
-  measurement. When it runs out, nothing fails: the capture waits as for a
+  quiet pulls meanwhile. The evidence for it is thin: on the same TV,
+  AirPlay video was refused on all 20 attempts, twice, while the service
+  told other clients `status` true, and six YouTube starts needed no
+  second attempt. When the bound runs out, nothing fails: the capture waits as for a
   refusal, its pulls `Pull::Refused`, until the video signal changes. A 17
   for video whose state is `unknown` waits at once. Any change of the
   signal (availability, permission, or input, app or picture mode)
