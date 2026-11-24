@@ -822,8 +822,8 @@ fieldset > .field-note {
  * Live, the colours change up to 10 times a second: the frame takes each
  * at once, and only the four fields ease to it (each its own `--field`),
  * so an easing restyles four elements, not the whole card. The small
- * tints (the glow, the chosen mode, the slider, the chosen segment) follow
- * each update directly.
+ * tints (the glow, the ignition's crest and wave, the chosen mode, the
+ * slider, the chosen segment) follow each update directly.
  */
 .home-grid[data-live='colors'] .light-frame[data-palette='sync'] {
   transition: none;
@@ -2373,7 +2373,10 @@ fieldset > .field-note {
   .led-map-edge:not(.empty)
   stop {
   stop-color: var(--led, var(--band, var(--line-strong)));
-  /* Set, not eased: the next update cancels any easing; smoothing is the style's. */
+  /*
+   * Set, not eased: easing every stop 10 times a second redraws the band on
+   * every frame, and the style's smoothing already smooths the colours.
+   */
   transition: none;
 }
 .edge-top {

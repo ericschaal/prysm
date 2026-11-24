@@ -141,8 +141,8 @@ supervisor in each of its states and play the phone's calibration part). See the
     colourless moonlight. The moonlight shows too until the first colours
     arrive and while the stream is lost. The TV drawing's LED band shows
     them too: each edge a gradient of its colours in screen order (left to
-    right, top to bottom), set as they arrive (each update would cancel an
-    easing).
+    right, top to bottom), set as they arrive (the style's smoothing already smooths
+    them).
     WLED effects keep the designed effects palette and open no
     stream. A failed or faulted session shows "Stopped" in a calm red light,
     whatever the session still reports (after a failed start from effects
