@@ -748,29 +748,29 @@ fieldset > .field-note {
 @property --light-a {
   syntax: '<color>';
   inherits: true;
-  initial-value: #e0479e;
+  initial-value: rgb(61 61 61);
 }
 @property --light-b {
   syntax: '<color>';
   inherits: true;
-  initial-value: #22c3ee;
+  initial-value: rgb(61 61 61);
 }
 @property --light-c {
   syntax: '<color>';
   inherits: true;
-  initial-value: #6b4dff;
+  initial-value: rgb(61 61 61);
 }
 @property --light-d {
   syntax: '<color>';
   inherits: true;
-  initial-value: #ff8a4c;
+  initial-value: rgb(61 61 61);
 }
 /* The frame holds the light's colours for the card and the LED drawing. */
 .light-frame {
-  --light-a: var(--aurora-1);
-  --light-b: var(--aurora-2);
-  --light-c: var(--aurora-3);
-  --light-d: var(--aurora-4);
+  --light-a: var(--live-a);
+  --light-b: var(--live-b);
+  --light-c: var(--live-c);
+  --light-d: var(--live-d);
   display: grid;
   /* Switching modes cross-fades the colours; turning on starts in them. */
   transition:
@@ -797,16 +797,12 @@ fieldset > .field-note {
   --light-d: var(--error-4);
 }
 /*
- * Screen sync on a host that streams the LEDs' colours: the card's four
- * fields take them (see live-colors.ts), easing from one update to the
- * next. Dim LEDs glow lower in their own colour; black ones, no picture, or
- * no colours yet leave a faint colourless moonlight.
+ * Screen sync: the card's four fields are the LEDs' colours (see
+ * live-colors.ts), easing from one update to the next. Dim LEDs glow lower
+ * in their own colour; black ones, no picture, or no colours yet leave a
+ * faint colourless moonlight.
  */
-.home-grid[data-colors='stream'] .light-frame[data-palette='sync'] {
-  --light-a: var(--live-a);
-  --light-b: var(--live-b);
-  --light-c: var(--live-c);
-  --light-d: var(--live-d);
+.light-frame[data-palette='sync'] {
   transition:
     --light-a var(--duration-led) var(--ease-out),
     --light-b var(--duration-led) var(--ease-out),
@@ -1862,27 +1858,29 @@ fieldset > .field-note {
 /*
  * Live light: the LEDs' colours arrive (at most 10 a second) as custom
  * properties on the Home grid, written by useLiveColors; nothing re-renders.
- * The card's fields and the LED drawing in Your setup read them.
+ * The card's fields and the LED drawing in Your setup read them. Until the
+ * first write the fields are the moonlight of black LEDs (the colour
+ * fieldValues gives for no colours), so no other colour shows first.
  */
 @property --live-a {
   syntax: '<color>';
   inherits: true;
-  initial-value: #e0479e;
+  initial-value: rgb(61 61 61);
 }
 @property --live-b {
   syntax: '<color>';
   inherits: true;
-  initial-value: #22c3ee;
+  initial-value: rgb(61 61 61);
 }
 @property --live-c {
   syntax: '<color>';
   inherits: true;
-  initial-value: #6b4dff;
+  initial-value: rgb(61 61 61);
 }
 @property --live-d {
   syntax: '<color>';
   inherits: true;
-  initial-value: #ff8a4c;
+  initial-value: rgb(61 61 61);
 }
 /* Your setup: where the picture comes from, where the colours go. */
 .setup-card {
@@ -2334,19 +2332,10 @@ fieldset > .field-note {
 }
 /* The band's colours follow the light card. */
 /*
- * Screen sync: the band is a readout, so it shows only real colours. With a
- * colours stream it stays neutral until the first ones arrive (and again on
- * idle or a lost stream); the designed colours only for a host without one.
+ * Screen sync: the band is a readout, so it shows only real colours: it
+ * stays neutral until the first ones arrive, and again on idle or a lost
+ * stream.
  */
-.home-grid[data-colors='none']:has(
-    .light-frame[data-lit='true'][data-palette='sync']
-  )
-  .led-map {
-  --band-top: var(--aurora-3);
-  --band-right: var(--aurora-2);
-  --band-bottom: var(--accent-ink);
-  --band-left: var(--aurora-1);
-}
 .home-grid:has(.light-frame[data-lit='true'][data-palette='effects']) .led-map {
   --band-top: var(--effects-4);
   --band-right: var(--effects-2);

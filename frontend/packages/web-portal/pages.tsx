@@ -165,7 +165,6 @@ export function HomeRoute() {
         captures={host.captures}
         outputs={host.outputs}
         discovery={host.discovery ?? null}
-        hasColors={!!host.colors}
         preview={
           host.preview
             ? {
@@ -443,7 +442,6 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   captures,
   outputs,
   discovery,
-  hasColors,
   preview,
   gridRef,
   online,
@@ -461,7 +459,6 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   outputs: AdapterUis<O>;
   discovery: DiscoveryClient | null;
   /** Whether this host streams the LEDs' colours at all. */
-  hasColors: boolean;
   preview?: PreviewSource;
   gridRef: RefObject<HTMLDivElement | null>;
   online: boolean;
@@ -481,11 +478,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   const outputUi = output ? adapterFor(outputs, output.kind) : undefined;
   const edges = output ? outputUi?.edges?.(output) : undefined;
   return (
-    <div
-      className="home-grid"
-      ref={gridRef}
-      data-colors={hasColors ? 'stream' : 'none'}
-    >
+    <div className="home-grid" ref={gridRef}>
       <LightCard
         target={snapshot.target}
         lighting={lighting}

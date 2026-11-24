@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { httpColorsClient } from '@prysm/application-client/http';
@@ -139,9 +140,7 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
     assert.equal(fake.open(), 1);
     assert.equal(live(), null);
     assert.equal(led('--live-a'), moonlight, 'moonlight until colours arrive');
-    // The LED band is a readout: no colours (neutral) before the first event,
-    // as the CSS keys the designed band to hosts without a stream only.
-    assert.equal(grid().dataset.colors, 'stream');
+    // The LED band is a readout: no colours (neutral) before the first event.
     assert.equal(grid().style.getPropertyValue('--led-t-0'), '');
 
     await act(async () => fake.send(colors));
@@ -310,7 +309,21 @@ test('a black scene is a colourless moonlight; a refused or ended stream falls b
   }
 });
 
-test('without a colors client Home is unchanged', async () => {
+test('before any colours are written the stylesheet starts the fields in the same moonlight', () => {
+  const css = readFileSync(
+    new URL('../packages/web-portal/portal.css', import.meta.url),
+    'utf8',
+  );
+  const starts = [
+    ...css.matchAll(
+      /@property --(?:live|light)-[a-d] \{[^}]*initial-value: ([^;]+);/g,
+    ),
+  ].map((match) => match[1]);
+  assert.equal(starts.length, 8);
+  assert(starts.every((value) => value === moonlight));
+});
+
+test('without a colors client Home writes no colours: the moonlight stays', async () => {
   const portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output },
@@ -319,8 +332,6 @@ test('without a colors client Home is unchanged', async () => {
   try {
     assert.equal(live(), null);
     assert.equal(grid().getAttribute('style'), null);
-    // Only here may the band show the designed colours.
-    assert.equal(grid().dataset.colors, 'none');
   } finally {
     await portal.unmount();
   }

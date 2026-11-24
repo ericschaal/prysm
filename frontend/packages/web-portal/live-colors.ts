@@ -242,7 +242,7 @@ export function useLiveColors(
   active: boolean,
   target: RefObject<HTMLElement | null>,
 ) {
-  // Before the first paint, so the designed colours never flash.
+  // Before the first paint, so colours left from an earlier run never flash.
   useLayoutEffect(() => {
     const element = target.current;
     if (!client || !active || !element) return;

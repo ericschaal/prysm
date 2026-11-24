@@ -35,7 +35,7 @@ export interface WebPortalProps<
   preview?: PreviewClient;
   /**
    * The LEDs' colours, for the glow Home casts while screen sync runs;
-   * without one the glow is the designed one.
+   * without one the glow stays the moonlight of black LEDs.
    */
   colors?: ColorsClient;
   /**
