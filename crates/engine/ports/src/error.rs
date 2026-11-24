@@ -1,4 +1,4 @@
-use crate::{Revision, Section, SessionPhase};
+use crate::{Escalation, Fix, Recovery, Revision, Section, SessionPhase};
 use std::error::Error as StdError;
 use std::sync::Arc;
 
@@ -48,6 +48,9 @@ pub enum Error {
         /// Which side failed, when the engine knows: the capture source or
         /// the output. Set where the error happens ([`Error::in_section`]).
         section: Option<Section>,
+        /// What makes it work again: [`Escalation::TRY_AGAIN`] unless set
+        /// where the error happens ([`Error::recovers`]).
+        recovery: Recovery,
     },
     #[error("settings revision {expected} is stale; current is {current}")]
     StaleRevision {
@@ -78,6 +81,7 @@ impl Error {
             context: context.into(),
             source: Some(Arc::new(source)),
             section: None,
+            recovery: Recovery::Escalate(Escalation::TRY_AGAIN),
         }
     }
 
@@ -87,6 +91,7 @@ impl Error {
             context: context.into(),
             source: None,
             section: None,
+            recovery: Recovery::Escalate(Escalation::TRY_AGAIN),
         }
     }
 
@@ -99,12 +104,51 @@ impl Error {
                 context,
                 source,
                 section: None,
+                recovery,
             } => Self::Adapter {
                 context,
                 source,
                 section: Some(section),
+                recovery,
             },
             other => other,
+        }
+    }
+
+    /// This adapter failure, made to work again by `recovery`. Other errors
+    /// keep the recovery of their kind ([`Error::recovery`]).
+    #[must_use]
+    pub fn recovers(self, recovery: Recovery) -> Self {
+        match self {
+            Self::Adapter {
+                context,
+                source,
+                section,
+                recovery: _,
+            } => Self::Adapter {
+                context,
+                source,
+                section,
+                recovery,
+            },
+            other => other,
+        }
+    }
+
+    /// What makes this failure work again.
+    #[must_use]
+    pub fn recovery(&self) -> Recovery {
+        match self {
+            Self::Invalid(_) | Self::UnusableSettings(_) | Self::Decode { .. } => {
+                Recovery::Escalate(Escalation::Ask(Fix::ChangeSettings))
+            }
+            Self::Adapter { recovery, .. } => *recovery,
+            Self::StaleRevision { .. } | Self::NeedsScreenSync => {
+                Recovery::Escalate(Escalation::TRY_AGAIN)
+            }
+            Self::Faulted(_) | Self::Panicked(_) | Self::Closed => {
+                Recovery::Escalate(Escalation::Restart)
+            }
         }
     }
 
@@ -194,5 +238,53 @@ mod tests {
             "unplugged"
         );
         assert_eq!(chain(&unusable), "cannot read: unplugged");
+    }
+
+    #[test]
+    fn an_adapter_failure_fails_fast_unless_it_says_what_recovers_it() {
+        let fail_fast = Recovery::Escalate(Escalation::TRY_AGAIN);
+        let io = std::io::Error::other("unplugged");
+        assert_eq!(Error::adapter("cannot read", io).recovery(), fail_fast);
+        assert_eq!(Error::other("cannot read").recovery(), fail_fast);
+
+        let reachable = Recovery::Retry(crate::Converges::LightsReachable);
+        let said = Error::other("no answer").recovers(reachable);
+        assert_eq!(said.recovery(), reachable);
+        let placed = said.in_section(Section::Output);
+        assert_eq!(placed.section(), Some(Section::Output));
+        assert_eq!(placed.recovery(), reachable);
+    }
+
+    #[test]
+    fn every_other_error_recovers_as_its_kind_says() {
+        let settings = Recovery::Escalate(Escalation::Ask(Fix::ChangeSettings));
+        let restart = Recovery::Escalate(Escalation::Restart);
+        let invalid = Error::Invalid(ValidationError::new("capture.fps", "zero"));
+        let decode = Error::Decode {
+            kind: "fake".into(),
+            field: "capture".into(),
+            source: Arc::new(serde_json::from_str::<u8>("x").unwrap_err()),
+        };
+        let stale = Error::StaleRevision {
+            expected: Revision::default(),
+            current: Revision::default(),
+        };
+        for (error, recovery) in [
+            (Error::UnusableSettings(Arc::new(invalid.clone())), settings),
+            (invalid, settings),
+            (decode, settings),
+            (stale, Recovery::Escalate(Escalation::TRY_AGAIN)),
+            (
+                Error::NeedsScreenSync,
+                Recovery::Escalate(Escalation::TRY_AGAIN),
+            ),
+            (Error::Faulted(SessionPhase::ClosingSource), restart),
+            (Error::Panicked("session"), restart),
+            (Error::Closed, restart),
+        ] {
+            assert_eq!(error.recovery(), recovery, "{error}");
+            let unchanged = error.recovers(Recovery::Wait(crate::Signal::Video));
+            assert_eq!(unchanged.recovery(), recovery, "{unchanged}");
+        }
     }
 }
