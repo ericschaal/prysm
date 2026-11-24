@@ -10,6 +10,7 @@ use prysm_webos_luna_sys as sys;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+use tracing::info;
 
 /// Register and run until stopped (the signal number stored in `stop`,
 /// `deadline`, or uninstall). `wake` wakes the loop: the stop signals and
@@ -38,7 +39,7 @@ pub fn serve(
         wake,
         refuse,
     };
-    log!("registering {}", identity.service);
+    info!(service = %identity.service, "registering");
     sys::run(&config, Box::new(Glue::new(service, stop, deadline)))
 }
 
@@ -129,7 +130,7 @@ where
             };
             if let Some(why) = why {
                 self.stopping = true;
-                log!("stopping: {why}");
+                info!(%why, "stopping");
                 self.service.shutdown(&mut LunaBus(bus), now);
             }
         }

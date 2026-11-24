@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use tracing::{debug, error, info, warn};
 
 /// Largest accepted request payload.
 pub const MAX_PAYLOAD: usize = 4096;
@@ -304,7 +305,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         let (file, preferences, unreadable) = match loaded {
             Ok((file, preferences)) => (file, preferences, None),
             Err(why) => {
-                log!("using the default preferences: {why}");
+                warn!(error = %why, "using the default preferences");
                 (
                     PreferencesFile::default(),
                     Preferences::default(),
@@ -521,15 +522,17 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             *slot = None;
         }
         if self.permission != Some(reading) {
-            self.permission = Some(reading);
-            // `coreStatus` is only logged, for comparison with `status`.
-            match reading.permission {
-                Permission::Unobserved => log!("capture permission unobserved: {payload}"),
-                permission => log!(
-                    "capture permission {permission:?} (coreStatus {:?})",
-                    reading.core
-                ),
+            let previous = self.permission.replace(reading);
+            if previous.map(|previous| previous.permission) != Some(reading.permission) {
+                match reading.permission {
+                    Permission::Unobserved => {
+                        info!(permission = ?reading.permission, reply = %payload, "capture permission");
+                    }
+                    permission => info!(?permission, "capture permission"),
+                }
             }
+            // Only logged, for comparison with `status`.
+            debug!("coreStatus" = ?reading.core, "capture permission");
         }
         self.input(bus, Input::Permission(reading.permission), now);
     }
@@ -550,6 +553,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             let slot = self.renew.of(watch);
             if slot.is_some_and(|at| now >= at) {
                 *slot = Some(now + RESUBSCRIBE);
+                debug!(?watch, "renewing a subscription without a good reply");
                 bus.resubscribe(watch);
                 // A renewed permission was already unobserved: nothing changes.
                 if watch == Watch::Video {
@@ -564,7 +568,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         if self.uninstall == Uninstall::Requested
             && let Err(error) = self.installer.uninstall()
         {
-            log!("uninstall failed: {}", chain(&error));
+            error!(error = %chain(&error), "uninstall failed");
         }
         false
     }
@@ -595,7 +599,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 // Logged once per worker; the machine lets it go after its kill.
                 if !self.wait_failed {
                     self.wait_failed = true;
-                    log!("cannot wait for the worker: {error}");
+                    warn!(%error, "cannot wait for the worker");
                 }
                 None
             }
@@ -626,7 +630,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             // Best effort, reported once per change.
             self.remembered = Some(intent);
             if let Err(error) = self.store.remember(intent) {
-                log!("{}", chain(&error));
+                warn!(error = %chain(&error), "cannot remember the intent");
             }
         }
     }
@@ -657,20 +661,20 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                     if let Some(worker) = &mut self.worker
                         && let Err(error) = worker.terminate()
                     {
-                        log!("cannot stop the worker: {error}");
+                        warn!(%error, "cannot stop the worker");
                     }
                 }
                 Effect::Kill => {
                     if let Some(worker) = &mut self.worker
                         && let Err(error) = worker.kill()
                     {
-                        log!("cannot kill the worker: {error}");
+                        warn!(%error, "cannot kill the worker");
                     }
                 }
                 // Dropping it reaps it on a thread, if it ever can be.
                 Effect::Abandon => {
                     if self.worker.take().is_some() {
-                        log!("letting go of a worker not reaped after its kill");
+                        warn!("letting go of a worker not reaped after its kill");
                     }
                 }
                 Effect::Publish => {

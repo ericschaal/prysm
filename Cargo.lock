@@ -2075,6 +2075,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "prysm-logging"
+version = "0.0.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "prysm-output-wled"
 version = "0.0.0"
 dependencies = [
@@ -2134,6 +2142,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-core",
+ "prysm-logging",
  "prysm-ports",
  "prysm-processor",
  "prysm-runtime",
@@ -2283,6 +2292,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "nix",
+ "prysm-logging",
  "prysm-ports",
  "prysm-settings-file",
  "prysm-testkit",
@@ -2295,6 +2305,7 @@ dependencies = [
  "signal-hook 0.4.6",
  "tempfile",
  "thiserror 2.0.21",
+ "tracing",
  "utoipa",
 ]
 

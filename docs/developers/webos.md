@@ -127,7 +127,7 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   (allowed, refused, or unobserved: an error or a reply without a boolean
   `status`) is logged once and sends a running worker one
   `capture_permission_changed`, which carries no value. Published `video`
-  is the video output's alone. `coreStatus` is only logged; `whitelist` is
+  is the video output's alone. `coreStatus` is only logged (`debug`); `whitelist` is
   not read. Unverified on hardware: whether LG lets the supervisor
   subscribe at all.
 - After a 17 the tap is kept with its driver created and not

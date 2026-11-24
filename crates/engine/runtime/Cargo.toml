@@ -11,8 +11,8 @@ description = "The Prysm engine, session thread, builder and surfaces"
 testkit = []
 # `utoipa::ToSchema` for `NullSettings`, for the contract exporter.
 schema = ["dep:utoipa"]
-# `logging::init`: a `tracing` subscriber for host processes.
-logging = ["dep:tracing-subscriber"]
+# `logging::init`: the hosts' `tracing` subscriber on stderr or in a file.
+logging = ["dep:prysm-logging", "dep:tracing-subscriber"]
 
 [dependencies]
 prysm-ports.workspace = true
@@ -23,6 +23,7 @@ tokio = { workspace = true, features = ["time"] }
 serde.workspace = true
 utoipa = { workspace = true, optional = true }
 tracing.workspace = true
+prysm-logging = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
