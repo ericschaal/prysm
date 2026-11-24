@@ -364,12 +364,9 @@ enum Started {
 const NOT_READY: i32 = 1;
 
 /// The status of `vtCapture_init` that refuses the capture of the video the
-/// TV shows. Observed on one TV: AirPlay video got it on every
-/// initialization while `capturepermission/checkPermission` said `status`
-/// true, and one YouTube start got it in the same second `status` turned
-/// true. Static reading of the library on that TV (webOS 10.3.2) suggests
-/// it answers from its own copy of that permission, kept by its own
-/// subscription; not verified.
+/// TV shows. Observed on one TV (webOS 10.3.2): AirPlay video got it on every
+/// initialization in two sessions, and one YouTube video start in about
+/// fifteen got it until the next video. The cause is not known.
 const REFUSED: i32 = 17;
 
 /// One native capture tap; see the crate documentation.

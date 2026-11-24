@@ -226,6 +226,7 @@ export function sectionStatus(
     };
   }
   // Not a problem, however long it lasts: it ends when the video changes.
+  // The title names the symptom, the detail the reason.
   if (path.kind === 'waiting' && path.picture === 'refused')
     return { tone: 'idle', title: 'No picture', detail: REFUSED_VIDEO };
   if (path.kind === 'waiting' && stalled)

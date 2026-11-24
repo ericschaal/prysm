@@ -12,8 +12,7 @@
       ],
       "outbound": [
         "com.webos.service.tvpower",
-        "com.webos.service.videooutput",
-        "com.webos.service.capturepermission"
+        "com.webos.service.videooutput"
       ]
     }
   ]

@@ -22,10 +22,9 @@ pub struct Readiness {
     pub video: Video,
     /// The video context: bumped by every [`VideoSignal::reset`].
     pub generation: u64,
-    /// Bumped by every change of the signal (each [`VideoSignal::set`],
-    /// [`VideoSignal::reset`] and [`VideoSignal::permission_changed`]), so a
-    /// reader that compares it sees two changes in a row that leave `video`
-    /// and `generation` as they were.
+    /// Bumped by every change of the signal (each [`VideoSignal::set`] and
+    /// [`VideoSignal::reset`]), so a reader that compares it sees two changes
+    /// in a row that leave `video` and `generation` as they were.
     pub sequence: u64,
 }
 
@@ -38,12 +37,6 @@ impl VideoSignal {
     /// the native tap, or initialize again a tap whose video the TV refused.
     pub fn reset(&self) {
         self.change(|readiness| readiness.generation = readiness.generation.wrapping_add(1));
-    }
-
-    /// The TV's capture permission changed: a driver whose initialization
-    /// was refused is initialized once more. A running tap is left alone.
-    pub fn permission_changed(&self) {
-        self.change(|_| {});
     }
 
     /// Availability, context generation (the number of resets) and change

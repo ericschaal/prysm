@@ -110,8 +110,8 @@ impl Answer {
 }
 
 /// A refusal period of the held video driver: from an initialization the
-/// driver refused to the first it accepts, a native failure, or video
-/// becoming unavailable. Its pulls are refused meanwhile.
+/// driver refused to the first it accepts, a not-ready answer, a native
+/// failure, or video becoming unavailable. Its pulls are refused meanwhile.
 #[derive(Debug)]
 struct Refusal {
     since: Instant,
@@ -260,8 +260,7 @@ impl<B: Backend> Native<B> {
     }
 
     /// The video signal changed from `before` (`None`: the start) to `now`.
-    /// Any change, a permission wake included, lets a refused driver be
-    /// initialized once more; only a change of video or context lets a
+    /// Any change lets a refused driver be initialized once more; only a change of video or context lets a
     /// failed TV UI be tried again.
     fn signal_changed(&mut self, before: Option<Readiness>, now: Readiness) {
         self.changed_at = Instant::now();
@@ -344,9 +343,14 @@ impl<B: Backend> Native<B> {
         }
         match answer {
             Answer::Refused => self.refused(now),
+            // Preparing has its own bounded wait, so the pulls stop saying refused.
             Answer::NotReady => {
-                if let Some(refusal) = &mut self.refusal {
-                    refusal.initializations += 1;
+                if let Some((initializations, elapsed_ms)) = self.end_refusal(now, 1) {
+                    tracing::debug!(
+                        initializations,
+                        elapsed_ms,
+                        "the refusal ended with a driver that is preparing"
+                    );
                 }
             }
             Answer::Accepted => {
@@ -388,6 +392,7 @@ impl<B: Backend> Native<B> {
                 self.worker.offer(frame);
             }
             Ok(Acquired::Pending) => {
+                self.not_ready_since = None;
                 let since = *self.pending_since.get_or_insert(now);
                 if now.duration_since(since) >= self.limits.pending {
                     let stalled = Fault::recoverable(Error::other(format!(
@@ -398,6 +403,7 @@ impl<B: Backend> Native<B> {
                 }
             }
             Ok(Acquired::NotReady) => {
+                self.pending_since = None;
                 let since = *self.not_ready_since.get_or_insert(now);
                 if now.duration_since(since) >= self.limits.preparation {
                     return Err(Error::other(format!(

@@ -40,7 +40,7 @@ const REFUSED = 'Video can’t be captured';
  * The status card while the capture gives no picture, by why and package
  * (slim's `quiet` also while its worker has not reported yet). Neither is a
  * failure: no button but slim's usual one, and a refusal ends by itself
- * when the TV allows capture again.
+ * when the video changes.
  */
 const waitingStatus: Record<
   Exclude<Picture, 'arriving'>,
@@ -59,11 +59,11 @@ const waitingStatus: Record<
   refused: {
     full: {
       title: REFUSED,
-      description: 'Screen sync continues when the TV allows it.',
+      description: 'Screen sync continues when the video changes.',
     },
     slim: {
       title: REFUSED,
-      description: 'Capture continues when the TV allows it.',
+      description: 'Capture continues when the video changes.',
     },
   },
 };

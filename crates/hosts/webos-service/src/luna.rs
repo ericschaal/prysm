@@ -120,12 +120,10 @@ where
 
     fn reply(&mut self, bus: &mut sys::Bus, index: usize, payload: &str) {
         let now = Instant::now();
-        let bus = &mut LunaBus(bus);
-        match Watch::ALL.get(index) {
-            Some(Watch::Power) => self.service.power(bus, payload, now),
-            Some(Watch::Video) => self.service.video(bus, payload, now),
-            Some(Watch::Permission) => self.service.permission(bus, payload, now),
-            None => {}
+        if index == Watch::Power as usize {
+            self.service.power(&mut LunaBus(bus), payload, now);
+        } else if index == Watch::Video as usize {
+            self.service.video(&mut LunaBus(bus), payload, now);
         }
     }
 
@@ -237,8 +235,8 @@ mod tests {
     }
 
     /// The supervisor's log lines reach the tail at the next poll, in order
-    /// with the worker's: logged while a reply is handled, and while a poll
-    /// runs (they wait for the next one).
+    /// with the worker's: logged before a poll, and while a poll runs (they
+    /// wait for the next one).
     #[test]
     fn the_supervisors_log_lines_join_the_workers_in_the_tail() {
         let now = Instant::now();
@@ -268,8 +266,7 @@ mod tests {
             };
             let active = r#"{"returnValue":true,"state":"Active"}"#;
             glue.reply(&mut bus, Watch::Power as usize, active);
-            let allowed = r#"{"status":true,"coreStatus":true,"returnValue":true}"#;
-            glue.reply(&mut bus, Watch::Permission as usize, allowed);
+            info!("before the first poll");
             worker("prysm-webos: first");
             glue.poll(&mut bus, now);
             world.borrow_mut().wait_fails = true;
@@ -290,7 +287,7 @@ mod tests {
         assert_eq!(
             log,
             serde_json::json!([
-                "prysm-webos-service: info prysm_webos_service::service: capture permission permission=Allowed",
+                "prysm-webos-service: info prysm_webos_service::luna::tests: before the first poll",
                 "prysm-webos: first",
                 "prysm-webos: second",
                 "prysm-webos-service: warn prysm_webos_service::service: cannot wait for the worker error=no child",

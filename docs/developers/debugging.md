@@ -56,7 +56,7 @@ activation. The boot hook's `setup` runs without the service and writes to
 `/tmp/io.github.ericschaal.prysm-setup.log`; a failed setup from the app
 shows its stderr as the failure. Each new line is published to `getState`
 subscribers, so nothing the supervisor logs at `info` or above repeats on
-its own: its subscription renewals and the TV's `coreStatus` are `debug`.
+its own: its subscription renewals are `debug`.
 
 For rates and timing over time, enable [metrics](monitoring.md).
 

@@ -5,7 +5,7 @@
 use crate::install::Installer;
 use crate::launcher::{Launcher, Output, Worker};
 use crate::machine::{Effect, Input, Machine, Spec};
-use crate::observe::{self, Permission};
+use crate::observe;
 use crate::preferences::{Preferences, PreferencesFile, PreferencesStore};
 use crate::state::{Flavor, Power, State};
 use prysm_ports::chain;
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 /// Largest accepted request payload.
 pub const MAX_PAYLOAD: usize = 4096;
@@ -70,41 +70,38 @@ pub const METHODS: [&str; 5] = [
 /// Subscription key of `getState`.
 pub const STATE_KEY: &str = "/getState";
 
-/// The subscriptions the service keeps, in call order: the discriminant is
-/// the call's index in [`WATCHES`].
+/// The two subscriptions the service keeps, in call order: the
+/// discriminant is the call's index in [`WATCHES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Watch {
     Power = 0,
     Video = 1,
-    Permission = 2,
 }
 
-impl Watch {
-    pub const ALL: [Self; 3] = [Self::Power, Self::Video, Self::Permission];
-}
-
-/// When each [`Watch`] is renewed, unless a good reply came first.
+/// When each subscription is renewed, unless a good reply came first.
 #[derive(Debug, Clone, Copy)]
-struct Renewals([Option<Instant>; Watch::ALL.len()]);
+struct Renewals {
+    power: Option<Instant>,
+    video: Option<Instant>,
+}
 
 impl Renewals {
     fn of(&mut self, watch: Watch) -> &mut Option<Instant> {
-        &mut self.0[watch as usize]
+        match watch {
+            Watch::Power => &mut self.power,
+            Watch::Video => &mut self.video,
+        }
     }
 }
 
 /// `(uri, payload)` of each [`Watch`], in order.
-pub const WATCHES: [(&str, &str); Watch::ALL.len()] = [
+pub const WATCHES: [(&str, &str); 2] = [
     (
         "luna://com.webos.service.tvpower/power/getPowerState",
         r#"{"subscribe":true}"#,
     ),
     (
         "luna://com.webos.service.videooutput/getStatus",
-        r#"{"subscribe":true}"#,
-    ),
-    (
-        "luna://com.webos.service.capturepermission/checkPermission",
         r#"{"subscribe":true}"#,
     ),
 ];
@@ -275,8 +272,6 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
     wait_failed: bool,
     renew: Renewals,
     video_context: Option<Value>,
-    /// The last capture permission reading, logged when it changes.
-    permission: Option<observe::PermissionReading>,
     published: Option<String>,
     /// `tv.json` as last read or saved; the default while it is unreadable,
     /// so the next save replaces it.
@@ -330,9 +325,11 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             installer,
             worker: None,
             wait_failed: false,
-            renew: Renewals([Some(now + RESUBSCRIBE); Watch::ALL.len()]),
+            renew: Renewals {
+                power: Some(now + RESUBSCRIBE),
+                video: Some(now + RESUBSCRIBE),
+            },
             video_context: None,
-            permission: None,
             published: None,
             file,
             remembered: resumed,
@@ -511,32 +508,6 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         self.input(bus, Input::Video(reading.video), now);
     }
 
-    /// A `capturepermission` subscription reply.
-    pub fn permission(&mut self, bus: &mut impl Bus, payload: &str, now: Instant) {
-        let value = serde_json::from_str(payload).unwrap_or(Value::Null);
-        let reading = observe::permission(&value);
-        let slot = self.renew.of(Watch::Permission);
-        if reading.permission == Permission::Unobserved {
-            slot.get_or_insert(now + RESUBSCRIBE);
-        } else {
-            *slot = None;
-        }
-        if self.permission != Some(reading) {
-            let previous = self.permission.replace(reading);
-            if previous.map(|previous| previous.permission) != Some(reading.permission) {
-                match reading.permission {
-                    Permission::Unobserved => {
-                        info!(permission = ?reading.permission, reply = %payload, "capture permission");
-                    }
-                    permission => info!(?permission, "capture permission"),
-                }
-            }
-            // Only logged, for comparison with `status`.
-            debug!("coreStatus" = ?reading.core, "capture permission");
-        }
-        self.input(bus, Input::Permission(reading.permission), now);
-    }
-
     /// A line for the state's tail.
     pub fn log(&mut self, bus: &mut impl Bus, line: String, now: Instant) {
         self.input(bus, Input::Log(line), now);
@@ -554,13 +525,12 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     pub fn tick(&mut self, bus: &mut impl Bus, now: Instant) -> bool {
         self.poll_worker(bus, now);
         self.input(bus, Input::Tick, now);
-        for watch in Watch::ALL {
+        for watch in [Watch::Power, Watch::Video] {
             let slot = self.renew.of(watch);
             if slot.is_some_and(|at| now >= at) {
                 *slot = Some(now + RESUBSCRIBE);
                 debug!(?watch, "renewing a subscription without a good reply");
                 bus.resubscribe(watch);
-                // A renewed permission was already unobserved: nothing changes.
                 if watch == Watch::Video {
                     // Unknown video still lets capture try, bounded by the adapter.
                     self.input(bus, Input::Video(Video::Unknown), now);
@@ -585,10 +555,11 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     pub fn next_due(&self, now: Instant) -> Option<Instant> {
         [
             self.machine.next_due(now),
+            self.renew.power,
+            self.renew.video,
             self.worker.as_ref().and_then(Worker::due),
         ]
         .into_iter()
-        .chain(self.renew.0)
         .flatten()
         .min()
     }

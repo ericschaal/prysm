@@ -44,10 +44,6 @@ pub enum Command {
     /// Input, app or picture mode changed: reopen the native tap. (A struct
     /// variant, so unknown fields are rejected like everywhere else.)
     ResetVideo {},
-    /// The TV's capture permission changed. It carries no verdict: a
-    /// capture the TV refused initializes its driver once more, and nothing
-    /// else follows from it.
-    CapturePermissionChanged {},
     /// Full only: the lighting target the TV app chose. `sequence` counts
     /// the targets sent to this worker from 1; its status says the last one
     /// it applied ([`FullStatus::applied`]). A slim worker treats it as
@@ -153,7 +149,7 @@ pub enum SlimLink {
     /// while none come.
     Sending { encoding: StreamEncoding, fps: u16 },
     /// Connected, but the TV refuses to share the video it shows, so no
-    /// frames go out until it allows it again. Not a failure.
+    /// frames go out; it ends when the video changes. Not a failure.
     Refused {},
     /// The receiver stopped the stream (its lighting is off), and the TV
     /// capture is released until a receiver takes a connection again. Not a

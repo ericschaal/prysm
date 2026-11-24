@@ -18,10 +18,6 @@ fn commands_have_a_stable_wire_form() {
         ),
         (Command::ResetVideo {}, r#"{"type":"reset_video"}"#),
         (
-            Command::CapturePermissionChanged {},
-            r#"{"type":"capture_permission_changed"}"#,
-        ),
-        (
             Command::Target {
                 target: LightingTarget::Effects,
                 sequence: 3,

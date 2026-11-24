@@ -1,6 +1,5 @@
 //! The supervisor's decisions as a pure state machine: inputs and the current
 //! time in, effects out. No I/O, no clock; every rule is table-tested.
-use crate::observe::Permission;
 use crate::preferences::Preferences;
 use crate::state::{self, FullWorker, Power, Process, SlimWorker, State};
 use prysm_webos_link::{
@@ -20,9 +19,6 @@ pub enum Input {
     Power(Power),
     Video(Video),
     VideoContextChanged,
-    /// The TV's capture permission as last read. Only its changes count:
-    /// each wakes a running worker's capture, and none changes the video.
-    Permission(Permission),
     /// Already validated and persisted.
     Preferences(Preferences),
     /// Full only: the lighting target the app chose. Slim ignores it (the
@@ -197,8 +193,6 @@ pub struct Machine {
     preferences: Preferences,
     power: Power,
     video: Video,
-    /// The last [`Input::Permission`], to tell its changes.
-    permission: Permission,
     phase: Phase,
     /// Restart delays: reset by a worker that ran [`Backoff::HEALTHY`] and by
     /// a dismissal ([`Machine::dismiss`]).
@@ -252,7 +246,6 @@ impl Machine {
             preferences,
             power: Power::Unknown,
             video: Video::Unknown,
-            permission: Permission::Unobserved,
             phase: Phase::Idle,
             backoff: Backoff::default(),
             failed: None,
@@ -306,12 +299,6 @@ impl Machine {
                 self.power = power;
             }
             Input::Video(video) => self.video = video,
-            Input::Permission(permission) => {
-                let changed = std::mem::replace(&mut self.permission, permission) != permission;
-                if changed && self.running() {
-                    effects.push(Effect::Send(Command::CapturePermissionChanged {}));
-                }
-            }
             Input::VideoContextChanged => {
                 if self.running() {
                     effects.push(Effect::Send(Command::ResetVideo {}));

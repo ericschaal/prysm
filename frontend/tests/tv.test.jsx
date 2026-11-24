@@ -676,7 +676,7 @@ test('status card covers the supervisor states for both packages', () => {
     ],
     [
       'Video can’t be captured',
-      'Capture continues when the TV allows it.',
+      'Capture continues when the video changes.',
       false,
       'disable',
     ],
@@ -2034,7 +2034,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     [refused.title, refused.description, refused.attention, refused.action],
     [
       'Video can’t be captured',
-      'Screen sync continues when the TV allows it.',
+      'Screen sync continues when the video changes.',
       false,
       'none',
     ],

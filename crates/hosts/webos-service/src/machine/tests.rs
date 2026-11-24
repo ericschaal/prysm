@@ -215,40 +215,6 @@ fn full_runs_while_awake_and_gates_video_on_active() {
     ));
 }
 
-/// Each change of the capture permission wakes a running worker once; a
-/// repeated reading wakes nothing, and no reading changes the video sent or
-/// published. A change while no worker runs is not kept for the next one.
-#[test]
-fn a_change_of_the_capture_permission_wakes_the_capture() {
-    use crate::observe::Permission::{Allowed, Refused, Unobserved};
-    use Input::Permission as P;
-    let wake = || Effect::Send(Command::CapturePermissionChanged {});
-    let (mut m, t) = (full(), Instant::now());
-    script(
-        &mut m,
-        t,
-        vec![
-            (0, P(Refused), vec![]),
-            (
-                0,
-                Pw(Active),
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
-            (1, V(Video::Available), vec![video(Video::Available)]),
-            (2, P(Refused), vec![]),
-            (3, P(Allowed), vec![wake()]),
-            (4, P(Allowed), vec![]),
-            (5, P(Refused), vec![wake()]),
-            (6, P(Unobserved), vec![wake()]),
-            (7, P(Unobserved), vec![]),
-            (8, P(Allowed), vec![wake()]),
-        ],
-    );
-    assert_eq!(m.state(t).video, Video::Available);
-    m.handle(P(Refused), t);
-    assert_eq!(m.state(t).video, Video::Available, "never a verdict");
-}
-
 #[test]
 fn full_autostart_starts_screen_sync_and_the_target_is_sent() {
     let mut m = full_with(Preferences {
@@ -2038,16 +2004,6 @@ fn every_phase_takes_every_input() {
             V(Video::Available),
             false,
             only_running((vec![video(Video::Available)], running, None)),
-        ),
-        // A change of the reading: a wake while running, nothing else.
-        (
-            Input::Permission(crate::observe::Permission::Refused),
-            false,
-            only_running((
-                vec![Effect::Send(Command::CapturePermissionChanged {})],
-                running,
-                None,
-            )),
         ),
         (
             Input::VideoContextChanged,

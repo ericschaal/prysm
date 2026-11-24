@@ -24,7 +24,7 @@ it. Capture therefore runs in a worker process under a supervisor.
 
 | Installed as | Full package | Slim package | Owns |
 | --- | --- | --- | --- |
-| `prysm-webos-service` (Luna-activated, root) | bin `prysm-webos-service` | bin `prysm-webos-slim-service` | Luna name `io.github.ericschaal.prysm.service`, TV power, video and capture permission, preferences, the intent, worker start/stop/kill, setup and uninstall |
+| `prysm-webos-service` (Luna-activated, root) | bin `prysm-webos-service` | bin `prysm-webos-slim-service` | Luna name `io.github.ericschaal.prysm.service`, TV power and video, preferences, the intent, worker start/stop/kill, setup and uninstall |
 | `prysm-webos-worker` (child) | `prysm-webos`: engine, webOS capture, WLED, portal on `0.0.0.0:8787` | `prysm-webos-slim`: webOS capture, H.264 or raw stream to a desktop Prysm | Capture and everything after it |
 
 The flavour is compiled into each supervisor binary, and each package ships
@@ -51,9 +51,8 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   dropped) and wakes the loop, which adds them to the tail at its next poll,
   before the worker lines it reads then. The commands are
   `video` (`unknown`, `unavailable` or `available`; unavailable unless the
-  TV is active), `reset_video` (input, app or picture mode changed),
-  `capture_permission_changed` (a wake, without a value) and `target`
-  (full only, numbered from 1 by
+  TV is active), `reset_video` (input, app or picture mode changed) and
+  `target` (full only, numbered from 1 by
   `sequence`; a slim worker takes it as protocol misuse); the events
   `status` (the full worker's says the `sequence` it last `applied`),
   `failed` and `faulted`. The worker
@@ -120,32 +119,20 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs),
   [native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
 - The TV can refuse to capture the video it shows: `vtCapture_init`
-  answers 17. Observed on one TV: AirPlay video got 17 on every
-  initialization (20 timed attempts, twice) while the TV's capture
-  permission said allowed; six YouTube starts never needed a second
-  initialization; one earlier YouTube start got 17 in the same second the
-  permission turned allowed, and stayed refused because nothing woke the
-  capture. Static reading of the library on that TV (webOS 10.3.2)
-  suggests it answers from its own copy of that permission; not verified.
-- The supervisor subscribes to the capture permission
-  (`com.webos.service.capturepermission/checkPermission`) beside power and
-  video. Its `status` was false on that TV only between videos, while the
-  video output also reported no frames; it never refused playing video. So
-  the permission is an event, never a verdict: each change of the reading
-  (allowed, refused, or unobserved: an error or a reply without a boolean
-  `status`) is logged once and sends a running worker one
-  `capture_permission_changed`, which carries no value. Published `video`
-  is the video output's alone. `coreStatus` is only logged (`debug`); `whitelist` is
-  not read. Unverified on hardware: whether LG lets the supervisor
-  subscribe at all.
+  answers 17. Observed on one TV (webOS 10.3.2): AirPlay video was refused
+  on every attempt in two sessions; one YouTube video start in about
+  fifteen was refused and stayed refused until the next video. The cause is
+  not known. The TV's capture-permission service
+  (`com.webos.service.capturepermission`) refuses Prysm's supervisor: it is
+  reserved to the TV's own capture services.
 - After a 17 the tap is kept with its driver created and not
   initialized: no timer runs, no preparation limit, and pulls are
-  `Pull::Refused`. The next change of the video signal (availability,
-  input, app or picture mode, or a permission wake) initializes the same
-  driver once more; refused again, it waits again. Pulls stay refused until
-  an initialization is accepted, a native failure, or video becomes
-  unavailable. A permission wake alone releases and reopens nothing, also
-  while a tap runs. Whether a driver is only created is what the driver
+  `Pull::Refused`. A refused capture is initialized again only when the
+  video output's signal changes (availability, or input, app or picture
+  mode); refused again, it waits again. Pulls stay refused until an
+  initialization is accepted or answers not ready (the driver is then
+  preparing, under the preparation limit), a native failure, or video
+  becomes unavailable. Whether a driver is only created is what the driver
   reached (`VtCapture::created_only`), so one that answered not ready (1)
   is kept the same way: a change of context initializes it again instead
   of releasing it, since a created driver holds no video context (not yet
@@ -164,11 +151,13 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   portal's light card say "The TV doesn’t let Prysm capture this video."
   Neither is a failure, and both clear once frames come again. A slim
   stream carries no reason, so its receiver's portal only waits for the
-  picture. The capture thread logs one info line when a refusal starts
-  (with the milliseconds since the last signal change) and one when an
-  initialization is accepted again (with the initializations of the
-  refusal and its milliseconds); each initialization's answer, and each
-  signal change, is debug, except one info line per change of `video`. A
+  picture. The capture thread logs at info when a refusal starts (with the
+  milliseconds since the last signal change), when a signal change
+  initializes the refused driver again, when it is refused again, and when
+  an initialization is accepted (with the initializations of the refusal
+  and its milliseconds); a refusal that ends with a not-ready answer, a
+  native failure or video gone is debug. Each initialization's answer, and
+  each signal change, is debug, except one info line per change of `video`. A
   fresh tap's open already ran one initialization on the TV that these
   counts leave out.
 - The supervisor reaps a worker before starting another (or lets go of one
@@ -223,8 +212,8 @@ protocol: [capture-remote](../../crates/adapters/capture-remote/README.md).
 
 Every rule above is one sans-IO machine,
 [`Machine::handle(Input, now) -> Vec<Effect>`](../../crates/hosts/webos-service/src/machine.rs):
-inputs are TV power, video and capture permission, preferences (already
-validated and persisted), enable, worker events, logs and exits, a broken event stream, a
+inputs are TV power and video, preferences (already validated and
+persisted), enable, worker events, logs and exits, a broken event stream, a
 failed spawn, a tick (at the time `Machine::next_due` names) and shutdown;
 effects are `Spawn`, `Send`, `Terminate`, `Kill`, `Abandon` (let go of a
 worker not reaped after its kill) and `Publish`. Its phases are idle, running, stopping and retrying. A worker is

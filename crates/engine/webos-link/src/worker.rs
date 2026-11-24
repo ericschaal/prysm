@@ -300,7 +300,7 @@ impl Stdio {
     ///
     /// # Errors
     /// The descriptors cannot be duplicated.
-    pub fn take() -> io::Result<Self> {
+    fn take() -> io::Result<Self> {
         use nix::fcntl::{FcntlArg, FdFlag, fcntl};
         let original = nix::unistd::dup(io::stdout())?;
         fcntl(&original, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
@@ -311,8 +311,10 @@ impl Stdio {
     }
 }
 
-/// [`Stdio::take`] for the program `name`; prints the error and exits
-/// [`exit::FAILED`] when it cannot.
+/// Take over stdio for the program `name` (see the module documentation);
+/// prints the error and exits [`exit::FAILED`] when it cannot. The only way
+/// to a [`Stdio`]: called once, as the worker's first statement, since a
+/// second call would keep stderr as the events' stdout.
 #[must_use]
 pub fn take_stdio(name: &'static str) -> Stdio {
     Stdio::take().unwrap_or_else(|error| {

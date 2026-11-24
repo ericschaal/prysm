@@ -33,7 +33,8 @@ use utoipa::{OpenApi as _, ToSchema};
 pub const API_VERSION: &str = "4";
 
 // Mirrors `prysm_webos_link::Video`.
-/// The TV's main video output.
+/// The TV's main video output. Open: an app reads a value it does not know
+/// as `unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = Video)]
 #[serde(rename_all = "snake_case")]
@@ -100,8 +101,8 @@ pub enum LightingTargetSchema {
 /// `starting`: no connection attempt yet. `sending`: connected, frames go
 /// out in `encoding` (the one the receiver requested, set in the desktop
 /// portal), `fps` per second (0 while none come). `refused`: connected, but
-/// the TV refuses to share the video it shows, so no frames go out until it
-/// allows it again; not a failure. `paused`: the
+/// the TV refuses to share the video it shows, so no frames go out; it ends
+/// when the video changes, not a failure. `paused`: the
 /// receiver stopped the stream because its lighting is off; the TV capture
 /// is released until a receiver takes a connection again, not a failure.
 /// `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
