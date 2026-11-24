@@ -48,8 +48,10 @@ pub enum Error {
         /// Which side failed, when the engine knows: the capture source or
         /// the output. Set where the error happens ([`Error::in_section`]).
         section: Option<Section>,
-        /// What makes it work again: [`Escalation::TRY_AGAIN`] unless set
-        /// where the error happens ([`Error::recovers`]).
+        /// What makes it work again, set when the error is built:
+        /// [`Escalation::FAIL_FAST`] ([`Error::adapter`], [`Error::other`])
+        /// unless the adapter says ([`Error::adapter_recovering`],
+        /// [`Error::other_recovering`]).
         recovery: Recovery,
     },
     #[error("settings revision {expected} is stale; current is {current}")]
@@ -72,26 +74,42 @@ pub enum Error {
 }
 
 impl Error {
-    /// An adapter failure with its cause preserved.
+    /// An adapter failure with its cause preserved; it fails fast.
     pub fn adapter(
         context: impl Into<String>,
         source: impl StdError + Send + Sync + 'static,
+    ) -> Self {
+        Self::adapter_recovering(context, source, Recovery::Escalate(Escalation::FAIL_FAST))
+    }
+
+    /// An adapter failure without an underlying cause; it fails fast.
+    pub fn other(context: impl Into<String>) -> Self {
+        Self::other_recovering(context, Recovery::Escalate(Escalation::FAIL_FAST))
+    }
+
+    /// An adapter failure with its cause preserved, made to work again by
+    /// `recovery`.
+    pub fn adapter_recovering(
+        context: impl Into<String>,
+        source: impl StdError + Send + Sync + 'static,
+        recovery: Recovery,
     ) -> Self {
         Self::Adapter {
             context: context.into(),
             source: Some(Arc::new(source)),
             section: None,
-            recovery: Recovery::Escalate(Escalation::TRY_AGAIN),
+            recovery,
         }
     }
 
-    /// An adapter failure without an underlying cause.
-    pub fn other(context: impl Into<String>) -> Self {
+    /// An adapter failure without an underlying cause, made to work again by
+    /// `recovery`.
+    pub fn other_recovering(context: impl Into<String>, recovery: Recovery) -> Self {
         Self::Adapter {
             context: context.into(),
             source: None,
             section: None,
-            recovery: Recovery::Escalate(Escalation::TRY_AGAIN),
+            recovery,
         }
     }
 
@@ -115,26 +133,6 @@ impl Error {
         }
     }
 
-    /// This adapter failure, made to work again by `recovery`. Other errors
-    /// keep the recovery of their kind ([`Error::recovery`]).
-    #[must_use]
-    pub fn recovers(self, recovery: Recovery) -> Self {
-        match self {
-            Self::Adapter {
-                context,
-                source,
-                section,
-                recovery: _,
-            } => Self::Adapter {
-                context,
-                source,
-                section,
-                recovery,
-            },
-            other => other,
-        }
-    }
-
     /// What makes this failure work again.
     #[must_use]
     pub fn recovery(&self) -> Recovery {
@@ -143,12 +141,13 @@ impl Error {
                 Recovery::Escalate(Escalation::Ask(Fix::ChangeSettings))
             }
             Self::Adapter { recovery, .. } => *recovery,
-            Self::StaleRevision { .. } | Self::NeedsScreenSync => {
-                Recovery::Escalate(Escalation::TRY_AGAIN)
-            }
-            Self::Faulted(_) | Self::Panicked(_) | Self::Closed => {
-                Recovery::Escalate(Escalation::Restart)
-            }
+            Self::Faulted(_) => Recovery::Escalate(Escalation::Restart),
+            // A rejected request; a bug, which a new process repeats; the
+            // answer while shutting down.
+            Self::StaleRevision { .. }
+            | Self::NeedsScreenSync
+            | Self::Panicked(_)
+            | Self::Closed => Recovery::Escalate(Escalation::FAIL_FAST),
         }
     }
 
@@ -241,24 +240,41 @@ mod tests {
     }
 
     #[test]
-    fn an_adapter_failure_fails_fast_unless_it_says_what_recovers_it() {
-        let fail_fast = Recovery::Escalate(Escalation::TRY_AGAIN);
-        let io = std::io::Error::other("unplugged");
-        assert_eq!(Error::adapter("cannot read", io).recovery(), fail_fast);
+    fn an_adapter_failure_fails_fast_unless_built_with_its_recovery() {
+        let fail_fast = Recovery::Escalate(Escalation::FAIL_FAST);
+        let io = || std::io::Error::other("unplugged");
+        assert_eq!(Error::adapter("cannot read", io()).recovery(), fail_fast);
         assert_eq!(Error::other("cannot read").recovery(), fail_fast);
 
-        let reachable = Recovery::Retry(crate::Converges::LightsReachable);
-        let said = Error::other("no answer").recovers(reachable);
-        assert_eq!(said.recovery(), reachable);
-        let placed = said.in_section(Section::Output);
-        assert_eq!(placed.section(), Some(Section::Output));
-        assert_eq!(placed.recovery(), reachable);
+        let stall = Recovery::Retry(crate::Converges::StartStall);
+        for (plain, recovering) in [
+            (
+                Error::adapter("cannot read", io()),
+                Error::adapter_recovering("cannot read", io(), stall),
+            ),
+            (
+                Error::other("cannot read"),
+                Error::other_recovering("cannot read", stall),
+            ),
+        ] {
+            assert_eq!(recovering.recovery(), stall);
+            assert_eq!(recovering.to_string(), plain.to_string());
+            assert_eq!(chain(&recovering), chain(&plain));
+            assert_eq!(
+                StdError::source(&recovering).map(ToString::to_string),
+                StdError::source(&plain).map(ToString::to_string)
+            );
+            assert_eq!(recovering.section(), None);
+            let placed = recovering.in_section(Section::Output);
+            assert_eq!(placed.section(), Some(Section::Output));
+            assert_eq!(placed.recovery(), stall);
+        }
     }
 
     #[test]
     fn every_other_error_recovers_as_its_kind_says() {
         let settings = Recovery::Escalate(Escalation::Ask(Fix::ChangeSettings));
-        let restart = Recovery::Escalate(Escalation::Restart);
+        let fail_fast = Recovery::Escalate(Escalation::FAIL_FAST);
         let invalid = Error::Invalid(ValidationError::new("capture.fps", "zero"));
         let decode = Error::Decode {
             kind: "fake".into(),
@@ -273,18 +289,43 @@ mod tests {
             (Error::UnusableSettings(Arc::new(invalid.clone())), settings),
             (invalid, settings),
             (decode, settings),
-            (stale, Recovery::Escalate(Escalation::TRY_AGAIN)),
+            (stale, fail_fast),
+            (Error::NeedsScreenSync, fail_fast),
             (
-                Error::NeedsScreenSync,
-                Recovery::Escalate(Escalation::TRY_AGAIN),
+                Error::Faulted(SessionPhase::ClosingSource),
+                Recovery::Escalate(Escalation::Restart),
             ),
-            (Error::Faulted(SessionPhase::ClosingSource), restart),
-            (Error::Panicked("session"), restart),
-            (Error::Closed, restart),
+            (Error::Panicked("session"), fail_fast),
+            (Error::Closed, fail_fast),
         ] {
             assert_eq!(error.recovery(), recovery, "{error}");
-            let unchanged = error.recovers(Recovery::Wait(crate::Signal::Video));
-            assert_eq!(unchanged.recovery(), recovery, "{unchanged}");
         }
+    }
+
+    #[test]
+    fn only_a_fault_asks_for_a_new_process() {
+        let restart = Recovery::Escalate(Escalation::Restart);
+        assert_eq!(
+            Error::Faulted(SessionPhase::IdlingOutput).recovery(),
+            restart
+        );
+        assert_ne!(Error::Panicked("session").recovery(), restart, "a bug");
+        assert_ne!(Error::Closed.recovery(), restart, "shutting down");
+    }
+
+    #[test]
+    fn attempts_refuse_an_error_that_does_not_say_their_convergence() {
+        let now = std::time::Instant::now();
+        let mut attempts = crate::Attempts::new(crate::Converges::StartStall);
+        let fail_fast = Err(Escalation::FAIL_FAST);
+        assert_eq!(
+            attempts.failed(Error::other("x").recovery(), now),
+            fail_fast
+        );
+        let faulted = Error::Faulted(SessionPhase::ClosingSource).recovery();
+        assert_eq!(attempts.failed(faulted, now), Err(Escalation::Restart));
+        let stall = Recovery::Retry(crate::Converges::StartStall);
+        let said = Error::other_recovering("stalled", stall).recovery();
+        assert_eq!(attempts.failed(said, now), Ok(now));
     }
 }

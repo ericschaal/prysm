@@ -1,9 +1,9 @@
-//! What makes a failure work again: set once where the error is typed
-//! ([`crate::Error::recovery`]), read by every layer, derived by none.
+//! What makes a failure work again: set once where the error is built
+//! ([`crate::Error::recovery`]) and read, never changed, by every layer.
 //!
-//! A [`Recovery::Retry`] or [`Recovery::Wait`] is acted on only by the layer
-//! that owns the operation and never leaves it; giving up is always
-//! [`Escalation::TRY_AGAIN`]. Only an [`Escalation`] travels further.
+//! Only the layer that owns an operation acts on a [`Recovery::Retry`]
+//! ([`Attempts::failed`]) or a [`Recovery::Wait`]; every layer above reads
+//! [`Recovery::escalation`].
 use std::time::{Duration, Instant};
 
 /// What makes a failure work again.
@@ -18,20 +18,34 @@ pub enum Recovery {
     Escalate(Escalation),
 }
 
+impl Recovery {
+    /// What a layer above the operation's owner sees. Only the owner acts on
+    /// a retry or a wait, so one that reaches another layer fails fast.
+    #[must_use]
+    pub const fn escalation(self) -> Escalation {
+        match self {
+            Self::Escalate(escalation) => escalation,
+            Self::Retry(_) | Self::Wait(_) => Escalation::FAIL_FAST,
+        }
+    }
+}
+
 /// What is left once a failure leaves the layer that met it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Escalation {
-    /// Only a new process recovers (a hung or unconfirmed native call,
-    /// vendor state left broken): the supervisor starts one, once.
+    /// Only a new process recovers (a session that did not stop or did not
+    /// confirm its release): the supervisor starts one, once. If that one
+    /// faults again before it has worked, it is `Ask(Fix::TryAgain)`. A host
+    /// without a supervisor fails fast.
     Restart,
     /// The person must act: shown with this step, and resumed only by it.
     Ask(Fix),
 }
 
 impl Escalation {
-    /// Fail fast: the default for an adapter failure, and what a retry
-    /// becomes when its schedule gives up.
-    pub const TRY_AGAIN: Self = Self::Ask(Fix::TryAgain);
+    /// Fail fast: nothing recovers this automatically; the person is told
+    /// and decides whether to try again.
+    pub const FAIL_FAST: Self = Self::Ask(Fix::TryAgain);
 }
 
 /// A change that ends a [`Recovery::Wait`].
@@ -40,8 +54,6 @@ pub enum Signal {
     /// The TV's video signal or context changes (input, app, picture mode,
     /// power).
     Video,
-    /// The slim receiver sends a new stream request.
-    ReceiverRequest,
 }
 
 /// The person's next step.
@@ -53,10 +65,6 @@ pub enum Fix {
     ChangeSettings,
     /// Run the TV service setup again.
     SetUpService,
-    /// Install matching versions of Prysm and the TV app.
-    Update,
-    /// Restart the TV: a native resource stays held until a reboot.
-    RestartTv,
     /// Nothing makes this work on this device.
     Unsupported,
 }
@@ -64,23 +72,13 @@ pub enum Fix {
 /// Why trying again reaches a working state: one variant per timed retry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Converges {
-    /// LG finalizes a capture session that is not ready yet (status 1), and
-    /// the next initialization starts it again once the TV has woken.
+    /// After the TV wakes, LG's capture driver answers status 1 (not ready)
+    /// while it initializes again; the same driver then delivers, so trying
+    /// again reaches it. One still not ready after 10 s fails fast.
     DriverPreparing,
-    /// A native capture start lost its wake-up; one fresh start recovers it.
+    /// A native capture start lost its wake-up and delivers no frame; a
+    /// fresh start is woken. One that stalls again fails fast.
     StartStall,
-    /// A video device reports an I/O error while its signal resyncs, and
-    /// delivers again once it has.
-    SignalResyncs,
-    /// The lights are off, booting or off the network, and come back on
-    /// their own; only a connection shows that they have.
-    LightsReachable,
-    /// The receiving Prysm accepts once its lighting is on or it is updated;
-    /// the TV is the client, so connecting is the only way to learn it.
-    ReceiverListens,
-    /// The TV's own services register after Prysm's at boot, and a call
-    /// starts a service that is not running.
-    ServiceRegisters,
 }
 
 impl Converges {
@@ -93,16 +91,6 @@ impl Converges {
                 limit: Duration::from_secs(10),
             },
             Self::StartStall => Schedule::Once,
-            Self::SignalResyncs => Schedule::Within {
-                every: Duration::from_millis(100),
-                limit: Duration::from_secs(3),
-            },
-            Self::LightsReachable => Schedule::Doubling {
-                first: Duration::from_secs(1),
-                max: Duration::from_secs(30),
-            },
-            Self::ReceiverListens => Schedule::Every(Duration::from_secs(1)),
-            Self::ServiceRegisters => Schedule::Every(Duration::from_secs(5)),
         }
     }
 }
@@ -110,11 +98,7 @@ impl Converges {
 /// When a [`Recovery::Retry`] tries again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Schedule {
-    /// After this long, for as long as it fails.
-    Every(Duration),
-    /// After `first`, doubling up to `max`, for as long as it fails.
-    Doubling { first: Duration, max: Duration },
-    /// After `every`, until failures have lasted `limit`.
+    /// After `every`, never later than `limit` after the first failure.
     Within { every: Duration, limit: Duration },
     /// At once, one time.
     Once,
@@ -124,9 +108,7 @@ pub enum Schedule {
 #[derive(Debug, Clone)]
 pub struct Attempts {
     converges: Converges,
-    /// Failures since the last success.
-    failures: u32,
-    /// The first of them.
+    /// The first failure since the last success.
     since: Option<Instant>,
 }
 
@@ -135,37 +117,40 @@ impl Attempts {
     pub const fn new(converges: Converges) -> Self {
         Self {
             converges,
-            failures: 0,
             since: None,
         }
     }
 
-    /// After a failure at `now`: when to try again, or, once the schedule
-    /// gives up, the person's next step.
+    /// After a failure at `now` whose recovery is `recovery`: when to try
+    /// again.
     ///
     /// # Errors
-    /// [`Escalation::TRY_AGAIN`] once the schedule gives up.
-    pub fn failed(&mut self, now: Instant) -> Result<Instant, Escalation> {
-        self.failures = self.failures.saturating_add(1);
-        let since = *self.since.get_or_insert(now);
-        let wait = match self.converges.schedule() {
-            Schedule::Every(every) => Some(every),
-            Schedule::Doubling { first, max } => Some(
-                first
-                    .saturating_mul(2_u32.saturating_pow(self.failures - 1))
-                    .min(max),
-            ),
-            Schedule::Within { every, limit } => {
-                (now.duration_since(since) < limit).then_some(every)
+    /// The failure's own [`Recovery::escalation`] unless it is a retry of
+    /// this [`Converges`]; [`Escalation::FAIL_FAST`] once the schedule gives
+    /// up.
+    pub fn failed(&mut self, recovery: Recovery, now: Instant) -> Result<Instant, Escalation> {
+        match recovery {
+            Recovery::Retry(converges) if converges == self.converges => {}
+            Recovery::Retry(_) | Recovery::Wait(_) | Recovery::Escalate(_) => {
+                return Err(recovery.escalation());
             }
-            Schedule::Once => (self.failures == 1).then_some(Duration::ZERO),
+        }
+        let first = self.since.is_none();
+        let since = *self.since.get_or_insert(now);
+        let retry = match self.converges.schedule() {
+            Schedule::Within { every, limit } => {
+                let deadline = since + limit;
+                (now < deadline).then(|| (now + every).min(deadline))
+            }
+            Schedule::Once => first.then_some(now),
         };
-        wait.map(|wait| now + wait).ok_or(Escalation::TRY_AGAIN)
+        retry.ok_or(Escalation::FAIL_FAST)
     }
 
-    /// It worked: the next failure starts the schedule over.
+    /// The operation really worked (a frame arrived, a connection carried
+    /// data), so the next failure starts the schedule over: a failure after
+    /// real work is progress, not a loop.
     pub fn succeeded(&mut self) {
-        self.failures = 0;
         self.since = None;
     }
 }
@@ -174,6 +159,10 @@ impl Attempts {
 mod tests {
     use super::*;
 
+    const fn retry(converges: Converges) -> Recovery {
+        Recovery::Retry(converges)
+    }
+
     /// The waits of `failures` failures one `apart`, `None` for a give-up.
     fn waits(converges: Converges, failures: u32, apart: Duration) -> Vec<Option<Duration>> {
         let start = Instant::now();
@@ -181,7 +170,10 @@ mod tests {
         (0..failures)
             .map(|n| {
                 let now = start + apart * n;
-                attempts.failed(now).ok().map(|at| at - now)
+                attempts
+                    .failed(retry(converges), now)
+                    .ok()
+                    .map(|at| at - now)
             })
             .collect()
     }
@@ -191,26 +183,19 @@ mod tests {
     }
 
     #[test]
-    fn every_retries_for_as_long_as_it_fails() {
-        assert_eq!(
-            waits(Converges::ReceiverListens, 4, Duration::from_secs(60)),
-            [secs(1); 4]
-        );
-    }
-
-    #[test]
-    fn doubling_is_capped_and_starts_over_after_a_success() {
-        let expected = [1, 2, 4, 8, 16, 30, 30].map(secs);
-        assert_eq!(
-            waits(Converges::LightsReachable, 7, Duration::ZERO),
-            expected
-        );
-        let now = Instant::now();
-        let mut attempts = Attempts::new(Converges::LightsReachable);
-        attempts.failed(now).unwrap();
-        attempts.failed(now).unwrap();
-        attempts.succeeded();
-        assert_eq!(attempts.failed(now), Ok(now + Duration::from_secs(1)));
+    fn each_convergence_has_its_schedule() {
+        for (converges, schedule) in [
+            (
+                Converges::DriverPreparing,
+                Schedule::Within {
+                    every: Duration::from_secs(1),
+                    limit: Duration::from_secs(10),
+                },
+            ),
+            (Converges::StartStall, Schedule::Once),
+        ] {
+            assert_eq!(converges.schedule(), schedule, "{converges:?}");
+        }
     }
 
     #[test]
@@ -221,18 +206,91 @@ mod tests {
 
         let now = Instant::now();
         let late = now + Duration::from_secs(10);
+        let preparing = retry(Converges::DriverPreparing);
         let mut attempts = Attempts::new(Converges::DriverPreparing);
-        attempts.failed(now).unwrap();
-        assert_eq!(attempts.failed(late), Err(Escalation::TRY_AGAIN));
+        attempts.failed(preparing, now).unwrap();
+        assert_eq!(attempts.failed(preparing, late), Err(Escalation::FAIL_FAST));
         attempts.succeeded();
-        assert_eq!(attempts.failed(late), Ok(late + Duration::from_secs(1)));
+        assert_eq!(
+            attempts.failed(preparing, late),
+            Ok(late + Duration::from_secs(1))
+        );
     }
 
     #[test]
-    fn once_retries_at_once_one_time() {
+    fn within_schedules_nothing_after_its_limit() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(10);
+        let preparing = retry(Converges::DriverPreparing);
+        let mut attempts = Attempts::new(Converges::DriverPreparing);
+        attempts.failed(preparing, now).unwrap();
+        let just_under = deadline - Duration::from_millis(1);
+        assert_eq!(attempts.failed(preparing, just_under), Ok(deadline));
+        assert_eq!(
+            attempts.failed(preparing, deadline),
+            Err(Escalation::FAIL_FAST)
+        );
+    }
+
+    #[test]
+    fn within_keeps_its_first_failure_when_now_goes_backwards() {
+        let now = Instant::now() + Duration::from_secs(60);
+        let earlier = now - Duration::from_secs(5);
+        let preparing = retry(Converges::DriverPreparing);
+        let mut attempts = Attempts::new(Converges::DriverPreparing);
+        attempts.failed(preparing, now).unwrap();
+        assert_eq!(
+            attempts.failed(preparing, earlier),
+            Ok(earlier + Duration::from_secs(1))
+        );
+        let deadline = now + Duration::from_secs(10);
+        assert_eq!(
+            attempts.failed(preparing, deadline),
+            Err(Escalation::FAIL_FAST)
+        );
+    }
+
+    #[test]
+    fn once_retries_at_once_one_time_and_starts_over_after_a_success() {
         assert_eq!(
             waits(Converges::StartStall, 3, Duration::ZERO),
             [Some(Duration::ZERO), None, None]
         );
+        let now = Instant::now();
+        let stall = retry(Converges::StartStall);
+        let mut attempts = Attempts::new(Converges::StartStall);
+        attempts.failed(stall, now).unwrap();
+        assert_eq!(attempts.failed(stall, now), Err(Escalation::FAIL_FAST));
+        attempts.succeeded();
+        assert_eq!(attempts.failed(stall, now), Ok(now));
+    }
+
+    #[test]
+    fn attempts_retry_only_their_own_convergence() {
+        let now = Instant::now();
+        let restart = Escalation::Restart;
+        let mut attempts = Attempts::new(Converges::StartStall);
+        for (recovery, escalation) in [
+            (retry(Converges::DriverPreparing), Escalation::FAIL_FAST),
+            (Recovery::Wait(Signal::Video), Escalation::FAIL_FAST),
+            (Recovery::Escalate(restart), restart),
+        ] {
+            assert_eq!(attempts.failed(recovery, now), Err(escalation));
+        }
+        let stall = retry(Converges::StartStall);
+        assert_eq!(attempts.failed(stall, now), Ok(now), "a refusal is no try");
+    }
+
+    #[test]
+    fn above_the_owner_a_retry_or_wait_fails_fast() {
+        let unsupported = Escalation::Ask(Fix::Unsupported);
+        for (recovery, escalation) in [
+            (retry(Converges::StartStall), Escalation::FAIL_FAST),
+            (Recovery::Wait(Signal::Video), Escalation::FAIL_FAST),
+            (Recovery::Escalate(Escalation::Restart), Escalation::Restart),
+            (Recovery::Escalate(unsupported), unsupported),
+        ] {
+            assert_eq!(recovery.escalation(), escalation, "{recovery:?}");
+        }
     }
 }
