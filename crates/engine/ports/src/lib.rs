@@ -39,7 +39,7 @@ pub use handoff::{
 pub use hangup::{CallError, Hangup, Registration, Stopping};
 pub use modes::{Mode, Modes, Span};
 pub use owner::{OwnerThread, Wakeup, Worker};
-pub use recovery::{Attempts, Converges, Escalation, Fix, Recovery, Schedule, Signal};
+pub use recovery::{Attempts, Escalation, Fix, Schedule};
 pub use registry::{
     Candidate, OpenFailure, OutputFactory, Registry, SOURCE_OPEN_LIMIT, SourceFactory,
 };

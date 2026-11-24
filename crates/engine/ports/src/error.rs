@@ -1,4 +1,4 @@
-use crate::{Escalation, Fix, Recovery, Revision, Section, SessionPhase};
+use crate::{Escalation, Fix, Revision, Section, SessionPhase};
 use std::error::Error as StdError;
 use std::sync::Arc;
 
@@ -48,11 +48,11 @@ pub enum Error {
         /// Which side failed, when the engine knows: the capture source or
         /// the output. Set where the error happens ([`Error::in_section`]).
         section: Option<Section>,
-        /// What makes it work again, set when the error is built:
-        /// [`Escalation::FAIL_FAST`] ([`Error::adapter`], [`Error::other`])
-        /// unless the adapter says ([`Error::adapter_recovering`],
-        /// [`Error::other_recovering`]).
-        recovery: Recovery,
+        /// What is left once it leaves the adapter, set when the error is
+        /// built: [`Escalation::FAIL_FAST`] ([`Error::adapter`],
+        /// [`Error::other`]) unless the adapter says
+        /// ([`Error::adapter_escalating`], [`Error::other_escalating`]).
+        escalation: Escalation,
     },
     #[error("settings revision {expected} is stale; current is {current}")]
     StaleRevision {
@@ -79,37 +79,37 @@ impl Error {
         context: impl Into<String>,
         source: impl StdError + Send + Sync + 'static,
     ) -> Self {
-        Self::adapter_recovering(context, source, Recovery::Escalate(Escalation::FAIL_FAST))
+        Self::adapter_escalating(context, source, Escalation::FAIL_FAST)
     }
 
     /// An adapter failure without an underlying cause; it fails fast.
     pub fn other(context: impl Into<String>) -> Self {
-        Self::other_recovering(context, Recovery::Escalate(Escalation::FAIL_FAST))
+        Self::other_escalating(context, Escalation::FAIL_FAST)
     }
 
-    /// An adapter failure with its cause preserved, made to work again by
-    /// `recovery`.
-    pub fn adapter_recovering(
+    /// An adapter failure with its cause preserved that escalates as
+    /// `escalation`.
+    pub fn adapter_escalating(
         context: impl Into<String>,
         source: impl StdError + Send + Sync + 'static,
-        recovery: Recovery,
+        escalation: Escalation,
     ) -> Self {
         Self::Adapter {
             context: context.into(),
             source: Some(Arc::new(source)),
             section: None,
-            recovery,
+            escalation,
         }
     }
 
-    /// An adapter failure without an underlying cause, made to work again by
-    /// `recovery`.
-    pub fn other_recovering(context: impl Into<String>, recovery: Recovery) -> Self {
+    /// An adapter failure without an underlying cause that escalates as
+    /// `escalation`.
+    pub fn other_escalating(context: impl Into<String>, escalation: Escalation) -> Self {
         Self::Adapter {
             context: context.into(),
             source: None,
             section: None,
-            recovery,
+            escalation,
         }
     }
 
@@ -122,32 +122,32 @@ impl Error {
                 context,
                 source,
                 section: None,
-                recovery,
+                escalation,
             } => Self::Adapter {
                 context,
                 source,
                 section: Some(section),
-                recovery,
+                escalation,
             },
             other => other,
         }
     }
 
-    /// What makes this failure work again.
+    /// What is left of this failure once it leaves the layer that met it.
     #[must_use]
-    pub fn recovery(&self) -> Recovery {
+    pub fn escalation(&self) -> Escalation {
         match self {
             Self::Invalid(_) | Self::UnusableSettings(_) | Self::Decode { .. } => {
-                Recovery::Escalate(Escalation::Ask(Fix::ChangeSettings))
+                Escalation::Ask(Fix::ChangeSettings)
             }
-            Self::Adapter { recovery, .. } => *recovery,
-            Self::Faulted(_) => Recovery::Escalate(Escalation::Restart),
+            Self::Adapter { escalation, .. } => *escalation,
+            Self::Faulted(_) => Escalation::Restart,
             // A rejected request; a bug, which a new process repeats; the
             // answer while shutting down.
             Self::StaleRevision { .. }
             | Self::NeedsScreenSync
             | Self::Panicked(_)
-            | Self::Closed => Recovery::Escalate(Escalation::FAIL_FAST),
+            | Self::Closed => Escalation::FAIL_FAST,
         }
     }
 
@@ -240,41 +240,46 @@ mod tests {
     }
 
     #[test]
-    fn an_adapter_failure_fails_fast_unless_built_with_its_recovery() {
-        let fail_fast = Recovery::Escalate(Escalation::FAIL_FAST);
+    fn an_adapter_failure_fails_fast_unless_built_with_its_escalation() {
         let io = || std::io::Error::other("unplugged");
-        assert_eq!(Error::adapter("cannot read", io()).recovery(), fail_fast);
-        assert_eq!(Error::other("cannot read").recovery(), fail_fast);
+        assert_eq!(
+            Error::adapter("cannot read", io()).escalation(),
+            Escalation::FAIL_FAST
+        );
+        assert_eq!(
+            Error::other("cannot read").escalation(),
+            Escalation::FAIL_FAST
+        );
 
-        let stall = Recovery::Retry(crate::Converges::StartStall);
-        for (plain, recovering) in [
+        let set_up = Escalation::Ask(Fix::SetUp);
+        for (plain, escalating) in [
             (
                 Error::adapter("cannot read", io()),
-                Error::adapter_recovering("cannot read", io(), stall),
+                Error::adapter_escalating("cannot read", io(), set_up),
             ),
             (
                 Error::other("cannot read"),
-                Error::other_recovering("cannot read", stall),
+                Error::other_escalating("cannot read", set_up),
             ),
         ] {
-            assert_eq!(recovering.recovery(), stall);
-            assert_eq!(recovering.to_string(), plain.to_string());
-            assert_eq!(chain(&recovering), chain(&plain));
+            assert_eq!(escalating.escalation(), set_up);
+            assert_eq!(escalating.to_string(), plain.to_string());
+            assert_eq!(chain(&escalating), chain(&plain));
             assert_eq!(
-                StdError::source(&recovering).map(ToString::to_string),
+                StdError::source(&escalating).map(ToString::to_string),
                 StdError::source(&plain).map(ToString::to_string)
             );
-            assert_eq!(recovering.section(), None);
-            let placed = recovering.in_section(Section::Output);
+            assert_eq!(escalating.section(), None);
+            let placed = escalating.in_section(Section::Output);
             assert_eq!(placed.section(), Some(Section::Output));
-            assert_eq!(placed.recovery(), stall);
+            assert_eq!(placed.escalation(), set_up);
         }
     }
 
     #[test]
-    fn every_other_error_recovers_as_its_kind_says() {
-        let settings = Recovery::Escalate(Escalation::Ask(Fix::ChangeSettings));
-        let fail_fast = Recovery::Escalate(Escalation::FAIL_FAST);
+    fn every_other_error_escalates_as_its_kind_says() {
+        let settings = Escalation::Ask(Fix::ChangeSettings);
+        let fail_fast = Escalation::FAIL_FAST;
         let invalid = Error::Invalid(ValidationError::new("capture.fps", "zero"));
         let decode = Error::Decode {
             kind: "fake".into(),
@@ -285,7 +290,7 @@ mod tests {
             expected: Revision::default(),
             current: Revision::default(),
         };
-        for (error, recovery) in [
+        for (error, escalation) in [
             (Error::UnusableSettings(Arc::new(invalid.clone())), settings),
             (invalid, settings),
             (decode, settings),
@@ -293,39 +298,23 @@ mod tests {
             (Error::NeedsScreenSync, fail_fast),
             (
                 Error::Faulted(SessionPhase::ClosingSource),
-                Recovery::Escalate(Escalation::Restart),
+                Escalation::Restart,
             ),
             (Error::Panicked("session"), fail_fast),
             (Error::Closed, fail_fast),
         ] {
-            assert_eq!(error.recovery(), recovery, "{error}");
+            assert_eq!(error.escalation(), escalation, "{error}");
         }
     }
 
     #[test]
     fn only_a_fault_asks_for_a_new_process() {
-        let restart = Recovery::Escalate(Escalation::Restart);
+        let restart = Escalation::Restart;
         assert_eq!(
-            Error::Faulted(SessionPhase::IdlingOutput).recovery(),
+            Error::Faulted(SessionPhase::IdlingOutput).escalation(),
             restart
         );
-        assert_ne!(Error::Panicked("session").recovery(), restart, "a bug");
-        assert_ne!(Error::Closed.recovery(), restart, "shutting down");
-    }
-
-    #[test]
-    fn attempts_refuse_an_error_that_does_not_say_their_convergence() {
-        let now = std::time::Instant::now();
-        let mut attempts = crate::Attempts::new(crate::Converges::StartStall);
-        let fail_fast = Err(Escalation::FAIL_FAST);
-        assert_eq!(
-            attempts.failed(Error::other("x").recovery(), now),
-            fail_fast
-        );
-        let faulted = Error::Faulted(SessionPhase::ClosingSource).recovery();
-        assert_eq!(attempts.failed(faulted, now), Err(Escalation::Restart));
-        let stall = Recovery::Retry(crate::Converges::StartStall);
-        let said = Error::other_recovering("stalled", stall).recovery();
-        assert_eq!(attempts.failed(said, now), Ok(now));
+        assert_ne!(Error::Panicked("session").escalation(), restart, "a bug");
+        assert_ne!(Error::Closed.escalation(), restart, "shutting down");
     }
 }
