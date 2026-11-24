@@ -224,6 +224,11 @@ export interface components {
              */
             latency?: components["schemas"]["Latency"];
             /**
+             * @description Why no frame arrived in the last second, as the source said: absent
+             *     while frames arrive (`receiving`).
+             */
+            no_picture?: components["schemas"]["NoPicture"];
+            /**
              * @description At least one frame arrived in the last second. `false` right after
              *     lighting starts and while the source is quiet (no signal, no sender).
              */
@@ -329,6 +334,11 @@ export interface components {
             /** @enum {string} */
             status: "known";
         };
+        /**
+         * @description Why no picture arrives. Not a failure: lighting keeps running.
+         * @enum {string}
+         */
+        NoPicture: "quiet" | "refused";
         /**
          * @description Why the lights are not showing Prysm's colours. Prysm keeps sending; they
          *     follow again once the device takes the colours.
@@ -617,6 +627,7 @@ export type LightingFailure = components['schemas']['LightingFailure'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type Mode = components['schemas']['Mode'];
 export type Modes = components['schemas']['Modes'];
+export type NoPicture = components['schemas']['NoPicture'];
 export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Pattern = components['schemas']['Pattern'];

@@ -74,7 +74,7 @@ pub fn failure(source: &mut RemoteSource) -> Error {
         assert!(Instant::now() < deadline, "the source never failed");
         match source.next_frame(PULL) {
             Err(error) => return error,
-            Ok(pull) => assert!(pull.is_idle(), "a frame came first"),
+            Ok(pull) => assert!(pull.is_quiet(), "a frame came first"),
         }
     }
 }

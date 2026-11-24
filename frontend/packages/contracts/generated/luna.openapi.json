@@ -97,6 +97,10 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "no_picture": {
+                "$ref": "#/components/schemas/NoPicture",
+                "description": "While screen sync runs without frames: why, as the capture said.\nNot a failure; `refused` ends once the video changes."
+              },
               "phase": {
                 "enum": [
                   "running"
@@ -174,6 +178,14 @@
           "off",
           "screen_sync",
           "effects"
+        ],
+        "type": "string"
+      },
+      "NoPicture": {
+        "description": "Why no picture arrives. `quiet`: no frames (no signal, no sender).\n`refused`: the TV refuses to share the video it shows (AirPlay, for\nexample); frames come again once the video changes. Not a failure.",
+        "enum": [
+          "quiet",
+          "refused"
         ],
         "type": "string"
       },
@@ -405,6 +417,10 @@
               "link": {
                 "$ref": "#/components/schemas/SlimLink",
                 "description": "Where the uplink to the receiver stands, as the worker last\nreported it."
+              },
+              "no_picture": {
+                "$ref": "#/components/schemas/NoPicture",
+                "description": "While the capture runs and gives no frames, so none are sent:\nwhy, as it said. Absent while frames are sent, and while no\ncapture runs (the stream paused, or no request yet). Not a\nfailure; `refused` ends once the video changes."
               },
               "phase": {
                 "enum": [

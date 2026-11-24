@@ -95,6 +95,18 @@ pub enum LightingTargetSchema {
     Effects,
 }
 
+// Mirrors `prysm_ports::NoPicture`.
+/// Why no picture arrives. `quiet`: no frames (no signal, no sender).
+/// `refused`: the TV refuses to share the video it shows (AirPlay, for
+/// example); frames come again once the video changes. Not a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = NoPicture)]
+#[serde(rename_all = "snake_case")]
+pub enum NoPictureSchema {
+    Quiet,
+    Refused,
+}
+
 // Mirrors `prysm_webos_link::SlimLink`.
 /// Where the slim worker's stream to the receiver stands, as `{ "state": … }`.
 /// `starting`: no connection attempt yet. `sending`: connected, frames go
@@ -154,6 +166,7 @@ pub(crate) fn always_false() -> ObjectBuilder {
     WorkerFailureSchema,
     VideoSchema,
     LightingTargetSchema,
+    NoPictureSchema,
     GetStateRequest,
     SetTargetRequest,
     SetEnabledRequest,
@@ -177,7 +190,9 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{FailureKind, LightingTarget, SlimLink, Video, WorkerFailure};
+    use prysm_webos_link::{
+        FailureKind, LightingTarget, NoPicture, SlimLink, Video, WorkerFailure,
+    };
 
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::{Value, json};
@@ -189,6 +204,9 @@ mod tests {
         }
         for target in LightingTarget::ALL {
             assert_mirror_round_trips::<LightingTarget, LightingTargetSchema>(&target);
+        }
+        for why in [NoPicture::Quiet, NoPicture::Refused] {
+            assert_mirror_round_trips::<NoPicture, NoPictureSchema>(&why);
         }
         for kind in [
             FailureKind::Encoder,
@@ -279,13 +297,21 @@ mod tests {
         assert_eq!(required(running), ["capturing", "phase"]);
         let mut fields: Vec<_> = running["properties"].as_object().unwrap().keys().collect();
         fields.sort_unstable();
-        assert_eq!(fields, ["capturing", "fps", "phase", "portal"]);
+        assert_eq!(
+            fields,
+            ["capturing", "fps", "no_picture", "phase", "portal"]
+        );
         let running = variant(schemas, "SlimWorker", "phase", "running");
         assert_eq!(required(running), ["capturing", "link", "phase"]);
         assert_eq!(
             running["properties"]["link"]["$ref"],
             json!("#/components/schemas/SlimLink")
         );
+        assert_eq!(
+            running["properties"]["no_picture"]["$ref"],
+            json!("#/components/schemas/NoPicture")
+        );
+        assert_eq!(schemas["NoPicture"]["enum"], json!(["quiet", "refused"]));
         // The slim link is one tag with only that state's fields.
         assert_eq!(
             required(variant(schemas, "SlimLink", "state", "sending")),

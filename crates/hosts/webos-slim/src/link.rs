@@ -5,7 +5,7 @@ use futures::future::BoxFuture;
 use prysm_capture_remote::{Close, RemoteSender, RemoteSettings, SendError, WireError};
 use prysm_capture_webos::VideoSignal;
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSink, Result, StreamEncoding, chain};
+use prysm_ports::{Error, FrameSink, NoPicture, Pull, Result, StreamEncoding, chain};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{
@@ -28,6 +28,11 @@ pub const RECONNECT: Duration = Duration::from_secs(1);
 #[derive(Debug, Default)]
 pub struct Flow {
     sent: AtomicU64,
+    /// Frames the capture gave.
+    pulled: AtomicU64,
+    /// Why the capture's last pull gave no frame; `None` after a frame, and
+    /// while no capture is open (nothing is pulled from the TV then).
+    no_picture: Mutex<Option<NoPicture>>,
     report: Mutex<Report>,
 }
 
@@ -243,6 +248,29 @@ impl Report {
 impl Flow {
     fn sent(&self) -> u64 {
         self.sent.load(Ordering::Relaxed)
+    }
+
+    /// What a pull of the open capture gave (`Some`), or that none is open
+    /// (`None`).
+    pub fn pulled(&self, pull: Option<&Pull>) {
+        if let Some(Pull::Frame(_)) = pull {
+            self.pulled.fetch_add(1, Ordering::Relaxed);
+        }
+        *self
+            .no_picture
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = pull.and_then(Pull::no_picture);
+    }
+
+    fn frames_pulled(&self) -> u64 {
+        self.pulled.load(Ordering::Relaxed)
+    }
+
+    fn no_picture(&self) -> Option<NoPicture> {
+        *self
+            .no_picture
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// What to capture for: the receiver's latest request, kept while it is
@@ -501,6 +529,7 @@ impl ForwarderLink {
             stop,
         } = self.link;
         let mut counted = self.flow.sent();
+        let mut pulled = self.flow.frames_pulled();
         let mut status = SlimStatus::default();
         events.send(&report(&status));
         let mut beat = TokioInstant::now() + self.heartbeat;
@@ -520,11 +549,20 @@ impl ForwarderLink {
                 () = sleep_until(sample) => {
                     sample = TokioInstant::now() + self.sample;
                     let now = self.flow.sent();
+                    let taken = self.flow.frames_pulled();
                     let next = SlimStatus {
                         capturing: now != counted,
+                        // Only when the capture itself gave nothing, so
+                        // nothing was sent: frames not sent (paused,
+                        // receiver away) are no reason.
+                        no_picture: self
+                            .flow
+                            .no_picture()
+                            .filter(|_| taken == pulled && now == counted),
                         link: self.flow.link(rate(now - counted, self.sample)),
                     };
                     counted = now;
+                    pulled = taken;
                     if next != status {
                         status = next;
                         events.send(&report(&status));

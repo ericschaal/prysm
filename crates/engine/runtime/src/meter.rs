@@ -150,6 +150,7 @@ impl Meter {
                 }
             }),
             behind,
+            no_picture: (received == 0).then_some(totals.no_picture),
         }
     }
 }

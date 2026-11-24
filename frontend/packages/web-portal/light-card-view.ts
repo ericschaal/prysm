@@ -5,7 +5,9 @@
 import {
   describeOutputIssue,
   describeSituation,
+  noPictureOf,
   plainFailure,
+  REFUSED_VIDEO,
   situationFailure,
   unreachable,
   unusableSettings,
@@ -14,6 +16,7 @@ import {
   type LightingMode,
   type LightingSituation,
   type LightingTarget,
+  type NoPicture,
   type TargetReading,
 } from '@prysm/application-client';
 import type { DeviceReport } from '@prysm/contracts/application';
@@ -63,8 +66,17 @@ export function moodOf(lighting: LightingSituation, configured: boolean): Mood {
   }
 }
 
-/** A pause worth naming once it lasts: no picture yet, or a slow start. */
-export type Pause = 'waiting' | 'starting';
+/**
+ * A pause worth naming once it lasts: no picture, and why (`quiet` when the
+ * source gives none), or a slow start.
+ */
+export type Pause = NoPicture | 'starting';
+
+/** The calm line while no picture arrives; neither reason is a problem. */
+const noPictureLine: Record<NoPicture, string> = {
+  quiet: 'Waiting for the picture.',
+  refused: REFUSED_VIDEO,
+};
 
 /** The pause the card is in now, named only once it lasts. */
 export function pauseOf(
@@ -72,7 +84,7 @@ export function pauseOf(
   lit: boolean,
 ): Pause | null {
   if (lighting.kind === 'sync' && lighting.input && !lighting.input.receiving)
-    return 'waiting';
+    return noPictureOf(lighting.input);
   if (lighting.kind === 'starting' && !lit) return 'starting';
   return null;
 }
@@ -301,8 +313,8 @@ export function lightCardView(
       mode === 'screen_sync'
         ? 'Power turns on Screen sync.'
         : `Power turns on ${effects}.`;
-  else if (note === 'waiting') calm = 'Waiting for the picture.';
   else if (note === 'starting') calm = 'Starting…';
+  else if (note) calm = noPictureLine[note];
   else if (showing) calm = 'Following the screen.';
   else if (lighting.kind === 'effects') calm = `${effects} are showing.`;
 

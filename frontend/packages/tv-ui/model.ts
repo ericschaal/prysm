@@ -1,5 +1,6 @@
 /** Pure rules of the TV UI: addresses, drafts, the status card and the screen. */
 import {
+  noPictureOf,
   plainFailure,
   unreachable,
   unusableSettings,
@@ -11,9 +12,11 @@ import {
   isCapturing,
   isEnabled,
   isPaused,
+  noPicture,
   slimEncoding,
   type Flavor,
   type LightingTarget,
+  type NoPicture,
   type Preferences,
   type StreamEncoding,
   type State,
@@ -25,6 +28,44 @@ import type { PortalView } from './portal-connection';
 export type { StreamEncoding };
 
 export const PORTAL_PORT = 8787;
+
+/**
+ * The title while the TV refuses to share the video it shows; the lights
+ * card says why (`REFUSED_VIDEO`), as the title and detail fit one line each.
+ */
+const REFUSED = 'Video can’t be captured';
+
+/**
+ * The status card while the capture gives no picture, by why and package
+ * (slim's `quiet` also while its worker has not reported yet). Neither is a
+ * failure: no button but slim's usual one, and a refusal ends by itself
+ * when the video changes.
+ */
+const noPictureStatus: Record<
+  NoPicture,
+  Record<Flavor, { title: string; description: string }>
+> = {
+  quiet: {
+    full: {
+      title: 'Waiting for video',
+      description: 'Screen sync starts when a picture arrives.',
+    },
+    slim: {
+      title: 'Starting capture…',
+      description: 'Waiting for the first picture.',
+    },
+  },
+  refused: {
+    full: {
+      title: REFUSED,
+      description: 'Screen sync continues when another source plays.',
+    },
+    slim: {
+      title: REFUSED,
+      description: 'Capture continues when another source plays.',
+    },
+  },
+};
 
 /** The short names of the slim stream encodings (chosen in Prysm's portal). */
 const encodingNames: Record<StreamEncoding, string> = {
@@ -323,6 +364,13 @@ export function tvStatus(
       const flowing = lighting
         ? lighting.kind === 'sync' && (lighting.input?.receiving ?? capturing)
         : capturing;
+      // Why no picture arrives: the portal's measure first, like `flowing`.
+      let why = noPicture(state);
+      if (lighting?.kind === 'sync' && lighting.input) {
+        why = noPictureOf(lighting.input);
+      } else if (lighting && lighting.kind !== 'sync') {
+        why = undefined;
+      }
       if (target === 'off') {
         title = 'Lights off';
         description = 'Choose Screen sync: the lights follow the picture.';
@@ -338,10 +386,12 @@ export function tvStatus(
       } else if (flowing) {
         title = 'Screen sync on';
         description = 'Your lights follow the picture.';
-      } else if (fullPortal(state) && phase === 'running') {
+      } else if (
+        why === 'refused' ||
+        (fullPortal(state) && phase === 'running')
+      ) {
         // Lighting is on but no frames arrive: the lights are released to WLED.
-        title = 'Waiting for video';
-        description = 'Screen sync starts when a picture arrives.';
+        ({ title, description } = noPictureStatus[why ?? 'quiet'].full);
       } else {
         title = 'Starting screen sync…';
         description = 'This takes a few seconds.';
@@ -364,8 +414,8 @@ export function tvStatus(
     title = 'Sending the picture';
     description = 'Prysm on your computer lights up with it.';
   } else {
-    title = 'Starting capture…';
-    description = 'Waiting for the first picture.';
+    ({ title, description } =
+      noPictureStatus[noPicture(state) ?? 'quiet'].slim);
   }
   // Lights are set up in the portal (its first-run setup), never here.
   const linked = full || !!state.preferences.prysm_address;

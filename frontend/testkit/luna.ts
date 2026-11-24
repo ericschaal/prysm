@@ -14,6 +14,7 @@ import {
   type Flavor,
   type FullWorker,
   type LightingTarget,
+  type NoPicture,
   type Power,
   type Preferences,
   type ServiceBridge,
@@ -47,6 +48,8 @@ interface CommonFacts {
   worker: FakeProcess;
   capturing: boolean;
   fps: number | null;
+  /** Why the running worker's capture gives no frames. */
+  no_picture: NoPicture | null;
 }
 export interface FullFacts extends CommonFacts {
   flavor: 'full';
@@ -80,6 +83,7 @@ const commonKeys: Record<keyof CommonFacts, true> = {
   worker: true,
   capturing: true,
   fps: true,
+  no_picture: true,
 };
 const fullKeys: Record<Own<FullFacts>, true> = { target: true, portal: true };
 const slimKeys: Record<Own<SlimFacts>, true> = {
@@ -111,6 +115,7 @@ function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
     worker: { phase: flavor === 'full' ? 'running' : 'stopped' },
     capturing: false,
     fps: null,
+    no_picture: null,
   };
   return flavor === 'full'
     ? {
@@ -128,13 +133,14 @@ function present<K extends string, V>(key: K, value: V | null) {
 }
 
 function fullWorker(facts: FullFacts): FullWorker {
-  const { worker, capturing, fps, portal } = facts;
+  const { worker, capturing, fps, no_picture, portal } = facts;
   switch (worker.phase) {
     case 'running':
       return {
         phase: 'running',
         capturing,
         ...present('fps', fps),
+        ...present('no_picture', no_picture),
         ...present('portal', portal),
       };
     case 'stopping':
@@ -156,9 +162,14 @@ function slimLink(facts: SlimFacts): SlimLink {
 }
 
 function slimWorker(facts: SlimFacts): SlimWorker {
-  const { worker, capturing } = facts;
+  const { worker, capturing, no_picture } = facts;
   return worker.phase === 'running'
-    ? { phase: 'running', capturing, link: slimLink(facts) }
+    ? {
+        phase: 'running',
+        capturing,
+        ...present('no_picture', no_picture),
+        link: slimLink(facts),
+      }
     : worker;
 }
 

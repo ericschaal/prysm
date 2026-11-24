@@ -1,5 +1,5 @@
 use super::*;
-use prysm_ports::StreamEncoding;
+use prysm_ports::{NoPicture, StreamEncoding};
 use std::io::BufReader;
 use std::path::PathBuf;
 
@@ -34,6 +34,7 @@ fn commands_have_a_stable_wire_form() {
 fn events_round_trip() {
     let full = Event::Status(WorkerStatus::Full(FullStatus {
         capturing: true,
+        no_picture: None,
         fps: Some(30),
         target: LightingTarget::ScreenSync,
         applied: 2,
@@ -79,6 +80,7 @@ fn events_round_trip() {
     ] {
         let status = Event::Status(WorkerStatus::Slim(SlimStatus {
             capturing: true,
+            no_picture: None,
             link,
         }));
         let encoded = encode(&status).unwrap();
@@ -86,6 +88,33 @@ fn events_round_trip() {
             String::from_utf8(encoded.clone()).unwrap(),
             format!(r#"{{"type":"status","flavor":"slim","capturing":true,"link":{text}}}"#) + "\n"
         );
+        assert_eq!(decode::<Event>(&encoded).unwrap(), status);
+    }
+    // Why there is no picture is said only while there is none.
+    for (status, text) in [
+        (
+            WorkerStatus::Full(FullStatus {
+                capturing: false,
+                no_picture: Some(NoPicture::Refused),
+                fps: Some(0),
+                target: LightingTarget::ScreenSync,
+                applied: 0,
+                portal: None,
+                failure: None,
+            }),
+            r#"{"type":"status","flavor":"full","capturing":false,"fps":0,"no_picture":"refused","target":"screen_sync","applied":0}"#,
+        ),
+        (
+            WorkerStatus::Slim(SlimStatus {
+                no_picture: Some(NoPicture::Quiet),
+                ..SlimStatus::default()
+            }),
+            r#"{"type":"status","flavor":"slim","capturing":false,"no_picture":"quiet","link":{"state":"starting"}}"#,
+        ),
+    ] {
+        let status = Event::Status(status);
+        let encoded = encode(&status).unwrap();
+        assert_eq!(encoded, line(text));
         assert_eq!(decode::<Event>(&encoded).unwrap(), status);
     }
     let failed = Event::Failed {

@@ -117,15 +117,17 @@ test('webOS capture settings keep the ranges the adapter validates', () => {
 
 test('the Luna document covers both flavors with one State', () => {
   const states = fixtures['luna/State'];
-  // Each package in each worker phase.
+  // Each package in each worker phase, running also without a picture.
   assert.deepEqual(
     states.map((state) => `${state.flavor} ${state.worker.phase}`).sort(),
     [
       'full retrying',
       'full running',
+      'full running',
       'full stopped',
       'full stopping',
       'slim retrying',
+      'slim running',
       'slim running',
       'slim stopped',
       'slim stopping',

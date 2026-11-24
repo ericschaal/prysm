@@ -256,6 +256,10 @@ test('generated Rust states decode as they are; malformed ones do not', () => {
   assert(malformed({ ...state(), failure: null }), 'absent, not null');
   assert(malformed({ ...state(), power: 3 }));
   assert(malformed({ ...state(), worker: { ...state().worker, fps: '30' } }));
+  assert(
+    malformed({ ...state(), worker: { ...state().worker, no_picture: 17 } }),
+    'why there is no picture is named',
+  );
   assert(malformed({ ...state(), log: [1] }));
   assert(
     malformed({ ...state(), preferences: [] }),
@@ -314,6 +318,15 @@ test('values newer than the app have one reading each', () => {
     ...state(),
     worker: { phase: 'unknown' },
   });
+  // A reason for no picture newer than the app reads as none given.
+  const newer = (worker) => ({
+    ...state(),
+    worker: { ...state().worker, ...worker },
+  });
+  assert.deepEqual(
+    decodeState(newer({ no_picture: 'protected' })),
+    newer({ no_picture: 'quiet' }),
+  );
   const slim = fixtures['luna/State'].find((value) => value.flavor === 'slim');
   const link = (value) =>
     decodeState({
@@ -662,6 +675,26 @@ test('status card covers the supervisor states for both packages', () => {
     'Screen sync starts when a picture arrives.',
   );
   assert.equal(noFrames.attention, false);
+  // The TV refuses to share the video: not a failure (no Try again), and
+  // it ends by itself; slim keeps its usual Stop capture.
+  for (const [value, description, action] of [
+    [
+      full({ no_picture: 'refused' }),
+      'Screen sync continues when another source plays.',
+      'none',
+    ],
+    [
+      slim({ no_picture: 'refused' }),
+      'Capture continues when another source plays.',
+      'disable',
+    ],
+  ]) {
+    const refused = tvStatus(true, value, draft());
+    assert.deepEqual(
+      [refused.title, refused.description, refused.attention, refused.action],
+      ['Video can’t be captured', description, false, action],
+    );
+  }
   assert.equal(
     title(true, full({ capturing: false, portal: null })),
     'Starting screen sync…',
@@ -691,6 +724,8 @@ test('status card covers the supervisor states for both packages', () => {
       full({ target: 'off' }),
       full({ capturing: true }),
       full({ target: 'effects' }),
+      full({ no_picture: 'refused' }),
+      slim({ no_picture: 'refused' }),
       full({ failure: { kind: 'other', message: 'x' } }),
       full({ failure: { kind: 'preferences', message: 'x' } }),
     ].map((value) => tvStatus(true, value, draft())),
@@ -1994,6 +2029,22 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     facts({ target: 'screen_sync', session: { state: 'stopped' } }),
   );
   assert.equal(waiting.title, 'Waiting for video', 'the TV has no frames');
+  // The portal says the TV refuses to share the video: said plainly, with
+  // nothing to press, before the worker's own report.
+  const refused = tvStatus(
+    true,
+    full,
+    draft,
+    facts({
+      target: 'screen_sync',
+      session: { state: 'screen_sync' },
+      input: { fps: 0, receiving: false, no_picture: 'refused' },
+    }),
+  );
+  assert.deepEqual(
+    [refused.title, refused.attention, refused.action],
+    ['Video can’t be captured', false, 'none'],
+  );
   assert.equal(
     tvStatus(
       true,

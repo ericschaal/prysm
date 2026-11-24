@@ -84,6 +84,7 @@ fn kind(state: &State) -> Option<FailureKind> {
 fn full_report(target: LightingTarget) -> FullStatus {
     FullStatus {
         capturing: false,
+        no_picture: None,
         fps: None,
         target,
         applied: 0,
@@ -121,6 +122,7 @@ fn slim_status(status: SlimStatus) -> Input {
 fn slim_link(link: SlimLink) -> Input {
     slim_status(SlimStatus {
         capturing: false,
+        no_picture: None,
         link,
     })
 }
@@ -934,6 +936,7 @@ fn published_state_reflects_the_worker() {
     m.handle(
         full_status(FullStatus {
             capturing: true,
+            no_picture: None,
             fps: Some(30),
             applied: 0,
             target: LightingTarget::ScreenSync,
@@ -979,6 +982,7 @@ fn published_slim_state_has_only_its_own_fields() {
     m.handle(
         slim_status(SlimStatus {
             capturing: true,
+            no_picture: None,
             link: SlimLink::Sending {
                 encoding: StreamEncoding::Raw,
                 fps: 25,
@@ -1223,6 +1227,7 @@ fn a_paused_receiver_is_published_without_a_failure() {
         slim_state(&state).1,
         &SlimWorker::Running {
             capturing: false,
+            no_picture: None,
             link: SlimLink::Paused {},
         }
     );
@@ -1281,6 +1286,7 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             2_000,
             slim_status(SlimStatus {
                 capturing: true,
+                no_picture: None,
                 link: SlimLink::Sending {
                     encoding: StreamEncoding::H264Hardware,
                     fps: 30,
@@ -1941,6 +1947,7 @@ fn every_phase_takes_every_input() {
     let worker = |event| Input::Worker(event);
     let sending = worker(Event::Status(WorkerStatus::Slim(SlimStatus {
         capturing: true,
+        no_picture: None,
         link: SlimLink::Sending {
             encoding: StreamEncoding::Raw,
             fps: 30,

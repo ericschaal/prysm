@@ -65,6 +65,11 @@ export interface components {
              *     lighting runs; 0 while it waits for frames.
              */
             fps?: number;
+            /**
+             * @description While screen sync runs without frames: why, as the capture said.
+             *     Not a failure; `refused` ends once the video changes.
+             */
+            no_picture?: components["schemas"]["NoPicture"];
             /** @enum {string} */
             phase: "running";
             /** @description The portal's LAN address once the worker reported it. */
@@ -95,6 +100,13 @@ export interface components {
          * @enum {string}
          */
         LightingTarget: "off" | "screen_sync" | "effects";
+        /**
+         * @description Why no picture arrives. `quiet`: no frames (no signal, no sender).
+         *     `refused`: the TV refuses to share the video it shows (AirPlay, for
+         *     example); frames come again once the video changes. Not a failure.
+         * @enum {string}
+         */
+        NoPicture: "quiet" | "refused";
         /**
          * @description The installed package (both install as the same app), what the user asked
          *     of it and its worker process, as `{ "flavor": … }`.
@@ -200,6 +212,13 @@ export interface components {
              *     reported it.
              */
             link: components["schemas"]["SlimLink"];
+            /**
+             * @description While the capture runs and gives no frames, so none are sent:
+             *     why, as it said. Absent while frames are sent, and while no
+             *     capture runs (the stream paused, or no request yet). Not a
+             *     failure; `refused` ends once the video changes.
+             */
+            no_picture?: components["schemas"]["NoPicture"];
             /** @enum {string} */
             phase: "running";
         } | {
@@ -277,6 +296,7 @@ export type FailureKind = components['schemas']['FailureKind'];
 export type FullWorker = components['schemas']['FullWorker'];
 export type GetStateRequest = components['schemas']['GetStateRequest'];
 export type LightingTarget = components['schemas']['LightingTarget'];
+export type NoPicture = components['schemas']['NoPicture'];
 export type Package = components['schemas']['Package'];
 export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];

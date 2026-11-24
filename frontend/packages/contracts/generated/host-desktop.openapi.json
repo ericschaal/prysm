@@ -663,6 +663,10 @@
             "$ref": "#/components/schemas/Latency",
             "description": "The mean time per frame along the path, in two parts, over the last\nsecond. Absent when no frame reached the output."
           },
+          "no_picture": {
+            "$ref": "#/components/schemas/NoPicture",
+            "description": "Why no frame arrived in the last second, as the source said: absent\nwhile frames arrive (`receiving`)."
+          },
           "receiving": {
             "description": "At least one frame arrived in the last second. `false` right after\nlighting starts and while the source is quiet (no signal, no sender).",
             "type": "boolean"
@@ -937,6 +941,14 @@
             "type": "object"
           }
         ]
+      },
+      "NoPicture": {
+        "description": "Why no picture arrives. Not a failure: lighting keeps running.",
+        "enum": [
+          "quiet",
+          "refused"
+        ],
+        "type": "string"
       },
       "NullSettings": {
         "additionalProperties": false,

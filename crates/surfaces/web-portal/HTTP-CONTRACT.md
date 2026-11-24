@@ -157,6 +157,11 @@ keeping up with its source: `processing` (turning frames into colours) or
 idle time between frames (busy at least 85% of each second) for 3 seconds in
 a row, and cleared after 3 seconds with slack; a source that just sends fewer
 frames leaves idle time and never sets it. Absent while Prysm keeps up.
+`no_picture` says why no frame arrived in the window (`receiving` is then
+`false`), as the source said: `quiet` (no frames: no signal, no sender) or
+`refused` (the source's device refuses to share the video it shows, as an LG
+TV playing AirPlay does; frames come again once the video changes). Neither
+is a failure: screen sync keeps running. Absent while frames arrive.
 `/metrics` has
 the received-to-flushed spans as the `prysm_frame_flush_seconds` summary.
 

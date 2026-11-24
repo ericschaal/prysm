@@ -34,6 +34,11 @@ pub enum Acquired<'a> {
     /// LG finalized the session (status 1) or it is still initializing; the
     /// next call re-initializes. Callers wait about a second between attempts.
     NotReady,
+    /// The TV refuses to capture the video it shows (`vtCapture_init` status
+    /// 17; seen with AirPlay). The driver stays created and the next call
+    /// initializes again; callers wait for the video to change first, since
+    /// a retry before that is refused too.
+    Refused,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -345,7 +350,18 @@ enum Next {
     },
     Pending,
     NotReady,
+    Refused,
 }
+
+/// How far [`VtCapture::prepare`] started the driver.
+enum Started {
+    Running,
+    NotReady,
+    Refused,
+}
+
+/// `vtCapture_init`'s status when the TV refuses to capture its video.
+const REFUSED: i32 = 17;
 
 /// One native capture tap; see the crate documentation.
 pub struct VtCapture {
@@ -374,8 +390,9 @@ fn check_luna() -> Result<(), Error> {
 
 impl VtCapture {
     /// Load the library, check Luna permission, create the driver and try to
-    /// start capture once. A tap that is not ready yet still opens; see
-    /// [`Acquired::NotReady`].
+    /// start capture once. A tap that is not ready yet, or whose video the TV
+    /// refuses, still opens; see [`Acquired::NotReady`] and
+    /// [`Acquired::Refused`].
     ///
     /// # Errors
     /// Library, permission or native failures; [`Error::is_fatal`] says
@@ -435,8 +452,8 @@ impl VtCapture {
         result
     }
 
-    /// Initialize, preprocess and start the driver. `Ok(false)`: not ready.
-    fn prepare(&mut self) -> Result<bool, Error> {
+    /// Initialize, preprocess and start the driver.
+    fn prepare(&mut self) -> Result<Started, Error> {
         if self.stage == Stage::Working(Reached::Created) {
             let code = vt_call!(
                 self,
@@ -445,13 +462,15 @@ impl VtCapture {
                 c"prysm-capture-webos".as_ptr(),
                 self.client.as_mut_ptr()
             )?;
-            if code == 1 {
-                return Ok(false);
+            // Neither initialized the driver, so it stays created: a new
+            // driver would only add a release, which can hang (the vendor's
+            // lost wake-up in its destructor).
+            match code {
+                1 => return Ok(Started::NotReady),
+                REFUSED => return Ok(Started::Refused),
+                _ => {}
             }
-            status(
-                code,
-                "vtCapture_init (11 = Luna permission denied, 17 = not ready)",
-            )?;
+            status(code, "vtCapture_init (11 = Luna permission denied)")?;
             self.stage = Stage::Working(Reached::Initialized);
         }
         let code = vt_call!(
@@ -464,7 +483,7 @@ impl VtCapture {
         if code == 1 {
             // LG finalizes the session on status 1; preprocessing alone cannot reopen it.
             self.stage = Stage::Working(Reached::Created);
-            return Ok(false);
+            return Ok(Started::NotReady);
         }
         status(code, "vtCapture_preprocess")?;
         self.stage = Stage::Working(Reached::Prepared);
@@ -502,7 +521,7 @@ impl VtCapture {
             )?,
             "vtCapture_process",
         )?;
-        Ok(true)
+        Ok(Started::Running)
     }
 
     /// Borrow the driver's current frame. Its size is known only now: a
@@ -536,6 +555,7 @@ impl VtCapture {
             }
             Next::Pending => Acquired::Pending,
             Next::NotReady => Acquired::NotReady,
+            Next::Refused => Acquired::Refused,
         })
     }
 
@@ -546,8 +566,12 @@ impl VtCapture {
             self.stage,
             Stage::Working(Reached::Created | Reached::Initialized)
         );
-        if unprepared && !self.prepare()? {
-            return Ok(Next::NotReady);
+        if unprepared {
+            match self.prepare()? {
+                Started::Running => {}
+                Started::NotReady => return Ok(Next::NotReady),
+                Started::Refused => return Ok(Next::Refused),
+            }
         }
         let mut buffer = BufferInfo::default();
         let code = vt_call!(self, prysm_vt_buffer, self.api.buffer, &raw mut buffer)?;
@@ -803,6 +827,23 @@ mod tests {
         fake.with(|driver| driver.code = 0);
         assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
         assert_eq!(fake.with(|driver| driver.initializations), 2);
+        capture.release().unwrap();
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
+    }
+
+    /// A refused video keeps the driver: nothing is released, and each call
+    /// initializes the same driver again.
+    #[test]
+    fn refused_video_keeps_the_driver_and_initializes_it_again() {
+        let fake = Fake::new(17);
+        let mut capture = fake.capture(Reached::Created);
+        assert!(matches!(capture.acquire().unwrap(), Acquired::Refused));
+        assert!(matches!(capture.acquire().unwrap(), Acquired::Refused));
+        assert_eq!(fake.with(|driver| driver.initializations), 2);
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), []);
+        fake.with(|driver| driver.code = 0);
+        assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
+        assert_eq!(fake.with(|driver| driver.initializations), 3);
         capture.release().unwrap();
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }

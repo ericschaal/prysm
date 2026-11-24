@@ -198,6 +198,7 @@ impl Tap for LgTap {
             Ok(sys::Acquired::Frame(video)) => video,
             Ok(sys::Acquired::Pending) => return Ok(Acquired::Pending),
             Ok(sys::Acquired::NotReady) => return Ok(Acquired::NotReady),
+            Ok(sys::Acquired::Refused) => return Ok(Acquired::Refused),
             Err(error) => return Err(fault("webOS video interrupted", error)),
         };
         // An unfinished frame publishes nothing and goes back to the pool.

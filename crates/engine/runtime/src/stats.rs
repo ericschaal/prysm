@@ -2,6 +2,7 @@
 //! the portal's opt-in `/metrics`. Every total lives behind one mutex: the
 //! session thread locks it once per frame and once per output write, only to
 //! add; readers lock it to copy.
+use prysm_ports::NoPicture;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -76,6 +77,9 @@ pub(crate) struct Totals {
     /// For flushed frames, the loop's time for each, waiting for it included.
     /// Not a metric: against it the engine judges whether the loop has slack.
     pub(crate) cycles: Timing,
+    /// Why the last pull without a frame gave none. Not a metric: the
+    /// engine reports it with the input while no frame arrives.
+    pub(crate) no_picture: NoPicture,
 }
 
 impl Stats {
@@ -132,8 +136,16 @@ impl Stats {
         }
     }
 
+    /// A pull without a frame, and why ([`Totals::no_picture`]).
+    pub(crate) fn no_picture(&self, why: NoPicture) {
+        self.lock().no_picture = why;
+    }
+
+    /// A new source has given no reason yet.
     pub(crate) fn source_opened(&self) {
-        self.lock().counters.source_opens += 1;
+        let mut totals = self.lock();
+        totals.counters.source_opens += 1;
+        totals.no_picture = NoPicture::Quiet;
     }
 
     pub(crate) fn output_opened(&self) {

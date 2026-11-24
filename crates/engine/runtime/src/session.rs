@@ -7,7 +7,7 @@ use crate::stats::{FrameTimes, Stats};
 use crate::worker::{Exit, Flags, Worker, guarded};
 use prysm_core::{Config, EdgeColors, Frame};
 use prysm_ports::{
-    DeviceReport, Error, FrameSource, Hangup, IdleMode, Result, Section, SessionPhase,
+    DeviceReport, Error, FrameSource, Hangup, IdleMode, NoPicture, Result, Section, SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -185,7 +185,9 @@ impl SessionLoop {
         Ok(())
     }
 
-    fn on_quiet(&mut self, stop: &Hangup) -> Result<()> {
+    /// No frame within a tick, for the reason the source gave.
+    fn on_quiet(&mut self, why: NoPicture, stop: &Hangup) -> Result<()> {
+        self.stats.no_picture(why);
         if !self.leds.is_held() {
             return Ok(());
         }
@@ -284,9 +286,9 @@ impl Session {
             "session thread",
             (source, session),
             |(mut source, mut session), flags| {
-                let exit = flags.pump(&mut *source, |frame| match frame {
-                    Some(frame) => session.on_frame(frame, flags.stopping()),
-                    None => session.on_quiet(flags.stopping()),
+                let exit = flags.pump(&mut *source, |pulled| match pulled {
+                    Ok(frame) => session.on_frame(frame, flags.stopping()),
+                    Err(why) => session.on_quiet(why, flags.stopping()),
                 });
                 session.finish(exit, source, flags)
             },

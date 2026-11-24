@@ -21,6 +21,9 @@ pub(crate) enum Acquired {
     Pending,
     /// The driver is (re)initializing; try again after [`Limits::retry`].
     NotReady,
+    /// The TV refuses to capture this video; try again once the video
+    /// signal changes, on the same tap.
+    Refused,
 }
 
 /// A native failure. Recoverable ones release the tap and reopen it.
@@ -104,8 +107,9 @@ impl Limits {
     };
 }
 
-/// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Idle`]
-/// while video is unavailable or the driver is preparing, and `Err` on a terminal
+/// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::NoPicture`]
+/// while video is unavailable, the driver is preparing or the TV refuses the
+/// video (saying so), and `Err` on a terminal
 /// native failure or a native call that exceeds its watchdog.
 pub struct WebosFrames {
     thread: OwnerThread,

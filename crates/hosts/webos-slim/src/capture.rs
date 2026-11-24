@@ -4,7 +4,7 @@ use prysm_capture_remote::{Offer, RemoteSettings};
 use prysm_capture_webos::WebosSettings;
 use prysm_h264::Backend;
 use prysm_ports::StreamEncoding;
-use prysm_ports::{FrameSource, Mode, Pull, Result};
+use prysm_ports::{FrameSource, Mode, NoPicture, Pull, Result};
 use prysm_webos_link::worker::StopHandle;
 use std::sync::Arc;
 use std::time::Duration;
@@ -88,11 +88,16 @@ where
             }
         }
         match &mut self.current {
-            Some((_, source)) => source.next_frame(timeout),
+            Some((_, source)) => {
+                let pull = source.next_frame(timeout);
+                self.flow.pulled(pull.as_ref().ok());
+                pull
+            }
             // Waits like any idle pull, so a stop cannot make it spin.
             None => {
+                self.flow.pulled(None);
                 std::thread::sleep(timeout);
-                Ok(Pull::Idle)
+                Ok(Pull::NoPicture(NoPicture::Quiet))
             }
         }
     }

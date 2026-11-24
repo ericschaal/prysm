@@ -3,7 +3,7 @@
 //! its [`Worker`].
 use super::{Acquired, Backend, Fault, Limits, Recovery, Tap};
 use crate::{Readiness, Video, VideoSignal, WebosSettings};
-use prysm_ports::{Error, Result, Worker, chain};
+use prysm_ports::{Error, NoPicture, Result, Worker, chain};
 use std::time::{Duration, Instant};
 
 /// Which tap the native thread holds. The two never run together.
@@ -101,11 +101,15 @@ pub(super) struct Native<B> {
     retry_at: Instant,
     not_ready_since: Option<Instant>,
     pending_since: Option<Instant>,
-    /// A video fault was logged since the last video frame or the start of
-    /// this video period.
+    /// A video fault or refusal was logged since the last video frame or the
+    /// start of this video period.
     video_failing: bool,
     /// A UI fault was logged since the last UI frame.
     ui_failing: bool,
+    /// The TV refused the video: the tap is kept and initialized again only
+    /// after the video signal changes, never on a timer, as a retry before
+    /// then is refused too.
+    refused: bool,
 }
 
 impl<B: Backend> Native<B> {
@@ -130,6 +134,7 @@ impl<B: Backend> Native<B> {
             pending_since: None,
             video_failing: false,
             ui_failing: false,
+            refused: false,
         }
     }
 
@@ -158,6 +163,7 @@ impl<B: Backend> Native<B> {
             if readiness != seen {
                 seen = readiness;
                 self.ui = self.ui.after_change();
+                self.refuse(false);
             }
             let Readiness {
                 video,
@@ -175,14 +181,14 @@ impl<B: Backend> Native<B> {
                 self.retry_at = Instant::now();
             }
             let now = Instant::now();
-            let Some(kind) = kind.filter(|_| now >= self.retry_at) else {
-                // Idle: until the video signal changes; retrying: until the
-                // retry time, or a change first.
-                match kind {
-                    None => self.worker.idle(),
-                    Some(_) => self
-                        .worker
-                        .sleep(self.retry_at.saturating_duration_since(now)),
+            let Some(kind) = kind.filter(|_| !self.refused && now >= self.retry_at) else {
+                // Idle or refused: until the video signal changes; retrying:
+                // until the retry time, or a change first.
+                if kind.is_none() || self.refused {
+                    self.worker.idle();
+                } else {
+                    self.worker
+                        .sleep(self.retry_at.saturating_duration_since(now));
                 }
                 continue;
             };
@@ -229,7 +235,7 @@ impl<B: Backend> Native<B> {
     }
 
     /// Act on one acquisition: publish a frame, time a pending or preparing
-    /// driver, or recover from a fault.
+    /// driver, wait out a refusal, or recover from a fault.
     fn acquired(&mut self, kind: Kind, acquired: Result<Acquired, Fault>) -> Result<()> {
         let now = Instant::now();
         match acquired {
@@ -270,6 +276,19 @@ impl<B: Backend> Native<B> {
                     )));
                 }
                 self.retry_at = now + self.limits.retry;
+            }
+            Ok(Acquired::Refused) => {
+                // Not preparation: no deadline runs while the TV refuses.
+                self.not_ready_since = None;
+                self.pending_since = None;
+                self.refuse(true);
+                let message = "the TV refuses to capture this video; \
+                               tried again once the video signal changes";
+                if std::mem::replace(&mut self.video_failing, true) {
+                    tracing::debug!("{message}");
+                } else {
+                    tracing::warn!("{message}");
+                }
             }
             Err(fault) => return self.recover(kind, fault),
         }
@@ -329,6 +348,16 @@ impl<B: Backend> Native<B> {
         } else {
             tracing::debug!(%error, retry_in = ?wait, "webOS video capture failed; retrying");
         }
+    }
+
+    /// Whether the TV refuses the video, for this thread and its pulls.
+    fn refuse(&mut self, refused: bool) {
+        self.refused = refused;
+        self.worker.no_picture(if refused {
+            NoPicture::Refused
+        } else {
+            NoPicture::Quiet
+        });
     }
 
     fn release_tap(&mut self) -> Result<()> {

@@ -1,4 +1,6 @@
-use crate::{CalibrationPattern, DeviceBrightness, Error, OutputIssue, Revision, Settings};
+use crate::{
+    CalibrationPattern, DeviceBrightness, Error, NoPicture, OutputIssue, Revision, Settings,
+};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -184,6 +186,10 @@ pub struct Input {
     /// Which step keeps Prysm from keeping up with its source, if one does.
     #[serde(default, skip_serializing_if = "Behind::is_none")]
     pub behind: Behind,
+    /// Why no frame arrived in the last window, as the source said; `None`
+    /// while frames arrive (`receiving`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_picture: Option<NoPicture>,
 }
 
 /// What makes Prysm fall behind its source: the frame loop has had no slack

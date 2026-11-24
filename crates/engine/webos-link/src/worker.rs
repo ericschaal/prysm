@@ -518,6 +518,7 @@ mod tests {
         link.events
             .send(&Event::Status(WorkerStatus::Full(FullStatus {
                 capturing: false,
+                no_picture: None,
                 fps: None,
                 target: prysm_ports::LightingTarget::Off,
                 applied: 0,
@@ -532,6 +533,7 @@ mod tests {
         link.events
             .send(&Event::Status(WorkerStatus::Slim(SlimStatus {
                 capturing: false,
+                no_picture: None,
                 link: SlimLink::Failed {
                     failure: long().unwrap(),
                 },
@@ -576,6 +578,7 @@ mod tests {
                 for event in [
                     Event::Status(WorkerStatus::Full(FullStatus {
                         capturing: true,
+                        no_picture: None,
                         fps: Some(u16::MAX),
                         target: prysm_ports::LightingTarget::Effects,
                         applied: u64::MAX,
@@ -584,12 +587,14 @@ mod tests {
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
+                        no_picture: None,
                         link: SlimLink::Waiting {
                             failure: failure().unwrap(),
                         },
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
+                        no_picture: None,
                         link: SlimLink::Sending {
                             encoding: StreamEncoding::H264Software,
                             fps: u16::MAX,

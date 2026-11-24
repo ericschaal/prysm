@@ -1,7 +1,8 @@
 //! What the snapshot reports about a running session: rates, latency, issues, the slow step.
 use crate::common::*;
 use prysm_ports::{
-    Behind, DeviceBrightness, DeviceReport, Latency, LightingTarget, OutputIssue, SessionState,
+    Behind, DeviceBrightness, DeviceReport, Latency, LightingTarget, NoPicture, OutputIssue,
+    SessionState,
 };
 use prysm_runtime::EngineHandle;
 use prysm_runtime::fakes::{CallLog, FakeOutputSettings, FakeSourceSettings};
@@ -26,6 +27,7 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
         let started = tokio::time::Instant::now();
         let waiting = handle.snapshot().borrow().input.unwrap();
         assert!(!waiting.receiving, "nothing measured yet");
+        assert_eq!(waiting.no_picture, Some(NoPicture::Quiet));
 
         // The fake delivers a frame about every 2 ms.
         let receiving = snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
@@ -41,6 +43,11 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
         // After 150 frames it goes quiet.
         let quiet = snapshot_until(&handle, |s| s.input.is_some_and(|i| !i.receiving)).await;
         assert!(quiet.input.unwrap().fps.abs() < f32::EPSILON);
+        assert_eq!(
+            quiet.input.unwrap().no_picture,
+            Some(NoPicture::Quiet),
+            "quiet, for no reason given"
+        );
         assert!(
             matches!(quiet.session, SessionState::ScreenSync),
             "{}",
@@ -49,6 +56,39 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert!(handle.snapshot().borrow().input.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// A source whose device refuses to share its video: the input says so
+/// while no frame arrives, and a frame withdraws it.
+#[tokio::test]
+async fn input_reports_a_refused_video_until_frames_come_again() {
+    within_async(LIMIT, async {
+        let log = CallLog::new();
+        let refused = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                quiet_after: Some(0),
+                quiet_for_ms: 1500,
+                no_picture: NoPicture::Refused,
+                ..Default::default()
+            },
+            FakeOutputSettings::default(),
+        );
+        let (handle, engine, _) = start(&log, refused, DEADLINE).await;
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
+        let waiting = snapshot_until(&handle, |s| {
+            s.input
+                .is_some_and(|i| i.no_picture == Some(NoPicture::Refused))
+        })
+        .await;
+        assert!(!waiting.input.unwrap().receiving);
+        assert!(matches!(waiting.session, SessionState::ScreenSync));
+
+        let receiving = snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
+        assert_eq!(receiving.input.unwrap().no_picture, None);
         engine.shutdown().await.unwrap();
     })
     .await;

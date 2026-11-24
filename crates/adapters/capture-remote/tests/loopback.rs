@@ -152,7 +152,7 @@ fn next_frame_times_out_idle() {
         source
             .next_frame(Duration::from_millis(30))
             .unwrap()
-            .is_idle()
+            .is_quiet()
     );
     assert!(started.elapsed() >= Duration::from_millis(30));
     Box::new(source).close().unwrap();
@@ -176,7 +176,7 @@ fn a_slow_consumer_sees_only_the_newest_frame() {
         source
             .next_frame(Duration::from_millis(100))
             .unwrap()
-            .is_idle()
+            .is_quiet()
     );
     Box::new(source).close().unwrap();
 }
@@ -194,7 +194,7 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
         source
             .next_frame(Duration::from_millis(200))
             .unwrap()
-            .is_idle()
+            .is_quiet()
     );
 
     let mut second = portal.connect().unwrap();
@@ -313,7 +313,7 @@ fn malformed_and_oversized_messages_drop_only_that_connection() {
         source
             .next_frame(Duration::from_millis(50))
             .unwrap()
-            .is_idle()
+            .is_quiet()
     );
 
     let mut sender = portal.connect().unwrap();
@@ -866,7 +866,7 @@ fn factory_decodes_validates_and_opens() {
         source
             .next_frame(Duration::from_millis(10))
             .unwrap()
-            .is_idle()
+            .is_quiet()
     );
     source.close().unwrap();
 }

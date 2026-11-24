@@ -3,7 +3,7 @@
 use super::*;
 use crate::source::{Acquired, Backend, Fault, Limits, Recovery, Tap};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
+use prysm_ports::{AdapterSettings, Error, NoPicture, Registry, Settings, chain};
 use prysm_testkit::{eventually, within};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
@@ -45,6 +45,7 @@ enum Step {
     Frame(u8),
     Pending,
     NotReady,
+    Refused,
     Fail { fatal: bool },
 }
 
@@ -234,6 +235,7 @@ impl Tap for FakeTap {
             Step::Frame(value) => Ok(Acquired::Frame(frame(value))),
             Step::Pending => Ok(Acquired::Pending),
             Step::NotReady => Ok(Acquired::NotReady),
+            Step::Refused => Ok(Acquired::Refused),
             Step::Fail { fatal } => Err(Fault {
                 error: Error::adapter(
                     "webOS video interrupted",
@@ -340,7 +342,7 @@ fn waits_for_video_before_opening_the_tap() {
         let (driver, video) = (driver.clone(), video.clone());
         move || start(&driver, &video)
     });
-    assert!(frames.next_frame(SHORT * 2).unwrap().is_idle());
+    assert!(frames.next_frame(SHORT * 2).unwrap().is_quiet());
     assert_eq!(driver.count(|s| s.opens), 0, "opened without video");
 
     driver.push([Step::Frame(7)]);
@@ -363,7 +365,7 @@ fn losing_video_releases_the_tap_and_frames_resume() {
     eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
         (driver.count(|s| s.releases) == 1).then_some(())
     });
-    assert!(frames.next_frame(SHORT).unwrap().is_idle());
+    assert!(frames.next_frame(SHORT).unwrap().is_quiet());
     assert_eq!(driver.count(|s| s.opens), 1);
 
     driver.push([Step::Frame(2)]);
@@ -394,7 +396,7 @@ fn newest_frame_wins() {
     });
     assert_eq!(frames.pending_frame().unwrap().as_slice(), &[3; 96]);
     assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_quiet());
     closes_cleanly(frames);
 }
 
@@ -428,6 +430,50 @@ fn preparation_limit_is_a_failure_and_release_is_still_certified() {
     assert!(error.to_string().contains("not ready within"), "{error}");
     closes_cleanly(frames);
     assert_eq!(driver.count(|s| s.releases), 1);
+}
+
+/// A refused video keeps its tap and is tried again only after the video
+/// signal changes, without a deadline: the same tap after a change of
+/// availability, a new one after a change of context.
+#[test]
+fn a_refused_video_waits_for_the_video_signal() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    driver.push([Step::Refused, Step::Frame(6), Step::Refused]);
+    let limits = Limits {
+        preparation: Duration::from_millis(50),
+        ..TEST
+    };
+    let mut frames = start_with(&driver, &video, limits);
+    eventually("`driver.count(|s| s.acquires) == 1`", LIMIT, || {
+        (driver.count(|s| s.acquires) == 1).then_some(())
+    });
+    // Past the retry and preparation limits: still waiting, nothing failed,
+    // and the pulls say why.
+    assert_eq!(
+        frames.next_frame(SHORT * 4).unwrap().no_picture(),
+        Some(NoPicture::Refused)
+    );
+    let calls = || {
+        let script = driver.script();
+        (script.opens, script.acquires, script.releases)
+    };
+    assert_eq!(calls(), (1, 1, 0));
+
+    video.set(Video::Available);
+    assert_eq!(next(&mut frames).as_slice(), &[6; 96]);
+    assert_eq!((calls().0, calls().2), (1, 0), "same tap");
+
+    eventually("the second refusal", LIMIT, || {
+        (driver.count(|s| s.acquires) == 3).then_some(())
+    });
+    video.reset();
+    eventually("a new tap", LIMIT, || {
+        (calls().0 == 2 && calls().2 == 1).then_some(())
+    });
+    // The change withdrew the refusal.
+    assert!(frames.next_frame(SHORT).unwrap().is_quiet());
+    closes_cleanly(frames);
 }
 
 #[test]
@@ -491,7 +537,7 @@ fn recoverable_failure_reopens_without_an_error() {
         (driver.count(|s| s.opens) >= 4).then_some(())
     });
     assert!(
-        frames.next_frame(SHORT).unwrap().is_idle(),
+        frames.next_frame(SHORT).unwrap().is_quiet(),
         "open retries quietly"
     );
     closes_cleanly(frames);
@@ -643,7 +689,7 @@ fn without_include_ui_there_are_no_frames_without_video() {
     video.set(Video::Unavailable);
     let mut frames = start(&driver, &video);
     thread::sleep(SHORT);
-    assert!(frames.next_frame(SHORT).unwrap().is_idle());
+    assert!(frames.next_frame(SHORT).unwrap().is_quiet());
     assert_eq!(driver.count(|s| s.ui_opens), 0);
     closes_cleanly(frames);
 }
@@ -673,7 +719,7 @@ fn a_ui_failure_that_cannot_heal_makes_ui_capture_unsupported() {
                 (driver.count(|s| s.open_taps) == 0).then_some(())
             });
         }
-        assert!(frames.next_frame(SHORT).unwrap().is_idle(), "no failure");
+        assert!(frames.next_frame(SHORT).unwrap().is_quiet(), "no failure");
         closes_cleanly(frames);
         let opened: Vec<_> = driver
             .events()

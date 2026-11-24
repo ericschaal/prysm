@@ -387,7 +387,17 @@ test('the light card view: mood, word, line and mode from the situation', () => 
 
   assert.equal(
     pauseOf({ kind: 'sync', input: { fps: 0, receiving: false } }, true),
-    'waiting',
+    'quiet',
+  );
+  assert.equal(
+    pauseOf(
+      {
+        kind: 'sync',
+        input: { fps: 0, receiving: false, no_picture: 'refused' },
+      },
+      true,
+    ),
+    'refused',
   );
   assert.equal(pauseOf({ kind: 'sync', input: undefined }, true), null);
   assert.equal(

@@ -337,6 +337,19 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       'Waiting for picture',
       'in place of the Video fact',
     );
+    // The TV refuses to share the video: the calm line says why, still not
+    // a problem, once it lasts.
+    await act(async () =>
+      fixture.publish({
+        input: { fps: 0, receiving: false, no_picture: 'refused' },
+      }),
+    );
+    await act(async () => sleep(slowStartMs + 50));
+    assert.equal(info(), null, 'a refusal is not a problem');
+    assert.equal(
+      note(),
+      'The TV doesn’t share this video (AirPlay, for example).',
+    );
 
     await act(async () =>
       fixture.publish({ input: { fps: 29.9, receiving: true } }),

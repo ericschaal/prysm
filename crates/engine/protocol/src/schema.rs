@@ -284,6 +284,24 @@ pub struct InputSchema {
     #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     behind: Option<BehindSchema>,
+    /// Why no frame arrived in the last second, as the source said: absent
+    /// while frames arrive (`receiving`).
+    #[schema(nullable = false)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    no_picture: Option<NoPictureSchema>,
+}
+
+// Mirrors `prysm_ports::NoPicture`.
+/// Why no picture arrives. Not a failure: lighting keeps running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = NoPicture)]
+#[serde(rename_all = "snake_case")]
+pub enum NoPictureSchema {
+    /// No frames (no signal, no sender).
+    Quiet,
+    /// The source's device refuses to share the video it shows (an LG TV
+    /// playing AirPlay); frames come again once the video changes.
+    Refused,
 }
 
 // Mirrors `prysm_ports::Behind` (`none` is not sent: the field is absent).
@@ -483,6 +501,7 @@ impl ToSchema for OutputSettings {}
     InputSchema,
     LatencySchema,
     BehindSchema,
+    NoPictureSchema,
     OutputIssueSchema,
     DeviceReportSchema,
     Session,
@@ -658,8 +677,8 @@ mod tests {
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
         DeviceBrightness, DeviceReport, FrameSource, Input, Latency, LightingTarget, Mode, Modes,
-        OutputIssue, Pattern, PrimaryControls, Processing, Result, Settings, Span, Style,
-        StyleValues, ValidationError,
+        NoPicture, OutputIssue, Pattern, PrimaryControls, Processing, Result, Settings, Span,
+        Style, StyleValues, ValidationError,
     };
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::json;
@@ -746,11 +765,19 @@ mod tests {
                 output_ms: 2.4,
             }),
             behind: Behind::Output,
+            no_picture: None,
         });
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             behind: Behind::Processing,
             ..Input::default()
         });
+        for why in [NoPicture::Quiet, NoPicture::Refused] {
+            assert_mirror_round_trips::<Input, InputSchema>(&Input {
+                no_picture: Some(why),
+                ..Input::default()
+            });
+            assert_mirror_round_trips::<NoPicture, NoPictureSchema>(&why);
+        }
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             latency: Some(Latency {
                 capture_ms: None,

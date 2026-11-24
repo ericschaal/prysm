@@ -10,7 +10,7 @@ use crate::{FileSettings, players};
 use nix::errno::Errno;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use prysm_core::{Frame, FramePool, PixelFormat};
-use prysm_ports::{Error, FrameSource, Pull, Result};
+use prysm_ports::{Error, FrameSource, NoPicture, Pull, Result};
 use std::fmt;
 use std::io::{self, Read};
 use std::os::fd::AsFd;
@@ -434,7 +434,7 @@ impl FileFrames {
             .stdout_ready(Instant::now() + timeout)
             .map_err(|error| Error::adapter("cannot wait for FFmpeg output", error))?
         {
-            return Ok(Pull::Idle);
+            return Ok(Pull::NoPicture(NoPicture::Quiet));
         }
         match read_frame(
             &mut self.pipes,

@@ -55,9 +55,9 @@ impl Forwarder {
             "forwarder thread",
             (source, sink),
             |(mut source, mut sink), flags| {
-                let exit = flags.pump(&mut *source, |frame| match frame {
-                    Some(frame) => sink.send(&frame),
-                    None => sink.tick(),
+                let exit = flags.pump(&mut *source, |pulled| match pulled {
+                    Ok(frame) => sink.send(&frame),
+                    Err(_) => sink.tick(),
                 });
                 flags.set_phase(SessionPhase::ClosingSource);
                 let released = source.close();

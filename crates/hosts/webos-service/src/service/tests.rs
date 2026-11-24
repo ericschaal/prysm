@@ -523,6 +523,7 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
         Output::Log("prysm-webos: portal http://10.0.0.2:8787/".into()),
         Output::Event(Event::Status(WorkerStatus::Full(FullStatus {
             capturing: false,
+            no_picture: None,
             fps: None,
             target: LightingTarget::Off,
             applied: 0,

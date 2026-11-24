@@ -134,7 +134,7 @@ fn open_waits_for_readiness_not_frames() {
     assert!(opened.recv_timeout(SHORT).is_err(), "open returned early");
     native.ready();
     let mut frames = opened.recv_timeout(LIMIT).unwrap().unwrap();
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_quiet());
     closes_cleanly(frames, &native);
 }
 
@@ -278,7 +278,7 @@ fn newest_frame_wins() {
             .as_slice(),
         &[99; 96]
     );
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_quiet());
 
     // An untaken frame is replaced, never queued.
     native.frame(1);
@@ -286,7 +286,7 @@ fn newest_frame_wins() {
     native.frame(2);
     let newest = frames.next_frame(LIMIT).unwrap().into_frame().unwrap();
     assert_eq!(newest.as_slice(), &[2; 96]);
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_quiet());
 
     closes_cleanly(frames, &native);
 }
@@ -295,7 +295,7 @@ fn newest_frame_wins() {
 fn timeout_returns_none() {
     let (mut frames, native) = opened();
     let started = Instant::now();
-    assert!(frames.next_frame(SHORT).unwrap().is_idle());
+    assert!(frames.next_frame(SHORT).unwrap().is_quiet());
     assert!(started.elapsed() >= SHORT);
     closes_cleanly(frames, &native);
 }

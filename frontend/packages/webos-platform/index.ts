@@ -9,12 +9,14 @@ import {
   isObject,
   known,
   lightingTargets,
+  noPictures,
 } from '@prysm/application-client';
 import type {
   ErrorKind,
   FailureKind,
   FullWorker,
   LightingTarget,
+  NoPicture,
   Power,
   Preferences,
   StreamEncoding,
@@ -29,6 +31,7 @@ export type {
   FailureKind,
   FullWorker,
   LightingTarget,
+  NoPicture,
   Power,
   Preferences,
   StreamEncoding,
@@ -86,6 +89,12 @@ export function isEnabled(state: State): boolean {
 export function isCapturing(state: State): boolean {
   const worker = state.worker;
   return worker.phase === 'running' && worker.capturing;
+}
+
+/** Why the running worker's capture gives no frames, when it says so. */
+export function noPicture(state: State): NoPicture | undefined {
+  const worker = state.worker;
+  return worker.phase === 'running' ? worker.no_picture : undefined;
 }
 
 /** The running worker's frame rate, 0 while it waits for frames; `null` while none is measured. */
@@ -243,6 +252,17 @@ const optionalText = (value: unknown) =>
 const optionalNumber = (value: unknown) =>
   value === undefined || typeof value === 'number';
 
+/**
+ * A running worker's `no_picture` as fields to spread: absent stays absent,
+ * and a reason newer than this app is `quiet`. `null` when malformed.
+ */
+function decodeNoPicture(value: unknown): { no_picture?: NoPicture } | null {
+  if (value === undefined) return {};
+  return typeof value === 'string'
+    ? { no_picture: known(noPictures, value, 'quiet') }
+    : null;
+}
+
 /** A failure; an unknown kind is `other`. `null` when malformed. */
 function decodeFailure(value: unknown): WorkerFailure | null {
   if (
@@ -278,12 +298,18 @@ function decodeCommonPhase(
 function decodeFullWorker(value: unknown): WorkerReading<FullWorker> | null {
   if (!isObject(value) || typeof value.phase !== 'string') return null;
   switch (value.phase) {
-    case 'running':
+    case 'running': {
+      const reason = decodeNoPicture(value.no_picture);
       return typeof value.capturing === 'boolean' &&
         optionalNumber(value.fps) &&
+        reason &&
         optionalText(value.portal)
-        ? (value as unknown as FullWorker)
+        ? {
+            ...(value as unknown as Extract<FullWorker, { phase: 'running' }>),
+            ...reason,
+          }
         : null;
+    }
     case 'stopping':
       return optionalText(value.portal)
         ? (value as unknown as FullWorker)
@@ -325,8 +351,9 @@ function decodeSlimWorker(value: unknown): WorkerReading<SlimWorker> | null {
   switch (value.phase) {
     case 'running': {
       const link = decodeSlimLink(value.link);
-      return typeof value.capturing === 'boolean' && link
-        ? { phase: 'running', capturing: value.capturing, link }
+      const reason = decodeNoPicture(value.no_picture);
+      return typeof value.capturing === 'boolean' && link && reason
+        ? { phase: 'running', capturing: value.capturing, ...reason, link }
         : null;
     }
     case 'stopping':
@@ -372,9 +399,10 @@ function isPreferences(value: unknown): value is Preferences {
  * A state as this app reads it, or `null` when it is malformed. Its
  * structure is checked; a value newer than this app in a known field has
  * one reading: an unknown power or video is `unknown`, an unknown failure
- * kind `other`, an unknown lighting target or worker phase `unknown` (never
- * off or stopped) and an unknown slim link state starting, so an app older
- * than its service still shows the service it talks to.
+ * kind `other`, an unknown reason for no picture `quiet`, an unknown
+ * lighting target or worker phase `unknown` (never off or stopped) and an
+ * unknown slim link state starting, so an app older than its service still
+ * shows the service it talks to.
  */
 export function decodeState(value: unknown): State | null {
   if (!isObject(value)) return null;

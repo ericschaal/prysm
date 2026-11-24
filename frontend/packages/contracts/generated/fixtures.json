@@ -670,6 +670,44 @@
     },
     {
       "device": {},
+      "input": {
+        "fps": 0,
+        "no_picture": "refused",
+        "receiving": false,
+        "sent_fps": 0
+      },
+      "revision": 0,
+      "session": {
+        "state": "screen_sync"
+      },
+      "settings": {
+        "capture": {
+          "device": "/dev/video0",
+          "kind": "device"
+        },
+        "output": {
+          "address": "192.0.2.1",
+          "kind": "wled",
+          "leds": {
+            "left": 4,
+            "top": 10
+          }
+        },
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "style": {
+            "kind": "natural"
+          }
+        }
+      },
+      "surface_failures": [],
+      "target": "screen_sync",
+      "version": "1.0.0"
+    },
+    {
+      "device": {},
       "revision": 0,
       "session": {
         "state": "effects"
@@ -957,6 +995,25 @@
       "preferences": {
         "autostart": false
       },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "capturing": false,
+        "fps": 0,
+        "no_picture": "refused",
+        "phase": "running",
+        "portal": "http://192.168.1.5:8787/"
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
       "target": "off",
       "video": "available",
       "worker": {
@@ -1029,6 +1086,27 @@
         "link": {
           "state": "paused"
         },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "encoding": "raw",
+          "fps": 0,
+          "state": "sending"
+        },
+        "no_picture": "refused",
         "phase": "running"
       }
     },

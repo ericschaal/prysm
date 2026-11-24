@@ -21,7 +21,9 @@ pub fn power(payload: &Value) -> Option<Power> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoReading {
     pub video: Video,
-    /// Source, port and context of available video; a change resets capture.
+    /// Source, port, context and app of available video; a change resets
+    /// capture. The app counts because media apps can share the rest, and the
+    /// capture of one the TV refuses (AirPlay) waits for such a change.
     pub context: Option<Value>,
     /// A good subscription reply: stop retrying the subscription.
     pub settled: bool,
@@ -54,7 +56,8 @@ pub fn video(payload: &Value) -> VideoReading {
         serde_json::json!([
             main["connectedSource"],
             main["connectedSourcePort"],
-            main["context"]
+            main["context"],
+            main["appId"]
         ])
     });
     VideoReading {
@@ -89,7 +92,8 @@ mod tests {
 
     fn main_sink(fields: Value) -> Value {
         let mut sink = json!({"sink": "MAIN", "connected": true, "width": 1920, "height": 1080,
-            "frameRate": 60.0, "connectedSource": "HDMI", "connectedSourcePort": 2, "context": "pipeline1"});
+            "frameRate": 60.0, "connectedSource": "HDMI", "connectedSourcePort": 2, "context": "pipeline1",
+            "appId": "com.webos.app.hdmi2"});
         for (key, value) in fields.as_object().unwrap() {
             sink[key] = value.clone();
         }
@@ -101,11 +105,16 @@ mod tests {
         let reading = video(&main_sink(json!({})));
         assert_eq!(reading.video, Video::Available);
         assert!(reading.settled);
-        assert_eq!(reading.context, Some(json!(["HDMI", 2, "pipeline1"])));
-        assert_ne!(
-            video(&main_sink(json!({"connectedSourcePort": 3}))).context,
-            reading.context
+        assert_eq!(
+            reading.context,
+            Some(json!(["HDMI", 2, "pipeline1", "com.webos.app.hdmi2"]))
         );
+        for change in [
+            json!({"connectedSourcePort": 3}),
+            json!({"appId": "airplay"}),
+        ] {
+            assert_ne!(video(&main_sink(change)).context, reading.context);
+        }
 
         let gone = video(&main_sink(json!({"connected": false})));
         assert_eq!((gone.video, gone.context), (Video::Unavailable, None));

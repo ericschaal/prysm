@@ -105,7 +105,25 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   stays registered, or a failed driver creation (`vtCapture_create`), cannot
   succeed again in the process, so the full worker fails then too (exit 1)
   instead of retrying in place. Other video failures reopen the tap; the
-  first of a run logs a warning and the rest debug. After a failed driver call a tap
+  first of a run logs a warning and the rest debug.
+- The TV can refuse to capture the video it shows (`vtCapture_init` status
+  17, seen with AirPlay; probably protected video). The tap is kept, with
+  its driver only created, and initialized again only after the video
+  signal changes (availability, or a new input, app or picture mode; the
+  app is MAIN's `appId`), never on a timer and without the preparation
+  limit. The session runs without frames meanwhile; its pulls are
+  `Pull::NoPicture(NoPicture::Refused)`, which the engine reports as
+  `input.no_picture` and the workers as `no_picture` in their status (and
+  the supervisor in its running `worker`). The TV app then shows **Video
+  can’t be captured** with no Try again (slim keeps its Stop capture), and
+  the portal's light card says the TV doesn't share this video; neither is
+  a failure, and both clear once frames come again. A
+  slim stream carries no reason, so its receiver's portal only waits for
+  the picture. A new driver per attempt would add a release of
+  a driver that never ran, and that release can hang in the vendor's
+  destructor ([cleanup diagnosis](../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md#video-release-has-a-reproduced-lost-wakeup-race)),
+  faulting the worker. The first refusal of a run logs a warning, the rest
+  debug. After a failed driver call a tap
   accepts nothing but its release
   ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs),
   [native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
@@ -222,9 +240,13 @@ says whether slim capture streams; slim has no target, since the desktop
 Prysm decides what the lights do. The state has the fields both packages
 share (`preferences`, `power`, `video`, `failure`, `log`) and the installed
 package's own, tagged by `flavor`: full `target` and a `worker` that reports
-`capturing`, `fps` and `portal` while it runs (`portal` also while it
-stops); slim `enabled` and a `worker` that reports `capturing` and its
-`link` (as in the worker's status) while it runs. `autostart` starts the
+`capturing`, `fps`, `no_picture` and `portal` while it runs (`portal` also
+while it stops); slim `enabled` and a `worker` that reports `capturing`,
+`no_picture` and its `link` (as in the worker's status) while it runs.
+`no_picture` says why the capture gives no frames: `quiet` (no video) or
+`refused` (the TV refuses to share the video it shows). Full reports it
+while screen sync runs; slim while a capture runs, not while the stream is
+paused or before a request. `autostart` starts the
 full package's screen sync, or slim streaming, when the service starts. A
 restart within one boot resumes the intent from `resume.json`
 (`{ "boot": …, "intent": "off" | "screen_sync" | "effects" }`; slim
@@ -240,7 +262,7 @@ sent, and a newer `flavor` as a state it cannot show. Requests stay closed:
 the service refuses a value it does not know. Preferences hold only
 `autostart` and, for slim, `prysm_address` (the desktop Prysm's portal
 address, where frames go). An absent value (no failure, `fps`, `portal` or
-`prysm_address`) is omitted, never `null`, here and in the worker's status
+`prysm_address`, and `no_picture` while frames come) is omitted, never `null`, here and in the worker's status
 lines. Picture settings live in a portal, never in Luna. Types: generated
 `@prysm/contracts/luna` from
 [schema.rs](../../crates/hosts/webos-service/src/schema.rs).

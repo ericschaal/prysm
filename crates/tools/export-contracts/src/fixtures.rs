@@ -8,7 +8,7 @@ use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::StreamEncoding;
 use prysm_ports::{
     AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
-    DeviceBrightness, DeviceReport, Error, Input, Latency, LightingTarget, Mode, Modes,
+    DeviceBrightness, DeviceReport, Error, Input, Latency, LightingTarget, Mode, Modes, NoPicture,
     OutputIssue, Pattern, PrimaryControls, Processing, Revision, Section, SessionPhase,
     SessionState, Settings, Snapshot, Span, Style, StyleValues, ValidationError,
 };
@@ -55,11 +55,22 @@ fn luna() -> Value {
         FullWorker::Running {
             capturing: true,
             fps: Some(30),
+            no_picture: None,
             portal: portal(),
         },
     );
     let full_states = [
         running.clone(),
+        // The TV refuses to share the video it shows.
+        full(
+            LightingTarget::ScreenSync,
+            FullWorker::Running {
+                capturing: false,
+                fps: Some(0),
+                no_picture: Some(NoPicture::Refused),
+                portal: portal(),
+            },
+        ),
         full(LightingTarget::Off, FullWorker::Stopped),
         full(
             LightingTarget::Effects,
@@ -92,7 +103,23 @@ fn luna() -> Value {
                 true,
                 SlimWorker::Running {
                     capturing: false,
+                    no_picture: None,
                     link: SlimLink::Paused {},
+                },
+            ),
+            None,
+        ),
+        // The TV refuses to share the video it shows.
+        (
+            slim(
+                true,
+                SlimWorker::Running {
+                    capturing: false,
+                    no_picture: Some(NoPicture::Refused),
+                    link: SlimLink::Sending {
+                        encoding: StreamEncoding::Raw,
+                        fps: 0,
+                    },
                 },
             ),
             None,
@@ -221,6 +248,7 @@ fn states() -> Vec<State> {
                     output_ms: 2.4,
                 }),
                 behind: Behind::Output,
+                no_picture: None,
             }),
             device: DeviceReport {
                 issue: Some(OutputIssue::Overridden),
@@ -237,6 +265,17 @@ fn states() -> Vec<State> {
             calibration: Some(CalibrationPattern {
                 pattern: Pattern::Gray192,
                 uncorrected: false,
+            }),
+            ..Snapshot::default()
+        },
+        // Screen sync whose source's device refuses to share its video.
+        Snapshot {
+            target: LightingTarget::ScreenSync,
+            session: SessionState::ScreenSync,
+            settings: configured(),
+            input: Some(Input {
+                no_picture: Some(NoPicture::Refused),
+                ..Input::default()
             }),
             ..Snapshot::default()
         },

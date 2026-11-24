@@ -2,7 +2,7 @@
 //! with the [`Hangup`] it cuts, a reported phase, and a completion the async
 //! side can await with a deadline.
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, Hangup, Pull, Result, Section, SessionPhase};
+use prysm_ports::{Error, FrameSource, Hangup, NoPicture, Pull, Result, Section, SessionPhase};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
@@ -38,12 +38,12 @@ impl Flags {
     }
 
     /// Pull frames until stopped, until the source ends, or until the source
-    /// or `each` fails; `each` receives `None` when no frame arrived within a
-    /// tick. A panic becomes a failure so the caller still releases its adapters.
+    /// or `each` fails; `each` receives each frame, or why a tick gave none.
+    /// A panic becomes a failure so the caller still releases its adapters.
     pub(crate) fn pump(
         &self,
         source: &mut dyn FrameSource,
-        mut each: impl FnMut(Option<Frame>) -> Result<()>,
+        mut each: impl FnMut(std::result::Result<Frame, NoPicture>) -> Result<()>,
     ) -> Exit {
         self.set_phase(SessionPhase::Running);
         let pumped = guarded("session loop", || {
@@ -53,8 +53,8 @@ impl Flags {
                     .next_frame(TICK)
                     .map_err(|error| error.in_section(Section::Capture))?
                 {
-                    Pull::Frame(frame) => each(Some(frame))?,
-                    Pull::Idle => each(None)?,
+                    Pull::Frame(frame) => each(Ok(frame))?,
+                    Pull::NoPicture(why) => each(Err(why))?,
                     Pull::Ended => return Ok(Exit::Ended),
                 }
             }

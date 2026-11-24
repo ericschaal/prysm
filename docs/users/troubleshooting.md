@@ -36,6 +36,7 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | Unsupported mode | Choose a size and rate the card supports. On Linux it must offer YUYV, RGB3 or BGR3; MJPEG-only cards do not work. |
 | Capture device delivered unusable buffers in a row | The card sends a broken or incomplete picture. Check the cable and the source's signal, or choose another size and rate. |
 | Waiting for video | Prysm runs but no picture arrives. Check the source is playing. After about 3 seconds WLED returns to its own state until video comes back. |
+| The TV doesn’t share this video | The LG TV plays video it keeps to itself (AirPlay, for example), so no picture arrives. Nothing is wrong: the lights follow again as soon as another source plays. |
 | No LEDs | Check the WLED address, that WLED allows DDP input, and the LED counts. Allow HTTP and UDP port 4048 from Prysm to WLED. In Docker, enter WLED by IP address. |
 | Light card says WLED is off, overridden or not live | Something else changed WLED (its power button, a live override, another app sending colours). Prysm keeps sending; fix it in WLED. |
 | LED counts differ | WLED's own LED count (**Config → LED Preferences**) is not the sum of Prysm's edges: with fewer in Prysm the last LEDs stay dark, with more the last edge is cut short. Correct whichever is wrong. |
@@ -52,6 +53,7 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | Prysm needs setting up | Choose **Set up service**. After every install or update the service must be set up again. |
 | TV is asleep, Screen saver is on | Capture continues when the TV wakes. |
 | Waiting for video | Play video or use an active HDMI input. The Home screen may give no picture. |
+| Video can’t be captured | The TV doesn't share the video it plays (AirPlay, for example), so it cannot light the room. Nothing is wrong: the lights follow again as soon as another source plays. |
 | Screen sync stopped, Capture stopped | The TV tries again by itself and counts down. If it repeats, the reason is under **Service options → View diagnostics**. Stop other capture apps. |
 | Couldn’t read settings | The TV's saved settings could not be read, so Prysm uses its defaults and leaves the file as it is. Change a setting (**Start with TV**, or for slim the **Prysm address**) to save new ones. **View diagnostics** says what was wrong. |
 | Slim: Waiting for Prysm | Check the **Prysm address** (the one you open the portal with), that Prysm on the computer has the **LG TV on your network** source with its lights on, and, behind a reverse proxy, that it passes WebSockets on `/api/v1/capture/stream` without a login. |
