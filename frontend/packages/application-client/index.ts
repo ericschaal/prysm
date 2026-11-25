@@ -3,6 +3,7 @@ import type {
   Candidate,
   CaptureSettings,
   ColorsEvent,
+  DeviceReport,
   Failure,
   FailureSection,
   Input,
@@ -124,8 +125,9 @@ export function describeOutputIssue(issue: OutputIssue): string {
 }
 
 /**
- * The headline while the lights are not showing screen sync: lights that
- * don't answer are a problem; any other issue (a newer one too) is a warning.
+ * The headline while the lights are not showing screen sync, and while they
+ * don't answer whatever was chosen: lights that don't answer are a problem;
+ * any other issue (a newer one too) is a warning.
  */
 export function outputIssueHeadline(issue: OutputIssue): string {
   return issue === 'unreachable'
@@ -134,8 +136,32 @@ export function outputIssueHeadline(issue: OutputIssue): string {
 }
 export type { PreviewFrame } from '@prysm/contracts/application';
 
+/**
+ * What happens once lights that don't answer answer again, by the target:
+ * Prysm keeps it and tries again every few seconds. `effects` names the
+ * output's own effects. At most 52 characters with `WLED effects`.
+ */
+export function whenLightsAnswer(
+  target: LightingTarget,
+  effects: string,
+): string {
+  switch (target) {
+    case 'screen_sync':
+      return 'The lights follow again as soon as they answer.';
+    case 'off':
+      return 'The lights switch off as soon as they answer.';
+    case 'effects':
+      return `${effects} start as soon as the lights answer.`;
+    default:
+      return unreachable(target);
+  }
+}
+
 /** What the lights show while on: screen sync or the output's own effects. */
 export type LightingMode = Exclude<LightingTarget, 'off'>;
+
+/** A target reached without a session: the lights off or their own effects. */
+export type IdleTarget = Exclude<LightingTarget, 'screen_sync'>;
 
 /**
  * A target as this page reads it: `unknown` is one newer than this page,
@@ -180,13 +206,18 @@ export function failureSide(
 }
 
 /**
- * What the lights are doing, decided once from the requested target and the
- * session (with the failure it carries); every view of the lights shows
- * this. The rule is ordered, so every pair lands on exactly one:
+ * What the lights are doing, decided once from the requested target, the
+ * session (with the failure it carries) and what the lights say about
+ * themselves; every view of the lights shows this. The rule is ordered, so
+ * every state lands on exactly one:
  *
  * - `faulted`: the session stopped responding; nothing works until a
  *   restart. `message` says what did not finish.
  * - `unknown`: the target or the session state is newer than this page.
+ * - `unanswered`: the lights don't answer the request that puts them off or
+ *   in their own effects (no session, no failure). The target stays; Prysm
+ *   tries again every few seconds and applies it once they answer. (Lights
+ *   that don't answer screen sync are `sync`: its session waits for them.)
  * - `off`: the lights were asked off (the session may still be stopping).
  *   With the lights off a stopped session's failure still stays said:
  *   settings that do not validate, or a switch off that failed.
@@ -204,6 +235,7 @@ export function failureSide(
 export type LightingSituation =
   | { kind: 'faulted'; message: string }
   | { kind: 'unknown'; failure: LightingFailure | null; message: string | null }
+  | { kind: 'unanswered'; target: IdleTarget }
   | { kind: 'off'; failure: LightingFailure | null }
   | {
       kind: 'failed';
@@ -221,10 +253,13 @@ export function lightingSituation({
   target,
   session,
   input,
+  device,
 }: {
   target: TargetReading;
   session: SessionReading;
   input?: Input;
+  /** What the lights say about themselves; absent, nothing. */
+  device?: DeviceReport;
 }): LightingSituation {
   if (session.state === 'faulted')
     return { kind: 'faulted', message: session.message };
@@ -234,6 +269,13 @@ export function lightingSituation({
       failure: sessionFailure(session),
       message: session.state === 'unknown' ? (session.message ?? null) : null,
     };
+  if (
+    target !== 'screen_sync' &&
+    session.state === 'stopped' &&
+    !session.failure &&
+    device?.issue === 'unreachable'
+  )
+    return { kind: 'unanswered', target };
   if (target === 'off')
     return {
       kind: 'off',
@@ -271,6 +313,7 @@ export function situationFailure(
     case 'unknown':
       return situation.failure;
     case 'faulted':
+    case 'unanswered':
     case 'sync':
     case 'starting':
       return null;
@@ -301,6 +344,13 @@ export function describeSituation(
         sentence:
           'Prysm is newer than this page. Reload it to see what the lights do.',
       };
+    case 'unanswered': {
+      const headline = outputIssueHeadline('unreachable');
+      return {
+        headline,
+        sentence: `${headline}. ${whenLightsAnswer(situation.target, effects)}`,
+      };
+    }
     case 'off':
       return both('Lights are off');
     case 'failed':

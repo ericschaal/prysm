@@ -10,6 +10,7 @@ import {
   type AdapterSide,
   type LightingFailure,
   type LightingSituation,
+  type OutputIssue,
   type TargetReading,
 } from '@prysm/application-client';
 import type { DeviceReport, Input } from '@prysm/contracts/application';
@@ -54,9 +55,11 @@ export function pathOf(lighting: LightingSituation): PathState {
         ? { kind: 'failed', at }
         : { kind: 'off' };
     }
-    // The path shows a start as off until the session runs, and a state
-    // newer than this page as nothing it can name.
+    // The path shows a start as off until the session runs, lights waited
+    // for as off (no session, nothing sent), and a state newer than this
+    // page as nothing it can name.
     case 'starting':
+    case 'unanswered':
     case 'unknown':
       return { kind: 'off' };
     default:
@@ -96,6 +99,15 @@ export interface Status {
   details?: string;
   /** Frames are flowing from this source: show them. */
   picture?: boolean;
+}
+
+/** The lights' status while they don't show what was chosen, and why. */
+function issueStatus(issue: OutputIssue, identity: string): Status {
+  const title = outputIssueHeadline(issue);
+  const why = describeOutputIssue(issue);
+  return issue === 'unreachable'
+    ? { tone: 'problem', title, detail: `${identity}. ${why}` }
+    : { tone: 'warning', title, detail: why };
 }
 
 /**
@@ -173,6 +185,10 @@ export function sectionStatus(
           details: reason,
         };
   }
+  // Lights that don't answer Off or their effects are said as during screen
+  // sync; the video source is not in use.
+  if (!capture && situation.kind === 'unanswered')
+    return issueStatus('unreachable', identity);
   if (target === 'off')
     return {
       tone: 'idle',
@@ -193,13 +209,8 @@ export function sectionStatus(
       : { tone: 'busy', title: 'Starting…', detail: identity };
   }
   // Screen sync: the lights say first when they do not show it.
-  if (!capture && outputIssue && path.kind !== 'off') {
-    const title = outputIssueHeadline(outputIssue);
-    const why = describeOutputIssue(outputIssue);
-    return outputIssue === 'unreachable'
-      ? { tone: 'problem', title, detail: `${identity}. ${why}` }
-      : { tone: 'warning', title, detail: why };
-  }
+  if (!capture && outputIssue && path.kind !== 'off')
+    return issueStatus(outputIssue, identity);
   if (path.kind === 'flowing') {
     if (capture)
       return {

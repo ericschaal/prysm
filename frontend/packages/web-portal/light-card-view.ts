@@ -59,6 +59,8 @@ export function moodOf(lighting: LightingSituation, configured: boolean): Mood {
       return 'effects';
     case 'starting':
       return 'starting';
+    // Lights waited for are neither lit nor busy: the info line says it.
+    case 'unanswered':
     case 'off':
       return 'off';
     default:
@@ -122,7 +124,8 @@ export interface LightCardFacts {
   lighting: LightingSituation;
   /**
    * What the lights say about themselves while screen sync runs: why they
-   * do not show it, their own brightness, how many LEDs they have.
+   * do not show it, their own brightness, how many LEDs they have. Lights
+   * that don't answer Off or their effects are the situation `unanswered`.
    */
   device: DeviceReport;
   /** How many LEDs Prysm sends: the configured edges' total. */
@@ -294,6 +297,13 @@ export function lightCardView(
     };
   } else if (device.issue && lighting.kind === 'sync')
     info = { tone: 'warning', text: describeOutputIssue(device.issue) };
+  // A warning, as an issue while screen sync runs, with what happens once
+  // they answer.
+  else if (lighting.kind === 'unanswered')
+    info = {
+      tone: 'warning',
+      text: describeSituation(lighting, effects).sentence,
+    };
   // While screen sync shows: LED counts that differ leave some LEDs dark or
   // some colours unshown, so they come first; then the lights' own
   // brightness, as a low one is named in place of "Following the screen.",
