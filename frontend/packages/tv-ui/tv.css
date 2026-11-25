@@ -276,12 +276,20 @@ button:disabled {
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
+/* The dot beside the title: what the card says, as a colour. */
+.status-head {
+  display: flex;
+  align-items: center;
+}
+.status-head h1 {
+  min-width: 0;
+}
 .status-dot {
   position: relative;
   flex-shrink: 0;
-  width: 0.55rem;
-  height: 0.55rem;
-  margin-right: var(--space-2);
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: var(--space-3);
   border-radius: 50%;
   background: rgba(var(--fg), 0.6);
 }
@@ -312,7 +320,6 @@ button:disabled {
   text-overflow: ellipsis;
 }
 .overview h1 {
-  margin-top: var(--space-3);
   font-size: var(--text-hero);
   font-weight: var(--weight-strong);
   line-height: var(--leading-tight);

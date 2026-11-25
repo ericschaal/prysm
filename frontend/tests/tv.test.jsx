@@ -3017,9 +3017,9 @@ test('neither package sets up capture, lights or the stream on the TV; both show
       document.querySelector('.brand-sub').textContent,
       'Ambient light',
     );
-    assert.equal(
-      document.querySelector('.section-label').textContent,
-      flavor === 'full' ? 'Prysm on this TV' : 'Capture on this TV',
+    assert(
+      tv.el('status-title').parentElement.querySelector('.status-dot'),
+      'the dot is beside the title',
     );
     assert.equal(tv.text('lighting-title'), 'Your lights');
     assert.equal(

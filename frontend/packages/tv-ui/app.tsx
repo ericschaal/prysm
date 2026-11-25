@@ -308,11 +308,8 @@ export function TvApp({
               className={`card overview${screen.attention ? ' attention' : ''}`}
               aria-labelledby="status-title"
             >
-              <p className="section-label">
+              <div className="status-head" role="status" aria-live="polite">
                 <span className="status-dot" aria-hidden="true" />
-                {slim ? 'Capture on this TV' : 'Prysm on this TV'}
-              </p>
-              <div role="status" aria-live="polite">
                 <h1
                   id="status-title"
                   key={screen.mismatch ? 'mismatch' : screen.title}
