@@ -336,6 +336,8 @@ mod tests {
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod capture_time;
+#[cfg(any(target_os = "linux", test))]
+mod classify;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod health;
 #[cfg(target_os = "linux")]

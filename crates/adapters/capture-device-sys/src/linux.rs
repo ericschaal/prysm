@@ -9,6 +9,7 @@ use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 use v4l::buffer::Type;
 mod stream;
+use crate::classify::Op;
 use stream::{Dequeued, Stream, failed, released};
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
@@ -359,12 +360,16 @@ fn rates_at(device: &Device, fourcc: FourCC, width: u32, height: u32) -> Option<
 /// Stop the stream and start it again. STREAMOFF gives every buffer back,
 /// including one the driver kept.
 fn restart(stream: &mut Stream) -> Result<()> {
-    stream
-        .stop()
-        .map_err(|error| failed(error, "failed to stop capture stream to restart it"))?;
+    stream.stop().map_err(|error| {
+        failed(
+            Op::Stop,
+            error,
+            "failed to stop capture stream to restart it",
+        )
+    })?;
     stream
         .start()
-        .map_err(|error| failed(error, "failed to restart capture stream"))
+        .map_err(|error| failed(Op::Start, error, "failed to restart capture stream"))
 }
 
 /// Carries out `verdict`: restarts (each after its pause) for as long as
@@ -407,7 +412,7 @@ fn capture(
     }
     stream
         .start()
-        .map_err(|error| failed(error, "failed to start capture stream"))?;
+        .map_err(|error| failed(Op::Start, error, "failed to start capture stream"))?;
     sink.ready();
     let mut pool = FramePool::default();
     let mut stats = crate::trace_stats::TraceStats::new("v4l_capture");
@@ -539,6 +544,7 @@ mod tests {
 
     fn refused() -> Result<()> {
         Err(failed(
+            Op::Start,
             std::io::Error::from_raw_os_error(libc::EBUSY),
             "failed to restart capture stream",
         ))
@@ -603,6 +609,7 @@ mod tests {
     #[test]
     fn a_device_gone_during_a_restart_ends_capture_at_once() {
         let gone = Err(failed(
+            Op::Start,
             std::io::Error::from_raw_os_error(libc::ENODEV),
             "failed to restart capture stream",
         ));
