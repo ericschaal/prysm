@@ -49,7 +49,7 @@ pub enum Schedule {
 
 /// The tries of one operation on one [`Schedule`]: the only state a retry
 /// keeps.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Attempts {
     schedule: Schedule,
     /// The first failure since the last success.

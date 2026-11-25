@@ -18,7 +18,7 @@ const TEST: Limits = Limits {
     watchdog: Duration::from_secs(2),
     preparation: Duration::from_secs(2),
     pending: Duration::from_secs(2),
-    retry: Duration::from_millis(5),
+    not_ready_retry: Duration::from_millis(5),
     release: Duration::from_secs(2),
 };
 
@@ -57,7 +57,11 @@ enum Step {
     Pending,
     NotReady,
     Refused,
-    Fail { fatal: bool },
+    Fail {
+        fatal: bool,
+    },
+    /// The TV withholds the video (`vtCapture_planeInfo` 13).
+    Withheld,
 }
 
 struct Script {
@@ -248,18 +252,19 @@ impl Tap for FakeTap {
         script.acquires += 1;
         let step = script.steps.pop_front().unwrap_or(script.idle);
         script.created = matches!(step, Step::NotReady | Step::Refused);
+        let status = |status: &str, recovery| {
+            Err(Fault {
+                error: Error::adapter("webOS video interrupted", std::io::Error::other(status)),
+                recovery,
+            })
+        };
         match step {
             Step::Frame(value) => Ok(Acquired::Frame(frame(value))),
             Step::Pending => Ok(Acquired::Pending),
             Step::NotReady => Ok(Acquired::NotReady),
             Step::Refused => Ok(Acquired::Refused),
-            Step::Fail { fatal } => Err(Fault {
-                error: Error::adapter(
-                    "webOS video interrupted",
-                    std::io::Error::other("status 12"),
-                ),
-                recovery: recovery(fatal),
-            }),
+            Step::Fail { fatal } => status("status 5", recovery(fatal)),
+            Step::Withheld => status("status 13", Recovery::Wait),
         }
     }
 
@@ -486,7 +491,7 @@ fn refusing(then: Step) -> (Driver, VideoSignal, WebosFrames) {
 }
 
 /// A refused initialization is no failure and runs no timer: past the
-/// retry and preparation limits the pulls say refused, the one driver is
+/// not-ready retry and preparation limits the pulls say refused, the one driver is
 /// neither initialized again nor released.
 #[test]
 fn a_refusal_waits_for_the_video_signal_on_the_same_driver() {
@@ -591,7 +596,8 @@ fn a_not_ready_answer_ends_a_refusal() {
 }
 
 /// Not-ready and pending answers share one wait for a frame: alternating,
-/// they reach the pending limit, which reopens the tap without an error.
+/// they reach the pending limit, which opens a new driver without an error
+/// (held in its open here so the next frame is queued for it).
 #[test]
 fn alternating_not_ready_and_pending_answers_reach_a_limit() {
     let driver = Driver::new();
@@ -603,6 +609,8 @@ fn alternating_not_ready_and_pending_answers_reach_a_limit() {
         ..TEST
     };
     let mut frames = start_with(&driver, &video, limits);
+    eventually("the open", LIMIT, || (calls(&driver).0 == 1).then_some(()));
+    driver.hang("open");
     // Each answer lasts less than the limit, so only one shared wait reaches it.
     let deadline = Instant::now() + LIMIT;
     for idle in [Step::Pending, Step::NotReady].into_iter().cycle() {
@@ -613,11 +621,9 @@ fn alternating_not_ready_and_pending_answers_reach_a_limit() {
         driver.with(|s| s.idle = idle);
         thread::sleep(Duration::from_millis(200));
     }
-    eventually("the reopen", LIMIT, || {
-        (calls(&driver).0 >= 2).then_some(())
-    });
     assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
     driver.push([Step::Frame(3)]);
+    driver.unhang();
     assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
     closes_cleanly(frames);
 }
@@ -631,7 +637,7 @@ fn a_context_reset_keeps_a_created_only_driver() {
     video.set(Video::Available);
     driver.push([Step::NotReady]);
     let limits = Limits {
-        retry: Duration::from_secs(60),
+        not_ready_retry: Duration::from_secs(60),
         preparation: Duration::from_secs(120),
         ..TEST
     };
@@ -682,71 +688,99 @@ fn stopping_releases_a_refused_driver() {
     assert_eq!(calls(&driver), (1, 1, 1));
 }
 
+/// A stall opens one new driver at once, held here in its open so the
+/// next frame is queued for it.
 #[test]
 fn stalled_producer_restarts_the_tap() {
     let driver = Driver::new();
     let video = VideoSignal::default();
-    driver.push([Step::Frame(1)]);
+    driver.with(|s| s.idle = Step::Frame(1));
     let limits = Limits {
         pending: Duration::from_millis(50),
         ..TEST
     };
     let mut frames = start_with(&driver, &video, limits);
     assert_eq!(next(&mut frames).as_slice(), &[1; 96]);
-    eventually(
-        "`driver.count(|s| s.releases) >= 1 && driver.count(|s| s.opens) >= 2`",
-        LIMIT,
-        || (driver.count(|s| s.releases) >= 1 && driver.count(|s| s.opens) >= 2).then_some(()),
-    );
-    driver.push([Step::Frame(2)]);
-    assert_eq!(next(&mut frames).as_slice(), &[2; 96]);
-    closes_cleanly(frames);
-}
-
-/// A stall already waited `pending`: the tap reopens at once, not after
-/// `retry`, so frames can resume before the session releases the lights.
-#[test]
-fn a_stalled_tap_reopens_without_the_retry_wait() {
-    let driver = Driver::new();
-    let video = VideoSignal::default();
-    driver.push([Step::Frame(1)]);
-    let limits = Limits {
-        pending: Duration::from_millis(50),
-        retry: Duration::from_secs(60),
-        ..TEST
-    };
-    let mut frames = start_with(&driver, &video, limits);
-    assert_eq!(next(&mut frames).as_slice(), &[1; 96]);
-    eventually("`driver.count(|s| s.releases) == 1`", LIMIT, || {
-        (driver.count(|s| s.releases) == 1).then_some(())
+    driver.hang("open");
+    driver.with(|s| s.idle = Step::Pending);
+    eventually("the stall's release", LIMIT, || {
+        (calls(&driver).2 == 1).then_some(())
     });
     driver.push([Step::Frame(2)]);
-    assert_eq!(next(&mut frames).as_slice(), &[2; 96]);
-    assert_eq!(driver.count(|s| s.opens), 2);
+    driver.unhang();
+    // Queued after the release: only the new driver can deliver it.
+    next_where(&mut frames, |f| f.as_slice()[0] == 2);
     closes_cleanly(frames);
 }
 
+/// The new driver stalling too, with no frame between, is the TV
+/// withholding the picture: no failure, no timer; the pulls say refused
+/// until a change of the video signal opens a new driver and frames come.
 #[test]
-fn recoverable_failure_reopens_without_an_error() {
+fn two_stalls_in_a_row_wait_for_the_video_signal() {
     let driver = Driver::new();
     let video = VideoSignal::default();
-    driver.push([Step::Frame(1), Step::Fail { fatal: false }, Step::Frame(2)]);
-    let mut frames = start(&driver, &video);
-    assert_eq!(next(&mut frames).as_slice(), &[1; 96]);
-    assert_eq!(next(&mut frames).as_slice(), &[2; 96]);
-    assert_eq!(driver.count(|s| s.opens), 2);
-    assert_eq!(driver.count(|s| s.releases), 1);
-
-    driver.with(|s| s.open_fails = Some(Recovery::Retry(Reason::FreshDriver)));
+    video.set(Video::Available);
+    let limits = Limits {
+        pending: Duration::from_millis(50),
+        ..TEST
+    };
+    let mut frames = start_with(&driver, &video, limits);
+    refused(&mut frames);
+    let (opens, _, releases) = calls(&driver);
+    assert_eq!((opens, releases), (2, 2), "one new driver, both released");
+    assert_eq!(driver.count(|s| s.open_taps), 0);
+    driver.push([Step::Frame(3)]);
     video.reset();
-    eventually("`driver.count(|s| s.opens) >= 4`", LIMIT, || {
-        (driver.count(|s| s.opens) >= 4).then_some(())
-    });
-    assert!(
-        matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet),
-        "open retries quietly"
-    );
+    // Queued with no tap held: only a third driver can deliver it.
+    assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
     closes_cleanly(frames);
+}
+
+/// No video plane to capture (status 13) on the first acquisition: the tap
+/// is released and nothing is opened until the video signal changes; the
+/// pulls say refused meanwhile. A change opens a new tap and frames come.
+#[test]
+fn a_withheld_video_waits_for_the_video_signal() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Available);
+    driver.push([Step::Withheld]);
+    let mut frames = start(&driver, &video);
+    refused(&mut frames);
+    let (opens, acquires, releases) = calls(&driver);
+    assert_eq!((opens, acquires, releases), (1, 1, 1), "idle, no timer");
+    driver.push([Step::Frame(4)]);
+    video.reset();
+    assert_eq!(next(&mut frames).as_slice(), &[4; 96]);
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
+    let (opens, _, releases) = calls(&driver);
+    assert_eq!((opens, releases), (2, 1));
+    closes_cleanly(frames);
+    assert_eq!(calls(&driver).2, 2);
+}
+
+/// An ordinary failure opens one new driver at once, without an error; a
+/// frame gives that try back, so a second failure after it does the same.
+/// Two failures with no frame between (here two failed opens after a
+/// context change) fail the source.
+#[test]
+fn an_ordinary_failure_opens_one_new_driver() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    let fail = Step::Fail { fatal: false };
+    driver.push([Step::Frame(1), fail, Step::Frame(2), fail, Step::Frame(3)]);
+    let mut frames = start(&driver, &video);
+    next_where(&mut frames, |f| f.as_slice()[0] == 3);
+    let (opens, _, releases) = calls(&driver);
+    assert_eq!((opens, releases), (3, 2));
+
+    driver.with(|s| s.open_fails = Some(recovery(false)));
+    video.reset();
+    assert_eq!(failure(&mut frames).to_string(), "driver refused");
+    closes_cleanly(frames);
+    let (opens, _, releases) = calls(&driver);
+    assert_eq!((opens, releases), (5, 3), "one more open, then the failure");
 }
 
 /// A tap's open only creates its driver, so a failed initialization is
@@ -772,7 +806,7 @@ fn fatal_failure_propagates_with_its_cause_and_release_is_certified() {
     driver.push([Step::Frame(1), Step::Fail { fatal: true }]);
     let mut frames = start(&driver, &video);
     let error = failure(&mut frames);
-    assert_eq!(chain(&error), "webOS video interrupted: status 12");
+    assert_eq!(chain(&error), "webOS video interrupted: status 5");
     assert!(
         frames.next_frame(Duration::ZERO).is_err(),
         "failure is sticky"

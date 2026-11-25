@@ -113,9 +113,17 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   fails, and the supervisor starts a new one after its backoff. A name that
   stays registered, or a failed driver creation (`vtCapture_create`), cannot
   succeed again in the process, so the full worker fails then too (exit 1)
-  instead of retrying in place. Other video failures reopen the tap; the
-  first of a run logs a warning and the rest debug. After a failed driver call a tap
-  accepts nothing but its release
+  instead of retrying in place. Every other video failure has one row in
+  the [classification](../../crates/adapters/capture-webos/src/classify.rs).
+  A buffer status 12 (the TV's resource policy took the capture) or a plane
+  status 13 (no video plane, as under AirPlay mirroring) releases the tap,
+  logs a warning once, makes pulls `Pull::Refused` and waits for the next
+  change of the video signal, which opens a new tap; pulls stay refused
+  until a frame or video becomes unavailable (not yet verified on
+  hardware). Any other failure, and a stall (no buffer for 2 s), releases
+  the tap and opens a new one at once, one time until a frame: failing again
+  before a frame, a failure ends the source, a stall waits as above. After
+  a failed driver call a tap accepts nothing but its release
   ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs),
   [native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
 - The TV can refuse to capture the video it shows: `vtCapture_init`

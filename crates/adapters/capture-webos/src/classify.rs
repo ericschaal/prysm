@@ -35,14 +35,30 @@ pub(crate) enum Reason {
     StalledDriver,
 }
 
+/// What a [`Reason`]'s retries end in once its schedule gives up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GiveUp {
+    /// The source fails fast.
+    Fail,
+    /// [`Recovery::Wait`].
+    Wait,
+}
+
 impl Reason {
     pub(crate) fn schedule(self, limits: &Limits) -> Schedule {
         match self {
             Self::DriverPreparing => Schedule::Within {
-                every: limits.retry,
+                every: limits.not_ready_retry,
                 limit: limits.preparation,
             },
             Self::FreshDriver | Self::StalledDriver => Schedule::Once,
+        }
+    }
+
+    pub(crate) fn gives_up(self) -> GiveUp {
+        match self {
+            Self::DriverPreparing | Self::FreshDriver => GiveUp::Fail,
+            Self::StalledDriver => GiveUp::Wait,
         }
     }
 }
@@ -220,10 +236,19 @@ mod tests {
                 Recovery::Escalate(Escalation::Restart),
                 may_pass,
             ),
-            (status(BUFFER, 12), wait, may_pass),
-            (status(PLANE, 13), wait, may_pass),
-            (status(BUFFER, 13), retry, may_pass),
-            (status(PLANE, 12), retry, may_pass),
+            // Spelled as `prysm-capture-webos-sys` reports them.
+            (
+                status("vtCapture_currentCaptureBuffInfo", 12),
+                wait,
+                may_pass,
+            ),
+            (status("vtCapture_planeInfo", 13), wait, may_pass),
+            (
+                status("vtCapture_currentCaptureBuffInfo", 13),
+                retry,
+                may_pass,
+            ),
+            (status("vtCapture_planeInfo", 12), retry, may_pass),
             (status("vtCapture_init (11: …)", 11), retry, may_pass),
             (status("vtCapture_process", 1), retry, may_pass),
             (sys::Error::Exception("boom".into()), retry, may_pass),
@@ -290,7 +315,7 @@ mod tests {
             (
                 Reason::DriverPreparing,
                 Schedule::Within {
-                    every: limits.retry,
+                    every: limits.not_ready_retry,
                     limit: limits.preparation,
                 },
             ),
@@ -298,6 +323,13 @@ mod tests {
             (Reason::StalledDriver, Schedule::Once),
         ] {
             assert_eq!(reason.schedule(&limits), schedule, "{reason:?}");
+        }
+        for (reason, give_up) in [
+            (Reason::DriverPreparing, GiveUp::Fail),
+            (Reason::FreshDriver, GiveUp::Fail),
+            (Reason::StalledDriver, GiveUp::Wait),
+        ] {
+            assert_eq!(reason.gives_up(), give_up, "{reason:?}");
         }
     }
 }

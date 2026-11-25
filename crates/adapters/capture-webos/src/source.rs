@@ -2,8 +2,8 @@
 //! (LG requires load, capture and release on one thread). It follows the
 //! [`VideoSignal`] to pick the tap kind (video, or the TV UI plane when there
 //! is no video and `include_ui` is on; never both), paces acquisition,
-//! retries recoverable interruptions and publishes the newest frame, a
-//! terminal failure and the release result. The session thread only waits
+//! recovers from faults as [`crate::classify`] says and publishes the newest
+//! frame, refusals, a terminal failure and the release result. The session thread only waits
 //! with a deadline and enforces the native-operation watchdog, so a hung
 //! driver call surfaces as an error instead of a hang.
 mod native;
@@ -99,11 +99,11 @@ pub(crate) struct Limits {
     /// at which an [`Acquired::NotReady`] fails the source.
     pub preparation: Duration,
     /// Longest without a frame, counted the same way, at which an
-    /// [`Acquired::Pending`] restarts the tap.
+    /// [`Acquired::Pending`] is a stall.
     pub pending: Duration,
-    /// Delay before reopening after a recoverable failure or between
-    /// preparation attempts.
-    pub retry: Duration,
+    /// Delay between two initializations of a driver that answered
+    /// [`Acquired::NotReady`].
+    pub not_ready_retry: Duration,
     /// How long `close` waits for certified release ([`RELEASE`]).
     pub release: Duration,
 }
@@ -113,16 +113,17 @@ impl Limits {
         watchdog: Duration::from_secs(5),
         preparation: Duration::from_secs(10),
         pending: Duration::from_secs(2),
-        retry: Duration::from_secs(1),
+        not_ready_retry: Duration::from_secs(1),
         release: RELEASE,
     };
 }
 
 /// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Quiet`]
 /// while video is unavailable or the driver is preparing, [`Pull::Refused`]
-/// from a refused initialization until another answer or until video is
-/// unavailable, and `Err` on a terminal native failure or a native call that
-/// exceeds its watchdog.
+/// from a refused initialization until another answer, and from a wait for
+/// withheld video until a frame (either until video is unavailable), and
+/// `Err` on a terminal native failure or a native call that exceeds its
+/// watchdog.
 pub struct WebosFrames {
     thread: OwnerThread,
 }

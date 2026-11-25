@@ -1,10 +1,10 @@
 //! The native thread: owns the backend and its tap, follows the video signal,
-//! paces acquisition, retries recoverable interruptions and publishes through
-//! its [`Worker`].
+//! paces acquisition, recovers from faults and publishes through its
+//! [`Worker`].
 //!
 //! Every decision is [`phase::next`]'s; this shell reads the clock and the
 //! signal, tells the machine what happened and performs what it asks.
-use super::phase::{self, Action, Event, Kind, Note, Occurrence, Rules, State, Then};
+use super::phase::{self, Action, Event, Kind, Note, Occurrence, Rules, State};
 use super::{Backend, Limits, Tap, UiTap};
 use crate::{Readiness, VideoSignal, WebosSettings};
 use prysm_ports::{Error, Result, Worker, chain};
@@ -83,12 +83,7 @@ impl<B: Backend> Native<B> {
                     match action {
                         Action::Open(kind) => event = Some(self.open(kind)),
                         Action::Acquire => event = Some(self.acquire()),
-                        Action::Release(then) => {
-                            self.release_tap()?;
-                            if let Then::Reopen { wait } = then {
-                                event = Some(Event::Released { wait });
-                            }
-                        }
+                        Action::Release => self.release_tap()?,
                         Action::Deliver(frame) => self.worker.offer(frame),
                         Action::Refused(refused) => self.worker.refused(refused),
                         Action::Note(note) => log(note),
@@ -267,20 +262,26 @@ fn log(note: Note) {
             occurrence,
             "TV UI capture is unsupported; no frames while there is no video",
         ),
-        Note::VideoRetrying {
-            error,
-            retry_in,
-            occurrence,
-        } => {
-            let error = chain(&error);
-            match occurrence {
-                Occurrence::First => {
-                    tracing::warn!(%error, ?retry_in, "webOS video capture failed; retrying");
-                }
-                Occurrence::Again => {
-                    tracing::debug!(%error, ?retry_in, "webOS video capture failed; retrying");
-                }
-            }
+        Note::VideoRetrying { error } => tracing::warn!(
+            error = %chain(&error),
+            "webOS video capture failed; opening a new driver once"
+        ),
+        Note::Withheld { error } => tracing::warn!(
+            error = %chain(&error),
+            "the TV doesn’t let Prysm capture this video; \
+             a new driver is opened at the next change of the video signal"
+        ),
+        Note::WithheldAgain { error } => tracing::debug!(
+            error = %chain(&error),
+            "the TV still doesn’t let Prysm capture this video"
+        ),
+        Note::ChangedWhileWithheld { video, generation } => tracing::info!(
+            ?video,
+            generation,
+            "the video signal changed while the TV withholds the video; opening a new driver"
+        ),
+        Note::WithheldEnded { elapsed_ms } => {
+            tracing::info!(elapsed_ms, "the wait for withheld video ended");
         }
     }
 }
