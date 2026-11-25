@@ -9,6 +9,8 @@
 //!   its children drive them (target, session end, the wait for the lights)
 //!   and publish them.
 //! - `shutdown`: the shutdown sequence and blocking calls it may abandon.
+//! - `deadlines`: what is due without a command, waited for as one timer.
+mod deadlines;
 mod handle;
 mod lighting;
 mod lookups;
@@ -20,6 +22,7 @@ pub use settings::{CALIBRATION_TIMEOUT, TRIAL_TIMEOUT};
 
 use crate::feeds::Feeds;
 use crate::stats::Stats;
+use deadlines::Due;
 use handle::{Command, Request};
 use lighting::{Event, Lighting, next};
 use lookups::Lookups;
@@ -157,7 +160,7 @@ struct Core {
 impl Core {
     async fn run(mut self, mut inbox: mpsc::Receiver<Command>) {
         loop {
-            let again = self.again();
+            let deadlines = self.deadlines();
             let command = tokio::select! {
                 command = inbox.recv() => command,
                 event = next(&mut self.lighting) => {
@@ -167,16 +170,12 @@ impl Core {
                     }
                     continue;
                 }
-                () = expiry(self.calibration_expires) => {
-                    self.calibrate(None);
-                    continue;
-                }
-                () = expiry(self.trial.as_ref().map(|(_, at)| *at)) => {
-                    self.reconfigure(|core| core.trial = None);
-                    continue;
-                }
-                () = expiry(again) => {
-                    self.try_again().await;
+                due = deadlines.next() => {
+                    match due {
+                        Due::Calibration => self.calibrate(None),
+                        Due::Trial => self.reconfigure(|core| core.trial = None),
+                        Due::Again => self.try_again().await,
+                    }
                     continue;
                 }
             };
@@ -232,12 +231,5 @@ impl Core {
                 let _ = reply.send(self.replace_settings(expected, *settings).await);
             }
         }
-    }
-}
-
-async fn expiry(at: Option<Instant>) {
-    match at {
-        Some(at) => tokio::time::sleep_until(at).await,
-        None => std::future::pending().await,
     }
 }
