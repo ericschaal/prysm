@@ -1033,6 +1033,25 @@
       }
     },
     {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "capturing": true,
+        "fps": 30,
+        "lights": "unreachable",
+        "phase": "running",
+        "portal": "http://192.168.1.5:8787/"
+      }
+    },
+    {
       "enabled": true,
       "failure": {
         "kind": "encoder",

@@ -36,6 +36,7 @@ fn events_round_trip() {
         capturing: true,
         fps: Some(30),
         target: LightingTarget::ScreenSync,
+        lights: Some(OutputIssue::Unreachable),
         applied: 2,
         portal: Some("http://192.168.1.5:8787/".into()),
         failure: Some(WorkerFailure::other("output: refused")),
@@ -44,7 +45,7 @@ fn events_round_trip() {
     assert_eq!(
         String::from_utf8(text.clone()).unwrap(),
         "{\"type\":\"status\",\"flavor\":\"full\",\"capturing\":true,\"fps\":30,\
-         \"target\":\"screen_sync\",\"applied\":2,\"portal\":\"http://192.168.1.5:8787/\",\
+         \"target\":\"screen_sync\",\"lights\":\"unreachable\",\"applied\":2,\"portal\":\"http://192.168.1.5:8787/\",\
          \"failure\":{\"kind\":\"other\",\"message\":\"output: refused\"}}\n"
     );
     assert_eq!(decode::<Event>(&text).unwrap(), full);

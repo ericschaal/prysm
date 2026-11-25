@@ -55,6 +55,7 @@ fn luna() -> Value {
         FullWorker::Running {
             capturing: true,
             fps: Some(30),
+            lights: None,
             portal: portal(),
         },
     );
@@ -68,6 +69,16 @@ fn luna() -> Value {
         full(
             LightingTarget::ScreenSync,
             FullWorker::Retrying { seconds: 2 },
+        ),
+        // Lighting runs while the lights do not answer.
+        full(
+            LightingTarget::ScreenSync,
+            FullWorker::Running {
+                capturing: true,
+                fps: Some(30),
+                lights: Some(OutputIssue::Unreachable),
+                portal: portal(),
+            },
         ),
     ]
     .map(|package| TvState {

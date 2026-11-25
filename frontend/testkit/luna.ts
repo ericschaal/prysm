@@ -14,6 +14,7 @@ import {
   type Flavor,
   type FullWorker,
   type LightingTarget,
+  type OutputIssue,
   type Power,
   type Preferences,
   type ServiceBridge,
@@ -51,6 +52,8 @@ interface CommonFacts {
 export interface FullFacts extends CommonFacts {
   flavor: 'full';
   target: LightingTarget;
+  /** Why the lights don't show screen sync, as the running worker reports it. */
+  lights: OutputIssue | null;
   portal: string | null;
 }
 export interface SlimFacts extends CommonFacts {
@@ -65,7 +68,7 @@ export type FakeFacts = FullFacts | SlimFacts;
 /**
  * A change to the facts. Only the package's own keys are accepted (checked
  * when applied, for the untyped tests too): a slim supervisor has no
- * `target` or `portal`, a full one no `enabled`, `encoding`, `paused` or
+ * `target`, `lights` or `portal`, a full one no `enabled`, `encoding`, `paused` or
  * `refused`.
  */
 export type FakeChange =
@@ -84,7 +87,11 @@ const commonKeys: Record<keyof CommonFacts, true> = {
   capturing: true,
   fps: true,
 };
-const fullKeys: Record<Own<FullFacts>, true> = { target: true, portal: true };
+const fullKeys: Record<Own<FullFacts>, true> = {
+  target: true,
+  lights: true,
+  portal: true,
+};
 const slimKeys: Record<Own<SlimFacts>, true> = {
   enabled: true,
   encoding: true,
@@ -121,6 +128,7 @@ function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
         ...common,
         flavor,
         target: 'off',
+        lights: null,
         portal: 'http://192.168.1.5:8787/',
       }
     : {
@@ -139,13 +147,14 @@ function present<K extends string, V>(key: K, value: V | null) {
 }
 
 function fullWorker(facts: FullFacts): FullWorker {
-  const { worker, capturing, fps, portal } = facts;
+  const { worker, capturing, fps, lights, portal } = facts;
   switch (worker.phase) {
     case 'running':
       return {
         phase: 'running',
         capturing,
         ...present('fps', fps),
+        ...present('lights', lights),
         ...present('portal', portal),
       };
     case 'stopping':

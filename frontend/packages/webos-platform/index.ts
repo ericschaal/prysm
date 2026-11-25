@@ -15,6 +15,7 @@ import type {
   FailureKind,
   FullWorker,
   LightingTarget,
+  OutputIssue,
   Power,
   Preferences,
   StreamEncoding,
@@ -29,6 +30,7 @@ export type {
   FailureKind,
   FullWorker,
   LightingTarget,
+  OutputIssue,
   Power,
   Preferences,
   StreamEncoding,
@@ -105,6 +107,17 @@ export function fullPortal(state: State): string | null {
   return worker.phase === 'running' || worker.phase === 'stopping'
     ? (worker.portal ?? null)
     : null;
+}
+
+/**
+ * Full: why the running worker's lights are not showing screen sync (also
+ * while they don't answer); else `null`. An issue newer than this app is
+ * kept as sent.
+ */
+export function fullLights(state: State): OutputIssue | null {
+  if (state.flavor !== 'full') return null;
+  const worker = state.worker;
+  return worker.phase === 'running' ? (worker.lights ?? null) : null;
 }
 
 /** Slim: the running worker's stream to Prysm; else `null`. */
@@ -286,6 +299,7 @@ function decodeFullWorker(value: unknown): WorkerReading<FullWorker> | null {
     case 'running':
       return typeof value.capturing === 'boolean' &&
         optionalNumber(value.fps) &&
+        optionalText(value.lights) &&
         optionalText(value.portal)
         ? (value as unknown as FullWorker)
         : null;
@@ -380,8 +394,9 @@ function isPreferences(value: unknown): value is Preferences {
  * structure is checked; a value newer than this app in a known field has
  * one reading: an unknown power or video is `unknown`, an unknown failure
  * kind `other`, an unknown lighting target or worker phase `unknown` (never
- * off or stopped) and an unknown slim link state starting, so an app older
- * than its service still shows the service it talks to.
+ * off or stopped), an unknown slim link state starting, and an unknown
+ * full worker `lights` issue is kept (said in general words), so an app
+ * older than its service still shows the service it talks to.
  */
 export function decodeState(value: unknown): State | null {
   if (!isObject(value)) return null;

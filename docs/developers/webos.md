@@ -285,8 +285,9 @@ says whether slim capture streams; slim has no target, since the desktop
 Prysm decides what the lights do. The state has the fields both packages
 share (`preferences`, `power`, `video`, `failure`, `log`) and the installed
 package's own, tagged by `flavor`: full `target` and a `worker` that reports
-`capturing`, `fps` and `portal` while it runs (`portal` also while it
-stops); slim `enabled` and a `worker` that reports `capturing` and its
+`capturing`, `fps`, `lights` (the lights' device issue, such as
+`unreachable` while lighting waits for lights that do not answer) and
+`portal` while it runs (`portal` also while it stops); slim `enabled` and a `worker` that reports `capturing` and its
 `link` (as in the worker's status) while it runs. `autostart` starts the
 full package's screen sync, or slim streaming, when the service starts. A
 restart within one boot resumes the intent from `resume.json`
@@ -298,12 +299,13 @@ Values the service sends are open, as on HTTP
 ([decision](decisions/2026-11-22-open-response-enums.md)): the app reads a
 newer `target` or worker `phase` as `unknown` (never off or stopped; a phase
 shows "Updating…" with no start or stop), a newer `failure.kind` as
-`other`, a newer slim `link.state` as starting, a newer `link.encoding` as
+`other`, a newer full `lights` issue in general words ("Not showing screen
+sync"), a newer slim `link.state` as starting, a newer `link.encoding` as
 sent, and a newer `flavor` as a state it cannot show. Requests stay closed:
 the service refuses a value it does not know. Preferences hold only
 `autostart` and, for slim, `prysm_address` (the desktop Prysm's portal
-address, where frames go). An absent value (no failure, `fps`, `portal` or
-`prysm_address`) is omitted, never `null`, here and in the worker's status
+address, where frames go). An absent value (no failure, `fps`, `lights`,
+`portal` or `prysm_address`) is omitted, never `null`, here and in the worker's status
 lines. Picture settings live in a portal, never in Luna. Types: generated
 `@prysm/contracts/luna` from
 [schema.rs](../../crates/hosts/webos-service/src/schema.rs).

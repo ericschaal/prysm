@@ -122,6 +122,16 @@ export function describeOutputIssue(issue: OutputIssue): string {
       return 'The lights aren’t showing screen sync.';
   }
 }
+
+/**
+ * The headline while the lights are not showing screen sync: lights that
+ * don't answer are a problem; any other issue (a newer one too) is a warning.
+ */
+export function outputIssueHeadline(issue: OutputIssue): string {
+  return issue === 'unreachable'
+    ? 'Can’t reach the lights'
+    : 'Not showing screen sync';
+}
 export type { PreviewFrame } from '@prysm/contracts/application';
 
 /** What the lights show while on: screen sync or the output's own effects. */

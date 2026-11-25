@@ -20,8 +20,8 @@ pub mod worker;
 pub use address::{PrysmAddress, Scheme};
 pub use args::{FullArgs, SlimArgs};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
-pub use prysm_ports::LightingTarget;
 use prysm_ports::StreamEncoding;
+pub use prysm_ports::{LightingTarget, OutputIssue};
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -110,6 +110,11 @@ pub struct FullStatus {
     pub fps: Option<u16>,
     /// The engine's target, including changes made in the portal.
     pub target: LightingTarget,
+    /// Why the lights are not showing the session's colours while a
+    /// lighting session runs (its device report's issue): `Unreachable`
+    /// also while the session waits for lights that do not answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lights: Option<OutputIssue>,
     /// The `sequence` of the last [`Command::Target`] applied before this
     /// status; 0 before any (the worker started with the target in its
     /// arguments). A status that applied an older one than the supervisor

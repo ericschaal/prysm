@@ -9,6 +9,7 @@ import {
   describeOutputIssue,
   describeSituation,
   lightingSituation,
+  outputIssueHeadline,
   plainFailure,
   situationFailure,
 } from '@prysm/application-client';
@@ -228,6 +229,11 @@ test('each situation has one headline and one sentence', () => {
     describeOutputIssue('sleeping'),
     'The lights aren’t showing screen sync.',
   );
+  // Lights that don't answer are a problem; any other issue, a newer one
+  // too, is not showing screen sync.
+  assert.equal(outputIssueHeadline('unreachable'), 'Can’t reach the lights');
+  for (const issue of ['off', 'other_sender', 'sleeping'])
+    assert.equal(outputIssueHeadline(issue), 'Not showing screen sync', issue);
 });
 
 const facts = (lighting, change = {}) => ({

@@ -1,6 +1,7 @@
 import {
   describeOutputIssue,
   failureSide,
+  outputIssueHeadline,
   pictureOf,
   plainFailure,
   REFUSED_VIDEO,
@@ -192,18 +193,13 @@ export function sectionStatus(
       : { tone: 'busy', title: 'Starting…', detail: identity };
   }
   // Screen sync: the lights say first when they do not show it.
-  if (!capture && outputIssue && path.kind !== 'off')
+  if (!capture && outputIssue && path.kind !== 'off') {
+    const title = outputIssueHeadline(outputIssue);
+    const why = describeOutputIssue(outputIssue);
     return outputIssue === 'unreachable'
-      ? {
-          tone: 'problem',
-          title: 'Can’t reach the lights',
-          detail: `${identity}. ${describeOutputIssue(outputIssue)}`,
-        }
-      : {
-          tone: 'warning',
-          title: 'Not showing screen sync',
-          detail: describeOutputIssue(outputIssue),
-        };
+      ? { tone: 'problem', title, detail: `${identity}. ${why}` }
+      : { tone: 'warning', title, detail: why };
+  }
   if (path.kind === 'flowing') {
     if (capture)
       return {

@@ -167,6 +167,7 @@ fn status(snapshot: &Snapshot, portal: Option<&str>, applied: u64) -> WorkerStat
                 .is_some_and(|input| input.picture.is_arriving()),
         fps: snapshot.input.map(|input| whole_fps(input.fps)),
         target: snapshot.target,
+        lights: snapshot.device.issue,
         applied,
         portal: portal.map(str::to_owned),
         failure: failure.map(|failure| WorkerFailure::other(chain(failure))),
@@ -332,6 +333,28 @@ mod tests {
         assert_eq!(needs_restart(&showing_effects), None);
         for seen in [Seen::Off, Seen::Running, Seen::Failed, Seen::Invalid] {
             assert_eq!(needs_restart(&snapshot(seen)), None, "{seen:?}");
+        }
+    }
+
+    /// The status says the lights' issue of the running session, the wait
+    /// for lights that do not answer included, and none without one.
+    #[test]
+    fn the_status_carries_the_lights_issue() {
+        use prysm_ports::{DeviceReport, OutputIssue};
+        let running = |issue| Snapshot {
+            target: LightingTarget::ScreenSync,
+            session: SessionState::ScreenSync,
+            device: DeviceReport {
+                issue,
+                ..DeviceReport::default()
+            },
+            ..Snapshot::default()
+        };
+        for issue in [None, Some(OutputIssue::Unreachable), Some(OutputIssue::Off)] {
+            let WorkerStatus::Full(full) = status(&running(issue), None, 0) else {
+                panic!("a full status");
+            };
+            assert_eq!(full.lights, issue);
         }
     }
 

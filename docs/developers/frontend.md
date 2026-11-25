@@ -66,6 +66,7 @@ has one reading.
 | | `failure.kind` | `other` |
 | | full `target` | `unknown` |
 | | worker `phase` | `unknown`: "Updating…", with no start or stop |
+| | full worker `lights` | kept; the status card says "Not showing screen sync" |
 | | slim link `state` | starting |
 | | slim `encoding` | kept, shown as sent |
 | TV calibration screen | `calibration.pattern` | the waiting pattern |

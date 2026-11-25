@@ -97,6 +97,10 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "lights": {
+                "$ref": "#/components/schemas/OutputIssue",
+                "description": "Why the lights are not showing screen sync while lighting runs,\nas the worker last reported it: `unreachable` also while it\nwaits for lights that do not answer."
+              },
               "phase": {
                 "enum": [
                   "running"
@@ -174,6 +178,17 @@
           "off",
           "screen_sync",
           "effects"
+        ],
+        "type": "string"
+      },
+      "OutputIssue": {
+        "description": "Why the lights are not showing screen sync while lighting runs. `off`:\nswitched off on the device. `overridden`: the device's own override is\non (WLED: live override). `not_live`: the device is not taking the\ncolours (WLED: not in live mode, or no DDP arriving). `other_sender`:\nanother sender's colours reach the device. `unreachable`: the device does\nnot answer, also while lighting waits for it to answer an open. Prysm\nkeeps trying; the lights follow again once they take the colours. Open:\nan app says an issue it does not know in general words.",
+        "enum": [
+          "off",
+          "overridden",
+          "not_live",
+          "other_sender",
+          "unreachable"
         ],
         "type": "string"
       },

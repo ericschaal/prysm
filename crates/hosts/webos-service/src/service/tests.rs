@@ -525,6 +525,7 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
             capturing: false,
             fps: None,
             target: LightingTarget::Off,
+            lights: None,
             applied: 0,
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,

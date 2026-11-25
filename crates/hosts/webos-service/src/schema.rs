@@ -96,6 +96,26 @@ pub enum LightingTargetSchema {
     Effects,
 }
 
+// Mirrors `prysm_ports::OutputIssue`.
+/// Why the lights are not showing screen sync while lighting runs. `off`:
+/// switched off on the device. `overridden`: the device's own override is
+/// on (WLED: live override). `not_live`: the device is not taking the
+/// colours (WLED: not in live mode, or no DDP arriving). `other_sender`:
+/// another sender's colours reach the device. `unreachable`: the device does
+/// not answer, also while lighting waits for it to answer an open. Prysm
+/// keeps trying; the lights follow again once they take the colours. Open:
+/// an app says an issue it does not know in general words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = OutputIssue)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputIssueSchema {
+    Off,
+    Overridden,
+    NotLive,
+    OtherSender,
+    Unreachable,
+}
+
 // Mirrors `prysm_webos_link::SlimLink`.
 /// Where the slim worker's stream to the receiver stands, as `{ "state": … }`.
 /// `starting`: no connection attempt yet. `sending`: connected, frames go
@@ -158,6 +178,7 @@ pub(crate) fn always_false() -> ObjectBuilder {
     WorkerFailureSchema,
     VideoSchema,
     LightingTargetSchema,
+    OutputIssueSchema,
     GetStateRequest,
     SetTargetRequest,
     SetEnabledRequest,
@@ -181,7 +202,9 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{FailureKind, LightingTarget, SlimLink, Video, WorkerFailure};
+    use prysm_webos_link::{
+        FailureKind, LightingTarget, OutputIssue, SlimLink, Video, WorkerFailure,
+    };
 
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::{Value, json};
@@ -193,6 +216,15 @@ mod tests {
         }
         for target in LightingTarget::ALL {
             assert_mirror_round_trips::<LightingTarget, LightingTargetSchema>(&target);
+        }
+        for issue in [
+            OutputIssue::Off,
+            OutputIssue::Overridden,
+            OutputIssue::NotLive,
+            OutputIssue::OtherSender,
+            OutputIssue::Unreachable,
+        ] {
+            assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
         }
         for kind in [
             FailureKind::Encoder,
@@ -284,7 +316,11 @@ mod tests {
         assert_eq!(required(running), ["capturing", "phase"]);
         let mut fields: Vec<_> = running["properties"].as_object().unwrap().keys().collect();
         fields.sort_unstable();
-        assert_eq!(fields, ["capturing", "fps", "phase", "portal"]);
+        assert_eq!(fields, ["capturing", "fps", "lights", "phase", "portal"]);
+        assert_eq!(
+            running["properties"]["lights"]["$ref"],
+            json!("#/components/schemas/OutputIssue")
+        );
         let running = variant(schemas, "SlimWorker", "phase", "running");
         assert_eq!(required(running), ["capturing", "link", "phase"]);
         assert_eq!(

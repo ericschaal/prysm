@@ -1,6 +1,8 @@
 //! What the TV app sees: the published state and its parts.
 use crate::preferences::Preferences;
-use prysm_webos_link::{FullStatus, LightingTarget, SlimLink, SlimStatus, Video, WorkerFailure};
+use prysm_webos_link::{
+    FullStatus, LightingTarget, OutputIssue, SlimLink, SlimStatus, Video, WorkerFailure,
+};
 use serde::Serialize;
 
 /// Which package this supervisor belongs to. Published as [`Package`]'s tag.
@@ -119,6 +121,15 @@ pub enum FullWorker {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "schema", schema(nullable = false))]
         fps: Option<u16>,
+        /// Why the lights are not showing screen sync while lighting runs,
+        /// as the worker last reported it: `unreachable` also while it
+        /// waits for lights that do not answer.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schema(value_type = Option<crate::schema::OutputIssueSchema>, nullable = false)
+        )]
+        lights: Option<OutputIssue>,
         /// The portal's LAN address once the worker reported it.
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "schema", schema(nullable = false))]
@@ -187,6 +198,7 @@ impl FullWorker {
             Process::Running => Self::Running {
                 capturing: report.is_some_and(|report| report.capturing),
                 fps: report.and_then(|report| report.fps),
+                lights: report.and_then(|report| report.lights),
                 portal: portal(),
             },
             Process::Stopping => Self::Stopping { portal: portal() },
@@ -215,6 +227,41 @@ impl SlimWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a running worker says the lights' issue its last report gave.
+    #[test]
+    fn a_running_full_worker_says_the_lights_issue() {
+        let report = FullStatus {
+            capturing: true,
+            fps: Some(30),
+            target: LightingTarget::ScreenSync,
+            lights: Some(OutputIssue::Unreachable),
+            applied: 0,
+            portal: None,
+            failure: None,
+        };
+        assert_eq!(
+            FullWorker::new(Process::Running, Some(&report)),
+            FullWorker::Running {
+                capturing: true,
+                fps: Some(30),
+                lights: Some(OutputIssue::Unreachable),
+                portal: None,
+            }
+        );
+        let json = serde_json::to_value(FullWorker::new(Process::Running, Some(&report))).unwrap();
+        assert_eq!(json["lights"], "unreachable");
+        for process in [Process::Stopped, Process::Stopping] {
+            let json = serde_json::to_value(FullWorker::new(process, Some(&report))).unwrap();
+            assert_eq!(json.get("lights"), None, "{process:?}");
+        }
+        let fine = FullStatus {
+            lights: None,
+            ..report
+        };
+        let json = serde_json::to_value(FullWorker::new(Process::Running, Some(&fine))).unwrap();
+        assert_eq!(json.get("lights"), None, "absent, never null");
+    }
 
     /// `flavor` in the state is the [`Flavor`] the rest of the service uses.
     #[test]

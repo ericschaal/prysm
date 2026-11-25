@@ -1,5 +1,6 @@
 /** Pure rules of the TV UI: addresses, drafts, the status card and the screen. */
 import {
+  outputIssueHeadline,
   pictureOf,
   plainFailure,
   REFUSED_VIDEO,
@@ -10,6 +11,7 @@ import {
 } from '@prysm/application-client';
 import {
   captureFps,
+  fullLights,
   fullPortal,
   isCapturing,
   isEnabled,
@@ -381,6 +383,8 @@ export function tvStatus(
         lighting?.kind === 'sync' && lighting.input
           ? pictureOf(lighting.input)
           : undefined;
+      // Why the lights don't show screen sync, as the worker last said.
+      const lights = fullLights(state);
       // Without the portal's measure yet, the TV's own word.
       const flowing = lighting
         ? lighting.kind === 'sync' &&
@@ -398,6 +402,12 @@ export function tvStatus(
       } else if (target === 'effects') {
         title = 'WLED effects on';
         description = 'Your lights run their own effects.';
+      } else if (lights) {
+        // Lighting runs, but the lights don't show it (also while they don't
+        // answer); the lights card says why, as for a refused video.
+        title = outputIssueHeadline(lights);
+        description = 'The lights follow again as soon as they can.';
+        attention = true;
       } else if (flowing) {
         title = 'Screen sync on';
         description = 'Your lights follow the picture.';

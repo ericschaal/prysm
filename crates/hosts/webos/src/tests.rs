@@ -101,6 +101,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
             capturing: false,
             fps: None,
             target: LightingTarget::Off,
+            lights: None,
             applied: 0,
             portal: Some(PORTAL.into()),
             failure: None,

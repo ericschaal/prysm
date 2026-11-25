@@ -65,6 +65,12 @@ export interface components {
              *     lighting runs; 0 while it waits for frames.
              */
             fps?: number;
+            /**
+             * @description Why the lights are not showing screen sync while lighting runs,
+             *     as the worker last reported it: `unreachable` also while it
+             *     waits for lights that do not answer.
+             */
+            lights?: components["schemas"]["OutputIssue"];
             /** @enum {string} */
             phase: "running";
             /** @description The portal's LAN address once the worker reported it. */
@@ -95,6 +101,18 @@ export interface components {
          * @enum {string}
          */
         LightingTarget: "off" | "screen_sync" | "effects";
+        /**
+         * @description Why the lights are not showing screen sync while lighting runs. `off`:
+         *     switched off on the device. `overridden`: the device's own override is
+         *     on (WLED: live override). `not_live`: the device is not taking the
+         *     colours (WLED: not in live mode, or no DDP arriving). `other_sender`:
+         *     another sender's colours reach the device. `unreachable`: the device does
+         *     not answer, also while lighting waits for it to answer an open. Prysm
+         *     keeps trying; the lights follow again once they take the colours. Open:
+         *     an app says an issue it does not know in general words.
+         * @enum {string}
+         */
+        OutputIssue: "off" | "overridden" | "not_live" | "other_sender" | "unreachable";
         /**
          * @description The installed package (both install as the same app), what the user asked
          *     of it and its worker process, as `{ "flavor": … }`.
@@ -286,6 +304,7 @@ export type FailureKind = components['schemas']['FailureKind'];
 export type FullWorker = components['schemas']['FullWorker'];
 export type GetStateRequest = components['schemas']['GetStateRequest'];
 export type LightingTarget = components['schemas']['LightingTarget'];
+export type OutputIssue = components['schemas']['OutputIssue'];
 export type Package = components['schemas']['Package'];
 export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];

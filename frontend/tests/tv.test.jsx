@@ -260,6 +260,7 @@ test('generated Rust states decode as they are; malformed ones do not', () => {
   assert(malformed({ ...state(), failure: null }), 'absent, not null');
   assert(malformed({ ...state(), power: 3 }));
   assert(malformed({ ...state(), worker: { ...state().worker, fps: '30' } }));
+  assert(malformed({ ...state(), worker: { ...state().worker, lights: 3 } }));
   assert(malformed({ ...state(), log: [1] }));
   assert(
     malformed({ ...state(), preferences: [] }),
@@ -318,6 +319,16 @@ test('values newer than the app have one reading each', () => {
     ...state(),
     worker: { phase: 'unknown' },
   });
+  // A newer lights issue is kept; the status card says it in general words.
+  const dimmed = {
+    ...state(),
+    worker: { ...state().worker, lights: 'dimmed' },
+  };
+  assert.deepEqual(decodeState(dimmed), dimmed);
+  assert.equal(
+    tvStatus(live(decodeState(dimmed)), completePreferences({})).title,
+    'Not showing screen sync',
+  );
   const slim = fixtures['luna/State'].find((value) => value.flavor === 'slim');
   const link = (value) =>
     decodeState({
@@ -659,6 +670,19 @@ test('status card covers the supervisor states for both packages', () => {
   );
   assert.equal(title(full({ capturing: true })), 'Screen sync on');
   assert.equal(title(full({ target: 'effects' })), 'WLED effects on');
+  // Screen sync runs, but the lights don't show it: said over the picture,
+  // with the portal's headline; the lights card says why.
+  for (const [lights, heading] of [
+    ['unreachable', 'Can’t reach the lights'],
+    ['other_sender', 'Not showing screen sync'],
+  ]) {
+    const status = tvStatus(live(full({ capturing: true, lights })), draft());
+    assert.deepEqual(
+      [status.title, status.description, status.attention, status.action],
+      [heading, 'The lights follow again as soon as they can.', true, 'none'],
+      lights,
+    );
+  }
   const noFrames = tvStatus(live(full({ capturing: false })), draft());
   assert.equal(
     noFrames.title,
@@ -717,6 +741,8 @@ test('status card covers the supervisor states for both packages', () => {
       full({ target: 'off' }),
       full({ capturing: true }),
       full({ target: 'effects' }),
+      full({ capturing: true, lights: 'unreachable' }),
+      full({ capturing: true, lights: 'not_live' }),
       slim({ refused: true }),
       full({ failure: { kind: 'other', message: 'x' } }),
       full({ failure: { kind: 'preferences', message: 'x' } }),
