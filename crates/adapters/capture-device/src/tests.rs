@@ -2,7 +2,7 @@ use super::*;
 use crate::source::{Capture, CaptureResult, Check, Deadlines, DeviceFrames};
 use prysm_capture_device_sys::{CaptureError, CaptureSink};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, Error, Pull, Registry, Settings, chain};
+use prysm_ports::{AdapterSettings, Error, Escalation, Fix, Pull, Registry, Settings, chain};
 use prysm_testkit::{eventually, within};
 use std::error::Error as _;
 use std::sync::{Arc, Mutex, mpsc};
@@ -153,6 +153,7 @@ fn open_failure_reports_the_native_cause_after_release() {
         chain(&error),
         "video device capture failed: capture device disconnected: cable unplugged"
     );
+    assert_eq!(error.escalation(), Escalation::FAIL_FAST);
 }
 
 #[test]
@@ -171,6 +172,7 @@ fn a_missing_device_fails_open_naming_it() {
         "video device capture failed: no video capture device at /dev/video0: \
          No such file or directory (os error 2)"
     );
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
 }
 
 /// A refused camera permission fails open as an adapter failure saying what to do.
@@ -190,6 +192,7 @@ fn refused_camera_access_fails_open_with_guidance() {
          starts Prysm (such as Terminal) under System Settings > Privacy & Security > \
          Camera, then restart that app"
     );
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::SetUp));
 }
 
 #[test]
@@ -225,6 +228,26 @@ fn open_timeout_reports_unconfirmed_release() {
     let text = chain(&error);
     assert!(text.contains("not ready within"), "{text}");
     assert!(text.contains("release is unconfirmed"), "{text}");
+    assert_eq!(error.escalation(), Escalation::Restart);
+}
+
+#[test]
+fn open_timeout_with_a_failed_release_asks_for_a_restart() {
+    let (capture, native) = native();
+    let deadlines = Deadlines {
+        ready: SHORT,
+        release: LIMIT,
+    };
+    let opening = start(capture, deadlines);
+    native.wait_stopped();
+    native.exit(Err(CaptureError::Cleanup(anyhow::anyhow!(
+        "buffer release failed"
+    ))));
+    let Err(error) = opening.recv_timeout(LIMIT).unwrap() else {
+        panic!("open must time out");
+    };
+    assert!(chain(&error).contains("release is unconfirmed"), "{error}");
+    assert_eq!(error.escalation(), Escalation::Restart);
 }
 
 #[test]
@@ -388,6 +411,7 @@ fn close_reports_failed_release() {
         chain(&error),
         "video device release is unconfirmed: native capture cleanup failed: buffer release failed: buffer release failed"
     );
+    assert_eq!(error.escalation(), Escalation::Restart);
 }
 
 #[test]

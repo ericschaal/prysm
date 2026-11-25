@@ -2,6 +2,7 @@
 pub use prysm_core::Frame;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use prysm_core::{FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
+use prysm_ports::{Escalation, Fix};
 mod device;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod formats;
@@ -47,6 +48,27 @@ pub enum CaptureError {
     Cleanup(#[source] anyhow::Error),
     #[error(transparent)]
     Backend(#[from] anyhow::Error),
+}
+
+impl CaptureError {
+    /// What is left for the person once this failure ends capture.
+    #[must_use]
+    pub fn escalation(&self) -> Escalation {
+        match self {
+            Self::DeviceNotFound { .. } => Escalation::Ask(Fix::ChangeSettings),
+            Self::NoCameraAccess(CameraAccess::Denied) => Escalation::Ask(Fix::SetUp),
+            // The device may still hold buffers or the fd: only a new
+            // process frees them.
+            Self::Cleanup(_) => Escalation::Restart,
+            Self::Disconnected { .. }
+            | Self::UnsupportedFormat { .. }
+            | Self::NoCameraAccess(
+                CameraAccess::Restricted | CameraAccess::NotAsked | CameraAccess::Unanswered,
+            )
+            | Self::Unusable { .. }
+            | Self::Backend(_) => Escalation::FAIL_FAST,
+        }
+    }
 }
 
 fn missing_device(device: Option<&str>) -> String {
@@ -155,6 +177,68 @@ mod tests {
             source: None,
         };
         assert_eq!(default.to_string(), "no video capture device found");
+    }
+
+    #[test]
+    fn each_capture_failure_escalates_as_its_cause_says() {
+        let io = || Some(std::io::Error::from_raw_os_error(2));
+        let rejection = BufferRejection::Payload(prysm_core::PayloadError::Corrupted);
+        for (error, escalation) in [
+            (
+                CaptureError::DeviceNotFound {
+                    device: None,
+                    source: io(),
+                },
+                Escalation::Ask(Fix::ChangeSettings),
+            ),
+            (
+                CaptureError::Disconnected {
+                    details: "unplugged".into(),
+                    source: io(),
+                },
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::UnsupportedFormat {
+                    details: "no YUYV".into(),
+                    source: io(),
+                },
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::NoCameraAccess(CameraAccess::Denied),
+                Escalation::Ask(Fix::SetUp),
+            ),
+            (
+                CaptureError::NoCameraAccess(CameraAccess::Restricted),
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::NoCameraAccess(CameraAccess::NotAsked),
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::NoCameraAccess(CameraAccess::Unanswered),
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::Unusable {
+                    rejected: 90,
+                    source: rejection,
+                },
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::Cleanup(anyhow::anyhow!("REQBUFS(0) failed")),
+                Escalation::Restart,
+            ),
+            (
+                CaptureError::Backend(anyhow::anyhow!("STREAMON failed")),
+                Escalation::FAIL_FAST,
+            ),
+        ] {
+            assert_eq!(error.escalation(), escalation, "{error}");
+        }
     }
 
     #[test]
