@@ -4,8 +4,8 @@
 use crate::stats::Stats;
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    AdapterSettings, Attempts, DeviceReport, Error, Escalation, Hangup, IdleMode, LedOutput,
-    OpenFailure, OutputIssue, Registry, Result, Schedule,
+    AdapterSettings, DeviceReport, Error, Escalation, Hangup, IdleMode, LedOutput, OpenFailure,
+    OutputIssue, Registry, Result,
 };
 use std::time::{Duration, Instant};
 
@@ -14,10 +14,13 @@ use std::time::{Duration, Instant};
 /// stops, or the settings change (a new session); every other failed open
 /// fails the session. The lights come back only by something outside Prysm
 /// (power, network) at a time nothing announces, so one try every 5 s
-/// reaches them at the first frame 5 s or less after their return, at the
-/// cost of one connect, bounded by the adapter's own limits (about 1.5 s
-/// for WLED). The session serves no frames during it: there is no output to
-/// serve them to. A quiet source tries nothing; its next frame does.
+/// reaches them at the first frame 5 s or less after their return. A try
+/// costs one open, bounded by the adapter's open limit: for WLED 1.5 s when
+/// the connect itself times out, up to `OPEN_LIMIT` (3 s) when it connects
+/// but no reply comes and the device is then turned off again. The session
+/// serves no frames during it: there is no output to serve them to. A quiet
+/// source tries nothing, and its quiet spell ends the wait
+/// ([`Leds::quiet`]); its next frame tries again.
 const UNANSWERED_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The session's output as configured. Opened on the session thread at the
@@ -76,7 +79,8 @@ pub(crate) enum Leds {
     /// ([`UNANSWERED_INTERVAL`]).
     Unanswered {
         device: Device,
-        attempts: Attempts,
+        /// The frame whose open the lights did not answer first.
+        since: Instant,
         again: Instant,
     },
 }
@@ -130,17 +134,15 @@ impl Leds {
         stats: &Stats,
         stop: &Hangup,
     ) -> Result<Write> {
-        let (device, attempts) = match self {
+        let (device, since) = match self {
             Self::Held(held) => return write_held(&mut **held, colors, ready, stats),
             Self::Unanswered { again, .. } if ready < *again => return Ok(Write::Unanswered),
             Self::Closed(device) => (*device, None),
-            Self::Unanswered {
-                device, attempts, ..
-            } => (*device, Some(*attempts)),
+            Self::Unanswered { device, since, .. } => (*device, Some(*since)),
         };
         let failure = match output.open(stop) {
             Ok(mut held) => {
-                if let Some(since) = attempts.and_then(|attempts| attempts.since()) {
+                if let Some(since) = since {
                     let waited = ready.saturating_duration_since(since);
                     tracing::info!(?waited, "the lights answer again");
                 }
@@ -157,21 +159,18 @@ impl Leds {
             OpenFailure::Touched(_) => Device::Unknown,
             OpenFailure::Untouched(_) => device,
         };
-        *self = Self::Closed(device);
         let error = failure.into_error();
-        if ended(&error, stop) {
-            return Ok(Write::Stopped);
+        let stopped = ended(&error, stop);
+        if stopped || error.escalation() != Escalation::Unanswered {
+            *self = Self::Closed(device);
+            return if stopped {
+                Ok(Write::Stopped)
+            } else {
+                Err(error)
+            };
         }
-        if error.escalation() != Escalation::Unanswered {
-            return Err(error);
-        }
-        let waiting = attempts.is_some();
-        let mut attempts = attempts.unwrap_or(Attempts::new(Schedule::Every(UNANSWERED_INTERVAL)));
-        let Ok(again) = attempts.failed(ready) else {
-            return Err(error);
-        };
         let error = prysm_ports::chain(&error);
-        if waiting {
+        if since.is_some() {
             tracing::debug!(%error, "the lights still do not answer");
         } else {
             let every = UNANSWERED_INTERVAL.as_secs();
@@ -179,8 +178,8 @@ impl Leds {
         }
         *self = Self::Unanswered {
             device,
-            attempts,
-            again,
+            since: since.unwrap_or(ready),
+            again: ready + UNANSWERED_INTERVAL,
         };
         Ok(Write::Unanswered)
     }
@@ -267,17 +266,21 @@ impl Leds {
             Self::Held(_) => return self.release(mode, &Hangup::default()),
             Self::Closed(device) | Self::Unanswered { device, .. } => *device,
         };
-        *self = Self::Closed(device);
         match device {
-            Device::Left(left) if left == mode => Ok(()),
-            Device::Untouched if mode == IdleMode::Off => Ok(()),
+            Device::Left(left) if left == mode => {}
+            Device::Untouched if mode == IdleMode::Off => {}
             Device::Untouched | Device::Left(_) | Device::Unknown => {
+                // Set before the idle, not after: the session catches a
+                // panic in it and may finish these leds again in another
+                // mode, which must not trust the mode they had before.
                 *self = Self::Closed(Device::Unknown);
                 output.idle(mode)?;
                 *self = Self::Closed(Device::Left(mode));
-                Ok(())
+                return Ok(());
             }
         }
+        *self = Self::Closed(device);
+        Ok(())
     }
 }
 
@@ -418,7 +421,7 @@ mod tests {
     fn waiting(device: Device) -> Leds {
         Leds::Unanswered {
             device,
-            attempts: Attempts::new(Schedule::Every(UNANSWERED_INTERVAL)),
+            since: Instant::now(),
             again: Instant::now() + UNANSWERED_INTERVAL,
         }
     }
