@@ -7,6 +7,9 @@
 //! with a deadline and enforces the native-operation watchdog, so a hung
 //! driver call surfaces as an error instead of a hang.
 mod native;
+// Not wired into the native thread yet.
+#[allow(dead_code)]
+mod phase;
 
 use crate::{VideoSignal, WebosSettings};
 use native::Native;
@@ -15,6 +18,7 @@ use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result};
 use std::time::Duration;
 
 /// One acquisition attempt.
+#[derive(Debug)]
 pub(crate) enum Acquired {
     Frame(Frame),
     /// No new buffer yet.
