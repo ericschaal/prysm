@@ -110,9 +110,12 @@ pub struct FullStatus {
     pub fps: Option<u16>,
     /// The engine's target, including changes made in the portal.
     pub target: LightingTarget,
-    /// Why the lights are not showing the session's colours while a
-    /// lighting session runs (its device report's issue): `Unreachable`
-    /// also while the session waits for lights that do not answer.
+    /// The engine's device report's issue: why the lights are not showing
+    /// the session's colours while a lighting session runs, `Unreachable`
+    /// also while the session waits for lights that do not answer. With the
+    /// target `Off` or `Effects`, `Unreachable` alone, while the lights do
+    /// not answer the request that puts them in that mode; it is tried again
+    /// until they do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lights: Option<OutputIssue>,
     /// The `sequence` of the last [`Command::Target`] applied before this

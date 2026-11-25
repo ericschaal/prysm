@@ -96,7 +96,11 @@ the output returns to the device's own state until frames return; WLED
 problems while running (switched off, live override, another sender, no
 answer) show as `device.issue`, and Prysm does not switch WLED back. Lights
 that do not answer the output's open are `unreachable` too, not a failure:
-lighting keeps running and tries the open again every 5 s.
+lighting keeps running and tries the open again every 5 s. With the target
+`off` or `effects` the same holds without a session: lights that do not answer
+the request that puts them in that mode leave `session.state` `stopped`
+without a failure and `device.issue` `unreachable`; the target stays and the
+request is tried again every 5 s until they answer.
 `device.brightness_percent` (`40`) is WLED's own brightness while it scales
 Prysm's colours; Prysm reports it and never changes it. `device.led_count`
 (`120`) is how many LEDs WLED itself says it has; Prysm keeps sending the

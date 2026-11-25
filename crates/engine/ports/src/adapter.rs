@@ -145,10 +145,12 @@ impl From<DeviceBrightness> for u8 {
     }
 }
 
-/// Why the LEDs are not showing Prysm's colours although lighting runs.
-/// Prysm reports it and keeps sending, or, for a device that did not answer
-/// the session's open, keeps trying the open: the LEDs follow again as soon
-/// as the device takes the colours.
+/// Why the LEDs are not showing Prysm's colours although lighting runs, or
+/// that they do not answer the request for the target. Prysm reports it and
+/// keeps sending, or, for a device that did not answer, keeps trying the
+/// request (the session's open, or the idle for `Off` or the device's own
+/// effects): the LEDs follow, switch off or show their effects as soon as
+/// the device answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputIssue {
@@ -161,10 +163,12 @@ pub enum OutputIssue {
     NotLive,
     /// Another sender's colours are reaching the device.
     OtherSender,
-    /// The device does not answer: a held output's state requests, or the
+    /// The device does not answer: a held output's state requests, the
     /// session's open ([`Escalation::Unanswered`](crate::Escalation)), which
     /// the session then tries again at a frame every few seconds without
-    /// holding the output.
+    /// holding the output, or, without a session, the idle for `Off` or the
+    /// device's own effects, which the engine tries again every few
+    /// seconds.
     Unreachable,
 }
 

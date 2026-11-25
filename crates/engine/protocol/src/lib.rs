@@ -40,9 +40,12 @@ pub struct State {
     /// What the lights say about themselves, from the output's own checks
     /// (about once a second). Empty while no session holds the output: no
     /// session, or one that has no frame yet or released the output after 3 s
-    /// without video; `session.state` and `input.picture` say which. While a
-    /// session waits for lights that did not answer its open, `issue` is
-    /// `unreachable` alone.
+    /// without video; `session.state` and `input.picture` say which. While
+    /// the lights are waited for, `issue` is `unreachable` alone: a session
+    /// waits for lights that did not answer its open, or, with the target
+    /// `off` or `effects`, the session is `stopped` without a failure and the
+    /// request that puts the lights in that mode is tried again every 5 s
+    /// until they answer. The target stays meanwhile.
     #[cfg_attr(feature = "schema", schema(value_type = schema::DeviceReportSchema))]
     pub device: DeviceReport,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;

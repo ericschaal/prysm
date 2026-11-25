@@ -125,8 +125,11 @@ pub struct Snapshot {
     pub input: Option<Input>,
     /// What the output's device says about itself, from the output's own
     /// checks; republished with `input`. Empty while no session holds the
-    /// output, but for [`OutputIssue::Unreachable`] while a session waits
-    /// for lights that did not answer its open.
+    /// output, but for [`OutputIssue::Unreachable`] while the lights are
+    /// waited for: a session's open they did not answer, or, without a
+    /// session (`session` is `Stopped` without a failure), the request that
+    /// puts them `Off` or in their own effects. The target stays, and the
+    /// request is tried again until they answer.
     pub device: DeviceReport,
     /// The calibration pattern shown, while the target is `ScreenSync`. Not
     /// persisted; while set, processing runs without smoothing (and without
@@ -137,14 +140,15 @@ pub struct Snapshot {
 }
 
 /// What a held output's device last said about itself
-/// ([`LedOutput::report`](crate::LedOutput::report)), or, while the session
-/// waits for lights that did not answer its open, only that issue. Each part
+/// ([`LedOutput::report`](crate::LedOutput::report)), or, while the lights
+/// are waited for (the session's open, or the request for `Off` or their own
+/// effects, that they did not answer), only that issue. Each part
 /// is `None` while the output cannot tell; Prysm reports them and changes
 /// none.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceReport {
-    /// Why the LEDs are not showing the session's colours; `None` while they
-    /// show them.
+    /// Why the LEDs are not showing the session's colours, or that they do
+    /// not answer the request for the target; `None` while all is well.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<OutputIssue>,
     /// The device's own brightness while it scales the session's colours

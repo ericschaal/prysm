@@ -199,7 +199,7 @@
         "type": "object"
       },
       "DeviceReport": {
-        "description": "What the lights say about themselves, from the output's own checks. Each\npart is absent while the output cannot tell, and all are while no session\nholds the output (no session, no frame yet, or released after 3 s without\nvideo; see `session.state` and `input.picture`), but `issue`\n`unreachable` while lighting waits for lights that did not answer its\nopen. Prysm reports them and changes none.",
+        "description": "What the lights say about themselves, from the output's own checks. Each\npart is absent while the output cannot tell, and all are while no session\nholds the output (no session, no frame yet, or released after 3 s without\nvideo; see `session.state` and `input.picture`), but `issue`\n`unreachable` while the lights are waited for: lighting's open, or the\nrequest for `off` or their own effects, that they did not answer. Prysm\nreports them and changes none.",
         "properties": {
           "brightness_percent": {
             "description": "The lights' own brightness while it scales Prysm's colours (WLED: its\nmaster brightness and brightness factor): the share of Prysm's\nbrightness they show. Absent while it does not (WLED: \"Force max\nbrightness\" on).",
@@ -211,7 +211,7 @@
           },
           "issue": {
             "$ref": "#/components/schemas/OutputIssue",
-            "description": "Why the lights are not showing Prysm's colours; absent while they\nshow them."
+            "description": "Why the lights are not showing Prysm's colours, or that they do not\nanswer; absent while all is well."
           },
           "led_count": {
             "description": "How many LEDs the lights say they have (WLED: its LED count). Prysm\nsends the configured `settings.output.leds` either way: a different\ncount leaves LEDs dark or colours unshown.",
@@ -809,7 +809,7 @@
         ]
       },
       "OutputIssue": {
-        "description": "Why the lights are not showing Prysm's colours. Prysm keeps sending; they\nfollow again once the device takes the colours.",
+        "description": "Why the lights are not showing Prysm's colours, or that they do not answer\nthe request for the target. Prysm keeps sending, or trying the request;\nthe lights follow again once the device takes the colours, or switch off\nor show their own effects once it answers.",
         "enum": [
           "off",
           "overridden",
@@ -1250,7 +1250,7 @@
           },
           "device": {
             "$ref": "#/components/schemas/DeviceReport",
-            "description": "What the lights say about themselves, from the output's own checks\n(about once a second). Empty while no session holds the output: no\nsession, or one that has no frame yet or released the output after 3 s\nwithout video; `session.state` and `input.picture` say which. While a\nsession waits for lights that did not answer its open, `issue` is\n`unreachable` alone."
+            "description": "What the lights say about themselves, from the output's own checks\n(about once a second). Empty while no session holds the output: no\nsession, or one that has no frame yet or released the output after 3 s\nwithout video; `session.state` and `input.picture` say which. While\nthe lights are waited for, `issue` is `unreachable` alone: a session\nwaits for lights that did not answer its open, or, with the target\n`off` or `effects`, the session is `stopped` without a failure and the\nrequest that puts the lights in that mode is tried again every 5 s\nuntil they answer. The target stays meanwhile."
           },
           "input": {
             "$ref": "#/components/schemas/Input",

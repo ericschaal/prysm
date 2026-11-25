@@ -134,12 +134,18 @@ state until frames return.
 while the output cannot tell. It is `{}` while no session holds the output:
 no session, a session before its first frame, or one that returned the output
 after 3 s without video. Read `session.state` and `input.picture` for which;
-`{}` alone does not mean lighting stopped. `issue` (absent
+`{}` alone does not mean lighting stopped.
+Lights that do not answer with the target `off` or `effects` are the
+exception: `session.state` is `stopped` without a failure, `device` is
+`{ "issue": "unreachable" }`, and the request that puts the lights in that
+mode is tried again every 5 s; the target stays, and the issue clears once
+they answer. `issue` (absent
 when all is well) says why the lights are not showing its colours: `off`
 (switched off on the device), `overridden` (WLED's live override), `not_live`
 (the device is not taking realtime colours), `other_sender` or `unreachable`
-(no answer to its state checks, or to the session's open while it waits for
-the lights; then `device` holds only this).
+(no answer to its state checks, to the session's open while it waits for
+the lights, or to the request for `off` or the device's effects; then `device`
+holds only this).
 It is not a failure: lighting keeps sending, nothing is switched back, and the
 field clears once the device shows the colours again. `brightness_percent`
 (0-100) is the device's own brightness while it scales the colours, and

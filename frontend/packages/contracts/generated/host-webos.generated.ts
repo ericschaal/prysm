@@ -86,8 +86,9 @@ export interface components {
          *     part is absent while the output cannot tell, and all are while no session
          *     holds the output (no session, no frame yet, or released after 3 s without
          *     video; see `session.state` and `input.picture`), but `issue`
-         *     `unreachable` while lighting waits for lights that did not answer its
-         *     open. Prysm reports them and changes none.
+         *     `unreachable` while the lights are waited for: lighting's open, or the
+         *     request for `off` or their own effects, that they did not answer. Prysm
+         *     reports them and changes none.
          */
         DeviceReport: {
             /**
@@ -100,8 +101,8 @@ export interface components {
              */
             brightness_percent?: number;
             /**
-             * @description Why the lights are not showing Prysm's colours; absent while they
-             *     show them.
+             * @description Why the lights are not showing Prysm's colours, or that they do not
+             *     answer; absent while all is well.
              */
             issue?: components["schemas"]["OutputIssue"];
             /**
@@ -351,8 +352,10 @@ export interface components {
             status: "known";
         };
         /**
-         * @description Why the lights are not showing Prysm's colours. Prysm keeps sending; they
-         *     follow again once the device takes the colours.
+         * @description Why the lights are not showing Prysm's colours, or that they do not answer
+         *     the request for the target. Prysm keeps sending, or trying the request;
+         *     the lights follow again once the device takes the colours, or switch off
+         *     or show their own effects once it answers.
          * @enum {string}
          */
         OutputIssue: "off" | "overridden" | "not_live" | "other_sender" | "unreachable";
@@ -542,9 +545,12 @@ export interface components {
              * @description What the lights say about themselves, from the output's own checks
              *     (about once a second). Empty while no session holds the output: no
              *     session, or one that has no frame yet or released the output after 3 s
-             *     without video; `session.state` and `input.picture` say which. While a
-             *     session waits for lights that did not answer its open, `issue` is
-             *     `unreachable` alone.
+             *     without video; `session.state` and `input.picture` say which. While
+             *     the lights are waited for, `issue` is `unreachable` alone: a session
+             *     waits for lights that did not answer its open, or, with the target
+             *     `off` or `effects`, the session is `stopped` without a failure and the
+             *     request that puts the lights in that mode is tried again every 5 s
+             *     until they answer. The target stays meanwhile.
              */
             device: components["schemas"]["DeviceReport"];
             /**
