@@ -139,7 +139,6 @@ fn luna() -> Value {
         SlimLink::Waiting { message: message() },
         SlimLink::EncoderFailed { message: message() },
         SlimLink::VersionDiffers { message: message() },
-        SlimLink::Replaced { message: message() },
         SlimLink::ReceiverFailed { message: message() },
     ]
     .map(|link| {

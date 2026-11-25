@@ -89,12 +89,10 @@ pub enum LightingTargetSchema {
 /// failed; the receiver is told, and another encoding chosen in its portal
 /// may work. `version_differs`: Prysm speaks another capture stream version;
 /// the older one needs updating, and the worker keeps reconnecting.
-/// `replaced`: another TV took over the stream at Prysm; this one sends no
-/// more until capture is stopped and started, the TV wakes, or the Prysm
-/// address changes. `receiver_failed`: Prysm's receiving source failed with
-/// this TV's stream (a refusal, a keyframe that does not decode, no
-/// decoder), and Prysm shows why; the worker released the capture and keeps
-/// reconnecting. `message` says why, with the causes.
+/// `receiver_failed`: Prysm's receiving source failed with this TV's stream
+/// (a refusal, a keyframe that does not decode, no decoder), and Prysm shows
+/// why; the worker released the capture and keeps reconnecting. `message`
+/// says why, with the causes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = SlimLink)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -114,9 +112,6 @@ pub enum SlimLinkSchema {
         message: String,
     },
     VersionDiffers {
-        message: String,
-    },
-    Replaced {
         message: String,
     },
     ReceiverFailed {
@@ -214,9 +209,6 @@ mod tests {
             SlimLink::VersionDiffers {
                 message: "x".into(),
             },
-            SlimLink::Replaced {
-                message: "x".into(),
-            },
             SlimLink::ReceiverFailed {
                 message: "x".into(),
             },
@@ -305,7 +297,6 @@ mod tests {
             ("waiting", vec!["message", "state"]),
             ("encoder_failed", vec!["message", "state"]),
             ("version_differs", vec!["message", "state"]),
-            ("replaced", vec!["message", "state"]),
             ("receiver_failed", vec!["message", "state"]),
         ] {
             assert_eq!(

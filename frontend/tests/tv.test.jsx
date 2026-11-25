@@ -663,9 +663,9 @@ test('status card covers the supervisor states for both packages', () => {
     ],
     [
       'Capture stopped',
-      'Stop and start capture again to retry.',
+      'Something went wrong. Try again to restart it.',
       true,
-      'Stop capture',
+      'Try again',
     ],
     'plain words: the message is for Diagnostics',
   );
@@ -853,7 +853,6 @@ test('status card covers the supervisor states for both packages', () => {
         'waiting',
         'encoder_failed',
         'version_differs',
-        'replaced',
         'receiver_failed',
       ].map((state) => slim({ uplink: { state, message: 'x' } })),
       slim({ unreadable: 'x' }),
@@ -975,13 +974,13 @@ test('what the service asks has its words and its button in each package', () =>
     [
       [
         reach,
-        'Prysm stopped trying. Stop and start capture again.',
-        'Stop capture',
+        'Prysm stopped trying. Check Prysm, then try again.',
+        'Try again',
       ],
       [
         'Capture stopped',
-        'Stop and start capture again to retry.',
-        'Stop capture',
+        'Something went wrong. Try again to restart it.',
+        'Try again',
       ],
       [
         'Capture stopped',
@@ -1101,7 +1100,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   );
   assert.deepEqual(
     [other.title, other.description],
-    ['Capture stopped', 'Stop and start capture again to retry.'],
+    ['Capture stopped', 'Something went wrong. Try again to restart it.'],
     'only the structured state counts, not the text',
   );
   const paused = status(slim({ paused: true, encoding: 'h264_hardware' }));
@@ -1147,26 +1146,18 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     [versions.title, versions.description, versions.attention],
     ['Update Prysm or TV app', 'Update the older of Prysm and this app.', true],
   );
-  // Another TV took the stream over: this one stopped until capture is
-  // started again, which the button offers.
+  // Another TV took the stream over: this worker ended, and the service
+  // asks; Try again starts capture from this TV.
   const replaced = status(
-    slim({
-      uplink: {
-        state: 'replaced',
-        message:
-          'the stream to ws://prysm.local:8787/api/v1/capture/stream failed: another sender replaced this one at Prysm',
-      },
-    }),
+    slim(
+      asking(
+        ask('try_again'),
+        'the TV stopped streaming to Prysm: another sender replaced this one at Prysm',
+      ),
+    ),
   );
-  assert.deepEqual(
-    [replaced.title, replaced.description, replaced.attention, replaced.action],
-    [
-      'Another TV took over',
-      'Stop and start capture to send from this TV.',
-      true,
-      'disable',
-    ],
-  );
+  assert.equal(replaced.action, 'retry');
+  assert.equal(replaced.attention, true);
   // Prysm's source failed with this TV's stream: not paused, not a lights
   // off on the computer; its portal says why.
   const receiverFailed = status(
@@ -1532,16 +1523,6 @@ test('every state keeps the same slots, plain words and focus on a control', asy
                   state: 'version_differs',
                   message:
                     'waiting for the receiver: Prysm answered HTTP 426: versions differ',
-                },
-              },
-            ],
-            [
-              'replaced',
-              {
-                ...running,
-                uplink: {
-                  state: 'replaced',
-                  message: 'another sender replaced this one at Prysm',
                 },
               },
             ],
@@ -3271,11 +3252,11 @@ test('slim: a receiver wait or another failure does not mention the encoding', a
   assert.equal(tv.text('status-title'), 'Capture stopped');
   assert.equal(
     tv.text('status-description'),
-    'Stop and start capture again to retry.',
+    'Something went wrong. Try again to restart it.',
   );
   assert.equal(tv.text('status-meta'), '\u00a0', 'no countdown');
   await tv.key(DOWN);
-  assert.equal(tv.focus(), 'mode-off', 'down from Stop capture: the lights');
+  assert.equal(tv.focus(), 'mode-off', 'down from Try again: the lights');
 });
 
 test('full: no encoding setting, encoding in use or encoding switch', async (t) => {

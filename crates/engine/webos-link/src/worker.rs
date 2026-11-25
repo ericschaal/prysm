@@ -547,7 +547,7 @@ mod tests {
         link.events
             .send(&Event::Status(WorkerStatus::Slim(SlimStatus {
                 capturing: false,
-                link: SlimLink::Replaced {
+                link: SlimLink::ReceiverFailed {
                     message: "w".repeat(10_000),
                 },
             })));

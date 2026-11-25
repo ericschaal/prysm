@@ -224,17 +224,6 @@ export function runDemo(
             capturing: false,
             fps: null,
           },
-          'TV: another TV took over': {
-            enabled: true,
-            worker: { phase: 'running' },
-            uplink: {
-              state: 'replaced',
-              message:
-                'the stream to ws://prysm.local:8787/api/v1/capture/stream failed: another sender replaced this one at Prysm',
-            },
-            capturing: false,
-            fps: null,
-          },
         }
       : {}),
   };

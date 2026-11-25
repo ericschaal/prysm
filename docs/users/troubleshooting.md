@@ -64,7 +64,7 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | Couldn’t read settings | The TV's saved settings could not be read, so Prysm uses its defaults and leaves the file as it is. Change a setting (**Start with TV**, or for slim the **Prysm address**) to save new ones. **View diagnostics** says what was wrong. |
 | Slim: Waiting for Prysm | Check the **Prysm address** (the one you open the portal with), that Prysm on the computer has the **LG TV on your network** source with its lights on, and, behind a reverse proxy, that it passes WebSockets on `/api/v1/capture/stream` without a login. |
 | Slim: Update Prysm or TV app | Prysm on the computer and the TV app send the picture in different ways. Update the older of the two; the TV checks again every second, so there is no need to restart it. |
-| Slim: Another TV took over | Another TV sends its picture to the same Prysm, so this one stopped. It sends again when you choose **Stop capture**, then **Start capture**, when the TV wakes from standby, or when you change the Prysm address. |
+| Slim: Capture stopped, after another TV started | Another TV sends its picture to the same Prysm, so this one stopped. Choose **Try again** to send from this TV. |
 | Slim: Paused by Prysm | Normal while the computer's lights are off. Turn on Screen sync. |
 | Slim: Prysm stopped receiving | Prysm on the computer could not use the TV's picture (for example, no H.264 decoder starts there). Its web portal says why; choose another encoding for the video source there, or turn Screen sync on again. The TV keeps trying. |
 | Slim: the TV app cannot reach or control Prysm ("doesn't take commands from the TV") | Check **Prysm address**. Start the computer's Prysm with `--allow-origin null`. |

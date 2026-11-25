@@ -358,7 +358,6 @@ function decodeSlimLink(value: unknown): SlimLink | null {
     case 'waiting':
     case 'encoder_failed':
     case 'version_differs':
-    case 'replaced':
     case 'receiver_failed':
       return typeof value.message === 'string'
         ? { state: value.state, message: value.message }

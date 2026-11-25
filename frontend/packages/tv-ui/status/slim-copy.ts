@@ -11,18 +11,18 @@ import {
 } from './copy';
 import type { SlimSituation } from './slim';
 
-/** Slim: what the service asks; capture stopped and started tries again. */
+/** Slim: what the service asks; Try again starts capture again. */
 function askedCopy(asked: Asked): Copy {
   if (asked.step === 'unanswered')
     return {
       title: UNANSWERED,
-      description: 'Prysm stopped trying. Stop and start capture again.',
+      description: 'Prysm stopped trying. Check Prysm, then try again.',
       attention: true,
     };
   const fixes: Record<Fix, Copy> = {
     try_again: {
       title: packageWords.slim.stopped,
-      description: 'Stop and start capture again to retry.',
+      description: 'Something went wrong. Try again to restart it.',
       attention: true,
     },
     // The picture settings are Prysm's, set in its portal.
@@ -60,12 +60,6 @@ export function slimCopy(situation: SlimSituation): Copy {
       return {
         title: 'Update Prysm or TV app',
         description: 'Update the older of Prysm and this app.',
-        attention: true,
-      };
-    case 'replaced':
-      return {
-        title: 'Another TV took over',
-        description: 'Stop and start capture to send from this TV.',
         attention: true,
       };
     case 'receiverFailed':

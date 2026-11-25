@@ -30,7 +30,6 @@ export type SlimSituation =
   | { kind: 'problem'; asked: Asked }
   | { kind: 'encoder' }
   | { kind: 'version' }
-  | { kind: 'replaced' }
   | { kind: 'receiverFailed' }
   | { kind: 'noAddress' }
   | { kind: 'captureOff' }
@@ -58,9 +57,6 @@ export function slimSituation(
   // Prysm and this app speak different stream versions; the TV keeps
   // checking (every second), so updating the older side is enough.
   if (link === 'version_differs') return { kind: 'version' };
-  // Another TV took the stream over; this one stopped until capture is
-  // started again, so the two never take it from each other in turn.
-  if (link === 'replaced') return { kind: 'replaced' };
   // Prysm's lighting failed with this TV's stream (no decoder, a broken
   // keyframe); the TV keeps trying, and Prysm's portal says why.
   if (link === 'receiver_failed') return { kind: 'receiverFailed' };
@@ -96,7 +92,10 @@ export function slimButton(state: SlimState, draft: SavedPreferences): Button {
     case 'stopping':
       return 'wait';
     default:
-      if (problem && remedyOf(problem.asked) === 'setup') return 'setup';
+      // What the service asks is answered first: its setup, or the same
+      // again (another TV took the stream over, the stream failed).
+      if (problem && remedyOf(problem.asked) !== 'none')
+        return remedyOf(problem.asked);
       if (state.enabled) return 'stop';
       return draft.prysm_address ? 'start' : 'address';
   }

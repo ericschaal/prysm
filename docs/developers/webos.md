@@ -201,11 +201,11 @@ menus, encoding); closes capture while the receiver has stopped the stream
 and refused until the desktop asks for another encoding; nothing falls back on
 its own. A receiver whose source failed with the stream (it refused the
 request, a keyframe did not decode, or it has no decoder; close code 4002) is
-reported as `receiver_failed`. When another TV takes the
-stream over, the worker releases capture
-and encoder, reports `replaced` and connects no more until the
-worker restarts (capture stopped and started, the TV waking, or a new Prysm
-address), so two TVs never take the stream from each other in turn. A
+reported as `receiver_failed`. What waiting cannot fix ends the worker
+with its cause, and the supervisor asks: another TV taking the stream
+over or a reply that breaks the protocol (try again), a wrong address
+(404) or an untrusted certificate (change the settings). So two TVs
+never take the stream from each other in turn. A
 stopped stream, an encoder failure, a failed receiver or another version
 stays the news while the receiver is unreachable. In all four the capture is
 closed, and connection attempts go on, so a receiver that asks again
@@ -213,8 +213,8 @@ closed, and connection attempts go on, so a receiver that asks again
 carries the uplink as one `link` tagged by `state`: `starting`, `sending`
 (`encoding`, `fps`), `refused` (connected, but the TV refuses to share the
 video it shows, so nothing goes out until the video changes), `paused`,
-`waiting` (the receiver wait), `encoder_failed`, `version_differs`,
-`replaced` or `receiver_failed`, the last five with their `message`. They
+`waiting` (the receiver wait), `encoder_failed`, `version_differs` or
+`receiver_failed`, the last four with their `message`. They
 are the worker's own states, not what the supervisor asks; a frame sent
 gives the supervisor's restart back. A stop shuts the uplink's socket
 down, which ends a connect, read or write at once, and no capture opens after

@@ -342,7 +342,7 @@ The service is `io.github.ericschaal.prysm.service` (rc.1:
   `stopping` and (full) in `running`; rc.1's `retrying` phase and its
   countdown are gone, since the service restarts a worker at most once
   and then asks. Slim's own waits and failures are its `link` states
-  (`waiting`, `encoder_failed`, `version_differs`, `replaced`,
+  (`waiting`, `encoder_failed`, `version_differs`,
   `receiver_failed`, each with a `message`). Saved preferences that cannot
   be read are `unreadable`.
 

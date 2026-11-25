@@ -130,7 +130,7 @@ test('the Luna document covers both flavors with one State', () => {
       'full stopping',
       'full stopping',
       'slim asking',
-      ...Array(7).fill('slim running'),
+      ...Array(6).fill('slim running'),
       'slim stopped',
       'slim stopping',
     ],

@@ -88,12 +88,6 @@ fn events_round_trip() {
             r#"{"state":"version_differs","message":"v2"}"#,
         ),
         (
-            SlimLink::Replaced {
-                message: "r".into(),
-            },
-            r#"{"state":"replaced","message":"r"}"#,
-        ),
-        (
             SlimLink::ReceiverFailed {
                 message: "f".into(),
             },

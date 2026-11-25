@@ -196,10 +196,6 @@ pub enum SlimLink {
     /// older one needs updating. The worker keeps reconnecting, so an update
     /// on either side is picked up without restarting it.
     VersionDiffers { message: String },
-    /// Another sender (another TV) took over the stream at Prysm. The worker
-    /// released the capture and connects no more until it restarts (capture
-    /// stopped and started, the TV waking, or a new Prysm address).
-    Replaced { message: String },
     /// Prysm's receiving source failed with this TV's stream (it refused the
     /// request, a keyframe did not decode, or Prysm has no decoder); Prysm
     /// shows why. The worker released the capture and keeps reconnecting, so
@@ -214,7 +210,6 @@ impl SlimLink {
             Self::Waiting { message }
             | Self::EncoderFailed { message }
             | Self::VersionDiffers { message }
-            | Self::Replaced { message }
             | Self::ReceiverFailed { message } => Some(message),
             Self::Starting {} | Self::Sending { .. } | Self::Refused {} | Self::Paused {} => None,
         }

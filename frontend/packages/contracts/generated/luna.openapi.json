@@ -361,7 +361,7 @@
         "type": "object"
       },
       "SlimLink": {
-        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding` (the one the receiver requested, set in the desktop\nportal), `fps` per second (0 while none come). `refused`: connected, but\nthe TV refuses to share the video it shows, so no frames go out; it ends\nwhen the video changes, not a failure. `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (not lighting, unreachable, or its\nname does not resolve); the worker keeps reconnecting, not a failure.\n`encoder_failed`: the encoder the receiver requested could not start or\nfailed; the receiver is told, and another encoding chosen in its portal\nmay work. `version_differs`: Prysm speaks another capture stream version;\nthe older one needs updating, and the worker keeps reconnecting.\n`replaced`: another TV took over the stream at Prysm; this one sends no\nmore until capture is stopped and started, the TV wakes, or the Prysm\naddress changes. `receiver_failed`: Prysm's receiving source failed with\nthis TV's stream (a refusal, a keyframe that does not decode, no\ndecoder), and Prysm shows why; the worker released the capture and keeps\nreconnecting. `message` says why, with the causes.",
+        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding` (the one the receiver requested, set in the desktop\nportal), `fps` per second (0 while none come). `refused`: connected, but\nthe TV refuses to share the video it shows, so no frames go out; it ends\nwhen the video changes, not a failure. `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (not lighting, unreachable, or its\nname does not resolve); the worker keeps reconnecting, not a failure.\n`encoder_failed`: the encoder the receiver requested could not start or\nfailed; the receiver is told, and another encoding chosen in its portal\nmay work. `version_differs`: Prysm speaks another capture stream version;\nthe older one needs updating, and the worker keeps reconnecting.\n`receiver_failed`: Prysm's receiving source failed with this TV's stream\n(a refusal, a keyframe that does not decode, no decoder), and Prysm shows\nwhy; the worker released the capture and keeps reconnecting. `message`\nsays why, with the causes.",
         "oneOf": [
           {
             "properties": {
@@ -474,24 +474,6 @@
               "state": {
                 "enum": [
                   "version_differs"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "message",
-              "state"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "message": {
-                "type": "string"
-              },
-              "state": {
-                "enum": [
-                  "replaced"
                 ],
                 "type": "string"
               }

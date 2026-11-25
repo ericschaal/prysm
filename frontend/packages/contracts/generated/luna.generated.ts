@@ -204,12 +204,10 @@ export interface components {
          *     failed; the receiver is told, and another encoding chosen in its portal
          *     may work. `version_differs`: Prysm speaks another capture stream version;
          *     the older one needs updating, and the worker keeps reconnecting.
-         *     `replaced`: another TV took over the stream at Prysm; this one sends no
-         *     more until capture is stopped and started, the TV wakes, or the Prysm
-         *     address changes. `receiver_failed`: Prysm's receiving source failed with
-         *     this TV's stream (a refusal, a keyframe that does not decode, no
-         *     decoder), and Prysm shows why; the worker released the capture and keeps
-         *     reconnecting. `message` says why, with the causes.
+         *     `receiver_failed`: Prysm's receiving source failed with this TV's stream
+         *     (a refusal, a keyframe that does not decode, no decoder), and Prysm shows
+         *     why; the worker released the capture and keeps reconnecting. `message`
+         *     says why, with the causes.
          */
         SlimLink: {
             /** @enum {string} */
@@ -241,10 +239,6 @@ export interface components {
             message: string;
             /** @enum {string} */
             state: "version_differs";
-        } | {
-            message: string;
-            /** @enum {string} */
-            state: "replaced";
         } | {
             message: string;
             /** @enum {string} */
