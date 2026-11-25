@@ -9,7 +9,8 @@
 //! capture and release must all run on one thread; [`UiCapture`] is not
 //! `Send`. The library is loaded once and never unloaded: unloading it leaks
 //! file descriptors.
-use crate::vtcapture::{Error, Operation, Plane};
+use crate::Operation;
+use crate::vtcapture::{Error, Plane};
 use prysm_webos_luna_sys::{Loaded, load_once};
 use std::ffi::c_int;
 use std::fs::File;

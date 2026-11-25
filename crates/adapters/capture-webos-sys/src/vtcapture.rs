@@ -1,4 +1,5 @@
 //! One VTCapture tap. Lifecycle ported from hyperion-webos.
+use crate::Operation;
 use crate::ffi::{
     BufferInfo, PlaneInfo, Properties, VtBuffer, VtClient, VtCreate, VtInit, VtPlane, VtPreprocess,
     VtRelease, prysm_vt_buffer, prysm_vt_client, prysm_vt_create, prysm_vt_init, prysm_vt_plane,
@@ -63,7 +64,9 @@ pub enum Error {
     /// the process must restart before capture is retried.
     #[error("vtCapture_create failed: {0}")]
     Create(Box<Error>),
-    #[error("{operation} failed with status {code}")]
+    /// A native call answered `code`, with what that is suspected to mean
+    /// where something is known.
+    #[error("{operation}{} failed with status {code}", operation.hint(*code))]
     Status { operation: Operation, code: i32 },
     #[error("vtcapture exception: {0}")]
     Exception(String),
@@ -79,74 +82,6 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
-}
-
-/// A native call of `libvtcapture` or `libhalgal` that answers a status
-/// code; [`Error::Status`] names the one that failed. One set for both
-/// libraries, as both report through the one [`Error`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Operation {
-    VtCreate,
-    VtInit,
-    VtPreprocess,
-    VtPlaneInfo,
-    VtProcess,
-    VtCurrentCaptureBuffInfo,
-    VtStop,
-    VtPostprocess,
-    VtFinalize,
-    HalInit,
-    HalCreateSurface,
-    HalCaptureFrameBuffer,
-    HalDestroySurface,
-}
-
-impl Operation {
-    /// Every operation, in declaration order.
-    pub const ALL: [Self; 13] = [
-        Self::VtCreate,
-        Self::VtInit,
-        Self::VtPreprocess,
-        Self::VtPlaneInfo,
-        Self::VtProcess,
-        Self::VtCurrentCaptureBuffInfo,
-        Self::VtStop,
-        Self::VtPostprocess,
-        Self::VtFinalize,
-        Self::HalInit,
-        Self::HalCreateSurface,
-        Self::HalCaptureFrameBuffer,
-        Self::HalDestroySurface,
-    ];
-
-    /// The native function's name, as error messages show it.
-    /// `vtCapture_init` carries what its status 11 is suspected to mean.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::VtCreate => "vtCapture_create",
-            Self::VtInit => {
-                "vtCapture_init (11: on webOS 10.3.2 the library's code suggests the TV's resource manager did not grant the capture resource)"
-            }
-            Self::VtPreprocess => "vtCapture_preprocess",
-            Self::VtPlaneInfo => "vtCapture_planeInfo",
-            Self::VtProcess => "vtCapture_process",
-            Self::VtCurrentCaptureBuffInfo => "vtCapture_currentCaptureBuffInfo",
-            Self::VtStop => "vtCapture_stop",
-            Self::VtPostprocess => "vtCapture_postprocess",
-            Self::VtFinalize => "vtCapture_finalize",
-            Self::HalInit => "HAL_GAL_Init",
-            Self::HalCreateSurface => "HAL_GAL_CreateSurface",
-            Self::HalCaptureFrameBuffer => "HAL_GAL_CaptureFrameBuffer",
-            Self::HalDestroySurface => "HAL_GAL_DestroySurface",
-        }
-    }
-}
-
-impl std::fmt::Display for Operation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
 }
 
 impl Error {
@@ -1116,15 +1051,25 @@ mod tests {
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }
 
+    /// The one hint: `vtCapture_init`'s status 11, and no other.
     #[test]
-    fn every_operation_is_listed_once_with_its_own_name() {
-        for (index, operation) in Operation::ALL.into_iter().enumerate() {
-            assert_eq!(operation as usize, index, "{operation:?}");
+    fn only_init_status_eleven_carries_its_suspected_meaning() {
+        for (operation, code, shown) in [
+            (
+                Operation::VtInit,
+                11,
+                "vtCapture_init (11: on webOS 10.3.2 the library's code suggests the TV's resource manager did not grant the capture resource) failed with status 11",
+            ),
+            (Operation::VtInit, 5, "vtCapture_init failed with status 5"),
+            (
+                Operation::VtProcess,
+                11,
+                "vtCapture_process failed with status 11",
+            ),
+        ] {
+            let error = Error::Status { operation, code };
+            assert_eq!(error.to_string(), shown);
         }
-        let mut names: Vec<_> = Operation::ALL.map(Operation::as_str).into();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), Operation::ALL.len());
     }
 
     #[test]
