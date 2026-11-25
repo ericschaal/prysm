@@ -77,10 +77,6 @@ impl Core {
             }
             Step::Stop(mode) => self.stop(mode).await,
             Step::Idle(mode) => self.idle_output(mode).await,
-            Step::EndWait => {
-                self.set_lighting(Lighting::Stopped);
-                Ok(())
-            }
             Step::MayNotBeOff => self.off_may_not_be_off().map_or(Ok(()), Err),
         }
     }

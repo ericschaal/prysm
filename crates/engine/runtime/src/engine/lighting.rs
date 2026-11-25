@@ -312,9 +312,8 @@ impl Kind {
             // Also while waiting for the lights: they are asked again now.
             (Target::Effects, _) => Step::Idle(IdleMode::Native),
             (Target::Off, Self::ScreenSync) => Step::Stop(IdleMode::Off),
-            // Other lights end a wait as they end a failure that says the
-            // lights may not be off: they were never touched.
-            (Target::Off, Self::Unanswered) if output_changed => Step::EndWait,
+            // Also while waiting for the lights, whatever output was saved:
+            // it may be the same lights, which the wait never reached.
             (Target::Off, Self::Effects | Self::Unanswered) => Step::Idle(IdleMode::Off),
             // A command that does nothing about the output keeps a failure
             // that says the lights may not be off: it is still true. Other
@@ -340,8 +339,6 @@ pub(super) enum Step {
     Stop(IdleMode),
     /// Put the output in this mode without a session.
     Idle(IdleMode),
-    /// Stop waiting for the lights: the reply is success.
-    EndWait,
     /// Reply with the failure that says the lights may not be off, if one is
     /// published ([`Lighting::may_not_be_off`]).
     MayNotBeOff,

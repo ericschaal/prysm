@@ -109,7 +109,7 @@ fn every_step_towards_a_target() {
     use IdleMode::{Native, Off};
     use Kind::{Effects, ScreenSync, Stopped, Unanswered};
     use LightingTarget as Target;
-    use Step::{EndWait, Idle, MayNotBeOff, Restart, Start, Stay, Stop};
+    use Step::{Idle, MayNotBeOff, Restart, Start, Stay, Stop};
     let faulted = Kind::Faulted(SessionPhase::SourceUnreleased);
     let fault = Step::Faulted(SessionPhase::SourceUnreleased);
     let (start, after_wait) = (Start { ends_wait: false }, Start { ends_wait: true });
@@ -128,7 +128,7 @@ fn every_step_towards_a_target() {
         (Target::Off,        Stopped,    [MayNotBeOff, Stay, MayNotBeOff, Stay]),
         (Target::Off,        Effects,    [Idle(Off); 4]),
         (Target::Off,        ScreenSync, [Stop(Off); 4]),
-        (Target::Off,        Unanswered, [Idle(Off), EndWait, Idle(Off), EndWait]),
+        (Target::Off,        Unanswered, [Idle(Off); 4]),
         (Target::Off,        faulted,    [fault; 4]),
     ];
     let flags = [(false, false), (false, true), (true, false), (true, true)];

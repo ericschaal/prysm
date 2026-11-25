@@ -155,6 +155,33 @@ async fn a_command_ends_a_wait_at_once() {
     engine.shutdown().await.unwrap();
 }
 
+/// An output saved during a wait for `Off` is tried at once, whatever
+/// changed: it may be the same lights, which the wait never reached.
+#[tokio::test(start_paused = true)]
+async fn an_output_saved_during_a_wait_for_off_is_tried_at_once() {
+    let log = CallLog::new();
+    let (handle, engine, _) = start(&log, silent(), DEADLINE).await;
+    handle.set_target(LightingTarget::Effects).await.unwrap();
+    handle.set_target(LightingTarget::Off).await.unwrap();
+    let mut saved = silent();
+    saved.output = Some(prysm_ports::AdapterSettings::new(
+        "fake",
+        &FakeOutputSettings {
+            name: "o".into(),
+            idle: FakeIdle::UnansweredUntil(ANSWER.into()),
+            brightness: Some(50),
+            ..Default::default()
+        },
+    ));
+    handle
+        .replace_settings(revision(&handle), saved)
+        .await
+        .unwrap();
+    assert_eq!(log.count("output.idle:o:Off"), 2, "tried at once");
+    assert!(waiting(&handle.snapshot().borrow(), LightingTarget::Off));
+    engine.shutdown().await.unwrap();
+}
+
 /// Screen sync whose source delivers no frame opens no output: `Off` after
 /// it still puts in `Off` lights left in their effects, or waited for. The
 /// session runs and stops on the running clock.
