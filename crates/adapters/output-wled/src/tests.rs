@@ -10,6 +10,7 @@ use prysm_ports::{
     AdapterSettings, DeviceBrightness, Error, Hangup, IdleMode, LedOutput, OpenFailure,
     OutputFactory, OutputIssue, Registry,
 };
+use prysm_ports::{Escalation, Fix};
 use prysm_testkit::eventually;
 use serde_json::{Value, json};
 use std::error::Error as _;
@@ -411,21 +412,32 @@ fn unreachable_device_fails_open_with_its_cause() {
     let cause = request_error(&error);
     assert!(matches!(cause, RequestError::Connect(_)), "{cause:?}");
     assert!(cause.source().is_some(), "io::Error retained");
+    assert_eq!(error.escalation(), Escalation::Unanswered);
 }
 
 #[test]
 fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
+    let (fail, settings) = (Escalation::FAIL_FAST, Escalation::Ask(Fix::ChangeSettings));
     let failures = [
-        Reply::Raw("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".into()),
-        Reply::Json(r#"{"success":false}"#),
-        Reply::Json(r#"{"error":9}"#),
-        Reply::Json(r#"{"on":true}"#),
-        Reply::Json("not JSON"),
-        Reply::Raw(String::new()),
-        Reply::Raw("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{}".into()),
-        Reply::Raw(format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(4097))),
+        (
+            Reply::Raw("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".into()),
+            fail,
+        ),
+        (Reply::Json(r#"{"success":false}"#), fail),
+        (Reply::Json(r#"{"error":9}"#), fail),
+        (Reply::Json(r#"{"on":true}"#), fail),
+        (Reply::Json("not JSON"), settings),
+        (Reply::Raw(String::new()), Escalation::Unanswered),
+        (
+            Reply::Raw("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{}".into()),
+            Escalation::Unanswered,
+        ),
+        (
+            Reply::Raw(format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(4097))),
+            settings,
+        ),
     ];
-    for failure in failures {
+    for (failure, escalation) in failures {
         let device = Device::new(vec![failure, Reply::Json(OK)]);
         let failure = device
             .wled
@@ -440,6 +452,7 @@ fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
         let cause = request_error(&error);
         assert!(!matches!(cause, RequestError::Connect(_)), "{cause:?}");
         assert!(!error.to_string().contains("also failed"), "{error}");
+        assert_eq!(error.escalation(), escalation, "{cause:?}");
         device.expect(&[live(), off()]);
     }
 }
@@ -453,6 +466,7 @@ fn failed_compensation_is_reported_alongside_the_original_cause() {
     let both: &NotTurnedOff = source(&error).downcast_ref().expect("both causes");
     assert!(matches!(both.live, RequestError::Json(_)), "{both:?}");
     assert!(matches!(both.off, RequestError::Json(_)), "{both:?}");
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
     assert_eq!(
         prysm_ports::chain(&error),
         format!(
@@ -488,6 +502,7 @@ fn idle_failure_keeps_its_cause() {
     let error = output.idle(IdleMode::Off, &Hangup::default()).unwrap_err();
     assert!(error.to_string().contains("off mode"), "{error}");
     assert!(matches!(request_error(&error), RequestError::Status(404)));
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
     device.expect(&[live(), off()]);
 }
 
@@ -734,6 +749,26 @@ fn unresolvable_host_fails_open_naming_the_host() {
         ),
         "{source:?}"
     );
+    assert_eq!(error.escalation(), Escalation::Unanswered);
+}
+
+#[test]
+fn a_host_resolving_to_no_unicast_address_asks_for_other_settings() {
+    let settings = WledSettings {
+        address: "prysm-test.invalid".into(),
+        leds: one_each(),
+        dither: true,
+    };
+    let wled = Wled::default().with_lookup(|_, port| Ok(SocketAddr::from(([224, 0, 0, 1], port))));
+    let failure = wled.open(&settings, &Hangup::default()).err().unwrap();
+    let OpenFailure::Untouched(error) = failure else {
+        panic!("nothing reached it");
+    };
+    assert!(
+        error.to_string().contains("not a unicast address"),
+        "{error}"
+    );
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
 }
 
 /// A name whose lookup hangs fails each open at the deadline, and the
@@ -1137,6 +1172,7 @@ fn a_send_error_with_no_row_fails_write_at_once() {
             .is_some(),
         "{error:?}"
     );
+    assert_eq!(error.escalation(), Escalation::FAIL_FAST);
 }
 
 #[test]
@@ -1519,8 +1555,9 @@ fn an_open_output_encodes_for_wled_gamma() {
 /// The bound of a call the cut ends.
 const AT_ONCE: Duration = Duration::from_secs(1);
 
-/// Whether `error` says a cut ended it.
+/// Whether `error` says a cut ended it; such an error fails fast.
 fn stopped(error: &Error) -> bool {
+    assert_eq!(error.escalation(), Escalation::FAIL_FAST);
     error.cause::<prysm_ports::Stopping>().is_some()
 }
 
