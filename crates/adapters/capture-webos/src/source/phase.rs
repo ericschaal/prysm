@@ -52,7 +52,7 @@ pub(super) struct Refusal {
     initializations: u32,
 }
 
-/// Where a tap's period stands.
+/// Where a video tap's period stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Stage {
     /// No tap: open at `at`. A refusal runs on when its tap was released at
@@ -86,7 +86,10 @@ pub(super) enum Phase {
         /// How the next video fault of this period is logged.
         next_fault: Occurrence,
     },
-    Ui(Stage),
+    /// The TV UI tap, `held` once opened. It answers only a frame or a
+    /// fault (its driver has no separate initialisation), so it has none of
+    /// the video tap's stages: a fault ends its period.
+    Ui { held: bool },
 }
 
 /// The signal last seen, and when.
@@ -132,7 +135,9 @@ pub(super) enum Event {
     Released {
         wait: Duration,
     },
-    /// A sleep or an idle ended without a change of the signal.
+    /// A sleep or an idle ended without a change of the signal. The wanted
+    /// tap changes only with a signal (a TV UI fault ends its period
+    /// itself), so only the due step is decided.
     Woke,
     Stop,
 }
@@ -161,8 +166,9 @@ pub(super) enum Action {
 pub(super) enum Then {
     /// Go on with the step's other actions.
     Nothing,
-    /// Answer with [`Event::Released`] and this `wait`: the tap was released
-    /// after a fault and reopens `wait` after the release completes.
+    /// Answer with [`Event::Released`] and this `wait`: the video tap was
+    /// released after a fault and reopens `wait` after the release
+    /// completes.
     Reopen { wait: Duration },
 }
 
@@ -346,7 +352,8 @@ impl Stage {
 }
 
 impl Phase {
-    /// A new period for `kind` at `stage`: its first video fault is news.
+    /// A new period for `kind` at `stage`: its first video fault is news. A
+    /// TV UI period keeps only whether `stage` holds a tap.
     fn begin(kind: Option<Kind>, stage: Stage) -> Self {
         match kind {
             None => Self::Idle,
@@ -354,7 +361,9 @@ impl Phase {
                 stage,
                 next_fault: Occurrence::First,
             },
-            Some(Kind::Ui) => Self::Ui(stage),
+            Some(Kind::Ui) => Self::Ui {
+                held: stage.holds_tap(),
+            },
         }
     }
 
@@ -362,23 +371,31 @@ impl Phase {
         match self {
             Self::Idle => None,
             Self::Video { .. } => Some(Kind::Video),
-            Self::Ui(_) => Some(Kind::Ui),
+            Self::Ui { .. } => Some(Kind::Ui),
         }
     }
 
-    fn stage(self) -> Option<Stage> {
+    fn holds_tap(self) -> bool {
         match self {
-            Self::Idle => None,
-            Self::Video { stage, .. } | Self::Ui(stage) => Some(stage),
+            Self::Idle => false,
+            Self::Video { stage, .. } => stage.holds_tap(),
+            Self::Ui { held } => held,
         }
     }
 
-    /// The same period at `stage`; idle stays idle.
+    /// The video tap's refusal; none for any other.
+    fn refusal(self) -> Option<Refusal> {
+        match self {
+            Self::Video { stage, .. } => stage.refusal(),
+            Self::Idle | Self::Ui { .. } => None,
+        }
+    }
+
+    /// The same video period at `stage`.
     fn at(self, stage: Stage) -> Self {
         match self {
-            Self::Idle => Self::Idle,
             Self::Video { next_fault, .. } => Self::Video { stage, next_fault },
-            Self::Ui(_) => Self::Ui(stage),
+            Self::Idle | Self::Ui { .. } => unreachable!("only a video period has stages"),
         }
     }
 }
@@ -414,10 +431,7 @@ pub(super) fn next(mut state: State, event: Event, now: Instant, rules: &Rules) 
             state.choose_tap(context_changed, created_only, now, rules, out);
             state.decide(now, out);
         }
-        Event::Woke => {
-            state.choose_tap(false, false, now, rules, out);
-            state.decide(now, out);
-        }
+        Event::Woke => state.decide(now, out),
         Event::Opened => state.opened(out),
         Event::OpenFailed(fault) => state.recover(fault, Reopen::AfterRetry, now, rules, out),
         Event::Acquired {
@@ -432,7 +446,7 @@ pub(super) fn next(mut state: State, event: Event, now: Instant, rules: &Rules) 
             state.pace(now, rules, out);
         }
         Event::Stop => {
-            if state.phase.stage().is_some_and(Stage::holds_tap) {
+            if state.phase.holds_tap() {
                 out.push(Action::Release(Then::Nothing));
             }
             state.phase = Phase::Idle;
@@ -489,10 +503,12 @@ impl State {
         if video_changed || context_changed {
             self.ui = self.ui.after_change();
         }
-        if let Some(stage) = self.phase.stage()
-            && stage.refusal().is_some()
-        {
-            if let Stage::Refused(refusal) = stage {
+        if self.phase.refusal().is_some() {
+            if let Phase::Video {
+                stage: Stage::Refused(refusal),
+                ..
+            } = self.phase
+            {
                 self.phase = self.phase.at(Stage::Reinitialising(refusal));
             }
             out.push(Action::Note(Note::ChangedWhileRefused {
@@ -523,9 +539,8 @@ impl State {
         if kind == self.phase.kind() && !context_changed {
             return;
         }
-        let stage = self.phase.stage();
-        let held = stage.is_some_and(Stage::holds_tap);
-        let refusal = stage.and_then(Stage::refusal);
+        let held = self.phase.holds_tap();
+        let refusal = self.phase.refusal();
         let stage = if kind != self.phase.kind() {
             if held {
                 out.push(Action::Release(Then::Nothing));
@@ -555,40 +570,47 @@ impl State {
     /// Idle without a tap wanted or while refused; wait for a deadline not
     /// reached; else open or acquire.
     fn decide(&self, now: Instant, out: &mut Vec<Action>) {
-        let Some(kind) = self.phase.kind() else {
-            out.push(Action::Idle);
-            return;
-        };
-        match self.phase.stage() {
-            None | Some(Stage::Refused(_)) => out.push(Action::Idle),
-            Some(Stage::Closed { at, .. } | Stage::Preparing { at, .. }) if now < at => {
-                out.push(Action::Sleep(at - now));
-            }
-            Some(Stage::Closed { .. }) => out.push(Action::Open(kind)),
-            Some(
-                Stage::Running
-                | Stage::Preparing { .. }
-                | Stage::Pending { .. }
-                | Stage::Reinitialising(_),
-            ) => out.push(Action::Acquire),
-        }
+        out.push(match self.phase {
+            Phase::Idle
+            | Phase::Video {
+                stage: Stage::Refused(_),
+                ..
+            } => Action::Idle,
+            Phase::Ui { held: false } => Action::Open(Kind::Ui),
+            Phase::Ui { held: true } => Action::Acquire,
+            Phase::Video {
+                stage: Stage::Closed { at, .. } | Stage::Preparing { at, .. },
+                ..
+            } if now < at => Action::Sleep(at - now),
+            Phase::Video {
+                stage: Stage::Closed { .. },
+                ..
+            } => Action::Open(Kind::Video),
+            Phase::Video { .. } => Action::Acquire,
+        });
     }
 
     /// The tap opened: acquire at once, in the same step.
     fn opened(&mut self, out: &mut Vec<Action>) {
-        if let Some(Stage::Closed { refusal, .. }) = self.phase.stage() {
-            self.phase = self
+        self.phase = match self.phase {
+            Phase::Video {
+                stage: Stage::Closed { refusal, .. },
+                ..
+            } => self
                 .phase
-                .at(refusal.map_or(Stage::Running, Stage::Reinitialising));
-            out.push(Action::Acquire);
-        }
+                .at(refusal.map_or(Stage::Running, Stage::Reinitialising)),
+            Phase::Ui { held: false } => Phase::Ui { held: true },
+            _ => return,
+        };
+        out.push(Action::Acquire);
     }
 }
 
 impl State {
-    /// Act on one acquisition, an `initializing` one if the driver was
-    /// created-only: a refusal starts, goes on or ends; then publish a
-    /// frame, time a pending or preparing driver, or recover from a fault.
+    /// Act on one acquisition; a TV UI answer goes to [`Self::ui_acquired`].
+    /// For video, an `initializing` one if the driver was created-only: a
+    /// refusal starts, goes on or ends; then publish a frame, time a pending
+    /// or preparing driver, or recover from a fault.
     fn acquired(
         &mut self,
         answer: Result<Acquired, Fault>,
@@ -597,6 +619,13 @@ impl State {
         rules: &Rules,
         out: &mut Vec<Action>,
     ) {
+        let stage = match self.phase {
+            Phase::Video { stage, .. } => stage,
+            Phase::Ui { .. } => return self.ui_acquired(answer, now, rules, out),
+            Phase::Idle => {
+                unreachable!("an acquisition answers an acquire, asked only of a tap's period")
+            }
+        };
         let outcome = Answer::of(&answer);
         if initializing {
             out.push(Action::Note(Note::InitializationAnswered {
@@ -604,10 +633,6 @@ impl State {
                 since_change_ms: self.since_change(now),
             }));
         }
-        let stage = self
-            .phase
-            .stage()
-            .expect("an acquisition answers an acquire, asked only of a tap's period");
         let refusal = stage.refusal();
         match outcome {
             Answer::Refused => self.refused(refusal, now, out),
@@ -632,21 +657,10 @@ impl State {
         }
         match answer {
             Ok(Acquired::Frame(frame)) => {
-                self.phase = match self.phase.at(Stage::Running) {
-                    Phase::Video { stage, .. } => Phase::Video {
-                        stage,
-                        next_fault: Occurrence::First,
-                    },
-                    other => other,
+                self.phase = Phase::Video {
+                    stage: Stage::Running,
+                    next_fault: Occurrence::First,
                 };
-                // The first UI frame is reported once.
-                if matches!(self.phase, Phase::Ui(_)) && self.ui != UiSupport::Works {
-                    self.ui = UiSupport::Works;
-                    out.push(Action::Note(Note::UiCapturing {
-                        width: frame.width(),
-                        height: frame.height(),
-                    }));
-                }
                 out.push(Action::Deliver(frame));
             }
             Ok(Acquired::Pending) => {
@@ -687,6 +701,34 @@ impl State {
         }
         self.pace(now, rules, out);
     }
+
+    /// A TV UI tap answers only a frame or a fault, as its tap
+    /// ([`super::Tap`] over the HAL GAL plane) is written: the first frame
+    /// since a fault is reported once, delivered and paced; a fault ends
+    /// the UI period.
+    fn ui_acquired(
+        &mut self,
+        answer: Result<Acquired, Fault>,
+        now: Instant,
+        rules: &Rules,
+        out: &mut Vec<Action>,
+    ) {
+        match answer {
+            Ok(Acquired::Frame(frame)) => {
+                if self.ui != UiSupport::Works {
+                    self.ui = UiSupport::Works;
+                    out.push(Action::Note(Note::UiCapturing {
+                        width: frame.width(),
+                        height: frame.height(),
+                    }));
+                }
+                out.push(Action::Deliver(frame));
+                self.pace(now, rules, out);
+            }
+            Err(fault) => self.ui_fault(fault, now, out),
+            Ok(other) => unreachable!("a TV UI tap answers only a frame or a fault, not {other:?}"),
+        }
+    }
 }
 
 impl State {
@@ -716,10 +758,8 @@ impl State {
         self.phase = self.phase.at(Stage::Refused(refusal));
     }
 
-    /// Fatal video faults end the source; others release the tap and
-    /// reopen later. UI faults never end the source: lighting idles without
-    /// video until the video or its context changes (a fault that may pass)
-    /// or the next source (one that cannot).
+    /// A fault of the period's open or acquire: a TV UI fault or a video
+    /// one.
     fn recover(
         &mut self,
         fault: Fault,
@@ -728,34 +768,56 @@ impl State {
         rules: &Rules,
         out: &mut Vec<Action>,
     ) {
-        let (stage, wait) = match &mut self.phase {
-            Phase::Video { stage, next_fault } => {
-                let stage = *stage;
-                let Some(wait) = video_wait(fault.recovery, reopen, &rules.limits) else {
-                    return self.fail(fault.error, out);
-                };
-                out.push(Action::Note(Note::VideoRetrying {
-                    error: fault.error,
-                    retry_in: wait,
-                    occurrence: std::mem::replace(next_fault, Occurrence::Again),
-                }));
-                (stage, wait)
-            }
-            Phase::Ui(stage) => {
-                let stage = *stage;
-                let occurrence = self.ui.occurrence();
-                self.ui = UiSupport::after_fault(fault.recovery);
-                let error = fault.error;
-                out.push(Action::Note(match self.ui {
-                    UiSupport::Unsupported => Note::UiUnsupported { error, occurrence },
-                    _ => Note::UiFailed { error, occurrence },
-                }));
-                (stage, rules.limits.retry)
-            }
+        match self.phase {
+            Phase::Video { .. } => self.video_fault(fault, reopen, now, rules, out),
+            Phase::Ui { .. } => self.ui_fault(fault, now, out),
             Phase::Idle => {
                 unreachable!("a fault answers an open or acquire, asked only of a tap's period")
             }
+        }
+    }
+
+    /// A TV UI fault never ends the source, and ends the UI period: a held
+    /// tap is released and lighting idles without video until the video or
+    /// its context changes (a fault that may pass) or the next source (one
+    /// that cannot).
+    fn ui_fault(&mut self, fault: Fault, now: Instant, out: &mut Vec<Action>) {
+        let occurrence = self.ui.occurrence();
+        self.ui = UiSupport::after_fault(fault.recovery);
+        let error = fault.error;
+        out.push(Action::Note(match self.ui {
+            UiSupport::Unsupported => Note::UiUnsupported { error, occurrence },
+            _ => Note::UiFailed { error, occurrence },
+        }));
+        if self.phase.holds_tap() {
+            out.push(Action::Release(Then::Nothing));
+        }
+        self.phase = Phase::Idle;
+        self.decide(now, out);
+    }
+
+    /// A fatal video fault ends the source; any other releases the tap and
+    /// reopens it later.
+    fn video_fault(
+        &mut self,
+        fault: Fault,
+        reopen: Reopen,
+        now: Instant,
+        rules: &Rules,
+        out: &mut Vec<Action>,
+    ) {
+        let Phase::Video { stage, next_fault } = &mut self.phase else {
+            unreachable!("a video fault answers a video period");
         };
+        let stage = *stage;
+        let Some(wait) = video_wait(fault.recovery, reopen, &rules.limits) else {
+            return self.fail(fault.error, out);
+        };
+        out.push(Action::Note(Note::VideoRetrying {
+            error: fault.error,
+            retry_in: wait,
+            occurrence: std::mem::replace(next_fault, Occurrence::Again),
+        }));
         if stage.holds_tap() {
             // Reopened `wait` from after the release, which can take until
             // the watchdog: [`Event::Released`] counts it again and paces.
@@ -776,7 +838,7 @@ impl State {
     /// End the source with `error`; a held tap is released after.
     fn fail(&mut self, error: Error, out: &mut Vec<Action>) {
         out.push(Action::Fail(error));
-        if self.phase.stage().is_some_and(Stage::holds_tap) {
+        if self.phase.holds_tap() {
             out.push(Action::Release(Then::Nothing));
         }
         self.phase = Phase::Idle;
@@ -922,10 +984,7 @@ mod tests {
             (
                 Video::Unavailable,
                 RULES,
-                Phase::Ui(Stage::Closed {
-                    at: t0,
-                    refusal: None,
-                }),
+                Phase::Ui { held: false },
                 Action::Open(Kind::Ui),
             ),
             (Video::Unavailable, NO_UI, Phase::Idle, Action::Idle),
@@ -1017,11 +1076,11 @@ mod tests {
             }
             actions.extend([Action::Deliver(frame.clone()), Action::Sleep(INTERVAL)]);
             let state = check(
-                at(t0, Phase::Ui(Stage::Running), ui),
+                at(t0, Phase::Ui { held: true }, ui),
                 acquired(Ok(Acquired::Frame(frame.clone())), false),
                 t0,
                 &RULES,
-                Phase::Ui(Stage::Running),
+                Phase::Ui { held: true },
                 &actions,
             );
             assert_eq!(state.ui, UiSupport::Works);
@@ -1352,7 +1411,7 @@ mod tests {
                 format!("{:?}", &step.actions[..2]),
                 format!("{:?}", [Action::Refused(false), Action::Note(note)])
             );
-            assert_eq!(step.state.phase.stage().and_then(Stage::refusal), None);
+            assert_eq!(step.state.phase.refusal(), None);
         }
     }
 
@@ -1585,11 +1644,13 @@ mod tests {
             Stage::Refused(r),
             Stage::Reinitialising(r),
         ];
-        let mut cases = vec![(Phase::Idle, false)];
-        cases.extend([(video(closed), false), (Phase::Ui(closed), false)]);
-        for stage in held {
-            cases.extend([(video(stage), true), (Phase::Ui(stage), true)]);
-        }
+        let mut cases = vec![
+            (Phase::Idle, false),
+            (video(closed), false),
+            (Phase::Ui { held: false }, false),
+            (Phase::Ui { held: true }, true),
+        ];
+        cases.extend(held.map(|stage| (video(stage), true)));
         for (phase, release) in cases {
             let actions: &[Action] = if release {
                 &[Action::Release(Then::Nothing)]
@@ -1612,14 +1673,10 @@ mod tests {
     #[test]
     fn a_failed_ui_is_tried_again_after_video_comes_and_goes() {
         let t0 = Instant::now();
-        let mut state = at(t0, Phase::Ui(Stage::Running), UiSupport::Works);
+        let mut state = at(t0, Phase::Ui { held: true }, UiSupport::Works);
         state.seen = Some(Seen {
             readiness: ready(Video::Unavailable, 0, 1),
             at: t0,
-        });
-        let closed = Phase::Ui(Stage::Closed {
-            at: ms(t0, 1000),
-            refusal: None,
         });
         let ui_failed = |occurrence| {
             note(Note::UiFailed {
@@ -1632,31 +1689,14 @@ mod tests {
             acquired(Err(fault()), false),
             t0,
             &RULES,
-            closed,
+            Phase::Idle,
             &[
                 ui_failed(Occurrence::First),
-                Action::Release(Then::Reopen { wait: LIMITS.retry }),
+                Action::Release(Then::Nothing),
+                Action::Idle,
             ],
         );
         assert_eq!(state.ui, UiSupport::Failed);
-        // Released at once: due `retry` from now.
-        let state = check(
-            state,
-            Event::Released { wait: LIMITS.retry },
-            t0,
-            &RULES,
-            closed,
-            &[Action::Sleep(INTERVAL)],
-        );
-        // The next run of the loop finds no tap wanted.
-        let state = check(
-            state,
-            Event::Woke,
-            ms(t0, 100),
-            &RULES,
-            Phase::Idle,
-            &[Action::Idle],
-        );
         let back = ready(Video::Available, 0, 2);
         let state = next(state, signal(back, false), ms(t0, 200), &RULES).state;
         assert_eq!(state.ui, UiSupport::Again);
@@ -1667,10 +1707,7 @@ mod tests {
             signal(gone, false),
             ms(t0, 300),
             &RULES,
-            Phase::Ui(Stage::Closed {
-                at: ms(t0, 300),
-                refusal: None,
-            }),
+            Phase::Ui { held: false },
             &[
                 note(Note::SignalChanged(gone)),
                 note(Note::VideoChanged(Video::Unavailable)),
@@ -1683,39 +1720,38 @@ mod tests {
             Event::OpenFailed(fault()),
             ms(t0, 300),
             &RULES,
-            Phase::Ui(Stage::Closed {
-                at: ms(t0, 1300),
-                refusal: None,
-            }),
-            &[ui_failed(Occurrence::Again), Action::Sleep(Duration::ZERO)],
+            Phase::Idle,
+            &[ui_failed(Occurrence::Again), Action::Idle],
         );
         assert_eq!(state.ui, UiSupport::Failed);
     }
 
-    /// A UI fault's `retry` never elapses: the next run finds no UI wanted,
-    /// and a context reset that revives it opens it at once.
+    /// A UI fault ends the UI period with no timer: a wake without a
+    /// signal only idles, and a context reset that revives the UI opens it
+    /// at once.
     #[test]
-    fn a_ui_fault_retry_is_overtaken() {
+    fn a_failed_ui_waits_for_a_signal() {
         let t0 = Instant::now();
-        let closed = Phase::Ui(Stage::Closed {
-            at: ms(t0, 1000),
-            refusal: None,
-        });
-        let mut state = at(t0, closed, UiSupport::Failed);
+        let mut state = at(t0, Phase::Idle, UiSupport::Failed);
         state.seen = Some(Seen {
             readiness: ready(Video::Unavailable, 0, 1),
             at: t0,
         });
+        let state = check(
+            state,
+            Event::Woke,
+            ms(t0, 100),
+            &RULES,
+            Phase::Idle,
+            &[Action::Idle],
+        );
         let reset = ready(Video::Unavailable, 1, 2);
         check(
             state,
             signal(reset, false),
             ms(t0, 100),
             &RULES,
-            Phase::Ui(Stage::Closed {
-                at: ms(t0, 100),
-                refusal: None,
-            }),
+            Phase::Ui { held: false },
             &[note(Note::SignalChanged(reset)), Action::Open(Kind::Ui)],
         );
         // Only the sequence: the UI stays failed, so no tap is wanted.
@@ -1734,13 +1770,9 @@ mod tests {
     #[test]
     fn an_unsupported_ui_is_never_opened_again() {
         let t0 = Instant::now();
-        let closed = Phase::Ui(Stage::Closed {
-            at: t0,
-            refusal: None,
-        });
         let error = Error::other("no library");
         let state = next(
-            at(t0, closed, UiSupport::Untried),
+            at(t0, Phase::Ui { held: false }, UiSupport::Untried),
             Event::OpenFailed(Fault::fatal(error.clone())),
             t0,
             &RULES,
@@ -1894,51 +1926,65 @@ mod tests {
         }
     }
 
-    /// A TV UI tap answers as a video one would: a stall waits `retry`, a
-    /// driver not ready too long fails the source.
+    /// A TV UI fault, of an open or of an acquisition, ends the UI period at
+    /// once: a held tap is released, then the source idles. It never fails
+    /// the source, even when it cannot heal.
     #[test]
-    fn a_ui_tap_stalls_and_prepares_like_video() {
+    fn a_ui_fault_goes_straight_to_no_tap() {
         let t0 = Instant::now();
-        let stalled = Error::other(format!(
-            "webOS video produced no frame for {:?}",
-            LIMITS.pending
-        ));
-        let state = at(
-            t0,
-            Phase::Ui(Stage::Pending { since: t0 }),
-            UiSupport::Works,
-        );
-        let after = check(
-            state,
-            acquired(Ok(Acquired::Pending), false),
-            ms(t0, 2000),
-            &RULES,
-            Phase::Ui(Stage::Closed {
-                at: ms(t0, 2000) + LIMITS.retry,
-                refusal: None,
-            }),
-            &[
-                note(Note::UiFailed {
-                    error: stalled,
-                    occurrence: Occurrence::First,
-                }),
-                Action::Release(Then::Reopen { wait: LIMITS.retry }),
-            ],
-        );
-        assert_eq!(after.ui, UiSupport::Failed);
-        let preparing = Phase::Ui(Stage::Preparing { since: t0, at: t0 });
-        let failed = Error::other(format!(
-            "webOS video was not ready within {:?}",
-            LIMITS.preparation
-        ));
-        check(
-            at(t0, preparing, UiSupport::Works),
-            acquired(Ok(Acquired::NotReady), false),
-            ms(t0, 10_000),
-            &RULES,
-            Phase::Idle,
-            &[Action::Fail(failed), Action::Release(Then::Nothing)],
-        );
+        for (held, fault, ui) in [
+            (false, fault(), UiSupport::Failed),
+            (true, fault(), UiSupport::Failed),
+            (
+                false,
+                Fault::fatal(Error::other("x")),
+                UiSupport::Unsupported,
+            ),
+            (
+                true,
+                Fault::fatal(Error::other("x")),
+                UiSupport::Unsupported,
+            ),
+        ] {
+            let error = fault.error.clone();
+            let event = if held {
+                acquired(Err(fault), false)
+            } else {
+                Event::OpenFailed(fault)
+            };
+            let occurrence = Occurrence::First;
+            let mut actions = vec![note(match ui {
+                UiSupport::Unsupported => Note::UiUnsupported { error, occurrence },
+                _ => Note::UiFailed { error, occurrence },
+            })];
+            if held {
+                actions.push(Action::Release(Then::Nothing));
+            }
+            actions.push(Action::Idle);
+            let state = at(t0, Phase::Ui { held }, UiSupport::Works);
+            let after = check(state, event, t0, &RULES, Phase::Idle, &actions);
+            assert_eq!(after.ui, ui, "{held}");
+        }
+    }
+
+    /// A TV UI tap answers only a frame or a fault; any other answer is a
+    /// broken tap.
+    #[test]
+    fn a_ui_tap_answers_only_a_frame_or_a_fault() {
+        for answer in [Acquired::Pending, Acquired::NotReady, Acquired::Refused] {
+            let t0 = Instant::now();
+            let state = at(t0, Phase::Ui { held: true }, UiSupport::Works);
+            let broken =
+                std::panic::catch_unwind(|| next(state, acquired(Ok(answer), false), t0, &RULES))
+                    .expect_err("a UI tap's non-frame answer panics");
+            let message = broken
+                .downcast_ref::<String>()
+                .expect("a formatted panic message");
+            assert!(
+                message.contains("a TV UI tap answers only a frame or a fault"),
+                "{message}"
+            );
+        }
     }
 
     /// A change of kind ends a refusal that outlived its tap, with nothing
@@ -2028,12 +2074,9 @@ mod tests {
         let reset = ready(Video::Unavailable, 1, 2);
         for (phase, rules, after, actions) in [
             (
-                Phase::Ui(Stage::Running),
+                Phase::Ui { held: true },
                 RULES,
-                Phase::Ui(Stage::Closed {
-                    at: t0,
-                    refusal: None,
-                }),
+                Phase::Ui { held: false },
                 vec![Action::Release(Then::Nothing), Action::Open(Kind::Ui)],
             ),
             (Phase::Idle, NO_UI, Phase::Idle, vec![Action::Idle]),
