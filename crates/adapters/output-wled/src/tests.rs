@@ -2,7 +2,7 @@
 use crate::address::{DeviceAddress, Host};
 use crate::ddp::{Gamma, Transfer};
 use crate::http::{self, RequestError, TIMEOUT};
-use crate::observe::{BACKOFF, EVERY, Observer, REPLY};
+use crate::observe::{EVERY, Observer, REPLY};
 use crate::output::NotTurnedOff;
 use crate::{IDLE_LIMIT, LedCounts, MAX_LEDS, OPEN_LIMIT, Wled, WledSettings};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
@@ -1038,52 +1038,54 @@ fn a_dripping_state_reply_is_abandoned_at_the_deadline() {
     assert!(!observer.checking());
 }
 
-/// After a usable state the next check is [`EVERY`] later; after none,
-/// [`BACKOFF`] times that.
+/// Each check is [`EVERY`] after the last one ended, whether it got a
+/// usable state or none.
 #[test]
-fn state_checks_wait_every_and_back_off_after_no_answer() {
-    let every = EVERY;
+fn state_checks_keep_one_pace_whatever_they_answered() {
     let just = Duration::from_millis(1);
-    let device = Device::new(vec![healthy(), Reply::Raw(String::new()), healthy()]);
+    let device = Device::new(vec![
+        healthy(),
+        Reply::Raw(String::new()),
+        Reply::Raw(String::new()),
+        healthy(),
+    ]);
     let t0 = Instant::now();
     let mut observer =
-        Observer::new(device.http(), &device.address("127.0.0.1"), every, t0).state_only();
-    let mut answered = t0;
-    // The first check is `every` after the observer starts.
-    for (wait, found) in [
-        (every, None),
-        (every, Some(OutputIssue::Unreachable)),
-        (every * BACKOFF, None),
-    ] {
-        let due = answered + wait;
+        Observer::new(device.http(), &device.address("127.0.0.1"), EVERY, t0).state_only();
+    // The first check is `EVERY` after the observer starts.
+    for (n, found) in (1..).zip([
+        None,
+        Some(OutputIssue::Unreachable),
+        Some(OutputIssue::Unreachable),
+        None,
+    ]) {
+        let due = t0 + EVERY * n;
         observer.poll(due - just);
         assert!(!observer.checking(), "a check before it was due");
         assert_eq!(check_at(&mut observer, due), found);
         device.check_request();
-        answered = due;
     }
 }
 
-/// A configuration read that WLED refuses backs the next check off too.
+/// A configuration read that WLED refuses keeps the pace too.
 #[test]
-fn a_refused_configuration_read_backs_off() {
-    let every = EVERY;
+fn a_refused_configuration_read_keeps_the_pace() {
     let device = Device::new(vec![at(255), refused(), at(255)]);
     let t0 = Instant::now();
-    let mut observer = Observer::new(device.http(), &device.address("127.0.0.1"), every, t0);
-    let first = t0 + every;
+    let mut observer = Observer::new(device.http(), &device.address("127.0.0.1"), EVERY, t0);
+    let first = t0 + EVERY;
     assert_eq!(check_at(&mut observer, first), None);
     device.check_request();
-    let second = first + every;
+    let second = first + EVERY;
     assert_eq!(
         check_at(&mut observer, second),
         None,
         "a refusal is no issue"
     );
     device.get_request("/json/cfg");
-    let third = second + every * BACKOFF;
+    let third = second + EVERY;
     observer.poll(third - Duration::from_millis(1));
-    assert!(!observer.checking(), "backed off");
+    assert!(!observer.checking(), "a check before it was due");
     assert_eq!(check_at(&mut observer, third), None);
     device.check_request();
 }

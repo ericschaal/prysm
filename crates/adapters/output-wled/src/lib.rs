@@ -36,7 +36,7 @@
 //! for the next one), and discovery's requests run on scoped threads it
 //! joins. The time limits are deadlines on calls, never retries:
 //! `http::TIMEOUT` for a resolution or a mode change,
-//! the state check's cadence, backoff and reply deadline, `ddp`'s
+//! the state check's cadence and reply deadline, `ddp`'s
 //! `SEND_GRACE` before failing sends fail `write`, and `discover`'s answer
 //! window and per-device request limit. The runtime rewrites the last colours
 //! while the source is briefly quiet, which keeps WLED in live mode, and after
