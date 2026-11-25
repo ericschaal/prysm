@@ -98,8 +98,7 @@ mod desktop {
 
 use futures::future::BoxFuture;
 use prysm_ports::{
-    Error, Escalation, Fix, Handoff, LightingTarget, OutputIssue, Result, SessionState, Snapshot,
-    chain,
+    Error, Handoff, LightingTarget, OutputIssue, Result, SessionState, Snapshot, chain,
 };
 use prysm_runtime::logging::{self, Logs};
 use prysm_runtime::{Builder, EngineHandle, Prysm, Shutdown, Surface};
@@ -597,7 +596,7 @@ impl Seen {
         if let SessionState::Faulted(phase) = snapshot.session {
             state = format!(
                 "{state} ({})",
-                next_step(Error::Faulted(phase).escalation())
+                Error::Faulted(phase).escalation().next_step()
             );
         }
         if self.state.as_ref() != Some(&state) {
@@ -619,7 +618,7 @@ impl Seen {
         let failure = snapshot
             .session
             .failure()
-            .map(|failure| format!("{} ({})", chain(failure), next_step(failure.escalation())));
+            .map(|failure| format!("{} ({})", chain(failure), failure.escalation().next_step()));
         if failure != self.failure {
             if let Some(failure) = &failure {
                 lines.push(format!("lighting failed: {failure}"));
@@ -630,7 +629,7 @@ impl Seen {
             lines.push(format!(
                 "surface failed, lighting continues: {} ({})",
                 chain(failure),
-                next_step(failure.escalation())
+                failure.escalation().next_step()
             ));
         }
         self.surface_failures = snapshot.surface_failures.len();
@@ -638,48 +637,9 @@ impl Seen {
     }
 }
 
-/// The person's next step after a failure that leaves `escalation`. A
-/// desktop host restarts and retries nothing, so `Restart` is the person's
-/// too. `Unanswered` reaches a host only where nothing waits for the lights:
-/// a shutdown's last try, or the idle of a session the target moved away
-/// from.
-const fn next_step(escalation: Escalation) -> &'static str {
-    match escalation {
-        Escalation::Restart => "restart Prysm",
-        Escalation::Unanswered => "check that the lights are on and on the network",
-        Escalation::Ask(Fix::TryAgain) => "try again",
-        Escalation::Ask(Fix::ChangeSettings) => "change the settings",
-        Escalation::Ask(Fix::SetUp) => "run the setup again",
-        Escalation::Ask(Fix::Unsupported) => "not supported on this device",
-        Escalation::Ask(Fix::RestartTv) => "restart the TV",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn each_escalation_names_one_next_step() {
-        let steps = [
-            (Escalation::Restart, "restart Prysm"),
-            (
-                Escalation::Unanswered,
-                "check that the lights are on and on the network",
-            ),
-            (Escalation::Ask(Fix::TryAgain), "try again"),
-            (Escalation::Ask(Fix::ChangeSettings), "change the settings"),
-            (Escalation::Ask(Fix::SetUp), "run the setup again"),
-            (
-                Escalation::Ask(Fix::Unsupported),
-                "not supported on this device",
-            ),
-            (Escalation::Ask(Fix::RestartTv), "restart the TV"),
-        ];
-        for (escalation, step) in steps {
-            assert_eq!(next_step(escalation), step, "{escalation:?}");
-        }
-    }
 
     #[test]
     fn status_reports_only_changes() {

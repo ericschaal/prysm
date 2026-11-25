@@ -29,6 +29,23 @@ impl Escalation {
     /// Fail fast: nothing recovers this automatically; the person is told
     /// and decides whether to try again.
     pub const FAIL_FAST: Self = Self::Ask(Fix::TryAgain);
+
+    /// The person's next step on a desktop host, which restarts and retries
+    /// nothing, so `Restart` is the person's too. `Unanswered` reaches a
+    /// desktop host only where nothing waits for the lights: a shutdown's
+    /// last try, or the idle of a session the target moved away from.
+    #[must_use]
+    pub const fn next_step(self) -> &'static str {
+        match self {
+            Self::Restart => "restart Prysm",
+            Self::Unanswered => "check that the lights are on and on the network",
+            Self::Ask(Fix::TryAgain) => "try again",
+            Self::Ask(Fix::ChangeSettings) => "change the settings",
+            Self::Ask(Fix::SetUp) => "run the setup again",
+            Self::Ask(Fix::Unsupported) => "not supported on this device",
+            Self::Ask(Fix::RestartTv) => "restart the TV",
+        }
+    }
 }
 
 /// The person's next step.
@@ -107,6 +124,28 @@ mod tests {
         for (fix, json) in fixes {
             assert_eq!(serde_json::to_string(&fix).unwrap(), json);
             assert_eq!(serde_json::from_str::<Fix>(json).unwrap(), fix);
+        }
+    }
+
+    #[test]
+    fn each_escalation_names_one_next_step() {
+        let steps = [
+            (Escalation::Restart, "restart Prysm"),
+            (
+                Escalation::Unanswered,
+                "check that the lights are on and on the network",
+            ),
+            (Escalation::Ask(Fix::TryAgain), "try again"),
+            (Escalation::Ask(Fix::ChangeSettings), "change the settings"),
+            (Escalation::Ask(Fix::SetUp), "run the setup again"),
+            (
+                Escalation::Ask(Fix::Unsupported),
+                "not supported on this device",
+            ),
+            (Escalation::Ask(Fix::RestartTv), "restart the TV"),
+        ];
+        for (escalation, step) in steps {
+            assert_eq!(escalation.next_step(), step, "{escalation:?}");
         }
     }
 }

@@ -2,7 +2,7 @@
 use crate::input::{Notice, Severity, Ui, clean};
 use crate::video::{self, HalfBlocks};
 use prysm_core::{ColorStrip, EdgeColors};
-use prysm_ports::{AdapterSettings, Picture, SessionState, Snapshot, chain};
+use prysm_ports::{AdapterSettings, Error, Picture, SessionState, Snapshot, chain};
 use prysm_runtime::Preview;
 use ratatui::{
     Frame,
@@ -216,24 +216,30 @@ fn field(name: &str, value: String) -> Line<'static> {
     ])
 }
 
-/// Lighting failure, surface failures, then notices; newest first.
+/// Lighting failure, surface failures, then notices; newest first. Each
+/// failure ends with the person's next step.
 pub(crate) fn diagnostics(view: &View<'_>) -> Vec<Line<'static>> {
     let snapshot = view.snapshot;
-    let failures = snapshot
-        .session
-        .failure()
-        .into_iter()
-        .map(|error| Notice::error(format!("Lighting: {}", chain(error))));
+    let lighting = match &snapshot.session {
+        SessionState::Faulted(phase) => Some(Error::Faulted(*phase)),
+        session => session.failure().cloned(),
+    };
+    let failures = lighting.iter().map(|error| failed("Lighting", error));
     let surfaces = snapshot
         .surface_failures
         .iter()
         .rev()
-        .map(|error| Notice::error(format!("Surface: {}", chain(error))));
+        .map(|error| failed("Surface", error));
     failures
         .chain(surfaces)
         .chain(view.ui.notices().cloned())
         .map(|notice| event_line(&notice))
         .collect()
+}
+
+fn failed(what: &str, error: &Error) -> Notice {
+    let step = error.escalation().next_step();
+    Notice::error(format!("{what}: {} ({step})", chain(error)))
 }
 
 fn event_line(notice: &Notice) -> Line<'static> {
@@ -575,8 +581,11 @@ mod tests {
         };
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         let text = draw(&mut terminal, &view);
-        assert!(text.contains("capture failed: device unplugged"), "{text}");
-        assert!(text.contains("portal could not bind"));
+        assert!(
+            text.contains("capture failed: device unplugged (try again)"),
+            "{text}"
+        );
+        assert!(text.contains("portal could not bind (try again)"));
         assert!(text.contains("Session   effects"), "{text}");
         assert!(text.find("newest event") < text.find("older event"));
         assert!(text.contains("q quit"));
@@ -730,6 +739,7 @@ mod tests {
             text.contains("Session did not finish; only shutdown is accepted"),
             "{text}"
         );
+        assert!(text.contains("(restart Prysm)"), "{text}");
     }
 
     #[test]
