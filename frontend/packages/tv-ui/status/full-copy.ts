@@ -45,7 +45,7 @@ function askedCopy(asked: Asked, headline: Headline): Copy {
   const fixes: Record<Fix, Copy> = {
     try_again: {
       title,
-      description: 'Try again, or choose another mode.',
+      description: 'Something went wrong. Try again to restart it.',
       attention: true,
     },
     // Trying again cannot help settings Prysm can't use.

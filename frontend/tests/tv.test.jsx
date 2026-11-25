@@ -946,7 +946,7 @@ test('what the service asks has its words and its button in each package', () =>
       [reach, 'Prysm stopped trying. Check them, then try again.', 'Try again'],
       [
         'Screen sync stopped',
-        'Try again, or choose another mode.',
+        'Something went wrong. Try again to restart it.',
         'Try again',
       ],
       ['Screen sync stopped', 'Change the settings in the web portal.', ''],
@@ -1007,7 +1007,11 @@ test('what the service asks has its words and its button in each package', () =>
   const off = status('full', { target: 'off', ...asking(ask('try_again')) });
   assert.deepEqual(
     [off.title, off.description, off.action],
-    ['Prysm stopped', 'Try again, or choose another mode.', 'retry'],
+    [
+      'Prysm stopped',
+      'Something went wrong. Try again to restart it.',
+      'retry',
+    ],
   );
   assert.equal(
     status('full', asking(ask('try_again'))).title,
@@ -1952,7 +1956,7 @@ test('the title and the lights card agree on what the lights do', async (t) => {
   assert.equal(tv.text('status-title'), 'Screen sync stopped');
   assert.equal(
     tv.text('status-description'),
-    'Try again, or choose another mode.',
+    'Something went wrong. Try again to restart it.',
   );
   assert.equal(tv.text('lighting-status'), 'Screen sync couldn’t start.');
   await act(async () =>
@@ -2075,7 +2079,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
   );
   assert.deepEqual(
     [offAsked.title, offAsked.description],
-    ['Lights off', 'Try again, or choose another mode.'],
+    ['Lights off', 'Something went wrong. Try again to restart it.'],
   );
   assert.equal(tvStatus(live(reported()), draft).title, 'Screen sync stopped');
   // Also when the lights themselves failed (then not said to be still on).
@@ -2833,11 +2837,7 @@ test('full: while the service asks, the modes and Try again go to it', async (t)
       'Prysm stopped trying. Check them, then try again.',
       target,
     );
-    assert.equal(
-      tv.text('lighting-status'),
-      'Choose a mode to start Prysm again.',
-      target,
-    );
+    assert.equal(tv.text('lighting-status'), 'Prysm stopped.', target);
     for (const mode of ['screen_sync', 'effects', 'off']) {
       assert(!tv.el(`mode-${mode}`).disabled, `${target}: ${mode} offered`);
       assert.equal(

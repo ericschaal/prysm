@@ -99,8 +99,8 @@ export function LightingCard({
   if (connecting) {
     message = 'Connecting to Prysm…';
   } else if (onService) {
-    // No worker, so no portal: the status card says why.
-    message = 'Choose a mode to start Prysm again.';
+    // No worker, so no portal: the status card says why, and what to do.
+    said = 'Prysm stopped.';
   } else if (!portal.baseUrl) {
     message = full
       ? 'Waiting for Prysm on this TV…'
