@@ -154,10 +154,10 @@ impl Leds {
     /// Write `colors`, opening the output first if it is not held; the
     /// open ends when `stop` is cut, and is then not a failure. While the
     /// lights do not answer, the open is tried only at the first frame at
-    /// or after the next try ([`UNANSWERED_INTERVAL`], counted from
-    /// `ready`). The write starts at `ready` (or when the output finished
-    /// opening) and its time and outcome are counted. Returns when the write
-    /// returned.
+    /// or after the next try ([`UNANSWERED_INTERVAL`], counted from when
+    /// the last try returned). The write starts at `ready` (or when the
+    /// output finished opening) and its time and outcome are counted.
+    /// Returns when the write returned.
     pub(crate) fn write(
         &mut self,
         colors: &EdgeColors,
@@ -205,7 +205,7 @@ impl Leds {
         *self = Self::Unanswered {
             device,
             since: since.unwrap_or(ready),
-            again: ready + UNANSWERED_INTERVAL,
+            again: Instant::now() + UNANSWERED_INTERVAL,
         };
         Ok(Write::Unanswered)
     }
@@ -346,7 +346,12 @@ mod tests {
         /// Fails after a request may have reached the device, which then
         /// did not answer.
         TouchedUnanswered,
+        /// As `Unanswered`, after [`SLOW`].
+        SlowUnanswered,
     }
+
+    /// How long a slow open takes.
+    const SLOW: Duration = Duration::from_millis(20);
 
     /// The recorder's output with these failures, recording into `made`.
     fn configured(made: &Calls, fails: Fails) -> Configured {
@@ -399,6 +404,10 @@ mod tests {
                 Opens::Unanswered => return Err(OpenFailure::Untouched(failed(unanswered))),
                 Opens::TouchedUnanswered => {
                     return Err(OpenFailure::Touched(failed(unanswered)));
+                }
+                Opens::SlowUnanswered => {
+                    std::thread::sleep(SLOW);
+                    return Err(OpenFailure::Untouched(failed(unanswered)));
                 }
             }
             Ok(Box::new(Output {
@@ -585,18 +594,23 @@ mod tests {
         }
     }
 
-    /// Writes at `ready` times after `start` against `output`, each step's
-    /// outcome (`None`: written), its opens and the issue reported.
+    /// Writes at `ready` times after the last failed try returned (after
+    /// `start` without one) against `output`, each step's outcome (`None`:
+    /// written), its opens and the issue reported.
     type Step<'a> = (&'a Configured, Duration, Option<Write>, usize, bool);
 
     fn run(leds: &mut Leds, made: &Calls, start: Instant, steps: &[Step<'_>]) {
         let stats = Stats::default();
         for (n, &(output, after, outcome, opens, unreachable)) in steps.iter().enumerate() {
             made.lock().unwrap().clear();
+            let returned = match leds {
+                Leds::Unanswered { again, .. } => *again - UNANSWERED_INTERVAL,
+                Leds::Held(_) | Leds::Closed(_) => start,
+            };
             let wrote = leds
                 .write(
                     &EdgeColors::default(),
-                    start + after,
+                    returned + after,
                     output,
                     &stats,
                     &Hangup::default(),
@@ -629,11 +643,36 @@ mod tests {
             (&silent, ms(0), wait, 1, true),
             (&silent, ms(4_999), wait, 0, true),
             (&silent, ms(5_000), wait, 1, true),
-            (&answering, ms(9_999), wait, 0, true),
-            (&answering, ms(10_000), None, 1, false),
-            (&answering, ms(10_001), None, 0, false),
+            (&answering, ms(4_999), wait, 0, true),
+            (&answering, ms(5_000), None, 1, false),
+            (&answering, ms(5_001), None, 0, false),
         ]);
         assert!(leds.is_held());
+    }
+
+    /// The next try is due the interval after a slow try returned, not
+    /// after the frame that made it; the wait still counts from that frame.
+    #[test]
+    fn the_next_try_counts_from_the_last_return() {
+        let made = Calls::default();
+        let output = configured(&made, opening(Opens::SlowUnanswered));
+        let mut leds = Leds::Closed(Device::Untouched);
+        let ready = Instant::now();
+        let wrote = leds.write(
+            &EdgeColors::default(),
+            ready,
+            &output,
+            &Stats::default(),
+            &Hangup::default(),
+        );
+        let after = Instant::now();
+        assert_eq!(wrote.unwrap(), Write::Unanswered);
+        let Leds::Unanswered { since, again, .. } = leds else {
+            panic!("waiting for the lights");
+        };
+        assert_eq!(since, ready);
+        assert!(again >= ready + SLOW + UNANSWERED_INTERVAL);
+        assert!(again <= after + UNANSWERED_INTERVAL);
     }
 
     /// A quiet spell's end from each state: the calls made, the state left,
@@ -680,11 +719,10 @@ mod tests {
         let silent = configured(&made, opening(Opens::TouchedUnanswered));
         let wait = Some(Write::Unanswered);
         let steps: Vec<Step<'_>> = (0..1_000)
-            .flat_map(|n| {
-                let at = UNANSWERED_INTERVAL * n;
+            .flat_map(|_| {
                 [
-                    (&silent, at, wait, 1, true),
-                    (&silent, at + UNANSWERED_INTERVAL / 2, wait, 0, true),
+                    (&silent, UNANSWERED_INTERVAL, wait, 1, true),
+                    (&silent, UNANSWERED_INTERVAL / 2, wait, 0, true),
                 ]
             })
             .collect();
