@@ -2,7 +2,7 @@
 //! current time in, the next state and the actions to perform out. No clock,
 //! no logging, no backend, no worker; every rule is table-tested.
 use super::{Acquired, Fault, Limits, UiFault};
-use crate::classify::{self, GiveUp, Recovery, UiRecovery, VideoCause};
+use crate::classify::{GiveUp, Recovery, UiRecovery, VideoCause};
 use crate::{Readiness, Video};
 use prysm_core::Frame;
 use prysm_ports::{Attempts, Error, Schedule};
@@ -88,8 +88,8 @@ pub(super) enum Phase {
     Video {
         stage: Stage,
         /// The one new driver a fault opens
-        /// ([`classify::Reason::FreshDriver`],
-        /// [`classify::Reason::StalledDriver`]); a frame or a change of the video
+        /// ([`crate::classify::Reason::FreshDriver`],
+        /// [`crate::classify::Reason::StalledDriver`]); a frame or a change of the video
         /// signal gives it back.
         fresh: Attempts,
         /// Since when the pulls are told refused: from the period's first
@@ -702,19 +702,10 @@ impl State {
             Ok(Acquired::Pending) => {
                 answered(Answer::Accepted, out);
                 let pending_since = stage.pending_since(now);
-                if now.duration_since(pending_since) >= rules.limits.pending {
-                    let recovery = classify::video(VideoCause::Stall);
-                    let stalled = Fault {
-                        error: Error::other_escalating(
-                            format!(
-                                "webOS video produced no frame for {:?}",
-                                rules.limits.pending
-                            ),
-                            recovery.escalation(),
-                        ),
-                        recovery,
-                    };
-                    return self.video_fault(stalled, now, out);
+                let limit = rules.limits.pending;
+                if now.duration_since(pending_since) >= limit {
+                    let context = format!("webOS video produced no frame for {limit:?}");
+                    return self.video_fault(Fault::limit(context, VideoCause::Stall), now, out);
                 }
                 self.phase = self.phase.at(Stage::NoFrame {
                     since: stage.no_frame_since(now),
@@ -732,8 +723,9 @@ impl State {
                 let limit = rules.limits.preparation;
                 let since = stage.no_frame_since(now);
                 if now.duration_since(since) >= limit {
-                    let error = Error::other(format!("webOS video was not ready within {limit:?}"));
-                    return self.fail(error, out);
+                    let context = format!("webOS video was not ready within {limit:?}");
+                    let unprepared = Fault::limit(context, VideoCause::Unprepared);
+                    return self.video_fault(unprepared, now, out);
                 }
                 self.phase = self.phase.at(Stage::NoFrame {
                     since,
@@ -816,8 +808,9 @@ impl State {
 
     /// A video fault, as its [`Recovery`] says: one that escalates fails
     /// the source; a retry releases the tap and opens a new one at once,
-    /// one time until a frame, then gives up as its [`classify::Reason`] says;
-    /// withheld video releases the tap until the signal changes.
+    /// one time until a frame, then gives up as its
+    /// [`crate::classify::Reason`] says; withheld video releases the tap
+    /// until the signal changes.
     fn video_fault(&mut self, fault: Fault, now: Instant, out: &mut Out) {
         let Phase::Video { stage, fresh, .. } = &mut self.phase else {
             unreachable!("a video fault answers a video period");

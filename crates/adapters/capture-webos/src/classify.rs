@@ -69,6 +69,10 @@ pub(crate) enum VideoCause<'a> {
     /// The initialized driver gave no buffer for
     /// [`crate::source::Limits::pending`].
     Stall,
+    /// The driver stayed not ready for [`crate::source::Limits::preparation`],
+    /// within which the TV's video pipeline starts: waiting longer does not
+    /// converge.
+    Unprepared,
     /// The capture thread could not block its signals.
     SignalMask,
 }
@@ -85,7 +89,7 @@ pub(crate) fn video(cause: VideoCause<'_>) -> Recovery {
         VideoCause::Native(E::Create(_) | E::Registered(_)) => {
             Recovery::Escalate(Escalation::Restart)
         }
-        VideoCause::Native(E::Luna(_)) | VideoCause::SignalMask => {
+        VideoCause::Native(E::Luna(_)) | VideoCause::Unprepared | VideoCause::SignalMask => {
             Recovery::Escalate(Escalation::FAIL_FAST)
         }
         // The TV's resource policy took the capture (seen at standby, with
@@ -288,6 +292,10 @@ mod tests {
         for (cause, recovery) in [
             (VideoCause::Allocation, Recovery::Retry(Reason::FreshDriver)),
             (VideoCause::Stall, Recovery::Retry(Reason::StalledDriver)),
+            (
+                VideoCause::Unprepared,
+                Recovery::Escalate(Escalation::FAIL_FAST),
+            ),
             (
                 VideoCause::SignalMask,
                 Recovery::Escalate(Escalation::FAIL_FAST),

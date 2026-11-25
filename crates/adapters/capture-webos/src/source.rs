@@ -9,7 +9,7 @@
 mod native;
 mod phase;
 
-use crate::classify::{Recovery, UiRecovery};
+use crate::classify::{self, Recovery, UiRecovery, VideoCause};
 use crate::{VideoSignal, WebosSettings};
 use native::Native;
 use prysm_core::Frame;
@@ -52,6 +52,17 @@ impl Fault {
     ) -> Self {
         Self {
             error: Error::adapter_escalating(context, source, recovery.escalation()),
+            recovery,
+        }
+    }
+
+    /// A video fault of a limit the driver reached, which has no native
+    /// source: `context` is its error, recovering and escalating as
+    /// `cause`'s row says.
+    pub(crate) fn limit(context: String, cause: VideoCause<'_>) -> Self {
+        let recovery = classify::video(cause);
+        Self {
+            error: Error::other_escalating(context, recovery.escalation()),
             recovery,
         }
     }
