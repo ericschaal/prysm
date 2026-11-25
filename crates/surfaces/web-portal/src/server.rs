@@ -6,7 +6,7 @@ use crate::routes::{self, BODY_DEADLINE, Context};
 use crate::timed_io::TimedIo;
 use hyper::{server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use prysm_ports::{Error, Result};
+use prysm_ports::{Error, Escalation, Result};
 use prysm_runtime::{EngineHandle, Shutdown};
 use socket2::{SockRef, TcpKeepalive};
 use std::convert::Infallible;
@@ -45,7 +45,7 @@ pub(crate) async fn serve(
         .listener
         .set_nonblocking(true)
         .and_then(|()| TcpListener::from_std(portal.listener))
-        .map_err(|error| Error::adapter("cannot use the portal listener", error))?;
+        .map_err(|error| listener_failed("cannot use the portal listener", error))?;
     let context = Arc::new(Context::new(
         engine,
         portal.assets,
@@ -169,13 +169,19 @@ where
                             exhausted = true;
                         }
                         Refused::Listener => {
-                            return Err(Error::adapter("portal listener failed", error));
+                            return Err(listener_failed("portal listener failed", error));
                         }
                     },
                 }
             }
         }
     }
+}
+
+/// A failed listener: the process binds it once, so only a new process
+/// opens another.
+fn listener_failed(context: &str, error: io::Error) -> Error {
+    Error::adapter_escalating(context, error, Escalation::Restart)
 }
 
 /// What a failed `accept` means for the portal.
@@ -331,7 +337,7 @@ mod tests {
     }
 
     /// Out of descriptors with no connection open, nothing would wake it:
-    /// the listener fails.
+    /// the listener fails, and only a new process opens another.
     #[cfg(unix)]
     #[tokio::test]
     async fn an_exhausted_listener_without_connections_fails() {
@@ -352,7 +358,7 @@ mod tests {
             |_ends: oneshot::Receiver<()>| async {},
         )
         .await;
-        assert!(failed.is_err());
+        assert_eq!(failed.unwrap_err().escalation(), Escalation::Restart);
     }
 
     /// An accepted connection carries the kernel options that end it once

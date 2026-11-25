@@ -628,8 +628,9 @@ impl Seen {
         }
         for failure in snapshot.surface_failures.iter().skip(self.surface_failures) {
             lines.push(format!(
-                "surface failed, lighting continues: {}",
-                chain(failure)
+                "surface failed, lighting continues: {} ({})",
+                chain(failure),
+                next_step(failure.escalation())
             ));
         }
         self.surface_failures = snapshot.surface_failures.len();
@@ -697,7 +698,7 @@ mod tests {
             [
                 "target screen_sync, session stopped",
                 "lighting failed: no frames (try again)",
-                "surface failed, lighting continues: no terminal",
+                "surface failed, lighting continues: no terminal (try again)",
             ]
         );
         assert!(seen.update(&snapshot).is_empty());
