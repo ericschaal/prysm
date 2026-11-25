@@ -1,7 +1,7 @@
 //! One session: a thread owning a source, the processor and an output, and
 //! the engine's handle on it.
 use crate::feeds::Feeds;
-use crate::leds::{Configured, Leds};
+use crate::leds::{Configured, Device, Leds, Write};
 use crate::slot::LatestSlot;
 use crate::stats::{FrameTimes, Stats};
 use crate::worker::{Exit, Flags, Worker, guarded};
@@ -91,7 +91,8 @@ struct Control {
     /// Set by the thread as soon as its loop ended on its own, before it
     /// releases anything; see [`Session::has_ended`].
     ended: AtomicBool,
-    /// What the held output last learned about its device; read by the
+    /// What the held output last learned about its device, or that the
+    /// lights do not answer; read by the
     /// engine about once a second.
     observed: Mutex<DeviceReport>,
 }
@@ -115,8 +116,11 @@ fn idle(leds: &mut Leds, mode: IdleMode, output: &Configured) -> Result<IdleMode
 /// what is watched. A quiet tick rewrites the last colors (and takes the
 /// report), and after [`VIDEO_GRACE`] without frames idles the output in
 /// [`RELEASE`], clears the published colors and closes it until the next
-/// frame. The open and that idle end when a stop comes (it cuts the
-/// thread's [`Hangup`]), and are then not failures: the loop sees the stop.
+/// frame. While the lights do not answer an open, frames are not written,
+/// the report says they are unreachable, and the open is tried again as
+/// [`Leds::write`] says. The open and that idle end when a stop comes (it
+/// cuts the thread's [`Hangup`]), and are then not failures: the loop sees
+/// the stop.
 /// When the loop ends (stop, failure, or
 /// [`Pull::Ended`](prysm_ports::Pull::Ended)) the feeds are cleared,
 /// `source.close()`, and the output is left in the stop's idle mode, or
@@ -165,23 +169,26 @@ impl SessionLoop {
         let write = self
             .leds
             .write(&colors, processed, &self.output, &self.stats, stop);
-        // Recorded whether or not the write worked.
+        // Recorded whether or not the colors were written.
         self.stats.frame(FrameTimes {
             previous_done: self.previous_done.replace(Instant::now()),
             received,
             captured,
             processed,
-            written: write.as_ref().ok().copied().flatten(),
+            written: write.as_ref().ok().copied().and_then(Write::written),
         });
-        // `None`: the stop ended the open.
-        let Some(written) = write.map_err(lights)? else {
+        let write = write.map_err(lights)?;
+        if write == Write::Stopped {
             return Ok(());
-        };
+        }
+        // Also while the lights do not answer: the report says so.
         let observed = self.leds.report();
         self.report(observed);
-        self.feeds
-            .publish(&colors, shown, self.processor.viewport());
-        self.last = Some((colors, written));
+        if let Write::Written(written) = write {
+            self.feeds
+                .publish(&colors, shown, self.processor.viewport());
+            self.last = Some((colors, written));
+        }
         Ok(())
     }
 
@@ -204,7 +211,7 @@ impl SessionLoop {
             && now - *written >= REFRESH
         {
             // Held: nothing is opened, so nothing for the stop to end.
-            if let Some(rewritten) = self
+            if let Write::Written(rewritten) = self
                 .leds
                 .write(colors, now, &self.output, &self.stats, stop)
                 .map_err(lights)?
@@ -272,7 +279,7 @@ impl Session {
         });
         let session = SessionLoop {
             processor: PrysmProcessor::new(&config),
-            leds: Leds::Untouched,
+            leds: Leds::Closed(Device::Untouched),
             last: None,
             last_frame: Instant::now(),
             previous_done: None,
@@ -304,7 +311,8 @@ impl Session {
     }
 
     /// What the held output last learned about its device: why its LEDs are
-    /// not showing the session's colours, and its own brightness.
+    /// not showing the session's colours (also that the lights do not
+    /// answer an open), and its own brightness.
     #[must_use]
     pub fn observed(&self) -> DeviceReport {
         *self
@@ -387,7 +395,7 @@ mod tests {
     use crate::fakes::{
         AtStop, CallLog, FakeOutputSettings, FakeOutputs, FakeSource, FakeSourceSettings,
     };
-    use prysm_ports::{AdapterSettings, OutputFactory, Processing, Registry};
+    use prysm_ports::{AdapterSettings, OutputFactory, OutputIssue, Processing, Registry};
     use prysm_testkit::within_async;
 
     const DEADLINE: Duration = Duration::from_secs(2);
@@ -516,6 +524,61 @@ mod tests {
                 "output.idle:o:Off"
             ]
         );
+    }
+
+    /// Lights that do not answer the open: the session runs on, says they
+    /// are unreachable, and does not try the open again within its
+    /// interval; the session's only failure is its source's.
+    #[tokio::test]
+    async fn unanswered_lights_are_reported_while_the_session_runs() {
+        let log = CallLog::new();
+        let gated = FakeSourceSettings {
+            fail_after: Some(3),
+            fail_at: Some("test.fail".into()),
+            ..Default::default()
+        };
+        let silent = FakeOutputSettings {
+            open_unanswered: true,
+            ..Default::default()
+        };
+        let mut session = started(&log, gated, silent);
+        // The source waits in its fourth pull, after three frames were done.
+        assert!(log.wait_for("source.failing:s", 1).await);
+        let unreachable = Some(OutputIssue::Unreachable);
+        assert_eq!(session.observed().issue, unreachable);
+        assert!(!session.has_ended());
+        assert_eq!(log.count("output.open_unanswered:o"), 1);
+        log.record("test.fail");
+        let end = session.finished().await.unwrap();
+        assert_eq!(end.result().unwrap_err().to_string(), "fake source failed");
+        assert_eq!(session.observed(), DeviceReport::default());
+        session.join().await;
+    }
+
+    /// A stop while waiting for the lights ends at once without another
+    /// open; the stop's idle follows the finish rules: an untouched device
+    /// stays untouched for `Off`.
+    #[tokio::test]
+    async fn a_stop_ends_a_wait_for_the_lights() {
+        use IdleMode::{Native, Off};
+        #[rustfmt::skip]
+        let cases: [(IdleMode, &[&str]); 2] = [
+            (Off, &["source.close:s"]),
+            (Native, &["source.close:s", "output.idle:o:Native"]),
+        ];
+        for (mode, calls) in cases {
+            let log = CallLog::new();
+            let silent = FakeOutputSettings {
+                open_unanswered: true,
+                ..Default::default()
+            };
+            let session = started(&log, FakeSourceSettings::default(), silent);
+            assert!(log.wait_for("output.open_unanswered:o", 1).await);
+            let end = stopped_at_once(session, mode).await;
+            assert!(matches!(end.left, Ok(left) if left == mode), "{mode:?}");
+            let after = log.position("output.open_unanswered:o").unwrap() + 1;
+            assert_eq!(log.events()[after..], *calls, "{mode:?}");
+        }
     }
 
     #[tokio::test]

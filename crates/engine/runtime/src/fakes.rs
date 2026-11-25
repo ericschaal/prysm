@@ -3,10 +3,10 @@
 use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
-    AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, FrameSink, FrameSource,
-    Hangup, IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure, OutputFactory,
-    OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory, Span, Stopping,
-    ValidationError,
+    AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, Escalation, FrameSink,
+    FrameSource, Hangup, IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure,
+    OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory, Span,
+    Stopping, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -281,6 +281,10 @@ pub struct FakeOutputSettings {
     /// this event in the log before failing.
     pub fail_at: Option<String>,
     pub fail_open: bool,
+    /// `open` fails before anything reaches the fake device, as lights that
+    /// do not answer ([`Escalation::Unanswered`]), recording
+    /// `output.open_unanswered:<name>`.
+    pub open_unanswered: bool,
     /// `idle` fails after recording the call, like an unreachable device.
     pub fail_idle: bool,
     /// `idle` panics after recording the call.
@@ -367,6 +371,14 @@ impl OutputFactory for FakeOutputs {
                 .record(format!("output.open_failed:{}", settings.name));
             return Err(OpenFailure::Untouched(Error::other(
                 "fake output cannot open",
+            )));
+        }
+        if settings.open_unanswered {
+            self.0
+                .record(format!("output.open_unanswered:{}", settings.name));
+            return Err(OpenFailure::Untouched(Error::other_escalating(
+                "fake output does not answer",
+                Escalation::Unanswered,
             )));
         }
         self.0.record(format!("output.open:{}", settings.name));

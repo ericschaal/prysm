@@ -34,8 +34,9 @@ The full wire mapping is in the
   fault carry none). A failure of what a command replaced (the old output of
   a restart, a session that ended as the lights' own effects were asked for)
   is logged at `warn` and is neither published nor the reply. The target
-  stays as requested, so the next settings change retries. The engine
-  does not retry on its own; on the TV, the full worker re-applies the
+  stays as requested, so the next settings change retries. Apart from the
+  wait for the lights below, the engine does not retry on its own; on the
+  TV, the full worker re-applies the
   target after a session failure with a backoff
   ([TV lifecycle](webos.md#supervisor-and-worker)).
 - An output's `idle` runs on every session exit; a failure there is reported,
@@ -44,6 +45,14 @@ The full wire mapping is in the
   to the device) is dropped, and the next frame is the next try; any other
   send error fails the output at once
   ([`classify.rs`](../../crates/adapters/output-wled/src/classify.rs)).
+- An output open the lights did not answer (`Escalation::Unanswered`: off,
+  or away from the network) does not end the session: it reports the
+  device issue `unreachable` and tries the open again at the first frame
+  every 5 s, without end, until the lights answer, lighting stops or the
+  settings change.
+  Every other failed open ends the session at once. The rule and why it
+  converges are `UNANSWERED` in
+  [`leds.rs`](../../crates/engine/runtime/src/leds.rs).
 - Surface failures (a portal listener that dies) are recorded in
   `surface_failures`; lighting continues.
 - A settings store that cannot be read is no reason not to start: the

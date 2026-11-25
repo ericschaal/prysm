@@ -28,8 +28,9 @@ pub struct Counters {
     pub output_write_failures: u64,
     /// Capture sources opened by starting lighting.
     pub source_opens: u64,
-    /// Outputs opened to show colors: at a session's first frame and at the
-    /// first frame after a release.
+    /// Outputs opened to show colors: at a session's first frame, at the
+    /// first frame after a release, and when lights that did not answer do.
+    /// Opens that failed are not counted.
     pub output_opens: u64,
 }
 
@@ -60,7 +61,8 @@ pub(crate) struct FrameTimes {
     /// Its colors were ready.
     pub(crate) processed: Instant,
     /// The write of its colors returned successfully; `None` if opening or
-    /// writing the output failed.
+    /// writing the output failed, or the colors were not written while the
+    /// lights do not answer.
     pub(crate) written: Option<Instant>,
 }
 

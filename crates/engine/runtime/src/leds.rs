@@ -1,15 +1,28 @@
 //! The session's hold on its output: opened at the first frame, released
-//! after a quiet spell, left in the stop's idle mode at the end.
+//! after a quiet spell, waited for while the lights do not answer, left in
+//! the stop's idle mode at the end.
 use crate::stats::Stats;
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    AdapterSettings, DeviceReport, Error, Hangup, IdleMode, LedOutput, OpenFailure, Registry,
-    Result,
+    AdapterSettings, Attempts, DeviceReport, Error, Escalation, Hangup, IdleMode, LedOutput,
+    OpenFailure, OutputIssue, Registry, Result, Schedule,
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// How often an open is tried again while the lights do not answer it
+/// ([`Escalation::Unanswered`]): without end, until they answer, the session
+/// stops, or the settings change (a new session); every other failed open
+/// fails the session. The lights come back only by something outside Prysm
+/// (power, network) at a time nothing announces, so one try every 5 s
+/// reaches them at the first frame 5 s or less after their return, at the
+/// cost of one connect, bounded by the adapter's own limits (about 1.5 s
+/// for WLED). The session serves no frames during it: there is no output to
+/// serve them to. A quiet source tries nothing; its next frame does.
+const UNANSWERED_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The session's output as configured. Opened on the session thread at the
-/// first frame and at the first frame after each release; put in an idle
+/// first frame, at the first frame after each release, and while the lights
+/// do not answer at the first frame of each try; put in an idle
 /// mode without being opened at the end, when that mode differs from the
 /// one the output was left in (see [`Registry::idle_output`]).
 pub(crate) struct Configured {
@@ -42,23 +55,73 @@ fn ended(error: &Error, stop: &Hangup) -> bool {
     ended
 }
 
-pub(crate) enum Leds {
+/// What the device of an output the session does not hold shows, as far as
+/// the session knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Device {
     /// Never opened by this session.
     Untouched,
-    Held(Box<dyn LedOutput>),
     /// Idled in this mode and closed.
     Left(IdleMode),
-    /// The device may be in any mode: a release failed, or an open that
-    /// may have reached it did.
+    /// Any mode: a release failed, or an open that may have reached it did.
     Unknown,
+}
+
+pub(crate) enum Leds {
+    Held(Box<dyn LedOutput>),
+    /// Not held: the next frame opens it.
+    Closed(Device),
+    /// The lights did not answer an open: frames are not written, and the
+    /// first frame at or after `again` tries the open again
+    /// ([`UNANSWERED_INTERVAL`]).
+    Unanswered {
+        device: Device,
+        attempts: Attempts,
+        again: Instant,
+    },
+}
+
+/// What [`Leds::write`] did with a frame's colors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Write {
+    /// Written; the write returned at this time.
+    Written(Instant),
+    /// The stop ended the open: nothing written, and not a failure.
+    Stopped,
+    /// The lights do not answer: nothing written, and not a failure.
+    Unanswered,
+}
+
+impl Write {
+    pub(crate) fn written(self) -> Option<Instant> {
+        match self {
+            Self::Written(at) => Some(at),
+            Self::Stopped | Self::Unanswered => None,
+        }
+    }
+}
+
+/// Write `colors` to `held`, timed from `began` and counted.
+fn write_held(
+    held: &mut dyn LedOutput,
+    colors: &EdgeColors,
+    began: Instant,
+    stats: &Stats,
+) -> Result<Write> {
+    let wrote = held.write(colors);
+    let at = Instant::now();
+    stats.output_write(at - began, wrote.is_ok());
+    wrote.map(|()| Write::Written(at))
 }
 
 impl Leds {
     /// Write `colors`, opening the output first if it is not held; the
-    /// open ends when `stop` is cut, and is then not a failure: `None`, the
-    /// state saying what the open left. The write starts at `ready` (or
-    /// when the output finished opening) and its time and outcome are
-    /// counted. Returns when the write returned.
+    /// open ends when `stop` is cut, and is then not a failure. While the
+    /// lights do not answer, the open is tried only at the first frame at
+    /// or after the next try ([`UNANSWERED_INTERVAL`], counted from
+    /// `ready`). The write starts at `ready` (or when the output finished
+    /// opening) and its time and outcome are counted. Returns when the write
+    /// returned.
     pub(crate) fn write(
         &mut self,
         colors: &EdgeColors,
@@ -66,54 +129,88 @@ impl Leds {
         output: &Configured,
         stats: &Stats,
         stop: &Hangup,
-    ) -> Result<Option<Instant>> {
-        let began = if self.is_held() {
-            ready
-        } else {
-            *self = Self::Held(match output.open(stop) {
-                Ok(held) => held,
-                Err(failure) => {
-                    if let OpenFailure::Touched(_) = failure {
-                        *self = Self::Unknown;
-                    }
-                    // Else nothing reached the device: it is as this state says.
-                    let error = failure.into_error();
-                    return if ended(&error, stop) {
-                        Ok(None)
-                    } else {
-                        Err(error)
-                    };
+    ) -> Result<Write> {
+        let (device, attempts) = match self {
+            Self::Held(held) => return write_held(&mut **held, colors, ready, stats),
+            Self::Unanswered { again, .. } if ready < *again => return Ok(Write::Unanswered),
+            Self::Closed(device) => (*device, None),
+            Self::Unanswered {
+                device, attempts, ..
+            } => (*device, Some(*attempts)),
+        };
+        let failure = match output.open(stop) {
+            Ok(mut held) => {
+                if let Some(since) = attempts.and_then(|attempts| attempts.since()) {
+                    let waited = ready.saturating_duration_since(since);
+                    tracing::info!(?waited, "the lights answer again");
                 }
-            });
-            stats.output_opened();
-            Instant::now()
+                stats.output_opened();
+                let wrote = write_held(&mut *held, colors, Instant::now(), stats);
+                *self = Self::Held(held);
+                return wrote;
+            }
+            Err(failure) => failure,
         };
-        let Self::Held(held) = self else {
-            unreachable!("held above")
+        // A failed open that may have reached the device leaves its mode
+        // unknown; one that reached nothing leaves it as it was.
+        let device = match failure {
+            OpenFailure::Touched(_) => Device::Unknown,
+            OpenFailure::Untouched(_) => device,
         };
-        let wrote = held.write(colors);
-        let written = Instant::now();
-        stats.output_write(written - began, wrote.is_ok());
-        wrote.map(|()| Some(written))
+        *self = Self::Closed(device);
+        let error = failure.into_error();
+        if ended(&error, stop) {
+            return Ok(Write::Stopped);
+        }
+        if error.escalation() != Escalation::Unanswered {
+            return Err(error);
+        }
+        let waiting = attempts.is_some();
+        let mut attempts = attempts.unwrap_or(Attempts::new(Schedule::Every(UNANSWERED_INTERVAL)));
+        let Ok(again) = attempts.failed(ready) else {
+            return Err(error);
+        };
+        let error = prysm_ports::chain(&error);
+        if waiting {
+            tracing::debug!(%error, "the lights still do not answer");
+        } else {
+            let every = UNANSWERED_INTERVAL.as_secs();
+            tracing::warn!(%error, "the lights do not answer; trying again every {every} s");
+        }
+        *self = Self::Unanswered {
+            device,
+            attempts,
+            again,
+        };
+        Ok(Write::Unanswered)
     }
 
     pub(crate) fn is_held(&self) -> bool {
         matches!(self, Self::Held(_))
     }
 
-    /// What a held output last learned about its device.
+    /// What a held output last learned about its device; while waiting for
+    /// the lights, that they do not answer.
     pub(crate) fn report(&mut self) -> DeviceReport {
         match self {
             Self::Held(output) => output.report(),
-            Self::Untouched | Self::Left(_) | Self::Unknown => DeviceReport::default(),
+            Self::Unanswered { .. } => DeviceReport {
+                issue: Some(OutputIssue::Unreachable),
+                ..DeviceReport::default()
+            },
+            Self::Closed(_) => DeviceReport::default(),
         }
     }
 
     /// Idle a held output in `mode` and close it; the idle ends when `stop`
-    /// is cut, and is then not a failure, the output `Unknown`.
+    /// is cut, and is then not a failure, the device `Unknown`. Anything
+    /// else is left as it is.
     pub(crate) fn release(&mut self, mode: IdleMode, stop: &Hangup) -> Result<()> {
-        let Self::Held(output) = std::mem::replace(self, Self::Unknown) else {
+        if !self.is_held() {
             return Ok(());
+        }
+        let Self::Held(output) = std::mem::replace(self, Self::Closed(Device::Unknown)) else {
+            unreachable!("held above")
         };
         if let Err(error) = output.idle(mode, stop) {
             return if ended(&error, stop) {
@@ -122,25 +219,30 @@ impl Leds {
                 Err(error)
             };
         }
-        *self = Self::Left(mode);
+        *self = Self::Closed(Device::Left(mode));
         Ok(())
     }
 
     /// Leave the output in `mode`: idle it if held; otherwise put it in
-    /// `mode` without opening it, only when it may be in another mode. An
-    /// untouched output stays untouched for `Off`, the state lighting
-    /// started from. Afterwards the output is `Left(mode)`, or `Unknown` if
-    /// that failed, so it can be finished again in another mode. Nothing
-    /// cuts it: this is the stop's own idle.
+    /// `mode` without opening it, only when its device may be in another
+    /// mode. An untouched device stays untouched for `Off`, the state
+    /// lighting started from. A wait for the lights ends here, its device
+    /// finished as the wait says it was left. Afterwards the device is
+    /// `Left(mode)`, or `Unknown` if that failed, so it can be finished
+    /// again in another mode. Nothing cuts it: this is the stop's own idle.
     pub(crate) fn finish(&mut self, mode: IdleMode, output: &Configured) -> Result<()> {
-        match self {
-            Self::Held(_) => self.release(mode, &Hangup::default()),
-            Self::Left(left) if *left == mode => Ok(()),
-            Self::Untouched if mode == IdleMode::Off => Ok(()),
-            Self::Untouched | Self::Left(_) | Self::Unknown => {
-                *self = Self::Unknown;
+        let device = match self {
+            Self::Held(_) => return self.release(mode, &Hangup::default()),
+            Self::Closed(device) | Self::Unanswered { device, .. } => *device,
+        };
+        *self = Self::Closed(device);
+        match device {
+            Device::Left(left) if left == mode => Ok(()),
+            Device::Untouched if mode == IdleMode::Off => Ok(()),
+            Device::Untouched | Device::Left(_) | Device::Unknown => {
+                *self = Self::Closed(Device::Unknown);
                 output.idle(mode)?;
-                *self = Self::Left(mode);
+                *self = Self::Closed(Device::Left(mode));
                 Ok(())
             }
         }
@@ -171,6 +273,22 @@ mod tests {
         Untouched,
         /// Fails after a request may have reached it.
         Touched,
+        /// Fails before reaching the device, which does not answer.
+        Unanswered,
+        /// Fails after a request may have reached the device, which then
+        /// did not answer.
+        TouchedUnanswered,
+    }
+
+    /// The recorder's output with these failures, recording into `made`.
+    fn configured(made: &Calls, fails: Fails) -> Configured {
+        let mut registry = Registry::default();
+        registry.add_output(Recorder(made.clone()));
+        Configured::new(registry, AdapterSettings::new(Recorder::KIND, &fails))
+    }
+
+    fn opening(opens: Opens) -> Fails {
+        Fails { idle: false, opens }
     }
 
     /// Records opens, idles of what it opened (`idle:<mode>`), and modes set
@@ -197,11 +315,16 @@ mod tests {
 
         fn open(&self, fails: &Fails, _: &Hangup) -> Result<Box<dyn LedOutput>, OpenFailure> {
             self.0.lock().unwrap().push("open".into());
-            let failed = || Error::other("cannot open");
+            let failed = |escalation| Error::other_escalating("cannot open", escalation);
+            let (fast, unanswered) = (Escalation::FAIL_FAST, Escalation::Unanswered);
             match fails.opens {
                 Opens::Yes => {}
-                Opens::Untouched => return Err(OpenFailure::Untouched(failed())),
-                Opens::Touched => return Err(OpenFailure::Touched(failed())),
+                Opens::Untouched => return Err(OpenFailure::Untouched(failed(fast))),
+                Opens::Touched => return Err(OpenFailure::Touched(failed(fast))),
+                Opens::Unanswered => return Err(OpenFailure::Untouched(failed(unanswered))),
+                Opens::TouchedUnanswered => {
+                    return Err(OpenFailure::Touched(failed(unanswered)));
+                }
             }
             Ok(Box::new(Output {
                 calls: self.0.clone(),
@@ -237,35 +360,62 @@ mod tests {
         LeftOff,
         LeftNative,
         Unknown,
+        /// Waiting for lights it never reached.
+        WaitingUntouched,
+        /// Waiting for lights an open may have reached.
+        WaitingUnknown,
+    }
+
+    fn waiting(device: Device) -> Leds {
+        Leds::Unanswered {
+            device,
+            attempts: Attempts::new(Schedule::Every(UNANSWERED_INTERVAL)),
+            again: Instant::now() + UNANSWERED_INTERVAL,
+        }
     }
 
     fn leds(from: Before, output: &Configured) -> Leds {
         match from {
-            Before::Untouched => Leds::Untouched,
+            Before::Untouched => Leds::Closed(Device::Untouched),
             Before::Held => Leds::Held(output.open(&Hangup::default()).unwrap()),
-            Before::LeftOff => Leds::Left(IdleMode::Off),
-            Before::LeftNative => Leds::Left(IdleMode::Native),
-            Before::Unknown => Leds::Unknown,
+            Before::LeftOff => Leds::Closed(Device::Left(IdleMode::Off)),
+            Before::LeftNative => Leds::Closed(Device::Left(IdleMode::Native)),
+            Before::Unknown => Leds::Closed(Device::Unknown),
+            Before::WaitingUntouched => waiting(Device::Untouched),
+            Before::WaitingUnknown => waiting(Device::Unknown),
         }
     }
 
     fn state(leds: &Leds) -> String {
+        let device = |device: &Device| match device {
+            Device::Untouched => "untouched".into(),
+            Device::Left(mode) => format!("left {mode:?}"),
+            Device::Unknown => "unknown".into(),
+        };
         match leds {
-            Leds::Untouched => "untouched".into(),
             Leds::Held(_) => "held".into(),
-            Leds::Left(mode) => format!("left {mode:?}"),
-            Leds::Unknown => "unknown".into(),
+            Leds::Closed(closed) => device(closed),
+            Leds::Unanswered { device: left, .. } => format!("waiting, {}", device(left)),
         }
     }
 
     /// Every state against every mode, with outputs that idle and outputs
     /// that cannot: the calls made and the state left. Only a held output is
-    /// idled through itself; nothing is opened to idle.
+    /// idled through itself; nothing is opened to idle. A wait for the
+    /// lights is finished as the device it waited with.
     #[test]
     fn finish_leaves_every_state_in_the_asked_mode() {
         use IdleMode::{Native, Off};
         #[rustfmt::skip]
-        let cases: [(Before, IdleMode, bool, &[&str], &str); 20] = [
+        let cases: [(Before, IdleMode, bool, &[&str], &str); 28] = [
+            (Before::WaitingUntouched, Off, false, &[], "untouched"),
+            (Before::WaitingUntouched, Native, false, &["set:Native"], "left Native"),
+            (Before::WaitingUnknown, Off, false, &["set:Off"], "left Off"),
+            (Before::WaitingUnknown, Native, false, &["set:Native"], "left Native"),
+            (Before::WaitingUntouched, Off, true, &[], "untouched"),
+            (Before::WaitingUntouched, Native, true, &["set:Native"], "unknown"),
+            (Before::WaitingUnknown, Off, true, &["set:Off"], "unknown"),
+            (Before::WaitingUnknown, Native, true, &["set:Native"], "unknown"),
             (Before::Untouched, Off, false, &[], "untouched"),
             (Before::Untouched, Native, false, &["set:Native"], "left Native"),
             (Before::Held, Off, false, &["idle:Off"], "left Off"),
@@ -289,18 +439,11 @@ mod tests {
         ];
         for (from, mode, fail_idle, calls, left) in cases {
             let made = Calls::default();
-            let mut registry = Registry::default();
-            registry.add_output(Recorder(made.clone()));
-            let output = Configured::new(
-                registry,
-                AdapterSettings::new(
-                    Recorder::KIND,
-                    &Fails {
-                        idle: fail_idle,
-                        opens: Opens::Yes,
-                    },
-                ),
-            );
+            let fails = Fails {
+                idle: fail_idle,
+                opens: Opens::Yes,
+            };
+            let output = configured(&made, fails);
             let mut leds = leds(from, &output);
             made.lock().unwrap().clear();
             let finished = leds.finish(mode, &output);
@@ -311,30 +454,43 @@ mod tests {
         }
     }
 
+    /// The state before, how the open fails, whether the lights are waited
+    /// for, the stop's mode, the state after, and the calls of the finish.
+    type FailedOpen = (
+        Before,
+        Opens,
+        bool,
+        IdleMode,
+        &'static str,
+        &'static [&'static str],
+    );
+
     /// A failed open that may have reached the device (WLED's turns it off
     /// again, or may not) leaves its mode unknown, whatever it was left in
     /// before: the end then sets the stop's mode instead of trusting the
-    /// old one. One that reached nothing leaves the state as it was.
+    /// old one. One that reached nothing leaves the state as it was. Lights
+    /// that do not answer are waited for, with what the open left: not a
+    /// failure (`true`); any other failed open fails at once.
     #[test]
     fn a_failed_open_says_what_it_left_the_device_in() {
         use IdleMode::{Native, Off};
+        use Opens::{Touched, TouchedUnanswered, Unanswered, Untouched};
         #[rustfmt::skip]
-        let cases: [(Before, Opens, IdleMode, &str, &[&str]); 6] = [
-            (Before::Untouched, Opens::Touched, Off, "unknown", &["set:Off"]),
-            (Before::LeftOff, Opens::Touched, Off, "unknown", &["set:Off"]),
-            (Before::LeftNative, Opens::Touched, Native, "unknown", &["set:Native"]),
-            (Before::Untouched, Opens::Untouched, Off, "untouched", &[]),
-            (Before::LeftOff, Opens::Untouched, Off, "left Off", &[]),
-            (Before::LeftNative, Opens::Untouched, Native, "left Native", &[]),
+        let cases: [FailedOpen; 10] = [
+            (Before::Untouched, Touched, false, Off, "unknown", &["set:Off"]),
+            (Before::LeftOff, Touched, false, Off, "unknown", &["set:Off"]),
+            (Before::LeftNative, Touched, false, Native, "unknown", &["set:Native"]),
+            (Before::Untouched, Untouched, false, Off, "untouched", &[]),
+            (Before::LeftOff, Untouched, false, Off, "left Off", &[]),
+            (Before::LeftNative, Untouched, false, Native, "left Native", &[]),
+            (Before::Untouched, Unanswered, true, Off, "waiting, untouched", &[]),
+            (Before::LeftNative, Unanswered, true, Native, "waiting, left Native", &[]),
+            (Before::Untouched, TouchedUnanswered, true, Off, "waiting, unknown", &["set:Off"]),
+            (Before::LeftOff, TouchedUnanswered, true, Off, "waiting, unknown", &["set:Off"]),
         ];
-        for (from, opens, mode, after, calls) in cases {
+        for (from, opens, waits, mode, after, calls) in cases {
             let made = Calls::default();
-            let mut registry = Registry::default();
-            registry.add_output(Recorder(made.clone()));
-            let output = Configured::new(
-                registry,
-                AdapterSettings::new(Recorder::KIND, &Fails { idle: false, opens }),
-            );
+            let output = configured(&made, opening(opens));
             let mut leds = leds(from, &output);
             let stats = Stats::default();
             let wrote = leds.write(
@@ -345,11 +501,87 @@ mod tests {
                 &Hangup::default(),
             );
             let case = (from, opens);
-            assert!(wrote.is_err(), "{case:?}");
+            assert_eq!(wrote.ok(), waits.then_some(Write::Unanswered), "{case:?}");
             assert_eq!(state(&leds), after, "{case:?}");
             made.lock().unwrap().clear();
             leds.finish(mode, &output).unwrap();
             assert_eq!(*made.lock().unwrap(), calls, "{case:?}");
         }
+    }
+
+    /// Writes at `ready` times after `start` against `output`, each step's
+    /// outcome (`None`: written), its opens and the issue reported.
+    type Step<'a> = (&'a Configured, Duration, Option<Write>, usize, bool);
+
+    fn run(leds: &mut Leds, made: &Calls, start: Instant, steps: &[Step<'_>]) {
+        let stats = Stats::default();
+        for (n, &(output, after, outcome, opens, unreachable)) in steps.iter().enumerate() {
+            made.lock().unwrap().clear();
+            let wrote = leds
+                .write(
+                    &EdgeColors::default(),
+                    start + after,
+                    output,
+                    &stats,
+                    &Hangup::default(),
+                )
+                .unwrap();
+            let wrote = (wrote.written().is_none()).then_some(wrote);
+            assert_eq!(wrote, outcome, "step {n}");
+            assert_eq!(made.lock().unwrap().len(), opens, "step {n}");
+            let issue = unreachable.then_some(OutputIssue::Unreachable);
+            assert_eq!(leds.report().issue, issue, "step {n}");
+        }
+    }
+
+    /// Lights that do not answer: no failure and `Unreachable` reported; no
+    /// open before the interval, one at it; once they answer the colors are
+    /// written and the issue clears. A quiet spell's release touches nothing.
+    #[test]
+    fn unanswered_lights_are_tried_again_every_interval_until_they_answer() {
+        let made = Calls::default();
+        let (silent, answering) = (
+            configured(&made, opening(Opens::Unanswered)),
+            configured(&made, opening(Opens::Yes)),
+        );
+        let ms = Duration::from_millis;
+        let wait = Some(Write::Unanswered);
+        let mut leds = Leds::Closed(Device::Untouched);
+        let start = Instant::now();
+        #[rustfmt::skip]
+        run(&mut leds, &made, start, &[
+            (&silent, ms(0), wait, 1, true),
+            (&silent, ms(4_999), wait, 0, true),
+            (&silent, ms(5_000), wait, 1, true),
+            (&answering, ms(9_999), wait, 0, true),
+            (&answering, ms(10_000), None, 1, false),
+            (&answering, ms(10_001), None, 0, false),
+        ]);
+        assert!(leds.is_held());
+
+        let mut leds = waiting(Device::Untouched);
+        leds.release(IdleMode::Native, &Hangup::default()).unwrap();
+        assert_eq!(state(&leds), "waiting, untouched");
+    }
+
+    /// Lights that never answer never fail the session: one open per
+    /// interval, for as long as frames come.
+    #[test]
+    fn unanswered_lights_are_waited_for_without_end() {
+        let made = Calls::default();
+        let silent = configured(&made, opening(Opens::TouchedUnanswered));
+        let wait = Some(Write::Unanswered);
+        let steps: Vec<Step<'_>> = (0..1_000)
+            .flat_map(|n| {
+                let at = UNANSWERED_INTERVAL * n;
+                [
+                    (&silent, at, wait, 1, true),
+                    (&silent, at + UNANSWERED_INTERVAL / 2, wait, 0, true),
+                ]
+            })
+            .collect();
+        let mut leds = Leds::Closed(Device::Untouched);
+        run(&mut leds, &made, Instant::now(), &steps);
+        assert_eq!(state(&leds), "waiting, unknown");
     }
 }

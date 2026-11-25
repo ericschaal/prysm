@@ -94,6 +94,12 @@ impl Attempts {
         retry.ok_or(Escalation::FAIL_FAST)
     }
 
+    /// The first failure since the last success; `None` before it.
+    #[must_use]
+    pub const fn since(&self) -> Option<Instant> {
+        self.since
+    }
+
     /// The operation really worked, so the next failure starts the schedule
     /// over.
     pub fn succeeded(&mut self) {
