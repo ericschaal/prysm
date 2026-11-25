@@ -29,6 +29,7 @@
 //!
 //! Without a configuration read (none yet, or WLED refuses it behind its
 //! settings PIN) no brightness is reported and the gamma is unknown.
+use crate::classify::{self, Cause};
 use crate::ddp::{Gamma, Transfer};
 use crate::http::{self, RequestError};
 use prysm_ports::{DeviceBrightness, DeviceReport, OutputIssue, chain};
@@ -271,8 +272,9 @@ impl Observer {
     }
 
     /// Records a check's outcome. Any failure, a reply that is not WLED's
-    /// state included, reports [`OutputIssue::Unreachable`]; its cause is
-    /// logged at debug level.
+    /// state included, reports [`OutputIssue::Unreachable`]: the check only
+    /// reports, and no other issue says it. Its cause and what it would
+    /// escalate as ([`classify::escalation`]) are logged at debug level.
     fn finish(&mut self, now: Instant, answer: Result<(Status, IpAddr), RequestError>) {
         self.next = now + self.every;
         let status = answer.as_ref().ok().map(|(status, _)| status);
@@ -288,6 +290,7 @@ impl Observer {
                 tracing::debug!(
                     device = %self.device,
                     error = %chain(&error),
+                    escalation = ?classify::escalation(Cause::Request(&error)),
                     "WLED state check got no usable answer"
                 );
                 Some(OutputIssue::Unreachable)
