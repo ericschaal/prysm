@@ -61,10 +61,11 @@ pub(super) enum Stage {
     Closed { at: Instant },
     /// A tap with no deadline running: acquired at the pace.
     Running,
-    /// The driver answered not ready since `since`; acquired again at `at`.
-    Preparing { since: Instant, at: Instant },
-    /// Initialised, with no buffer since `since`.
-    Pending { since: Instant },
+    /// No frame since `since`, the first answer without one (not ready or a
+    /// pending buffer) since the tap opened or last delivered a frame;
+    /// acquired again at `at`: [`Limits::retry`] after a not-ready answer,
+    /// at the pace after a pending one.
+    Waiting { since: Instant, at: Instant },
     /// The driver refused: initialised again at the next change of the
     /// video signal, since nothing tells when the TV would allow it sooner.
     /// A refused driver stays created-only, so a refusal always has its tap.
@@ -342,9 +343,15 @@ impl Stage {
     fn refusal(self) -> Option<Refusal> {
         match self {
             Self::Refused(refusal) | Self::Reinitialising(refusal) => Some(refusal),
-            Self::Closed { .. } | Self::Running | Self::Preparing { .. } | Self::Pending { .. } => {
-                None
-            }
+            Self::Closed { .. } | Self::Running | Self::Waiting { .. } => None,
+        }
+    }
+
+    /// When the wait for a frame started: kept while waiting, else `now`.
+    fn waiting_since(self, now: Instant) -> Instant {
+        match self {
+            Self::Waiting { since, .. } => since,
+            _ => now,
         }
     }
 }
@@ -575,7 +582,7 @@ impl State {
             Phase::Ui { held: false } => Action::Open(Kind::Ui),
             Phase::Ui { held: true } => Action::Acquire,
             Phase::Video {
-                stage: Stage::Closed { at } | Stage::Preparing { at, .. },
+                stage: Stage::Closed { at } | Stage::Waiting { at, .. },
                 ..
             } if now < at => Action::Sleep(at - now),
             Phase::Video {
@@ -603,8 +610,8 @@ impl State {
 impl State {
     /// Act on one acquisition; a TV UI answer goes to [`Self::ui_acquired`].
     /// For video, an `initializing` one if the driver was created-only: a
-    /// refusal starts, goes on or ends; then publish a frame, time a pending
-    /// or preparing driver, or recover from a fault.
+    /// refusal starts, goes on or ends; then publish a frame, time the wait
+    /// for one, or recover from a fault.
     fn acquired(
         &mut self,
         answer: Result<Acquired, Fault>,
@@ -657,11 +664,9 @@ impl State {
                 };
                 out.push(Action::Deliver(frame));
             }
+            // One wait for a frame, each answer judged against its own limit.
             Ok(Acquired::Pending) => {
-                let since = match stage {
-                    Stage::Pending { since } => since,
-                    _ => now,
-                };
+                let since = stage.waiting_since(now);
                 if now.duration_since(since) >= rules.limits.pending {
                     let stalled = Fault::recoverable(Error::other(format!(
                         "webOS video produced no frame for {:?}",
@@ -669,13 +674,10 @@ impl State {
                     )));
                     return self.recover(stalled, Reopen::AtOnce, now, rules, out);
                 }
-                self.phase = self.phase.at(Stage::Pending { since });
+                self.phase = self.phase.at(Stage::Waiting { since, at: now });
             }
             Ok(Acquired::NotReady) => {
-                let since = match stage {
-                    Stage::Preparing { since, .. } => since,
-                    _ => now,
-                };
+                let since = stage.waiting_since(now);
                 if now.duration_since(since) >= rules.limits.preparation {
                     let error = Error::other(format!(
                         "webOS video was not ready within {:?}",
@@ -683,7 +685,7 @@ impl State {
                     ));
                     return self.fail(error, out);
                 }
-                self.phase = self.phase.at(Stage::Preparing {
+                self.phase = self.phase.at(Stage::Waiting {
                     since,
                     at: now + rules.limits.retry,
                 });
@@ -1007,11 +1009,7 @@ mod tests {
     #[test]
     fn a_frame_is_delivered_and_paced() {
         let t0 = Instant::now();
-        for stage in [
-            Stage::Running,
-            Stage::Preparing { since: t0, at: t0 },
-            Stage::Pending { since: t0 },
-        ] {
+        for stage in [Stage::Running, Stage::Waiting { since: t0, at: t0 }] {
             let phase = Phase::Video {
                 stage,
                 next_fault: Occurrence::Again,
@@ -1061,8 +1059,8 @@ mod tests {
         }
     }
 
-    /// A pending driver is timed from its first pending answer; one that
-    /// stays pending for `pending` is released and reopened at once.
+    /// A pending driver is timed from its first answer without a frame; one
+    /// that stays pending for `pending` is released and reopened at once.
     #[test]
     fn a_pending_driver_stalls_after_its_limit() {
         let t0 = Instant::now();
@@ -1071,7 +1069,7 @@ mod tests {
             acquired(Ok(Acquired::Pending), false),
             t0,
             &RULES,
-            video(Stage::Pending { since: t0 }),
+            video(Stage::Waiting { since: t0, at: t0 }),
             &[Action::Sleep(INTERVAL)],
         );
         let state = check(
@@ -1079,7 +1077,10 @@ mod tests {
             acquired(Ok(Acquired::Pending), false),
             ms(t0, 1999),
             &RULES,
-            video(Stage::Pending { since: t0 }),
+            video(Stage::Waiting {
+                since: t0,
+                at: ms(t0, 1999),
+            }),
             &[Action::Sleep(Duration::ZERO)],
         );
         let stalled = Error::other(format!(
@@ -1139,7 +1140,7 @@ mod tests {
     fn a_preparing_driver_fails_after_its_limit() {
         let t0 = Instant::now();
         let preparing = |at_ms| {
-            video(Stage::Preparing {
+            video(Stage::Waiting {
                 since: t0,
                 at: ms(t0, at_ms),
             })
@@ -1189,38 +1190,47 @@ mod tests {
         );
     }
 
-    /// Not ready and pending restart each other's wait.
+    /// Not-ready and pending answers share one wait for a frame, each judged
+    /// against its own limit: alternating, a pending answer stalls once
+    /// `pending` passed since the first, a not-ready one fails the source
+    /// once `preparation` did.
     #[test]
-    fn not_ready_and_pending_restart_each_other() {
+    fn alternating_answers_share_one_wait() {
         let t0 = Instant::now();
-        let mut state = at(t0, video(Stage::Running), UiSupport::Untried);
-        for (now, answer, stage) in [
-            (
-                0,
-                Acquired::NotReady,
-                Stage::Preparing {
-                    since: t0,
-                    at: ms(t0, 1000),
-                },
-            ),
-            (
-                1500,
-                Acquired::Pending,
-                Stage::Pending {
-                    since: ms(t0, 1500),
-                },
-            ),
-            (
-                3000,
-                Acquired::NotReady,
-                Stage::Preparing {
-                    since: ms(t0, 3000),
-                    at: ms(t0, 4000),
-                },
-            ),
-        ] {
-            state = next(state, acquired(Ok(answer), false), ms(t0, now), &RULES).state;
-            assert_eq!(state.phase, video(stage), "at {now} ms");
+        let waiting = |at_ms| {
+            video(Stage::Waiting {
+                since: t0,
+                at: ms(t0, at_ms),
+            })
+        };
+        let stalled = Phase::Video {
+            stage: Stage::Closed { at: ms(t0, 2100) },
+            next_fault: Occurrence::Again,
+        };
+        let not_ready: fn() -> Acquired = || Acquired::NotReady;
+        let pending: fn() -> Acquired = || Acquired::Pending;
+        let paths = [
+            vec![
+                (0, not_ready, waiting(1000)),
+                (1000, pending, waiting(1000)),
+                (1100, not_ready, waiting(2100)),
+                (2100, pending, stalled),
+            ],
+            vec![
+                (0, pending, waiting(0)),
+                (100, not_ready, waiting(1100)),
+                (1100, pending, waiting(1100)),
+                (1200, not_ready, waiting(2200)),
+                (9999, not_ready, waiting(10_999)),
+                (10_000, not_ready, Phase::Idle),
+            ],
+        ];
+        for path in paths {
+            let mut state = at(t0, video(Stage::Running), UiSupport::Untried);
+            for (now, answer, phase) in path {
+                state = next(state, acquired(Ok(answer()), false), ms(t0, now), &RULES).state;
+                assert_eq!(state.phase, phase, "at {now} ms");
+            }
         }
     }
 
@@ -1320,7 +1330,7 @@ mod tests {
             acquired(Ok(Acquired::NotReady), true),
             ms(t0, 600),
             &RULES,
-            video(Stage::Preparing {
+            video(Stage::Waiting {
                 since: ms(t0, 600),
                 at: ms(t0, 1600),
             }),
@@ -1401,7 +1411,7 @@ mod tests {
                 vec![Action::Acquire],
             ),
             (
-                Stage::Preparing {
+                Stage::Waiting {
                     since: t0,
                     at: ms(t0, 900),
                 },
@@ -1489,8 +1499,7 @@ mod tests {
         let r = refusal(t0, 1);
         for stage in [
             Stage::Running,
-            Stage::Preparing { since: t0, at: t0 },
-            Stage::Pending { since: t0 },
+            Stage::Waiting { since: t0, at: t0 },
             Stage::Reinitialising(r),
         ] {
             for next_fault in [Occurrence::First, Occurrence::Again] {
@@ -1558,8 +1567,7 @@ mod tests {
         let closed = Stage::Closed { at: t0 };
         let held = [
             Stage::Running,
-            Stage::Preparing { since: t0, at: t0 },
-            Stage::Pending { since: t0 },
+            Stage::Waiting { since: t0, at: t0 },
             Stage::Refused(r),
             Stage::Reinitialising(r),
         ];

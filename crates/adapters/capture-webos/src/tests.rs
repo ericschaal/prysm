@@ -579,37 +579,35 @@ fn a_not_ready_answer_ends_a_refusal() {
     closes_cleanly(frames);
 }
 
-/// Preparation and a pending buffer are timed apart: each answer restarts
-/// the other's wait, so not ready, pending and not ready again is no
-/// preparation failure, and a later pending buffer is no stall.
+/// Not-ready and pending answers share one wait for a frame: alternating,
+/// they reach the pending limit, which reopens the tap without an error.
 #[test]
-fn not_ready_and_pending_answers_restart_each_others_wait() {
+fn alternating_not_ready_and_pending_answers_reach_a_limit() {
     let driver = Driver::new();
     let video = VideoSignal::default();
     video.set(Video::Available);
     driver.with(|s| s.idle = Step::NotReady);
     let limits = Limits {
-        preparation: Duration::from_millis(500),
         pending: Duration::from_millis(500),
         ..TEST
     };
     let mut frames = start_with(&driver, &video, limits);
-    for (idle, wait) in [
-        (Step::NotReady, 300),
-        (Step::Pending, 300),
-        (Step::NotReady, 300),
-        (Step::Pending, 300),
-    ] {
+    // Each answer lasts less than the limit, so only one shared wait reaches it.
+    let deadline = Instant::now() + LIMIT;
+    for idle in [Step::Pending, Step::NotReady].into_iter().cycle() {
+        if calls(&driver).2 >= 1 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "no limit reached");
         driver.with(|s| s.idle = idle);
-        thread::sleep(Duration::from_millis(wait));
-        assert!(matches!(
-            frames.next_frame(Duration::ZERO).unwrap(),
-            Pull::Quiet
-        ));
+        thread::sleep(Duration::from_millis(200));
     }
+    eventually("the reopen", LIMIT, || {
+        (calls(&driver).0 >= 2).then_some(())
+    });
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
     driver.push([Step::Frame(3)]);
     assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
-    assert_eq!(calls(&driver).2, 0, "no stall reopened the tap");
     closes_cleanly(frames);
 }
 

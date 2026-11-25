@@ -97,9 +97,11 @@ pub const RELEASE: Duration = Duration::from_secs(4);
 pub(crate) struct Limits {
     /// Longest a single native call may run before the source fails.
     pub watchdog: Duration,
-    /// Longest the driver may stay [`Acquired::NotReady`].
+    /// Longest without a frame, counted from the first answer without one,
+    /// at which an [`Acquired::NotReady`] fails the source.
     pub preparation: Duration,
-    /// Longest the driver may stay [`Acquired::Pending`] before the tap is restarted.
+    /// Longest without a frame, counted the same way, at which an
+    /// [`Acquired::Pending`] restarts the tap.
     pub pending: Duration,
     /// Delay before reopening after a recoverable failure or between
     /// preparation attempts.
