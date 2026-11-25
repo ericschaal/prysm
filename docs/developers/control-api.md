@@ -94,7 +94,9 @@ There is no confirmation window and no rollback to the previous mode after a
 failed start. A failure leaves the target as requested. Without frames for 3 s
 the output returns to the device's own state until frames return; WLED
 problems while running (switched off, live override, another sender, no
-answer) show as `device.issue`, and Prysm does not switch WLED back.
+answer) show as `device.issue`, and Prysm does not switch WLED back. Lights
+that do not answer the output's open are `unreachable` too, not a failure:
+lighting keeps running and tries the open again every 5 s.
 `device.brightness_percent` (`40`) is WLED's own brightness while it scales
 Prysm's colours; Prysm reports it and never changes it. `device.led_count`
 (`120`) is how many LEDs WLED itself says it has; Prysm keeps sending the

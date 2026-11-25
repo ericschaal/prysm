@@ -151,6 +151,10 @@ comes from `bri` in its state and, every 30th check instead of the state,
 output at the source's first frame, not at start, and idles it `Native` (the
 device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
 at the next frame; a source that never delivers never takes the device over.
+An open that fails with `Escalation::Unanswered` (lights that do not answer)
+does not end the session: it reports `OutputIssue::Unreachable` and is tried
+again at a frame every `UNANSWERED_INTERVAL` (5 s); every other failed open
+ends it ([error handling](error-handling.md#rules)).
 To put a device nobody holds in another idle mode (lights off after such a
 release, or the device's own effects without a session) the engine calls
 `OutputFactory::idle(settings, mode)`, which by default opens and idles; an

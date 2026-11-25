@@ -349,7 +349,8 @@ pub enum OutputIssueSchema {
     NotLive,
     /// Another sender's colours reach the device.
     OtherSender,
-    /// The device does not answer state requests.
+    /// The device does not answer state requests, or lighting's open of it:
+    /// lighting runs and tries the open again every few seconds.
     Unreachable,
 }
 
@@ -357,8 +358,9 @@ pub enum OutputIssueSchema {
 /// What the lights say about themselves, from the output's own checks. Each
 /// part is absent while the output cannot tell, and all are while no session
 /// holds the output (no session, no frame yet, or released after 3 s without
-/// video; see `session.state` and `input.picture`). Prysm reports them and
-/// changes none.
+/// video; see `session.state` and `input.picture`), but `issue`
+/// `unreachable` while lighting waits for lights that did not answer its
+/// open. Prysm reports them and changes none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = DeviceReport)]
 pub struct DeviceReportSchema {

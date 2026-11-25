@@ -139,7 +139,11 @@ TV two threads take a 640x360 frame from 11 to 7 ms
 
 The output is opened at the first frame, not when lighting starts, so a source
 without video never takes WLED over. After 3 s without frames the output is
-idled to the device's own state and reopened at the next frame. An output
+idled to the device's own state and reopened at the next frame. An open the
+lights do not answer keeps the session running: it reports `unreachable` and
+tries again at a frame every 5 s
+([error handling](error-handling.md#rules)); any other output failure ends
+the session. An output
 nobody holds (released, or `effects` without a session) is put in
 another idle mode without being opened (`OutputFactory::idle`): WLED is
 switched off, or to its effects, without entering live mode first. While a

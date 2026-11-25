@@ -122,7 +122,9 @@ On input, `processing`, each of its fields, a calibration's `correction` and eac
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
 Setting the target to `screen_sync` opens the capture (a failure is the
 reply); the output is opened at the first frame, so an output that cannot
-open ends the session and appears only in `session.failure`. While no frames arrive, `input.picture` is `quiet` or
+open ends the session and appears only in `session.failure`, except lights
+that do not answer: the session runs on, `device.issue` is `unreachable`, and
+the open is tried again at a frame every 5 s until they answer. While no frames arrive, `input.picture` is `quiet` or
 `refused` (waiting for video) and after a few seconds the output is returned to its own
 state until frames return.
 
@@ -134,7 +136,9 @@ after 3 s without video. Read `session.state` and `input.picture` for which;
 `{}` alone does not mean lighting stopped. `issue` (absent
 when all is well) says why the lights are not showing its colours: `off`
 (switched off on the device), `overridden` (WLED's live override), `not_live`
-(the device is not taking realtime colours), `other_sender` or `unreachable`.
+(the device is not taking realtime colours), `other_sender` or `unreachable`
+(no answer to its state checks, or to the session's open while it waits for
+the lights; then `device` holds only this).
 It is not a failure: lighting keeps sending, nothing is switched back, and the
 field clears once the device shows the colours again. `brightness_percent`
 (0-100) is the device's own brightness while it scales the colours, and

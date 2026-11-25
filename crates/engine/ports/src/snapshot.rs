@@ -125,7 +125,8 @@ pub struct Snapshot {
     pub input: Option<Input>,
     /// What the output's device says about itself, from the output's own
     /// checks; republished with `input`. Empty while no session holds the
-    /// output.
+    /// output, but for [`OutputIssue::Unreachable`] while a session waits
+    /// for lights that did not answer its open.
     pub device: DeviceReport,
     /// The calibration pattern shown, while the target is `ScreenSync`. Not
     /// persisted; while set, processing runs without smoothing (and without
@@ -136,8 +137,10 @@ pub struct Snapshot {
 }
 
 /// What a held output's device last said about itself
-/// ([`LedOutput::report`](crate::LedOutput::report)). Each part is `None`
-/// while the output cannot tell; Prysm reports them and changes none.
+/// ([`LedOutput::report`](crate::LedOutput::report)), or, while the session
+/// waits for lights that did not answer its open, only that issue. Each part
+/// is `None` while the output cannot tell; Prysm reports them and changes
+/// none.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceReport {
     /// Why the LEDs are not showing the session's colours; `None` while they

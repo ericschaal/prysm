@@ -49,10 +49,14 @@ The full wire mapping is in the
   or away from the network) does not end the session: it reports the
   device issue `unreachable` and tries the open again at the first frame
   every 5 s, without end, until the lights answer, lighting stops or the
-  settings change.
+  settings change. It writes no frames meanwhile and holds no output, and,
+  as it is no failure, nothing else retries it (the TV's backoff included).
+  The portal and the TV app say "Can’t reach the lights".
   Every other failed open ends the session at once. The rule and why it
-  converges are `UNANSWERED` in
+  converges are `UNANSWERED_INTERVAL` in
   [`leds.rs`](../../crates/engine/runtime/src/leds.rs).
+- A held WLED output whose state checks get no answer reports the same
+  issue and keeps sending; its checks go on once a second, without backoff.
 - Surface failures (a portal listener that dies) are recorded in
   `surface_failures`; lighting continues.
 - A settings store that cannot be read is no reason not to start: the

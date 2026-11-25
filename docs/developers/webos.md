@@ -181,8 +181,10 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   starts from **Start with TV** (`autostart`).
 
 Full worker: re-applies a non-off target after a session failure (same
-backoff), advertises its LAN portal URL (looked up again at every heartbeat),
-and seeds `settings.json` with `capture.kind = "webos"` when missing.
+backoff); lights that do not answer are no failure (the session waits for
+them itself), so its status says them in `lights` instead. It advertises its
+LAN portal URL (looked up again at every heartbeat), and seeds
+`settings.json` with `capture.kind = "webos"` when missing.
 
 Slim worker: connects to the receiver at most once a second, also while
 Prysm speaks another capture stream version, resolving a host name at each
