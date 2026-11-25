@@ -8,8 +8,8 @@
 //! reader thread decodes [`Command`]s from stdin; stdin EOF or a bad line
 //! stops the worker.
 use crate::{
-    Command, Event, FullStatus, LineReader, LinkError, SlimLink, SlimStatus, WorkerFailure,
-    WorkerStatus, encode, exit,
+    Command, Event, Failure, FullStatus, LineReader, LinkError, SlimLink, SlimStatus,
+    WorkerFailure, WorkerStatus, encode, exit,
 };
 use prysm_ports::{Error, chain};
 use std::future::Future;
@@ -23,9 +23,8 @@ use tokio::sync::{mpsc, watch};
 pub enum Stop {
     /// SIGTERM, SIGINT or stdin EOF: exit [`exit::STOPPED`].
     Requested(&'static str),
-    /// A native resource is unconfirmed: exit [`exit::FAULTED`].
-    Faulted(String),
-    /// Protocol misuse or a lost link: exit [`exit::FAILED`].
+    /// Protocol misuse, a lost link, or the worker's own failure: exit
+    /// [`exit::FAILED`].
     Failed(String),
 }
 
@@ -33,7 +32,7 @@ impl std::fmt::Display for Stop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Requested(why) => why,
-            Self::Faulted(why) | Self::Failed(why) => why,
+            Self::Failed(why) => why,
         })
     }
 }
@@ -133,11 +132,15 @@ fn fit(event: Event, limit: usize) -> Event {
         message: short(failure.message),
         ..failure
     };
+    let short_escalated = |failure: Failure| Failure {
+        message: short(failure.message),
+        ..failure
+    };
     match event {
         Event::Status(WorkerStatus::Full(status)) => {
             Event::Status(WorkerStatus::Full(FullStatus {
                 portal: status.portal.map(short),
-                failure: status.failure.map(short_failure),
+                failure: status.failure.map(short_escalated),
                 ..status
             }))
         }
@@ -155,12 +158,7 @@ fn fit(event: Event, limit: usize) -> Event {
                 ..status
             }))
         }
-        Event::Failed { cause } => Event::Failed {
-            cause: short(cause),
-        },
-        Event::Faulted { cause } => Event::Faulted {
-            cause: short(cause),
-        },
+        Event::Failed(failure) => Event::Failed(short_escalated(failure)),
     }
 }
 
@@ -351,7 +349,7 @@ fn read_commands(
 #[must_use]
 pub fn exit_code(stop: Option<&Stop>, result: &prysm_ports::Result<()>) -> u8 {
     match (stop, result) {
-        (Some(Stop::Faulted(_)), _) | (_, Err(Error::Faulted(_))) => exit::FAULTED,
+        (_, Err(Error::Faulted(_))) => exit::FAULTED,
         (Some(Stop::Failed(_)), _) | (_, Err(_)) => exit::FAILED,
         _ => exit::STOPPED,
     }
@@ -443,9 +441,9 @@ where
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            let cause = format!("cannot start the async runtime: {error}");
-            eprintln!("{name}: {cause}");
-            events.send(&Event::Failed { cause });
+            let error = Error::adapter("cannot start the async runtime", error);
+            eprintln!("{name}: {}", chain(&error));
+            events.send(&Event::Failed(Failure::of(&error)));
             return ExitCode::from(exit::FAILED);
         }
     };
@@ -457,9 +455,8 @@ where
     runtime.shutdown_background();
     let code = exit_code(stop.reason().as_ref(), &result);
     if let Err(error) = &result {
-        let failure = chain(error);
-        eprintln!("{name}: {failure}");
-        events.send(&Event::Failed { cause: failure });
+        eprintln!("{name}: {}", chain(error));
+        events.send(&Event::Failed(Failure::of(error)));
     }
     match stop.reason() {
         Some(why) => eprintln!("{name}: {why}; exit {code}"),
@@ -503,7 +500,7 @@ mod tests {
         );
         assert_eq!(exit_code(None, &faulted), exit::FAULTED);
         assert_eq!(
-            exit_code(Some(&Stop::Faulted("x".into())), &failed),
+            exit_code(Some(&Stop::Failed("x".into())), &faulted),
             exit::FAULTED
         );
         assert_eq!(
@@ -516,9 +513,9 @@ mod tests {
     fn first_stop_reason_wins() {
         let stop = StopHandle::default();
         assert_eq!(stop.reason(), None);
-        stop.request(Stop::Faulted("tap".into()));
+        stop.request(Stop::Failed("tap".into()));
         stop.request(Stop::Requested("SIGTERM"));
-        assert_eq!(stop.reason(), Some(Stop::Faulted("tap".into())));
+        assert_eq!(stop.reason(), Some(Stop::Failed("tap".into())));
     }
 
     #[test]
@@ -542,14 +539,16 @@ mod tests {
         let (mut link, mut peer) = Link::memory();
         peer.send(Command::ResetVideo {});
         assert_eq!(link.commands.next().await, Some(Command::ResetVideo {}));
-        link.events.send(&Event::Faulted {
-            cause: "x".repeat(10_000),
-        });
-        let Some(Event::Faulted { cause }) = peer.event().await else {
-            panic!("expected a fault");
+        let long = |text: &str| Failure {
+            escalation: prysm_ports::Escalation::Restart,
+            message: text.repeat(10_000),
         };
-        assert!(cause.len() < 2000, "long causes are shortened");
-        let long = || Some(WorkerFailure::other("y".repeat(10_000)));
+        link.events.send(&Event::Failed(long("x")));
+        let Some(Event::Failed(failure)) = peer.event().await else {
+            panic!("expected a failure");
+        };
+        assert!(failure.message.len() < 2000, "long messages are shortened");
+        assert_eq!(failure.escalation, prysm_ports::Escalation::Restart);
         link.events
             .send(&Event::Status(WorkerStatus::Full(FullStatus {
                 capturing: false,
@@ -558,7 +557,7 @@ mod tests {
                 lights: None,
                 applied: 0,
                 portal: Some("z".repeat(10_000)),
-                failure: long(),
+                failure: Some(long("y")),
             })));
         let Some(Event::Status(WorkerStatus::Full(full))) = peer.event().await else {
             panic!("expected a full status");
@@ -569,20 +568,13 @@ mod tests {
             .send(&Event::Status(WorkerStatus::Slim(SlimStatus {
                 capturing: false,
                 link: SlimLink::Failed {
-                    failure: long().unwrap(),
+                    failure: WorkerFailure::other("w".repeat(10_000)),
                 },
             })));
         let Some(Event::Status(WorkerStatus::Slim(slim))) = peer.event().await else {
             panic!("expected a slim status");
         };
         assert!(slim.link.failure().unwrap().message.len() < 2000);
-        link.events.send(&Event::Failed {
-            cause: "w".repeat(10_000),
-        });
-        let Some(Event::Failed { cause }) = peer.event().await else {
-            panic!("expected a failure");
-        };
-        assert!(cause.len() < 2000);
         peer.close();
         assert_eq!(link.commands.next().await, None);
         link.stop.stopped().await;
@@ -608,7 +600,11 @@ mod tests {
         for unit in ["\"", "\\", "\u{1}", "\n", "é", "😀", "x"] {
             for length in [MAX_TEXT - 1, MAX_TEXT, MAX_TEXT + 1, 10_000] {
                 let text = unit.repeat(length.div_ceil(unit.len()));
-                let failure = || Some(WorkerFailure::new(FailureKind::Encoder, text.clone()));
+                let failure = || WorkerFailure::new(FailureKind::Encoder, text.clone());
+                let escalated = || Failure {
+                    escalation: prysm_ports::Escalation::Ask(prysm_ports::Fix::ChangeSettings),
+                    message: text.clone(),
+                };
                 for event in [
                     Event::Status(WorkerStatus::Full(FullStatus {
                         capturing: true,
@@ -617,13 +613,11 @@ mod tests {
                         lights: Some(prysm_ports::OutputIssue::OtherSender),
                         applied: u64::MAX,
                         portal: Some(text.clone()),
-                        failure: failure(),
+                        failure: Some(escalated()),
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
-                        link: SlimLink::Waiting {
-                            failure: failure().unwrap(),
-                        },
+                        link: SlimLink::Waiting { failure: failure() },
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
@@ -632,12 +626,7 @@ mod tests {
                             fps: u16::MAX,
                         },
                     })),
-                    Event::Failed {
-                        cause: text.clone(),
-                    },
-                    Event::Faulted {
-                        cause: text.clone(),
-                    },
+                    Event::Failed(escalated()),
                 ] {
                     events.send(&event);
                     let line = lines.lock().unwrap().pop().expect("a line");

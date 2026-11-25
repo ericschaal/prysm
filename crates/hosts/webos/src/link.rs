@@ -1,12 +1,10 @@
 //! The engine's side of the supervisor link: commands in, status out.
 use futures::future::BoxFuture;
 use prysm_capture_webos::VideoSignal;
-use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot, chain};
+use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
-use prysm_webos_link::{
-    Backoff, Command, Event, FullStatus, HEARTBEAT, WorkerFailure, WorkerStatus,
-};
+use prysm_webos_link::{Backoff, Command, Event, Failure, FullStatus, HEARTBEAT, WorkerStatus};
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until};
 
@@ -83,18 +81,14 @@ impl EngineLink {
                 beat = now + self.heartbeat;
             }
             if let SessionState::Faulted(phase) = snapshot.session {
-                let cause = Error::Faulted(phase).to_string();
-                events.send(&Event::Faulted {
-                    cause: cause.clone(),
-                });
-                stop.request(Stop::Faulted(cause));
+                let failure = Failure::of(&Error::Faulted(phase));
+                events.send(&Event::Failed(failure.clone()));
+                stop.request(Stop::Failed(failure.message));
                 return Ok(());
             }
-            if let Some(cause) = needs_restart(&snapshot) {
-                events.send(&Event::Failed {
-                    cause: cause.clone(),
-                });
-                stop.request(Stop::Failed(cause));
+            if let Some(failure) = needs_restart(&snapshot) {
+                events.send(&Event::Failed(failure.clone()));
+                stop.request(Stop::Failed(failure.message));
                 return Ok(());
             }
             retry.observe(&snapshot, now);
@@ -170,7 +164,7 @@ fn status(snapshot: &Snapshot, portal: Option<&str>, applied: u64) -> WorkerStat
         lights: snapshot.device.issue,
         applied,
         portal: portal.map(str::to_owned),
-        failure: failure.map(|failure| WorkerFailure::other(chain(failure))),
+        failure: failure.map(Failure::of),
     })
 }
 
@@ -230,14 +224,14 @@ impl Retry {
 /// a capture failure no source in this process can recover from: the
 /// worker then fails (exit 1), and the supervisor starts a new one after its
 /// backoff instead of this worker retrying in place.
-fn needs_restart(snapshot: &Snapshot) -> Option<String> {
+fn needs_restart(snapshot: &Snapshot) -> Option<Failure> {
     let SessionState::Stopped {
         failure: Some(failure),
     } = &snapshot.session
     else {
         return None;
     };
-    prysm_capture_webos::needs_new_process(failure).then(|| chain(failure))
+    prysm_capture_webos::needs_new_process(failure).then(|| Failure::of(failure))
 }
 
 /// A non-Off target whose session ended with a failure that a retry can fix.
@@ -319,7 +313,9 @@ mod tests {
             ..Snapshot::default()
         };
         assert_eq!(
-            needs_restart(&stopped).as_deref(),
+            needs_restart(&stopped)
+                .map(|failure| failure.message)
+                .as_deref(),
             Some(
                 "cannot open webOS video capture: vtCapture_create failed: vtcapture exception: bad_alloc"
             )

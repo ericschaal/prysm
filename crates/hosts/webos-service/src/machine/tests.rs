@@ -93,6 +93,19 @@ fn full_report(target: LightingTarget) -> FullStatus {
     }
 }
 
+/// A worker's failure: `escalation` and `message`.
+fn failure(escalation: Escalation, message: &str) -> Failure {
+    Failure {
+        escalation,
+        message: message.into(),
+    }
+}
+
+/// A worker's last word: it fails with `escalation`, for `message`.
+fn failed_with(escalation: Escalation, message: &str) -> Input {
+    Input::Worker(Event::Failed(failure(escalation, message)))
+}
+
 fn reported(status: WorkerStatus) -> Input {
     Input::Worker(Event::Status(status))
 }
@@ -602,9 +615,7 @@ fn silence_is_a_hang_then_term_then_one_kill() {
 #[test]
 fn faults_broken_links_and_spawn_failures_retry() {
     let (mut m, t0) = (full(), Instant::now());
-    let fault = Input::Worker(Event::Faulted {
-        cause: "release unconfirmed".into(),
-    });
+    let fault = failed_with(Escalation::Restart, "release unconfirmed");
     script(
         &mut m,
         t0,
@@ -669,7 +680,7 @@ fn an_exit_keeps_the_workers_last_failure() {
             (
                 1,
                 full_status(FullStatus {
-                    failure: Some(WorkerFailure::other("output: refused")),
+                    failure: Some(failure(Escalation::FAIL_FAST, "output: refused")),
                     ..full_report(LightingTarget::ScreenSync)
                 }),
                 vec![],
@@ -726,11 +737,7 @@ fn an_exit_keeps_an_actionable_kind_but_not_a_receiver_wait() {
 #[test]
 fn an_exit_names_why_the_worker_failed() {
     let (mut m, t0) = (full(), Instant::now());
-    let failed = |cause: &str| {
-        Input::Worker(Event::Failed {
-            cause: cause.into(),
-        })
-    };
+    let failed = |message: &str| failed_with(Escalation::FAIL_FAST, message);
     script(
         &mut m,
         t0,
@@ -763,7 +770,7 @@ fn an_exit_names_why_the_worker_failed() {
             (
                 1_003,
                 full_status(FullStatus {
-                    failure: Some(WorkerFailure::other("output: refused")),
+                    failure: Some(failure(Escalation::FAIL_FAST, "output: refused")),
                     ..full_report(LightingTarget::Effects)
                 }),
                 vec![],
@@ -1184,7 +1191,7 @@ fn failures_carry_their_kind() {
     full.handle(Pw(Active), t0);
     full.handle(
         full_status(FullStatus {
-            failure: Some(WorkerFailure::other("x")),
+            failure: Some(failure(Escalation::FAIL_FAST, "x")),
             ..full_report(LightingTarget::Off)
         }),
         t0,
@@ -1492,9 +1499,7 @@ fn a_requested_stop_that_ends_badly_is_a_failure() {
             (1, Enabled(false), vec![Effect::Terminate]),
             (
                 2,
-                Input::Worker(Event::Failed {
-                    cause: "release unconfirmed".into(),
-                }),
+                failed_with(Escalation::Restart, "release unconfirmed"),
                 vec![],
             ),
             (3, Exited(Exit::Code(exit::FAULTED.into())), vec![]),
@@ -1522,9 +1527,7 @@ fn a_requested_stop_that_ends_badly_is_a_failure() {
             ),
             (
                 2,
-                Input::Worker(Event::Faulted {
-                    cause: "release unconfirmed".into(),
-                }),
+                failed_with(Escalation::Restart, "release unconfirmed"),
                 vec![],
             ),
             (3, Exited(Exit::Code(exit::FAULTED.into())), vec![]),
@@ -2051,12 +2054,12 @@ fn every_phase_takes_every_input() {
         ),
         (sending, false, unchanged()),
         (
-            worker(Event::Failed { cause: cause() }),
+            failed_with(Escalation::FAIL_FAST, &cause()),
             false,
             last_word((none(), running, Some("c"))),
         ),
         (
-            worker(Event::Faulted { cause: cause() }),
+            failed_with(Escalation::Restart, &cause()),
             false,
             last_word((terminate(), failing, Some("worker faulted: c"))),
         ),

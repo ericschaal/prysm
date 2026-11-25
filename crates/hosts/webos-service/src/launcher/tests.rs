@@ -69,14 +69,17 @@ exit 3"#,
 /// process it left behind) is drained before the exit is handed over.
 #[test]
 fn the_last_events_come_before_the_exit() {
-    let mut worker = sh(r#"(sleep 0.2; echo '{"type":"failed","cause":"late"}') &
-exit 1"#);
+    let mut worker = sh(
+        r#"(sleep 0.2; echo '{"type":"failed","escalation":{"step":"restart"},"message":"late"}') &
+exit 1"#,
+    );
     assert_eq!(exit(&mut worker), Exit::Code(1));
     let seen = worker.drain();
     assert!(
-        seen.contains(&Output::Event(Event::Failed {
-            cause: "late".into()
-        })),
+        seen.contains(&Output::Event(Event::Failed(prysm_webos_link::Failure {
+            escalation: prysm_webos_link::Escalation::Restart,
+            message: "late".into()
+        }))),
         "{seen:?}"
     );
 }

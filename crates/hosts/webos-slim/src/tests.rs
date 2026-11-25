@@ -128,7 +128,7 @@ fn status(event: &Event) -> Option<&SlimStatus> {
     match event {
         Event::Status(WorkerStatus::Slim(status)) => Some(status),
         Event::Status(WorkerStatus::Full(status)) => panic!("a full status: {status:?}"),
-        Event::Failed { .. } | Event::Faulted { .. } => None,
+        Event::Failed(_) => None,
     }
 }
 

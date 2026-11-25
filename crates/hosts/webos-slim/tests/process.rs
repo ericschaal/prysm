@@ -101,9 +101,11 @@ fn capture_off_the_tv_fails_with_its_cause() {
     let stdin = child.stdin.take();
     let failed = events(&mut child, |event| event["type"] == "failed");
     assert!(
-        failed["cause"].as_str().unwrap().contains("webOS"),
+        failed["message"].as_str().unwrap().contains("webOS"),
         "{failed}"
     );
+    // The worker copies the error's escalation: off the TV, the person's.
+    assert_eq!(failed["escalation"]["step"], "ask", "{failed}");
     assert_eq!(
         wait_child(&mut child, EXIT)
             .expect("the worker exits")

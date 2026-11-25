@@ -3,8 +3,9 @@
 use crate::preferences::Preferences;
 use crate::state::{self, FullWorker, Power, Process, SlimWorker, State};
 use prysm_webos_link::{
-    Backoff, Command, Event, FailureKind, FullArgs, FullStatus, KILL_AFTER, LightingTarget,
-    SILENCE, SlimArgs, SlimLink, SlimStatus, Video, WorkerFailure, WorkerStatus, exit,
+    Backoff, Command, Escalation, Event, Failure, FailureKind, FullArgs, FullStatus, KILL_AFTER,
+    LightingTarget, SILENCE, SlimArgs, SlimLink, SlimStatus, Video, WorkerFailure, WorkerStatus,
+    exit,
 };
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -157,18 +158,24 @@ impl Package {
 
     /// Forget the report of a worker that is gone; its failure, if any.
     fn forget(&mut self) -> Option<WorkerFailure> {
+        let failure = self.reported_failure();
         match self {
-            Self::Full { report, .. } => report.take().and_then(|report| report.failure),
-            Self::Slim { report, .. } => report
-                .take()
-                .and_then(|report| report.link.failure().cloned()),
+            Self::Full { report, .. } => *report = None,
+            Self::Slim { report, .. } => *report = None,
         }
+        failure
     }
 
-    fn reported_failure(&self) -> Option<&WorkerFailure> {
+    /// The current worker's reported failure, as the TV app is shown one: a
+    /// full worker's by its message alone (kind `other`).
+    fn reported_failure(&self) -> Option<WorkerFailure> {
         match self {
-            Self::Full { report, .. } => report.as_ref()?.failure.as_ref(),
-            Self::Slim { report, .. } => report.as_ref()?.link.failure(),
+            Self::Full { report, .. } => report
+                .as_ref()?
+                .failure
+                .as_ref()
+                .map(|failure| WorkerFailure::other(failure.message.clone())),
+            Self::Slim { report, .. } => report.as_ref()?.link.failure().cloned(),
         }
     }
 
@@ -197,8 +204,8 @@ pub struct Machine {
     /// Restart delays: reset by a worker that ran [`Backoff::HEALTHY`] and by
     /// a dismissal ([`Machine::dismiss`]).
     backoff: Backoff,
-    /// Why the current worker says it fails or faults ([`Event::Failed`],
-    /// [`Event::Faulted`] while it stops), until it exits.
+    /// Why the current worker says it fails ([`Event::Failed`]; while it
+    /// stops, also a fault), until it exits.
     failed: Option<String>,
     /// The supervisor's own failure: why the last worker ended or could not
     /// start, or why the current one is being stopped. Set by a failed stop
@@ -376,7 +383,7 @@ impl Machine {
             self.failed
                 .clone()
                 .map(WorkerFailure::other)
-                .or_else(|| self.package.reported_failure().cloned())
+                .or_else(|| self.package.reported_failure())
         };
         match self.phase {
             Phase::Stopping {
@@ -593,7 +600,7 @@ impl Machine {
                     Event::Status(status) => {
                         self.package.keep(status);
                     }
-                    Event::Failed { cause } | Event::Faulted { cause } => self.failed = Some(cause),
+                    Event::Failed(failure) => self.failed = Some(failure.message),
                 }
             }
             return;
@@ -601,10 +608,10 @@ impl Machine {
         self.phase = Phase::Running { since, heard: now };
         match event {
             Event::Status(status) => self.report(status, now, effects),
-            Event::Failed { cause } => self.failed = Some(cause),
-            Event::Faulted { cause } => {
-                self.fail(&format!("worker faulted: {cause}"), now, effects)
-            }
+            Event::Failed(failure) => match interim_fault(&failure) {
+                Some(why) => self.fail(&why, now, effects),
+                None => self.failed = Some(failure.message),
+            },
         }
     }
 
@@ -748,6 +755,19 @@ impl Machine {
             },
             _ => {}
         }
+    }
+}
+
+/// Interim, deleted by the supervisor's recovery, which reads every
+/// escalation in one exhaustive match: what a running worker's
+/// [`Event::Failed`] meant before failures carried their escalation. A
+/// `Restart` was the worker's fault: why it is stopped as failed at once,
+/// to be restarted after the backoff. Any other escalation (`None`) was a
+/// failure kept until the worker exits.
+fn interim_fault(failure: &Failure) -> Option<String> {
+    match failure.escalation {
+        Escalation::Restart => Some(format!("worker faulted: {}", failure.message)),
+        Escalation::Unanswered | Escalation::Ask(_) => None,
     }
 }
 

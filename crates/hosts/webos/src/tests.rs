@@ -6,7 +6,7 @@ use prysm_runtime::fakes::{
     self, CallLog, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
 use prysm_webos_link::worker::{Link, Peer, Stop};
-use prysm_webos_link::{Command, Event, FullStatus, Video, WorkerStatus};
+use prysm_webos_link::{Command, Escalation, Event, FullStatus, Video, WorkerStatus};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -87,7 +87,7 @@ fn status(event: &Event) -> Option<&FullStatus> {
     match event {
         Event::Status(WorkerStatus::Full(status)) => Some(status),
         Event::Status(WorkerStatus::Slim(status)) => panic!("a slim status: {status:?}"),
-        Event::Failed { .. } | Event::Faulted { .. } => None,
+        Event::Failed(_) => None,
     }
 }
 
@@ -311,27 +311,28 @@ async fn an_unconfirmed_release_faults_the_worker() {
     });
     let (mut peer, _feed, _log, task) = start(settings, LightingTarget::ScreenSync);
     // The status just before the fault says lighting no longer runs; the
-    // fault itself, not a failure, says why.
+    // fault itself, not a failure in the status, says why.
     let mut previous = None;
     let fault = loop {
         let event = peer.event().await.unwrap();
-        if matches!(event, Event::Faulted { .. }) {
-            break event;
+        if let Event::Failed(failure) = event {
+            break failure;
         }
         previous = Some(event);
     };
     let last = previous.as_ref().and_then(status).unwrap();
     assert!(!last.capturing && last.failure.is_none(), "{last:?}");
-    let Event::Faulted { cause } = fault else {
-        unreachable!()
-    };
-    assert!(cause.contains("confirming the source's release"), "{cause}");
+    assert_eq!(fault.escalation, Escalation::Restart);
+    assert!(
+        fault.message.contains("confirming the source's release"),
+        "{fault:?}"
+    );
     let (result, stop) = task.await.unwrap();
     assert!(matches!(
         result,
         Err(Error::Faulted(SessionPhase::SourceUnreleased))
     ));
-    assert!(matches!(stop, Some(Stop::Faulted(_))));
+    assert!(matches!(stop, Some(Stop::Failed(_))));
     assert_eq!(
         prysm_webos_link::worker::exit_code(stop.as_ref(), &result),
         prysm_webos_link::exit::FAULTED
@@ -354,21 +355,21 @@ async fn an_unconfirmed_release_on_a_commanded_stop_faults_the_worker() {
         sequence: 1,
     });
     let fault = loop {
-        let event = peer.event().await.unwrap();
-        if matches!(event, Event::Faulted { .. }) {
-            break event;
+        if let Event::Failed(failure) = peer.event().await.unwrap() {
+            break failure;
         }
     };
-    let Event::Faulted { cause } = fault else {
-        unreachable!()
-    };
-    assert!(cause.contains("confirming the source's release"), "{cause}");
+    assert_eq!(fault.escalation, Escalation::Restart);
+    assert!(
+        fault.message.contains("confirming the source's release"),
+        "{fault:?}"
+    );
     let (result, stop) = task.await.unwrap();
     assert!(matches!(
         result,
         Err(Error::Faulted(SessionPhase::SourceUnreleased))
     ));
-    assert!(matches!(stop, Some(Stop::Faulted(_))));
+    assert!(matches!(stop, Some(Stop::Failed(_))));
 }
 
 /// A new LAN address (a DHCP renewal) is advertised at the next heartbeat.

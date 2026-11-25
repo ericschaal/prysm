@@ -21,7 +21,7 @@ pub use address::{PrysmAddress, Scheme};
 pub use args::{FullArgs, SlimArgs};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
 use prysm_ports::StreamEncoding;
-pub use prysm_ports::{LightingTarget, OutputIssue};
+pub use prysm_ports::{Escalation, Fix, LightingTarget, OutputIssue};
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -76,16 +76,35 @@ pub enum Video {
 pub enum Event {
     /// Sent on every change and at least every [`HEARTBEAT`].
     Status(WorkerStatus),
-    /// Why the worker's run ended with an error (at startup or while
-    /// running); it exits next, [`exit::FAILED`], or [`exit::FAULTED`] when
-    /// the error or the stop reason is a fault. Not a status: a worker can fail before it has
-    /// anything of its package to report. Not every failed exit is preceded
-    /// by one: a protocol misuse or lost link (a stop reason, not an error)
-    /// exits [`exit::FAILED`] without it, as does a failure before the link
-    /// exists.
-    Failed { cause: String },
-    /// A native resource is unconfirmed; the worker exits [`exit::FAULTED`] next.
-    Faulted { cause: String },
+    /// Why the worker's run ends with an error (at startup or while
+    /// running); it exits next, [`exit::FAULTED`] when the error is a
+    /// [`prysm_ports::Error::Faulted`], else [`exit::FAILED`]. Not a status:
+    /// a worker can fail before it has anything of its package to report.
+    /// Not every failed exit is preceded by one: a protocol misuse or lost
+    /// link (a stop reason, not an error) exits [`exit::FAILED`] without it,
+    /// as does a failure before the link exists.
+    Failed(Failure),
+}
+
+/// A worker's failure: what is left of it, copied from
+/// [`prysm_ports::Error::escalation`] where the error is met (never decided
+/// on the wire), and its message with the causes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Failure {
+    pub escalation: Escalation,
+    pub message: String,
+}
+
+impl Failure {
+    /// `error`'s escalation and cause chain.
+    #[must_use]
+    pub fn of(error: &prysm_ports::Error) -> Self {
+        Self {
+            escalation: error.escalation(),
+            message: prysm_ports::chain(error),
+        }
+    }
 }
 
 /// What a worker is doing, in its package's terms (`"flavor": "full"` or
@@ -129,7 +148,7 @@ pub struct FullStatus {
     pub portal: Option<String>,
     /// The last session or portal failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure: Option<WorkerFailure>,
+    pub failure: Option<Failure>,
 }
 
 /// The slim worker (`prysm-webos-slim`): capture streamed to a desktop Prysm.
