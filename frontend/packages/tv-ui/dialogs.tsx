@@ -185,7 +185,10 @@ export function Dialogs({
       description = 'Service state and the latest messages.';
       content = (
         <pre className="diagnostics" id="diagnostics-text" data-scroll>
-          {diagnostics(tv.online === false ? null : tv.state, tv.problem)}
+          {diagnostics(
+            tv.link.status === 'missing' ? null : tv.state,
+            tv.problem,
+          )}
         </pre>
       );
       break;

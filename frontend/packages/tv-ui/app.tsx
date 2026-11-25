@@ -145,7 +145,8 @@ export function TvApp({
   const refocusRef = useRef(false);
   const rootRef = useRef<HTMLElement>(null);
   const slim = flavor === 'slim';
-  const { state, draft, online } = tv;
+  const { state, draft, link } = tv;
+  const connecting = link.status === 'connecting';
   // The full package's portal on this TV, as its worker reports it.
   const ownPortal = state && fullPortal(state);
   const baseUrl = slim ? draft.prysm_address : localPortal(ownPortal);
@@ -160,7 +161,7 @@ export function TvApp({
     // Focus is placed once the screen has its controls: the service has
     // answered, and so has the portal (or it failed, or there is none).
     settled:
-      online !== null &&
+      !connecting &&
       (!portal.runtime || !!snapshot || !!portal.connection?.error),
   });
   // Capture, lights and the slim stream encoding are set up only in this
@@ -168,8 +169,7 @@ export function TvApp({
   const portalAddress = slim ? draft.prysm_address : ownPortal;
   const elapsed = useElapsed(tv.countdown ? tv.stateAt : null);
   const status = tvStatus(
-    online,
-    state,
+    link,
     draft,
     snapshot
       ? {
@@ -278,7 +278,7 @@ export function TvApp({
 
   // A change applies at once; while one is sent the others wait (the
   // service runs one command at a time), but nothing dims for it.
-  const disabled = !online;
+  const disabled = link.status !== 'live' && link.status !== 'lost';
   const { setupFirst } = screen;
 
   if (calibrating)
@@ -375,7 +375,7 @@ export function TvApp({
               <LightingCard
                 flavor={flavor}
                 portal={portal}
-                connecting={online === null}
+                connecting={connecting}
               />
             )}
           </div>

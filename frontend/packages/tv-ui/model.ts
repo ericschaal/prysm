@@ -220,38 +220,53 @@ export function captureRate(state: State | null): string | null {
 }
 
 /**
- * The status card and primary button from the supervisor's state. `online`
- * is `null` until the first reply; `draft` is the preferences as shown
- * (saved, or being saved); `portal` is `null` until the portal's state is
- * known. The retry countdown
+ * What the status card needs of the service subscription (`Link` in
+ * `service.ts`): waiting for the first reply, the service missing (a state
+ * kept from before is not shown), or a state received.
+ */
+export type ServiceLink =
+  | { status: 'connecting' | 'missing' }
+  | { status: 'live' | 'lost'; state: State };
+
+/**
+ * The status card and primary button from the service subscription;
+ * `draft` is the preferences as shown (saved, or being saved); `portal` is
+ * `null` until the portal's state is known. The retry countdown
  * is shown beside the card (see {@link retrySeconds}), not in its words.
  */
 export function tvStatus(
-  online: boolean | null,
-  state: State | null,
+  link: ServiceLink,
   draft: SavedPreferences,
   portal: PortalFacts | null = null,
 ): TvStatus {
-  if (online === null || (online && !state))
-    return {
-      title: 'Connecting…',
-      description: 'Checking Prysm on this TV.',
-      label: 'Please wait…',
-      action: 'none',
-      attention: false,
-      ready: false,
-      setupLights: false,
-    };
-  if (!online || !state)
-    return {
-      title: 'Prysm needs setting up',
-      description: 'Set up its service on this TV to start.',
-      label: 'Set up service',
-      action: 'setup',
-      attention: true,
-      ready: false,
-      setupLights: false,
-    };
+  switch (link.status) {
+    case 'connecting':
+      return {
+        title: 'Connecting…',
+        description: 'Checking Prysm on this TV.',
+        label: 'Please wait…',
+        action: 'none',
+        attention: false,
+        ready: false,
+        setupLights: false,
+      };
+    case 'missing':
+      return {
+        title: 'Prysm needs setting up',
+        description: 'Set up its service on this TV to start.',
+        label: 'Set up service',
+        action: 'setup',
+        attention: true,
+        ready: false,
+        setupLights: false,
+      };
+    case 'live':
+    case 'lost':
+      break;
+    default:
+      return unreachable(link);
+  }
+  const { state } = link;
   const full = state.flavor === 'full';
   const enabled = isEnabled(state);
   const capturing = isCapturing(state);

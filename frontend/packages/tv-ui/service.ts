@@ -278,8 +278,6 @@ export function useTvService(service: TvService, active: boolean) {
 
   return {
     ...current,
-    /** `null` until the first reply; `false` while the service is missing. */
-    online: link.status === 'connecting' ? null : known,
     /** The last state received, also kept while the service is missing. */
     state,
     stateAt: known ? link.at : 0,
