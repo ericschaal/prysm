@@ -91,12 +91,11 @@ fn ended(error: &Error, stop: &Hangup) -> bool {
 }
 
 /// What the device of an output the session does not hold shows, as far as
-/// the session knows.
+/// Prysm knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Device {
-    /// Never opened by this session.
-    Untouched,
-    /// Idled in this mode and closed.
+    /// In this mode: idled in it and closed, or so before the session
+    /// started (`Off` as lighting starts).
     Left(IdleMode),
     /// Any mode: a release failed, or an open that may have reached it did.
     Unknown,
@@ -279,9 +278,8 @@ impl Leds {
 
     /// Leave the output in `mode`: idle it if held; otherwise put it in
     /// `mode` without opening it, only when its device may be in another
-    /// mode. An untouched device stays untouched for `Off`, the state
-    /// lighting started from. A wait for the lights ends here, its device
-    /// finished as the wait says it was left. Afterwards the device is
+    /// mode. A wait for the lights ends here, its device finished as the
+    /// wait says it was left. Afterwards the device is
     /// `Left(mode)`, or `Unknown` if that failed, so it can be finished
     /// again in another mode. Nothing cuts it: this is the stop's own idle.
     pub(crate) fn finish(&mut self, mode: IdleMode, output: &Configured) -> Result<()> {
@@ -291,8 +289,7 @@ impl Leds {
         };
         match device {
             Device::Left(left) if left == mode => {}
-            Device::Untouched if mode == IdleMode::Off => {}
-            Device::Untouched | Device::Left(_) | Device::Unknown => {
+            Device::Left(_) | Device::Unknown => {
                 // Set before the idle, not after: the session catches a
                 // panic in it and may finish these leds again in another
                 // mode, which must not trust the mode they had before.
@@ -439,13 +436,12 @@ mod tests {
     /// The state before `finish`.
     #[derive(Debug, Clone, Copy)]
     enum Before {
-        Untouched,
         Held,
         LeftOff,
         LeftNative,
         Unknown,
-        /// Waiting for lights it never reached.
-        WaitingUntouched,
+        /// Waiting for lights it never reached, left off.
+        WaitingOff,
         /// Waiting for lights an open may have reached.
         WaitingUnknown,
     }
@@ -460,12 +456,11 @@ mod tests {
 
     fn leds(from: Before, output: &Configured) -> Leds {
         match from {
-            Before::Untouched => Leds::Closed(Device::Untouched),
             Before::Held => Leds::Held(output.open(&Hangup::default()).unwrap()),
             Before::LeftOff => Leds::Closed(Device::Left(IdleMode::Off)),
             Before::LeftNative => Leds::Closed(Device::Left(IdleMode::Native)),
             Before::Unknown => Leds::Closed(Device::Unknown),
-            Before::WaitingUntouched => waiting(Device::Untouched),
+            Before::WaitingOff => waiting(Device::Left(IdleMode::Off)),
             Before::WaitingUnknown => waiting(Device::Unknown),
         }
     }
@@ -478,7 +473,6 @@ mod tests {
         Waiting(Device),
     }
 
-    const UNTOUCHED: View = View::Closed(Device::Untouched);
     const UNKNOWN: View = View::Closed(Device::Unknown);
     const LEFT_OFF: View = View::Closed(Device::Left(IdleMode::Off));
     const LEFT_NATIVE: View = View::Closed(Device::Left(IdleMode::Native));
@@ -499,17 +493,15 @@ mod tests {
     fn finish_leaves_every_state_in_the_asked_mode() {
         use IdleMode::{Native, Off};
         #[rustfmt::skip]
-        let cases: [(Before, IdleMode, bool, &[&str], View); 28] = [
-            (Before::WaitingUntouched, Off, false, &[], UNTOUCHED),
-            (Before::WaitingUntouched, Native, false, &["set:Native"], LEFT_NATIVE),
+        let cases: [(Before, IdleMode, bool, &[&str], View); 24] = [
+            (Before::WaitingOff, Off, false, &[], LEFT_OFF),
+            (Before::WaitingOff, Native, false, &["set:Native"], LEFT_NATIVE),
             (Before::WaitingUnknown, Off, false, &["set:Off"], LEFT_OFF),
             (Before::WaitingUnknown, Native, false, &["set:Native"], LEFT_NATIVE),
-            (Before::WaitingUntouched, Off, true, &[], UNTOUCHED),
-            (Before::WaitingUntouched, Native, true, &["set:Native"], UNKNOWN),
+            (Before::WaitingOff, Off, true, &[], LEFT_OFF),
+            (Before::WaitingOff, Native, true, &["set:Native"], UNKNOWN),
             (Before::WaitingUnknown, Off, true, &["set:Off"], UNKNOWN),
             (Before::WaitingUnknown, Native, true, &["set:Native"], UNKNOWN),
-            (Before::Untouched, Off, false, &[], UNTOUCHED),
-            (Before::Untouched, Native, false, &["set:Native"], LEFT_NATIVE),
             (Before::Held, Off, false, &["idle:Off"], LEFT_OFF),
             (Before::Held, Native, false, &["idle:Native"], LEFT_NATIVE),
             (Before::LeftOff, Off, false, &[], LEFT_OFF),
@@ -518,8 +510,6 @@ mod tests {
             (Before::LeftNative, Native, false, &[], LEFT_NATIVE),
             (Before::Unknown, Off, false, &["set:Off"], LEFT_OFF),
             (Before::Unknown, Native, false, &["set:Native"], LEFT_NATIVE),
-            (Before::Untouched, Off, true, &[], UNTOUCHED),
-            (Before::Untouched, Native, true, &["set:Native"], UNKNOWN),
             (Before::Held, Off, true, &["idle:Off"], UNKNOWN),
             (Before::Held, Native, true, &["idle:Native"], UNKNOWN),
             (Before::LeftOff, Off, true, &[], LEFT_OFF),
@@ -561,16 +551,13 @@ mod tests {
         use IdleMode::{Native, Off};
         use Opens::{Touched, TouchedUnanswered, Unanswered, Untouched};
         #[rustfmt::skip]
-        let cases: [FailedOpen; 10] = [
-            (Before::Untouched, Touched, false, Off, UNKNOWN, &["set:Off"]),
+        let cases: [FailedOpen; 7] = [
             (Before::LeftOff, Touched, false, Off, UNKNOWN, &["set:Off"]),
             (Before::LeftNative, Touched, false, Native, UNKNOWN, &["set:Native"]),
-            (Before::Untouched, Untouched, false, Off, UNTOUCHED, &[]),
             (Before::LeftOff, Untouched, false, Off, LEFT_OFF, &[]),
             (Before::LeftNative, Untouched, false, Native, LEFT_NATIVE, &[]),
-            (Before::Untouched, Unanswered, true, Off, View::Waiting(Device::Untouched), &[]),
+            (Before::LeftOff, Unanswered, true, Off, View::Waiting(Device::Left(Off)), &[]),
             (Before::LeftNative, Unanswered, true, Native, View::Waiting(Device::Left(Native)), &[]),
-            (Before::Untouched, TouchedUnanswered, true, Off, View::Waiting(Device::Unknown), &["set:Off"]),
             (Before::LeftOff, TouchedUnanswered, true, Off, View::Waiting(Device::Unknown), &["set:Off"]),
         ];
         for (from, opens, waits, mode, after, calls) in cases {
@@ -636,7 +623,7 @@ mod tests {
         );
         let ms = Duration::from_millis;
         let wait = Some(Write::Unanswered);
-        let mut leds = Leds::Closed(Device::Untouched);
+        let mut leds = Leds::Closed(Device::Left(IdleMode::Off));
         let start = Instant::now();
         #[rustfmt::skip]
         run(&mut leds, &made, start, &[
@@ -656,7 +643,7 @@ mod tests {
     fn the_next_try_counts_from_the_last_return() {
         let made = Calls::default();
         let output = configured(&made, opening(Opens::SlowUnanswered));
-        let mut leds = Leds::Closed(Device::Untouched);
+        let mut leds = Leds::Closed(Device::Left(IdleMode::Off));
         let ready = Instant::now();
         let wrote = leds.write(
             &EdgeColors::default(),
@@ -684,13 +671,12 @@ mod tests {
     fn a_quiet_spell_ends_holds_and_waits() {
         use Idles::{Fail, Unanswered, Yes};
         #[rustfmt::skip]
-        let cases: [(Before, Idles, &[&str], View, bool); 7] = [
+        let cases: [(Before, Idles, &[&str], View, bool); 6] = [
             (Before::Held, Yes, &["idle:Native"], LEFT_NATIVE, true),
             (Before::Held, Unanswered, &["idle:Native"], UNKNOWN, true),
             (Before::Held, Fail, &["idle:Native"], UNKNOWN, false),
-            (Before::WaitingUntouched, Yes, &[], UNTOUCHED, true),
+            (Before::WaitingOff, Yes, &[], LEFT_OFF, true),
             (Before::WaitingUnknown, Yes, &[], UNKNOWN, true),
-            (Before::Untouched, Yes, &[], UNTOUCHED, true),
             (Before::LeftOff, Yes, &[], LEFT_OFF, true),
         ];
         for (from, idle, calls, left, fine) in cases {
@@ -726,7 +712,7 @@ mod tests {
                 ]
             })
             .collect();
-        let mut leds = Leds::Closed(Device::Untouched);
+        let mut leds = Leds::Closed(Device::Left(IdleMode::Off));
         run(&mut leds, &made, Instant::now(), &steps);
         assert_eq!(view(&leds), View::Waiting(Device::Unknown));
     }

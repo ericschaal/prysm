@@ -269,7 +269,7 @@ impl Session {
         });
         let session = SessionLoop {
             processor: PrysmProcessor::new(&config),
-            leds: Leds::Closed(Device::Untouched),
+            leds: Leds::Closed(Device::Left(IdleMode::Off)),
             last: None,
             last_frame: Instant::now(),
             previous_done: None,
@@ -454,7 +454,7 @@ mod tests {
     /// A stop that comes while the output opens ends the open at once, and
     /// the stop's own idle follows the source's close: once, through the
     /// output it held when the open finished, else without opening it, and
-    /// not at all for an untouched device the stop turns off.
+    /// not at all for a device left off that the stop turns off.
     #[tokio::test]
     async fn a_stop_ends_an_open_in_flight() {
         use IdleMode::{Native, Off};
@@ -625,8 +625,8 @@ mod tests {
     }
 
     /// A stop while waiting for the lights ends at once without another
-    /// open; the stop's idle follows the finish rules: an untouched device
-    /// stays untouched for `Off`.
+    /// open; the stop's idle follows the finish rules: a device left off
+    /// stays so for `Off`.
     #[tokio::test]
     async fn a_stop_ends_a_wait_for_the_lights() {
         use IdleMode::{Native, Off};

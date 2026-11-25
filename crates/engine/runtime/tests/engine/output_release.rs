@@ -93,7 +93,7 @@ async fn a_source_without_frames_never_takes_the_output() {
             waiting.session
         );
 
-        // Off leaves an untouched output untouched, and the whole session
+        // Off leaves an output left off as it is, and the whole session
         // never opened it.
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert_eq!(log.events(), ["source.open:s", "source.close:s"]);
