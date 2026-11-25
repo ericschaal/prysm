@@ -15,6 +15,12 @@ pub enum Escalation {
     /// If that one faults again before it has worked, it is
     /// `Ask(Fix::TryAgain)`. A process that nothing restarts fails fast.
     Restart,
+    /// The device did not answer: it may be off or away from the network.
+    /// Nothing inside the process fixes it and nothing announces its
+    /// return, so the person is told and a reader may also try the device
+    /// again on [`Schedule::Every`] until it answers or the person acts.
+    /// A reader that does not try again fails fast.
+    Unanswered,
     /// The person must act: shown with this step, and resumed only by it.
     Ask(Fix),
 }
@@ -45,6 +51,10 @@ pub enum Schedule {
     Within { every: Duration, limit: Duration },
     /// At once, one time.
     Once,
+    /// After every interval, without end: for a wait whose end only
+    /// something outside Prysm brings (a device switched back on), so no
+    /// limit inside it would be the right one.
+    Every(Duration),
 }
 
 /// The tries of one operation on one [`Schedule`]: the only state a retry
@@ -69,7 +79,7 @@ impl Attempts {
     ///
     /// # Errors
     /// [`Escalation::FAIL_FAST`] once the schedule gives up; a give-up is
-    /// never another retry.
+    /// never another retry. [`Schedule::Every`] never gives up.
     pub fn failed(&mut self, now: Instant) -> Result<Instant, Escalation> {
         let first = self.since.is_none();
         let since = *self.since.get_or_insert(now);
@@ -79,6 +89,7 @@ impl Attempts {
                 (now < deadline).then(|| (now + every).min(deadline))
             }
             Schedule::Once => first.then_some(now),
+            Schedule::Every(every) => Some(now + every),
         };
         retry.ok_or(Escalation::FAIL_FAST)
     }
@@ -167,5 +178,19 @@ mod tests {
         assert_eq!(attempts.failed(now), Err(Escalation::FAIL_FAST));
         attempts.succeeded();
         assert_eq!(attempts.failed(now), Ok(now));
+    }
+
+    #[test]
+    fn every_never_gives_up_and_waits_its_interval() {
+        let every = Schedule::Every(Duration::from_secs(5));
+        assert_eq!(waits(every, 4, Duration::ZERO), [secs(5); 4]);
+        assert_eq!(waits(every, 4, Duration::from_secs(1)), [secs(5); 4]);
+        assert_eq!(waits(every, 3, Duration::from_secs(3600)), [secs(5); 3]);
+
+        let now = Instant::now();
+        let mut attempts = Attempts::new(every);
+        attempts.failed(now).unwrap();
+        attempts.succeeded();
+        assert_eq!(attempts.failed(now), Ok(now + Duration::from_secs(5)));
     }
 }
