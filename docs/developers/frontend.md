@@ -73,10 +73,11 @@ has one reading.
 
 No value is read as off or stopped
 ([decision](decisions/2026-11-22-open-response-enums.md)). Anything else
-malformed ends the stream or the reply (`Invalid state event.`,
-`invalid_reply`), except the saved `capture` and `output` sections: the
-settings file keeps them as free maps, so one that does not validate still
-arrives (with a failure of kind `invalid`). The portal reads each with
+malformed ends the stream or the reply ("This page can’t read a state
+event from Prysm. Reload the page.", `invalid_reply`), except the saved
+`capture` and `output` sections: the settings file keeps them as free
+maps, so one that does not validate still arrives (with a failure of
+kind `invalid`). The portal reads each with
 `readSection` (`web-portal/adapters.ts`) before any page sees it: a
 required field (one `create` sets that the kind's `optional` does not name)
 that is missing or of another JSON type is `create`'s, so its editor draws

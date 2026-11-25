@@ -44,7 +44,9 @@ The two portal dev servers forward `/api` to a running
 Prysm ([dev.config.mjs](dev.config.mjs)): `http://127.0.0.1:8787` unless
 `PRYSM` names another one. Start a host first
 (`cargo run -p prysm-headless -- crates/hosts/headless/settings.example.json`);
-without one the page says "Invalid state stream response." The TV entry points use the Luna client of the TV supervisor;
+without one the page says "This page can’t read a 502 reply from Prysm.
+Reload the page." and stops asking, so reload it once the host runs.
+The TV entry points use the Luna client of the TV supervisor;
 their `demo.html` pages run the same UI on an
 [in-memory supervisor](testkit/luna.ts) and portal (flags `?offline`,
 `?refused`, `?unreachable`, `?old`; selects at the bottom right put the
