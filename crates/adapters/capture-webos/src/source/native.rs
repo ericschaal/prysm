@@ -266,7 +266,7 @@ fn log(note: Note) {
             error = %chain(&error),
             "webOS video capture failed; opening a new driver once"
         ),
-        Note::Withheld { error } => tracing::warn!(
+        Note::Withheld { error } => tracing::info!(
             error = %chain(&error),
             "the TV doesn’t let Prysm capture this video; \
              a new driver is opened at the next change of the video signal"
