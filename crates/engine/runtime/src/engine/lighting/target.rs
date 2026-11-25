@@ -180,7 +180,7 @@ impl Core {
     /// it, by the rule of [`Self::idled`].
     pub(in crate::engine) async fn idle_output(&mut self, mode: IdleMode) -> Result<()> {
         let result = self.idle(mode).await;
-        self.idled(mode, Lighting::idled(mode, &result), result)
+        self.idled(mode, Lighting::left_by_idle(mode, &result), result)
     }
 
     /// The request putting the output in `mode` without opening it; bounded

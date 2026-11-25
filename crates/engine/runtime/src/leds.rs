@@ -10,24 +10,15 @@ use prysm_ports::{
 use std::time::{Duration, Instant};
 
 /// How often the request that puts the lights in the chosen mode is tried
-/// again while they do not answer it ([`Escalation::Unanswered`]): the
-/// session's open for screen sync, and the engine's idle for `Off` or the
-/// lights' own effects (`Core::idled` in `engine.rs`). Without end, until
-/// they answer, or a command (another target, a settings save, a stop or
-/// the shutdown) ends the wait; every other failure of these requests
-/// fails at once. The lights come back only by something outside Prysm
-/// (power, network) at a time nothing announces, so one try every 5 s
-/// reaches them 5 s or less after their return (for the open, at the first
-/// frame then). A try costs one request, bounded by the adapter's own
-/// limit: for WLED's open 1.5 s when the connect itself times out, up to
-/// `OPEN_LIMIT` (3 s) when it connects but no reply comes and the device is
-/// then turned off again; for its idle `IDLE_LIMIT` (1.5 s). The next try
-/// is due 5 s after the last one returned. The session serves no frames
-/// during an open: there is no output to serve them to; the engine serves
-/// commands between tries, and those that come during one after it. A
-/// quiet source tries nothing, and its quiet spell ends the wait
-/// ([`Leds::quiet`]); its next frame tries again. A shutdown makes one
-/// last try and waits for nothing.
+/// again while they do not answer it ([`Escalation::Unanswered`]), without
+/// end: the session's open for screen sync (`Leds::write`), the engine's
+/// idle for `Off` or the lights' own effects (`engine/lighting/unanswered.rs`).
+/// Every other failure of these requests fails at once. The lights come
+/// back only by something outside Prysm (power, network) at a time nothing
+/// announces, so one try every 5 s reaches them 5 s or less after their
+/// return. A try costs one request, bounded by the adapter's own limit
+/// (WLED: 1.5 s, at most 3 s). The next try is due 5 s after the last one
+/// returned.
 pub const UNANSWERED_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The report while the lights are waited for: only that they do not
@@ -107,10 +98,11 @@ pub(crate) enum Leds {
     Closed(Device),
     /// The lights did not answer an open: frames are not written, and the
     /// first frame at or after `again` tries the open again
-    /// ([`UNANSWERED_INTERVAL`]).
+    /// ([`UNANSWERED_INTERVAL`]). A quiet source tries nothing.
     Unanswered {
         device: Device,
-        /// The frame whose open the lights did not answer first.
+        /// When the lights first did not answer: the first open they did
+        /// not answer returned.
         since: Instant,
         again: Instant,
     },
@@ -174,7 +166,7 @@ impl Leds {
         let failure = match output.open(stop) {
             Ok(held) => {
                 if let Some(since) = since {
-                    log_answered(ready.saturating_duration_since(since));
+                    log_answered(since.elapsed());
                 }
                 stats.output_opened();
                 // Held before the first write: the end idles it also when
@@ -201,10 +193,11 @@ impl Leds {
             };
         }
         log_unanswered(&error, since.is_none());
+        let returned = Instant::now();
         *self = Self::Unanswered {
             device,
-            since: since.unwrap_or(ready),
-            again: Instant::now() + UNANSWERED_INTERVAL,
+            since: since.unwrap_or(returned),
+            again: returned + UNANSWERED_INTERVAL,
         };
         Ok(Write::Unanswered)
     }
@@ -638,7 +631,7 @@ mod tests {
     }
 
     /// The next try is due the interval after a slow try returned, not
-    /// after the frame that made it; the wait still counts from that frame.
+    /// after the frame that made it; the wait counts from that return too.
     #[test]
     fn the_next_try_counts_from_the_last_return() {
         let made = Calls::default();
@@ -657,7 +650,7 @@ mod tests {
         let Leds::Unanswered { since, again, .. } = leds else {
             panic!("waiting for the lights");
         };
-        assert_eq!(since, ready);
+        assert_eq!(again, since + UNANSWERED_INTERVAL);
         assert!(again >= ready + SLOW + UNANSWERED_INTERVAL);
         assert!(again <= after + UNANSWERED_INTERVAL);
     }

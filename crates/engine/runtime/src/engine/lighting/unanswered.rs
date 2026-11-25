@@ -1,5 +1,11 @@
 //! The wait for lights that do not answer the request putting them in the
-//! target's mode, and its tries again.
+//! target's mode, and its tries again every
+//! [`UNANSWERED_INTERVAL`](crate::UNANSWERED_INTERVAL). The engine serves
+//! commands between tries, and those that come during one after it. Screen
+//! sync ends the wait: its session waits for its own open. Another target,
+//! or the same one or a settings save, tries at once in the target's mode,
+//! and the wait goes on while the lights still do not answer; a saved
+//! output begins a wait of its own. A shutdown makes one last try and waits for nothing.
 use super::{Idled, Lighting};
 use crate::engine::Core;
 use crate::leds::{log_answered, log_unanswered};
@@ -11,10 +17,8 @@ impl Core {
     /// and return its `reply`, by the one rule for lights that do not
     /// answer ([`Lighting::waits_for`]): that is no failure. The target
     /// stands, the device reports `Unreachable`, and the request is tried
-    /// again every [`UNANSWERED_INTERVAL`](crate::UNANSWERED_INTERVAL)
-    /// ([`Self::try_again`]) until it is answered or a command asks for
-    /// something else; a wait that goes on is not published again. Every
-    /// other failure is the reply.
+    /// again ([`Self::try_again`]); a wait that goes on is not published
+    /// again. Every other failure is the reply.
     pub(in crate::engine) fn idled(
         &mut self,
         mode: IdleMode,

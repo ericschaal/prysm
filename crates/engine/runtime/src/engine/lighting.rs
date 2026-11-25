@@ -74,7 +74,7 @@ impl Lighting {
 
     /// What a request putting the lights in `mode` leaves when it worked
     /// (their own effects for `Native`), and when it did not.
-    pub(super) fn idled(mode: IdleMode, result: &Result<()>) -> Self {
+    pub(super) fn left_by_idle(mode: IdleMode, result: &Result<()>) -> Self {
         match (result, mode) {
             (Ok(()), IdleMode::Native) => Self::Effects,
             _ => Self::Stopped,

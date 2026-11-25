@@ -123,10 +123,10 @@ async fn a_stop_the_lights_do_not_answer_is_waited_for() {
     }
 }
 
-/// Screen sync, or a settings save, during a wait: it ends at once, and
-/// what the command asks is done now.
+/// A settings save during a wait tries at once, and the wait goes on;
+/// screen sync ends it, its session waiting for its own open.
 #[tokio::test(start_paused = true)]
-async fn a_command_ends_a_wait_at_once() {
+async fn a_command_during_a_wait_is_done_at_once() {
     let log = CallLog::new();
     let (handle, engine, _) = start(&log, silent(), DEADLINE).await;
     handle.set_target(LightingTarget::Effects).await.unwrap();

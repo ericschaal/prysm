@@ -108,7 +108,7 @@ impl Core {
             // One last try, waiting for nothing.
             Lighting::Unanswered { mode, .. } => {
                 let tried = self.idle(mode).await;
-                self.set_lighting(Lighting::idled(mode, &tried));
+                self.set_lighting(Lighting::left_by_idle(mode, &tried));
                 tried
             }
             _ => self.stop(IdleMode::Off).await,
