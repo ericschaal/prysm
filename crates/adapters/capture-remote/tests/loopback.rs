@@ -271,47 +271,43 @@ fn a_sender_without_an_offer_is_not_checked_against_another_senders() {
     Box::new(source).close().unwrap();
 }
 
+/// A message this end does not take fails the source, and the sender hears
+/// close 4002: the same sender would send it again.
 #[test]
-fn malformed_and_oversized_messages_drop_only_that_connection() {
-    let (portal, mut source) = open();
-
-    // Text that is not JSON.
-    let mut garbage = greeted(&portal);
-    garbage.send(Message::text("GET / HTTP/1.1")).unwrap();
-    assert!(assert_dropped(garbage).is_empty());
-
-    // One past the largest size: rejected from the header alone.
-    let mut oversized = greeted(&portal);
-    oversized
-        .send(Message::binary(raw_frame([1, 0, 0, 0], 1921, 1080, &[])))
-        .unwrap();
-    assert!(assert_dropped(oversized).is_empty());
-    // A payload one byte shorter than the header's frame.
-    let mut short = greeted(&portal);
-    short
-        .send(Message::binary(raw_frame([1, 0, 0, 0], 4, 4, &[0; 47])))
-        .unwrap();
-    assert!(assert_dropped(short).is_empty());
-    // Text over the limit, though a message of a type this end ignores.
-    let mut long = greeted(&portal);
+fn malformed_and_oversized_messages_fail_the_source() {
     let padded = format!(r#"{{"type":"stats","pad":"{}"}}"#, "x".repeat(4096));
-    long.send(Message::text(padded)).unwrap();
-    assert!(assert_dropped(long).is_empty());
-    // A message without a type.
-    let mut untyped = greeted(&portal);
-    untyped
-        .send(Message::text(r#"{"refused":"request","reason":"x"}"#))
-        .unwrap();
-    assert!(assert_dropped(untyped).is_empty());
-    assert!(matches!(
-        source.next_frame(Duration::from_millis(50)).unwrap(),
-        Pull::Quiet
-    ));
-
-    let mut sender = portal.connect().unwrap();
-    sender.send(&frame(4, 4, 4)).unwrap();
-    assert_eq!(receive(&mut source).as_slice()[0], 4);
-    Box::new(source).close().unwrap();
+    for (message, cause) in [
+        // Text that is not JSON.
+        (Message::text("GET / HTTP/1.1"), "invalid message"),
+        // One past the largest size: rejected from the header alone.
+        (
+            Message::binary(raw_frame([1, 0, 0, 0], 1921, 1080, &[])),
+            "outside",
+        ),
+        // A payload one byte shorter than the header's frame.
+        (
+            Message::binary(raw_frame([1, 0, 0, 0], 4, 4, &[0; 47])),
+            "does not match",
+        ),
+        // Text over the limit, though a message of a type this end ignores.
+        (Message::text(padded), "exceeds"),
+        // A message without a type.
+        (
+            Message::text(r#"{"refused":"request","reason":"x"}"#),
+            "invalid message",
+        ),
+    ] {
+        let (portal, mut source) = open();
+        let mut client = greeted(&portal);
+        client.send(message).unwrap();
+        match client.read() {
+            Ok(Message::Close(Some(frame))) => assert_eq!(u16::from(frame.code), 4002),
+            other => panic!("{cause}: {other:?}"),
+        }
+        let error = failure(&mut source);
+        assert!(wire_cause(&error).to_string().contains(cause), "{error}");
+        Box::new(source).close().unwrap();
+    }
 }
 
 /// What this end does not know is ignored: a sender message of another
@@ -676,14 +672,9 @@ fn a_sender_that_does_not_offer_the_request_fails_the_source_unasked() {
         fps: 60,
         ..RAW
     });
-    // The sender is closed without a request.
+    // The sender hears the failure instead of a request.
     let error = portal.connect_offering(&raw_offer()).unwrap_err();
-    assert!(
-        error
-            .source()
-            .is_some_and(|cause| cause.to_string().contains("request")),
-        "{error}"
-    );
+    assert_eq!(wire_cause(&error), WireError::Closed(Some(Close::Failed)));
     let error = failure(&mut source);
     let prysm_ports::Error::Invalid(invalid) = &error else {
         panic!("{error:?}");

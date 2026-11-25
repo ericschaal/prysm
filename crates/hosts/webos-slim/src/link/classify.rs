@@ -38,8 +38,8 @@ pub(crate) enum Heard {
 /// turn), a wrong address (`404`: no portal there, or an older Prysm), a
 /// certificate this end cannot trust, or a receiver that speaks the
 /// protocol wrongly, which the same Prysm repeats. Another version counts
-/// only at the upgrade, the other close codes only on an open connection;
-/// everything else is waited out like an absent receiver.
+/// only at the upgrade, a stop only on an open connection; everything else
+/// is waited out like an absent receiver.
 pub(crate) fn heard(cause: Cause<'_>) -> Result<Heard, Escalation> {
     use WireError as W;
     let (open, error) = match cause {
@@ -63,8 +63,8 @@ pub(crate) fn heard(cause: Cause<'_>) -> Result<Heard, Escalation> {
         }
         (false, Some(W::Version { .. })) => Heard::OtherVersion(waiting()),
         (true, Some(W::Closed(Some(Close::Stopped)))) => Heard::Stopped,
-        (true, Some(W::Closed(Some(Close::Failed)))) => Heard::Failed(chain(error)),
-        (false, Some(W::Closed(Some(Close::Stopped | Close::Failed))))
+        (_, Some(W::Closed(Some(Close::Failed)))) => Heard::Failed(chain(error)),
+        (false, Some(W::Closed(Some(Close::Stopped))))
         | (true, Some(W::Version { .. }))
         | (
             _,
@@ -154,7 +154,7 @@ mod tests {
             (closed(None), absent, absent),
             (closed(Some(Close::Stopped)), absent, stopped),
             (closed(Some(Close::Replaced)), fail_fast, fail_fast),
-            (closed(Some(Close::Failed)), absent, failed),
+            (closed(Some(Close::Failed)), failed, failed),
             (Some(W::TextTooLarge(1)), fail_fast, fail_fast),
             (Some(W::Short(1)), absent, absent),
             (Some(W::FormatCode { format: 9, range: 0, matrix: 0 }), absent, absent),
