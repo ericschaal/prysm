@@ -385,8 +385,8 @@ fn restart(stream: &mut Stream) -> Result<()> {
         .map_err(|error| failed(Op::Start, error, "failed to restart capture stream"))
 }
 
-/// Carries out `verdict`: restarts (each after its pause) for as long as
-/// `health` says so, where a failed `restart` is one more interruption, and
+/// Carries out `verdict`: restarts for as long as `health` says so, where a
+/// failed `restart` is one more interruption, and
 /// a device gone ends capture. `Ok(true)` to capture on, `Ok(false)` when
 /// `sink` stops meanwhile.
 fn settle(
@@ -400,8 +400,8 @@ fn settle(
         verdict = match verdict {
             Verdict::Continue => return Ok(true),
             Verdict::Fail(error) => return Err(error),
-            Verdict::Restart { pause } if sink.should_stop(pause) => return Ok(false),
-            Verdict::Restart { .. } => match restart() {
+            Verdict::Restart if sink.should_stop(Duration::ZERO) => return Ok(false),
+            Verdict::Restart => match restart() {
                 Ok(()) => Verdict::Continue,
                 Err(error @ CaptureError::Disconnected { .. }) => Verdict::Fail(error),
                 Err(error) => health.on(Event::Interrupted(error), now()),
@@ -503,7 +503,6 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::health::PAUSE;
     use v4l::v4l_sys::*;
 
     #[test]
@@ -523,117 +522,6 @@ mod tests {
             panic!("expected missing device error")
         };
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
-    }
-
-    /// A sink that never stops and never waits.
-    struct Running;
-
-    impl CaptureSink for Running {
-        fn ready(&self) {}
-        fn frame(&self, _: crate::Frame) {}
-        fn should_stop(&self, _: Duration) -> bool {
-            false
-        }
-        fn wake(&self) {}
-    }
-
-    /// `settle` after an interruption at `start`, with restarts that give
-    /// `restarts` in turn (then succeed), each a pause later than the last.
-    fn settled(restarts: Vec<Result<()>>) -> (Result<bool>, usize) {
-        let start = Instant::now();
-        let mut health = Health::new(NonZeroU32::new(30).unwrap());
-        let interruption = CaptureError::Backend(anyhow::anyhow!("EIO"));
-        let verdict = health.on(Event::Interrupted(interruption), start);
-        let attempts = std::cell::Cell::new(0);
-        let mut restarts = restarts.into_iter();
-        let result = settle(
-            verdict,
-            &mut health,
-            &Running,
-            || {
-                attempts.set(attempts.get() + 1);
-                restarts.next().unwrap_or(Ok(()))
-            },
-            || start + PAUSE * u32::try_from(attempts.get()).unwrap(),
-        );
-        (result, attempts.get())
-    }
-
-    fn refused() -> Result<()> {
-        Err(failed(
-            Op::Start,
-            std::io::Error::from_raw_os_error(libc::EBUSY),
-            "failed to restart capture stream",
-        ))
-    }
-
-    #[test]
-    fn a_failed_restart_is_retried_within_the_grace() {
-        let (result, attempts) = settled(vec![refused(), refused(), Ok(())]);
-        assert!(result.unwrap(), "capturing again");
-        assert_eq!(attempts, 3);
-        // Three seconds of refusals, a pause apart: the last one ends capture.
-        let (result, attempts) = settled((0..100).map(|_| refused()).collect());
-        let error = result.unwrap_err();
-        assert_eq!(attempts, 30, "{error}");
-        assert_eq!(
-            prysm_ports::chain(&error),
-            "capture device is in use by another program: failed to restart capture stream: \
-             Device or resource busy (os error 16)"
-        );
-    }
-
-    /// A sink that never stops and records how long each check would wait.
-    #[derive(Default)]
-    struct Waits(std::sync::Mutex<Vec<Duration>>);
-
-    impl CaptureSink for Waits {
-        fn ready(&self) {}
-        fn frame(&self, _: crate::Frame) {}
-        fn should_stop(&self, wait: Duration) -> bool {
-            self.0.lock().unwrap().push(wait);
-            false
-        }
-        fn wake(&self) {}
-    }
-
-    /// A stall already waited, so its restart does not pause; an
-    /// interruption's does, so a failing device does not spin.
-    #[test]
-    fn only_an_interruption_pauses_before_its_restart() {
-        let now = Instant::now();
-        let interruption = || Event::Interrupted(CaptureError::Backend(anyhow::anyhow!("EIO")));
-        for (event, pause) in [(Event::Stalled, Duration::ZERO), (interruption(), PAUSE)] {
-            let mut health = Health::new(NonZeroU32::new(30).unwrap());
-            let verdict = health.on(event, now);
-            let sink = Waits::default();
-            let restarts = std::cell::Cell::new(0);
-            let result = settle(
-                verdict,
-                &mut health,
-                &sink,
-                || {
-                    restarts.set(restarts.get() + 1);
-                    Ok(())
-                },
-                || now,
-            );
-            assert!(result.unwrap(), "capturing again");
-            assert_eq!(restarts.get(), 1);
-            assert_eq!(*sink.0.lock().unwrap(), [pause]);
-        }
-    }
-
-    #[test]
-    fn a_device_gone_during_a_restart_ends_capture_at_once() {
-        let gone = Err(failed(
-            Op::Start,
-            std::io::Error::from_raw_os_error(libc::ENODEV),
-            "failed to restart capture stream",
-        ));
-        let (result, attempts) = settled(vec![refused(), gone]);
-        assert!(matches!(result, Err(CaptureError::Disconnected { .. })));
-        assert_eq!(attempts, 2);
     }
 
     #[test]

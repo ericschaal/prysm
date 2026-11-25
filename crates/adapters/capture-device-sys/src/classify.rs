@@ -46,7 +46,7 @@ pub(crate) enum Fault {
     /// this way, so the next format is tried.
     Rejected,
     /// EIO from DQBUF or QBUF, which may be temporary: V4L2 also uses it
-    /// for problems like signal loss, so the stream restarts
+    /// for problems like signal loss, so the stream restarts once
     /// ([`crate::health`]).
     QueueError,
     /// EINTR from poll: a signal handler ran on this thread. poll(2) is

@@ -237,7 +237,7 @@ impl Delegate {
             }
             // A quiet session has nothing to restart: it delivers again when
             // its source does.
-            Verdict::Continue | Verdict::Restart { .. } => {}
+            Verdict::Continue | Verdict::Restart => {}
         }
     }
 
