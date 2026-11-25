@@ -232,3 +232,129 @@ test('a save after a failed one answers its error, so later changes save again',
     await probe.unmount();
   }
 });
+
+const saves = (fixture) =>
+  fixture.calls.filter((call) => call === 'replaceSettings').length;
+
+/** Commits brightness `percent` while the next save fails. */
+async function failBrightness(fixture, probe, percent) {
+  fixture.failNext({ kind: 'unavailable', message: 'no answer' });
+  await act(async () => {
+    await probe
+      .live()
+      .commit(
+        { ...probe.live().value, brightness_percent: percent },
+        'processing.brightness_percent',
+      );
+  });
+  assert.equal(probe.live().state, 'failed');
+  assert.notEqual(probe.live().failure, '');
+  assert.equal(typeof probe.live().retry, 'function');
+}
+
+test('a failed save is answered when the draft changes; the next save is saving, not failed', async () => {
+  // The failure stayed while the next draft saved, and the state said
+  // failed while it was on its way.
+  const fixture = fakeApplicationPort({});
+  const probe = await mountLive(fixture);
+  try {
+    await failBrightness(fixture, probe, 40);
+    const release = fixture.holdSaves();
+    await act(async () =>
+      probe
+        .live()
+        .replace(
+          { ...probe.live().value, brightness_percent: 50 },
+          'processing.brightness_percent',
+        ),
+    );
+    assert.equal(probe.live().failure, '');
+    assert.equal(probe.live().retry, undefined);
+    assert.deepEqual(probe.live().scope.errors, {});
+    assert.equal(probe.live().state, 'saving');
+    await act(async () => sleep(processingDelayMs + 100));
+    assert.equal(saves(fixture), 2, 'the new draft is on its way');
+    assert.equal(probe.live().state, 'saving');
+    assert.equal(probe.live().saving, true);
+    await act(async () => {
+      release();
+      await sleep(20);
+    });
+    assert.equal(brightness(fixture), 50);
+    assert.equal(probe.live().state, 'idle');
+  } finally {
+    await probe.unmount();
+  }
+});
+
+test('a retry on its way is saving, not failed', async () => {
+  const fixture = fakeApplicationPort({});
+  const probe = await mountLive(fixture);
+  try {
+    await failBrightness(fixture, probe, 40);
+    const release = fixture.holdSaves();
+    await act(async () => probe.live().retry());
+    assert.equal(probe.live().failure, '');
+    assert.deepEqual(probe.live().scope.errors, {});
+    await act(async () => sleep(processingDelayMs + 100));
+    assert.equal(saves(fixture), 2, 'the retry is on its way');
+    assert.equal(probe.live().state, 'saving');
+    assert.equal(probe.live().saving, true);
+    await act(async () => {
+      release();
+      await sleep(20);
+    });
+    assert.equal(brightness(fixture), 40);
+    assert.equal(probe.live().state, 'idle');
+  } finally {
+    await probe.unmount();
+  }
+});
+
+test('a save refused as stale waits, then is saved again on the newer settings', async () => {
+  const fixture = fakeApplicationPort({});
+  const probe = await mountLive(fixture);
+  try {
+    fixture.failNext({
+      kind: 'stale_revision',
+      message: 'settings revision 0 is stale; current is 1',
+      current: 1,
+    });
+    await act(async () => {
+      const saved = await probe
+        .live()
+        .commit(
+          { ...probe.live().value, brightness_percent: 40 },
+          'processing.brightness_percent',
+        );
+      assert.equal(saved, null);
+    });
+    assert.equal(probe.live().state, 'saving', 'waits for the newer settings');
+    assert.equal(probe.live().failure, '');
+    await act(async () => sleep(processingDelayMs + 100));
+    assert.equal(saves(fixture), 1, 'not sent again against the same revision');
+    // Another device saved meanwhile.
+    await act(async () => {
+      const { settings, revision } = fixture.snapshot();
+      fixture.publish({
+        settings: {
+          ...settings,
+          processing: { ...settings.processing, remove_black_bars: true },
+        },
+        revision: revision + 1,
+      });
+      await sleep(0);
+    });
+    await act(async () => sleep(processingDelayMs + 100));
+    assert.equal(saves(fixture), 2);
+    assert.equal(brightness(fixture), 40);
+    assert.equal(
+      fixture.snapshot().settings.processing.remove_black_bars,
+      true,
+      'both changes kept',
+    );
+    assert.equal(probe.live().state, 'idle');
+  } finally {
+    await probe.unmount();
+  }
+});
