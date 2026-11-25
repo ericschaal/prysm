@@ -5,7 +5,9 @@ use prysm_ports::{
     SettingsStore, Snapshot,
 };
 use prysm_runtime::Engine;
-use prysm_runtime::fakes::{CallLog, FakeOutputSettings, FakeSourceSettings, MemoryStore};
+use prysm_runtime::fakes::{
+    CallLog, FakeOpen, FakeOutputSettings, FakeSourceSettings, MemoryStore,
+};
 
 #[tokio::test]
 async fn processing_change_keeps_source_and_output_open() {
@@ -150,7 +152,7 @@ async fn restart_failure_keeps_settings_saved_and_a_later_change_recovers() {
             },
             FakeOutputSettings {
                 name: "b".into(),
-                fail_open: true,
+                open: FakeOpen::Fails,
                 ..Default::default()
             },
         );

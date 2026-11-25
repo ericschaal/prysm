@@ -1,7 +1,7 @@
 //! The JSON API: state and target, settings, modes, candidates, calibration and trials.
 use crate::common::*;
 use prysm_ports::{AdapterSettings, Settings};
-use prysm_runtime::fakes::{self, FakeOutputSettings, FakeSourceSettings};
+use prysm_runtime::fakes::{self, FakeOpen, FakeOutputSettings, FakeSourceSettings};
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -349,7 +349,7 @@ async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
         // The output opens at the first frame: its failure ends the session
         // and is reported in the state, not in the reply.
         let failing = with_output(FakeOutputSettings {
-            fail_open: true,
+            open: FakeOpen::Fails,
             ..FakeOutputSettings::default()
         });
         let portal = start(failing, Duration::from_secs(5)).await;

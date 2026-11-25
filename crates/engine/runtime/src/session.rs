@@ -393,7 +393,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::fakes::{
-        AtStop, CallLog, FakeOutputSettings, FakeOutputs, FakeSource, FakeSourceSettings,
+        AtStop, CallLog, FakeOpen, FakeOutputSettings, FakeOutputs, FakeSource, FakeSourceSettings,
     };
     use prysm_ports::{AdapterSettings, OutputFactory, OutputIssue, Processing, Registry};
     use prysm_testkit::within_async;
@@ -480,7 +480,7 @@ mod tests {
         for (at_stop, mode, calls) in cases {
             let log = CallLog::new();
             let opening = FakeOutputSettings {
-                open_until_stop: Some(at_stop),
+                open: FakeOpen::UntilStop(at_stop),
                 ..Default::default()
             };
             let session = started(&log, FakeSourceSettings::default(), opening);
@@ -538,7 +538,7 @@ mod tests {
             ..Default::default()
         };
         let silent = FakeOutputSettings {
-            open_unanswered: true,
+            open: FakeOpen::Unanswered,
             ..Default::default()
         };
         let mut session = started(&log, gated, silent);
@@ -569,7 +569,7 @@ mod tests {
         for (mode, calls) in cases {
             let log = CallLog::new();
             let silent = FakeOutputSettings {
-                open_unanswered: true,
+                open: FakeOpen::Unanswered,
                 ..Default::default()
             };
             let session = started(&log, FakeSourceSettings::default(), silent);
