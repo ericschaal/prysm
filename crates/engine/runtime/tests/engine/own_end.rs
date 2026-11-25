@@ -1,7 +1,7 @@
 //! A session that ends or fails on its own, alone and meeting a command.
 use crate::common::*;
 use prysm_ports::{LightingTarget, SessionState, Settings};
-use prysm_runtime::fakes::{CallLog, FakeOutputSettings, FakeSourceSettings};
+use prysm_runtime::fakes::{CallLog, FakeIdle, FakeOutputSettings, FakeSourceSettings};
 
 #[tokio::test]
 async fn an_ended_source_stops_cleanly_turns_lighting_off_and_idles_the_output() {
@@ -261,7 +261,7 @@ async fn a_failing_idle_after_an_own_end_is_the_reply() {
             FakeOutputSettings {
                 name: "o".into(),
                 idle_delay_ms: 500,
-                fail_idle: true,
+                idle: FakeIdle::Fails,
                 ..Default::default()
             },
         );

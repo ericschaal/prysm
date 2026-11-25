@@ -397,7 +397,8 @@ impl Session {
 mod tests {
     use super::*;
     use crate::fakes::{
-        AtStop, CallLog, FakeOpen, FakeOutputSettings, FakeOutputs, FakeSource, FakeSourceSettings,
+        AtStop, CallLog, FakeIdle, FakeOpen, FakeOutputSettings, FakeOutputs, FakeSource,
+        FakeSourceSettings,
     };
     use prysm_ports::{AdapterSettings, OutputFactory, OutputIssue, Processing, Registry};
     use prysm_testkit::within_async;
@@ -738,7 +739,7 @@ mod tests {
     async fn a_failed_idle_in_the_asked_mode_is_reported() {
         let log = CallLog::new();
         let failing = FakeOutputSettings {
-            fail_idle: true,
+            idle: FakeIdle::Fails,
             ..Default::default()
         };
         let Stop::OnItsOwn(end) = asked_then_failing(&log, failing).await.unwrap() else {

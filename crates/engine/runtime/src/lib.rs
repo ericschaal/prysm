@@ -29,6 +29,7 @@ pub use builder::{Builder, COMMAND_LIMIT, Prysm, STOP_DEADLINE};
 pub use engine::{CALIBRATION_TIMEOUT, Engine, EngineHandle, TRIAL_TIMEOUT};
 pub use feeds::{ColorsWatch, Preview, PreviewWatch, Watch};
 pub use forwarder::Forwarder;
+pub use leds::UNANSWERED_INTERVAL;
 pub use null::{NullOutput, NullSettings};
 pub use sample::{SampleError, sample_rgb};
 pub use stats::{Counters, Timing};

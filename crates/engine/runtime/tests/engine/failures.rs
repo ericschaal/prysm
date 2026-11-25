@@ -2,7 +2,8 @@
 use crate::common::*;
 use prysm_ports::{Error, LightingTarget, Processing, Section, SessionPhase, SessionState};
 use prysm_runtime::fakes::{
-    CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
+    CallLog, FakeIdle, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources,
+    MemoryStore,
 };
 use prysm_runtime::{EngineHandle, Prysm, Shutdown};
 use std::time::Duration;
@@ -205,7 +206,7 @@ async fn stop_with_a_failing_idle_still_closes_the_source_and_reports_it() {
             },
             FakeOutputSettings {
                 name: "a".into(),
-                fail_idle: true,
+                idle: FakeIdle::Fails,
                 ..Default::default()
             },
         );

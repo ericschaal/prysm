@@ -9,19 +9,51 @@ use prysm_ports::{
 };
 use std::time::{Duration, Instant};
 
-/// How often an open is tried again while the lights do not answer it
-/// ([`Escalation::Unanswered`]): without end, until they answer, the session
-/// stops, or the settings change (a new session); every other failed open
-/// fails the session. The lights come back only by something outside Prysm
+/// How often the request that puts the lights in the chosen mode is tried
+/// again while they do not answer it ([`Escalation::Unanswered`]): the
+/// session's open for screen sync, and the engine's idle for `Off` or the
+/// lights' own effects (`Core::idled` in `engine.rs`). Without end, until
+/// they answer, or a command (another target, a settings save, a stop or
+/// the shutdown) ends the wait; every other failure of these requests
+/// fails at once. The lights come back only by something outside Prysm
 /// (power, network) at a time nothing announces, so one try every 5 s
-/// reaches them at the first frame 5 s or less after their return. A try
-/// costs one open, bounded by the adapter's open limit: for WLED 1.5 s when
-/// the connect itself times out, up to `OPEN_LIMIT` (3 s) when it connects
-/// but no reply comes and the device is then turned off again. The session
-/// serves no frames during it: there is no output to serve them to. A quiet
-/// source tries nothing, and its quiet spell ends the wait
-/// ([`Leds::quiet`]); its next frame tries again.
-const UNANSWERED_INTERVAL: Duration = Duration::from_secs(5);
+/// reaches them 5 s or less after their return (for the open, at the first
+/// frame then). A try costs one request, bounded by the adapter's own
+/// limit: for WLED's open 1.5 s when the connect itself times out, up to
+/// `OPEN_LIMIT` (3 s) when it connects but no reply comes and the device is
+/// then turned off again; for its idle `IDLE_LIMIT` (1.5 s). The next try
+/// is due 5 s after the last one returned. The session serves no frames
+/// during an open: there is no output to serve them to; the engine serves
+/// commands between tries, and those that come during one after it. A
+/// quiet source tries nothing, and its quiet spell ends the wait
+/// ([`Leds::quiet`]); its next frame tries again. A shutdown makes one
+/// last try and waits for nothing.
+pub const UNANSWERED_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The report while the lights are waited for: only that they do not
+/// answer.
+pub(crate) const UNREACHABLE: DeviceReport = DeviceReport {
+    issue: Some(OutputIssue::Unreachable),
+    brightness: None,
+    led_count: None,
+};
+
+/// Log a try the lights did not answer: the first of a wait at `warn`,
+/// later ones at `debug`.
+pub(crate) fn log_unanswered(error: &Error, first: bool) {
+    let error = prysm_ports::chain(error);
+    if first {
+        let every = UNANSWERED_INTERVAL.as_secs();
+        tracing::warn!(%error, "the lights do not answer; trying again every {every} s");
+    } else {
+        tracing::debug!(%error, "the lights still do not answer");
+    }
+}
+
+/// Log the lights answering after a wait of `waited`.
+pub(crate) fn log_answered(waited: Duration) {
+    tracing::info!(?waited, "the lights answer again");
+}
 
 /// The session's output as configured. Opened on the session thread at the
 /// first frame, at the first frame after each release, and while the lights
@@ -143,8 +175,7 @@ impl Leds {
         let failure = match output.open(stop) {
             Ok(mut held) => {
                 if let Some(since) = since {
-                    let waited = ready.saturating_duration_since(since);
-                    tracing::info!(?waited, "the lights answer again");
+                    log_answered(ready.saturating_duration_since(since));
                 }
                 stats.output_opened();
                 let wrote = write_held(&mut *held, colors, Instant::now(), stats);
@@ -169,13 +200,7 @@ impl Leds {
                 Err(error)
             };
         }
-        let error = prysm_ports::chain(&error);
-        if since.is_some() {
-            tracing::debug!(%error, "the lights still do not answer");
-        } else {
-            let every = UNANSWERED_INTERVAL.as_secs();
-            tracing::warn!(%error, "the lights do not answer; trying again every {every} s");
-        }
+        log_unanswered(&error, since.is_none());
         *self = Self::Unanswered {
             device,
             since: since.unwrap_or(ready),
@@ -225,10 +250,7 @@ impl Leds {
     pub(crate) fn report(&mut self) -> DeviceReport {
         match self {
             Self::Held(output) => output.report(),
-            Self::Unanswered { .. } => DeviceReport {
-                issue: Some(OutputIssue::Unreachable),
-                ..DeviceReport::default()
-            },
+            Self::Unanswered { .. } => UNREACHABLE,
             Self::Closed(_) => DeviceReport::default(),
         }
     }

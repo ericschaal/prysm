@@ -6,7 +6,7 @@ use prysm_ports::{
 };
 use prysm_runtime::Engine;
 use prysm_runtime::fakes::{
-    CallLog, FakeOpen, FakeOutputSettings, FakeSourceSettings, MemoryStore,
+    CallLog, FakeIdle, FakeOpen, FakeOutputSettings, FakeSourceSettings, MemoryStore,
 };
 
 #[tokio::test]
@@ -405,7 +405,7 @@ async fn a_restart_starts_the_new_session_even_when_the_old_output_cannot_idle()
             },
             FakeOutputSettings {
                 name: "a".into(),
-                fail_idle: true,
+                idle: FakeIdle::Fails,
                 ..Default::default()
             },
         );
@@ -448,7 +448,7 @@ async fn a_restart_that_cannot_start_reports_the_start_failure() {
             },
             FakeOutputSettings {
                 name: "a".into(),
-                fail_idle: true,
+                idle: FakeIdle::Fails,
                 ..Default::default()
             },
         );
@@ -496,7 +496,7 @@ async fn a_settings_save_after_a_failed_effects_idle_retries_the_idle() {
             FakeSourceSettings::default(),
             FakeOutputSettings {
                 name: "a".into(),
-                fail_idle: true,
+                idle: FakeIdle::Fails,
                 ..Default::default()
             },
         );

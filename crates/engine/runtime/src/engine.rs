@@ -1,5 +1,5 @@
 use crate::feeds::{ColorsWatch, Feeds, PreviewWatch};
-use crate::leds::Configured;
+use crate::leds::{Configured, UNANSWERED_INTERVAL, UNREACHABLE, log_answered, log_unanswered};
 use crate::meter::Meter;
 use crate::session::{Session, SessionEnd, Stop};
 use crate::stats::{Counters, Stats};
@@ -8,8 +8,8 @@ use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
 use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, CalibrationPattern, Candidate, DeviceReport, Error, IdleMode, Input,
-    LightingTarget, Modes, Processing, Registry, Result, Revision, Section, SessionPhase,
+    AdapterSettings, CalibrationPattern, Candidate, DeviceReport, Error, Escalation, IdleMode,
+    Input, LightingTarget, Modes, Processing, Registry, Result, Revision, Section, SessionPhase,
     SessionState, Settings, SettingsStore, Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
@@ -80,6 +80,10 @@ pub struct EngineHandle {
 }
 
 impl EngineHandle {
+    /// Lights that do not answer the request putting them `Off` or in their
+    /// own effects are no failure: the target is taken and the engine waits
+    /// for them ([`UNANSWERED_INTERVAL`]).
+    ///
     /// # Errors
     /// Missing adapter settings, open failure, or a faulted or stopped engine.
     pub async fn set_target(&self, target: LightingTarget) -> Result<()> {
@@ -319,7 +323,8 @@ impl Engine {
         self
     }
 
-    /// Stop the session (output idles `Off`), join it and end the task.
+    /// Stop the session (output idles `Off`), join it and end the task;
+    /// while the lights are waited for, try their request once more instead.
     /// Requests still queued, and any sent from now on, are refused with
     /// [`Error::Closed`] in their order, so none starts what shutdown stops.
     /// Blocking adapter or settings calls still running when the shutdown
@@ -450,6 +455,15 @@ enum Lighting {
     /// The output was put in its own effects, without a session.
     Effects,
     ScreenSync(Running),
+    /// No session: the lights did not answer the request putting them in
+    /// `mode`, the target's, which is tried again at `again`
+    /// ([`Core::idled`]). Their mode is not known meanwhile.
+    Unanswered {
+        mode: IdleMode,
+        /// The request they did not answer first.
+        since: Instant,
+        again: Instant,
+    },
     /// Only shutdown is accepted, and only a process restart recovers.
     Faulted(SessionPhase),
 }
@@ -457,13 +471,34 @@ enum Lighting {
 impl Lighting {
     /// The published state, carrying `failure` where it can: screen sync
     /// runs on valid settings and has reached its target, and a fault says
-    /// only its phase, so neither carries one.
+    /// only its phase, so neither carries one. A wait for the lights is
+    /// `Stopped`: no session, and the target not reached.
     fn state(&self, failure: Option<Error>) -> SessionState {
         match self {
-            Self::Stopped => SessionState::Stopped { failure },
+            Self::Stopped | Self::Unanswered { .. } => SessionState::Stopped { failure },
             Self::Effects => SessionState::Effects { failure },
             Self::ScreenSync(_) => SessionState::ScreenSync,
             Self::Faulted(phase) => SessionState::Faulted(*phase),
+        }
+    }
+
+    /// The published device report without a session: empty, but that the
+    /// lights do not answer while they are waited for.
+    fn device(&self) -> DeviceReport {
+        match self {
+            Self::Unanswered { .. } => UNREACHABLE,
+            Self::Stopped | Self::Effects | Self::ScreenSync(_) | Self::Faulted(_) => {
+                DeviceReport::default()
+            }
+        }
+    }
+
+    /// What a request putting the lights in `mode` leaves when it worked
+    /// (their own effects for `Native`), and when it did not.
+    fn idled(mode: IdleMode, result: &Result<()>) -> Self {
+        match (result, mode) {
+            (Ok(()), IdleMode::Native) => Self::Effects,
+            _ => Self::Stopped,
         }
     }
 
@@ -592,6 +627,7 @@ impl Core {
 
     async fn run(mut self, mut inbox: mpsc::Receiver<Command>) {
         loop {
+            let again = self.again();
             let command = tokio::select! {
                 command = inbox.recv() => command,
                 event = next(&mut self.lighting) => {
@@ -607,6 +643,10 @@ impl Core {
                 }
                 () = expiry(self.trial.as_ref().map(|(_, at)| *at)) => {
                     self.reconfigure(|core| core.trial = None);
+                    continue;
+                }
+                () = expiry(again) => {
+                    self.try_again().await;
                     continue;
                 }
             };
@@ -698,8 +738,8 @@ impl Core {
 
     /// The only writer of the snapshot's `session`, with `failure` where it
     /// can carry one, publishing `change` in the same snapshot. It also
-    /// resets `input` and `device`, which [`Self::measure`] updates while a
-    /// session runs.
+    /// resets `input` and `device` ([`Lighting::device`]), which
+    /// [`Self::measure`] updates while a session runs.
     fn set_lighting_and(
         &mut self,
         lighting: Lighting,
@@ -708,11 +748,12 @@ impl Core {
     ) {
         let session = lighting.state(failure);
         let input = matches!(lighting, Lighting::ScreenSync(_)).then(Input::default);
+        let device = lighting.device();
         self.lighting = lighting;
         self.state.send_modify(|s| {
             s.session = session;
             s.input = input;
-            s.device = DeviceReport::default();
+            s.device = device;
             change(s);
         });
     }
@@ -895,14 +936,28 @@ impl Core {
                 self.start().await
             }
             (LightingTarget::ScreenSync, Lighting::ScreenSync(_)) => Ok(()),
+            // A wait for the lights ends: the session's output is its own.
+            (LightingTarget::ScreenSync, Lighting::Unanswered { .. }) => {
+                self.set_lighting(Lighting::Stopped);
+                self.start().await
+            }
             // Also from `Effects`: a start that failed from the device's own
             // effects leaves them showing, and the target says `ScreenSync`.
             (LightingTarget::ScreenSync, _) => self.start().await,
             (LightingTarget::Effects, Lighting::ScreenSync(_)) => self.stop(IdleMode::Native).await,
             (LightingTarget::Effects, Lighting::Effects) if !output_changed => Ok(()),
+            // Also while waiting for the lights: they are asked again now.
             (LightingTarget::Effects, _) => self.idle_output(IdleMode::Native).await,
             (LightingTarget::Off, Lighting::ScreenSync(_)) => self.stop(IdleMode::Off).await,
-            (LightingTarget::Off, Lighting::Effects) => self.idle_output(IdleMode::Off).await,
+            // Other lights end a wait as they end a failure that says the
+            // lights may not be off: they were never touched.
+            (LightingTarget::Off, Lighting::Unanswered { .. }) if output_changed => {
+                self.set_lighting(Lighting::Stopped);
+                Ok(())
+            }
+            (LightingTarget::Off, Lighting::Effects | Lighting::Unanswered { .. }) => {
+                self.idle_output(IdleMode::Off).await
+            }
             // A command that does nothing about the output keeps a failure
             // that says the lights may not be off: it is still true. Other
             // lights make it no longer so.
@@ -976,6 +1031,9 @@ impl Core {
     /// effects replace what it ended with, which is logged: the reply is
     /// the output's idle (see [`replaced_by_effects`]). An unconfirmed
     /// release wins the state, then an idle that did not return in time.
+    /// Stopped as asked, or for the lights' own effects, an idle the lights
+    /// did not answer is waited for ([`Self::idled`]); a session that ended
+    /// on its own while stopped for `Off` is reported as it ended.
     async fn stop(&mut self, mode: IdleMode) -> Result<()> {
         let Some(running) = self.take_running() else {
             return Ok(());
@@ -985,40 +1043,103 @@ impl Core {
                 self.set_lighting(Lighting::failed(&error));
                 Err(error)
             }
-            Ok(Stop::AsAsked(end)) => {
-                self.set_lighting(Lighting::left_by(&end));
-                end.result()
-            }
+            Ok(Stop::AsAsked(end)) => self.idled(mode, Lighting::left_by(&end), end.result()),
             Ok(Stop::OnItsOwn(end)) if mode == IdleMode::Native => {
                 let (lighting, reply) = replaced_by_effects(end);
-                self.set_lighting(lighting);
-                reply
+                self.idled(mode, lighting, reply)
             }
             // What the output was left in is the end's, idled again or not.
             Ok(Stop::OnItsOwn(end)) => self.ended(Ok(end)),
         }
     }
 
-    /// Effects have no session: put the output in `mode` without
-    /// opening it.
+    /// Effects have no session: put the output in `mode` without opening
+    /// it, by the rule of [`Self::idled`].
     async fn idle_output(&mut self, mode: IdleMode) -> Result<()> {
+        let result = self.idle(mode).await;
+        self.idled(mode, Lighting::idled(mode, &result), result)
+    }
+
+    /// The request putting the output in `mode` without opening it; bounded
+    /// by the adapter's own limit.
+    async fn idle(&mut self, mode: IdleMode) -> Result<()> {
         let output = self.configured(
             self.state.borrow().settings.output.as_ref(),
             Section::Output,
-        );
+        )?;
         let registry = self.registry.clone();
-        let result = match output {
-            Ok(output) => self
-                .run_blocking(move || registry.idle_output(&output, mode))
-                .await
-                .and_then(|idled| idled.map_err(|error| error.in_section(Section::Output))),
-            Err(error) => Err(error),
+        self.run_blocking(move || registry.idle_output(&output, mode))
+            .await?
+            .map_err(|error| error.in_section(Section::Output))
+    }
+
+    /// Publish what a request putting the lights in `mode` left (`lighting`)
+    /// and return its `reply`, by the one rule for lights that do not
+    /// answer: when `mode` is the target's (`Off`, or `Native` for
+    /// `Effects`) and the request failed only because the lights did not
+    /// answer it ([`Escalation::Unanswered`]), that is no failure. The
+    /// target stands, the device reports `Unreachable`, and the request is
+    /// tried again every [`UNANSWERED_INTERVAL`] ([`Self::try_again`]) until
+    /// it is answered or a command asks for something else; a wait that
+    /// goes on is not published again. A shutdown waits for nothing, and
+    /// every other failure is the reply.
+    fn idled(&mut self, mode: IdleMode, lighting: Lighting, reply: Result<()>) -> Result<()> {
+        let target = self.state.borrow().target;
+        let shutting_down = self.abandon_at.borrow().is_some();
+        let unanswered = match (&lighting, reply) {
+            (Lighting::Stopped, Err(error))
+                if error.escalation() == Escalation::Unanswered
+                    && Some(mode) == idle_mode(target)
+                    && !shutting_down =>
+            {
+                error
+            }
+            (_, reply) => {
+                if let (Lighting::Unanswered { since, .. }, Ok(())) = (&self.lighting, &reply) {
+                    log_answered(since.elapsed());
+                }
+                self.set_lighting(lighting);
+                return reply;
+            }
         };
-        self.set_lighting(match (&result, mode) {
-            (Ok(()), IdleMode::Native) => Lighting::Effects,
-            _ => Lighting::Stopped,
-        });
-        result
+        let again = Instant::now() + UNANSWERED_INTERVAL;
+        match &mut self.lighting {
+            Lighting::Unanswered {
+                mode: waiting,
+                again: next,
+                ..
+            } if *waiting == mode => {
+                log_unanswered(&unanswered, false);
+                *next = again;
+            }
+            _ => {
+                log_unanswered(&unanswered, true);
+                let since = Instant::now();
+                self.set_lighting(Lighting::Unanswered { mode, since, again });
+            }
+        }
+        Ok(())
+    }
+
+    /// When the request the lights did not answer is tried again; never once
+    /// shutdown began, which makes the one last try.
+    fn again(&self) -> Option<Instant> {
+        match self.lighting {
+            Lighting::Unanswered { again, .. } if self.abandon_at.borrow().is_none() => Some(again),
+            _ => None,
+        }
+    }
+
+    /// Try the request the lights did not answer again. While it runs,
+    /// commands wait in the mailbox: one request, bounded by the adapter.
+    async fn try_again(&mut self) {
+        let Lighting::Unanswered { mode, .. } = self.lighting else {
+            return;
+        };
+        let result = self.idle_output(mode).await;
+        if !matches!(self.lighting, Lighting::Unanswered { .. }) {
+            self.record(&result);
+        }
     }
 
     fn set_calibration(&mut self, calibration: Option<CalibrationPattern>) -> Result<()> {
@@ -1124,7 +1245,22 @@ impl Core {
         if let Lighting::Faulted(phase) = self.lighting {
             return Err(Error::Faulted(phase));
         }
-        let stopped = self.stop(IdleMode::Off).await;
+        let stopped = match self.lighting {
+            // One last try, waiting for nothing: lights that do not answer
+            // it fail the shutdown, as any other failed idle does.
+            Lighting::Unanswered { mode, .. } => {
+                let tried = self.idle(mode).await;
+                if let Err(error) = &tried {
+                    tracing::warn!(
+                        error = %prysm_ports::chain(error),
+                        "the last try for the lights at shutdown failed; they are left as they are"
+                    );
+                }
+                self.set_lighting(Lighting::idled(mode, &tried));
+                tried
+            }
+            _ => self.stop(IdleMode::Off).await,
+        };
         let result = stopped.and(self.abandoned.take().map_or(Ok(()), Err));
         self.record(&result);
         result
@@ -1141,9 +1277,19 @@ async fn expiry(at: Option<Instant>) {
 async fn next(lighting: &mut Lighting) -> Event {
     match lighting {
         Lighting::ScreenSync(running) => running.next().await,
-        Lighting::Stopped | Lighting::Effects | Lighting::Faulted(_) => {
-            std::future::pending().await
-        }
+        Lighting::Stopped
+        | Lighting::Effects
+        | Lighting::Unanswered { .. }
+        | Lighting::Faulted(_) => std::future::pending().await,
+    }
+}
+
+/// The mode the lights are put in, without a session, for `target`.
+fn idle_mode(target: LightingTarget) -> Option<IdleMode> {
+    match target {
+        LightingTarget::Off => Some(IdleMode::Off),
+        LightingTarget::Effects => Some(IdleMode::Native),
+        LightingTarget::ScreenSync => None,
     }
 }
 

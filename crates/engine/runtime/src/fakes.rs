@@ -282,8 +282,8 @@ pub struct FakeOutputSettings {
     pub fail_at: Option<String>,
     /// How `open` goes.
     pub open: FakeOpen,
-    /// `idle` fails after recording the call, like an unreachable device.
-    pub fail_idle: bool,
+    /// How `idle` goes, held or not, after recording the call.
+    pub idle: FakeIdle,
     /// `idle` panics after recording the call.
     pub panic_idle: bool,
     /// Rejected by `validate`.
@@ -328,6 +328,20 @@ pub enum FakeOpen {
     /// It records `output.opening:<name>`, waits for the session's stop to
     /// cut it, then ends as this says.
     UntilStop(AtStop),
+}
+
+/// How a fake output's `idle` goes, after recording the call.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FakeIdle {
+    #[default]
+    Idles,
+    /// It fails, like a device that refuses it.
+    Fails,
+    /// It fails as lights that do not answer ([`Escalation::Unanswered`])
+    /// until the log holds this event, a gate the test opens with
+    /// [`CallLog::record`]; then it idles.
+    UnansweredUntil(String),
 }
 
 /// How a fake open that waits for the stop ends at the cut.
@@ -492,10 +506,14 @@ fn idle(log: &CallLog, settings: &FakeOutputSettings, mode: IdleMode) -> Result<
         IdleMode::Off => 0,
     };
     thread::sleep(Duration::from_millis(settings.idle_delay_ms + native));
-    if settings.fail_idle {
-        return Err(Error::other("fake output cannot idle"));
+    match &settings.idle {
+        FakeIdle::Idles => Ok(()),
+        FakeIdle::Fails => Err(Error::other("fake output cannot idle")),
+        FakeIdle::UnansweredUntil(gate) if !log.events().contains(gate) => Err(
+            Error::other_escalating("fake output does not answer", Escalation::Unanswered),
+        ),
+        FakeIdle::UnansweredUntil(_) => Ok(()),
     }
-    Ok(())
 }
 
 /// Records `"sink.send"` per frame.

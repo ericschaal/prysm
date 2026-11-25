@@ -45,20 +45,28 @@ The full wire mapping is in the
   to the device) is dropped, and the next frame is the next try; any other
   send error fails the output at once
   ([`classify.rs`](../../crates/adapters/output-wled/src/classify.rs)).
-- An output open the lights did not answer (`Escalation::Unanswered`: off,
-  or away from the network) does not end the session: it reports the
-  device issue `unreachable` and tries the open again at the first frame
-  every 5 s, without end, until the lights answer, lighting stops or the
-  settings change. It writes no frames meanwhile and holds no output, and,
-  as it is no failure, nothing else retries it (the TV's backoff included).
-  The portal and the TV app say "Can’t reach the lights". A quiet spell
+- One rule for the three lighting modes: lights that do not answer
+  (`Escalation::Unanswered`: off, or away from the network) the request
+  that puts them in the chosen mode (screen sync's open, the idle for `off`
+  or the lights' own effects) are no failure. The target stays, the device
+  issue is `unreachable` (the portal and the TV app say "Can’t reach the
+  lights"), and the request is tried again every 5 s
+  ([`UNANSWERED_INTERVAL`](../../crates/engine/runtime/src/leds.rs)) until
+  the lights answer or a command asks for something else; a shutdown tries
+  once more and fails. As it is no failure, nothing else retries it (the
+  TV's backoff included).
+- An output open the lights did not answer does not end the session: it
+  tries the open again at the first frame every 5 s. It writes no frames
+  meanwhile and holds no output. A quiet spell
   (no frames for 3 s) ends the wait with nothing tried: the issue goes,
   and the next frame tries the open at once. The release after a quiet
   spell that the lights do not answer is no failure either: the output is
   closed, its device's mode unknown, and the stop's idle sets it. Every
-  other failed open or release ends the session at once. The rule and why
-  it converges are `UNANSWERED_INTERVAL` and `Leds::quiet` in
-  [`leds.rs`](../../crates/engine/runtime/src/leds.rs).
+  other failed open or release ends the session at once ([`Leds::quiet`
+  in `leds.rs`](../../crates/engine/runtime/src/leds.rs)). Without a
+  session the engine waits between commands (`Core::idled` in
+  [`engine.rs`](../../crates/engine/runtime/src/engine.rs)); a session that
+  ended on its own is reported as it ended, its idle included.
 - A held WLED output whose state checks fail (no answer, or a reply that is
   not WLED's state) reports the same issue and keeps sending; its checks go
   on once a second, without backoff.
