@@ -189,6 +189,38 @@ impl Leds {
         matches!(self, Self::Held(_))
     }
 
+    /// Not held and not waiting for the lights: a quiet spell has nothing
+    /// to end.
+    pub(crate) fn is_closed(&self) -> bool {
+        matches!(self, Self::Closed(_))
+    }
+
+    /// End a quiet spell: a held output is idled in `mode` and closed, as
+    /// [`Leds::release`] says; a wait for the lights ends with nothing
+    /// tried, its device as the wait left it. Either way the next frame
+    /// opens the output. An idle the lights did not answer
+    /// ([`Escalation::Unanswered`]) is no failure, as it is none for an
+    /// open: the output is closed with its device `Unknown`, which the
+    /// stop's idle then sets. Any other failed idle fails.
+    pub(crate) fn quiet(&mut self, mode: IdleMode, stop: &Hangup) -> Result<()> {
+        let device = match self {
+            Self::Held(_) => {
+                return self.release(mode, stop).or_else(|error| {
+                    if error.escalation() != Escalation::Unanswered {
+                        return Err(error);
+                    }
+                    let error = prysm_ports::chain(&error);
+                    tracing::warn!(%error, "the lights did not answer their release");
+                    Ok(())
+                });
+            }
+            Self::Unanswered { device, .. } => *device,
+            Self::Closed(_) => return Ok(()),
+        };
+        *self = Self::Closed(device);
+        Ok(())
+    }
+
     /// What a held output last learned about its device; while waiting for
     /// the lights, that they do not answer.
     pub(crate) fn report(&mut self) -> DeviceReport {
@@ -205,7 +237,7 @@ impl Leds {
     /// Idle a held output in `mode` and close it; the idle ends when `stop`
     /// is cut, and is then not a failure, the device `Unknown`. Anything
     /// else is left as it is.
-    pub(crate) fn release(&mut self, mode: IdleMode, stop: &Hangup) -> Result<()> {
+    fn release(&mut self, mode: IdleMode, stop: &Hangup) -> Result<()> {
         if !self.is_held() {
             return Ok(());
         }
@@ -260,8 +292,18 @@ mod tests {
 
     #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
     struct Fails {
-        idle: bool,
+        idle: Idles,
         opens: Opens,
+    }
+
+    /// How the recorder's idles go.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+    enum Idles {
+        #[default]
+        Yes,
+        Fail,
+        /// Fail as lights that do not answer.
+        Unanswered,
     }
 
     /// How the recorder's open goes.
@@ -288,7 +330,10 @@ mod tests {
     }
 
     fn opening(opens: Opens) -> Fails {
-        Fails { idle: false, opens }
+        Fails {
+            idle: Idles::Yes,
+            opens,
+        }
     }
 
     /// Records opens, idles of what it opened (`idle:<mode>`), and modes set
@@ -298,10 +343,14 @@ mod tests {
     impl Recorder {
         fn idled(calls: &Calls, call: String, fails: Fails) -> Result<()> {
             calls.lock().unwrap().push(call);
-            if fails.idle {
-                return Err(Error::other("cannot idle"));
+            match fails.idle {
+                Idles::Yes => Ok(()),
+                Idles::Fail => Err(Error::other("cannot idle")),
+                Idles::Unanswered => Err(Error::other_escalating(
+                    "cannot idle",
+                    Escalation::Unanswered,
+                )),
             }
-            Ok(())
         }
     }
 
@@ -440,7 +489,7 @@ mod tests {
         for (from, mode, fail_idle, calls, left) in cases {
             let made = Calls::default();
             let fails = Fails {
-                idle: fail_idle,
+                idle: if fail_idle { Idles::Fail } else { Idles::Yes },
                 opens: Opens::Yes,
             };
             let output = configured(&made, fails);
@@ -536,7 +585,7 @@ mod tests {
 
     /// Lights that do not answer: no failure and `Unreachable` reported; no
     /// open before the interval, one at it; once they answer the colors are
-    /// written and the issue clears. A quiet spell's release touches nothing.
+    /// written and the issue clears.
     #[test]
     fn unanswered_lights_are_tried_again_every_interval_until_they_answer() {
         let made = Calls::default();
@@ -558,10 +607,42 @@ mod tests {
             (&answering, ms(10_001), None, 0, false),
         ]);
         assert!(leds.is_held());
+    }
 
-        let mut leds = waiting(Device::Untouched);
-        leds.release(IdleMode::Native, &Hangup::default()).unwrap();
-        assert_eq!(state(&leds), "waiting, untouched");
+    /// A quiet spell's end from each state: the calls made, the state left,
+    /// and whether it failed. A held output is idled; lights that do not
+    /// answer that idle fail nothing, as they fail no open, and leave the
+    /// device unknown. A wait for the lights ends with nothing tried. No
+    /// report is left: the session shows its own state.
+    #[test]
+    fn a_quiet_spell_ends_holds_and_waits() {
+        use Idles::{Fail, Unanswered, Yes};
+        #[rustfmt::skip]
+        let cases: [(Before, Idles, &[&str], &str, bool); 7] = [
+            (Before::Held, Yes, &["idle:Native"], "left Native", true),
+            (Before::Held, Unanswered, &["idle:Native"], "unknown", true),
+            (Before::Held, Fail, &["idle:Native"], "unknown", false),
+            (Before::WaitingUntouched, Yes, &[], "untouched", true),
+            (Before::WaitingUnknown, Yes, &[], "unknown", true),
+            (Before::Untouched, Yes, &[], "untouched", true),
+            (Before::LeftOff, Yes, &[], "left Off", true),
+        ];
+        for (from, idle, calls, left, fine) in cases {
+            let made = Calls::default();
+            let fails = Fails {
+                idle,
+                opens: Opens::Yes,
+            };
+            let output = configured(&made, fails);
+            let mut leds = leds(from, &output);
+            made.lock().unwrap().clear();
+            let quiet = leds.quiet(IdleMode::Native, &Hangup::default());
+            let case = (from, idle);
+            assert_eq!(*made.lock().unwrap(), calls, "{case:?}");
+            assert_eq!(state(&leds), left, "{case:?}");
+            assert_eq!(quiet.is_ok(), fine, "{case:?}");
+            assert_eq!(leds.report(), DeviceReport::default(), "{case:?}");
+        }
     }
 
     /// Lights that never answer never fail the session: one open per

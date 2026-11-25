@@ -114,11 +114,12 @@ fn idle(leds: &mut Leds, mode: IdleMode, output: &Configured) -> Result<IdleMode
 /// Each frame: apply a pending config, process, write (opening the output if
 /// not held), record the frame's times, take the output's report, publish
 /// what is watched. A quiet tick rewrites the last colors (and takes the
-/// report), and after [`VIDEO_GRACE`] without frames idles the output in
-/// [`RELEASE`], clears the published colors and closes it until the next
-/// frame. While the lights do not answer an open, frames are not written,
-/// the report says they are unreachable, and the open is tried again as
-/// [`Leds::write`] says. The open and that idle end when a stop comes (it
+/// report), and after [`VIDEO_GRACE`] without frames ends the quiet spell
+/// as [`Leds::quiet`] says (a held output idled in [`RELEASE`] and closed,
+/// a wait for the lights ended), clears the published colors and report,
+/// until the next frame. While the lights do not answer an open, frames are
+/// not written, the report says they are unreachable, and the open is tried
+/// again as [`Leds::write`] says. The open and that idle end when a stop comes (it
 /// cuts the thread's [`Hangup`]), and are then not failures: the loop sees
 /// the stop.
 /// When the loop ends (stop, failure, or
@@ -193,21 +194,24 @@ impl SessionLoop {
     }
 
     /// No frame within a tick; `refused`: the source said its device refuses
-    /// the video. The output is released alike either way.
+    /// the video. The quiet spell ends alike either way ([`Leds::quiet`]).
     fn on_quiet(&mut self, refused: bool, stop: &Hangup) -> Result<()> {
         self.stats.no_frame(refused);
-        if !self.leds.is_held() {
+        if self.leds.is_closed() {
             return Ok(());
         }
         let now = Instant::now();
         if now - self.last_frame >= VIDEO_GRACE {
             self.last = None;
+            // The session's own state says what happens now: no lights
+            // line, also after a wait for the lights.
             self.report(DeviceReport::default());
             // The device shows its own state now, not these colors.
             self.feeds.clear_colors();
-            return self.leds.release(RELEASE, stop).map_err(lights);
+            return self.leds.quiet(RELEASE, stop).map_err(lights);
         }
-        if let Some((colors, written)) = &mut self.last
+        if self.leds.is_held()
+            && let Some((colors, written)) = &mut self.last
             && now - *written >= REFRESH
         {
             // Held: nothing is opened, so nothing for the stop to end.
@@ -553,6 +557,64 @@ mod tests {
         assert_eq!(end.result().unwrap_err().to_string(), "fake source failed");
         assert_eq!(session.observed(), DeviceReport::default());
         session.join().await;
+    }
+
+    /// A source quiet for longer than [`VIDEO_GRACE`] (and less than the
+    /// wait's interval), then delivering one more frame before it fails at
+    /// a gate the test opens.
+    fn quiet_once() -> FakeSourceSettings {
+        FakeSourceSettings {
+            quiet_after: Some(1),
+            quiet_for_ms: 3_500,
+            fail_after: Some(2),
+            fail_at: Some("test.fail".into()),
+            ..Default::default()
+        }
+    }
+
+    /// Lets the gated source of [`quiet_once`] fail: the session's only
+    /// failure is its source's.
+    async fn fails_by_its_source(mut session: Session, log: &CallLog) {
+        assert!(!session.has_ended());
+        log.record("test.fail");
+        let end = session.finished().await.unwrap();
+        assert_eq!(end.result().unwrap_err().to_string(), "fake source failed");
+        session.join().await;
+    }
+
+    /// Lights that do not answer the release after a quiet spell, as an
+    /// open they do not answer, fail nothing: the output is closed, the
+    /// next frame opens it again.
+    #[tokio::test]
+    async fn an_unanswered_release_is_no_failure() {
+        let log = CallLog::new();
+        let unanswered = FakeOutputSettings {
+            release_unanswered: true,
+            ..Default::default()
+        };
+        let session = started(&log, quiet_once(), unanswered);
+        assert!(log.wait_for("source.failing:s", 1).await);
+        assert_eq!(log.count("output.idle:o:Native"), 1);
+        assert_eq!(log.count("output.open:o"), 2);
+        fails_by_its_source(session, &log).await;
+    }
+
+    /// A quiet spell ends a wait for the lights with nothing tried: the
+    /// next frame tries the open at once, not at the wait's interval, and
+    /// says again that the lights do not answer.
+    #[tokio::test]
+    async fn a_quiet_spell_ends_a_wait_for_the_lights() {
+        let log = CallLog::new();
+        let silent = FakeOutputSettings {
+            open: FakeOpen::Unanswered,
+            ..Default::default()
+        };
+        let session = started(&log, quiet_once(), silent);
+        assert!(log.wait_for("source.failing:s", 1).await);
+        assert_eq!(log.count("output.open_unanswered:o"), 2);
+        assert_eq!(log.count("output.idle:o:Native"), 0, "nothing tried");
+        assert_eq!(session.observed().issue, Some(OutputIssue::Unreachable));
+        fails_by_its_source(session, &log).await;
     }
 
     /// A stop while waiting for the lights ends at once without another

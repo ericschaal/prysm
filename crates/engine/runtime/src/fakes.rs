@@ -305,6 +305,10 @@ pub struct FakeOutputSettings {
     /// spell), after recording the call, waits for the session's stop to
     /// cut it, then fails.
     pub release_until_stop: bool,
+    /// The held output's `idle` in `Native` (a release after a quiet
+    /// spell), after recording the call, fails as lights that do not
+    /// answer ([`Escalation::Unanswered`]).
+    pub release_unanswered: bool,
 }
 
 /// How a fake output's `open` goes.
@@ -468,6 +472,12 @@ impl LedOutput for FakeOutput {
                 .record(format!("output.idle:{}:{mode:?}", self.settings.name));
             let _ = stop.wait(UNTIL_STOP);
             return Err(stopped(&self.log, "idle", &self.settings.name));
+        }
+        if self.settings.release_unanswered && mode == IdleMode::Native {
+            self.log
+                .record(format!("output.idle:{}:{mode:?}", self.settings.name));
+            let error = "fake output's release is not answered";
+            return Err(Error::other_escalating(error, Escalation::Unanswered));
         }
         idle(&self.log, &self.settings, mode)
     }
