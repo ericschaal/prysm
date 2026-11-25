@@ -177,8 +177,10 @@ fn dropping_an_unreaped_worker_terminates_it() {
         marker.display()
     ));
     collect(&mut worker, |seen| !seen.is_empty());
-    let pid =
-        nix::unistd::Pid::from_raw(i32::try_from(worker.child.as_ref().unwrap().id()).unwrap());
+    let Stage::Running { child, .. } = &worker.stage else {
+        panic!("running")
+    };
+    let pid = nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap());
     drop(worker);
     eventually("the worker to end with its handle", LIMIT, || {
         nix::sys::signal::kill(pid, None).is_err().then_some(())
@@ -222,9 +224,26 @@ read line"#
     assert_eq!(exit(&mut worker), Exit::Code(0));
 }
 
+/// An exit reaped after the event reader ended is handed over at once, never
+/// held back.
+#[test]
+fn an_exit_after_the_end_of_output_is_not_held_back() {
+    let mut worker = sh("exec 1>&-; read line");
+    eventually("the end of the output", LIMIT, || {
+        events_ended(&worker).then_some(())
+    });
+    worker.send(&Command::ResetVideo {}).unwrap();
+    let exit = eventually("the worker's exit", LIMIT, || {
+        let exit = worker.try_exit().unwrap();
+        assert_eq!(worker.due(), None, "not held back");
+        exit
+    });
+    assert_eq!(exit, Exit::Code(0));
+}
+
 fn events_ended(worker: &ProcessWorker) -> bool {
-    worker
-        .reader
-        .as_ref()
-        .is_some_and(|(_, ended)| ended.load(Ordering::Acquire))
+    match &worker.stage {
+        Stage::Running { reader, .. } | Stage::Reaped { reader, .. } => reader.ended(),
+        Stage::Reported => false,
+    }
 }
