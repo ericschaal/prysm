@@ -43,4 +43,4 @@ mod vtcapture;
 #[doc(hidden)]
 pub use halgal::fuzz_surface_check;
 pub use halgal::{UiCapture, UiFrame};
-pub use vtcapture::{Acquired, Error, Options, VideoFrame, VtCapture};
+pub use vtcapture::{Acquired, Error, Operation, Options, VideoFrame, VtCapture};

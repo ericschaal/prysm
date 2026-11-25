@@ -9,7 +9,7 @@
 //! capture and release must all run on one thread; [`UiCapture`] is not
 //! `Send`. The library is loaded once and never unloaded: unloading it leaks
 //! file descriptors.
-use crate::vtcapture::{Error, Plane};
+use crate::vtcapture::{Error, Operation, Plane};
 use prysm_webos_luna_sys::{Loaded, load_once};
 use std::ffi::c_int;
 use std::fs::File;
@@ -114,7 +114,7 @@ fn hal() -> Result<&'static HalApi, Error> {
     Ok(api)
 }
 
-fn status(code: c_int, operation: &'static str) -> Result<(), Error> {
+fn status(code: c_int, operation: Operation) -> Result<(), Error> {
     if code == 0 {
         Ok(())
     } else {
@@ -210,12 +210,12 @@ impl UiCapture {
         height: u16,
     ) -> Result<Self, Error> {
         // SAFETY: a typed symbol without arguments.
-        status(unsafe { (api.init)() }, "HAL_GAL_Init")?;
+        status(unsafe { (api.init)() }, Operation::HalInit)?;
         let mut surface = Box::new(Surface::empty());
         // SAFETY: the surface is a live, exclusively owned out parameter.
         let code =
             unsafe { (api.create)(u32::from(width), u32::from(height), 0, &raw mut *surface) };
-        status(code, "HAL_GAL_CreateSurface")?;
+        status(code, Operation::HalCreateSurface)?;
         // From here on dropping `this` destroys the surface.
         let mut this = Self {
             api,
@@ -271,7 +271,7 @@ impl UiCapture {
         };
         // SAFETY: the created surface is live until release.
         let code = unsafe { (self.api.capture)(&raw mut *self.surface) };
-        status(code, "HAL_GAL_CaptureFrameBuffer")?;
+        status(code, Operation::HalCaptureFrameBuffer)?;
         // SAFETY: the mapping is `length` readable bytes until it is unmapped,
         // which needs `&mut self`, so not while the frame borrows it. HAL may
         // still be writing it (the capture is a blit, and nothing says it has
@@ -316,7 +316,7 @@ impl UiCapture {
         // SAFETY: the surface was created by this HAL and not yet destroyed:
         // the stage was `Created` or `Mapped` and is now `Released`.
         let code = unsafe { (self.api.destroy)(&raw mut *self.surface) };
-        if let Err(error) = status(code, "HAL_GAL_DestroySurface") {
+        if let Err(error) = status(code, Operation::HalDestroySurface) {
             first.get_or_insert(error);
         }
         first.map_or(Ok(()), Err)

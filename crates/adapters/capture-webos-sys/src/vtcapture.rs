@@ -64,7 +64,7 @@ pub enum Error {
     #[error("vtCapture_create failed: {0}")]
     Create(Box<Error>),
     #[error("{operation} failed with status {code}")]
-    Status { operation: &'static str, code: i32 },
+    Status { operation: Operation, code: i32 },
     #[error("vtcapture exception: {0}")]
     Exception(String),
     #[error("invalid native capture: {0}")]
@@ -79,6 +79,74 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+}
+
+/// A native call of `libvtcapture` or `libhalgal` that answers a status
+/// code; [`Error::Status`] names the one that failed. One set for both
+/// libraries, as both report through the one [`Error`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    VtCreate,
+    VtInit,
+    VtPreprocess,
+    VtPlaneInfo,
+    VtProcess,
+    VtCurrentCaptureBuffInfo,
+    VtStop,
+    VtPostprocess,
+    VtFinalize,
+    HalInit,
+    HalCreateSurface,
+    HalCaptureFrameBuffer,
+    HalDestroySurface,
+}
+
+impl Operation {
+    /// Every operation, in declaration order.
+    pub const ALL: [Self; 13] = [
+        Self::VtCreate,
+        Self::VtInit,
+        Self::VtPreprocess,
+        Self::VtPlaneInfo,
+        Self::VtProcess,
+        Self::VtCurrentCaptureBuffInfo,
+        Self::VtStop,
+        Self::VtPostprocess,
+        Self::VtFinalize,
+        Self::HalInit,
+        Self::HalCreateSurface,
+        Self::HalCaptureFrameBuffer,
+        Self::HalDestroySurface,
+    ];
+
+    /// The native function's name, as error messages show it.
+    /// `vtCapture_init` carries what its status 11 is suspected to mean.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::VtCreate => "vtCapture_create",
+            Self::VtInit => {
+                "vtCapture_init (11: on webOS 10.3.2 the library's code suggests the TV's resource manager did not grant the capture resource)"
+            }
+            Self::VtPreprocess => "vtCapture_preprocess",
+            Self::VtPlaneInfo => "vtCapture_planeInfo",
+            Self::VtProcess => "vtCapture_process",
+            Self::VtCurrentCaptureBuffInfo => "vtCapture_currentCaptureBuffInfo",
+            Self::VtStop => "vtCapture_stop",
+            Self::VtPostprocess => "vtCapture_postprocess",
+            Self::VtFinalize => "vtCapture_finalize",
+            Self::HalInit => "HAL_GAL_Init",
+            Self::HalCreateSurface => "HAL_GAL_CreateSurface",
+            Self::HalCaptureFrameBuffer => "HAL_GAL_CaptureFrameBuffer",
+            Self::HalDestroySurface => "HAL_GAL_DestroySurface",
+        }
+    }
+}
+
+impl std::fmt::Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl Error {
@@ -163,7 +231,7 @@ fn vt() -> Result<&'static VtApi, Error> {
     })?)
 }
 
-fn status(code: i32, operation: &'static str) -> Result<(), Error> {
+fn status(code: i32, operation: Operation) -> Result<(), Error> {
     if code == 0 {
         Ok(())
     } else {
@@ -416,7 +484,7 @@ impl VtCapture {
             )
         };
         vt_result(code, &error)
-            .and_then(|code| status(code, "vtCapture_create"))
+            .and_then(|code| status(code, Operation::VtCreate))
             .map_err(|error| Error::Create(Box::new(error)))?;
         let driver = NonNull::new(driver).ok_or(Error::Invalid("null driver"))?;
         let mut client = Box::new([0; 128]);
@@ -464,10 +532,7 @@ impl VtCapture {
                 REFUSED => return Ok(Started::Refused),
                 _ => {}
             }
-            status(
-                code,
-                "vtCapture_init (11: on webOS 10.3.2 the library's code suggests the TV's resource manager did not grant the capture resource)",
-            )?;
+            status(code, Operation::VtInit)?;
             self.stage = Stage::Working(Reached::Initialized);
         }
         let code = vt_call!(
@@ -482,7 +547,7 @@ impl VtCapture {
             self.stage = Stage::Working(Reached::Created);
             return Ok(Started::NotReady);
         }
-        status(code, "vtCapture_preprocess")?;
+        status(code, Operation::VtPreprocess)?;
         self.stage = Stage::Working(Reached::Prepared);
         let mut plane = PlaneInfo::default();
         status(
@@ -493,7 +558,7 @@ impl VtCapture {
                 self.client.as_mut_ptr(),
                 &raw mut plane
             )?,
-            "vtCapture_planeInfo",
+            Operation::VtPlaneInfo,
         )?;
         let [_, _, width, height] = plane.region;
         if !(2..=1920).contains(&width)
@@ -516,7 +581,7 @@ impl VtCapture {
                 self.api.process,
                 self.client.as_mut_ptr()
             )?,
-            "vtCapture_process",
+            Operation::VtProcess,
         )?;
         Ok(Started::Running)
     }
@@ -575,7 +640,7 @@ impl VtCapture {
         if code == 2 {
             return Ok(Next::Pending);
         }
-        status(code, "vtCapture_currentCaptureBuffInfo")?;
+        status(code, Operation::VtCurrentCaptureBuffInfo)?;
         let [_, _, width, height] = self.plane.region;
         Ok(Next::Frame {
             y: checked_plane(buffer.y, buffer.y_len)?,
@@ -612,16 +677,20 @@ impl VtCapture {
         };
         let mut first = None;
         for (needed, function, operation) in [
-            (reached >= Reached::Running, self.api.stop, "vtCapture_stop"),
+            (
+                reached >= Reached::Running,
+                self.api.stop,
+                Operation::VtStop,
+            ),
             (
                 reached >= Reached::Prepared,
                 self.api.postprocess,
-                "vtCapture_postprocess",
+                Operation::VtPostprocess,
             ),
             (
                 reached >= Reached::Initialized,
                 self.api.finalize,
-                "vtCapture_finalize",
+                Operation::VtFinalize,
             ),
         ] {
             if needed {
@@ -1045,6 +1114,17 @@ mod tests {
         let error = capture.release().unwrap_err();
         assert_eq!(error.to_string(), "vtCapture_stop failed with status 5");
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn every_operation_is_listed_once_with_its_own_name() {
+        for (index, operation) in Operation::ALL.into_iter().enumerate() {
+            assert_eq!(operation as usize, index, "{operation:?}");
+        }
+        let mut names: Vec<_> = Operation::ALL.map(Operation::as_str).into();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), Operation::ALL.len());
     }
 
     #[test]

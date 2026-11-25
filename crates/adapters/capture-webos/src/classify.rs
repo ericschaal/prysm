@@ -86,17 +86,12 @@ pub(crate) enum VideoCause<'a> {
     SignalMask,
 }
 
-/// `vtCapture_currentCaptureBuffInfo`, the acquisition of a buffer.
-const BUFFER: &str = "vtCapture_currentCaptureBuffInfo";
-/// `vtCapture_planeInfo`, the video plane's geometry.
-const PLANE: &str = "vtCapture_planeInfo";
-
 /// The video tap's rules, one row per cause. A status is matched by its
 /// operation and code: the same number means different things per
 /// operation. `vtCapture_init` 1 and 17 and the buffer's 2 are answers, not
 /// errors ([`crate::source::Acquired`]).
 pub(crate) fn video(cause: VideoCause<'_>) -> Recovery {
-    use sys::Error as E;
+    use sys::{Error as E, Operation as O};
     match cause {
         VideoCause::Native(E::Load { .. }) => Recovery::Escalate(Escalation::Ask(Fix::Unsupported)),
         VideoCause::Native(E::Permission(_)) => Recovery::Escalate(Escalation::Ask(Fix::SetUp)),
@@ -109,13 +104,13 @@ pub(crate) fn video(cause: VideoCause<'_>) -> Recovery {
         // The TV's resource policy took the capture (seen at standby, with
         // the signal changing in the same instant).
         VideoCause::Native(E::Status {
-            operation: BUFFER,
+            operation: O::VtCurrentCaptureBuffInfo,
             code: 12,
         })
         // No video plane to capture (seen at start while the video is
         // unknown, and for ever under AirPlay mirroring).
         | VideoCause::Native(E::Status {
-            operation: PLANE,
+            operation: O::VtPlaneInfo,
             code: 13,
         }) => Recovery::Wait,
         VideoCause::Native(
@@ -177,7 +172,7 @@ mod tests {
     use prysm_webos_luna_sys::Error as Luna;
     use std::io::ErrorKind;
 
-    fn status(operation: &'static str, code: i32) -> sys::Error {
+    fn status(operation: sys::Operation, code: i32) -> sys::Error {
         sys::Error::Status { operation, code }
     }
 
@@ -200,10 +195,34 @@ mod tests {
         sys::UiCapture::open(320, 180).err()
     }
 
-    /// One row per `sys::Error` variant and per status that has its own
-    /// rule, for both taps.
-    fn rows() -> Vec<(sys::Error, Recovery, UiRecovery)> {
+    /// What a status of each operation leads to; no wildcard, so a new
+    /// operation needs its own arm here.
+    fn status_recovery(operation: sys::Operation, code: i32) -> Recovery {
+        use sys::Operation as O;
         let (retry, wait) = (Recovery::Retry(Reason::FreshDriver), Recovery::Wait);
+        match operation {
+            O::VtCurrentCaptureBuffInfo if code == 12 => wait,
+            O::VtPlaneInfo if code == 13 => wait,
+            O::VtCreate
+            | O::VtInit
+            | O::VtPreprocess
+            | O::VtPlaneInfo
+            | O::VtProcess
+            | O::VtCurrentCaptureBuffInfo
+            | O::VtStop
+            | O::VtPostprocess
+            | O::VtFinalize
+            | O::HalInit
+            | O::HalCreateSurface
+            | O::HalCaptureFrameBuffer
+            | O::HalDestroySurface => retry,
+        }
+    }
+
+    /// One row per `sys::Error` variant, and per operation for the status
+    /// codes that have their own rule somewhere, for both taps.
+    fn rows() -> Vec<(sys::Error, Recovery, UiRecovery)> {
+        let retry = Recovery::Retry(Reason::FreshDriver);
         let (unsupported, may_pass) = (UiRecovery::Unsupported, UiRecovery::MayPass);
         let message = || "failed".to_owned();
         let mut rows = vec![
@@ -232,31 +251,22 @@ mod tests {
                 may_pass,
             ),
             (
-                sys::Error::Create(Box::new(status("vtCapture_create", 1))),
+                sys::Error::Create(Box::new(status(sys::Operation::VtCreate, 1))),
                 Recovery::Escalate(Escalation::Restart),
                 may_pass,
             ),
-            // Spelled as `prysm-capture-webos-sys` reports them.
-            (
-                status("vtCapture_currentCaptureBuffInfo", 12),
-                wait,
-                may_pass,
-            ),
-            (status("vtCapture_planeInfo", 13), wait, may_pass),
-            (
-                status("vtCapture_currentCaptureBuffInfo", 13),
-                retry,
-                may_pass,
-            ),
-            (status("vtCapture_planeInfo", 12), retry, may_pass),
-            (status("vtCapture_init (11: …)", 11), retry, may_pass),
-            (status("vtCapture_process", 1), retry, may_pass),
             (sys::Error::Exception("boom".into()), retry, may_pass),
             (sys::Error::Invalid("stride"), retry, may_pass),
             (sys::Error::Failed, retry, may_pass),
             (device(ErrorKind::NotFound), retry, unsupported),
             (device(ErrorKind::OutOfMemory), retry, may_pass),
         ];
+        for operation in sys::Operation::ALL {
+            for code in [1, 12, 13] {
+                let recovery = status_recovery(operation, code);
+                rows.push((status(operation, code), recovery, may_pass));
+            }
+        }
         if let Some(load) = load() {
             rows.push((
                 load,

@@ -1048,7 +1048,7 @@ fn only_a_missing_ui_library_or_device_is_permanent() {
         std::io::ErrorKind::OutOfMemory
     ))));
     let status = sys::Error::Status {
-        operation: "HAL_GAL_Init",
+        operation: sys::Operation::HalInit,
         code: -1,
     };
     let fault = backend::ui_open_fault(status);
@@ -1072,7 +1072,7 @@ fn only_a_failed_create_or_a_stuck_name_needs_a_new_process() {
     use prysm_capture_webos_sys as sys;
     use prysm_webos_luna_sys::Error as Luna;
     let status = || sys::Error::Status {
-        operation: "vtCapture_init",
+        operation: sys::Operation::VtInit,
         code: 11,
     };
     let message = || "failed".to_owned();
@@ -1152,7 +1152,7 @@ fn every_failed_registration_check_escalates_and_names_its_cause() {
     }
     assert_eq!(
         open(sys::Error::Status {
-            operation: "vtCapture_process",
+            operation: sys::Operation::VtProcess,
             code: 1,
         })
         .recovery,
