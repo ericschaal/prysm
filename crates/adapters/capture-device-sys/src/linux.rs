@@ -371,7 +371,8 @@ fn rates_at(device: &Device, fourcc: FourCC, width: u32, height: u32) -> Option<
 }
 
 /// Stop the stream and start it again. STREAMOFF gives every buffer back,
-/// including one the driver kept.
+/// including one the driver kept. A failure here ends capture: it is not
+/// retried.
 fn restart(stream: &mut Stream) -> Result<()> {
     stream.stop().map_err(|error| {
         failed(
@@ -383,31 +384,6 @@ fn restart(stream: &mut Stream) -> Result<()> {
     stream
         .start()
         .map_err(|error| failed(Op::Start, error, "failed to restart capture stream"))
-}
-
-/// Carries out `verdict`: restarts for as long as `health` says so, where a
-/// failed `restart` is one more interruption, and
-/// a device gone ends capture. `Ok(true)` to capture on, `Ok(false)` when
-/// `sink` stops meanwhile.
-fn settle(
-    mut verdict: Verdict,
-    health: &mut Health,
-    sink: &dyn CaptureSink,
-    mut restart: impl FnMut() -> Result<()>,
-    now: impl Fn() -> Instant,
-) -> Result<bool> {
-    loop {
-        verdict = match verdict {
-            Verdict::Continue => return Ok(true),
-            Verdict::Fail(error) => return Err(error),
-            Verdict::Restart if sink.should_stop(Duration::ZERO) => return Ok(false),
-            Verdict::Restart => match restart() {
-                Ok(()) => Verdict::Continue,
-                Err(error @ CaptureError::Disconnected { .. }) => Verdict::Fail(error),
-                Err(error) => health.on(Event::Interrupted(error), now()),
-            },
-        };
-    }
 }
 
 /// Stream from `stream`, whose buffers hold `format` as `pixels`, into
@@ -458,9 +434,10 @@ fn capture(
         if !matches!(event, Event::Frame) {
             stats.failure();
         }
-        let verdict = health.on(event, Instant::now());
-        if !settle(verdict, &mut health, sink, || restart(stream), Instant::now)? {
-            return Ok(());
+        match health.on(event, Instant::now()) {
+            Verdict::Continue => {}
+            Verdict::Restart => restart(stream)?,
+            Verdict::Fail(error) => return Err(error),
         }
     }
     Ok(())
