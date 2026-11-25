@@ -40,7 +40,9 @@ struct Report {
     requested: Option<RemoteSettings>,
     uplink: UplinkState,
     /// The request whose encoder failed, and why: refused until the
-    /// receiver asks for another.
+    /// receiver asks for another, also after other states came between.
+    /// The receiver may not hear a refusal and connect again with the same
+    /// request; without this the encoder would reopen at every connection.
     refused: Option<(RemoteSettings, String)>,
 }
 
@@ -61,10 +63,9 @@ enum UplinkState {
     Waiting(String),
     /// Prysm speaks another capture stream version, and which.
     VersionDiffers(String),
-    /// The requested encoder failed (why is the report's `refused`): that
-    /// request is refused until it changes, and the capture is released
-    /// meanwhile.
-    EncoderFailed,
+    /// The requested encoder failed, and why: that request is refused until
+    /// it changes, and the capture is released meanwhile.
+    EncoderFailed(String),
     /// The receiver's source failed with this stream, and how it said so:
     /// the capture is released until a receiver takes a connection again.
     ReceiverFailed(String),
@@ -162,13 +163,14 @@ impl Report {
         match (&self.uplink, event) {
             (Replaced(_), _)
             | (
-                Stopped | EncoderFailed | ReceiverFailed(_) | VersionDiffers(_),
+                Stopped | EncoderFailed(_) | ReceiverFailed(_) | VersionDiffers(_),
                 UplinkEvent::Unavailable(_),
             ) => (self.clone(), Action::Drop),
             (_, UplinkEvent::Connected(request)) => match &self.refused {
-                Some((refused, reason)) if *refused == request => {
-                    (shown(EncoderFailed), Action::Refuse(reason.clone()))
-                }
+                Some((refused, reason)) if *refused == request => (
+                    shown(EncoderFailed(reason.clone())),
+                    Action::Refuse(reason.clone()),
+                ),
                 _ => {
                     let next = Self {
                         requested: Some(request),
@@ -184,7 +186,7 @@ impl Report {
             }
             (_, UplinkEvent::Lost(Loss::Refused { request, reason })) => {
                 let next = Self {
-                    uplink: EncoderFailed,
+                    uplink: EncoderFailed(reason.clone()),
                     refused: Some((request, reason)),
                     ..self.clone()
                 };
@@ -200,7 +202,7 @@ impl Report {
     fn wanted(&self) -> Option<RemoteSettings> {
         match self.uplink {
             UplinkState::Stopped
-            | UplinkState::EncoderFailed
+            | UplinkState::EncoderFailed(_)
             | UplinkState::ReceiverFailed(_)
             | UplinkState::VersionDiffers(_)
             | UplinkState::Replaced(_) => None,
@@ -228,16 +230,9 @@ impl Report {
             UplinkState::VersionDiffers(why) => SlimLink::VersionDiffers {
                 message: why.clone(),
             },
-            UplinkState::EncoderFailed => {
-                // `next` enters it only together with the refusal.
-                let (_, why) = self
-                    .refused
-                    .as_ref()
-                    .expect("an encoder failure keeps its refusal");
-                SlimLink::EncoderFailed {
-                    message: why.clone(),
-                }
-            }
+            UplinkState::EncoderFailed(why) => SlimLink::EncoderFailed {
+                message: why.clone(),
+            },
             UplinkState::ReceiverFailed(why) => SlimLink::ReceiverFailed {
                 message: why.clone(),
             },
@@ -650,67 +645,67 @@ mod tests {
             (Starting, connected(FAILED), hardware, keep.clone(), Some(FAILED)),
             (Starting, unavailable(), Waiting(text("w")), drop.clone(), None),
             (Starting, version(), VersionDiffers(text("v")), drop.clone(), None),
-            (Starting, refused(), EncoderFailed, drop.clone(), None),
+            (Starting, refused(), EncoderFailed(text("e")), drop.clone(), None),
             (Starting, stopped(), Stopped, drop.clone(), None),
             (Starting, replaced(), Replaced(text("r")), drop.clone(), None),
             (Starting, failed(), ReceiverFailed(text("f")), drop.clone(), None),
             (Starting, dropped(), Waiting(text("d")), drop.clone(), None),
 
             (raw.clone(), connected(NEW), software.clone(), keep.clone(), Some(NEW)),
-            (raw.clone(), connected(FAILED), EncoderFailed, refuse.clone(), None),
+            (raw.clone(), connected(FAILED), EncoderFailed(text("busy")), refuse.clone(), None),
             (raw.clone(), unavailable(), Waiting(text("w")), drop.clone(), Some(OLD)),
             (raw.clone(), version(), VersionDiffers(text("v")), drop.clone(), None),
-            (raw.clone(), refused(), EncoderFailed, drop.clone(), None),
+            (raw.clone(), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (raw.clone(), stopped(), Stopped, drop.clone(), None),
             (raw.clone(), replaced(), Replaced(text("r")), drop.clone(), None),
             (raw.clone(), failed(), ReceiverFailed(text("f")), drop.clone(), None),
             (raw.clone(), dropped(), Waiting(text("d")), drop.clone(), Some(OLD)),
 
             (Stopped, connected(NEW), software.clone(), keep.clone(), Some(NEW)),
-            (Stopped, connected(FAILED), EncoderFailed, refuse.clone(), None),
+            (Stopped, connected(FAILED), EncoderFailed(text("busy")), refuse.clone(), None),
             (Stopped, unavailable(), Stopped, drop.clone(), None),
             (Stopped, version(), VersionDiffers(text("v")), drop.clone(), None),
-            (Stopped, refused(), EncoderFailed, drop.clone(), None),
+            (Stopped, refused(), EncoderFailed(text("e")), drop.clone(), None),
             (Stopped, stopped(), Stopped, drop.clone(), None),
             (Stopped, replaced(), Replaced(text("r")), drop.clone(), None),
             (Stopped, failed(), ReceiverFailed(text("f")), drop.clone(), None),
             (Stopped, dropped(), Waiting(text("d")), drop.clone(), Some(OLD)),
 
             (Waiting(text("w0")), connected(NEW), software.clone(), keep.clone(), Some(NEW)),
-            (Waiting(text("w0")), connected(FAILED), EncoderFailed, refuse.clone(), None),
+            (Waiting(text("w0")), connected(FAILED), EncoderFailed(text("busy")), refuse.clone(), None),
             (Waiting(text("w0")), unavailable(), Waiting(text("w")), drop.clone(), Some(OLD)),
             (Waiting(text("w0")), version(), VersionDiffers(text("v")), drop.clone(), None),
-            (Waiting(text("w0")), refused(), EncoderFailed, drop.clone(), None),
+            (Waiting(text("w0")), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (Waiting(text("w0")), stopped(), Stopped, drop.clone(), None),
             (Waiting(text("w0")), replaced(), Replaced(text("r")), drop.clone(), None),
             (Waiting(text("w0")), failed(), ReceiverFailed(text("f")), drop.clone(), None),
             (Waiting(text("w0")), dropped(), Waiting(text("d")), drop.clone(), Some(OLD)),
 
             (VersionDiffers(text("v0")), connected(NEW), software.clone(), keep.clone(), Some(NEW)),
-            (VersionDiffers(text("v0")), connected(FAILED), EncoderFailed, refuse.clone(), None),
+            (VersionDiffers(text("v0")), connected(FAILED), EncoderFailed(text("busy")), refuse.clone(), None),
             (VersionDiffers(text("v0")), unavailable(), VersionDiffers(text("v0")), drop.clone(), None),
             (VersionDiffers(text("v0")), version(), VersionDiffers(text("v")), drop.clone(), None),
-            (VersionDiffers(text("v0")), refused(), EncoderFailed, drop.clone(), None),
+            (VersionDiffers(text("v0")), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (VersionDiffers(text("v0")), stopped(), Stopped, drop.clone(), None),
             (VersionDiffers(text("v0")), replaced(), Replaced(text("r")), drop.clone(), None),
             (VersionDiffers(text("v0")), failed(), ReceiverFailed(text("f")), drop.clone(), None),
             (VersionDiffers(text("v0")), dropped(), Waiting(text("d")), drop.clone(), Some(OLD)),
 
-            (EncoderFailed, connected(NEW), software.clone(), keep.clone(), Some(NEW)),
-            (EncoderFailed, connected(FAILED), EncoderFailed, refuse.clone(), None),
-            (EncoderFailed, unavailable(), EncoderFailed, drop.clone(), None),
-            (EncoderFailed, version(), VersionDiffers(text("v")), drop.clone(), None),
-            (EncoderFailed, refused(), EncoderFailed, drop.clone(), None),
-            (EncoderFailed, stopped(), Stopped, drop.clone(), None),
-            (EncoderFailed, replaced(), Replaced(text("r")), drop.clone(), None),
-            (EncoderFailed, failed(), ReceiverFailed(text("f")), drop.clone(), None),
-            (EncoderFailed, dropped(), Waiting(text("d")), drop.clone(), Some(OLD)),
+            (EncoderFailed(text("e0")), connected(NEW), software.clone(), keep.clone(), Some(NEW)),
+            (EncoderFailed(text("e0")), connected(FAILED), EncoderFailed(text("busy")), refuse.clone(), None),
+            (EncoderFailed(text("e0")), unavailable(), EncoderFailed(text("e0")), drop.clone(), None),
+            (EncoderFailed(text("e0")), version(), VersionDiffers(text("v")), drop.clone(), None),
+            (EncoderFailed(text("e0")), refused(), EncoderFailed(text("e")), drop.clone(), None),
+            (EncoderFailed(text("e0")), stopped(), Stopped, drop.clone(), None),
+            (EncoderFailed(text("e0")), replaced(), Replaced(text("r")), drop.clone(), None),
+            (EncoderFailed(text("e0")), failed(), ReceiverFailed(text("f")), drop.clone(), None),
+            (EncoderFailed(text("e0")), dropped(), Waiting(text("d")), drop.clone(), Some(OLD)),
 
             (ReceiverFailed(text("f0")), connected(NEW), software, keep, Some(NEW)),
-            (ReceiverFailed(text("f0")), connected(FAILED), EncoderFailed, refuse, None),
+            (ReceiverFailed(text("f0")), connected(FAILED), EncoderFailed(text("busy")), refuse, None),
             (ReceiverFailed(text("f0")), unavailable(), ReceiverFailed(text("f0")), drop.clone(), None),
             (ReceiverFailed(text("f0")), version(), VersionDiffers(text("v")), drop.clone(), None),
-            (ReceiverFailed(text("f0")), refused(), EncoderFailed, drop.clone(), None),
+            (ReceiverFailed(text("f0")), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (ReceiverFailed(text("f0")), stopped(), Stopped, drop.clone(), None),
             (ReceiverFailed(text("f0")), replaced(), Replaced(text("r")), drop.clone(), None),
             (ReceiverFailed(text("f0")), failed(), ReceiverFailed(text("f")), drop.clone(), None),
@@ -816,10 +811,8 @@ mod tests {
                 SlimLink::VersionDiffers { message: text("v") },
             ),
             (
-                EncoderFailed,
-                SlimLink::EncoderFailed {
-                    message: text("busy"),
-                },
+                EncoderFailed(text("e")),
+                SlimLink::EncoderFailed { message: text("e") },
             ),
             (
                 ReceiverFailed(text("f")),
@@ -872,7 +865,7 @@ mod tests {
             Starting,
             Stopped,
             Waiting(text("w")),
-            EncoderFailed,
+            EncoderFailed(text("e")),
             ReceiverFailed(text("f")),
             VersionDiffers(text("v")),
         ] {
