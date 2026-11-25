@@ -16,13 +16,16 @@ import {
   useRef,
   useState,
 } from 'react';
-import type {
-  LunaError,
-  ServiceEvent,
-  State,
-  TvService,
+import {
+  problemOf,
+  type LightingTarget,
+  type LunaError,
+  type ServiceEvent,
+  type State,
+  type TvService,
 } from '@prysm/webos-platform';
 import { same } from '@prysm/application-client';
+import { modeRoute } from './modes';
 import {
   completePreferences,
   sentPreferences,
@@ -33,15 +36,6 @@ type Saved = SavedPreferences;
 type Edits = Partial<Saved>;
 
 /**
- * A restart being counted down: when it was first announced and its length
- * then. Later states of the same wait keep it, so its bar runs on.
- */
-export interface Retry {
-  since: number;
-  seconds: number;
-}
-
-/**
  * The subscription as the screen shows it. `missing` (set up the service) is
  * reached only when the bus says the service is not there, after Remove
  * setup, or when the subscription fails twice in a row: one lost
@@ -49,13 +43,7 @@ export interface Retry {
  */
 export type Link =
   | { status: 'connecting' }
-  | {
-      status: 'live' | 'lost';
-      state: State;
-      /** When `state` arrived (`Date.now()`), for countdowns it carries. */
-      at: number;
-      retry: Retry | null;
-    }
+  | { status: 'live' | 'lost'; state: State }
   | { status: 'missing'; state: State | null };
 
 export interface ServiceState {
@@ -75,7 +63,7 @@ export interface ServiceState {
 }
 
 export type ServiceAction =
-  | { type: 'event'; event: ServiceEvent; at: number }
+  | { type: 'event'; event: ServiceEvent }
   | { type: 'removed' }
   | { type: 'saved'; stored: Saved }
   | { type: 'changing'; value: boolean }
@@ -121,17 +109,9 @@ export function serviceReducer(
       }
       const { state } = event;
       const saved = completePreferences(state.preferences);
-      const wait = state.worker.phase === 'retrying' ? state.worker : null;
-      const known =
-        link.status === 'live' || link.status === 'lost' ? link.retry : null;
       return {
         ...current,
-        link: {
-          status: 'live',
-          state,
-          at: action.at,
-          retry: wait && (known ?? { since: action.at, seconds: wait.seconds }),
-        },
+        link: { status: 'live', state },
         pending:
           current.pending &&
           current.pending.before &&
@@ -202,13 +182,10 @@ export function useTvService(service: TvService, active: boolean) {
   }, [service]);
   useEffect(() => {
     if (!active) return;
-    return service.watch((event) =>
-      dispatch({ type: 'event', event, at: Date.now() }),
-    );
+    return service.watch((event) => dispatch({ type: 'event', event }));
   }, [service, active, generation]);
   const { link } = current;
   const state = lastState(link);
-  const known = link.status === 'live' || link.status === 'lost';
   const saved = completePreferences(state?.preferences ?? {});
   /** What the settings show: the saved values, or those being saved. */
   const draft: Saved = current.pending?.stored ?? saved;
@@ -217,8 +194,11 @@ export function useTvService(service: TvService, active: boolean) {
    * what the change before it sent, until a render shows that.
    */
   const shown = useRef(draft);
+  /** The latest render's link, for a command that ends after it. */
+  const latest = useRef(link);
   useLayoutEffect(() => {
     shown.current = draft;
+    latest.current = link;
   });
   const say = useCallback(
     (text: string, error = false) => dispatch({ type: 'notice', text, error }),
@@ -268,6 +248,24 @@ export function useTvService(service: TvService, active: boolean) {
    * next, so the first push that differs from what was shown ends what is
    * pending: no wait needs a bound.
    */
+  /**
+   * Answer what the service asks with the intent it keeps: slim, capture
+   * on; full, the target again (off first while the worker runs, so it is
+   * applied anew). Nothing is sent when nothing is asked, or for a target
+   * newer than this app.
+   */
+  async function answer() {
+    const now = latest.current;
+    // A state kept while the service is missing asks nothing of this one.
+    if (now.status !== 'live' && now.status !== 'lost') return;
+    const asked = now.state;
+    if (!problemOf(asked)) return;
+    if (asked.flavor === 'slim') return void (await service.setEnabled(true));
+    if (asked.target === 'unknown') return;
+    if (modeRoute(now).via === 'portal') await service.setTarget('off');
+    await service.setTarget(asked.target);
+  }
+
   async function sendPreferences(patch: Edits) {
     const sent = { ...shown.current, ...patch };
     const reply = await service.setPreferences(sentPreferences(sent));
@@ -280,9 +278,6 @@ export function useTvService(service: TvService, active: boolean) {
     ...current,
     /** The last state received, also kept while the service is missing. */
     state,
-    stateAt: known ? link.at : 0,
-    /** The restart being counted down, if any. */
-    countdown: known ? link.retry : null,
     saved,
     draft,
     say,
@@ -295,27 +290,22 @@ export function useTvService(service: TvService, active: boolean) {
         '',
         enabled ? 'Couldn’t start.' : 'Couldn’t stop.',
       ),
-    /**
-     * Full package: off and on again, as after a failure, back to the target
-     * that failed. Only a mode is tried again: nothing is sent for `off` or
-     * a target newer than this app.
-     */
-    retry: () =>
+    /** Full package: what the service asks, tried again ({@link answer}). */
+    retry: () => run(answer, '', 'Couldn’t start.'),
+    /** Full package: a lighting mode, where it goes to the service (see `modeRoute`). */
+    choose: (target: LightingTarget) =>
       run(
-        async () => {
-          const failed = state?.flavor === 'full' ? state.target : 'off';
-          if (failed !== 'screen_sync' && failed !== 'effects') return;
-          await service.setTarget('off');
-          await service.setTarget(failed);
-        },
+        () => service.setTarget(target),
         '',
-        'Couldn’t start.',
+        target === 'off' ? 'Couldn’t switch off.' : 'Couldn’t start.',
       ),
     setup: () =>
       run(
         async () => {
           await service.setup();
           setGeneration((count) => count + 1);
+          // A set-up service keeps asking until it is answered.
+          await answer();
         },
         'Service setup complete.',
         'Setup didn’t finish.',

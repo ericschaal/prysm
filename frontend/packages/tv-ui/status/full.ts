@@ -5,7 +5,6 @@
 import {
   pictureOf,
   unreachable,
-  unusableSettings,
   type LightingFailure,
   type LightingSituation,
   type OutputIssue,
@@ -14,13 +13,14 @@ import {
   fullLights,
   fullPortal,
   isCapturing,
-  isEnabled,
+  problemOf,
+  type Asked,
   type LightingTarget,
   type State,
 } from '@prysm/webos-platform';
 import {
-  failed,
   noLights,
+  remedyOf,
   tvSituation,
   type Button,
   type FullState,
@@ -68,16 +68,71 @@ function targetOf(
   }
 }
 
+/**
+ * Full: what the lights do or what stopped, the headline of a failure: the
+ * portal's word while it answers, else the target's (with no worker,
+ * Prysm itself stopped).
+ */
+export type Headline =
+  | 'prysmStopped'
+  | 'syncStopped'
+  | 'syncNotStarted'
+  | 'effectsStopped'
+  | 'off'
+  | 'effectsOn'
+  | 'syncOn';
+
+function headlineOf(
+  state: FullState,
+  lighting: LightingSituation | undefined,
+): Headline {
+  const said = lighting && lightingHeadline(lighting);
+  if (said) return said;
+  switch (state.target) {
+    case 'screen_sync':
+      return 'syncStopped';
+    case 'effects':
+      return 'effectsStopped';
+    case 'off':
+      return state.worker.phase === 'asking' ? 'prysmStopped' : 'off';
+    case 'unknown':
+      return 'prysmStopped';
+    default:
+      return unreachable(state.target);
+  }
+}
+
+/** What the lights do or what failed, by the portal; `null` when it says neither. */
+function lightingHeadline(lighting: LightingSituation): Headline | null {
+  switch (lighting.kind) {
+    case 'failed':
+      if (lighting.target === 'effects') return 'effectsStopped';
+      return lighting.fromEffects ? 'syncNotStarted' : 'syncStopped';
+    case 'off':
+      return 'off';
+    case 'effects':
+      return 'effectsOn';
+    case 'sync':
+      return 'syncOn';
+    case 'faulted':
+    case 'unknown':
+    case 'unanswered':
+    case 'starting':
+      return null;
+    default:
+      return unreachable(lighting);
+  }
+}
+
 /** Full: what the status card is about ({@link fullSituation}). */
 export type FullSituation =
   | SharedSituation
   | NoPicture
-  | { kind: 'sessionFailed' }
+  /** What the service asks, under what the lights do or what stopped. */
+  | { kind: 'problem'; asked: Asked; headline: Headline }
   | { kind: 'faulted' }
-  | {
-      kind: 'lightingFailed';
-      lighting: Extract<LightingSituation, { kind: 'failed' }>;
-    }
+  /** The portal says it failed; the service does not say yet what is asked. */
+  | { kind: 'lightingFailed'; headline: Headline }
   | { kind: 'newer' }
   | { kind: 'off'; failure: LightingFailure | null }
   | { kind: 'effects' }
@@ -96,28 +151,27 @@ export function fullSituation(
 ): FullSituation {
   const phase = state.worker.phase;
   const lighting = portal?.lighting;
-  if (phase === 'stopping') return { kind: 'stopping' };
-  // The worker reports its session's failure, so while the portal's
-  // situation is known it says what the failure means (off with a switch
-  // off that failed is still off). Before the portal answers, the failure
-  // is said only for a mode, so lights that are off never flicker as
-  // stopped; Luna does not say whose failure it is, so one of the
-  // supervisor's own waits for the portal too. A restart being retried is
-  // the supervisor's own.
-  if (failed(state)) {
-    if (phase === 'retrying') return { kind: 'retrying' };
-    if (!lighting && isEnabled(state)) return { kind: 'sessionFailed' };
-  }
+  const problem = problemOf(state);
+  // A stop that asks says what it asks; any other is a restart.
+  if (phase === 'stopping' && !problem) return { kind: 'stopping' };
   if (noLights(portal)) return { kind: 'setUpLights' };
-  // A failure the service reports is said first.
   if (phase === 'unknown') return { kind: 'updating' };
-  // A faulted or failed session comes before the TV's power and video. It
-  // is what needs the user (restart Prysm, try again, another mode); waking
-  // the TV or a picture would not end it, and saying "Waiting for video"
-  // over it would hide it. Lights that are fine (off, effects, screen sync)
-  // let power and video speak first.
+  // What the service asks, or a faulted or failed session, comes before
+  // the TV's power and video. It is what needs the user; waking the TV or
+  // a picture would not end it, and saying "Waiting for video" over it
+  // would hide it. Lights that are fine (off, effects, screen sync) let
+  // power and video speak first. The service's word is the one fix, also
+  // with the lights off, and before lights the portal says it waits for:
+  // Prysm stopped trying.
+  if (problem)
+    return {
+      kind: 'problem',
+      asked: problem.asked,
+      headline: headlineOf(state, lighting),
+    };
   if (lighting?.kind === 'faulted') return { kind: 'faulted' };
-  if (lighting?.kind === 'failed') return { kind: 'lightingFailed', lighting };
+  if (lighting?.kind === 'failed')
+    return { kind: 'lightingFailed', headline: headlineOf(state, lighting) };
   const tv = tvSituation(state);
   if (tv) return tv;
   if (lighting?.kind === 'unknown' || (!lighting && state.target === 'unknown'))
@@ -158,23 +212,15 @@ export function fullSituation(
 }
 
 /**
- * Full: the modes start and stop the lights, so the button only restarts
- * after a failure the supervisor does not retry by itself: again the
- * target that failed, only a mode, and only while the portal's situation,
- * when known, is that failure. Nothing to start or stop in a phase this
- * app cannot read.
+ * Full: the modes start and stop the lights, so the button only answers
+ * what the card says the service asks, as its fix says: try again (the
+ * target again), set up the service, or nothing that could help. Nothing
+ * while the worker stops, or for a target newer than this app (nothing to
+ * send).
  */
-export function fullButton(
-  state: FullState,
-  portal: PortalFacts | null,
-): Button {
-  const phase = state.worker.phase;
-  if (phase === 'unknown' || phase === 'stopping' || phase === 'retrying')
+export function fullButton(state: FullState, situation: FullSituation): Button {
+  if (situation.kind !== 'problem' || state.worker.phase === 'stopping')
     return 'none';
-  if (!failed(state) || !isEnabled(state)) return 'none';
-  const lighting = portal?.lighting;
-  if (!lighting) return 'retry';
-  if (lighting.kind !== 'failed') return 'none';
-  // Trying again cannot help settings Prysm can't use.
-  return unusableSettings(lighting.failure) ? 'none' : 'retry';
+  const remedy = remedyOf(situation.asked);
+  return remedy === 'retry' && state.target === 'unknown' ? 'none' : remedy;
 }

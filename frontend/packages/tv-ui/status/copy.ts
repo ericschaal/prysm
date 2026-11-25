@@ -2,8 +2,12 @@
  * The status card's words that both packages use, and the primary
  * button's labels.
  */
-import { unreachable, type Picture } from '@prysm/application-client';
-import type { Flavor } from '@prysm/webos-platform';
+import {
+  outputIssueHeadline,
+  unreachable,
+  type Picture,
+} from '@prysm/application-client';
+import type { Fix, Flavor } from '@prysm/webos-platform';
 import type {
   Button,
   NoPicture,
@@ -70,6 +74,28 @@ export const linkCopy: Record<'connecting' | 'missing', Copy> = {
   },
 };
 
+/**
+ * What the service asks that both packages word alike; each package words
+ * trying again and changing the settings its own way.
+ */
+export const sharedFixCopy = {
+  set_up: linkCopy.missing,
+  unsupported: {
+    title: 'Capture not supported',
+    description: 'This TV doesn’t let Prysm capture its picture.',
+    attention: true,
+  },
+  // A worker that did not end holds the capture.
+  restart_tv: {
+    title: 'Restart the TV',
+    description: 'Prysm can’t capture again until the TV restarts.',
+    attention: true,
+  },
+} satisfies Partial<Record<Fix, Copy>>;
+
+/** The lights don't answer, and Prysm stopped trying: as the lights card heads it. */
+export const UNANSWERED = outputIssueHeadline('unreachable');
+
 /** The primary button's label and what it does. */
 export const buttons: Record<Button, { label: string; action: PrimaryAction }> =
   {
@@ -108,12 +134,6 @@ export function sharedCopy(situation: SharedSituation, flavor: Flavor): Copy {
         title: words.stopping,
         description: 'This takes a moment.',
         attention: false,
-      };
-    case 'retrying':
-      return {
-        title: words.stopped,
-        description: 'Something went wrong. Prysm tries again by itself.',
-        attention: true,
       };
     case 'setUpLights':
       return {

@@ -11,32 +11,34 @@ import {
   lightingTargets,
 } from '@prysm/application-client';
 import type {
+  Asked,
   ErrorKind,
-  FailureKind,
+  Fix,
   FullWorker,
   LightingTarget,
   OutputIssue,
   Power,
   Preferences,
+  Problem,
   StreamEncoding,
   SlimWorker,
   State as Sent,
   Video,
-  WorkerFailure,
 } from '@prysm/contracts/luna';
 
 export type {
+  Asked,
   ErrorKind,
-  FailureKind,
+  Fix,
   FullWorker,
   LightingTarget,
   OutputIssue,
   Power,
   Preferences,
+  Problem,
   StreamEncoding,
   SlimWorker,
   Video,
-  WorkerFailure,
 };
 
 /** A target as this app reads it: `unknown` is one newer than this app. */
@@ -120,8 +122,22 @@ export function fullLights(state: State): OutputIssue | null {
   return worker.phase === 'running' ? (worker.lights ?? null) : null;
 }
 
+/**
+ * What the person is asked, in whichever phase says it: while no worker
+ * runs, while one stops that will not be restarted, or (full) what the
+ * running worker asks; else `null`.
+ */
+export function problemOf(state: State): Problem | null {
+  const { worker } = state;
+  if (worker.phase === 'asking') return worker.problem;
+  if (worker.phase === 'stopping') return worker.problem ?? null;
+  return state.flavor === 'full' && state.worker.phase === 'running'
+    ? (state.worker.problem ?? null)
+    : null;
+}
+
 /** Slim: the running worker's stream to Prysm; else `null`. */
-function slimLink(state: State): SlimLink | null {
+export function slimLink(state: State): SlimLink | null {
   if (state.flavor !== 'slim') return null;
   const worker = state.worker;
   return worker.phase === 'running' ? worker.link : null;
@@ -235,14 +251,12 @@ const videos: Record<Video, true> = {
   unavailable: true,
   available: true,
 };
-const failureKinds: Record<FailureKind, true> = {
-  encoder: true,
-  receiver: true,
-  version: true,
-  replaced: true,
-  receiver_failed: true,
-  preferences: true,
-  other: true,
+const fixes: Record<Fix, true> = {
+  try_again: true,
+  change_settings: true,
+  set_up: true,
+  unsupported: true,
+  restart_tv: true,
 };
 const errorKinds: Record<ErrorKind, true> = {
   too_large: true,
@@ -261,52 +275,66 @@ const optionalText = (value: unknown) =>
 const optionalNumber = (value: unknown) =>
   value === undefined || typeof value === 'number';
 
-/** A failure; an unknown kind is `other`. `null` when malformed. */
-function decodeFailure(value: unknown): WorkerFailure | null {
-  if (
-    !isObject(value) ||
-    typeof value.kind !== 'string' ||
-    typeof value.message !== 'string'
-  )
-    return null;
-  return {
-    kind: known(failureKinds, value.kind, 'other'),
-    message: value.message,
-  };
+/** What is asked; a step or fix newer than this app asks to try again. `null` when malformed. */
+function decodeAsked(value: unknown): Asked | null {
+  if (!isObject(value) || typeof value.step !== 'string') return null;
+  if (value.step === 'unanswered') return { step: 'unanswered' };
+  if (value.step !== 'ask') return { step: 'ask', fix: 'try_again' };
+  return typeof value.fix === 'string'
+    ? { step: 'ask', fix: known(fixes, value.fix, 'try_again') }
+    : null;
+}
+
+/** What the person is asked about. `null` when malformed. */
+function decodeProblem(value: unknown): Problem | null {
+  if (!isObject(value) || typeof value.message !== 'string') return null;
+  const asked = decodeAsked(value.asked);
+  return asked && { asked, message: value.message };
+}
+
+/** A problem a phase may say: absent, or read. `null` when malformed. */
+function optionalProblem(value: unknown): { problem?: Problem } | null {
+  if (value === undefined) return {};
+  const problem = decodeProblem(value);
+  return problem && { problem };
 }
 
 /**
- * The phases both packages share: stopped, and retrying with its seconds; a
+ * The phases both packages share: stopped, and asking with its problem; a
  * phase newer than this app is `unknown`. `null` when malformed.
  */
 function decodeCommonPhase(
   worker: Fields,
 ):
   | { phase: 'stopped' }
-  | { phase: 'retrying'; seconds: number }
+  | { phase: 'asking'; problem: Problem }
   | { phase: 'unknown' }
   | null {
   if (worker.phase === 'stopped') return { phase: 'stopped' };
-  if (worker.phase !== 'retrying') return { phase: 'unknown' };
-  return typeof worker.seconds === 'number'
-    ? { phase: 'retrying', seconds: worker.seconds }
-    : null;
+  if (worker.phase !== 'asking') return { phase: 'unknown' };
+  const problem = decodeProblem(worker.problem);
+  return problem && { phase: 'asking', problem };
 }
 
 function decodeFullWorker(value: unknown): WorkerReading<FullWorker> | null {
   if (!isObject(value) || typeof value.phase !== 'string') return null;
   switch (value.phase) {
-    case 'running':
+    case 'running': {
+      const problem = optionalProblem(value.problem);
       return typeof value.capturing === 'boolean' &&
         optionalNumber(value.fps) &&
         optionalText(value.lights) &&
-        optionalText(value.portal)
-        ? (value as unknown as FullWorker)
+        optionalText(value.portal) &&
+        problem
+        ? ({ ...value, ...problem } as unknown as FullWorker)
         : null;
-    case 'stopping':
-      return optionalText(value.portal)
-        ? (value as unknown as FullWorker)
+    }
+    case 'stopping': {
+      const problem = optionalProblem(value.problem);
+      return optionalText(value.portal) && problem
+        ? ({ ...value, ...problem } as unknown as FullWorker)
         : null;
+    }
     default:
       return decodeCommonPhase(value);
   }
@@ -328,10 +356,13 @@ function decodeSlimLink(value: unknown): SlimLink | null {
           }
         : null;
     case 'waiting':
-    case 'failed': {
-      const failure = decodeFailure(value.failure);
-      return failure ? { state: value.state, failure } : null;
-    }
+    case 'encoder_failed':
+    case 'version_differs':
+    case 'replaced':
+    case 'receiver_failed':
+      return typeof value.message === 'string'
+        ? { state: value.state, message: value.message }
+        : null;
     case 'refused':
       return { state: 'refused' };
     case 'paused':
@@ -350,8 +381,10 @@ function decodeSlimWorker(value: unknown): WorkerReading<SlimWorker> | null {
         ? { phase: 'running', capturing: value.capturing, link }
         : null;
     }
-    case 'stopping':
-      return { phase: 'stopping' };
+    case 'stopping': {
+      const problem = optionalProblem(value.problem);
+      return problem && { phase: 'stopping', ...problem };
+    }
     default:
       return decodeCommonPhase(value);
   }
@@ -392,8 +425,8 @@ function isPreferences(value: unknown): value is Preferences {
 /**
  * A state as this app reads it, or `null` when it is malformed. Its
  * structure is checked; a value newer than this app in a known field has
- * one reading: an unknown power or video is `unknown`, an unknown failure
- * kind `other`, an unknown lighting target or worker phase `unknown` (never
+ * one reading: an unknown power or video is `unknown`, an unknown step
+ * or fix of what is asked asks to try again, an unknown lighting target or worker phase `unknown` (never
  * off or stopped), an unknown slim link state starting, and an unknown
  * full worker `lights` issue is kept (said in general words), so an app
  * older than its service still shows the service it talks to.
@@ -401,12 +434,10 @@ function isPreferences(value: unknown): value is Preferences {
 export function decodeState(value: unknown): State | null {
   if (!isObject(value)) return null;
   const pack = decodePackage(value);
-  const failure =
-    value.failure === undefined ? undefined : decodeFailure(value.failure);
-  const { log, preferences } = value;
+  const { log, preferences, unreadable } = value;
   if (
     !pack ||
-    failure === null ||
+    !optionalText(unreadable) ||
     typeof value.power !== 'string' ||
     typeof value.video !== 'string' ||
     !isPreferences(preferences) ||
@@ -420,7 +451,7 @@ export function decodeState(value: unknown): State | null {
     video: known(videos, value.video, 'unknown'),
     preferences,
     log: log as string[],
-    ...(failure ? { failure } : {}),
+    ...(unreadable === undefined ? {} : { unreadable }),
   };
 }
 

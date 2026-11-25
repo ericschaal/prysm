@@ -165,13 +165,18 @@ const slimOnly: TvState = {
   worker: { phase: 'stopped' },
   log: [],
 };
-const nullFailure: TvState = {
+const nullUnreadable: TvState = {
   ...fullState,
-  // @ts-expect-error An absent failure is omitted, never `null`.
-  failure: null,
+  // @ts-expect-error Readable preferences omit it, never `null`.
+  unreadable: null,
 };
-// @ts-expect-error A restart says when.
-const retrying: TvState['worker'] = { phase: 'retrying' };
+// @ts-expect-error Asking always says what it asks.
+const asking: TvState['worker'] = { phase: 'asking' };
+const askingFix: TvState['worker'] = {
+  phase: 'asking',
+  // @ts-expect-error `ask` says its fix.
+  problem: { asked: { step: 'ask' }, message: 'x' },
+};
 // @ts-expect-error Only full and slim packages exist.
 const otherFlavor: TvState['flavor'] = 'lite';
 // @ts-expect-error Preferences are strict.
@@ -181,8 +186,9 @@ void [
   fullState,
   fullOnly,
   slimOnly,
-  nullFailure,
-  retrying,
+  nullUnreadable,
+  asking,
+  askingFix,
   otherFlavor,
   extra,
 ];

@@ -1,13 +1,45 @@
 /** The slim package's status card words, by its situation. */
 import { unreachable } from '@prysm/application-client';
-import { noPictureCopy, packageWords, sharedCopy, type Copy } from './copy';
+import type { Asked, Fix } from '@prysm/webos-platform';
+import {
+  noPictureCopy,
+  packageWords,
+  sharedCopy,
+  sharedFixCopy,
+  UNANSWERED,
+  type Copy,
+} from './copy';
 import type { SlimSituation } from './slim';
+
+/** Slim: what the service asks; capture stopped and started tries again. */
+function askedCopy(asked: Asked): Copy {
+  if (asked.step === 'unanswered')
+    return {
+      title: UNANSWERED,
+      description: 'Prysm stopped trying. Stop and start capture again.',
+      attention: true,
+    };
+  const fixes: Record<Fix, Copy> = {
+    try_again: {
+      title: packageWords.slim.stopped,
+      description: 'Stop and start capture again to retry.',
+      attention: true,
+    },
+    // The picture settings are Prysm's, set in its portal.
+    change_settings: {
+      title: packageWords.slim.stopped,
+      description: 'Change the settings in Prysm’s web portal.',
+      attention: true,
+    },
+    ...sharedFixCopy,
+  };
+  return fixes[asked.fix];
+}
 
 /** Slim: the status card's words for its situation. */
 export function slimCopy(situation: SlimSituation): Copy {
   switch (situation.kind) {
     case 'stopping':
-    case 'retrying':
     case 'setUpLights':
     case 'updating':
     case 'unreadable':
@@ -16,6 +48,8 @@ export function slimCopy(situation: SlimSituation): Copy {
       return sharedCopy(situation, 'slim');
     case 'waitingForVideo':
       return noPictureCopy(situation, 'slim');
+    case 'problem':
+      return askedCopy(situation.asked);
     case 'encoder':
       return {
         title: 'Encoding not supported',
@@ -38,12 +72,6 @@ export function slimCopy(situation: SlimSituation): Copy {
       return {
         title: 'Prysm stopped receiving',
         description: 'Its web portal on your computer says why.',
-        attention: true,
-      };
-    case 'captureFailed':
-      return {
-        title: packageWords.slim.stopped,
-        description: 'Stop and start capture again to retry.',
         attention: true,
       };
     case 'noAddress':

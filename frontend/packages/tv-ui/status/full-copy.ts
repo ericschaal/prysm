@@ -3,14 +3,61 @@ import {
   outputIssueHeadline,
   plainFailure,
   unreachable,
-  unusableSettings,
   whenLightsAnswer,
-  type LightingSituation,
   type LightingTarget,
   type OutputIssue,
 } from '@prysm/application-client';
-import { noPictureCopy, packageWords, sharedCopy, type Copy } from './copy';
-import type { FullSituation } from './full';
+import type { Asked, Fix } from '@prysm/webos-platform';
+import {
+  noPictureCopy,
+  packageWords,
+  sharedCopy,
+  sharedFixCopy,
+  UNANSWERED,
+  type Copy,
+} from './copy';
+import type { FullSituation, Headline } from './full';
+
+/** The lights card says what to do. */
+const SEE_LIGHTS = 'See Your lights for what to do.';
+
+/** Full: what the lights do or what stopped, as a headline. */
+const headlines: Record<Headline, string> = {
+  prysmStopped: 'Prysm stopped',
+  syncStopped: packageWords.full.stopped,
+  syncNotStarted: 'Screen sync didn’t start',
+  effectsStopped: 'WLED effects stopped',
+  off: 'Lights off',
+  effectsOn: 'WLED effects on',
+  syncOn: 'Screen sync on',
+};
+
+/** Full: what the service asks, under `headline`. */
+function askedCopy(asked: Asked, headline: Headline): Copy {
+  // Prysm stopped trying: the lights card would say it keeps trying.
+  if (asked.step === 'unanswered')
+    return {
+      title: UNANSWERED,
+      description: 'Prysm stopped trying. Check them, then try again.',
+      attention: true,
+    };
+  const title = headlines[headline];
+  const fixes: Record<Fix, Copy> = {
+    try_again: {
+      title,
+      description: 'Try again, or choose another mode.',
+      attention: true,
+    },
+    // Trying again cannot help settings Prysm can't use.
+    change_settings: {
+      title,
+      description: 'Change the settings in the web portal.',
+      attention: true,
+    },
+    ...sharedFixCopy,
+  };
+  return fixes[asked.fix];
+}
 
 /**
  * The detail under an issue's headline, with `target` chosen. Only lights
@@ -27,7 +74,7 @@ function issueDetail(issue: OutputIssue, target: LightingTarget): string {
     case 'not_live':
     case 'other_sender':
     default:
-      return 'See Your lights for what to do.';
+      return SEE_LIGHTS;
   }
 }
 
@@ -35,7 +82,6 @@ function issueDetail(issue: OutputIssue, target: LightingTarget): string {
 export function fullCopy(situation: FullSituation): Copy {
   switch (situation.kind) {
     case 'stopping':
-    case 'retrying':
     case 'setUpLights':
     case 'updating':
     case 'unreadable':
@@ -44,26 +90,20 @@ export function fullCopy(situation: FullSituation): Copy {
       return sharedCopy(situation, 'full');
     case 'waitingForVideo':
       return noPictureCopy(situation, 'full');
-    case 'sessionFailed':
-      return {
-        title: packageWords.full.stopped,
-        description: 'Try again, or choose another mode.',
-        attention: true,
-      };
+    case 'problem':
+      return askedCopy(situation.asked, situation.headline);
     case 'faulted':
+      // The service stops it next: a restart, or what it asks.
       return {
         title: 'Prysm stopped responding',
-        description: 'Restart Prysm to recover.',
+        description: 'This takes a moment.',
         attention: true,
       };
     case 'lightingFailed':
-      // The lights card says what failed; its modes try again.
+      // The lights card says what failed, and the service what to do next.
       return {
-        title: failedTitle(situation.lighting),
-        // Trying again cannot help settings Prysm can't use.
-        description: unusableSettings(situation.lighting.failure)
-          ? 'Change the settings in the web portal.'
-          : 'Try again, or choose another mode.',
+        title: headlines[situation.headline],
+        description: SEE_LIGHTS,
         attention: true,
       };
     case 'newer':
@@ -77,18 +117,18 @@ export function fullCopy(situation: FullSituation): Copy {
       // settings that do not validate, or a switch off that failed.
       return situation.failure
         ? {
-            title: 'Lights off',
+            title: headlines.off,
             description: plainFailure(situation.failure, 'off', 'WLED effects'),
             attention: true,
           }
         : {
-            title: 'Lights off',
+            title: headlines.off,
             description: 'Choose Screen sync: the lights follow the picture.',
             attention: false,
           };
     case 'effects':
       return {
-        title: 'WLED effects on',
+        title: headlines.effectsOn,
         description: 'Your lights run their own effects.',
         attention: false,
       };
@@ -102,7 +142,7 @@ export function fullCopy(situation: FullSituation): Copy {
       };
     case 'syncOn':
       return {
-        title: 'Screen sync on',
+        title: headlines.syncOn,
         description: 'Your lights follow the picture.',
         attention: false,
       };
@@ -115,14 +155,4 @@ export function fullCopy(situation: FullSituation): Copy {
     default:
       return unreachable(situation);
   }
-}
-
-/** Full: what failed, by the mode that was asked for. */
-function failedTitle(
-  lighting: Extract<LightingSituation, { kind: 'failed' }>,
-): string {
-  if (lighting.target === 'effects') return 'WLED effects stopped';
-  return lighting.fromEffects
-    ? 'Screen sync couldn’t start'
-    : packageWords.full.stopped;
 }

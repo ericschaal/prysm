@@ -337,11 +337,12 @@ supervisor in each of its states and play the phone's calibration part). See the
   [null output](packages/output-null-ui/index.tsx).
 - [TV UI](packages/tv-ui/app.tsx) (both packages): status card from the
   supervisor's state ([rules](packages/tv-ui/status/index.ts)), with the capture
-  rate and a countdown to a pending restart (counted from when the state
-  arrived; its bar runs on through later states of the same wait); the full
-  package's headline says what the lights do from the portal's state, so it
-  agrees with the lights card; a primary button only for the service (set
-  up, try again after a failure, slim capture on and off), never for what
+  rate; what the service asks is its one fix, worded per package from a
+  record of every fix; the full package's headline says what the lights do
+  from the portal's state, so it agrees with the lights card; while the
+  service asks (no worker, so no portal) the lighting modes go to the
+  service ([route](packages/tv-ui/modes.ts)); a primary button only for the
+  service (set up, try again after a failure, slim capture on and off), never for what
   the lights do or while a setting saves, and busy rather than disabled while
   it waits, so focus stays on it;
   lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx)),

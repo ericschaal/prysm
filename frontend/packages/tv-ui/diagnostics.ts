@@ -6,6 +6,7 @@ import {
   isEnabled,
   isPaused,
   isRefused,
+  problemOf,
   slimEncoding,
   type State,
 } from '@prysm/webos-platform';
@@ -21,7 +22,7 @@ const phaseNames = {
   stopped: 'stopped',
   running: 'running',
   stopping: 'stopping',
-  retrying: 'waiting to restart after a failure',
+  asking: 'stopped until you choose what to do',
   unknown: 'unknown (newer than this app)',
 } as const;
 
@@ -56,7 +57,14 @@ export function diagnostics(state: State | null, problem = ''): string {
       `Stream encoding: ${encoding ? `${encodingName(encoding)} in use` : 'none in use'}`,
     );
   } else lines.push(`Web portal: ${fullPortal(state) ?? 'not open'}`);
-  lines.push('', state.failure?.message ?? 'No errors reported.');
+  const asking = problemOf(state);
+  if (asking) {
+    const { asked, message } = asking;
+    const step = asked.step === 'ask' ? asked.fix : asked.step;
+    lines.push('', `${message} (asked: ${step})`);
+  } else lines.push('', 'No errors reported.');
+  if (state.unreadable !== undefined)
+    lines.push('', `Saved settings unreadable: ${state.unreadable}`);
   if (problem) lines.push('', `Last command failed: ${problem}`);
   if (state.log.length) lines.push('', 'Recent messages:', ...state.log);
   return lines.join('\n');

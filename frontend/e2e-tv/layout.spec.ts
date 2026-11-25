@@ -124,7 +124,10 @@ for (const flavor of ['full', 'slim'] as const) {
         });
       else
         window.demo.supervisor.publish({
-          failure: { kind: 'other', message },
+          worker: {
+            phase: 'asking',
+            problem: { asked: { step: 'ask', fix: 'try_again' }, message },
+          },
           capturing: false,
           fps: null,
         });

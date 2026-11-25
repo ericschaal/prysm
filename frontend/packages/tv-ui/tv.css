@@ -325,25 +325,13 @@ button:disabled {
   font-size: var(--text-body);
   line-height: var(--leading);
 }
-/* The quiet line: a countdown or the frame rate, else empty but kept. */
+/* The quiet line: the frame rate, else empty but kept. */
 .meta {
   margin-top: var(--space-2);
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
   font-variant-numeric: tabular-nums;
   line-height: var(--leading);
-}
-/* The time left until the restart, before its words. */
-.retry-bar {
-  display: inline-block;
-  width: 6rem;
-  height: 0.12rem;
-  margin-right: var(--space-3);
-  border-radius: 0.06rem;
-  background: rgb(var(--alert));
-  vertical-align: middle;
-  transform-origin: 0 50%;
-  animation: countdown linear forwards;
 }
 /*
  * ---- Controls ----
@@ -973,14 +961,6 @@ button:active {
   to {
     opacity: 0;
     transform: scale(2.6);
-  }
-}
-@keyframes countdown {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
   }
 }
 @media (prefers-reduced-motion: reduce) {

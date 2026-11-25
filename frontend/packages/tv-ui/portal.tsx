@@ -15,6 +15,7 @@ import {
   type TargetReading,
 } from '@prysm/application-client';
 import type { Flavor } from '@prysm/webos-platform';
+import type { ModeRoute } from './modes';
 import type { PortalSnapshot, PortalView } from './portal-connection';
 
 const effectsOf = (snapshot: PortalSnapshot) =>
@@ -35,11 +36,17 @@ export function LightingCard({
   flavor,
   portal,
   connecting,
+  route,
+  choose: chooseOnService,
 }: {
   flavor: Flavor;
   portal: PortalView;
   /** The TV service has not answered yet, so where Prysm is is not known. */
   connecting: boolean;
+  /** Where a mode is sent. */
+  route: ModeRoute;
+  /** A mode sent to the TV service; it says its own failure. */
+  choose: (target: LightingTarget) => Promise<unknown>;
 }) {
   const [pending, setPending] = useState<LightingTarget | null>(null);
   const { snapshot, connection } = portal;
@@ -62,13 +69,14 @@ export function LightingCard({
   )
     setRefusal(null);
   const error = refusal?.text ?? '';
+  const onService = route.via === 'service';
 
   async function choose(target: LightingTarget) {
     const at = { target: snapshot?.target, kind: lighting?.kind };
     setPending(target);
     setRefusal(null);
     try {
-      await portal.setTarget(target);
+      await (onService ? chooseOnService(target) : portal.setTarget(target));
     } catch (reason) {
       setRefusal({
         text: plainFailure(
@@ -90,6 +98,9 @@ export function LightingCard({
   let said = '';
   if (connecting) {
     message = 'Connecting to Prysm…';
+  } else if (onService) {
+    // No worker, so no portal: the status card says why.
+    message = 'Choose a mode to start Prysm again.';
   } else if (!portal.baseUrl) {
     message = full
       ? 'Waiting for Prysm on this TV…'
@@ -160,21 +171,24 @@ export function LightingCard({
   }
 
   // A press in flight does not disable the track: a disabled control drops
-  // focus, which the remote navigation then moves to another column.
-  const offline = !snapshot;
+  // focus, which the remote navigation then moves to another column. On
+  // the service every mode is offered: only the worker's portal knows the
+  // lights' setup, and it starts with the mode chosen.
+  const offline = !snapshot && !onService;
   const faulted = lighting?.kind === 'faulted';
   const hasOutput = !!snapshot?.settings.output;
   const hasCapture = !!snapshot?.settings.capture;
+  const chosen = route.via === 'service' ? route.target : snapshot?.target;
   const modes: { value: LightingTarget; label: string; disabled: boolean }[] = [
     {
       value: 'screen_sync',
       label: 'Screen sync',
-      disabled: !hasOutput || !hasCapture,
+      disabled: !onService && (!hasOutput || !hasCapture),
     },
     {
       value: 'effects',
       label: effects ?? 'Effects',
-      disabled: !effects,
+      disabled: !onService && !effects,
     },
     { value: 'off', label: 'Off', disabled: false },
   ];
@@ -198,7 +212,9 @@ export function LightingCard({
             type="button"
             id={`mode-${mode.value}`}
             className="mode"
-            aria-pressed={snapshot ? snapshot.target === mode.value : undefined}
+            aria-pressed={
+              chosen === undefined ? undefined : chosen === mode.value
+            }
             disabled={offline || faulted || mode.disabled}
             aria-busy={pending === mode.value ? true : undefined}
             onClick={() => {

@@ -5,7 +5,10 @@
  * no worker, power or timing, but the same replies, validation messages and
  * subscription.
  */
-import type { ApplicationSnapshot } from '@prysm/application-client';
+import {
+  unusableSettings,
+  type ApplicationSnapshot,
+} from '@prysm/application-client';
 import {
   APP_ID,
   isEnabled,
@@ -17,13 +20,13 @@ import {
   type OutputIssue,
   type Power,
   type Preferences,
+  type Problem,
   type ServiceBridge,
   type StreamEncoding,
   type SlimLink,
   type SlimWorker,
   type State,
   type Video,
-  type WorkerFailure,
 } from '@prysm/webos-platform';
 
 /** Where the worker process is, as the supervisor tracks it. */
@@ -31,7 +34,10 @@ export type FakeProcess =
   | { phase: 'stopped' }
   | { phase: 'running' }
   | { phase: 'stopping' }
-  | { phase: 'retrying'; seconds: number };
+  | { phase: 'asking'; problem: Problem };
+
+/** Slim: a link state that says why it waits or does not send. */
+export type SaidLink = Extract<SlimLink, { message: string }>;
 
 /**
  * What the fake supervisor knows, as the real one does: the TV, the worker
@@ -43,7 +49,13 @@ interface CommonFacts {
   preferences: Preferences;
   power: Power;
   video: Video;
-  failure: WorkerFailure | null;
+  /** Unreadable saved preferences, until preferences are saved. */
+  unreadable: string | null;
+  /**
+   * What a stopping worker's exit will ask, or (full) what the running
+   * worker asks; while asking, the process carries it.
+   */
+  problem: Problem | null;
   log: string[];
   worker: FakeProcess;
   capturing: boolean;
@@ -63,6 +75,8 @@ export interface SlimFacts extends CommonFacts {
   paused: boolean;
   /** Connected, but the TV refuses to share the video it shows. */
   refused: boolean;
+  /** The link's wait or failure, when neither paused, refused nor sending. */
+  uplink: SaidLink | null;
 }
 export type FakeFacts = FullFacts | SlimFacts;
 /**
@@ -81,7 +95,8 @@ const commonKeys: Record<keyof CommonFacts, true> = {
   preferences: true,
   power: true,
   video: true,
-  failure: true,
+  unreadable: true,
+  problem: true,
   log: true,
   worker: true,
   capturing: true,
@@ -97,6 +112,7 @@ const slimKeys: Record<Own<SlimFacts>, true> = {
   encoding: true,
   paused: true,
   refused: true,
+  uplink: true,
 };
 const ownKeys: Record<Flavor, object> = { full: fullKeys, slim: slimKeys };
 
@@ -117,7 +133,8 @@ function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
     preferences: { autostart: false, ...preferences },
     power: 'active',
     video: 'available',
-    failure: null,
+    unreadable: null,
+    problem: null,
     log: [],
     worker: { phase: flavor === 'full' ? 'running' : 'stopped' },
     capturing: false,
@@ -138,6 +155,7 @@ function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
         encoding: null,
         paused: false,
         refused: false,
+        uplink: null,
       };
 }
 
@@ -147,7 +165,7 @@ function present<K extends string, V>(key: K, value: V | null) {
 }
 
 function fullWorker(facts: FullFacts): FullWorker {
-  const { worker, capturing, fps, lights, portal } = facts;
+  const { worker, capturing, fps, lights, portal, problem } = facts;
   switch (worker.phase) {
     case 'running':
       return {
@@ -156,41 +174,48 @@ function fullWorker(facts: FullFacts): FullWorker {
         ...present('fps', fps),
         ...present('lights', lights),
         ...present('portal', portal),
+        ...present('problem', problem),
       };
     case 'stopping':
-      return { phase: 'stopping', ...present('portal', portal) };
+      return {
+        phase: 'stopping',
+        ...present('portal', portal),
+        ...present('problem', problem),
+      };
     default:
       return worker;
   }
 }
 
-/** The link the facts make: paused, refused, sending in an encoding, or the failure's wait or failure. */
+/** The link the facts make: paused, refused, sending in an encoding, its wait or failure, else starting. */
 function slimLink(facts: SlimFacts): SlimLink {
-  const { fps, encoding, paused, refused, failure } = facts;
+  const { fps, encoding, paused, refused, uplink } = facts;
   if (paused) return { state: 'paused' };
   if (refused) return { state: 'refused' };
   if (encoding !== null) return { state: 'sending', encoding, fps: fps ?? 0 };
-  if (failure === null) return { state: 'starting' };
-  return failure.kind === 'receiver'
-    ? { state: 'waiting', failure }
-    : { state: 'failed', failure };
+  return uplink ?? { state: 'starting' };
 }
 
 function slimWorker(facts: SlimFacts): SlimWorker {
-  const { worker, capturing } = facts;
-  return worker.phase === 'running'
-    ? { phase: 'running', capturing, link: slimLink(facts) }
-    : worker;
+  const { worker, capturing, problem } = facts;
+  switch (worker.phase) {
+    case 'running':
+      return { phase: 'running', capturing, link: slimLink(facts) };
+    case 'stopping':
+      return { phase: 'stopping', ...present('problem', problem) };
+    default:
+      return worker;
+  }
 }
 
 /** The `getState` payload the facts make, as the supervisor publishes it. */
 function publishedState(facts: FakeFacts): State {
-  const { preferences, power, video, failure, log } = facts;
+  const { preferences, power, video, unreadable, log } = facts;
   const common = {
     preferences,
     power,
     video,
-    ...present('failure', failure),
+    ...present('unreadable', unreadable),
     log,
   };
   return facts.flavor === 'full'
@@ -254,8 +279,14 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     JSON.stringify({ returnValue: false, errorKind, errorText });
   const state = () => publishedState(facts);
 
-  /** Settle what follows from the intent, as the machine would. */
-  function reconcile() {
+  /**
+   * Settle what follows from the intent, as the machine would. A choice of
+   * the person (`answered`) answers what was asked; nothing else ends
+   * asking.
+   */
+  function reconcile(answered: boolean) {
+    if (answered) facts.problem = null;
+    else if (facts.worker.phase === 'asking') return;
     const awake = facts.power === 'active' || facts.power === 'screen_saver';
     const wanted =
       awake &&
@@ -266,7 +297,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       wanted &&
       isEnabled(state()) &&
       facts.video === 'available' &&
-      !facts.failure;
+      !facts.problem;
     facts.fps = facts.capturing ? 30 : null;
   }
 
@@ -338,7 +369,8 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           return;
         }
         facts.preferences = { autostart: false, ...preferences };
-        reconcile();
+        facts.unreadable = null;
+        reconcile(false);
         respond(reply(state()));
         later(() => publish());
         return;
@@ -351,7 +383,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           return;
         }
         facts.target = payload.target as LightingTarget;
-        reconcile();
+        reconcile(true);
         respond(reply(state()));
         later(() => publish());
         return;
@@ -363,7 +395,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           return;
         }
         facts.enabled = payload.enabled === true;
-        reconcile();
+        reconcile(true);
         respond(reply(state()));
         later(() => publish());
         return;
@@ -411,19 +443,28 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     /**
      * Full: what the running worker reports of its engine's state, as the
      * real one does (`hosts/webos/src/link.rs`): the session's failure, or
-     * else the last surface failure, as an `other` failure. Its target is
-     * left to the commands, so the service lags as it does.
+     * else the last surface failure, with what is asked as the engine
+     * classifies it (settings it cannot use: change them; anything else:
+     * try again). Its target is left to the commands, so the service lags
+     * as it does.
      */
     report(snapshot: ApplicationSnapshot<unknown, unknown>) {
       if (facts.flavor !== 'full' || facts.worker.phase !== 'running') return;
       const session =
         'failure' in snapshot.session ? snapshot.session.failure : undefined;
       const surfaces = snapshot.surface_failures;
-      const message =
-        session?.message ?? surfaces[surfaces.length - 1]?.message;
-      const failure: WorkerFailure | null =
-        message === undefined ? null : { kind: 'other', message };
-      if (failure?.message !== facts.failure?.message) publish({ failure });
+      const failure = session ?? surfaces[surfaces.length - 1];
+      const problem: Problem | null = failure
+        ? {
+            asked: {
+              step: 'ask',
+              fix: unusableSettings(failure) ? 'change_settings' : 'try_again',
+            },
+            message: failure.message,
+          }
+        : null;
+      if (JSON.stringify(problem) !== JSON.stringify(facts.problem))
+        publish({ problem });
     },
     subscribers: () => subscribers.size,
     failNext(

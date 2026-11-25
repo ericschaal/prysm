@@ -7,7 +7,13 @@ import type {
   OutputIssue,
   Picture,
 } from '@prysm/application-client';
-import { isCapturing, isEnabled, type State } from '@prysm/webos-platform';
+import {
+  isCapturing,
+  isEnabled,
+  type Asked,
+  type Fix,
+  type State,
+} from '@prysm/webos-platform';
 
 /**
  * The primary button is about the service on this TV only; what the lights
@@ -41,7 +47,6 @@ export type SlimState = Extract<State, { flavor: 'slim' }>;
 /** The situations of both packages; their words differ only by package. */
 export type SharedSituation =
   | { kind: 'stopping' }
-  | { kind: 'retrying' }
   | { kind: 'setUpLights' }
   | { kind: 'updating' }
   | { kind: 'unreadable' }
@@ -59,16 +64,26 @@ export type Button =
   'none' | 'wait' | 'setup' | 'retry' | 'stop' | 'address' | 'start';
 
 /**
- * The service reports a failure that stopped something. Slim: Prysm not
- * receiving (`receiver`) is a wait, the worker keeps trying, not a failure.
- * The saved preferences could not be read (`preferences`): the service runs
- * with the defaults, and saving a setting replaces the file. Nothing
- * stopped.
+ * What the button can do about what the service asks: try again (full: the
+ * target again; slim: capture stopped and started), set up the service, or
+ * nothing that could help.
  */
-export function failed(state: State): boolean {
-  const kind = state.failure?.kind;
-  return !!kind && kind !== 'receiver' && kind !== 'preferences';
-}
+export type Remedy = Extract<Button, 'retry' | 'setup' | 'none'>;
+
+/** Keyed by every fix, so the compiler keeps them in step. */
+const fixRemedies: Record<Fix, Remedy> = {
+  try_again: 'retry',
+  // The settings change in the portal; trying again cannot help them.
+  change_settings: 'none',
+  set_up: 'setup',
+  unsupported: 'none',
+  // A worker that did not end holds the capture until the TV restarts.
+  restart_tv: 'none',
+};
+
+/** What the button can do about `asked`: lights that stopped answering are tried again. */
+export const remedyOf = (asked: Asked): Remedy =>
+  asked.step === 'unanswered' ? 'retry' : fixRemedies[asked.fix];
 
 /**
  * The portal has no lights yet: their setup is the one next step, after a
@@ -80,12 +95,12 @@ export const noLights = (portal: PortalFacts | null) =>
 
 /**
  * What the TV itself says, or `null`: settings it could not read (after
- * every failure of the lights or the worker, which need the user first;
- * before power and video, which do not), then, while on, its power and
- * video.
+ * what the service asks and every failure of the lights, which need the
+ * user first; before power and video, which do not; nothing stopped for
+ * it), then, while on, its power and video.
  */
 export function tvSituation(state: State): SharedSituation | null {
-  if (state.failure?.kind === 'preferences') return { kind: 'unreadable' };
+  if (state.unreadable !== undefined) return { kind: 'unreadable' };
   if (!isEnabled(state)) return null;
   if (state.power !== 'active') return { kind: 'asleep', power: state.power };
   if (state.video === 'unavailable') return { kind: 'noVideo' };

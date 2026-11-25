@@ -30,6 +30,7 @@ import { localPortal, shown } from './preferences';
 import { qrCode } from './qr';
 import { useRemoteNavigation } from './navigation';
 import { msePatternPlayer, type PatternPlayer } from './patterns';
+import { modeRoute } from './modes';
 import { LightingCard } from './portal';
 import {
   checkPortal,
@@ -37,8 +38,8 @@ import {
   type PortalOptions,
   type PortalView,
 } from './portal-connection';
-import { retrySeconds, tvScreen } from './screen';
-import { useTvService, type Retry } from './service';
+import { tvScreen } from './screen';
+import { useTvService } from './service';
 import { tvStatus } from './status';
 import './tv.css';
 
@@ -93,36 +94,6 @@ function watchVisibility(changed: () => void) {
  */
 function useVisible() {
   return useSyncExternalStore(watchVisibility, pageShown);
-}
-
-/** Milliseconds since `since` (a `Date.now()`), updated every second; 0 for `null`. */
-function useElapsed(since: number | null) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (since === null) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [since]);
-  return since === null ? 0 : Math.max(0, now - since);
-}
-
-/**
- * The time left until a restart, as a bar that empties. Keyed by the wait,
- * it runs on through later states; mounted late (back from a dialog or
- * calibration), it starts where the wait is by now.
- */
-function RetryBar({ retry }: { retry: Retry }) {
-  const [elapsed] = useState(() => (Date.now() - retry.since) / 1000);
-  return (
-    <span
-      className="retry-bar"
-      style={{
-        animationDuration: `${retry.seconds}s`,
-        animationDelay: `${-elapsed}s`,
-      }}
-      aria-hidden="true"
-    />
-  );
 }
 
 /** The warning when no portal that allows this app answers at a saved address. */
@@ -194,7 +165,6 @@ export function TvApp({
   // Capture, lights and the slim stream encoding are set up only in this
   // portal, never in this UI.
   const portalAddress = slim ? draft.prysm_address : ownPortal;
-  const elapsed = useElapsed(tv.countdown ? tv.stateAt : null);
   const status = tvStatus(
     link,
     draft,
@@ -207,16 +177,12 @@ export function TvApp({
         }
       : null,
   );
-  // Counted from the latest state; its bar from when the wait began.
-  const retry =
-    tv.countdown && state?.worker.phase === 'retrying' ? state.worker : null;
   const screen = tvScreen({
     flavor,
     status,
     state,
     changing: tv.changing,
     portalAddress,
-    retryLeft: retry ? retrySeconds(retry, elapsed) : null,
   });
   const portalQr = useMemo(
     () => (portalAddress ? qrCode(portalAddress) : null),
@@ -359,9 +325,6 @@ export function TvApp({
               </p>
               {/* Always a line, so the buttons never move. */}
               <p id="status-meta" className="meta">
-                {tv.countdown ? (
-                  <RetryBar key={tv.countdown.since} retry={tv.countdown} />
-                ) : null}
                 {screen.meta || '\u00a0'}
               </p>
               {screen.showPrimary ? (
@@ -404,6 +367,8 @@ export function TvApp({
                 flavor={flavor}
                 portal={portal}
                 connecting={connecting}
+                route={modeRoute(link)}
+                choose={tv.choose}
               />
             )}
           </div>

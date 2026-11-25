@@ -45,8 +45,7 @@ export type ServiceLink =
 /**
  * The status card and primary button from the service subscription;
  * `draft` is the preferences as shown (saved, or being saved); `portal` is
- * `null` until the portal's state is known. The retry countdown is shown
- * beside the card (see `retrySeconds` in `../screen.ts`), not in its words.
+ * `null` until the portal's state is known.
  */
 export function tvStatus(
   link: ServiceLink,
@@ -79,7 +78,7 @@ export function tvStatus(
     const situation = fullSituation(state, portal);
     return {
       ...fullCopy(situation),
-      ...buttons[fullButton(state, portal)],
+      ...buttons[fullButton(state, situation)],
       ready: ready(state),
       setupLights: situation.kind === 'setUpLights',
     };

@@ -8,8 +8,8 @@
  * wizard), `noaddress` (slim: no Prysm address saved yet), `hold` (the
  * supervisor answers nothing until `demo.supervisor.release()`: the screen
  * before the first state). Selects at the bottom right put
- * the supervisor in one of its states (a failure with a retry countdown,
- * waiting for video, …) and set or clear the calibration pattern, as the
+ * the supervisor in one of its states (asking after a failure, waiting
+ * for video, …) and set or clear the calibration pattern, as the
  * phone does.
  * Never part of a production build: `index.html` does not load it.
  */
@@ -20,7 +20,12 @@ import type {
   CaptureSettings,
   OutputSettings,
 } from '@prysm/contracts/application';
-import { isEnabled, lunaTvService, type Flavor } from '@prysm/webos-platform';
+import {
+  isEnabled,
+  lunaTvService,
+  type Fix,
+  type Flavor,
+} from '@prysm/webos-platform';
 import type { PortalOptions, TvAppProps } from '@prysm/tv-ui';
 import { fakeApplicationPort } from './application';
 import { fakeTvSupervisor, type FakeChange } from './luna';
@@ -113,7 +118,7 @@ export function runDemo(
     const capturing =
       isEnabled(supervisor.state()) &&
       facts.worker.phase === 'running' &&
-      !facts.failure;
+      !facts.problem;
     if (facts.capturing !== capturing)
       supervisor.publish({ capturing, fps: capturing ? 30 : null });
     if (facts.flavor !== 'full') return;
@@ -150,26 +155,31 @@ export function runDemo(
   // Lighting (full) or capture (slim) on, in the package's own terms.
   const on: FakeChange =
     flavor === 'full' ? { target: 'screen_sync' } : { enabled: true };
+  // No worker: the service asks (full: the modes go to it).
+  const asking = (fix: Fix, message: string): FakeChange => ({
+    worker: {
+      phase: 'asking',
+      problem: { asked: { step: 'ask', fix }, message },
+    },
+    capturing: false,
+    fps: null,
+  });
   const states: Record<string, FakeChange> = {
     'TV: as it is': {},
-    'TV: failure, retry countdown': {
-      worker: { phase: 'retrying', seconds: 30 },
-      failure: { kind: 'other', message: 'Capture stopped: no video frames' },
-      capturing: false,
-      fps: null,
-    },
+    'TV: asking, try again': asking(
+      'try_again',
+      'again after a restart: worker killed by signal 9',
+    ),
+    'TV: asking, set up': asking('set_up', 'open capture: permission denied'),
+    'TV: asking, restart the TV': asking(
+      'restart_tv',
+      'worker not reaped 8 s after its kill',
+    ),
     // Full: the engine's session failure, which the worker reports (below).
     'TV: failure':
       flavor === 'full'
         ? {}
-        : {
-            failure: {
-              kind: 'other',
-              message: 'Capture stopped: no video frames',
-            },
-            capturing: false,
-            fps: null,
-          },
+        : asking('try_again', 'Capture stopped: no video frames'),
     'TV: waiting for video': {
       ...on,
       video: 'unavailable',
@@ -183,7 +193,7 @@ export function runDemo(
           'TV: waiting for Prysm': {
             enabled: true,
             worker: { phase: 'running' },
-            failure: { kind: 'receiver', message: 'Connection refused' },
+            uplink: { state: 'waiting', message: 'Connection refused' },
             capturing: false,
             fps: null,
           },
@@ -194,16 +204,20 @@ export function runDemo(
             fps: null,
           },
           'TV: encoder failure': {
-            worker: { phase: 'retrying', seconds: 10 },
-            failure: { kind: 'encoder', message: 'Hardware encoder busy' },
+            enabled: true,
+            worker: { phase: 'running' },
+            uplink: {
+              state: 'encoder_failed',
+              message: 'Hardware encoder busy',
+            },
             capturing: false,
             fps: null,
           },
           'TV: Prysm of another version': {
             enabled: true,
             worker: { phase: 'running' },
-            failure: {
-              kind: 'version',
+            uplink: {
+              state: 'version_differs',
               message:
                 'the capture stream versions differ (Prysm: 7, this end: 6); update the older one',
             },
@@ -213,8 +227,8 @@ export function runDemo(
           'TV: another TV took over': {
             enabled: true,
             worker: { phase: 'running' },
-            failure: {
-              kind: 'replaced',
+            uplink: {
+              state: 'replaced',
               message:
                 'the stream to ws://prysm.local:8787/api/v1/capture/stream failed: another sender replaced this one at Prysm',
             },
@@ -251,11 +265,11 @@ export function runDemo(
     const facts = supervisor.facts();
     const running = facts.flavor === 'full' || facts.enabled;
     const back: FakeChange = {
-      failure: null,
+      problem: null,
       power: 'active',
       video: 'available',
       worker: { phase: running ? 'running' : 'stopped' },
-      ...(facts.flavor === 'slim' ? { paused: false } : {}),
+      ...(facts.flavor === 'slim' ? { paused: false, uplink: null } : {}),
     };
     supervisor.publish(change && Object.keys(change).length ? change : back);
   };

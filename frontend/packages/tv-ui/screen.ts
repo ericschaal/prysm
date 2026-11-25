@@ -6,7 +6,6 @@ import {
   type Flavor,
   type State,
   type StreamEncoding,
-  type Worker,
 } from '@prysm/webos-platform';
 import type { TvStatus } from './status';
 
@@ -25,16 +24,6 @@ export function encodingName(encoding: StreamEncoding): string {
   return encodingNames[encoding] || encoding;
 }
 
-/**
- * Whole seconds until the supervisor restarts the worker, `elapsedMs` after
- * `worker` arrived (it counts from then: no clock is shared), or `null` when
- * no restart is pending. 0 once it is due.
- */
-export function retrySeconds(worker: Worker, elapsedMs: number): number | null {
-  if (worker.phase !== 'retrying') return null;
-  return Math.max(0, Math.ceil(worker.seconds - elapsedMs / 1000));
-}
-
 /** The capture rate the TV reports, for the status card; `null` when none. */
 export function captureRate(state: State | null): string | null {
   const fps = state && captureFps(state);
@@ -47,7 +36,7 @@ export interface TvScreen {
   title: string;
   description: string;
   attention: boolean;
-  /** The quiet line under the detail: a restart's countdown, or the capture rate. */
+  /** The quiet line under the detail: the capture rate while frames flow. */
   meta: string;
   /** The primary button is shown, with this label. */
   showPrimary: boolean;
@@ -64,9 +53,7 @@ export interface TvScreen {
 
 /**
  * The main screen: the status card's words, its one line of meta and its
- * button, and which panels show. `retryLeft` is the countdown to a restart
- * (see {@link retrySeconds}), `null` when none is shown; `changing` is a
- * command on its way.
+ * button, and which panels show. `changing` is a command on its way.
  */
 export function tvScreen({
   flavor,
@@ -74,23 +61,19 @@ export function tvScreen({
   state,
   changing,
   portalAddress,
-  retryLeft,
 }: {
   flavor: Flavor;
   status: TvStatus;
   state: State | null;
   changing: boolean;
   portalAddress: string | null;
-  retryLeft: number | null;
 }): TvScreen {
   const slim = flavor === 'slim';
   const mismatch = !!state && state.flavor !== flavor;
-  // One quiet line under the detail, always kept: the countdown to a
-  // restart, or while frames flow their rate (and the slim encoding).
+  // One quiet line under the detail, always kept: while frames flow their
+  // rate (and the slim encoding).
   let meta = '';
-  if (retryLeft !== null)
-    meta = retryLeft ? `Trying again in ${retryLeft} s` : 'Trying again now…';
-  else if (state && isCapturing(state) && !mismatch) {
+  if (state && isCapturing(state) && !mismatch) {
     const encoding = slimEncoding(state);
     meta = [captureRate(state), encoding ? encodingName(encoding) : null]
       .filter(Boolean)
