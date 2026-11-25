@@ -612,8 +612,10 @@ fn silence_is_a_hang_then_term_then_one_kill() {
     );
 }
 
+/// A fault is retried after the backoff; a broken link or a failed spawn
+/// asks the person, and only their action starts the next worker.
 #[test]
-fn faults_broken_links_and_spawn_failures_retry() {
+fn faults_retry_and_broken_links_and_spawn_failures_ask() {
     let (mut m, t0) = (full(), Instant::now());
     let fault = failed_with(Escalation::Restart, "release unconfirmed");
     script(
@@ -649,19 +651,33 @@ fn faults_broken_links_and_spawn_failures_retry() {
                 vec![Effect::Terminate],
             ),
             (1_005, Exited(Exit::Code(1)), vec![]),
-            (
-                3_005,
-                Tick,
-                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
-            ),
-            (3_006, Input::SpawnFailed("no such file".into()), vec![]),
+            (60_000, Tick, vec![]),
         ],
     );
     let state = m.state(t0);
-    assert!(matches!(full_state(&state).1, FullWorker::Retrying { .. }));
+    assert_eq!(full_state(&state).1, &FullWorker::Stopped);
     assert_eq!(
         message(&state),
-        Some("cannot start the worker: no such file")
+        Some("worker link broke: malformed (try again)")
+    );
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                60_001,
+                Target(LightingTarget::Off),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (60_002, Input::SpawnFailed("no such file".into()), vec![]),
+            (120_000, Tick, vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert_eq!(full_state(&state).1, &FullWorker::Stopped);
+    assert_eq!(
+        message(&state),
+        Some("cannot start the worker: no such file (try again)")
     );
 }
 
@@ -880,7 +896,7 @@ fn the_other_packages_status_breaks_the_link() {
         ],
     );
     let state = m.state(t0);
-    assert!(matches!(full_state(&state).1, FullWorker::Retrying { .. }));
+    assert_eq!(full_state(&state).1, &FullWorker::Stopped);
     assert!(
         message(&state).is_some_and(|text| text.contains("other package")),
         "{state:?}"
@@ -1810,7 +1826,10 @@ fn a_failed_stop_shows_why_it_was_stopped() {
         ],
     );
     let state = m.state(t0);
-    assert_eq!(message(&state), Some("worker link broke: malformed"));
+    assert_eq!(
+        message(&state),
+        Some("worker link broke: malformed (try again)")
+    );
     assert_eq!(kind(&state), Some(FailureKind::Other));
 }
 
@@ -1842,16 +1861,33 @@ fn a_worker_never_reaped_after_its_kill_is_let_go() {
 enum Is {
     Idle,
     Running,
-    Stopping(Sent, AfterExit),
+    Stopping(Sent, Then),
     Retrying,
+    Asking,
+}
+
+/// What follows a stopping worker, without the problem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Then {
+    Idle,
+    Retry,
+    Ask,
 }
 
 fn is(phase: &Phase) -> Is {
     match phase {
         Phase::Idle => Is::Idle,
         Phase::Running(_) => Is::Running,
-        Phase::Stopping(stopping) => Is::Stopping(stopping.sent, stopping.then),
+        Phase::Stopping(stopping) => Is::Stopping(
+            stopping.sent,
+            match stopping.then {
+                AfterExit::Idle => Then::Idle,
+                AfterExit::Retry => Then::Retry,
+                AfterExit::Ask(_) => Then::Ask,
+            },
+        ),
         Phase::Retrying { .. } => Is::Retrying,
+        Phase::Asking(_) => Is::Asking,
     }
 }
 
@@ -1898,8 +1934,8 @@ const UNREADABLE: &str = "invalid tv.json";
 /// preferences are saved.
 #[test]
 fn every_phase_takes_every_input() {
-    use AfterExit::{Idle as ThenIdle, Retry};
     use Sent::{Kill, Terminate};
+    use Then::{Ask, Idle as ThenIdle};
     let other = other_receiver();
     let broke = || {
         (
@@ -1981,13 +2017,18 @@ fn every_phase_takes_every_input() {
             due: 1_500,
         },
     ];
-    let (idle, running, retrying) = (Is::Idle, Is::Running, Is::Retrying);
+    let (idle, running, retrying, asking) = (Is::Idle, Is::Running, Is::Retrying, Is::Asking);
     let (asked, failing) = (
         Is::Stopping(Terminate, ThenIdle),
-        Is::Stopping(Terminate, Retry),
+        Is::Stopping(Terminate, Ask),
     );
-    let (killed, killed_failing) = (Is::Stopping(Kill, ThenIdle), Is::Stopping(Kill, Retry));
-    let (broken, failed) = (Some("worker link broke: x"), Some("worker failed"));
+    let (killed, killed_failing) = (Is::Stopping(Kill, ThenIdle), Is::Stopping(Kill, Ask));
+    let faulting = Is::Stopping(Terminate, Then::Retry);
+    let (broken, failed) = (
+        Some("worker link broke: x (try again)"),
+        Some("worker failed"),
+    );
+    let abandoned = Some("worker not reaped 8 s after its kill (restart the TV)");
     let faulted = Some("worker faulted");
     let not_stopped = Some("worker did not stop within 8 s");
     let none = Vec::new;
@@ -2027,9 +2068,9 @@ fn every_phase_takes_every_input() {
             (none(), idle, faulted),
             (none(), retrying, Some(running)),
             (none(), idle, asked),
-            (none(), retrying, broken),
+            (none(), asking, broken),
             (none(), idle, not_stopped),
-            (none(), retrying, broken),
+            (none(), asking, broken),
             (start(&other), Is::Running, not_stopped),
             (none(), retrying, failed),
         ]
@@ -2117,18 +2158,26 @@ fn every_phase_takes_every_input() {
         (
             failed_with(Escalation::Restart, &cause()),
             false,
-            last_word((terminate(), failing, Some("worker faulted: c"))),
+            last_word((terminate(), faulting, Some("worker faulted: c"))),
         ),
         (Input::Log("l".into()), false, unchanged()),
         (
             Input::WorkerBroken("y".into()),
             false,
-            only_running((terminate(), failing, Some("worker link broke: y"))),
+            only_running((
+                terminate(),
+                failing,
+                Some("worker link broke: y (try again)"),
+            )),
         ),
         (
             Input::SpawnFailed("s".into()),
             false,
-            only_running((none(), retrying, Some("cannot start the worker: s"))),
+            only_running((
+                none(),
+                asking,
+                Some("cannot start the worker: s (try again)"),
+            )),
         ),
         (Exited(Exit::Code(0)), false, exited("worker stopped", None)),
         (
@@ -2156,13 +2205,13 @@ fn every_phase_takes_every_input() {
             true,
             [
                 (none(), idle, faulted),
-                (terminate(), failing, Some("worker sent nothing for 15 s")),
+                (terminate(), faulting, Some("worker sent nothing for 15 s")),
                 (vec![Effect::Kill], killed, None),
                 (vec![Effect::Kill], killed_failing, broken),
-                (vec![Effect::Abandon], idle, not_stopped),
-                (vec![Effect::Abandon], retrying, broken),
                 // The abandoned worker may still hold the capture.
-                (vec![Effect::Abandon], retrying, not_stopped),
+                (vec![Effect::Abandon], asking, abandoned),
+                (vec![Effect::Abandon], asking, abandoned),
+                (vec![Effect::Abandon], asking, abandoned),
                 (start(&receiver()), running, failed),
             ],
         ),

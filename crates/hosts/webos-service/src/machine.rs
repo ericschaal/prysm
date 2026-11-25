@@ -12,6 +12,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod recovery;
+use recovery::{After, Lost, Problem, after, interim_failure};
+
 pub const LOG_LINES: usize = 20;
 
 /// What the machine reacts to.
@@ -55,8 +58,8 @@ pub enum Effect {
     Terminate,
     Kill,
     /// Let go of a worker still not reaped [`KILL_AFTER`] after its kill
-    /// (`waitpid` keeps failing): the machine takes it as killed, so it never
-    /// waits for ever.
+    /// (`waitpid` keeps failing), so the machine never waits for ever. It
+    /// may still hold the capture: the person is asked to restart the TV.
     Abandon,
     /// The published state changed.
     Publish,
@@ -77,7 +80,12 @@ enum Phase {
     Idle,
     Running(Run),
     Stopping(Stopping),
-    Retrying { at: Instant },
+    Retrying {
+        at: Instant,
+    },
+    /// No worker: the person is asked. Left only by their or the TV's
+    /// action ([`Machine::dismiss`]).
+    Asking(Problem),
 }
 
 /// A running worker.
@@ -177,13 +185,15 @@ enum Sent {
 }
 
 /// What follows a stopping worker's exit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum AfterExit {
     /// The user or the TV ended it: nothing, or at once the next worker if
     /// one is wanted (new worker settings).
     Idle,
     /// It failed: the next worker after the backoff.
     Retry,
+    /// It failed: the person is asked.
+    Ask(Problem),
 }
 
 /// Why a worker is stopped.
@@ -191,12 +201,10 @@ enum AfterExit {
 enum StopCause {
     /// The user or the TV ended it: no longer wanted, or new worker settings.
     Requested,
-    /// The supervisor ended it, and why.
-    Failed(WorkerFailure),
+    /// The supervisor ended it: what follows.
+    Failed(After),
 }
 
-/// The signal a kill sends; also what a worker let go is taken to have died of.
-const SIGKILL: i32 = 9;
 /// The signal a stop sends.
 const SIGTERM: i32 = 15;
 
@@ -322,7 +330,7 @@ impl Machine {
     /// Shut down and no worker left.
     #[must_use]
     pub fn finished(&self) -> bool {
-        self.shutdown && matches!(self.phase, Phase::Idle)
+        self.shutdown && matches!(self.phase, Phase::Idle | Phase::Asking(_))
     }
 
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
@@ -352,15 +360,10 @@ impl Machine {
                 }
                 self.log.push_back(line);
             }
-            Input::WorkerBroken(why) => {
-                self.fail(&format!("worker link broke: {why}"), now, &mut effects);
-            }
+            Input::WorkerBroken(why) => self.lose(&Lost::Broken(why), now, &mut effects),
             Input::SpawnFailed(why) => {
                 if self.running() {
-                    self.failure = Some(WorkerFailure::other(format!(
-                        "cannot start the worker: {why}"
-                    )));
-                    self.retry(now);
+                    self.gone(after(Lost::Spawn(why).failure()), now);
                 }
             }
             Input::WorkerExited(exit) => self.exited(exit, now),
@@ -396,7 +399,7 @@ impl Machine {
 
     fn process(&self, now: Instant) -> Process {
         match self.phase {
-            Phase::Idle => Process::Stopped,
+            Phase::Idle | Phase::Asking(_) => Process::Stopped,
             Phase::Running(_) => Process::Running,
             Phase::Stopping(_) => Process::Stopping,
             Phase::Retrying { at } => Process::Retrying {
@@ -410,7 +413,7 @@ impl Machine {
         match &self.phase {
             Phase::Running(run) => Some(&run.report),
             Phase::Stopping(stopping) => Some(&stopping.report),
-            Phase::Idle | Phase::Retrying { .. } => None,
+            Phase::Idle | Phase::Retrying { .. } | Phase::Asking(_) => None,
         }
     }
 
@@ -418,14 +421,16 @@ impl Machine {
         match &self.phase {
             Phase::Running(run) => run.failed.as_ref(),
             Phase::Stopping(stopping) => stopping.failed.as_ref(),
-            Phase::Idle | Phase::Retrying { .. } => None,
+            Phase::Idle | Phase::Retrying { .. } | Phase::Asking(_) => None,
         }
     }
 
-    /// The worker's own word (first why it is failing now, then its report)
-    /// wins over why the last one ended; while the supervisor stops it as
-    /// failed, that reason wins. Unreadable preferences come last: the
-    /// others name the fix for what is failing now.
+    /// What the person is asked comes first, also while the worker that
+    /// failed stops. Then the worker's own word (first why it is failing
+    /// now, then its report) wins over why the last one ended; while the
+    /// supervisor stops it as failed, that reason wins. Unreadable
+    /// preferences come last: the others name the fix for what is failing
+    /// now.
     fn current_failure(&self) -> Option<WorkerFailure> {
         let worker = || {
             self.failed()
@@ -434,11 +439,22 @@ impl Machine {
                 .or_else(|| self.reported().and_then(Report::failure))
         };
         match &self.phase {
+            Phase::Asking(problem)
+            | Phase::Stopping(Stopping {
+                then: AfterExit::Ask(problem),
+                ..
+            }) => Some(interim_failure(problem)),
             Phase::Stopping(Stopping {
                 then: AfterExit::Retry,
                 ..
             }) => self.failure.clone().or_else(worker),
-            _ => worker().or_else(|| self.failure.clone()),
+            Phase::Idle
+            | Phase::Running(_)
+            | Phase::Stopping(Stopping {
+                then: AfterExit::Idle,
+                ..
+            })
+            | Phase::Retrying { .. } => worker().or_else(|| self.failure.clone()),
         }
         .or_else(|| self.unreadable.clone())
     }
@@ -500,7 +516,7 @@ impl Machine {
             }
             Phase::Running(_)
             | Phase::Stopping(Stopping {
-                then: AfterExit::Retry,
+                then: AfterExit::Retry | AfterExit::Ask(_),
                 ..
             })
             | Phase::Retrying { .. }
@@ -512,7 +528,8 @@ impl Machine {
                 self.phase = Phase::Idle;
                 self.reconcile(now, effects);
             }
-            Phase::Running(_) | Phase::Stopping(_) | Phase::Retrying { .. } => {}
+            // Asking ends only by the person's or the TV's action.
+            Phase::Running(_) | Phase::Stopping(_) | Phase::Retrying { .. } | Phase::Asking(_) => {}
         }
     }
 
@@ -539,12 +556,17 @@ impl Machine {
                 self.dismiss();
                 AfterExit::Idle
             }
-            StopCause::Failed(failure) => {
+            StopCause::Failed(after) => {
                 if !self.running() {
                     return;
                 }
-                self.failure = Some(failure);
-                AfterExit::Retry
+                match after {
+                    After::Restart(why) => {
+                        self.failure = Some(WorkerFailure::other(why));
+                        AfterExit::Retry
+                    }
+                    After::Ask(problem) => AfterExit::Ask(problem),
+                }
             }
         };
         self.phase = match std::mem::replace(&mut self.phase, Phase::Idle) {
@@ -559,22 +581,44 @@ impl Machine {
                 })
             }
             Phase::Stopping(stopping) => Phase::Stopping(Stopping { then, ..stopping }),
-            Phase::Idle | Phase::Retrying { .. } => Phase::Idle,
+            Phase::Idle | Phase::Retrying { .. } | Phase::Asking(_) => Phase::Idle,
         };
     }
 
     /// The user or the TV ended the worker (turned off, standby, shutdown,
-    /// new worker settings): the failure is no longer current, and the next
-    /// start gets a fresh backoff. The one place that clears the failure
-    /// besides a worker that is up again or ran [`Backoff::HEALTHY`].
+    /// new worker settings) or answered what it was asked: the failure is
+    /// no longer current, and the next start gets a fresh backoff. The one
+    /// place that clears the failure besides a worker that is up again or
+    /// ran [`Backoff::HEALTHY`], and the one way out of asking.
     fn dismiss(&mut self) {
         self.failure = None;
         self.backoff.reset();
+        if let Phase::Asking(_) = self.phase {
+            self.phase = Phase::Idle;
+        }
     }
 
-    /// Stop a running worker as failed, for `why`.
-    fn fail(&mut self, why: &str, now: Instant, effects: &mut Vec<Effect>) {
-        self.stop(StopCause::Failed(WorkerFailure::other(why)), now, effects);
+    /// Stop a running worker as failed, for `why`; the next one after the
+    /// backoff.
+    fn fail(&mut self, why: String, now: Instant, effects: &mut Vec<Effect>) {
+        self.stop(StopCause::Failed(After::Restart(why)), now, effects);
+    }
+
+    /// Stop a running worker the supervisor lost for `lost`.
+    fn lose(&mut self, lost: &Lost, now: Instant, effects: &mut Vec<Effect>) {
+        self.stop(StopCause::Failed(after(lost.failure())), now, effects);
+    }
+
+    /// What follows a worker that is gone (exited, never started or let
+    /// go): the next one after the backoff, or the person is asked.
+    fn gone(&mut self, after: After, now: Instant) {
+        match after {
+            After::Restart(why) => {
+                self.failure = Some(WorkerFailure::other(why));
+                self.retry(now);
+            }
+            After::Ask(problem) => self.phase = Phase::Asking(problem),
+        }
     }
 
     fn retry(&mut self, now: Instant) {
@@ -612,6 +656,10 @@ impl Machine {
             return;
         };
         *current = target;
+        // Asked: the person answers by choosing a target.
+        if let Phase::Asking(_) = self.phase {
+            self.dismiss();
+        }
         if let Phase::Running(Run {
             report: Report::Full { sent, .. },
             ..
@@ -631,7 +679,8 @@ impl Machine {
             return;
         };
         *current = enabled;
-        if !enabled {
+        // Off ends the worker; on answers what the person was asked.
+        if !enabled || matches!(self.phase, Phase::Asking(_)) {
             self.dismiss();
         }
     }
@@ -650,13 +699,13 @@ impl Machine {
                 }
                 return;
             }
-            Phase::Idle | Phase::Retrying { .. } => return,
+            Phase::Idle | Phase::Retrying { .. } | Phase::Asking(_) => return,
         };
         run.heard = now;
         match event {
             Event::Status(status) => self.report(status, now, effects),
             Event::Failed(failure) => match interim_fault(&failure) {
-                Some(why) => self.fail(&why, now, effects),
+                Some(why) => self.fail(why, now, effects),
                 None => run.failed = Some(failure.message),
             },
         }
@@ -688,8 +737,8 @@ impl Machine {
             return;
         };
         if !run.report.keep(status) {
-            let why = "worker link broke: the worker reported the other package's status";
-            self.fail(why, now, effects);
+            let why = "the worker reported the other package's status";
+            self.lose(&Lost::Broken(why.into()), now, effects);
             return;
         }
         if up {
@@ -699,7 +748,7 @@ impl Machine {
             self.follow(target, applied);
         }
         if let Some(why) = fault {
-            self.fail(&why, now, effects);
+            self.fail(why, now, effects);
         }
     }
 
@@ -738,7 +787,7 @@ impl Machine {
         // stop that was asked for.
         let faulted = matches!(exit, Exit::Signal(signal) if signal != SIGTERM)
             || exit == Exit::Code(exit::FAULTED.into());
-        match self.phase {
+        match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Running(_) => {
                 self.failure = Some(exit_failure(described, last));
                 self.retry(now);
@@ -748,6 +797,10 @@ impl Machine {
                 then: AfterExit::Retry,
                 ..
             }) => self.retry(now),
+            Phase::Stopping(Stopping {
+                then: AfterExit::Ask(problem),
+                ..
+            }) => self.phase = Phase::Asking(problem),
             Phase::Stopping(Stopping {
                 sent: Sent::Kill,
                 then: AfterExit::Idle,
@@ -767,7 +820,7 @@ impl Machine {
                 }
                 self.phase = Phase::Idle;
             }
-            Phase::Idle | Phase::Retrying { .. } => {}
+            phase @ (Phase::Idle | Phase::Retrying { .. } | Phase::Asking(_)) => self.phase = phase,
         }
     }
 
@@ -778,7 +831,7 @@ impl Machine {
     #[must_use]
     pub fn next_due(&self, now: Instant) -> Option<Instant> {
         match self.phase {
-            Phase::Idle => None,
+            Phase::Idle | Phase::Asking(_) => None,
             Phase::Running(Run { since, heard, .. }) => {
                 let healthy = Some(since + Backoff::HEALTHY).filter(|&at| at > now);
                 healthy.into_iter().chain([heard + SILENCE]).min()
@@ -796,8 +849,7 @@ impl Machine {
                     self.failure = None;
                 }
                 if now.duration_since(heard) >= SILENCE {
-                    let why = format!("worker sent nothing for {} s", SILENCE.as_secs());
-                    self.fail(&why, now, effects);
+                    self.lose(&Lost::Silent, now, effects);
                 }
             }
             Phase::Stopping(stopping) if now >= stopping.at => match stopping.sent {
@@ -806,16 +858,13 @@ impl Machine {
                     stopping.at = now + KILL_AFTER;
                     stopping.sent = Sent::Kill;
                 }
+                // It may still hold the capture, however it was stopped.
                 Sent::Kill => {
                     effects.push(Effect::Abandon);
-                    self.exited(Exit::Signal(SIGKILL), now);
-                    // It may still hold the capture: the next one waits.
-                    if matches!(self.phase, Phase::Idle) && self.wanted() {
-                        self.retry(now);
-                    }
+                    self.gone(after(Lost::Abandoned.failure()), now);
                 }
             },
-            Phase::Idle | Phase::Stopping(_) | Phase::Retrying { .. } => {}
+            Phase::Idle | Phase::Stopping(_) | Phase::Retrying { .. } | Phase::Asking(_) => {}
         }
     }
 }

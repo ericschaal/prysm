@@ -550,7 +550,7 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
     let published = h.bus.published.last().unwrap();
     assert_eq!(
         published["worker"],
-        serde_json::json!({ "phase": "retrying", "seconds": 1 })
+        serde_json::json!({ "phase": "stopped" })
     );
     assert_eq!(published["failure"]["kind"], "other");
     assert!(
@@ -559,19 +559,17 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
             .unwrap()
             .contains("malformed")
     );
-    assert!(h.tick(1_299));
-    assert!(h.log().is_empty());
-    assert!(h.tick(1_300));
-    assert_eq!(h.log().len(), 2, "respawned after one second");
+    assert!(h.tick(60_000));
+    assert!(h.log().is_empty(), "the person is asked: nothing respawns");
 }
 
 #[test]
-fn a_spawn_failure_retries_without_a_worker() {
+fn a_spawn_failure_asks_without_a_worker() {
     let mut h = Harness::new(config(), None);
     h.world.borrow_mut().refuse_spawn = true;
     h.power("Active", 0);
     let published = h.bus.published.last().unwrap();
-    assert_eq!(published["worker"]["phase"], "retrying");
+    assert_eq!(published["worker"]["phase"], "stopped");
     assert!(
         published["failure"]["message"]
             .as_str()
