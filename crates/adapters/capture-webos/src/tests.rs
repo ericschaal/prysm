@@ -631,7 +631,10 @@ fn a_context_reset_keeps_a_created_only_driver() {
     driver.push([Step::Frame(5)]);
     video.reset();
     assert_eq!(next(&mut frames).as_slice(), &[5; 96]);
-    assert_eq!(calls(&driver), (1, 2, 0));
+    // The thread goes on acquiring at its pace after the frame.
+    let (opens, acquires, releases) = calls(&driver);
+    assert_eq!((opens, releases), (1, 0));
+    assert!(acquires >= 2, "{acquires} acquisitions");
 
     // Refused, then a new context: the same driver again.
     driver.push([Step::Refused]);
@@ -744,7 +747,10 @@ fn a_failed_first_acquisition_releases_and_reopens_the_tap() {
     driver.push([Step::Fail { fatal: false }, Step::Frame(3)]);
     let mut frames = start(&driver, &video);
     assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
-    assert_eq!(calls(&driver), (2, 2, 1));
+    // The thread goes on acquiring at its pace after the frame.
+    let (opens, acquires, releases) = calls(&driver);
+    assert_eq!((opens, releases), (2, 1));
+    assert!(acquires >= 2, "{acquires} acquisitions");
     closes_cleanly(frames);
 }
 
