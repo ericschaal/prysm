@@ -194,12 +194,16 @@ test('every target and session has one lighting situation', () => {
     );
   assert.equal(reading('screen_sync', 'screen_sync'), 'sync');
   assert.equal(reading('screen_sync', 'stopped'), 'starting');
-  // A session still stopping, or one that failed, is not the wait.
+  // A session still stopping is not the wait; saved settings that don't
+  // validate are published beside it, and the wait is still said.
   assert.equal(reading('off', 'screen_sync'), 'off');
-  assert.equal(
-    reading('effects', 'stopped', { session: session('stopped', true) }),
-    'failed',
-  );
+  for (const target of ['off', 'effects'])
+    assert.equal(
+      reading(target, 'stopped', {
+        session: { state: 'stopped', failure: invalid },
+      }),
+      'unanswered',
+    );
   // Any other issue is screen sync's alone.
   assert.equal(
     reading('off', 'stopped', { device: { issue: 'other_sender' } }),

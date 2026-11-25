@@ -207,7 +207,7 @@ export function failureSide(
  *   restart. `message` says what did not finish.
  * - `unknown`: the target or the session state is newer than this page.
  * - `unanswered`: the lights don't answer the request that puts them off or
- *   in their own effects (no session, no failure). The target stays; Prysm
+ *   in their own effects (no session). The target stays; Prysm
  *   tries again every few seconds and applies it once they answer. (Lights
  *   that don't answer screen sync are `sync`: its session waits for them.)
  * - `off`: the lights were asked off (the session may still be stopping).
@@ -264,7 +264,6 @@ export function lightingSituation({
   if (
     target !== 'screen_sync' &&
     session.state === 'stopped' &&
-    !session.failure &&
     device?.issue === 'unreachable'
   )
     return { kind: 'unanswered', target };
