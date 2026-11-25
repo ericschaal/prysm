@@ -97,7 +97,7 @@ enum Package {
 
 impl Package {
     /// What the TV app sees of the package while the worker is at
-    /// `process`, with the current worker's `report`.
+    /// `process`, with the running worker's `report`.
     fn published(&self, process: Process, report: Option<&Report>) -> state::Package {
         match self {
             Self::Full { target, .. } => state::Package::Full {
@@ -261,20 +261,22 @@ impl Machine {
         match &self.phase {
             Phase::Idle => Process::Stopped,
             Phase::Running(run) => Process::Running(run.problem()),
-            Phase::Stopping(stopping) => Process::Stopping(match &stopping.then {
-                Then::Ask(problem) => Some(problem.clone()),
-                Then::Idle | Then::Restart => None,
-            }),
+            Phase::Stopping(stopping) => Process::Stopping {
+                portal: stopping.portal.clone(),
+                problem: match &stopping.then {
+                    Then::Ask(problem) => Some(problem.clone()),
+                    Then::Idle | Then::Restart => None,
+                },
+            },
             Phase::Asking(problem) => Process::Asking(problem.clone()),
         }
     }
 
-    /// The current worker's report; none without a worker.
+    /// The running worker's report; none without one.
     fn reported(&self) -> Option<&Report> {
         match &self.phase {
             Phase::Running(run) => Some(&run.report),
-            Phase::Stopping(stopping) => Some(&stopping.report),
-            Phase::Idle | Phase::Asking(_) => None,
+            Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) => None,
         }
     }
 
@@ -378,8 +380,7 @@ impl Machine {
                     at: now + KILL_AFTER,
                     sent: Sent::Terminate,
                     then,
-                    restart: run.restart,
-                    report: run.report,
+                    portal: run.report.full().and_then(|status| status.portal.clone()),
                 })
             }
             phase @ (Phase::Idle | Phase::Stopping(_) | Phase::Asking(_)) => phase,
@@ -402,10 +403,7 @@ impl Machine {
         match &mut self.phase {
             Phase::Idle => {}
             Phase::Running(run) => run.restart = Restart::Available,
-            Phase::Stopping(stopping) => {
-                stopping.then = Then::Idle;
-                stopping.restart = Restart::Available;
-            }
+            Phase::Stopping(stopping) => stopping.then = Then::Idle,
             Phase::Asking(_) => self.phase = Phase::Idle,
         }
     }
@@ -515,10 +513,10 @@ impl Machine {
         let run = match &mut self.phase {
             Phase::Running(run) => run,
             // A late line from a worker already being stopped: only its
-            // report is kept (its portal answers until it exits).
+            // portal is kept (it answers until the worker exits).
             Phase::Stopping(stopping) => {
-                if let Event::Status(status) = event {
-                    stopping.report.keep(status);
+                if let Event::Status(WorkerStatus::Full(status)) = event {
+                    stopping.portal = status.portal;
                 }
                 return;
             }
@@ -628,10 +626,11 @@ impl Machine {
                     stopping.at = now + KILL_AFTER;
                     stopping.sent = Sent::Kill;
                 }
-                // It may still hold the capture, however it was stopped.
+                // It may still hold the capture, however it was stopped: the
+                // person is asked, whatever its restart.
                 Sent::Kill => {
                     effects.push(Effect::Abandon);
-                    let follows = after(stopping.restart, Lost::Abandoned.failure());
+                    let follows = after(Restart::Available, Lost::Abandoned.failure());
                     self.gone(follows, now, effects);
                 }
             },

@@ -250,8 +250,12 @@ pub(crate) enum Process {
     /// What the running worker asks; only a full worker's is published (a
     /// slim worker's link says its own).
     Running(Option<Problem>),
-    /// What the person is asked once it exited.
-    Stopping(Option<Problem>),
+    /// The full worker's portal address while it answers, and what the
+    /// person is asked once it exited.
+    Stopping {
+        portal: Option<String>,
+        problem: Option<Problem>,
+    },
     Asking(Problem),
 }
 
@@ -261,20 +265,16 @@ impl FullWorker {
     /// not capturing for the app.
     #[must_use]
     pub(crate) fn new(process: Process, report: Option<&FullStatus>) -> Self {
-        let portal = || report.and_then(|report| report.portal.clone());
         match process {
             Process::Stopped => Self::Stopped,
             Process::Running(problem) => Self::Running {
                 capturing: report.is_some_and(|report| report.capturing),
                 fps: report.and_then(|report| report.fps),
                 lights: report.and_then(|report| report.lights),
-                portal: portal(),
+                portal: report.and_then(|report| report.portal.clone()),
                 problem,
             },
-            Process::Stopping(problem) => Self::Stopping {
-                portal: portal(),
-                problem,
-            },
+            Process::Stopping { portal, problem } => Self::Stopping { portal, problem },
             Process::Asking(problem) => Self::Asking { problem },
         }
     }
@@ -291,7 +291,7 @@ impl SlimWorker {
                 let SlimStatus { capturing, link } = report.cloned().unwrap_or_default();
                 Self::Running { capturing, link }
             }
-            Process::Stopping(problem) => Self::Stopping { problem },
+            Process::Stopping { problem, .. } => Self::Stopping { problem },
             Process::Asking(problem) => Self::Asking { problem },
         }
     }
@@ -326,7 +326,11 @@ mod tests {
         let json =
             serde_json::to_value(FullWorker::new(Process::Running(None), Some(&report))).unwrap();
         assert_eq!(json["lights"], "unreachable");
-        for process in [Process::Stopped, Process::Stopping(None)] {
+        let stopping = Process::Stopping {
+            portal: None,
+            problem: None,
+        };
+        for process in [Process::Stopped, stopping] {
             let json =
                 serde_json::to_value(FullWorker::new(process.clone(), Some(&report))).unwrap();
             assert_eq!(json.get("lights"), None, "{process:?}");

@@ -817,6 +817,16 @@ fn only_a_running_worker_is_capturing() {
             problem: None,
         }
     );
+    // Until a late report says it does not.
+    let closed = full_status(full_report(LightingTarget::ScreenSync));
+    script(&mut m, t0, vec![(8, closed, vec![])]);
+    assert_eq!(
+        full_state(&m.state()).1,
+        &FullWorker::Stopping {
+            portal: None,
+            problem: None,
+        }
+    );
 }
 
 /// What the person is asked is published in the phase that asks it, with

@@ -47,12 +47,9 @@ pub(super) struct Stopping {
     pub(super) at: Instant,
     pub(super) sent: Sent,
     pub(super) then: Then,
-    /// The stopped run's restart, read for what follows letting it go
-    /// (never a frame: a stopping worker's do not count).
-    pub(super) restart: Restart,
-    /// What it reported until it was stopped and since (the portal answers
-    /// until it exits).
-    pub(super) report: Report,
+    /// Full: the portal address it last reported, until it was stopped and
+    /// since (the portal answers until it exits).
+    pub(super) portal: Option<String>,
 }
 
 /// The last signal a stopping worker was sent.
