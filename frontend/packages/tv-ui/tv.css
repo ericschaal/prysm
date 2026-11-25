@@ -276,20 +276,21 @@ button:disabled {
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
-/* The dot beside the title: what the card says, as a colour. */
+/*
+ * The dot beside the title: what the card says, as a colour. It hangs in
+ * the column's padding, so the title starts where the lines under it do.
+ */
 .status-head {
-  display: flex;
-  align-items: center;
-}
-.status-head h1 {
-  min-width: 0;
+  position: relative;
 }
 .status-dot {
-  position: relative;
-  flex-shrink: 0;
-  width: 0.7rem;
-  height: 0.7rem;
-  margin-right: var(--space-3);
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-top: -0.3rem;
+  margin-right: var(--space-2);
   border-radius: 50%;
   background: rgba(var(--fg), 0.6);
 }
