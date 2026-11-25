@@ -574,23 +574,22 @@ fn an_unchanged_video_leaves_a_running_tap_alone() {
     closes_cleanly(frames);
 }
 
-/// A not-ready answer after a refusal ends it: the driver is preparing,
-/// which has its own bounded wait, so the pulls stop saying refused. The
-/// driver is neither released nor opened again.
+/// A not-ready answer after a refusal leaves the pulls refused: only a
+/// frame ends that, and then they stop saying refused. The driver is
+/// neither released nor opened again.
 #[test]
-fn a_not_ready_answer_ends_a_refusal() {
+fn a_refusal_outlives_a_not_ready_answer() {
     let (driver, video, mut frames) = refusing(Step::NotReady);
     refused(&mut frames);
     video.reset();
-    eventually("a pull that is not refused", LIMIT, || {
-        matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet).then_some(())
+    eventually("the initialization after the change", LIMIT, || {
+        (driver.count(|s| s.acquires) >= 2).then_some(())
     });
-    assert!(driver.count(|s| s.acquires) >= 2);
-    thread::sleep(SHORT);
-    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Refused));
     driver.with(|s| s.idle = Step::Pending);
     driver.push([Step::Frame(7)]);
     assert_eq!(next(&mut frames).as_slice(), &[7; 96]);
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
     assert_eq!((calls(&driver).0, calls(&driver).2), (1, 0));
     closes_cleanly(frames);
 }

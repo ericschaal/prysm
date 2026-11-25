@@ -121,10 +121,9 @@ impl Limits {
 
 /// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Quiet`]
 /// while video is unavailable or the driver is preparing, [`Pull::Refused`]
-/// from a refused initialization until another answer, and from a wait for
-/// withheld video until a frame (either until video is unavailable), and
-/// `Err` on a terminal native failure or a native call that exceeds its
-/// watchdog.
+/// from the first refused initialization or withholding of the video until
+/// a frame or until video is unavailable, and `Err` on a terminal native
+/// failure or a native call that exceeds its watchdog.
 pub struct WebosFrames {
     thread: OwnerThread,
 }

@@ -207,48 +207,24 @@ fn log(note: Note) {
             since_change_ms,
             "webOS video initialization answered"
         ),
-        Note::Refused { since_change_ms } => tracing::info!(
-            initializations = 1,
-            since_change_ms,
-            "the TV doesn’t let Prysm capture this video; \
-             initialized again at the next change of the video signal"
-        ),
-        Note::RefusedAgain {
+        Note::Refused {
             initializations,
             since_change_ms,
-        } => tracing::info!(initializations, since_change_ms, "the TV refused again"),
-        Note::RefusalEndedWithVideo {
-            initializations,
-            elapsed_ms,
-        } => tracing::debug!(
-            initializations,
-            elapsed_ms,
-            "the refusal ended with the video"
-        ),
-        Note::RefusalEndedPreparing {
-            initializations,
-            elapsed_ms,
-        } => tracing::debug!(
-            initializations,
-            elapsed_ms,
-            "the refusal ended with a driver that is preparing"
-        ),
-        Note::CaptureAllowed {
-            initializations,
-            elapsed_ms,
-        } => tracing::info!(
-            initializations,
-            elapsed_ms,
-            "the TV lets Prysm capture this video now"
-        ),
-        Note::RefusalEndedFailure {
-            initializations,
-            elapsed_ms,
-        } => tracing::debug!(
-            initializations,
-            elapsed_ms,
-            "the refusal ended with a native failure"
-        ),
+            occurrence,
+        } => {
+            let message = "the TV doesn’t let Prysm capture this video; \
+                           initialized again at the next change of the video signal";
+            match occurrence {
+                Occurrence::First => tracing::info!(initializations, since_change_ms, "{message}"),
+                Occurrence::Again => tracing::debug!(initializations, since_change_ms, "{message}"),
+            }
+        }
+        Note::CaptureAllowed { elapsed_ms } => {
+            tracing::info!(elapsed_ms, "the TV lets Prysm capture this video again");
+        }
+        Note::RefusalEndedWithVideo { elapsed_ms } => {
+            tracing::debug!(elapsed_ms, "the refusal ended with the video");
+        }
         Note::UiCapturing { width, height } => {
             tracing::info!(width, height, "capturing the TV UI while there is no video")
         }
@@ -266,23 +242,20 @@ fn log(note: Note) {
             error = %chain(&error),
             "webOS video capture failed; opening a new driver once"
         ),
-        Note::Withheld { error } => tracing::info!(
-            error = %chain(&error),
-            "the TV doesn’t let Prysm capture this video; \
-             a new driver is opened at the next change of the video signal"
-        ),
-        Note::WithheldAgain { error } => tracing::debug!(
-            error = %chain(&error),
-            "the TV still doesn’t let Prysm capture this video"
-        ),
+        Note::Withheld { error, occurrence } => {
+            let error = chain(&error);
+            let message = "the TV doesn’t let Prysm capture this video; \
+                           a new driver is opened at the next change of the video signal";
+            match occurrence {
+                Occurrence::First => tracing::info!(%error, "{message}"),
+                Occurrence::Again => tracing::debug!(%error, "{message}"),
+            }
+        }
         Note::ChangedWhileWithheld { video, generation } => tracing::info!(
             ?video,
             generation,
             "the video signal changed while the TV withholds the video; opening a new driver"
         ),
-        Note::WithheldEnded { elapsed_ms } => {
-            tracing::info!(elapsed_ms, "the wait for withheld video ended");
-        }
     }
 }
 

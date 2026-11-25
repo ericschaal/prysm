@@ -117,13 +117,12 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   the [classification](../../crates/adapters/capture-webos/src/classify.rs).
   A buffer status 12 (the TV's resource policy took the capture) or a plane
   status 13 (no video plane, as under AirPlay mirroring) releases the tap,
-  logs a warning once, makes pulls `Pull::Refused` and waits for the next
-  change of the video signal, which opens a new tap; pulls stay refused
-  until a frame or video becomes unavailable (not yet verified on
-  hardware). Any other failure, and a stall (no buffer for 2 s), releases
-  the tap and opens a new one at once, one time until a frame: failing again
-  before a frame, a failure ends the source, a stall waits as above. After
-  a failed driver call a tap accepts nothing but its release
+  makes pulls `Pull::Refused` and waits for the next change of the video
+  signal, which opens a new tap (not yet verified on hardware). Any other
+  failure, and a stall (no buffer for 2 s), releases the tap and opens a
+  new one at once, one time until a frame: failing again before a frame,
+  a failure ends the source, a stall waits as above. After a failed
+  driver call a tap accepts nothing but its release
   ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs),
   [native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
 - The TV can refuse to capture the video it shows: `vtCapture_init`
@@ -137,12 +136,9 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   initialized: no timer runs, no preparation limit, and pulls are
   `Pull::Refused`. A refused capture is initialized again only when the
   video output's signal changes (availability, or input, app or picture
-  mode); refused again, it waits again. Pulls stay refused until an
-  initialization is accepted or answers not ready (the driver is then
-  preparing, under the preparation limit), a native failure, or video
-  becomes unavailable. Whether a driver is only created is what the driver
-  reached (`VtCapture::created_only`), so one that answered not ready (1)
-  is kept the same way: a change of context initializes it again instead
+  mode); refused again, it waits again. Whether a driver is only created
+  is what the driver reached (`VtCapture::created_only`), so one that
+  answered not ready (1) is kept the same way: a change of context initializes it again instead
   of releasing it, since a created driver holds no video context (not yet
   verified on hardware after a change of app). Its release can hang in the
   vendor's destructor
@@ -152,6 +148,11 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   source), and after a native failure of the initialization, which leaves
   the driver accepting only its release; each can still hang and fault the
   worker.
+- Within a video, pulls are refused from the first refusal (17) or
+  withholding (12, 13, or two stalls) until a frame, until video becomes
+  unavailable, or until the source fails; nothing else ends it, not a
+  not-ready or pending answer, nor a native failure that opens a new
+  driver.
 - The engine reports refused pulls as `input.picture` `refused`. The full
   TV app reads that from its portal, the slim worker reports its connected
   `link` as `refused`; the TV app then shows **Video can’t be captured**
@@ -159,15 +160,15 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   portal's light card say "The TV doesn’t let Prysm capture this video."
   Neither is a failure, and both clear once frames come again. A slim
   stream carries no reason, so its receiver's portal only waits for the
-  picture. The capture thread logs at info when a refusal starts (with the
-  milliseconds since the last signal change), when a signal change
-  initializes the refused driver again, when it is refused again, and when
-  an initialization is accepted (with the initializations of the refusal
-  and its milliseconds); a refusal that ends with a not-ready answer, a
-  native failure or video gone is debug. Each initialization's answer, and
-  each signal change, is debug, except one info line per change of `video`. A
-  tap's open only creates the driver; its first acquisition initializes
-  it, so these counts include every initialization.
+  picture. The capture thread logs at info the first refusal or
+  withholding since a frame (a refusal with the milliseconds since the last
+  signal change), when a signal change initializes the refused driver
+  again, and the frame that ends the refused pulls (with their
+  milliseconds); repeats, and refused pulls ended by video gone, are debug.
+  Each initialization's answer, and each signal change, is debug, except
+  one info line per change of `video`. A tap's open only creates the
+  driver; its first acquisition initializes it, so a refusal's count of
+  initializations in a row includes every initialization.
 - The supervisor reaps a worker before starting another (or lets go of one
   still not reaped 8 s after its KILL). Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.
