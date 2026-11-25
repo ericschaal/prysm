@@ -11,7 +11,11 @@ import { test } from 'node:test';
 import { JSDOM } from 'jsdom';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ApplicationError, lightingSituation } from '@prysm/application-client';
+import {
+  ApplicationError,
+  lightingSituation,
+  STALE_MS,
+} from '@prysm/application-client';
 import {
   APP_ID,
   CALL_TIMEOUT_MS,
@@ -43,7 +47,6 @@ import {
   streamPatterns,
 } from '../packages/tv-ui/patterns';
 import { qrCode } from '../packages/tv-ui/qr';
-import { STALE_MS } from '../packages/tv-ui/portal-connection';
 import { createHash } from 'node:crypto';
 import jsQR from 'jsqr';
 import { assertFocused, assertSame } from './dom';

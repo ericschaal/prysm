@@ -10,6 +10,7 @@ import type {
 } from '@prysm/contracts/application';
 import {
   failureOf,
+  STALE_MS,
   type ApplicationClient,
   type ApplicationSnapshot,
   type LightingTarget,
@@ -56,15 +57,6 @@ export function portalSupported(): boolean {
 }
 
 export type Reach = 'unknown' | 'refused' | 'unreachable';
-
-/**
- * How long the last portal state stays shown while its stream is away (lost,
- * or released while the page was hidden), counted while the page is shown.
- * The stream retries after 0.25, 0.5, 1 and 2 s (`reconnectDelayMs`), 3.75 s
- * in all, before its backoff reaches whole seconds: a stream that comes back
- * soon is back within 4 s, and a longer wait would hide a real outage.
- */
-export const STALE_MS = 4_000;
 
 /** How long {@link checkPortal} waits for the portal's state. */
 export const CHECK_TIMEOUT_MS = 10_000;
@@ -149,7 +141,8 @@ export function usePortal(
     reach = probed.reachable ? 'refused' : 'unreachable';
 
   const live = connection?.status === 'connected' ? connection.snapshot : null;
-  // The last state of this runtime, until STALE_MS after its stream left.
+  // The last state of this runtime, until STALE_MS after its stream left
+  // (lost, or released while the page was hidden), counted while shown.
   const [kept, setKept] = useState<{
     runtime: Runtime;
     snapshot: PortalSnapshot;

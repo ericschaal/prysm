@@ -38,6 +38,7 @@ export type {
   Session,
 };
 export { same } from './same';
+export { reconnectDelayMs, STALE_MS, streamStep } from './recovery';
 
 /**
  * The two sides an adapter fills, capture and output: the generated failure
@@ -86,15 +87,6 @@ export function known<T extends string, F extends string | null | undefined>(
 ): T | F {
   return Object.keys(values).indexOf(raw) >= 0 ? (raw as T) : fallback;
 }
-
-/**
- * How long a stream of the portal (state, colours) waits before it
- * reconnects after `attempt` failures in a row since it last received
- * (0 for the first): 250 ms doubling to 5 s. One policy for every stream of
- * one portal; the TV app's `STALE_MS` is derived from it.
- */
-export const reconnectDelayMs = (attempt: number) =>
-  Math.min(5000, 250 * 2 ** attempt);
 
 /**
  * Why no picture arrives while the source's device refuses to share the
