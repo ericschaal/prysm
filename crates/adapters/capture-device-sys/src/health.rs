@@ -2,10 +2,9 @@
 //! AVFoundation, fed what each buffer (or its absence) was.
 //!
 //! - A frame ends any run of trouble.
-//! - A stall (no buffer within [`stall_timeout`]) ends any run too, so a source
-//!   that is off, and yields a bad buffer now and then, stays "waiting for
-//!   video" instead of failing. V4L2 restarts its stream after a stall, at
-//!   once: the stall already waited.
+//! - A stall (no buffer within [`stall_timeout`]) is waited out. It ends a
+//!   run of unusable buffers, so a source that is off, and yields a bad
+//!   buffer now and then, stays "waiting for video" instead of failing.
 //! - Unusable buffers in a row are dropped quietly until the run has lasted
 //!   [`GRACE`] and held that long's worth of buffers at the configured rate;
 //!   then capture fails with [`CaptureError::Unusable`], so a stream does not
@@ -17,9 +16,10 @@
 //!   few of them.
 //! - An interruption (V4L2's EIO on DQBUF or QBUF) restarts the stream once:
 //!   STREAMOFF clears the queue error that fails every DQBUF until then. A
-//!   second one before a frame or a stall fails capture with it, since
-//!   nothing shows that more restarts would help. An interruption also ends
-//!   a run of unusable buffers: the restarted stream starts afresh.
+//!   second one before a frame (a stall between them does not count) fails
+//!   capture with it, since nothing shows that more restarts would help. An
+//!   interruption also ends a run of unusable buffers: the restarted stream
+//!   starts afresh.
 use crate::{BufferRejection, CaptureError};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -32,7 +32,11 @@ const GRACE_SECONDS: u32 = 3;
 const GRACE: Duration = Duration::from_secs(GRACE_SECONDS as u64);
 
 /// How long capture waits for a buffer before it counts a stall: a second,
-/// plus one frame period at `rate`.
+/// plus one frame period at `rate`. A stall is only waited out, with no
+/// restart and no failure: a card without a signal went on sending (black)
+/// frames, and a driver that dropped buffers for seconds delivered again by
+/// itself, unrestarted. The timeout lets a stop be noticed and a run of
+/// unusable buffers end.
 pub(crate) fn stall_timeout(rate: NonZeroU32) -> Duration {
     Duration::from_secs(1) + Duration::from_secs(1) / rate.get()
 }
@@ -59,7 +63,8 @@ pub(crate) enum Event {
 pub(crate) enum Verdict {
     /// Wait for the next buffer.
     Continue,
-    /// Restart the stream, then wait for the next buffer.
+    /// Restart the stream after an interruption, then wait for the next
+    /// buffer.
     Restart,
     /// Stop capturing with this error.
     Fail(CaptureError),
@@ -98,10 +103,10 @@ impl Health {
                 self.rejecting = None;
                 Verdict::Continue
             }
+            // Only a frame shows that a restart worked.
             Event::Stalled => {
-                self.restarted = false;
                 self.rejecting = None;
-                Verdict::Restart
+                Verdict::Continue
             }
             Event::Rejected(reason) => {
                 let run = match self.rejecting {
@@ -209,37 +214,37 @@ mod tests {
             [
                 (clean, Continue),
                 ((false, rejecting(now, 1)), Continue),
-                (clean, Restart),
+                (clean, Continue),
                 ((true, None), Restart),
             ],
             [
                 (clean, Continue),
                 ((false, rejecting(young, LIMIT + 1)), Continue),
-                (clean, Restart),
+                (clean, Continue),
                 ((true, None), Restart),
             ],
             [
                 (clean, Continue),
                 ((false, rejecting(old, LIMIT - 1)), Continue),
-                (clean, Restart),
+                (clean, Continue),
                 ((true, None), Restart),
             ],
             [
                 (clean, Continue),
                 ((false, rejecting(old, LIMIT)), Unusable),
-                (clean, Restart),
+                (clean, Continue),
                 ((true, None), Restart),
             ],
             [
                 (clean, Continue),
                 ((true, rejecting(now, 1)), Continue),
-                (clean, Restart),
+                ((true, None), Continue),
                 ((true, None), Interrupted),
             ],
             [
                 (clean, Continue),
                 ((true, rejecting(old, LIMIT)), Unusable),
-                (clean, Restart),
+                ((true, None), Continue),
                 ((true, None), Interrupted),
             ],
         ];
