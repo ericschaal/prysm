@@ -199,19 +199,13 @@ pub(super) enum Note {
         since_change_ms: u128,
         occurrence: Occurrence,
     },
-    /// A frame ended the pulls' refused state of `elapsed_ms`.
-    CaptureAllowed { elapsed_ms: u128 },
-    /// A change of tap kind ended the pulls' refused state of `elapsed_ms`.
-    RefusalEndedWithVideo { elapsed_ms: u128 },
+    /// `by` ended the pulls' refused state of `elapsed_ms`.
+    RefusalEnded { by: RefusalEnd, elapsed_ms: u128 },
     /// The first TV UI frame of the source or since a UI fault.
     UiCapturing { width: u32, height: u32 },
-    /// A TV UI fault that may pass.
-    UiFailed {
-        error: Error,
-        occurrence: Occurrence,
-    },
-    /// A TV UI fault that cannot heal.
-    UiUnsupported {
+    /// A TV UI fault, which may pass or cannot heal as `recovery` says.
+    UiFault {
+        recovery: UiRecovery,
         error: Error,
         occurrence: Occurrence,
     },
@@ -226,6 +220,14 @@ pub(super) enum Note {
     /// The signal changed while the TV withholds the video: a new driver
     /// is opened.
     ChangedWhileWithheld { video: Video, generation: u64 },
+}
+
+/// What ended the pulls' refused state, as a [`Note::RefusalEnded`] says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RefusalEnd {
+    Frame,
+    /// A change of tap kind: the video left.
+    KindChange,
 }
 
 /// What the decisions depend on besides the state.
@@ -314,17 +316,6 @@ fn wanted(video: Video, include_ui: bool, ui: UiSupport) -> Option<Kind> {
         Video::Available | Video::Unknown => Some(Kind::Video),
         Video::Unavailable if include_ui && ui.may_open() => Some(Kind::Ui),
         Video::Unavailable => None,
-    }
-}
-
-impl Answer {
-    fn of(acquired: &Result<Acquired, Fault>) -> Self {
-        match acquired {
-            Ok(Acquired::Refused) => Self::Refused,
-            Ok(Acquired::NotReady) => Self::NotReady,
-            Ok(Acquired::Frame(_) | Acquired::Pending) => Self::Accepted,
-            Err(_) => Self::Failed,
-        }
     }
 }
 
@@ -513,6 +504,17 @@ impl State {
         Some(since)
     }
 
+    /// The pulls stop being told refused, if they were, and `by` is noted
+    /// with how long they were.
+    fn end_refusal(&mut self, by: RefusalEnd, now: Instant, out: &mut Out) {
+        if let Some(since) = self.allow(out) {
+            out.push(Action::Note(Note::RefusalEnded {
+                by,
+                elapsed_ms: millis(since, now),
+            }));
+        }
+    }
+
     /// The signal changed to `readiness` (the first counts as a change of
     /// video). A change is new evidence, so it gives the one new driver
     /// back; only a change of video or context lets a failed TV UI be tried
@@ -564,11 +566,7 @@ impl State {
             if self.phase.holds_tap() {
                 out.push(Action::Release);
             }
-            if let Some(since) = self.allow(out) {
-                out.push(Action::Note(Note::RefusalEndedWithVideo {
-                    elapsed_ms: millis(since, now),
-                }));
-            }
+            self.end_refusal(RefusalEnd::KindChange, now, out);
             self.phase = Phase::begin(kind);
             return;
         }
@@ -663,30 +661,30 @@ impl State {
         let Phase::Video { stage, .. } = self.phase else {
             unreachable!("a video acquisition answers an acquire of a video period")
         };
-        let outcome = Answer::of(&answer);
-        if initializing {
-            out.push(Action::Note(Note::InitializationAnswered {
-                answer: outcome,
-                since_change_ms: self.since_change(now),
-            }));
-        }
+        let since_change_ms = self.since_change(now);
+        let answered = |answer, out: &mut Out| {
+            if initializing {
+                out.push(Action::Note(Note::InitializationAnswered {
+                    answer,
+                    since_change_ms,
+                }));
+            }
+        };
         match answer {
             Ok(Acquired::Frame(frame)) => {
+                answered(Answer::Accepted, out);
                 let Phase::Video { fresh, .. } = &mut self.phase else {
                     unreachable!("checked above");
                 };
                 fresh.succeeded();
-                if let Some(since) = self.allow(out) {
-                    out.push(Action::Note(Note::CaptureAllowed {
-                        elapsed_ms: millis(since, now),
-                    }));
-                }
+                self.end_refusal(RefusalEnd::Frame, now, out);
                 self.phase = self.phase.at(Stage::Running);
                 out.push(Action::Deliver(frame));
             }
             // Stalled once pending for `pending` since the driver was
             // initialized.
             Ok(Acquired::Pending) => {
+                answered(Answer::Accepted, out);
                 let pending_since = stage.pending_since(now);
                 if now.duration_since(pending_since) >= rules.limits.pending {
                     let recovery = classify::video(VideoCause::Stall);
@@ -713,6 +711,7 @@ impl State {
             // not on an `Attempts`, whose clock starts at its own first
             // failure.
             Ok(Acquired::NotReady) => {
+                answered(Answer::NotReady, out);
                 let limit = rules.limits.preparation;
                 let since = stage.no_frame_since(now);
                 if now.duration_since(since) >= limit {
@@ -726,8 +725,14 @@ impl State {
                 });
             }
             // Not preparation: no deadline runs while the TV refuses.
-            Ok(Acquired::Refused) => self.refused(stage, now, out),
-            Err(fault) => return self.video_fault(fault, now, out),
+            Ok(Acquired::Refused) => {
+                answered(Answer::Refused, out);
+                self.refused(stage, now, out);
+            }
+            Err(fault) => {
+                answered(Answer::Failed, out);
+                return self.video_fault(fault, now, out);
+            }
         }
         self.pace(now, rules, out);
     }
@@ -780,10 +785,10 @@ impl State {
     fn ui_fault(&mut self, fault: UiFault, now: Instant, out: &mut Out) {
         let occurrence = self.ui.occurrence();
         self.ui = UiSupport::after_fault(fault.recovery);
-        let error = fault.error;
-        out.push(Action::Note(match self.ui {
-            UiSupport::Unsupported => Note::UiUnsupported { error, occurrence },
-            _ => Note::UiFailed { error, occurrence },
+        out.push(Action::Note(Note::UiFault {
+            recovery: fault.recovery,
+            error: fault.error,
+            occurrence,
         }));
         if self.phase.holds_tap() {
             out.push(Action::Release);
@@ -1100,7 +1105,10 @@ mod tests {
                 let mut expected = Vec::new();
                 if withheld.is_some() {
                     expected.push(Action::TellRefused(false));
-                    expected.push(note(Note::CaptureAllowed { elapsed_ms: 30 }));
+                    expected.push(note(Note::RefusalEnded {
+                        by: RefusalEnd::Frame,
+                        elapsed_ms: 30,
+                    }));
                 }
                 expected.extend([
                     Action::Deliver(frame()),
@@ -1437,7 +1445,10 @@ mod tests {
             video(Stage::Running),
             &[
                 Action::TellRefused(false),
-                note(Note::CaptureAllowed { elapsed_ms: 1500 }),
+                note(Note::RefusalEnded {
+                    by: RefusalEnd::Frame,
+                    elapsed_ms: 1500,
+                }),
                 Action::Deliver(frame()),
                 Action::Sleep(Duration::ZERO),
             ],
@@ -1549,7 +1560,10 @@ mod tests {
                 note(Note::VideoChanged(Video::Unavailable)),
                 Action::Release,
                 Action::TellRefused(false),
-                note(Note::RefusalEndedWithVideo { elapsed_ms: 700 }),
+                note(Note::RefusalEnded {
+                    by: RefusalEnd::KindChange,
+                    elapsed_ms: 700,
+                }),
             ];
             if ask.is_none() {
                 actions.push(Action::Idle);
@@ -1846,7 +1860,10 @@ mod tests {
             }
             expected.extend([
                 Action::TellRefused(false),
-                note(Note::RefusalEndedWithVideo { elapsed_ms: 400 }),
+                note(Note::RefusalEnded {
+                    by: RefusalEnd::KindChange,
+                    elapsed_ms: 400,
+                }),
                 Action::Idle,
             ]);
             check(
@@ -2084,7 +2101,8 @@ mod tests {
             at: t0,
         });
         let ui_failed = |occurrence| {
-            note(Note::UiFailed {
+            note(Note::UiFault {
+                recovery: UiRecovery::MayPass,
                 error: Error::other("interrupted"),
                 occurrence,
             })
@@ -2188,7 +2206,8 @@ mod tests {
             format!("{:?}", step_notes(&state.actions)),
             format!(
                 "{:?}",
-                [Note::UiUnsupported {
+                [Note::UiFault {
+                    recovery: UiRecovery::Unsupported,
                     error,
                     occurrence: Occurrence::First
                 }]
@@ -2330,9 +2349,10 @@ mod tests {
                 Event::UiOpenFailed(fault)
             };
             let occurrence = Occurrence::First;
-            let mut actions = vec![note(match ui {
-                UiSupport::Unsupported => Note::UiUnsupported { error, occurrence },
-                _ => Note::UiFailed { error, occurrence },
+            let mut actions = vec![note(Note::UiFault {
+                recovery,
+                error,
+                occurrence,
             })];
             if held {
                 actions.push(Action::Release);

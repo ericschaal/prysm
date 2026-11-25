@@ -4,9 +4,9 @@
 //!
 //! Every decision is [`phase::next`]'s; this shell reads the clock and the
 //! signal, tells the machine what happened and performs what it asks.
-use super::phase::{self, Action, Ask, Event, Kind, Note, Occurrence, Rules, State};
+use super::phase::{self, Action, Ask, Event, Kind, Note, Occurrence, RefusalEnd, Rules, State};
 use super::{Backend, Limits, Tap, UiTap};
-use crate::classify;
+use crate::classify::{self, UiRecovery};
 use crate::{Readiness, VideoSignal, WebosSettings};
 use prysm_ports::{Error, Result, Worker, chain};
 use std::time::{Duration, Instant};
@@ -226,24 +226,32 @@ fn log(note: Note) {
                 Occurrence::Again => tracing::debug!(initializations, since_change_ms, "{message}"),
             }
         }
-        Note::CaptureAllowed { elapsed_ms } => {
-            tracing::info!(elapsed_ms, "the TV lets Prysm capture this video again");
-        }
-        Note::RefusalEndedWithVideo { elapsed_ms } => {
-            tracing::debug!(elapsed_ms, "the refusal ended with the video");
-        }
+        Note::RefusalEnded { by, elapsed_ms } => match by {
+            RefusalEnd::Frame => {
+                tracing::info!(elapsed_ms, "the TV lets Prysm capture this video again");
+            }
+            RefusalEnd::KindChange => {
+                tracing::debug!(elapsed_ms, "the refusal ended with the video");
+            }
+        },
         Note::UiCapturing { width, height } => {
             tracing::info!(width, height, "capturing the TV UI while there is no video")
         }
-        Note::UiFailed { error, occurrence } => ui_fault(
+        Note::UiFault {
+            recovery,
+            error,
+            occurrence,
+        } => ui_fault(
             &error,
             occurrence,
-            "TV UI capture failed; tried again once the video signal changes",
-        ),
-        Note::UiUnsupported { error, occurrence } => ui_fault(
-            &error,
-            occurrence,
-            "TV UI capture is unsupported; no frames while there is no video",
+            match recovery {
+                UiRecovery::MayPass => {
+                    "TV UI capture failed; tried again once the video signal changes"
+                }
+                UiRecovery::Unsupported => {
+                    "TV UI capture is unsupported; no frames while there is no video"
+                }
+            },
         ),
         Note::VideoRetrying { error } => tracing::warn!(
             error = %chain(&error),
