@@ -121,6 +121,12 @@ pub(crate) fn video(cause: VideoCause<'_>) -> Recovery {
     }
 }
 
+/// What a release that did not confirm escalates as, for either tap: the
+/// driver may still hold the device, which only a new process frees.
+pub(crate) fn unconfirmed_release() -> Escalation {
+    Escalation::Restart
+}
+
 /// What the TV UI tap does after a fault. It never fails the source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UiRecovery {
@@ -314,6 +320,7 @@ mod tests {
         ] {
             assert_eq!(video(cause), recovery);
         }
+        assert_eq!(unconfirmed_release(), Escalation::Restart);
         assert_eq!(ui(UiCause::Capture), UiRecovery::MayPass);
         assert_eq!(ui(UiCause::SignalMask), UiRecovery::Unsupported);
     }

@@ -1225,6 +1225,7 @@ fn close_reports_failed_release() {
         chain(&error),
         "webOS video release is unconfirmed: vtCapture_stop failed with status 5"
     );
+    assert_eq!(error.escalation(), prysm_ports::Escalation::Restart);
 }
 
 /// A release that fails mid-run (here at a change of context) fails the
@@ -1239,9 +1240,12 @@ fn a_failed_release_mid_run_leaves_the_release_unconfirmed() {
     driver.with(|s| s.release_fails = true);
     video.reset();
     let unconfirmed = "webOS video release is unconfirmed: vtCapture_stop failed with status 5";
-    assert_eq!(chain(&failure(&mut frames)), unconfirmed);
+    let failed = failure(&mut frames);
+    assert_eq!(chain(&failed), unconfirmed);
+    assert_eq!(failed.escalation(), prysm_ports::Escalation::Restart);
     let error = close(frames).recv_timeout(LIMIT).unwrap().unwrap_err();
     assert_eq!(chain(&error), unconfirmed);
+    assert_eq!(error.escalation(), prysm_ports::Escalation::Restart);
     assert_eq!(
         (calls(&driver).0, calls(&driver).2),
         (1, 1),
