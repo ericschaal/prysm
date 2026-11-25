@@ -57,20 +57,6 @@ impl SessionEnd {
     }
 }
 
-/// How [`Session::stop`] found the session.
-pub(crate) enum Stop {
-    /// The thread stopped because it was asked to: the output was left in
-    /// the stop's mode, as `end.left` says.
-    AsAsked(SessionEnd),
-    /// The thread had ended on its own first. If it idled before the stop
-    /// asked, it left the output in [`UNASKED`], and the stop then put it
-    /// in its own mode through the session's output, unless the source's
-    /// release is unconfirmed: `end.left` is what the output was left in
-    /// last, or why that idle failed or did not return in time
-    /// ([`Error::Faulted`] with [`SessionPhase::IdlingOutput`]).
-    OnItsOwn(SessionEnd),
-}
-
 /// What the session thread hands back: how it ended, and its hold on the
 /// output for a stop that finds it ended in another mode.
 struct Finished {
@@ -341,17 +327,20 @@ impl Session {
         self.control.ended.load(Ordering::Acquire)
     }
 
-    /// Stop, release, idle with `mode` and join within `deadline`. A thread
-    /// that had ended on its own and idled before this stop asked left the
-    /// output in [`UNASKED`]: unless that is `mode` or its source's release
-    /// is unconfirmed, the output is then put in `mode` through the
-    /// session's own output, on a blocking thread and within the same
-    /// deadline, and the end's `left` says how that went.
+    /// Stop, release, idle with `mode` and join within `deadline`. The
+    /// end's exit is [`Exit::Stopped`] when the thread stopped as asked,
+    /// the output left in `mode`. A thread that had ended on its own and
+    /// idled before this stop asked left the output in [`UNASKED`]: unless
+    /// that is `mode` or its source's release is unconfirmed, the output is
+    /// then put in `mode` through the session's own output, on a blocking
+    /// thread and within the same deadline, and the end's `left` says how
+    /// that went: also [`Error::Faulted`] with
+    /// [`SessionPhase::IdlingOutput`] when it did not return in time.
     ///
     /// # Errors
     /// [`Error::Faulted`] with the phase the thread is stuck in when the
     /// deadline passes (the thread is then abandoned), or [`Error::Panicked`].
-    pub async fn stop(self, mode: IdleMode, deadline: Duration) -> Result<Stop> {
+    pub async fn stop(self, mode: IdleMode, deadline: Duration) -> Result<SessionEnd> {
         let until = tokio::time::Instant::now() + deadline;
         // Set before the stop request: a thread that sees the request reads it.
         let _ = self.control.stop_mode.set(mode);
@@ -361,15 +350,12 @@ impl Session {
             mut leds,
             output,
         } = self.worker.stop(deadline).await.map_err(Error::Faulted)??;
-        if matches!(end.exit, Exit::Stopped) {
-            return Ok(Stop::AsAsked(end));
-        }
-        // Idled in `mode` already (the thread read it before idling; a
-        // failure there is not tried twice), or a session whose source may
-        // still hold its device, which is not trusted with the output in
-        // another mode.
-        if idled_in == mode || end.released.is_err() {
-            return Ok(Stop::OnItsOwn(end));
+        // Stopped as asked, or idled in `mode` already (the thread read it
+        // before idling; a failure there is not tried twice), or a session
+        // whose source may still hold its device, which is not trusted with
+        // the output in another mode.
+        if matches!(end.exit, Exit::Stopped) || idled_in == mode || end.released.is_err() {
+            return Ok(end);
         }
         // The stop's idle replaces the thread's; its failure is said here.
         if let Err(error) = &end.left {
@@ -384,7 +370,7 @@ impl Session {
             Ok(left) => left.unwrap_or(Err(Error::Panicked("idling the output"))),
             Err(_) => Err(Error::Faulted(SessionPhase::IdlingOutput)),
         };
-        Ok(Stop::OnItsOwn(SessionEnd { left, ..end }))
+        Ok(SessionEnd { left, ..end })
     }
 
     /// Join after [`Session::finished`] returned.
@@ -457,10 +443,9 @@ mod tests {
 
     /// A stop as asked, within [`ENDS_AT_ONCE`]; its end.
     async fn stopped_at_once(session: Session, mode: IdleMode) -> SessionEnd {
-        let stopped = within_async(ENDS_AT_ONCE, session.stop(mode, LATE)).await;
-        let Ok(Stop::AsAsked(end)) = stopped else {
-            panic!("stopped as asked");
-        };
+        let end = within_async(ENDS_AT_ONCE, session.stop(mode, LATE))
+            .await
+            .unwrap();
         assert!(matches!(end.exit, Exit::Stopped), "{:?}", end.exit);
         assert!(end.released.is_ok());
         end
@@ -669,9 +654,7 @@ mod tests {
     async fn a_stop_after_an_own_end_puts_the_output_in_its_mode() {
         let log = CallLog::new();
         let session = ended_on_its_own(&log, Default::default(), Default::default()).await;
-        let Stop::OnItsOwn(end) = session.stop(IdleMode::Native, DEADLINE).await.unwrap() else {
-            panic!("it ended on its own");
-        };
+        let end = session.stop(IdleMode::Native, DEADLINE).await.unwrap();
         assert!(matches!(end.exit, Exit::Failed(_)));
         assert!(matches!(end.left, Ok(IdleMode::Native)));
         assert_eq!(log.count("output.idle:o:Native"), 1);
@@ -687,9 +670,8 @@ mod tests {
             ..Default::default()
         };
         let session = ended_on_its_own(&log, unreleased, Default::default()).await;
-        let Stop::OnItsOwn(end) = session.stop(IdleMode::Native, DEADLINE).await.unwrap() else {
-            panic!("it ended on its own");
-        };
+        let end = session.stop(IdleMode::Native, DEADLINE).await.unwrap();
+        assert!(matches!(end.exit, Exit::Failed(_)), "it ended on its own");
         assert!(end.released.is_err());
         assert!(matches!(end.left, Ok(IdleMode::Off)), "left as it was");
         assert_eq!(log.count("output.idle:o:Native"), 0);
@@ -698,7 +680,7 @@ mod tests {
     /// A session whose source fails once a stop for `Native` was asked: the
     /// thread is inside the source's call, so it cannot see the stop before
     /// the failure. The stop is asked (its first poll), then the source fails.
-    async fn asked_then_failing(log: &CallLog, output: FakeOutputSettings) -> Result<Stop> {
+    async fn asked_then_failing(log: &CallLog, output: FakeOutputSettings) -> Result<SessionEnd> {
         let failing = FakeSourceSettings {
             fail_after: Some(2),
             fail_at: Some("test.fail".into()),
@@ -728,9 +710,7 @@ mod tests {
         let (stopped, ()) = tokio::join!(session.stop(IdleMode::Off, DEADLINE), async {
             log.record("test.fail");
         });
-        let Stop::OnItsOwn(end) = stopped.unwrap() else {
-            panic!("it failed on its own");
-        };
+        let end = stopped.unwrap();
         let Exit::Failed(failure) = &end.exit else {
             panic!("the write failed: {:?}", end.exit);
         };
@@ -744,10 +724,9 @@ mod tests {
     #[tokio::test]
     async fn an_own_end_after_a_stop_was_asked_idles_once_in_its_mode() {
         let log = CallLog::new();
-        let stopped = asked_then_failing(&log, FakeOutputSettings::default()).await;
-        let Stop::OnItsOwn(end) = stopped.unwrap() else {
-            panic!("it failed on its own");
-        };
+        let end = asked_then_failing(&log, FakeOutputSettings::default())
+            .await
+            .unwrap();
         assert!(matches!(end.exit, Exit::Failed(_)));
         assert!(matches!(end.left, Ok(IdleMode::Native)));
         assert_eq!(log.count("output.idle:o:Off"), 0);
@@ -763,9 +742,8 @@ mod tests {
             idle: FakeIdle::Fails,
             ..Default::default()
         };
-        let Stop::OnItsOwn(end) = asked_then_failing(&log, failing).await.unwrap() else {
-            panic!("it failed on its own");
-        };
+        let end = asked_then_failing(&log, failing).await.unwrap();
+        assert!(matches!(end.exit, Exit::Failed(_)), "it failed on its own");
         assert!(end.left.is_err(), "the idle in the asked mode failed");
         assert_eq!(log.count("output.idle:o:Native"), 1, "tried once");
     }
@@ -783,9 +761,8 @@ mod tests {
         let stopped = session
             .stop(IdleMode::Native, Duration::from_millis(300))
             .await;
-        let Ok(Stop::OnItsOwn(end)) = stopped else {
-            panic!("the end is kept");
-        };
+        let end = stopped.expect("the end is kept");
+        assert!(matches!(end.exit, Exit::Failed(_)), "it failed on its own");
         assert!(matches!(
             end.left,
             Err(Error::Faulted(SessionPhase::IdlingOutput))

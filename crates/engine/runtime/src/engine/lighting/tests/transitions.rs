@@ -1,7 +1,6 @@
 //! One literal table per transition: what each happening leaves.
 use super::*;
 use crate::leds::UNANSWERED_INTERVAL;
-use crate::session::Stop;
 use prysm_ports::Escalation;
 use std::time::Duration;
 
@@ -75,8 +74,8 @@ fn an_ended_source_completes_screen_sync() {
 fn a_stop_leaves_what_it_reported() {
     use IdleMode::{Native, Off};
     use SessionPhase::{IdlingOutput, SourceUnreleased};
-    let asked = |released, left| Ok(Stop::AsAsked(end(Exit::Stopped, released, left)));
-    let own = || Ok(Stop::OnItsOwn(end(Exit::Ended, true, Ok(Off))));
+    let asked = |released, left| Ok(end(Exit::Stopped, released, left));
+    let own = || Ok(end(Exit::Ended, true, Ok(Off)));
     let fault = |phase| Some(Kind::Faulted(phase));
     // (mode, stop) against (outcome, lighting left, reply is ok)
     #[rustfmt::skip]

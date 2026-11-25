@@ -3,7 +3,7 @@
 use super::Lighting;
 use super::publish::log_unpublished;
 use crate::engine::Core;
-use crate::session::{SessionEnd, Stop};
+use crate::session::SessionEnd;
 use crate::worker::Exit;
 use prysm_ports::{Error, IdleMode, Result};
 
@@ -21,14 +21,10 @@ impl Core {
         };
         // The thread is releasing what it holds: wait for it within the
         // stop deadline. `Off` is the mode it leaves the output in.
-        let end = match running
+        let end = running
             .session
             .stop(IdleMode::Off, self.stop_deadline)
-            .await
-        {
-            Ok(Stop::AsAsked(end) | Stop::OnItsOwn(end)) => Ok(end),
-            Err(error) => Err(error),
-        };
+            .await;
         let result = self.ended(end);
         log_unpublished(&self.lighting, &result);
     }

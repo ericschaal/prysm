@@ -13,7 +13,7 @@ mod tests;
 
 use crate::leds::{UNANSWERED_INTERVAL, UNREACHABLE};
 use crate::meter::Meter;
-use crate::session::{Session, SessionEnd, Stop};
+use crate::session::{Session, SessionEnd};
 use crate::worker::Exit;
 use prysm_ports::{
     DeviceReport, Error, Escalation, IdleMode, LightingTarget, Result, Section, SessionPhase,
@@ -138,19 +138,19 @@ impl Lighting {
     }
 
     /// What stopping the running session for `mode` leaves, from what the
-    /// stop reported.
-    pub(super) fn stopped(mode: IdleMode, stop: Result<Stop>) -> Stopped {
+    /// stop reported: an exit other than [`Exit::Stopped`] ended on its own.
+    pub(super) fn stopped(mode: IdleMode, stop: Result<SessionEnd>) -> Stopped {
         match stop {
             Err(error) => Stopped::Failed {
                 lighting: Self::failed(&error),
                 error,
             },
-            Ok(Stop::AsAsked(end)) => Stopped::Idled {
+            Ok(end) if matches!(end.exit, Exit::Stopped) => Stopped::Idled {
                 lighting: Self::left_by(&end),
                 reply: end.result(),
             },
-            Ok(Stop::OnItsOwn(end)) if mode == IdleMode::Native => Stopped::ReplacedByEffects(end),
-            Ok(Stop::OnItsOwn(end)) => Stopped::Ended(end),
+            Ok(end) if mode == IdleMode::Native => Stopped::ReplacedByEffects(end),
+            Ok(end) => Stopped::Ended(end),
         }
     }
 
