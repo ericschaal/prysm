@@ -12,7 +12,13 @@ import {
   useRef,
   useState,
 } from 'react';
-import { fullPortal, type Flavor, type TvService } from '@prysm/webos-platform';
+import {
+  fullPortal,
+  isEnabled,
+  type Flavor,
+  type State,
+  type TvService,
+} from '@prysm/webos-platform';
 import {
   failureOf,
   lightingSituation,
@@ -20,14 +26,7 @@ import {
 } from '@prysm/application-client';
 import { CalibrationScreen, QrCode } from './calibration';
 import { Dialogs, type DialogId } from './dialogs';
-import {
-  calibrationBlocker,
-  localPortal,
-  retrySeconds,
-  shown,
-  tvScreen,
-  tvStatus,
-} from './model';
+import { localPortal, shown } from './preferences';
 import { qrCode } from './qr';
 import { useRemoteNavigation } from './navigation';
 import { msePatternPlayer, type PatternPlayer } from './patterns';
@@ -36,8 +35,11 @@ import {
   checkPortal,
   usePortal,
   type PortalOptions,
+  type PortalView,
 } from './portal-connection';
+import { retrySeconds, tvScreen } from './screen';
 import { useTvService, type Retry } from './service';
+import { tvStatus } from './status';
 import './tv.css';
 
 const parents: Partial<Record<DialogId, DialogId>> = {
@@ -128,6 +130,31 @@ function addressWarning(reach: 'refused' | 'unreachable') {
   return reach === 'refused'
     ? 'Saved. Prysm answers there but doesn’t take commands from the TV; capture still works. The TV guide shows how to allow it.'
     : 'Saved. No Prysm answers at that address yet. Check that Prysm is running and the address is right.';
+}
+
+/**
+ * Why the lights cannot be calibrated from this TV's picture, or `null`.
+ * `tv` is the supervisor's state; `address` the slim package's Prysm address.
+ */
+function calibrationBlocker(
+  flavor: Flavor,
+  player: PatternPlayer,
+  portal: PortalView,
+  tv: State | null,
+  address: string | null,
+): string | null {
+  if (!player.supported || !portal.supported) return 'Needs a newer TV';
+  // Before the service answers, the address is not known yet.
+  if (!tv) return 'Waiting for Prysm';
+  if (flavor === 'slim' && !address) return 'Add the address first';
+  if (flavor === 'slim' && !isEnabled(tv)) return 'Start capture first';
+  const { snapshot } = portal;
+  if (!snapshot) return 'Waiting for Prysm';
+  if (!snapshot.settings.capture || !snapshot.settings.output)
+    return 'Set up lights first';
+  if (flavor === 'slim' && snapshot.settings.capture.kind !== 'remote')
+    return 'Uses another picture';
+  return null;
 }
 
 export function TvApp({

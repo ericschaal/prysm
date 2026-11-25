@@ -13,9 +13,13 @@ import {
   type Ref,
 } from 'react';
 import type { Pattern } from '@prysm/application-client';
-import { calibrationUrl, shown } from './model';
+import { shown } from './preferences';
 import { WAITING_PATTERN, type PatternPlayer } from './patterns';
 import { qrCode } from './qr';
+
+/** The portal page the phone opens, from the portal address the TV shows. */
+const calibrationUrl = (portal: string) =>
+  `${portal.replace(/\/+$/, '')}/#/calibrate`;
 
 /**
  * A QR code with a four-module quiet zone. Without `id` it is decorative: the

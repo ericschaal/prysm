@@ -336,7 +336,7 @@ supervisor in each of its states and play the phone's calibration part). See the
   total in the screen), and the
   [null output](packages/output-null-ui/index.tsx).
 - [TV UI](packages/tv-ui/app.tsx) (both packages): status card from the
-  supervisor's state ([rules](packages/tv-ui/model.ts)), with the capture
+  supervisor's state ([rules](packages/tv-ui/status/index.ts)), with the capture
   rate and a countdown to a pending restart (counted from when the state
   arrived; its bar runs on through later states of the same wait); the full
   package's headline says what the lights do from the portal's state, so it

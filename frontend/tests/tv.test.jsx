@@ -23,19 +23,21 @@ import {
   lunaTvService,
 } from '@prysm/webos-platform';
 import { TvApp } from '@prysm/tv-ui';
+import { diagnostics } from '../packages/tv-ui/diagnostics';
 import {
-  captureRate,
-  diagnostics,
-  encodingName,
+  completePreferences,
   localPortal,
   prysmAddress,
-  retrySeconds,
   sentPreferences,
   shown,
+} from '../packages/tv-ui/preferences';
+import {
+  captureRate,
+  encodingName,
+  retrySeconds,
   tvScreen,
-  tvStatus,
-  completePreferences,
-} from '../packages/tv-ui/model';
+} from '../packages/tv-ui/screen';
+import { tvStatus } from '../packages/tv-ui/status';
 import { initialService, serviceReducer } from '../packages/tv-ui/service';
 import { fakeApplicationPort } from '../testkit/application';
 import { fakeTvSupervisor } from '../testkit/luna';

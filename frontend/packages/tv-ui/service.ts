@@ -27,7 +27,7 @@ import {
   completePreferences,
   sentPreferences,
   type SavedPreferences,
-} from './model';
+} from './preferences';
 
 type Saved = SavedPreferences;
 type Edits = Partial<Saved>;
