@@ -39,7 +39,7 @@ pub(super) enum Lighting {
     /// ([`Lighting::after_idle`]). Their mode is not known meanwhile.
     Unanswered {
         mode: IdleMode,
-        /// The request they did not answer first.
+        /// When these lights first did not answer, in whichever mode.
         since: Instant,
         again: Instant,
     },
@@ -225,8 +225,9 @@ impl Lighting {
 
     /// What a request putting these lights in `mode` leaves at `now`: what
     /// it `left` and its `reply`, or a wait for the lights by
-    /// [`Self::waits_for`], tried again every [`UNANSWERED_INTERVAL`]. These
-    /// lights hold no session: a stop takes it out first.
+    /// [`Self::waits_for`], tried again every [`UNANSWERED_INTERVAL`]. A
+    /// wait is for the lights, not one request: it goes on in the mode
+    /// asked now. These lights hold no session: a stop takes it out first.
     pub(super) fn after_idle(
         &self,
         mode: IdleMode,
@@ -252,11 +253,7 @@ impl Lighting {
         };
         let again = now + UNANSWERED_INTERVAL;
         match *self {
-            Self::Unanswered {
-                mode: waiting,
-                since,
-                ..
-            } if waiting == mode => Idled::WaitGoesOn {
+            Self::Unanswered { since, .. } => Idled::WaitGoesOn {
                 lighting: Self::Unanswered { mode, since, again },
                 error,
             },
@@ -287,7 +284,8 @@ impl Kind {
     /// The step from these lights towards `target`. `restart`: a running
     /// session's adapters changed, so it is replaced; `output_changed`: the
     /// output may be another device, so an output showing its effects is
-    /// put in that mode again.
+    /// put in that mode again, and a wait for the lights is one of the new
+    /// output's.
     pub(super) fn towards(
         self,
         target: LightingTarget,
@@ -295,6 +293,7 @@ impl Kind {
         output_changed: bool,
     ) -> Step {
         use LightingTarget as Target;
+        let ends_wait = self == Self::Unanswered && output_changed;
         match (target, self) {
             // Requests are refused before they get here (see
             // `Core::refusal`); this keeps the match total.
@@ -310,11 +309,17 @@ impl Kind {
             (Target::Effects, Self::ScreenSync) => Step::Stop(IdleMode::Native),
             (Target::Effects, Self::Effects) if !output_changed => Step::Stay,
             // Also while waiting for the lights: they are asked again now.
-            (Target::Effects, _) => Step::Idle(IdleMode::Native),
+            (Target::Effects, _) => Step::Idle {
+                mode: IdleMode::Native,
+                ends_wait,
+            },
             (Target::Off, Self::ScreenSync) => Step::Stop(IdleMode::Off),
             // Also while waiting for the lights, whatever output was saved:
             // it may be the same lights, which the wait never reached.
-            (Target::Off, Self::Effects | Self::Unanswered) => Step::Idle(IdleMode::Off),
+            (Target::Off, Self::Effects | Self::Unanswered) => Step::Idle {
+                mode: IdleMode::Off,
+                ends_wait,
+            },
             // A command that does nothing about the output keeps a failure
             // that says the lights may not be off: it is still true. Other
             // lights make it no longer so.
@@ -337,8 +342,9 @@ pub(super) enum Step {
     Restart,
     /// Stop the running session for this mode.
     Stop(IdleMode),
-    /// Put the output in this mode without a session.
-    Idle(IdleMode),
+    /// Put the output in `mode` without a session; `ends_wait`: stop
+    /// waiting for the lights first.
+    Idle { mode: IdleMode, ends_wait: bool },
     /// Reply with the failure that says the lights may not be off, if one is
     /// published ([`Lighting::may_not_be_off`]).
     MayNotBeOff,
@@ -375,8 +381,8 @@ pub(super) enum Idled {
     /// The lights did not answer (`error`): a wait begins. Publish
     /// `lighting`; the reply is success.
     WaitBegins { lighting: Lighting, error: Error },
-    /// They still do not answer: `lighting`, the next try moved, replaces
-    /// the lights unpublished; the reply is success.
+    /// They still do not answer: `lighting`, in the mode asked and the next
+    /// try moved, replaces the lights unpublished; the reply is success.
     WaitGoesOn { lighting: Lighting, error: Error },
 }
 

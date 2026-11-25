@@ -76,7 +76,13 @@ impl Core {
                 self.start(device).await
             }
             Step::Stop(mode) => self.stop(mode).await,
-            Step::Idle(mode) => self.idle_output(mode).await,
+            Step::Idle { mode, ends_wait } => {
+                if ends_wait {
+                    // Unpublished: the idle publishes what it leaves.
+                    self.lighting = Lighting::Stopped;
+                }
+                self.idle_output(mode).await
+            }
             Step::MayNotBeOff => self.off_may_not_be_off().map_or(Ok(()), Err),
         }
     }

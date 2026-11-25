@@ -86,10 +86,10 @@ async fn unanswered_effects_are_waited_for_until_the_lights_answer() {
     engine.shutdown().await.unwrap();
 }
 
-/// Off after effects the lights did not answer: the command ends that wait
-/// at once, its own request is tried at once and waited for in turn.
+/// Off after effects the lights did not answer: tried at once, and the
+/// wait goes on for `Off`; effects are not tried again.
 #[tokio::test(start_paused = true)]
-async fn unanswered_off_is_waited_for_and_a_new_target_ends_a_wait_at_once() {
+async fn unanswered_off_is_waited_for_and_a_new_target_is_tried_at_once() {
     let log = CallLog::new();
     let (handle, engine, _) = start(&log, silent(), DEADLINE).await;
     handle.set_target(LightingTarget::Effects).await.unwrap();

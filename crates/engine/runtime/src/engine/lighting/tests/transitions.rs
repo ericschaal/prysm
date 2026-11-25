@@ -113,6 +113,14 @@ fn every_step_towards_a_target() {
     let faulted = Kind::Faulted(SessionPhase::SourceUnreleased);
     let fault = Step::Faulted(SessionPhase::SourceUnreleased);
     let (start, after_wait) = (Start { ends_wait: false }, Start { ends_wait: true });
+    let idle = |mode| Idle {
+        mode,
+        ends_wait: false,
+    };
+    let other = |mode| Idle {
+        mode,
+        ends_wait: true,
+    };
     #[rustfmt::skip]
     let cases = [
         (Target::ScreenSync, Stopped,    [start; 4]),
@@ -120,15 +128,15 @@ fn every_step_towards_a_target() {
         (Target::ScreenSync, ScreenSync, [Stay, Stay, Restart, Restart]),
         (Target::ScreenSync, Unanswered, [after_wait; 4]),
         (Target::ScreenSync, faulted,    [fault; 4]),
-        (Target::Effects,    Stopped,    [Idle(Native); 4]),
-        (Target::Effects,    Effects,    [Stay, Idle(Native), Stay, Idle(Native)]),
+        (Target::Effects,    Stopped,    [idle(Native); 4]),
+        (Target::Effects,    Effects,    [Stay, idle(Native), Stay, idle(Native)]),
         (Target::Effects,    ScreenSync, [Stop(Native); 4]),
-        (Target::Effects,    Unanswered, [Idle(Native); 4]),
+        (Target::Effects,    Unanswered, [idle(Native), other(Native), idle(Native), other(Native)]),
         (Target::Effects,    faulted,    [fault; 4]),
         (Target::Off,        Stopped,    [MayNotBeOff, Stay, MayNotBeOff, Stay]),
-        (Target::Off,        Effects,    [Idle(Off); 4]),
+        (Target::Off,        Effects,    [idle(Off); 4]),
         (Target::Off,        ScreenSync, [Stop(Off); 4]),
-        (Target::Off,        Unanswered, [Idle(Off); 4]),
+        (Target::Off,        Unanswered, [idle(Off), other(Off), idle(Off), other(Off)]),
         (Target::Off,        faulted,    [fault; 4]),
     ];
     let flags = [(false, false), (false, true), (true, false), (true, true)];
@@ -248,8 +256,9 @@ fn unanswered_lights_are_waited_for_only_by_the_rule() {
 }
 
 /// What a request putting the lights in a mode leaves, from the lights
-/// before it: a wait begins, goes on (its first request kept), or ends,
-/// saying how long the lights took to answer.
+/// before it: a wait begins, goes on in the mode asked (its first silence
+/// kept, whatever mode that was asked in), or ends, saying how long the
+/// lights did not answer.
 #[test]
 fn a_request_the_lights_do_not_answer_begins_or_continues_a_wait() {
     use IdleMode::{Native, Off};
@@ -264,7 +273,7 @@ fn a_request_the_lights_do_not_answer_begins_or_continues_a_wait() {
     };
     let (stopped, effects) = (|| Lighting::Stopped, || Lighting::Effects);
     let begins = |mode| ("begins", Some((mode, now, again)), true, None);
-    let goes_on = ("goes on", Some((Off, first, again)), true, None);
+    let goes_on = |mode| ("goes on", Some((mode, first, again)), true, None);
     let left = |ok, answered| ("left", None, ok, answered);
     let ten = Some(Duration::from_secs(10));
     // (before, mode, left, reply, target, shutting down) against (outcome,
@@ -272,9 +281,10 @@ fn a_request_the_lights_do_not_answer_begins_or_continues_a_wait() {
     #[rustfmt::skip]
     let cases = [
         (stopped(),     Off,    stopped(), Err(unanswered()), Target::Off,     false, begins(Off)),
-        (waiting(Off),  Off,    stopped(), Err(unanswered()), Target::Off,     false, goes_on),
-        (waiting(Off),  Native, stopped(), Err(unanswered()), Target::Effects, false, begins(Native)),
+        (waiting(Off),  Off,    stopped(), Err(unanswered()), Target::Off,     false, goes_on(Off)),
+        (waiting(Off),  Native, stopped(), Err(unanswered()), Target::Effects, false, goes_on(Native)),
         (waiting(Off),  Off,    stopped(), Ok(()),            Target::Off,     false, left(true, ten)),
+        (waiting(Off),  Native, effects(), Ok(()),            Target::Effects, false, left(true, ten)),
         (waiting(Native), Native, effects(), Ok(()),          Target::Effects, false, left(true, ten)),
         (stopped(),     Off,    stopped(), Err(unanswered()), Target::Off,     true,  left(false, None)),
         (waiting(Off),  Off,    stopped(), Err(failure()),    Target::Off,     false, left(false, None)),
