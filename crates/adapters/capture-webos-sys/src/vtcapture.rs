@@ -395,14 +395,14 @@ fn check_luna() -> Result<(), Error> {
 }
 
 impl VtCapture {
-    /// Load the library, check Luna permission, create the driver and try to
-    /// start capture once. A tap that is not ready yet, or whose video the TV
-    /// refuses, still opens; see [`Acquired::NotReady`] and
-    /// [`Acquired::Refused`].
+    /// Load the library, check Luna permission and create the driver. The
+    /// tap opens [`Self::created_only`]: its first [`Self::acquire`]
+    /// initializes and starts the driver.
     ///
     /// # Errors
-    /// Library, permission or native failures; [`Error::is_fatal`] says
-    /// whether the process must restart before retrying.
+    /// Invalid options, or library, permission or driver creation failures;
+    /// [`Error::is_fatal`] says whether the process must restart before
+    /// retrying.
     pub fn open(options: &Options) -> Result<Self, Error> {
         let properties = Properties {
             dump: if options.include_ui { 3 } else { 2 },
@@ -430,19 +430,18 @@ impl VtCapture {
             .and_then(|code| status(code, "vtCapture_create"))
             .map_err(|error| Error::Create(Box::new(error)))?;
         let driver = NonNull::new(driver).ok_or(Error::Invalid("null driver"))?;
-        let mut this = Self {
+        let mut client = Box::new([0; 128]);
+        // `c_char` is `u8` on ARM (the TV) and `i8` on x86: convert portably.
+        client[..2].fill(c_char::from_ne_bytes(*b"0"));
+        Ok(Self {
             api,
             driver,
-            client: Box::new([0; 128]),
+            client,
             stage: Stage::Working(Reached::Created),
             plane: PlaneInfo::default(),
             properties: Box::new(properties),
             _thread: PhantomData,
-        };
-        // `c_char` is `u8` on ARM (the TV) and `i8` on x86: convert portably.
-        this.client[..2].fill(c_char::from_ne_bytes(*b"0"));
-        this.step(Self::prepare)?;
-        Ok(this)
+        })
     }
 
     /// Runs `step` on a working tap. An error fails the tap, so the next
@@ -568,8 +567,8 @@ impl VtCapture {
         })
     }
 
-    /// Prepare the driver if a re-initialization is due, then ask for its
-    /// current buffer.
+    /// Prepare the driver if it is not started (just opened, or due for a
+    /// re-initialization), then ask for its current buffer.
     fn next(&mut self) -> Result<Next, Error> {
         let unprepared = matches!(
             self.stage,
@@ -598,10 +597,11 @@ impl VtCapture {
         })
     }
 
-    /// The driver is created and not initialized: its open or last
-    /// acquisition answered [`Acquired::NotReady`] or [`Acquired::Refused`],
-    /// so releasing it undoes only its creation, and the next acquisition
-    /// initializes it. `false` once a driver call failed.
+    /// The driver is created and not initialized: the tap is just opened, or
+    /// its last acquisition answered [`Acquired::NotReady`] or
+    /// [`Acquired::Refused`], so releasing it undoes only its creation, and
+    /// the next acquisition initializes it. `false` once a driver call
+    /// failed.
     #[must_use]
     pub fn created_only(&self) -> bool {
         self.stage == Stage::Working(Reached::Created)
@@ -833,6 +833,23 @@ mod tests {
         let mut output = vec![0; frame.width as usize * frame.height as usize * 3 / 2];
         frame.copy_to(&mut output).unwrap();
         output
+    }
+
+    /// A tap as `open` leaves it, created only: its first acquisition
+    /// initializes and starts the driver once, then asks for a buffer.
+    #[test]
+    fn the_first_acquisition_initializes_an_opened_tap() {
+        let fake = Fake::new(0);
+        let mut capture = fake.capture(Reached::Created);
+        assert!(capture.created_only());
+        assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
+        assert!(!capture.created_only());
+        assert_eq!(
+            fake.with(|driver| (driver.initializations, driver.buffers)),
+            (1, 1)
+        );
+        capture.release().unwrap();
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }
 
     #[test]

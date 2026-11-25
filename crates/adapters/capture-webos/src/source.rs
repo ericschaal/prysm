@@ -68,7 +68,8 @@ impl Fault {
 pub(crate) trait Tap {
     fn acquire(&mut self) -> Result<Acquired, Fault>;
     /// Its driver is created and not initialized, as the driver itself
-    /// says: releasing it undoes only the creation, and the next
+    /// says (a video tap is after its open, and after a refused or
+    /// not-ready initialization): releasing it undoes only the creation, and the next
     /// acquisition initializes it. A tap without a separate initialization
     /// (the TV UI) never is.
     fn created_only(&self) -> bool {

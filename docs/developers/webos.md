@@ -158,8 +158,8 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   and its milliseconds); a refusal that ends with a not-ready answer, a
   native failure or video gone is debug. Each initialization's answer, and
   each signal change, is debug, except one info line per change of `video`. A
-  fresh tap's open already ran one initialization on the TV that these
-  counts leave out.
+  tap's open only creates the driver; its first acquisition initializes
+  it, so these counts include every initialization.
 - The supervisor reaps a worker before starting another (or lets go of one
   still not reaped 8 s after its KILL). Failures back off
   from 1 s doubling to 30 s; 60 s of running resets the backoff.

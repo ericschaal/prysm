@@ -737,6 +737,19 @@ fn recoverable_failure_reopens_without_an_error() {
     closes_cleanly(frames);
 }
 
+/// A tap's open only creates its driver, so a failed initialization is
+/// its first acquisition's fault: the tap is released once and reopened.
+#[test]
+fn a_failed_first_acquisition_releases_and_reopens_the_tap() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    driver.push([Step::Fail { fatal: false }, Step::Frame(3)]);
+    let mut frames = start(&driver, &video);
+    assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
+    assert_eq!(calls(&driver), (2, 2, 1));
+    closes_cleanly(frames);
+}
+
 #[test]
 fn fatal_failure_propagates_with_its_cause_and_release_is_certified() {
     let driver = Driver::new();
