@@ -168,6 +168,16 @@ pub enum OutputIssue {
     Unreachable,
 }
 
+impl OutputIssue {
+    pub const ALL: [Self; 5] = [
+        Self::Off,
+        Self::Overridden,
+        Self::NotLive,
+        Self::OtherSender,
+        Self::Unreachable,
+    ];
+}
+
 impl std::fmt::Display for OutputIssue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {

@@ -217,13 +217,7 @@ mod tests {
         for target in LightingTarget::ALL {
             assert_mirror_round_trips::<LightingTarget, LightingTargetSchema>(&target);
         }
-        for issue in [
-            OutputIssue::Off,
-            OutputIssue::Overridden,
-            OutputIssue::NotLive,
-            OutputIssue::OtherSender,
-            OutputIssue::Unreachable,
-        ] {
+        for issue in OutputIssue::ALL {
             assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
         }
         for kind in [

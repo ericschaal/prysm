@@ -785,13 +785,7 @@ mod tests {
             ..Input::default()
         });
         assert_mirror_round_trips::<Input, InputSchema>(&Input::default());
-        for issue in [
-            OutputIssue::Off,
-            OutputIssue::Overridden,
-            OutputIssue::NotLive,
-            OutputIssue::OtherSender,
-            OutputIssue::Unreachable,
-        ] {
+        for issue in OutputIssue::ALL {
             assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
         }
         assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport::default());
