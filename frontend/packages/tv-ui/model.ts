@@ -7,6 +7,7 @@ import {
   unreachable,
   unusableSettings,
   type LightingSituation,
+  type OutputIssue,
   type Picture,
 } from '@prysm/application-client';
 import {
@@ -181,6 +182,39 @@ export interface PortalFacts {
    * headline follows it, so it never disagrees with the lights card.
    */
   lighting?: LightingSituation;
+  /** Why the lights don't show screen sync, by the portal's own state. */
+  issue?: OutputIssue | null;
+}
+
+/**
+ * Full: why the lights don't show screen sync (also while they don't
+ * answer), as the lights card says it: by the portal's state once it is
+ * known, as the worker last said before.
+ */
+function lightsIssue(
+  state: State,
+  portal: PortalFacts | null,
+): OutputIssue | null {
+  if (!portal?.lighting) return fullLights(state);
+  return portal.lighting.kind === 'sync' ? (portal.issue ?? null) : null;
+}
+
+/**
+ * The detail under an issue's headline. Only lights that don't answer come
+ * back by themselves; for every other issue (a newer one too) the person
+ * acts, as the lights card says.
+ */
+function issueDetail(issue: OutputIssue): string {
+  switch (issue) {
+    case 'unreachable':
+      return 'The lights follow again as soon as they answer.';
+    case 'off':
+    case 'overridden':
+    case 'not_live':
+    case 'other_sender':
+    default:
+      return 'See Your lights for what to do.';
+  }
 }
 
 /** The target a running or starting situation was asked for. */
@@ -383,8 +417,7 @@ export function tvStatus(
         lighting?.kind === 'sync' && lighting.input
           ? pictureOf(lighting.input)
           : undefined;
-      // Why the lights don't show screen sync, as the worker last said.
-      const lights = fullLights(state);
+      const lights = lightsIssue(state, portal);
       // Without the portal's measure yet, the TV's own word.
       const flowing = lighting
         ? lighting.kind === 'sync' &&
@@ -404,9 +437,11 @@ export function tvStatus(
         description = 'Your lights run their own effects.';
       } else if (lights) {
         // Lighting runs, but the lights don't show it (also while they don't
-        // answer); the lights card says why, as for a refused video.
+        // answer); the lights card says why, as for a refused video. The
+        // card has no tone but attention: the portal's warning and problem
+        // are both said with it.
         title = outputIssueHeadline(lights);
-        description = 'The lights follow again as soon as they can.';
+        description = issueDetail(lights);
         attention = true;
       } else if (flowing) {
         title = 'Screen sync on';

@@ -176,6 +176,7 @@ export function TvApp({
           lights: !!snapshot.settings.output,
           address: portalAddress,
           lighting: lightingSituation(snapshot),
+          issue: snapshot.device.issue ?? null,
         }
       : null,
   );

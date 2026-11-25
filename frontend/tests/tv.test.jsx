@@ -319,15 +319,17 @@ test('values newer than the app have one reading each', () => {
     ...state(),
     worker: { phase: 'unknown' },
   });
-  // A newer lights issue is kept; the status card says it in general words.
+  // A newer lights issue is kept; the status card says it in general words
+  // and points to the lights card.
   const dimmed = {
     ...state(),
     worker: { ...state().worker, lights: 'dimmed' },
   };
   assert.deepEqual(decodeState(dimmed), dimmed);
-  assert.equal(
-    tvStatus(live(decodeState(dimmed)), completePreferences({})).title,
-    'Not showing screen sync',
+  const newer = tvStatus(live(decodeState(dimmed)), completePreferences({}));
+  assert.deepEqual(
+    [newer.title, newer.description],
+    ['Not showing screen sync', 'See Your lights for what to do.'],
   );
   const slim = fixtures['luna/State'].find((value) => value.flavor === 'slim');
   const link = (value) =>
@@ -671,18 +673,44 @@ test('status card covers the supervisor states for both packages', () => {
   assert.equal(title(full({ capturing: true })), 'Screen sync on');
   assert.equal(title(full({ target: 'effects' })), 'WLED effects on');
   // Screen sync runs, but the lights don't show it: said over the picture,
-  // with the portal's headline; the lights card says why.
-  for (const [lights, heading] of [
-    ['unreachable', 'Can’t reach the lights'],
-    ['other_sender', 'Not showing screen sync'],
+  // with the portal's headline; the lights card says why. Only lights that
+  // don't answer come back by themselves.
+  const pointer = 'See Your lights for what to do.';
+  for (const [lights, heading, detail] of [
+    [
+      'unreachable',
+      'Can’t reach the lights',
+      'The lights follow again as soon as they answer.',
+    ],
+    ['off', 'Not showing screen sync', pointer],
+    ['overridden', 'Not showing screen sync', pointer],
+    ['not_live', 'Not showing screen sync', pointer],
+    ['other_sender', 'Not showing screen sync', pointer],
   ]) {
     const status = tvStatus(live(full({ capturing: true, lights })), draft());
     assert.deepEqual(
       [status.title, status.description, status.attention, status.action],
-      [heading, 'The lights follow again as soon as they can.', true, 'none'],
+      [heading, detail, true, 'none'],
       lights,
     );
   }
+  // Once the portal's state is known, its issue is the one said, as on the
+  // lights card (none included); before, the worker's.
+  const syncing = (issue) => ({
+    lights: true,
+    address: null,
+    lighting: { kind: 'sync', input: undefined },
+    issue,
+  });
+  const unreachable = live(full({ capturing: true, lights: 'unreachable' }));
+  assert.equal(
+    tvStatus(unreachable, draft(), syncing('off')).description,
+    pointer,
+  );
+  assert.equal(
+    tvStatus(unreachable, draft(), syncing(null)).title,
+    'Screen sync on',
+  );
   const noFrames = tvStatus(live(full({ capturing: false })), draft());
   assert.equal(
     noFrames.title,
