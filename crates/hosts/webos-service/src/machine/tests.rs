@@ -1846,11 +1846,11 @@ enum Is {
     Retrying,
 }
 
-fn is(phase: Phase) -> Is {
+fn is(phase: &Phase) -> Is {
     match phase {
         Phase::Idle => Is::Idle,
-        Phase::Running { .. } => Is::Running,
-        Phase::Stopping { sent, then, .. } => Is::Stopping(sent, then),
+        Phase::Running(_) => Is::Running,
+        Phase::Stopping(stopping) => Is::Stopping(stopping.sent, stopping.then),
         Phase::Retrying { .. } => Is::Retrying,
     }
 }
@@ -2183,7 +2183,7 @@ fn every_phase_takes_every_input() {
                     .filter(|effect| *effect != Effect::Publish)
                     .collect();
                 assert_eq!(done, effects, "{shown}");
-                assert_eq!(is(m.phase), next, "{shown}");
+                assert_eq!(is(&m.phase), next, "{shown}");
                 let state = m.state(t0);
                 let shows_unreadable = unreadable && !saved && failure.is_none();
                 if shows_unreadable {
