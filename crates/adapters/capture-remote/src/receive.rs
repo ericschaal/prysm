@@ -171,7 +171,9 @@ impl Receiver {
     }
 
     /// The newest connection handed over, waiting for one (each offer wakes
-    /// this thread); `None` once stopped.
+    /// this thread); `None` once stopped. Without end: a sender comes at a
+    /// time nothing announces (the TV is switched on, or its capture
+    /// started).
     fn wait_for_sender(&self) -> Option<Accepted> {
         loop {
             if self.worker.stopped() {
@@ -266,6 +268,9 @@ impl Receiver {
                 Encoding::H264 => match h264.decode(&header, payload, pixels) {
                     Decoded::Picture => {}
                     Decoded::Skipped => continue,
+                    // A keyframe request converges: a keyframe resets the
+                    // decoder's references, and one that does not decode
+                    // fails the source (`Broken`).
                     Decoded::Unstarted => {
                         if let Err(error) = send(link, &ToSender::Keyframe) {
                             return Leave::SenderGone(error);

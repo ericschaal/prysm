@@ -20,9 +20,21 @@ mod classify;
 /// How often frame flow is sampled; `capturing` means frames in the last window.
 const SAMPLE: Duration = Duration::from_secs(1);
 
-/// How long the uplink waits between connection attempts while the receiver
-/// is unavailable (its host is not lighting, or unreachable) or speaks
-/// another capture stream version (it refuses at once, with `426`).
+/// How long the uplink waits, after a connection attempt returned, before
+/// the next one, without end, in every state without a connection: the
+/// receiver is unavailable (its host is not lighting, is unreachable or its
+/// name does not resolve yet), stopped the stream, failed with it, or speaks
+/// another capture stream version; or this end refused its request. Only
+/// what [`classify::heard`] answers with `Err` fails the worker. Each state
+/// ends by a step on the computer at a time nothing announces (lighting
+/// started again, another encoding chosen, Prysm started or updated, the
+/// network back), or by an update of this app, which replaces the worker.
+/// So one try every second reaches the receiver within a second of its
+/// return, plus the try in flight then. A try costs one TCP connect and one
+/// HTTP answer, bounded by [`crate::resolve::RESOLVE_WAIT`] and
+/// [`prysm_capture_remote::CONNECT_DEADLINE`] together. The next try is due
+/// 1 s after the last one returned, so a host that drops packets is not
+/// tried back to back.
 pub const RECONNECT: Duration = Duration::from_secs(1);
 
 /// What the uplink tells the capture and the link.
@@ -304,8 +316,8 @@ pub struct Uplink<S, C> {
     connect: C,
     /// The open connection; there is one exactly while sending.
     sink: Option<S>,
-    /// When the last connection attempt began.
-    attempted: Option<Instant>,
+    /// When the last connection attempt returned.
+    returned: Option<Instant>,
     retry: Duration,
     flow: Arc<Flow>,
 }
@@ -316,7 +328,7 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         let uplink = Self {
             connect,
             sink: None,
-            attempted: None,
+            returned: None,
             retry: RECONNECT,
             flow: flow.clone(),
         };
@@ -330,9 +342,9 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
     }
 
     /// Whether to attempt a connection at `now`: [`RECONNECT`] after the
-    /// last attempt.
+    /// last attempt returned.
     fn due(&self, now: Instant) -> bool {
-        self.attempted
+        self.returned
             .is_none_or(|at| now.saturating_duration_since(at) >= self.retry)
     }
 
@@ -342,8 +354,9 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         if !self.due(now) {
             return Ok(());
         }
-        self.attempted = Some(now);
-        let (event, sink) = match (self.connect)() {
+        let connected = (self.connect)();
+        self.returned = Some(Instant::now());
+        let (event, sink) = match connected {
             Ok(sink) => (UplinkEvent::Connected(sink.request()), Some(sink)),
             Err(error) => match classify::heard(Cause::Attempt(&error)) {
                 Ok(heard) => (UplinkEvent::Heard(heard), None),
@@ -728,26 +741,20 @@ mod tests {
     }
 
     /// The first attempt is at once; the next one [`RECONNECT`] after the
-    /// last.
+    /// last returned, however long it took.
     #[test]
-    fn attempts_follow_the_state() {
-        let (mut uplink, flow) = Uplink::new(|| -> Result<Never> { unreachable!() });
-        let t0 = Instant::now();
-        let after = |ms| t0 + Duration::from_millis(ms);
-        assert!(uplink.due(t0));
-        uplink.attempted = Some(t0);
-        let wait = u64::try_from(RECONNECT.as_millis()).unwrap();
-        for state in [
-            Starting,
-            Stopped,
-            Waiting(text("w")),
-            EncoderFailed(text("e")),
-            ReceiverFailed(text("f")),
-            VersionDiffers(text("v")),
-        ] {
-            flow.lock().uplink = state.clone();
-            assert!(!uplink.due(after(wait - 1)), "{state:?}");
-            assert!(uplink.due(after(wait)), "{state:?}");
-        }
+    fn attempts_count_from_the_last_return() {
+        let slow = Duration::from_millis(20);
+        let (mut uplink, _flow) = Uplink::new(|| -> Result<Never> {
+            std::thread::sleep(slow);
+            Err(Error::other("cannot connect: refused"))
+        });
+        let began = Instant::now();
+        assert!(uplink.due(began));
+        uplink.reconnect(began).unwrap();
+        let returned = uplink.returned.unwrap();
+        assert!(returned >= began + slow);
+        assert!(!uplink.due(returned + RECONNECT - Duration::from_millis(1)));
+        assert!(uplink.due(returned + RECONNECT));
     }
 }
