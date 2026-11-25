@@ -184,7 +184,8 @@ pub(super) enum Note {
     SignalChanged(Readiness),
     /// The video's availability changed.
     VideoChanged(Video),
-    /// The signal changed during a refusal.
+    /// The signal changed while the driver is refused: it is initialised
+    /// again.
     ChangedWhileRefused { video: Video, generation: u64 },
     /// An initialisation of a created-only driver answered.
     InitializationAnswered {
@@ -339,21 +340,18 @@ impl Stage {
 }
 
 impl Phase {
-    /// A new period for `kind` at `stage`: a video period has its new
-    /// driver to open and the pulls not told refused. A TV UI period keeps
-    /// only whether `stage` holds a tap.
-    fn begin(kind: Option<Kind>, stage: Stage, limits: &Limits) -> Self {
+    /// A new period for `kind`, with no tap: a video period has its new
+    /// driver to open and the pulls not told refused.
+    fn begin(kind: Option<Kind>, limits: &Limits) -> Self {
         match kind {
             None => Self::Idle,
             // The two reasons that open a new driver share its one try.
             Some(Kind::Video) => Self::Video {
-                stage,
+                stage: Stage::Closed,
                 fresh: Attempts::new(Reason::FreshDriver.schedule(limits)),
                 refused_since: None,
             },
-            Some(Kind::Ui) => Self::Ui {
-                held: stage.holds_tap(),
-            },
+            Some(Kind::Ui) => Self::Ui { held: false },
         }
     }
 
@@ -370,14 +368,6 @@ impl Phase {
             Self::Idle => false,
             Self::Video { stage, .. } => stage.holds_tap(),
             Self::Ui { held } => held,
-        }
-    }
-
-    /// The video tap's refusals in a row; none for any other.
-    fn refusals(self) -> Option<u32> {
-        match self {
-            Self::Video { stage, .. } => stage.refusals(),
-            Self::Idle | Self::Ui { .. } => None,
         }
     }
 
@@ -486,62 +476,34 @@ impl State {
     }
 
     /// The signal changed to `readiness` (the first counts as a change of
-    /// video). Any change lets a refused driver be initialised once more
-    /// and opens a new driver for withheld video; a change is new
-    /// evidence, so it gives the one new driver back. Only a change of
-    /// video or context lets a failed TV UI be tried again. Returns whether
-    /// the context changed.
+    /// video). A change is new evidence, so it gives the one new driver
+    /// back; only a change of video or context lets a failed TV UI be tried
+    /// again. Returns whether the context changed.
     fn signal(&mut self, readiness: Readiness, now: Instant, out: &mut Vec<Action>) -> bool {
         let before = self.seen.replace(Seen { readiness, at: now });
-        let Readiness {
-            video, generation, ..
-        } = readiness;
         out.push(Action::Note(Note::SignalChanged(readiness)));
-        let video_changed = before.is_none_or(|before| before.readiness.video != video);
+        let video_changed = before.is_none_or(|before| before.readiness.video != readiness.video);
         if video_changed {
-            out.push(Action::Note(Note::VideoChanged(video)));
+            out.push(Action::Note(Note::VideoChanged(readiness.video)));
         }
         let context_changed =
-            before.is_some_and(|before| before.readiness.generation != generation);
+            before.is_some_and(|before| before.readiness.generation != readiness.generation);
         if video_changed || context_changed {
             self.ui = self.ui.after_change();
         }
         if let Phase::Video { fresh, .. } = &mut self.phase {
             fresh.succeeded();
         }
-        if self.phase.refusals().is_some() {
-            if let Phase::Video {
-                stage: Stage::Refused { initializations },
-                ..
-            } = self.phase
-            {
-                self.phase = self.phase.at(Stage::Reinitialising { initializations });
-            }
-            out.push(Action::Note(Note::ChangedWhileRefused {
-                video,
-                generation,
-            }));
-        }
-        if let Phase::Video {
-            stage: Stage::Withheld,
-            ..
-        } = self.phase
-        {
-            self.phase = self.phase.at(Stage::Closed);
-            out.push(Action::Note(Note::ChangedWhileWithheld {
-                video,
-                generation,
-            }));
-        }
         context_changed
     }
 
-    /// A change of the wanted tap kind starts a new period, a change of the
-    /// video context a new stage of the same one (its refused state kept),
-    /// due at once. A created-only driver
-    /// holds no video context and its release can hang, so only a change of
-    /// kind releases it; a change of kind also ends the refused state. A
-    /// refused driver stays created-only, so it is always kept otherwise.
+    /// The tap kind the signal wants, decided first. A change of kind
+    /// starts a new period, releasing the held tap and ending the refused
+    /// state. Otherwise the period goes on, due at once: a refused driver
+    /// is initialised once more, withheld video gets a new driver, and a
+    /// change of the video context releases and reopens a held tap, except
+    /// a created-only one: it holds no video context and its release can
+    /// hang. A refused driver stays created-only, so it is always kept.
     fn choose_tap(
         &mut self,
         context_changed: bool,
@@ -550,18 +512,18 @@ impl State {
         rules: &Rules,
         out: &mut Vec<Action>,
     ) {
-        let video = self
-            .seen
-            .map(|seen| seen.readiness.video)
-            .unwrap_or_default();
+        let Some(Seen {
+            readiness: Readiness {
+                video, generation, ..
+            },
+            ..
+        }) = self.seen
+        else {
+            unreachable!("a tap is chosen after a signal");
+        };
         let kind = wanted(video, rules.include_ui, self.ui);
-        if kind == self.phase.kind() && !context_changed {
-            return;
-        }
-        let held = self.phase.holds_tap();
-        let refusals = self.phase.refusals();
         if kind != self.phase.kind() {
-            if held {
+            if self.phase.holds_tap() {
                 out.push(Action::Release);
             }
             if let Some(since) = self.allow(out) {
@@ -569,24 +531,44 @@ impl State {
                     elapsed_ms: millis(since, now),
                 }));
             }
-            self.phase = Phase::begin(kind, Stage::Closed, &rules.limits);
+            self.phase = Phase::begin(kind, &rules.limits);
             return;
         }
-        let stage = if let Some(initializations) = refusals {
-            debug_assert!(created_only, "a refused driver stays created-only");
-            Stage::Reinitialising { initializations }
-        } else if held && created_only {
-            Stage::Running
-        } else {
-            if held {
-                out.push(Action::Release);
+        match self.phase {
+            Phase::Video { stage, .. } => {
+                let stage = match stage {
+                    Stage::Refused { initializations }
+                    | Stage::Reinitialising { initializations } => {
+                        debug_assert!(created_only, "a refused driver stays created-only");
+                        out.push(Action::Note(Note::ChangedWhileRefused {
+                            video,
+                            generation,
+                        }));
+                        Stage::Reinitialising { initializations }
+                    }
+                    Stage::Withheld => {
+                        out.push(Action::Note(Note::ChangedWhileWithheld {
+                            video,
+                            generation,
+                        }));
+                        Stage::Closed
+                    }
+                    stage if !context_changed => stage,
+                    Stage::Running | Stage::Waiting { .. } if created_only => Stage::Running,
+                    Stage::Running | Stage::Waiting { .. } => {
+                        out.push(Action::Release);
+                        Stage::Closed
+                    }
+                    Stage::Closed => Stage::Closed,
+                };
+                self.phase = self.phase.at(stage);
             }
-            Stage::Closed
-        };
-        self.phase = match self.phase {
-            Phase::Video { .. } => self.phase.at(stage),
-            Phase::Idle | Phase::Ui { .. } => Phase::begin(kind, stage, &rules.limits),
-        };
+            Phase::Ui { held: true } if context_changed => {
+                out.push(Action::Release);
+                self.phase = Phase::Ui { held: false };
+            }
+            Phase::Ui { .. } | Phase::Idle => {}
+        }
     }
 
     /// Idle without a tap wanted, while refused or withheld; wait for a
@@ -1498,31 +1480,32 @@ mod tests {
     }
 
     /// Video becoming unavailable releases a refused driver and ends the
-    /// pulls' refused state.
+    /// pulls' refused state; it does not note initialising the driver
+    /// again, which it does not do.
     #[test]
     fn video_leaving_ends_a_refusal() {
         let t0 = Instant::now();
         let gone = ready(Video::Unavailable, 0, 2);
-        let state = at(t0, period(refused(3), None, Some(t0)), UiSupport::Untried);
-        check(
-            state,
-            signal(gone, true),
-            ms(t0, 700),
-            &NO_UI,
-            Phase::Idle,
-            &[
-                note(Note::SignalChanged(gone)),
-                note(Note::VideoChanged(Video::Unavailable)),
-                note(Note::ChangedWhileRefused {
-                    video: Video::Unavailable,
-                    generation: 0,
-                }),
-                Action::Release,
-                Action::Refused(false),
-                note(Note::RefusalEndedWithVideo { elapsed_ms: 700 }),
-                Action::Idle,
-            ],
-        );
+        for (rules, phase, last) in [
+            (NO_UI, Phase::Idle, Action::Idle),
+            (RULES, Phase::Ui { held: false }, Action::Open(Kind::Ui)),
+        ] {
+            check(
+                at(t0, period(refused(3), None, Some(t0)), UiSupport::Untried),
+                signal(gone, true),
+                ms(t0, 700),
+                &rules,
+                phase,
+                &[
+                    note(Note::SignalChanged(gone)),
+                    note(Note::VideoChanged(Video::Unavailable)),
+                    Action::Release,
+                    Action::Refused(false),
+                    note(Note::RefusalEndedWithVideo { elapsed_ms: 700 }),
+                    last,
+                ],
+            );
+        }
     }
 
     /// Every video fault in every held stage, with its one new driver
@@ -1775,9 +1758,9 @@ mod tests {
         );
     }
 
-    /// A change of tap kind ends the refused state: the pulls are told once, and
-    /// nothing is released while the wait holds no tap. A stop during the
-    /// wait releases nothing either.
+    /// A change of tap kind ends the refused state: the pulls are told
+    /// once, no new driver is noted, and nothing is released while the
+    /// wait holds no tap. A stop during the wait releases nothing either.
     #[test]
     fn a_kind_change_or_a_stop_ends_a_wait_without_a_release() {
         let t0 = Instant::now();
@@ -1789,11 +1772,6 @@ mod tests {
             ];
             if release {
                 expected.push(Action::Release);
-            } else {
-                expected.push(note(Note::ChangedWhileWithheld {
-                    video: Video::Unavailable,
-                    generation: 0,
-                }));
             }
             expected.extend([
                 Action::Refused(false),
