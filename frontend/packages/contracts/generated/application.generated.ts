@@ -330,10 +330,16 @@ export interface components {
             status: "known";
         };
         /**
-         * @description Why the lights are not showing Prysm's colours, or that they do not answer
-         *     the request for the target. Prysm keeps sending, or trying the request;
-         *     the lights follow again once the device takes the colours, or switch off
-         *     or show their own effects once it answers.
+         * @description Why the lights do not show what was chosen. `off`: the device is
+         *     switched off. `overridden`: the device's own override is on (WLED: live
+         *     override). `not_live`: the device is not taking the colours (WLED: not in
+         *     live mode, or no DDP arriving). `other_sender`: another sender's colours
+         *     reach the device. `unreachable`: the device does not answer Prysm's state
+         *     checks, the request that opens it for screen sync, or, with the target
+         *     `off` or `effects`, the request for that mode. During screen sync Prysm
+         *     keeps sending the colours; it tries an unanswered request again every few
+         *     seconds. The lights follow once the device takes the colours or answers.
+         *     Open: an app reads an issue it does not know in general words.
          * @enum {string}
          */
         OutputIssue: "off" | "overridden" | "not_live" | "other_sender" | "unreachable";

@@ -2,8 +2,9 @@
 //! adapter sections of [`Settings`](prysm_ports::Settings).
 //!
 //! `prysm_ports` stays free of OpenAPI, so its serialized types are described
-//! here by schema-only mirrors. Tests keep each mirror's serde shape identical
-//! to the ports type it describes.
+//! here by schema-only mirrors, except `OutputIssue`, which derives its own
+//! schema (`prysm-ports/schema`). Tests keep each mirror's serde shape
+//! identical to the ports type it describes.
 //!
 //! # Adapter schemas
 //!
@@ -29,7 +30,7 @@ use crate::{
 };
 use prysm_ports::{
     MAX_CALIBRATION_ID_LEN, MAX_CALIBRATION_NAME_CHARS, MAX_CALIBRATIONS, OutputFactory,
-    SourceFactory,
+    OutputIssue, SourceFactory,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -334,31 +335,6 @@ pub struct LatencySchema {
     output_ms: f32,
 }
 
-// Mirrors `prysm_ports::OutputIssue`.
-/// Why the lights are not showing Prysm's colours, or that they do not answer
-/// the request for the target. Prysm keeps sending, or trying the request;
-/// the lights follow again once the device takes the colours, or switch off
-/// or show their own effects once it answers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = OutputIssue)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputIssueSchema {
-    /// The device was switched off (WLED: power off).
-    Off,
-    /// The device's own override is on (WLED: live override).
-    Overridden,
-    /// The device is not taking the colours (WLED: not in live mode, or no
-    /// DDP arriving).
-    NotLive,
-    /// Another sender's colours reach the device.
-    OtherSender,
-    /// The device does not answer state requests, lighting's open of it
-    /// (lighting runs and tries the open again at a frame every few seconds),
-    /// or, with the target `off` or `effects`, the request for that mode
-    /// (tried again every few seconds; the session is `stopped`).
-    Unreachable,
-}
-
 // Mirrors `prysm_ports::DeviceReport`.
 /// What the lights say about themselves, from the output's own checks. Each
 /// part is absent while the output cannot tell, and all are while no session
@@ -374,7 +350,7 @@ pub struct DeviceReportSchema {
     /// answer; absent while all is well.
     #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    issue: Option<OutputIssueSchema>,
+    issue: Option<OutputIssue>,
     /// The lights' own brightness while it scales Prysm's colours (WLED: its
     /// master brightness and brightness factor): the share of Prysm's
     /// brightness they show. Absent while it does not (WLED: "Force max
@@ -507,7 +483,7 @@ impl ToSchema for OutputSettings {}
     LatencySchema,
     BehindSchema,
     PictureSchema,
-    OutputIssueSchema,
+    OutputIssue,
     DeviceReportSchema,
     Session,
     LightingFailure,
@@ -790,9 +766,6 @@ mod tests {
             ..Input::default()
         });
         assert_mirror_round_trips::<Input, InputSchema>(&Input::default());
-        for issue in OutputIssue::ALL {
-            assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
-        }
         assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport::default());
         assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport {
             issue: Some(OutputIssue::OtherSender),

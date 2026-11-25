@@ -145,41 +145,31 @@ impl From<DeviceBrightness> for u8 {
     }
 }
 
-/// Why the LEDs are not showing Prysm's colours although lighting runs, or
-/// that they do not answer the request for the target. Prysm reports it and
-/// keeps sending, or, for a device that did not answer, keeps trying the
-/// request (the session's open, or the idle for `Off` or the device's own
-/// effects): the LEDs follow, switch off or show their effects as soon as
-/// the device answers.
+/// Why the lights do not show what was chosen. `off`: the device is
+/// switched off. `overridden`: the device's own override is on (WLED: live
+/// override). `not_live`: the device is not taking the colours (WLED: not in
+/// live mode, or no DDP arriving). `other_sender`: another sender's colours
+/// reach the device. `unreachable`: the device does not answer Prysm's state
+/// checks, the request that opens it for screen sync, or, with the target
+/// `off` or `effects`, the request for that mode. During screen sync Prysm
+/// keeps sending the colours; it tries an unanswered request again every few
+/// seconds. The lights follow once the device takes the colours or answers.
+/// Open: an app reads an issue it does not know in general words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum OutputIssue {
     /// The device was switched off.
     Off,
-    /// The device's own override is on (WLED: "live override").
+    /// The device's own override is on.
     Overridden,
-    /// The device is not taking the colours (realtime reception disabled,
-    /// or it left realtime mode).
+    /// The device is not taking the colours.
     NotLive,
-    /// Another sender's colours are reaching the device.
+    /// Another sender's colours reach the device.
     OtherSender,
-    /// The device does not answer: a held output's state requests, the
-    /// session's open ([`Escalation::Unanswered`](crate::Escalation)), which
-    /// the session then tries again at a frame every few seconds without
-    /// holding the output, or, without a session, the idle for `Off` or the
-    /// device's own effects, which the engine tries again every few
-    /// seconds.
+    /// The device does not answer: its state checks, the session's open
+    /// ([`Escalation::Unanswered`](crate::Escalation)) or the idle request.
     Unreachable,
-}
-
-impl OutputIssue {
-    pub const ALL: [Self; 5] = [
-        Self::Off,
-        Self::Overridden,
-        Self::NotLive,
-        Self::OtherSender,
-        Self::Unreachable,
-    ];
 }
 
 impl std::fmt::Display for OutputIssue {

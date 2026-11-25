@@ -177,10 +177,7 @@ pub enum FullWorker {
         /// `unreachable` alone, while the lights do not answer the request
         /// that puts them in that mode (tried again until they do).
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(
-            feature = "schema",
-            schema(value_type = Option<crate::schema::OutputIssueSchema>, nullable = false)
-        )]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
         lights: Option<OutputIssue>,
         /// The portal's LAN address once the worker reported it.
         #[serde(skip_serializing_if = "Option::is_none")]

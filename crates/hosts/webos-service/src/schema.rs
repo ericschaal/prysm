@@ -4,7 +4,8 @@
 //! One document for both packages: `State` carries the installed package's
 //! own fields in `Package`, tagged by `flavor`. Types from `prysm-webos-link` and `prysm-ports` are
 //! described by schema-only mirrors, kept equal to their serde shape by tests,
-//! except `StreamEncoding`, which derives its own schema (`prysm-ports/schema`).
+//! except `StreamEncoding` and `OutputIssue`, which derive their own schemas
+//! (`prysm-ports/schema`).
 //!
 //! | Method | Request | Reply |
 //! | --- | --- | --- |
@@ -22,7 +23,7 @@ use crate::service::{
     StateReply, UninstallRequest,
 };
 use crate::state::{Asked, FullWorker, Package, Power, Problem, SlimWorker, State};
-use prysm_ports::StreamEncoding;
+use prysm_ports::{OutputIssue, StreamEncoding};
 use serde::{Deserialize, Serialize};
 pub use utoipa::openapi::OpenApi;
 use utoipa::openapi::schema::{ObjectBuilder, Type};
@@ -71,26 +72,6 @@ pub enum LightingTargetSchema {
     Off,
     ScreenSync,
     Effects,
-}
-
-// Mirrors `prysm_ports::OutputIssue`.
-/// Why the lights do not show what was chosen. `off`:
-/// switched off on the device. `overridden`: the device's own override is
-/// on (WLED: live override). `not_live`: the device is not taking the
-/// colours (WLED: not in live mode, or no DDP arriving). `other_sender`:
-/// another sender's colours reach the device. `unreachable`: the device does
-/// not answer, also while lighting waits for it to answer an open. Prysm
-/// keeps trying; the lights follow again once they take the colours. Open:
-/// an app says an issue it does not know in general words.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = OutputIssue)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputIssueSchema {
-    Off,
-    Overridden,
-    NotLive,
-    OtherSender,
-    Unreachable,
 }
 
 // Mirrors `prysm_webos_link::SlimLink`.
@@ -174,7 +155,7 @@ pub(crate) fn always_false() -> ObjectBuilder {
     FixSchema,
     VideoSchema,
     LightingTargetSchema,
-    OutputIssueSchema,
+    OutputIssue,
     GetStateRequest,
     SetTargetRequest,
     SetEnabledRequest,
@@ -198,7 +179,7 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{Fix, LightingTarget, OutputIssue, SlimLink, Video};
+    use prysm_webos_link::{Fix, LightingTarget, SlimLink, Video};
 
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::{Value, json};
@@ -210,9 +191,6 @@ mod tests {
         }
         for target in LightingTarget::ALL {
             assert_mirror_round_trips::<LightingTarget, LightingTargetSchema>(&target);
-        }
-        for issue in OutputIssue::ALL {
-            assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
         }
         for fix in Fix::ALL {
             assert_mirror_round_trips::<Fix, FixSchema>(&fix);
