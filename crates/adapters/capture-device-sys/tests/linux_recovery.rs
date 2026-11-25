@@ -136,7 +136,10 @@ fn a_paused_producer_is_waited_for_and_a_stop_ends_the_wait() -> Result<()> {
         Ok(result) => result.context("capture failed or did not release the device")?,
         Err(_) => bail!("capture panicked"),
     }
-    // Reconfiguration must succeed immediately after capture returns.
+    // Reconfiguration must succeed immediately after capture returns. The
+    // producer closes first: the device takes a format only with no other
+    // opener.
+    drop(producer);
     Device::with_path(&path)?.set_format(&format)?;
     Ok(())
 }
