@@ -23,6 +23,8 @@ pub(crate) struct World {
     pub wait_fails: bool,
     /// How many worker handles were let go.
     pub dropped: u32,
+    /// Reaped, its exit held back for its last lines until then.
+    pub held: Option<Instant>,
 }
 
 #[derive(Clone, Default)]
@@ -71,7 +73,7 @@ impl Worker for FakeWorker {
         Ok(world.exit.take())
     }
     fn due(&self) -> Option<Instant> {
-        None
+        self.0.borrow().held
     }
 }
 
@@ -690,6 +692,31 @@ fn a_worker_that_cannot_be_reaped_is_let_go_after_its_kill() {
     assert_eq!(h.world.borrow().dropped, 0);
     assert!(!h.tick(16_001), "the shutdown finishes");
     assert_eq!(h.world.borrow().dropped, 1);
+}
+
+/// A worker reaped just before it would be let go, its last lines still
+/// being read, is not let go: its exit comes when the reading ends.
+#[test]
+fn a_reaped_worker_is_not_let_go_while_its_last_lines_are_read() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    let now = h.at(1);
+    h.service.shutdown(&mut h.bus, now);
+    assert!(h.tick(8_001));
+    assert_eq!(h.log(), ["terminate", "kill"]);
+    h.world.borrow_mut().held = Some(h.at(16_500));
+    assert!(h.tick(16_001));
+    assert_eq!(h.world.borrow().dropped, 0, "not let go");
+    assert_eq!(h.service.next_due(), Some(h.at(16_500)));
+    let mut world = h.world.borrow_mut();
+    world.held = None;
+    world.exit = Some(Exit::Signal(9));
+    drop(world);
+    assert!(!h.tick(16_500), "the shutdown finishes");
+    assert_eq!(h.world.borrow().dropped, 1);
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "stopped", "{published}");
 }
 
 #[test]

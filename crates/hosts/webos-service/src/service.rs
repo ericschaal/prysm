@@ -524,7 +524,9 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     /// Returns `false` once the service should exit.
     pub fn tick(&mut self, bus: &mut impl Bus, now: Instant) -> bool {
         self.poll_worker(bus, now);
-        self.input(bus, Input::Tick, now);
+        if self.held().is_none() {
+            self.input(bus, Input::Tick, now);
+        }
         for watch in [Watch::Power, Watch::Video] {
             let slot = self.renew.of(watch);
             if slot.is_some_and(|at| now >= at) {
@@ -549,19 +551,25 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     }
 
     /// When [`Self::tick`] next has something to do without an event: the
-    /// machine's next due time, a subscription renewal, or the end of the
-    /// wait for an exited worker's last lines.
+    /// machine's next due time, or the end of the wait for an exited
+    /// worker's last lines instead, and a subscription renewal.
     #[must_use]
     pub fn next_due(&self) -> Option<Instant> {
         [
-            self.machine.next_due(),
+            self.held().or_else(|| self.machine.next_due()),
             self.renew.power,
             self.renew.video,
-            self.worker.as_ref().and_then(Worker::due),
         ]
         .into_iter()
         .flatten()
         .min()
+    }
+
+    /// Until when a reaped worker's exit is held back for its last lines
+    /// ([`Worker::due`]). Meanwhile the machine's due times wait: they stop
+    /// or let go of a live process, and this one's exit comes by then.
+    fn held(&self) -> Option<Instant> {
+        self.worker.as_ref().and_then(Worker::due)
     }
 
     fn poll_worker(&mut self, bus: &mut impl Bus, now: Instant) {
