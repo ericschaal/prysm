@@ -9,7 +9,7 @@ use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 use v4l::buffer::Type;
 mod stream;
-use crate::classify::Op;
+use crate::classify::{Fault, Op, classify, failure};
 use stream::{Dequeued, Stream, failed, released};
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
@@ -180,9 +180,22 @@ fn configure_stream(
     let mut last_error = None;
     for wanted in Captured::PREFERRED {
         fmt.fourcc = wanted.fourcc();
-        if let Err(e) = device.set_format(&fmt) {
-            last_error = Some(crate::check_format_rejection(e)?);
-            continue;
+        if let Err(error) = device.set_format(&fmt) {
+            match classify(Op::SetFormat, &error) {
+                Fault::Rejected => {
+                    last_error = Some(error);
+                    continue;
+                }
+                fault @ (Fault::Gone
+                | Fault::Busy
+                | Fault::Denied
+                | Fault::Missing
+                | Fault::QueueError
+                | Fault::Signalled
+                | Fault::Other) => {
+                    return Err(failure(fault, error, "failed to set capture format"));
+                }
+            }
         }
         let format = device
             .format()
@@ -465,17 +478,21 @@ pub(crate) fn run(
         return Ok(());
     }
     let path = device_path.unwrap_or("/dev/video0");
-    let mut device = Device::with_path(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            CaptureError::DeviceNotFound {
-                device: Some(path.into()),
-                source: Some(error),
-            }
-        } else {
-            CaptureError::Backend(
-                anyhow::Error::new(error).context(format!("failed to open video device {path}")),
-            )
-        }
+    let mut device = Device::with_path(path).map_err(|error| match classify(Op::Open, &error) {
+        Fault::Missing => CaptureError::DeviceNotFound {
+            device: Some(path.into()),
+            source: Some(error),
+        },
+        Fault::Denied => CaptureError::Denied {
+            device: path.into(),
+            source: error,
+        },
+        fault @ (Fault::Gone
+        | Fault::Busy
+        | Fault::Rejected
+        | Fault::QueueError
+        | Fault::Signalled
+        | Fault::Other) => failure(fault, error, format!("failed to open video device {path}")),
     })?;
     let (format, pixels) = configure_stream(&mut device, width, height, rate)?;
     let mut stream = Stream::new(&device, stall_timeout(rate))?;
@@ -561,7 +578,8 @@ mod tests {
         assert_eq!(attempts, 30, "{error}");
         assert_eq!(
             prysm_ports::chain(&error),
-            "failed to restart capture stream: Device or resource busy (os error 16)"
+            "capture device is in use by another program: failed to restart capture stream: \
+             Device or resource busy (os error 16)"
         );
     }
 

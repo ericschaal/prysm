@@ -88,7 +88,13 @@ fn queue_failed<T>(op: Op, error: io::Error, doing: &'static str) -> Result<Dequ
     let failure = failure(fault, error, doing);
     match fault {
         Fault::QueueError => Ok(Dequeued::Interrupted(failure)),
-        Fault::Gone | Fault::Signalled | Fault::Other => Err(failure),
+        Fault::Gone
+        | Fault::Busy
+        | Fault::Denied
+        | Fault::Missing
+        | Fault::Rejected
+        | Fault::Signalled
+        | Fault::Other => Err(failure),
     }
 }
 
@@ -179,7 +185,11 @@ impl Stream {
             timeout,
         };
         if let Err(error) = stream.allocate() {
-            let allocation = Err(CaptureError::Backend(error.into()));
+            let allocation = Err(failed(
+                Op::Allocate,
+                error,
+                "failed to allocate capture buffers",
+            ));
             return Err(released(stream.release(), allocation)
                 .expect_err("a failed allocation stays failed after release"));
         }
@@ -277,7 +287,13 @@ impl Stream {
                 Ok(_) => break,
                 Err(error) => match classify(Op::Wait, &error) {
                     Fault::Signalled => {}
-                    fault @ (Fault::Gone | Fault::QueueError | Fault::Other) => {
+                    fault @ (Fault::Gone
+                    | Fault::Busy
+                    | Fault::Denied
+                    | Fault::Missing
+                    | Fault::Rejected
+                    | Fault::QueueError
+                    | Fault::Other) => {
                         return Err(failure(fault, error, WAITING));
                     }
                 },
