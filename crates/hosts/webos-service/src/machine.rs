@@ -43,6 +43,9 @@ pub enum Input {
     SpawnFailed(String),
     /// Reaped: the process no longer exists.
     WorkerExited(Exit),
+    /// The worker let go ([`Effect::Abandon`]) was reaped at last, or
+    /// waiting for it failed: it no longer exists.
+    LetGoReaped,
     Tick,
     Shutdown,
 }
@@ -64,7 +67,8 @@ pub enum Effect {
     Kill,
     /// Let go of a worker still not reaped [`KILL_AFTER`] after its kill
     /// (`waitpid` keeps failing), so the machine never waits for ever. It
-    /// may still hold the capture: the person is asked to restart the TV.
+    /// may still hold the capture: the person is asked to restart the TV
+    /// until it no longer exists ([`Input::LetGoReaped`]).
     Abandon,
     /// The published state changed.
     Publish,
@@ -191,7 +195,7 @@ impl Machine {
     /// Shut down and no worker left.
     #[must_use]
     pub fn finished(&self) -> bool {
-        self.shutdown && matches!(self.phase, Phase::Idle | Phase::Asking(_))
+        self.shutdown && matches!(self.phase, Phase::Idle | Phase::Asking(_) | Phase::LetGo(_))
     }
 
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
@@ -224,6 +228,12 @@ impl Machine {
                 }
             }
             Input::WorkerExited(exit) => self.exited(exit, now, &mut effects),
+            // `reconcile` starts a worker if one is wanted, with its restart.
+            Input::LetGoReaped => {
+                if let Phase::LetGo(_) = self.phase {
+                    self.phase = Phase::Idle;
+                }
+            }
             Input::Tick => self.tick(now, &mut effects),
             Input::Shutdown => {
                 self.dismiss();
@@ -268,7 +278,7 @@ impl Machine {
                     Then::Idle | Then::Restart => None,
                 },
             },
-            Phase::Asking(problem) => Process::Asking(problem.clone()),
+            Phase::Asking(problem) | Phase::LetGo(problem) => Process::Asking(problem.clone()),
         }
     }
 
@@ -276,7 +286,7 @@ impl Machine {
     fn reported(&self) -> Option<&Report> {
         match &self.phase {
             Phase::Running(run) => Some(&run.report),
-            Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) => None,
+            Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(_) => None,
         }
     }
 
@@ -338,7 +348,7 @@ impl Machine {
                 }
             }
             Phase::Running(_) if !self.wanted() => self.end(now, effects),
-            Phase::Running(_) | Phase::Stopping(_) | Phase::Asking(_) => {}
+            Phase::Running(_) | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(_) => {}
         }
     }
 
@@ -383,7 +393,9 @@ impl Machine {
                     portal: run.report.full().and_then(|status| status.portal.clone()),
                 })
             }
-            phase @ (Phase::Idle | Phase::Stopping(_) | Phase::Asking(_)) => phase,
+            phase @ (Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(_)) => {
+                phase
+            }
         };
     }
 
@@ -398,10 +410,11 @@ impl Machine {
     /// standby, shutdown, new worker settings): what was asked is answered,
     /// a stopping worker's exit is followed by nothing more than a new
     /// worker if one is wanted, and a running one has its restart again.
-    /// The one way out of asking.
+    /// The one way out of asking, except about a worker let go: what was
+    /// chosen is kept, and applies once it no longer exists.
     fn dismiss(&mut self) {
         match &mut self.phase {
-            Phase::Idle => {}
+            Phase::Idle | Phase::LetGo(_) => {}
             Phase::Running(run) => run.restart = Restart::Available,
             Phase::Stopping(stopping) => stopping.then = Then::Idle,
             Phase::Asking(_) => self.phase = Phase::Idle,
@@ -419,8 +432,8 @@ impl Machine {
         }
     }
 
-    /// A worker that is gone (exited, never started, let go): a new one at
-    /// once, or the person is asked, as `follows` says.
+    /// A worker that is gone (exited, never started): a new one at once, or
+    /// the person is asked, as `follows` says.
     fn gone(&mut self, follows: After, now: Instant, effects: &mut Vec<Effect>) {
         match follows {
             After::Restart(why) => {
@@ -520,7 +533,7 @@ impl Machine {
                 }
                 return;
             }
-            Phase::Idle | Phase::Asking(_) => return,
+            Phase::Idle | Phase::Asking(_) | Phase::LetGo(_) => return,
         };
         run.heard = now;
         match event {
@@ -593,7 +606,7 @@ impl Machine {
                 Then::Restart => self.respawn(now, effects),
                 Then::Ask(problem) => self.phase = Phase::Asking(problem),
             },
-            phase @ (Phase::Idle | Phase::Asking(_)) => self.phase = phase,
+            phase @ (Phase::Idle | Phase::Asking(_) | Phase::LetGo(_)) => self.phase = phase,
         }
     }
 
@@ -603,7 +616,7 @@ impl Machine {
     #[must_use]
     pub fn next_due(&self) -> Option<Instant> {
         match self.phase {
-            Phase::Idle | Phase::Asking(_) => None,
+            Phase::Idle | Phase::Asking(_) | Phase::LetGo(_) => None,
             Phase::Running(Run { heard, .. }) => Some(heard + SILENCE),
             Phase::Stopping(Stopping { at, .. }) => Some(at),
         }
@@ -623,14 +636,17 @@ impl Machine {
                     stopping.sent = Sent::Kill;
                 }
                 // It may still hold the capture, however it was stopped: the
-                // person is asked, whatever its restart.
+                // person is asked, whatever its restart, while it exists.
                 Sent::Kill => {
                     effects.push(Effect::Abandon);
-                    let follows = after(Restart::Available, Lost::Abandoned.failure());
-                    self.gone(follows, now, effects);
+                    let After::Ask(problem) = after(Restart::Available, Lost::Abandoned.failure())
+                    else {
+                        unreachable!("a worker let go is asked about")
+                    };
+                    self.phase = Phase::LetGo(problem);
                 }
             },
-            Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) => {}
+            Phase::Idle | Phase::Stopping(_) | Phase::Asking(_) | Phase::LetGo(_) => {}
         }
     }
 }

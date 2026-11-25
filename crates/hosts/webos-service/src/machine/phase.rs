@@ -13,6 +13,11 @@ pub(super) enum Phase {
     /// No worker: the person is asked. Left only by their or the TV's
     /// action ([`super::Machine::dismiss`]).
     Asking(Problem),
+    /// A worker let go after its kill may still exist and hold the capture:
+    /// the person is asked to restart the TV. Left only once it no longer
+    /// exists ([`super::Input::LetGoReaped`]); no action of the person or
+    /// the TV can answer it.
+    LetGo(Problem),
 }
 
 /// A running worker.
@@ -62,7 +67,7 @@ pub(super) enum Sent {
 /// What follows a stopping worker's exit. Decided once per worker: what it
 /// reports while it stops changes nothing (a stop asked for ends its run,
 /// and the next worker is a new process anyway). Only an action of the
-/// person or the TV (`Idle`) and letting it go (asked) change it.
+/// person or the TV (`Idle`) and letting it go ([`Phase::LetGo`]) change it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Then {
     /// The person or the TV asked for the stop: nothing, or at once a new

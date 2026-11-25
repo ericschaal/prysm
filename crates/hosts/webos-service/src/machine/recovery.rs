@@ -32,7 +32,8 @@ impl Lost {
             // Hung, or ended without saying why (a crash, a signal, out of
             // memory): a new process has none of the old one's state.
             Self::Silent | Self::Exited(_) => Escalation::Restart,
-            // It may hold the capture until the TV restarts.
+            // It may hold the capture while it exists, which only its late
+            // reap or the TV's restart ends: no action of the person helps.
             Self::Abandoned => Escalation::Ask(Fix::RestartTv),
         }
     }

@@ -244,6 +244,30 @@ fn an_exit_after_the_end_of_output_is_not_held_back() {
     assert_eq!(exit, Exit::Code(0));
 }
 
+/// A worker let go says when its late reap returns, also when waiting for
+/// it fails (here it was reaped already): it is gone either way, and once
+/// waiting failed it is not signalled, its pid may be another process's.
+#[test]
+fn a_worker_let_go_says_when_it_is_gone_even_if_waiting_fails() {
+    let mut launcher = launcher();
+    let mut worker = launcher
+        .spawn(Path::new("/bin/sh"), &["-c".into(), "exit 0".into()])
+        .unwrap();
+    let Stage::Running { child, .. } = &worker.stage else {
+        panic!("running");
+    };
+    let pid = nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap());
+    nix::sys::wait::waitpid(pid, None).unwrap();
+    assert!(worker.try_exit().is_err(), "already reaped");
+    let refused = worker.terminate().unwrap_err();
+    assert_eq!(refused.raw_os_error(), None, "not signalled: {refused}");
+    assert!(!launcher.let_go_reaped());
+    drop(worker);
+    eventually("the late reap", LIMIT, || {
+        launcher.let_go_reaped().then_some(())
+    });
+}
+
 fn events_ended(worker: &ProcessWorker) -> bool {
     match &worker.stage {
         Stage::Running { reader, .. } | Stage::Reaped { reader, .. } => reader.ended(),

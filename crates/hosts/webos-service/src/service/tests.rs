@@ -25,6 +25,8 @@ pub(crate) struct World {
     pub dropped: u32,
     /// Reaped, its exit held back for its last lines until then.
     pub held: Option<Instant>,
+    /// A worker let go no longer exists, until the launcher is next asked.
+    pub let_go_reaped: bool,
 }
 
 #[derive(Clone, Default)]
@@ -43,6 +45,9 @@ impl Launcher for FakeLauncher {
             .log
             .push(format!("spawn {} {}", program.display(), args.join(" ")));
         Ok(FakeWorker(self.0.clone()))
+    }
+    fn let_go_reaped(&mut self) -> bool {
+        std::mem::take(&mut self.0.borrow_mut().let_go_reaped)
     }
 }
 
@@ -728,6 +733,37 @@ fn a_worker_that_cannot_be_reaped_is_let_go_after_its_kill() {
     assert_eq!(h.world.borrow().dropped, 0);
     assert!(!h.tick(16_001), "the shutdown finishes");
     assert_eq!(h.world.borrow().dropped, 1);
+}
+
+/// A worker that cannot be waited for is let go after its kill and the
+/// person asked to restart the TV, until its late reap returns: then a new
+/// worker starts.
+#[test]
+fn a_worker_let_go_is_asked_about_until_its_late_reap() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    h.world.borrow_mut().wait_fails = true;
+    h.world
+        .borrow_mut()
+        .outputs
+        .push_back(Output::Broken("malformed".into()));
+    assert!(h.tick(1));
+    assert!(h.tick(8_001));
+    assert!(h.tick(16_001));
+    assert_eq!(h.log(), ["terminate", "kill"]);
+    assert_eq!(h.world.borrow().dropped, 1);
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(
+        published["worker"]["problem"]["asked"],
+        serde_json::json!({ "step": "ask", "fix": "restart_tv" })
+    );
+    h.world.borrow_mut().wait_fails = false;
+    h.world.borrow_mut().let_go_reaped = true;
+    assert!(h.tick(16_002));
+    assert!(h.log()[0].starts_with("spawn "));
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "running", "{published}");
 }
 
 /// A worker reaped just before it would be let go, its last lines still

@@ -13,6 +13,7 @@ enum Is {
     Running(Restart),
     Stopping(Sent, Next),
     Asking,
+    LetGo,
 }
 
 /// What follows a stopping worker, without its problem.
@@ -36,6 +37,7 @@ fn is(phase: &Phase) -> Is {
             },
         ),
         Phase::Asking(_) => Is::Asking,
+        Phase::LetGo(_) => Is::LetGo,
     }
 }
 
@@ -62,6 +64,8 @@ enum Given {
     KilledToRestart,
     /// A broken link at 500, reaped at 600.
     Asking,
+    /// `KilledToRestart`, let go at 16 500.
+    LetGo,
 }
 
 fn start() -> Vec<Effect> {
@@ -113,6 +117,7 @@ impl Given {
             Self::KilledAsked => vec![power, asleep, kill],
             Self::KilledToRestart => vec![power, fault, kill],
             Self::Asking => vec![power, broken, (600, Exited(Exit::Code(1)), vec![])],
+            Self::LetGo => vec![power, fault, kill, (16_500, Tick, vec![Effect::Abandon])],
         }
     }
 
@@ -203,7 +208,7 @@ fn running() -> Vec<Row> {
 /// While a worker stops, and while the person is asked.
 #[rustfmt::skip]
 fn stopping_and_asking() -> Vec<Row> {
-    use Given::{Asking, KilledAsked, Sleeping, KilledToRestart, StoppingAsked, StoppingToAsk, StoppingToRestart};
+    use Given::{Asking, KilledAsked, LetGo, Sleeping, KilledToRestart, StoppingAsked, StoppingToAsk, StoppingToRestart};
     use Sent::{Kill, Terminate};
     let broken = Some((TRY_AGAIN, "worker link broke: x"));
     let abandoned = Some((Asked::Ask(Fix::RestartTv), "worker not reaped 8 s after its kill"));
@@ -223,7 +228,7 @@ fn stopping_and_asking() -> Vec<Row> {
         (StoppingAsked, 8_499, Tick, vec![], asked, None),
         (StoppingAsked, 8_500, Tick, vec![Effect::Kill], Is::Stopping(Kill, Next::Idle), None),
         (KilledAsked, 9_000, Exited(Exit::Signal(9)), vec![], Is::Idle, None),
-        (KilledAsked, 16_500, Tick, vec![Effect::Abandon], Is::Asking, abandoned),
+        (KilledAsked, 16_500, Tick, vec![Effect::Abandon], Is::LetGo, abandoned),
         // A stop for a restart: decided once, it restarts unless the person acts.
         (StoppingToRestart, 1_000, Exited(Exit::Code(1)), start(), Is::Running(Spent), None),
         (StoppingToRestart, 1_000, failed_with(Escalation::Ask(Fix::SetUp), "denied"), vec![], Is::Stopping(Terminate, Next::Restart), None),
@@ -231,7 +236,7 @@ fn stopping_and_asking() -> Vec<Row> {
         (StoppingToRestart, 8_500, Tick, vec![Effect::Kill], Is::Stopping(Kill, Next::Restart), None),
         (StoppingToRestart, 1_000, effects(), vec![], asked, None),
         (KilledToRestart, 9_000, Exited(Exit::Signal(9)), start(), Is::Running(Spent), None),
-        (KilledToRestart, 16_500, Tick, vec![Effect::Abandon], Is::Asking, abandoned),
+        (KilledToRestart, 16_500, Tick, vec![Effect::Abandon], Is::LetGo, abandoned),
         // A stop to ask: the problem is shown while it stops.
         (StoppingToAsk, 1_000, Exited(Exit::Code(1)), vec![], Is::Asking, broken),
         (StoppingToAsk, 1_000, effects(), vec![], asked, None),
@@ -246,6 +251,15 @@ fn stopping_and_asking() -> Vec<Row> {
         (Asking, 1_000, capturing(), vec![], Is::Asking, broken),
         (Asking, 1_000, Exited(Exit::Code(1)), vec![], Is::Asking, broken),
         (Asking, 1_000, Enabled(true), vec![], Is::Asking, broken),
+        (Asking, 1_000, Input::LetGoReaped, vec![], Is::Asking, broken),
+        // Let go: only its end, its late reap, ends what is asked.
+        (LetGo, 17_000, Input::LetGoReaped, start(), Is::Running(Available), None),
+        (LetGo, 17_000, effects(), vec![], Is::LetGo, abandoned),
+        (LetGo, 17_000, Pw(Asleep), vec![], Is::LetGo, abandoned),
+        (LetGo, 17_000, Input::Preferences(Preferences::default()), vec![], Is::LetGo, abandoned),
+        (LetGo, 17_000, Input::Shutdown, vec![], Is::LetGo, abandoned),
+        (LetGo, 60_000, Tick, vec![], Is::LetGo, abandoned),
+        (LetGo, 17_000, Exited(Exit::Signal(9)), vec![], Is::LetGo, abandoned),
     ]
 }
 

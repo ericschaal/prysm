@@ -527,10 +527,14 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
 
     /// Called at every event (a request, a reply, the worker said something
     /// or exited, a signal) and at [`Self::next_due`]: reads and reaps the
-    /// worker, runs the machine's due times and renews subscriptions.
-    /// Returns `false` once the service should exit.
+    /// worker, hears of a worker let go that no longer exists, runs the
+    /// machine's due times and renews subscriptions. Returns `false` once
+    /// the service should exit.
     pub fn tick(&mut self, bus: &mut impl Bus, now: Instant) -> bool {
         self.poll_worker(bus, now);
+        if self.launcher.let_go_reaped() {
+            self.input(bus, Input::LetGoReaped, now);
+        }
         if self.held().is_none() {
             self.input(bus, Input::Tick, now);
         }
@@ -642,8 +646,9 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                         let _ = worker.send(&command);
                     }
                 }
-                // A signal that cannot be sent (the worker already exited)
-                // is logged; its exit follows either way.
+                // A signal that cannot be sent (the worker already exited,
+                // or waiting for it failed) is logged; its exit, or its
+                // late reap once let go, follows either way.
                 Effect::Terminate => {
                     if let Some(worker) = &mut self.worker
                         && let Err(error) = worker.terminate()
@@ -658,7 +663,8 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                         warn!(%error, "cannot kill the worker");
                     }
                 }
-                // Dropping it reaps it on a thread, if it ever can be.
+                // Dropping it reaps it on a thread, if it ever can be, and
+                // the launcher says when ([`Launcher::let_go_reaped`]).
                 Effect::Abandon => {
                     if self.worker.take().is_some() {
                         warn!("letting go of a worker not reaped after its kill");

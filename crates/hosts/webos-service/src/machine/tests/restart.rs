@@ -149,9 +149,10 @@ fn standby_gives_the_restart_back() {
 }
 
 /// A worker let go during standby may still hold the capture: the person
-/// is still asked to restart the TV after it wakes, until they choose.
+/// is still asked to restart the TV after it wakes, whatever they choose
+/// or the TV does, until it no longer exists; then their choice applies.
 #[test]
-fn a_worker_let_go_in_standby_is_asked_about_at_wake() {
+fn a_worker_let_go_in_standby_is_asked_about_until_it_is_reaped() {
     let (mut m, t0) = (full(), Instant::now());
     script(
         &mut m,
@@ -180,7 +181,24 @@ fn a_worker_let_go_in_standby_is_asked_about_at_wake() {
     script(
         &mut m,
         t0,
-        vec![(60_001, Target(LightingTarget::Off), start())],
+        vec![
+            (60_001, Target(LightingTarget::Effects), vec![]),
+            (60_002, Pw(Asleep), vec![]),
+            (60_003, Pw(Active), vec![]),
+        ],
+    );
+    let later = m.state();
+    assert!(matches!(full_state(&later).1, FullWorker::Asking { .. }));
+    assert_eq!(asked(&later), asked(&state));
+    assert_eq!(m.intent(), LightingTarget::Effects, "the choice is kept");
+    script(
+        &mut m,
+        t0,
+        vec![(
+            70_000,
+            Input::LetGoReaped,
+            vec![spawn_full(LightingTarget::Effects), video(Video::Unknown)],
+        )],
     );
 }
 

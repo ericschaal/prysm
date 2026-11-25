@@ -178,7 +178,8 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   initializations in a row includes every initialization.
 - The supervisor reaps a worker before starting another (or lets go of one
   still not reaped 8 s after its KILL, which asks to restart the TV: it may
-  still hold the capture).
+  still hold the capture). Only that worker's late reap, or the TV's
+  restart, ends the ask; a choice made meanwhile applies after it.
 - A worker runs while the TV is on (active or screen saver) and, for slim,
   while capture is enabled and `prysm_address` is set. Video is reported
   unavailable unless the TV is active.

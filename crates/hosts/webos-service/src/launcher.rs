@@ -37,6 +37,9 @@ pub trait Launcher {
     /// # Errors
     /// The process could not be started.
     fn spawn(&mut self, program: &Path, args: &[String]) -> io::Result<Self::Worker>;
+    /// Whether a worker let go before its reap (dropped) no longer exists
+    /// since the last call: its late reap returned. Without blocking.
+    fn let_go_reaped(&mut self) -> bool;
 }
 
 /// One started worker process.
@@ -72,16 +75,24 @@ pub trait Worker {
 /// long-lived loop thread: the worker's parent-death signal follows it.
 /// Each line read, and the end of the worker's event stream, wakes the loop
 /// through `waker`; its exit wakes it through SIGCHLD, which the caller
-/// routes there.
+/// routes there. A worker let go says through `waker` when its late reap
+/// returned.
 #[derive(Debug)]
 pub struct ProcessLauncher {
     waker: Waker,
+    reaps: mpsc::Sender<()>,
+    reaped: mpsc::Receiver<()>,
 }
 
 impl ProcessLauncher {
     #[must_use]
     pub fn new(waker: Waker) -> Self {
-        Self { waker }
+        let (reaps, reaped) = mpsc::channel();
+        Self {
+            waker,
+            reaps,
+            reaped,
+        }
     }
 }
 
@@ -135,6 +146,11 @@ impl Launcher for ProcessLauncher {
         };
         Ok(ProcessWorker {
             outputs,
+            wait_failed: false,
+            reaped: Reaped {
+                sender: self.reaps.clone(),
+                waker: self.waker.clone(),
+            },
             stage: Stage::Running {
                 child,
                 stdin,
@@ -144,6 +160,10 @@ impl Launcher for ProcessLauncher {
                 },
             },
         })
+    }
+
+    fn let_go_reaped(&mut self) -> bool {
+        self.reaped.try_iter().count() > 0
     }
 }
 
@@ -227,6 +247,16 @@ pub struct ProcessWorker {
     /// What the readers sent; read in every stage, also after the exit.
     outputs: mpsc::Receiver<Output>,
     stage: Stage,
+    /// `waitpid` failed (with ECHILD, the process is already gone).
+    wait_failed: bool,
+    reaped: Reaped,
+}
+
+/// Where a worker let go says that its late reap returned.
+#[derive(Debug)]
+struct Reaped {
+    sender: mpsc::Sender<()>,
+    waker: Waker,
 }
 
 /// Where the worker process is between its spawn and its reported exit.
@@ -265,11 +295,17 @@ impl EventReader {
 
 impl ProcessWorker {
     /// Signal the process while it is not reaped; afterwards its pid may be
-    /// someone else's.
+    /// someone else's. Also once waiting for it failed: it may have been
+    /// reaped already.
     fn signal(&self, signal: nix::sys::signal::Signal) -> io::Result<()> {
         let Stage::Running { child, .. } = &self.stage else {
             return Ok(());
         };
+        if self.wait_failed {
+            return Err(io::Error::other(
+                "not signalled: waiting for it failed, so its pid may be another process's",
+            ));
+        }
         let pid = i32::try_from(child.id()).map_err(io::Error::other)?;
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), signal).map_err(io::Error::from)
     }
@@ -298,7 +334,8 @@ impl Worker for ProcessWorker {
 
     fn try_exit(&mut self) -> io::Result<Option<Exit>> {
         if let Stage::Running { child, .. } = &mut self.stage {
-            let Some(status) = child.try_wait()? else {
+            let status = child.try_wait().inspect_err(|_| self.wait_failed = true)?;
+            let Some(status) = status else {
                 return Ok(None);
             };
             let exit = match (status.code(), status.signal()) {
@@ -346,17 +383,25 @@ impl Drop for ProcessWorker {
     /// worker was once seen to leave the TV's capture locked until a reboot;
     /// later kills did not reproduce it), and reap on a thread, so a process stuck in the kernel cannot
     /// block us. A worker that does not finish is bounded by its own stop
-    /// deadline (see `prysm_webos_link::worker::guard_parent`).
+    /// deadline (see `prysm_webos_link::worker::guard_parent`). When the
+    /// reap returns, the launcher is told ([`Launcher::let_go_reaped`]).
     fn drop(&mut self) {
         // Already exited if this fails; the reap below collects it.
         let _ = self.terminate();
         if let Stage::Running { mut child, .. } = mem::replace(&mut self.stage, Stage::Reported) {
+            let Reaped { sender, waker } = &self.reaped;
+            let (sender, waker) = (sender.clone(), waker.clone());
             let reaper = std::thread::Builder::new()
                 .name("prysm-worker-reaper".into())
                 .spawn(move || {
+                    // An error (such as ECHILD) means there is no process
+                    // to wait for: gone either way.
                     if let Err(error) = child.wait() {
                         warn!(%error, "cannot reap the worker");
                     }
+                    // Nobody listens once the service ended.
+                    let _ = sender.send(());
+                    waker.wake();
                 });
             if let Err(error) = reaper {
                 warn!(%error, "cannot start the worker reaper");
