@@ -25,13 +25,13 @@ pub(crate) enum Reason {
     /// which it finishes within [`Limits::preparation`].
     DriverPreparing,
     /// A driver that failed may hold broken state that a new one does not:
-    /// one new driver tells, and a second failure with no frame between
-    /// proves it is not that.
+    /// one new driver tells, and a second failure with no frame or change
+    /// of the video signal between proves it is not that.
     FreshDriver,
     /// An initialized driver that gets no buffer may be broken the same
-    /// way: one new driver tells. A second stall with no frame between is
-    /// the TV withholding the picture (protected content, say), which only
-    /// a change of the video ends.
+    /// way: one new driver tells. A second stall with no frame or change of
+    /// the video signal between is the TV withholding the picture
+    /// (protected content, say), which only a change of the video ends.
     StalledDriver,
 }
 

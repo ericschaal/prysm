@@ -751,9 +751,9 @@ fn a_withheld_video_waits_for_the_video_signal() {
 }
 
 /// An ordinary failure opens one new driver at once, without an error; a
-/// frame gives that try back, so a second failure after it does the same.
-/// Two failures with no frame between (here two failed opens after a
-/// context change) fail the source.
+/// frame or a change of the video signal gives that try back, so a second
+/// failure after it does the same. Two failures with neither between (here
+/// two failed opens after a context change) fail the source.
 #[test]
 fn an_ordinary_failure_opens_one_new_driver() {
     let driver = Driver::new();

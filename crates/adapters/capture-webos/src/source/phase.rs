@@ -82,7 +82,8 @@ pub(super) enum Phase {
     Video {
         stage: Stage,
         /// The one new driver a fault opens ([`Reason::FreshDriver`],
-        /// [`Reason::StalledDriver`]); a frame gives it back.
+        /// [`Reason::StalledDriver`]); a frame or a change of the video
+        /// signal gives it back.
         fresh: Attempts,
         /// Since when the pulls are told refused: from the period's first
         /// refusal or withholding until a frame, the end of the period (a
@@ -486,9 +487,10 @@ impl State {
 
     /// The signal changed to `readiness` (the first counts as a change of
     /// video). Any change lets a refused driver be initialised once more
-    /// and opens a new driver for withheld video; only a change of video or
-    /// context lets a failed TV UI be tried again. Returns whether the
-    /// context changed.
+    /// and opens a new driver for withheld video; a change is new
+    /// evidence, so it gives the one new driver back. Only a change of
+    /// video or context lets a failed TV UI be tried again. Returns whether
+    /// the context changed.
     fn signal(&mut self, readiness: Readiness, now: Instant, out: &mut Vec<Action>) -> bool {
         let before = self.seen.replace(Seen { readiness, at: now });
         let Readiness {
@@ -503,6 +505,9 @@ impl State {
             before.is_some_and(|before| before.readiness.generation != generation);
         if video_changed || context_changed {
             self.ui = self.ui.after_change();
+        }
+        if let Phase::Video { fresh, .. } = &mut self.phase {
+            fresh.succeeded();
         }
         if self.phase.refusals().is_some() {
             if let Phase::Video {
@@ -532,8 +537,8 @@ impl State {
     }
 
     /// A change of the wanted tap kind starts a new period, a change of the
-    /// video context a new stage of the same one (its new driver to open
-    /// and its refused state kept), due at once. A created-only driver
+    /// video context a new stage of the same one (its refused state kept),
+    /// due at once. A created-only driver
     /// holds no video context and its release can hang, so only a change of
     /// kind releases it; a change of kind also ends the refused state. A
     /// refused driver stays created-only, so it is always kept otherwise.
@@ -1438,26 +1443,26 @@ mod tests {
         }
     }
 
-    /// A context reset starts a new stage of the same period (its new
-    /// driver stays spent): a created-only driver is kept (and a refusal
+    /// A context reset starts a new stage of the same period, its new
+    /// driver given back: a created-only driver is kept (and a refusal
     /// goes on), any other held tap is released and reopened.
     #[test]
     fn a_context_reset_keeps_only_a_created_only_driver() {
         let t0 = Instant::now();
         let now = ms(t0, 50);
         let reset = ready(Video::Available, 1, 2);
-        let closed = spent(t0, Stage::Closed, None);
+        let closed = video(Stage::Closed);
         for (stage, created_only, phase, actions) in [
             (
                 refused(1),
                 true,
-                spent(t0, reinitialising(1), None),
+                video(reinitialising(1)),
                 vec![Action::Acquire],
             ),
             (
                 preparing_wait(t0, ms(t0, 900)),
                 true,
-                spent(t0, Stage::Running, None),
+                video(Stage::Running),
                 vec![Action::Acquire],
             ),
             (
@@ -1921,6 +1926,67 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// A change of the video signal gives the one new driver back: after
+    /// two stalls withheld the video, a change opens a new driver, and one
+    /// ordinary fault of it opens another instead of failing; a second
+    /// fault with no frame or change between fails the source.
+    #[test]
+    fn a_signal_change_gives_the_new_driver_back() {
+        let t0 = Instant::now();
+        let pending = || acquired(Ok(Acquired::Pending), false);
+        let (state, actions) = run(
+            t0,
+            at(t0, video(Stage::Running), UiSupport::Untried),
+            vec![
+                (0, pending()),
+                (2000, pending()),
+                (2000, Event::Opened),
+                (2000, acquired(Ok(Acquired::Pending), true)),
+                (4000, pending()),
+            ],
+            &RULES,
+        );
+        assert_eq!(
+            state.phase,
+            spent(ms(t0, 2000), Stage::Withheld, Some(ms(t0, 4000)))
+        );
+        assert_eq!(refused_told(&actions), [true]);
+        let (state, _) = run(
+            t0,
+            state,
+            vec![
+                (5000, signal(ready(Video::Available, 0, 2), false)),
+                (5000, Event::Opened),
+            ],
+            &RULES,
+        );
+        let error = || Error::other("interrupted");
+        let state = check(
+            state,
+            acquired(Err(fault()), true),
+            ms(t0, 5100),
+            &RULES,
+            spent(ms(t0, 5100), Stage::Closed, Some(ms(t0, 4000))),
+            &[
+                note(Note::InitializationAnswered {
+                    answer: Answer::Failed,
+                    since_change_ms: 100,
+                }),
+                note(Note::VideoRetrying { error: error() }),
+                Action::Release,
+                Action::Open(Kind::Video),
+            ],
+        );
+        check(
+            state,
+            Event::OpenFailed(fault()),
+            ms(t0, 5200),
+            &RULES,
+            Phase::Idle,
+            &[Action::Refused(false), Action::Fail(error())],
+        );
     }
 
     /// A stop releases the tap iff one is held.

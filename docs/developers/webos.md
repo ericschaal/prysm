@@ -120,8 +120,9 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   makes pulls `Pull::Refused` and waits for the next change of the video
   signal, which opens a new tap (not yet verified on hardware). Any other
   failure, and a stall (no buffer for 2 s), releases the tap and opens a
-  new one at once, one time until a frame: failing again before a frame,
-  a failure ends the source, a stall waits as above. After a failed
+  new one at once, one time until a frame or a change of the video
+  signal: failing again before either, a failure ends the source, a stall
+  waits as above. After a failed
   driver call a tap accepts nothing but its release
   ([capture-webos-sys](../../crates/adapters/capture-webos-sys/src/lib.rs),
   [native loop](../../crates/adapters/capture-webos/src/source/native.rs)).
