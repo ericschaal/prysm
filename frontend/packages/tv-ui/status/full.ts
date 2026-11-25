@@ -6,6 +6,7 @@ import {
   pictureOf,
   unreachable,
   type LightingFailure,
+  type LightingMode,
   type LightingSituation,
   type OutputIssue,
 } from '@prysm/application-client';
@@ -32,40 +33,15 @@ import {
 /**
  * Full: why the lights don't show screen sync, or that they don't answer
  * whatever was chosen, as the lights card says it: by the portal's state
- * once it is known (while screen sync runs or the lights are waited for),
- * as the worker last said before.
+ * once it is known (while screen sync runs), as the worker last said
+ * before.
  */
 function lightsIssue(
   state: State,
   portal: PortalFacts | null,
 ): OutputIssue | null {
   if (!portal?.lighting) return fullLights(state);
-  const { kind } = portal.lighting;
-  return kind === 'sync' || kind === 'unanswered'
-    ? (portal.issue ?? null)
-    : null;
-}
-
-/** The target a running, starting or waiting situation was asked for. */
-function targetOf(
-  lighting: Exclude<
-    LightingSituation,
-    { kind: 'faulted' | 'failed' | 'unknown' }
-  >,
-): LightingTarget {
-  switch (lighting.kind) {
-    case 'off':
-      return 'off';
-    case 'sync':
-      return 'screen_sync';
-    case 'effects':
-      return 'effects';
-    case 'unanswered':
-    case 'starting':
-      return lighting.target;
-    default:
-      return unreachable(lighting);
-  }
+  return portal.lighting.kind === 'sync' ? (portal.issue ?? null) : null;
 }
 
 /**
@@ -139,7 +115,7 @@ export type FullSituation =
   /** `target`: what was chosen; with Off or effects, only `unreachable`. */
   | { kind: 'lightsIssue'; issue: OutputIssue; target: LightingTarget }
   | { kind: 'syncOn' }
-  | { kind: 'starting' };
+  | { kind: 'starting'; target: LightingMode };
 
 /**
  * Full: what the status card is about, by the portal's situation once it is
@@ -176,39 +152,45 @@ export function fullSituation(
   if (tv) return tv;
   if (lighting?.kind === 'unknown' || (!lighting && state.target === 'unknown'))
     return { kind: 'newer' };
-  // The supervisor hears of a change made in the portal a moment later.
-  const target = lighting ? targetOf(lighting) : state.target;
+  // A mode asked for is starting until the session reaches it.
+  if (lighting?.kind === 'starting')
+    return { kind: 'starting', target: lighting.target };
+  // With the lights off or their effects, lights that don't answer: the
+  // target stays and is applied once they answer.
+  if (lighting?.kind === 'unanswered')
+    return {
+      kind: 'lightsIssue',
+      issue: 'unreachable',
+      target: lighting.target,
+    };
+  // Before the portal's first snapshot, the TV service's target; it hears
+  // of a change made in the portal a moment later.
+  const target = lighting ? null : state.target;
   // The lights don't show what was chosen; the lights card says why, as
-  // for a refused video. With the lights off or their effects, only lights
-  // that don't answer: the target stays and is applied once they answer.
+  // for a refused video.
   const issue = lightsIssue(state, portal);
   if (issue === 'unreachable' && (target === 'off' || target === 'effects'))
     return { kind: 'lightsIssue', issue, target };
-  if (target === 'off')
+  if (lighting?.kind === 'off' || target === 'off')
     return {
       kind: 'off',
       failure: lighting?.kind === 'off' ? lighting.failure : null,
     };
-  if (target === 'effects') return { kind: 'effects' };
+  if (lighting?.kind === 'effects' || target === 'effects')
+    return { kind: 'effects' };
   // Screen sync runs (also while it waits for lights that don't answer).
   if (issue) return { kind: 'lightsIssue', issue, target: 'screen_sync' };
   // The portal's measure; it alone says why no picture arrives.
-  const picture =
-    lighting?.kind === 'sync' && lighting.input
-      ? pictureOf(lighting.input)
-      : undefined;
+  const picture = lighting?.input ? pictureOf(lighting.input) : undefined;
   // Without the portal's measure yet, the TV's own word.
-  const flowing = lighting
-    ? lighting.kind === 'sync' &&
-      (picture ? picture === 'arriving' : isCapturing(state))
-    : isCapturing(state);
+  const flowing = picture ? picture === 'arriving' : isCapturing(state);
   if (flowing) return { kind: 'syncOn' };
   if (picture === 'refused')
     return { kind: 'waitingForVideo', picture: 'refused' };
   // Lighting is on but no frames arrive: the lights are released to WLED.
   if (fullPortal(state) && phase === 'running')
     return { kind: 'waitingForVideo', picture: 'quiet' };
-  return { kind: 'starting' };
+  return { kind: 'starting', target: 'screen_sync' };
 }
 
 /**

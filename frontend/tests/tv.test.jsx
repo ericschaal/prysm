@@ -1974,6 +1974,19 @@ test('the title and the lights card agree on what the lights do', async (t) => {
   assert.equal(tv.text('status-title'), 'Lights off');
 });
 
+test('both cards say effects start while the session still runs screen sync', async (t) => {
+  const tv = await mountTv(t, { flavor: 'full' });
+  await act(async () =>
+    tv.application.publish({
+      target: 'effects',
+      session: { state: 'screen_sync' },
+    }),
+  );
+  await settle();
+  assert.equal(tv.text('status-title'), 'Starting WLED effects…');
+  assert.equal(tv.text('lighting-status'), 'Starting WLED effects…');
+});
+
 test('the full status follows the portal: its failure, named by mode, and a faulted session', () => {
   const full = tvState('full', {
     target: 'screen_sync',
@@ -2201,7 +2214,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
   const waiting = tvStatus(
     live(full),
     draft,
-    facts({ target: 'screen_sync', session: { state: 'stopped' } }),
+    facts({ target: 'screen_sync', session: { state: 'screen_sync' } }),
   );
   assert.equal(waiting.title, 'Waiting for video', 'the TV has no frames');
   // The portal says the TV refuses to share the video: said plainly, with
@@ -2228,7 +2241,7 @@ test('the full status follows the portal: its failure, named by mode, and a faul
     tvStatus(
       live(full),
       draft,
-      facts({ target: 'effects', session: { state: 'stopped' } }),
+      facts({ target: 'effects', session: { state: 'effects' } }),
     ).title,
     'WLED effects on',
   );

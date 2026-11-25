@@ -148,7 +148,10 @@ export function fullCopy(situation: FullSituation): Copy {
       };
     case 'starting':
       return {
-        title: 'Starting screen sync…',
+        title:
+          situation.target === 'effects'
+            ? 'Starting WLED effects…'
+            : 'Starting screen sync…',
         description: 'This takes a few seconds.',
         attention: false,
       };
