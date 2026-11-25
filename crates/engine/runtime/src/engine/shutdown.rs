@@ -1,13 +1,14 @@
 //! The shutdown sequence, and the blocking calls it may abandon.
 use super::lighting::Lighting;
 use super::{Command, Core, Engine};
-use prysm_ports::{Error, IdleMode, Result};
+use prysm_ports::{Error, Escalation, IdleMode, Result};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 impl Engine {
     /// Stop the session (output idles `Off`), join it and end the task;
     /// while the lights are waited for, try their request once more instead.
+    /// Lights that do not answer that last request are logged, not failed.
     /// Requests still queued, and any sent from now on, are refused with
     /// [`Error::Closed`] in their order, so none starts what shutdown stops.
     /// Blocking adapter or settings calls still running when the shutdown
@@ -15,8 +16,8 @@ impl Engine {
     /// abandoned and left running on their threads; later ones fail at once.
     ///
     /// # Errors
-    /// The engine is faulted, stopping the session failed, or a blocking
-    /// call was abandoned.
+    /// The engine is faulted, stopping the session failed other than by
+    /// lights that do not answer, or a blocking call was abandoned.
     pub async fn shutdown(self) -> Result<()> {
         self.begin_shutdown();
         let (reply, result) = oneshot::channel();
@@ -104,21 +105,25 @@ impl Core {
             return Err(Error::Faulted(phase));
         }
         let stopped = match self.lighting {
-            // One last try, waiting for nothing: lights that do not answer
-            // it fail the shutdown, as any other failed idle does.
+            // One last try, waiting for nothing.
             Lighting::Unanswered { mode, .. } => {
                 let tried = self.idle(mode).await;
-                if let Err(error) = &tried {
-                    tracing::warn!(
-                        error = %prysm_ports::chain(error),
-                        "the last try for the lights at shutdown failed; they are left as they are"
-                    );
-                }
                 self.set_lighting(Lighting::idled(mode, &tried));
                 tried
             }
             _ => self.stop(IdleMode::Off).await,
         };
+        // Lights that do not answer are away, which fails no shutdown.
+        let stopped = stopped.or_else(|error| {
+            if error.escalation() != Escalation::Unanswered {
+                return Err(error);
+            }
+            tracing::warn!(
+                error = %prysm_ports::chain(&error),
+                "the lights did not answer the last request; they may be left as they were"
+            );
+            Ok(())
+        });
         let result = stopped.and(self.abandoned.take().map_or(Ok(()), Err));
         self.record(&result);
         result

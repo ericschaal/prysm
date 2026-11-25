@@ -156,18 +156,29 @@ async fn a_command_ends_a_wait_at_once() {
 }
 
 /// A shutdown during a wait tries the request once more and waits for
-/// nothing: the lights' silence is its failure.
+/// nothing: the lights' silence fails no shutdown.
 #[tokio::test(start_paused = true)]
-async fn a_shutdown_during_a_wait_tries_once() {
+async fn a_shutdown_during_a_wait_tries_once_and_completes() {
     let log = CallLog::new();
     let (handle, engine, _) = start(&log, silent(), DEADLINE).await;
     handle.set_target(LightingTarget::Effects).await.unwrap();
-    let error = engine.shutdown().await.unwrap_err();
-    assert_eq!(error.escalation(), Escalation::Unanswered);
+    engine.shutdown().await.unwrap();
     assert_eq!(log.count("output.idle:o:Native"), 2);
     let snapshot = handle.snapshot().borrow().clone();
-    assert!(snapshot.session.failure().is_some());
+    assert!(snapshot.session.failure().is_none());
     assert_eq!(snapshot.device, DeviceReport::default());
+}
+
+/// A shutdown of screen sync whose idle the lights do not answer: that
+/// fails no shutdown either.
+#[tokio::test]
+async fn a_shutdown_the_lights_do_not_answer_completes() {
+    let log = CallLog::new();
+    let (handle, engine, _) = start(&log, silent(), DEADLINE).await;
+    handle.set_target(LightingTarget::ScreenSync).await.unwrap();
+    assert!(log.wait_for("output.write:o", 1).await);
+    engine.shutdown().await.unwrap();
+    assert_eq!(log.count("output.idle:o:Off"), 1);
 }
 
 /// Lights that refuse the request, rather than not answering it, fail it

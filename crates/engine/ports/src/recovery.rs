@@ -32,8 +32,8 @@ impl Escalation {
 
     /// The person's next step on a desktop host, which restarts and retries
     /// nothing, so `Restart` is the person's too. `Unanswered` reaches a
-    /// desktop host only where nothing waits for the lights: a shutdown's
-    /// last try, or the idle of a session the target moved away from.
+    /// desktop host only where nothing waits for the lights: the idle of a
+    /// session the target moved away from.
     #[must_use]
     pub const fn next_step(self) -> &'static str {
         match self {
