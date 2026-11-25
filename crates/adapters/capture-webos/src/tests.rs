@@ -595,37 +595,28 @@ fn a_not_ready_answer_ends_a_refusal() {
     closes_cleanly(frames);
 }
 
-/// Not-ready and pending answers share one wait for a frame: alternating,
-/// they reach the pending limit, which opens a new driver without an error
-/// (held in its open here so the next frame is queued for it).
+/// Alternating pending and not-ready answers never stall, however short
+/// the pending limit: each pending run counts from its own first answer.
+/// They reach the preparation limit, counted from the first answer without
+/// a frame, which fails the source on its one driver.
 #[test]
-fn alternating_not_ready_and_pending_answers_reach_a_limit() {
+fn alternating_not_ready_and_pending_answers_reach_the_preparation_limit() {
     let driver = Driver::new();
     let video = VideoSignal::default();
     video.set(Video::Available);
+    driver.push([Step::Pending, Step::NotReady].repeat(1000));
     driver.with(|s| s.idle = Step::NotReady);
     let limits = Limits {
-        pending: Duration::from_millis(500),
+        pending: Duration::from_millis(1),
+        preparation: Duration::from_millis(300),
         ..TEST
     };
     let mut frames = start_with(&driver, &video, limits);
-    eventually("the open", LIMIT, || (calls(&driver).0 == 1).then_some(()));
-    driver.hang("open");
-    // Each answer lasts less than the limit, so only one shared wait reaches it.
-    let deadline = Instant::now() + LIMIT;
-    for idle in [Step::Pending, Step::NotReady].into_iter().cycle() {
-        if calls(&driver).2 >= 1 {
-            break;
-        }
-        assert!(Instant::now() < deadline, "no limit reached");
-        driver.with(|s| s.idle = idle);
-        thread::sleep(Duration::from_millis(200));
-    }
-    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
-    driver.push([Step::Frame(3)]);
-    driver.unhang();
-    assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
+    let error = failure(&mut frames);
+    assert!(error.to_string().contains("not ready within"), "{error}");
     closes_cleanly(frames);
+    let (opens, _, releases) = calls(&driver);
+    assert_eq!((opens, releases), (1, 1), "no stall opened a new driver");
 }
 
 /// A driver that answered not ready is created only too: a new context

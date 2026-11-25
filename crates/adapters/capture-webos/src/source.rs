@@ -98,8 +98,9 @@ pub(crate) struct Limits {
     /// Longest without a frame, counted from the first answer without one,
     /// at which an [`Acquired::NotReady`] fails the source.
     pub preparation: Duration,
-    /// Longest without a frame, counted the same way, at which an
-    /// [`Acquired::Pending`] is a stall.
+    /// Longest without a frame, counted from the first of the
+    /// [`Acquired::Pending`] answers since the driver last answered
+    /// anything else (it was initialized then), at which one is a stall.
     pub pending: Duration,
     /// Delay between two initializations of a driver that answered
     /// [`Acquired::NotReady`].
