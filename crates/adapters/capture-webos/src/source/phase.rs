@@ -75,8 +75,6 @@ pub(super) enum Stage {
     /// when the TV would allow it sooner. A refused driver stays
     /// created-only, so this stage always keeps its tap.
     Refused { initializations: u32 },
-    /// The video signal changed since the refusal: initialized once now.
-    Reinitializing { initializations: u32 },
     /// No tap: the TV withholds this video ([`Recovery::Withheld`]). Opened
     /// again at the next change of the video signal, since nothing tells
     /// when the TV would give it sooner.
@@ -331,11 +329,7 @@ impl Stage {
     fn holds_tap(self) -> bool {
         match self {
             Self::Closed | Self::Withheld => false,
-            Self::Created
-            | Self::Running
-            | Self::NoFrame { .. }
-            | Self::Refused { .. }
-            | Self::Reinitializing { .. } => true,
+            Self::Created | Self::Running | Self::NoFrame { .. } | Self::Refused { .. } => true,
         }
     }
 
@@ -349,8 +343,7 @@ impl Stage {
                 pending_since: None,
                 ..
             }
-            | Self::Refused { .. }
-            | Self::Reinitializing { .. } => true,
+            | Self::Refused { .. } => true,
             Self::Closed
             | Self::Running
             | Self::NoFrame {
@@ -364,9 +357,7 @@ impl Stage {
     /// The refusals in a row of a refused driver; none in any other stage.
     fn refusals(self) -> Option<u32> {
         match self {
-            Self::Refused { initializations } | Self::Reinitializing { initializations } => {
-                Some(initializations)
-            }
+            Self::Refused { initializations } => Some(initializations),
             Self::Closed
             | Self::Created
             | Self::Running
@@ -471,7 +462,6 @@ pub(super) fn next(mut state: State, event: Event, now: Instant, rules: &Rules) 
         Event::Signal(readiness) => {
             let context_changed = state.signal(readiness, now, out);
             state.choose_tap(context_changed, now, rules, out);
-            state.decide(now, out);
         }
         Event::Woke => state.decide(now, out),
         Event::Opened => state.opened(out),
@@ -564,14 +554,15 @@ impl State {
         context_changed
     }
 
-    /// The tap kind the signal wants, decided first. A change of kind
-    /// starts a new period, releasing the held tap and ending the refused
-    /// state. Otherwise the period goes on, due at once: a refused driver
-    /// is initialized once more, withheld video gets a new driver, and a
-    /// change of the video context releases and reopens a held tap, except
-    /// a created-only one: it holds no video context and its release can
-    /// hang, so it is [`Stage::Created`]. A refused driver stays
-    /// created-only, so it is always kept.
+    /// The tap kind the signal wants, decided first, then what is due. A
+    /// change of kind starts a new period, releasing the held tap and
+    /// ending the refused state. Otherwise the period goes on: a refused
+    /// driver is initialized once more at once, its stage still
+    /// [`Stage::Refused`] until it answers; withheld video gets a new
+    /// driver; and a change of the video context releases and reopens a
+    /// held tap, except a created-only one: it holds no video context and
+    /// its release can hang, so it is [`Stage::Created`]. A refused driver
+    /// stays created-only, so it is always kept.
     fn choose_tap(&mut self, context_changed: bool, now: Instant, rules: &Rules, out: &mut Out) {
         let Some(Seen {
             readiness: Readiness {
@@ -589,18 +580,17 @@ impl State {
             }
             self.end_refusal(RefusalEnd::KindChange, now, out);
             self.phase = Phase::begin(kind);
-            return;
+            return self.decide(now, out);
         }
         match self.phase {
             Phase::Video { stage, .. } => {
                 let stage = match stage {
-                    Stage::Refused { initializations }
-                    | Stage::Reinitializing { initializations } => {
+                    Stage::Refused { .. } => {
                         out.push(Action::Note(Note::ChangedWhileRefused {
                             video,
                             generation,
                         }));
-                        Stage::Reinitializing { initializations }
+                        return out.ask(Ask::Acquire);
                     }
                     Stage::Withheld => {
                         out.push(Action::Note(Note::ChangedWhileWithheld {
@@ -635,10 +625,12 @@ impl State {
             }
             Phase::Ui { .. } | Phase::Idle => {}
         }
+        self.decide(now, out);
     }
 
-    /// Idle without a tap wanted, while refused or withheld; sleep until a
-    /// deadline not reached; else ask to open or acquire.
+    /// Idle without a tap wanted, while refused or withheld (until a
+    /// signal, [`Self::choose_tap`]); sleep until a deadline not reached;
+    /// else ask to open or acquire.
     fn decide(&self, now: Instant, out: &mut Out) {
         match self.phase {
             Phase::Idle
@@ -1004,11 +996,6 @@ mod tests {
     /// A driver that refused `initializations` in a row.
     fn refused(initializations: u32) -> Stage {
         Stage::Refused { initializations }
-    }
-
-    /// A refused driver initialized again after `initializations` refusals.
-    fn reinitializing(initializations: u32) -> Stage {
-        Stage::Reinitializing { initializations }
     }
 
     /// Runs `event` at `now` and checks the next phase, the actions and the
@@ -1447,7 +1434,7 @@ mod tests {
             Event::Signal(same),
             ms(t0, 300),
             &RULES,
-            refusing(reinitializing(1)),
+            refusing(refused(1)),
             &[
                 note(Note::SignalChanged(same)),
                 note(Note::ChangedWhileRefused {
@@ -1525,7 +1512,7 @@ mod tests {
         ] {
             let state = at(
                 t0,
-                period(reinitializing(1), new_driver, Some(t0)),
+                period(refused(1), new_driver, Some(t0)),
                 UiSupport::Untried,
             );
             let step = next(state, Event::Acquired(answer), ms(t0, 250), &RULES);
@@ -1561,12 +1548,7 @@ mod tests {
         let open = Some(Ask::Open(Kind::Video));
         let released = || vec![Action::Release];
         for (stage, phase, actions, ask) in [
-            (
-                refused(1),
-                video(reinitializing(1)),
-                vec![],
-                Some(Ask::Acquire),
-            ),
+            (refused(1), video(refused(1)), vec![], Some(Ask::Acquire)),
             (
                 no_frame_not_ready(t0, ms(t0, 900)),
                 video(Stage::Created),
@@ -2136,7 +2118,7 @@ mod tests {
             Stage::Running,
             no_frame_pending(t0, t0),
             refused(1),
-            reinitializing(1),
+            Stage::Created,
         ];
         let mut cases = vec![
             (Phase::Idle, false),
