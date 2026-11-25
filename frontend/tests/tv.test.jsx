@@ -2759,6 +2759,25 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     /doesn’t take commands from the TV/,
   );
   assert.equal(probes, 0);
+  await forbidden.unmount();
+  // A reply the app can't read is no refusal: Prysm's message is said.
+  const message =
+    'This page can’t read the state stream from Prysm. Reload the page.';
+  const unreadable = await mountTv(t, {
+    block: { kind: 'internal', message },
+    probe: () => {
+      probes++;
+      return Promise.resolve(true);
+    },
+    supervisor: {
+      preferences: {
+        prysm_address: 'http://192.168.1.20:8787',
+      },
+    },
+  });
+  await settle();
+  assert.equal(unreadable.text('lighting-status'), message);
+  assert.equal(probes, 0);
 });
 
 test('a remote Prysm without Remote capture is explained; an old browser gets the portal address', async (t) => {

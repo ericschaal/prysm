@@ -11,6 +11,7 @@ import type {
 import {
   failureOf,
   STALE_MS,
+  streamStep,
   type ApplicationClient,
   type ApplicationSnapshot,
   type LightingTarget,
@@ -113,15 +114,19 @@ export function usePortal(
 
   // Kept while the runtime retries, until a state arrives.
   const error = connection?.status === 'connected' ? null : connection?.error;
-  const refused = error?.kind === 'forbidden';
-  const message = error?.message ?? null;
-  /** Whether anything answers at `baseUrl`, for the error `message`. */
+  // Prysm's own answer ends the stream; only a lost connection leaves open
+  // whether anything answers at `baseUrl`.
+  const stopped =
+    error && streamStep[error.kind] !== 'reconnect' ? error : null;
+  const refused = stopped?.kind === 'forbidden';
+  const message = error && !stopped ? error.message : null;
+  /** Whether anything answers at `baseUrl`, for the lost `message`. */
   const [probed, setProbed] = useState<{
     message: string;
     reachable: boolean;
   } | null>(null);
   useEffect(() => {
-    if (!message || refused || !baseUrl || !probe) return;
+    if (!message || !baseUrl || !probe) return;
     let current = true;
     probe(baseUrl).then(
       (reachable) => {
@@ -134,7 +139,7 @@ export function usePortal(
     return () => {
       current = false;
     };
-  }, [message, refused, baseUrl, probe]);
+  }, [message, baseUrl, probe]);
   let reach: Reach = 'unknown';
   if (refused) reach = 'refused';
   else if (message && probed?.message === message)
@@ -168,6 +173,8 @@ export function usePortal(
     connection,
     snapshot,
     reach,
+    /** Why the stream stopped, said by Prysm; it does not reconnect. */
+    stopped: stopped?.message ?? null,
     /** Rejects when there is no portal to command (unsupported, no address). */
     setTarget: (target: LightingTarget) =>
       runtime

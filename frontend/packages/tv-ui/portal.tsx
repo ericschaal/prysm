@@ -159,6 +159,10 @@ export function LightingCard({
       ? 'Prysm on this TV doesn’t answer the app. Close and open the app again.'
       : 'Prysm on your computer doesn’t take commands from the TV. The TV guide shows how to allow it.';
     attention = true;
+  } else if (portal.stopped) {
+    // Not a lost connection: Prysm's answer says what to do.
+    message = portal.stopped;
+    attention = true;
   } else if (connection?.error) {
     message = full
       ? 'Can’t reach Prysm on this TV. Service options can repair it.'
