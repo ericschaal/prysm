@@ -74,9 +74,6 @@ struct Script {
     opens: usize,
     releases: usize,
     acquires: usize,
-    /// The video tap's driver is created and not initialized, as the real
-    /// one is after its open or a refused or not-ready initialization.
-    created: bool,
     /// The UI tap fails to open (fatally or not), fails every acquisition,
     /// or fails once.
     ui_open_fails: Option<bool>,
@@ -119,7 +116,6 @@ impl Driver {
                 opens: 0,
                 releases: 0,
                 acquires: 0,
-                created: false,
                 ui_open_fails: None,
                 ui_fails: false,
                 ui_fail_once: false,
@@ -197,7 +193,6 @@ impl Backend for Driver {
             });
         }
         script.opened();
-        script.created = true;
         Ok(Box::new(FakeTap(self.clone())))
     }
 
@@ -251,7 +246,6 @@ impl Tap for FakeTap {
         let mut script = self.0.enter("acquire");
         script.acquires += 1;
         let step = script.steps.pop_front().unwrap_or(script.idle);
-        script.created = matches!(step, Step::NotReady | Step::Refused);
         let status = |status: &str, recovery| {
             Err(Fault {
                 error: Error::adapter("webOS video interrupted", std::io::Error::other(status)),
@@ -266,10 +260,6 @@ impl Tap for FakeTap {
             Step::Fail { fatal } => status("status 5", recovery(fatal)),
             Step::Withheld => status("status 13", Recovery::Withheld),
         }
-    }
-
-    fn created_only(&self) -> bool {
-        self.0.script().created
     }
 
     fn release(self: Box<Self>) -> prysm_ports::Result<()> {
@@ -1327,10 +1317,6 @@ struct PanickingTap {
 impl Tap for PanickingTap {
     fn acquire(&mut self) -> Result<Acquired, Fault> {
         panic!("native bug");
-    }
-
-    fn created_only(&self) -> bool {
-        true
     }
 
     fn release(self: Box<Self>) -> prysm_ports::Result<()> {

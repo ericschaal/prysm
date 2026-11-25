@@ -113,16 +113,8 @@ impl<B: Backend> Native<B> {
         if state.sequence() == Some(readiness.sequence) {
             Event::Woke
         } else {
-            Event::Signal {
-                readiness,
-                created_only: self.created_only(),
-            }
+            Event::Signal(readiness)
         }
-    }
-
-    /// The held tap's driver is created and not initialized, as it says.
-    fn created_only(&self) -> bool {
-        matches!(&self.tap, Some(Held::Video(tap)) if tap.created_only())
     }
 
     fn open(&mut self, kind: Kind) -> Event {
@@ -146,21 +138,14 @@ impl<B: Backend> Native<B> {
         }
     }
 
-    /// One acquisition of the held tap, told with whether it initializes a
-    /// created-only driver.
+    /// One acquisition of the held tap.
     fn acquire(&mut self) -> Event {
         match self
             .tap
             .as_mut()
             .expect("the machine acquires only a held tap")
         {
-            Held::Video(tap) => {
-                let initializing = tap.created_only();
-                Event::Acquired {
-                    answer: self.worker.watch("acquire", || tap.acquire()),
-                    initializing,
-                }
-            }
+            Held::Video(tap) => Event::Acquired(self.worker.watch("acquire", || tap.acquire())),
             Held::Ui(tap) => Event::UiAcquired(self.worker.watch("UI acquire", || tap.acquire())),
         }
     }

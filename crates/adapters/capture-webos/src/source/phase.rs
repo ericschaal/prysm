@@ -42,26 +42,29 @@ pub(super) enum Occurrence {
     Again,
 }
 
-/// Where a video tap's period stands.
+/// Where a video tap's period stands. The stage says whether the held
+/// driver is created-only ([`Stage::created_only`]): the driver's last
+/// answer decides it, and the machine sees every answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Stage {
     /// No tap: opened at once.
     Closed,
-    /// A created-only driver that a change of its video context found not
-    /// ready: initialized again at once, since the change restarts the TV's
-    /// video pipeline, which may make the driver ready. None of its answers
-    /// counts any more: [`Limits::preparation`] counts again from its next.
+    /// A created-only driver none of whose answers counts: just opened, or
+    /// found not ready by a change of its video context, which restarts
+    /// the TV's video pipeline and may make the driver ready. Initialized
+    /// at once; [`Limits::preparation`] counts from its next answer.
     Created,
-    /// A tap with no deadline running: acquired at the pace.
+    /// An initialized driver that delivered a frame: acquired at the pace.
     Running,
     /// A held driver with no frame since `since`, the first answer without
-    /// one (not ready or a pending buffer) since the tap opened, last
-    /// delivered a frame or was [`Stage::Created`]: the preparation limit
-    /// counts from it.
+    /// one (not ready or a pending buffer) since it was [`Stage::Created`]
+    /// or last delivered a frame: the preparation limit counts from it.
     /// `pending_since` is the first of the pending answers since the driver
-    /// last answered anything else (it was initialized then), `None` after
-    /// a not-ready one: the stall counts from it. Acquired again at `at`: [`Limits::not_ready_retry`]
-    /// after a not-ready answer, at the pace after a pending one.
+    /// last answered anything else (it was initialized then): the stall
+    /// counts from it. `None` after a not-ready answer, which leaves the
+    /// driver created-only. Acquired again at `at`:
+    /// [`Limits::not_ready_retry`] after a not-ready answer, at the pace
+    /// after a pending one.
     NoFrame {
         since: Instant,
         pending_since: Option<Instant>,
@@ -70,7 +73,7 @@ pub(super) enum Stage {
     /// The driver refused its last `initializations` in a row: initialized
     /// again at the next change of the video signal, since nothing tells
     /// when the TV would allow it sooner. A refused driver stays
-    /// created-only, so this stage always has its tap.
+    /// created-only, so this stage always keeps its tap.
     Refused { initializations: u32 },
     /// The video signal changed since the refusal: initialized once now.
     Reinitializing { initializations: u32 },
@@ -135,23 +138,14 @@ pub(super) struct State {
 /// What the machine is told in a run of the loop.
 #[derive(Debug)]
 pub(super) enum Event {
-    /// The signal read has a new sequence. `created_only`: the held tap's
-    /// driver is created and not initialized, as the tap says now (`false`
-    /// without a tap).
-    Signal {
-        readiness: Readiness,
-        created_only: bool,
-    },
+    /// The signal read has a new sequence.
+    Signal(Readiness),
     /// The tap [`Ask::Open`] asked for opened.
     Opened,
     OpenFailed(Fault),
     UiOpenFailed(UiFault),
-    /// A video acquisition answered; `initializing`: the driver was
-    /// created-only before it, as the tap said.
-    Acquired {
-        answer: Result<Acquired, Fault>,
-        initializing: bool,
-    },
+    /// A video acquisition answered.
+    Acquired(Result<Acquired, Fault>),
     /// A TV UI acquisition answered.
     UiAcquired(Result<Frame, UiFault>),
     /// A sleep or an idle ended without a change of the signal. The wanted
@@ -345,6 +339,28 @@ impl Stage {
         }
     }
 
+    /// The held driver is created and not initialized: just opened, or its
+    /// last answer was not ready or refused. Releasing it undoes only its
+    /// creation, and its next acquisition initializes it.
+    fn created_only(self) -> bool {
+        match self {
+            Self::Created
+            | Self::NoFrame {
+                pending_since: None,
+                ..
+            }
+            | Self::Refused { .. }
+            | Self::Reinitializing { .. } => true,
+            Self::Closed
+            | Self::Running
+            | Self::NoFrame {
+                pending_since: Some(_),
+                ..
+            }
+            | Self::Withheld => false,
+        }
+    }
+
     /// The refusals in a row of a refused driver; none in any other stage.
     fn refusals(self) -> Option<u32> {
         match self {
@@ -452,22 +468,16 @@ pub(super) fn next(mut state: State, event: Event, now: Instant, rules: &Rules) 
     let mut decided = Out::default();
     let out = &mut decided;
     match event {
-        Event::Signal {
-            readiness,
-            created_only,
-        } => {
+        Event::Signal(readiness) => {
             let context_changed = state.signal(readiness, now, out);
-            state.choose_tap(context_changed, created_only, now, rules, out);
+            state.choose_tap(context_changed, now, rules, out);
             state.decide(now, out);
         }
         Event::Woke => state.decide(now, out),
         Event::Opened => state.opened(out),
         Event::OpenFailed(fault) => state.video_fault(fault, now, out),
         Event::UiOpenFailed(fault) => state.ui_fault(fault, now, out),
-        Event::Acquired {
-            answer,
-            initializing,
-        } => state.acquired(answer, initializing, now, rules, out),
+        Event::Acquired(answer) => state.acquired(answer, now, rules, out),
         Event::UiAcquired(answer) => state.ui_acquired(answer, now, rules, out),
         Event::Stop => {
             if state.phase.holds_tap() {
@@ -562,14 +572,7 @@ impl State {
     /// a created-only one: it holds no video context and its release can
     /// hang, so it is [`Stage::Created`]. A refused driver stays
     /// created-only, so it is always kept.
-    fn choose_tap(
-        &mut self,
-        context_changed: bool,
-        created_only: bool,
-        now: Instant,
-        rules: &Rules,
-        out: &mut Out,
-    ) {
+    fn choose_tap(&mut self, context_changed: bool, now: Instant, rules: &Rules, out: &mut Out) {
         let Some(Seen {
             readiness: Readiness {
                 video, generation, ..
@@ -593,7 +596,6 @@ impl State {
                 let stage = match stage {
                     Stage::Refused { initializations }
                     | Stage::Reinitializing { initializations } => {
-                        debug_assert!(created_only, "a refused driver stays created-only");
                         out.push(Action::Note(Note::ChangedWhileRefused {
                             video,
                             generation,
@@ -610,10 +612,16 @@ impl State {
                     stage if !context_changed => stage,
                     // Initialized again at once, the preparation limit
                     // counting anew.
-                    Stage::Created | Stage::Running | Stage::NoFrame { .. } if created_only => {
-                        Stage::Created
-                    }
-                    Stage::Created | Stage::Running | Stage::NoFrame { .. } => {
+                    Stage::Created
+                    | Stage::NoFrame {
+                        pending_since: None,
+                        ..
+                    } => Stage::Created,
+                    Stage::Running
+                    | Stage::NoFrame {
+                        pending_since: Some(_),
+                        ..
+                    } => {
                         out.push(Action::Release);
                         Stage::Closed
                     }
@@ -658,7 +666,7 @@ impl State {
             Phase::Video {
                 stage: Stage::Closed,
                 ..
-            } => self.phase.at(Stage::Running),
+            } => self.phase.at(Stage::Created),
             Phase::Ui { held: false } => Phase::Ui { held: true },
             Phase::Idle | Phase::Video { .. } | Phase::Ui { held: true } => {
                 unreachable!("only a tap asked for opens")
@@ -669,13 +677,12 @@ impl State {
 }
 
 impl State {
-    /// Act on one video acquisition, an `initializing` one if the driver
-    /// was created-only: publish a frame, time the wait for one, keep a
-    /// refused driver, or recover from a fault.
+    /// Act on one video acquisition, which initialized the driver if it was
+    /// created-only: publish a frame, time the wait for one, keep a refused
+    /// driver, or recover from a fault.
     fn acquired(
         &mut self,
         answer: Result<Acquired, Fault>,
-        initializing: bool,
         now: Instant,
         rules: &Rules,
         out: &mut Out,
@@ -685,7 +692,7 @@ impl State {
         };
         let since_change_ms = self.since_change(now);
         let answered = |answer, out: &mut Out| {
-            if initializing {
+            if stage.created_only() {
                 out.push(Action::Note(Note::InitializationAnswered {
                     answer,
                     since_change_ms,
@@ -912,20 +919,6 @@ mod tests {
         }
     }
 
-    fn signal(readiness: Readiness, created_only: bool) -> Event {
-        Event::Signal {
-            readiness,
-            created_only,
-        }
-    }
-
-    fn acquired(answer: Result<Acquired, Fault>, initializing: bool) -> Event {
-        Event::Acquired {
-            answer,
-            initializing,
-        }
-    }
-
     fn frame() -> Frame {
         Frame::fill(1, 4, 2, PixelFormat::RGB24).unwrap()
     }
@@ -1080,7 +1073,7 @@ mod tests {
             }
             let state = check(
                 State::new(t0),
-                signal(readiness, false),
+                Event::Signal(readiness),
                 t0,
                 &rules,
                 phase,
@@ -1101,7 +1094,7 @@ mod tests {
             Event::Opened,
             t0,
             &RULES,
-            video(Stage::Running),
+            video(Stage::Created),
             &[],
             Some(Ask::Acquire),
         );
@@ -1129,7 +1122,7 @@ mod tests {
                 ]);
                 check(
                     at(t0, spent(stage, withheld), UiSupport::Untried),
-                    acquired(Ok(Acquired::Frame(frame())), false),
+                    Event::Acquired(Ok(Acquired::Frame(frame()))),
                     ms(t0, 30),
                     &RULES,
                     video(Stage::Running),
@@ -1182,7 +1175,7 @@ mod tests {
         let t0 = Instant::now();
         let state = check(
             at(t0, video(Stage::Running), UiSupport::Untried),
-            acquired(Ok(Acquired::Pending), false),
+            Event::Acquired(Ok(Acquired::Pending)),
             t0,
             &RULES,
             video(no_frame_pending(t0, t0)),
@@ -1191,7 +1184,7 @@ mod tests {
         );
         let state = check(
             state,
-            acquired(Ok(Acquired::Pending), false),
+            Event::Acquired(Ok(Acquired::Pending)),
             ms(t0, 1999),
             &RULES,
             video(no_frame_pending(t0, ms(t0, 1999))),
@@ -1207,7 +1200,7 @@ mod tests {
         let first = ms(t0, 2000);
         let state = check(
             state,
-            acquired(Ok(Acquired::Pending), false),
+            Event::Acquired(Ok(Acquired::Pending)),
             first,
             &RULES,
             spent(Stage::Closed, None),
@@ -1218,11 +1211,11 @@ mod tests {
             Some(Ask::Open(Kind::Video)),
         );
         let state = next(state, Event::Opened, first, &RULES).state;
-        let state = next(state, acquired(Ok(Acquired::Pending), true), first, &RULES).state;
+        let state = next(state, Event::Acquired(Ok(Acquired::Pending)), first, &RULES).state;
         let second = ms(t0, 4000);
         check(
             state,
-            acquired(Ok(Acquired::Pending), false),
+            Event::Acquired(Ok(Acquired::Pending)),
             second,
             &RULES,
             spent(Stage::Withheld, Some(second)),
@@ -1246,8 +1239,8 @@ mod tests {
         let t0 = Instant::now();
         let preparing = |at_ms| video(no_frame_not_ready(t0, ms(t0, at_ms)));
         let state = check(
-            at(t0, video(Stage::Running), UiSupport::Untried),
-            acquired(Ok(Acquired::NotReady), true),
+            at(t0, video(Stage::Created), UiSupport::Untried),
+            Event::Acquired(Ok(Acquired::NotReady)),
             t0,
             &RULES,
             preparing(1000),
@@ -1272,11 +1265,17 @@ mod tests {
         );
         let state = check(
             state,
-            acquired(Ok(Acquired::NotReady), false),
+            Event::Acquired(Ok(Acquired::NotReady)),
             ms(t0, 9999),
             &RULES,
             preparing(10_999),
-            &[Action::Sleep(Duration::ZERO)],
+            &[
+                note(Note::InitializationAnswered {
+                    answer: Answer::NotReady,
+                    since_change_ms: 9999,
+                }),
+                Action::Sleep(Duration::ZERO),
+            ],
             None,
         );
         let failed = Error::other(format!(
@@ -1285,11 +1284,18 @@ mod tests {
         ));
         check(
             state,
-            acquired(Ok(Acquired::NotReady), false),
+            Event::Acquired(Ok(Acquired::NotReady)),
             ms(t0, 10_000),
             &RULES,
             Phase::Idle,
-            &[Action::Fail(failed), Action::Release],
+            &[
+                note(Note::InitializationAnswered {
+                    answer: Answer::NotReady,
+                    since_change_ms: 10_000,
+                }),
+                Action::Fail(failed),
+                Action::Release,
+            ],
             None,
         );
     }
@@ -1340,7 +1346,7 @@ mod tests {
         for path in paths {
             let mut state = at(t0, video(Stage::Running), UiSupport::Untried);
             for (now, answer, phase) in path {
-                state = next(state, acquired(Ok(answer()), false), ms(t0, now), &RULES).state;
+                state = next(state, Event::Acquired(Ok(answer())), ms(t0, now), &RULES).state;
                 assert_eq!(state.phase, phase, "at {now} ms");
             }
         }
@@ -1355,9 +1361,9 @@ mod tests {
         let t0 = Instant::now();
         let preparing =
             |since_ms, at_ms| video(no_frame_not_ready(ms(t0, since_ms), ms(t0, at_ms)));
-        let not_ready = || acquired(Ok(Acquired::NotReady), true);
-        let reset = |sequence| signal(ready(Video::Available, 1, sequence), true);
-        let same = signal(ready(Video::Available, 0, 2), true);
+        let not_ready = || Event::Acquired(Ok(Acquired::NotReady));
+        let reset = |sequence| Event::Signal(ready(Video::Available, 1, sequence));
+        let same = Event::Signal(ready(Video::Available, 0, 2));
         let path = [
             (0, not_ready(), preparing(0, 1000), None),
             (500, same, preparing(0, 1000), None),
@@ -1382,7 +1388,7 @@ mod tests {
         let late = ms(t0, 950);
         let state = check(
             at(t0, video(Stage::Running), UiSupport::Untried),
-            acquired(Ok(Acquired::Frame(frame())), false),
+            Event::Acquired(Ok(Acquired::Frame(frame()))),
             late,
             &RULES,
             video(Stage::Running),
@@ -1408,8 +1414,8 @@ mod tests {
             })
         };
         let state = check(
-            at(t0, video(Stage::Running), UiSupport::Untried),
-            acquired(Ok(Acquired::Refused), true),
+            at(t0, video(Stage::Created), UiSupport::Untried),
+            Event::Acquired(Ok(Acquired::Refused)),
             ms(t0, 100),
             &RULES,
             refusing(refused(1)),
@@ -1438,7 +1444,7 @@ mod tests {
         let same = ready(Video::Available, 0, 2);
         let state = check(
             state,
-            signal(same, true),
+            Event::Signal(same),
             ms(t0, 300),
             &RULES,
             refusing(reinitializing(1)),
@@ -1453,7 +1459,7 @@ mod tests {
         );
         let state = check(
             state,
-            acquired(Ok(Acquired::Refused), true),
+            Event::Acquired(Ok(Acquired::Refused)),
             ms(t0, 400),
             &RULES,
             refusing(refused(2)),
@@ -1469,10 +1475,10 @@ mod tests {
             None,
         );
         let changed = ready(Video::Available, 0, 3);
-        let state = next(state, signal(changed, true), ms(t0, 500), &RULES).state;
+        let state = next(state, Event::Signal(changed), ms(t0, 500), &RULES).state;
         let state = check(
             state,
-            acquired(Ok(Acquired::NotReady), true),
+            Event::Acquired(Ok(Acquired::NotReady)),
             ms(t0, 600),
             &RULES,
             refusing(no_frame_not_ready(ms(t0, 600), ms(t0, 1600))),
@@ -1481,11 +1487,15 @@ mod tests {
         );
         check(
             state,
-            acquired(Ok(Acquired::Frame(frame())), false),
+            Event::Acquired(Ok(Acquired::Frame(frame()))),
             ms(t0, 1600),
             &RULES,
             video(Stage::Running),
             &[
+                note(Note::InitializationAnswered {
+                    answer: Answer::Accepted,
+                    since_change_ms: 1100,
+                }),
                 Action::TellRefused(false),
                 note(Note::RefusalEnded {
                     by: RefusalEnd::Frame,
@@ -1518,7 +1528,7 @@ mod tests {
                 period(reinitializing(1), new_driver, Some(t0)),
                 UiSupport::Untried,
             );
-            let step = next(state, acquired(answer, false), ms(t0, 250), &RULES);
+            let step = next(state, Event::Acquired(answer), ms(t0, 250), &RULES);
             let refused: Vec<_> = step
                 .actions
                 .iter()
@@ -1549,23 +1559,23 @@ mod tests {
         let reset = ready(Video::Available, 1, 2);
         let closed = video(Stage::Closed);
         let open = Some(Ask::Open(Kind::Video));
-        for (stage, created_only, phase, actions, ask) in [
+        let released = || vec![Action::Release];
+        for (stage, phase, actions, ask) in [
             (
                 refused(1),
-                true,
                 video(reinitializing(1)),
                 vec![],
                 Some(Ask::Acquire),
             ),
             (
                 no_frame_not_ready(t0, ms(t0, 900)),
-                true,
                 video(Stage::Created),
                 vec![],
                 Some(Ask::Acquire),
             ),
-            (Stage::Running, false, closed, vec![Action::Release], open),
-            (Stage::Closed, false, closed, vec![], open),
+            (no_frame_pending(t0, t0), closed, released(), open),
+            (Stage::Running, closed, released(), open),
+            (Stage::Closed, closed, vec![], open),
         ] {
             let mut expected = vec![note(Note::SignalChanged(reset))];
             if stage.refusals().is_some() {
@@ -1577,7 +1587,7 @@ mod tests {
             expected.extend(actions);
             check(
                 at(t0, spent(stage, None), UiSupport::Untried),
-                signal(reset, created_only),
+                Event::Signal(reset),
                 now,
                 &RULES,
                 phase,
@@ -1617,7 +1627,7 @@ mod tests {
                     period(refused(3), NewDriver::Available, Some(t0)),
                     UiSupport::Untried,
                 ),
-                signal(gone, true),
+                Event::Signal(gone),
                 ms(t0, 700),
                 &rules,
                 phase,
@@ -1664,7 +1674,15 @@ mod tests {
                 None,
             )
         };
-        for stage in [Stage::Running, no_frame_pending(t0, t0), reinitializing(1)] {
+        let initializing = note(Note::InitializationAnswered {
+            answer: Answer::Failed,
+            since_change_ms: 0,
+        });
+        for (stage, answered) in [
+            (Stage::Created, vec![initializing]),
+            (Stage::Running, vec![]),
+            (no_frame_pending(t0, t0), vec![]),
+        ] {
             for (recovery, new_driver, phase, (tail, ask)) in [
                 (fresh, Available, spent(Stage::Closed, None), retried()),
                 (fresh, Spent, Phase::Idle, failed()),
@@ -1686,11 +1704,11 @@ mod tests {
             ] {
                 check(
                     at(t0, period(stage, new_driver, None), UiSupport::Untried),
-                    acquired(Err(fault_of(recovery)), false),
+                    Event::Acquired(Err(fault_of(recovery))),
                     t0,
                     &RULES,
                     phase,
-                    &tail,
+                    &[answered.clone(), tail].concat(),
                     ask,
                 );
             }
@@ -1759,7 +1777,7 @@ mod tests {
                     period(Stage::Running, new_driver, Some(t0)),
                     UiSupport::Untried,
                 ),
-                acquired(answer, false),
+                Event::Acquired(answer),
                 t0,
                 &RULES,
                 phase,
@@ -1844,7 +1862,7 @@ mod tests {
         let reopened = period(Stage::Closed, NewDriver::Available, Some(t0));
         let state = check(
             state,
-            signal(same, false),
+            Event::Signal(same),
             ms(t0, 200),
             &RULES,
             reopened,
@@ -1861,7 +1879,7 @@ mod tests {
         let reset = ready(Video::Available, 1, 2);
         check(
             at(t0, withheld, UiSupport::Untried),
-            signal(reset, false),
+            Event::Signal(reset),
             ms(t0, 200),
             &RULES,
             reopened,
@@ -1877,7 +1895,7 @@ mod tests {
         let state = next(state, Event::Opened, ms(t0, 200), &RULES).state;
         check(
             state,
-            acquired(Err(fault_of(Recovery::Withheld)), true),
+            Event::Acquired(Err(fault_of(Recovery::Withheld))),
             ms(t0, 300),
             &RULES,
             withheld,
@@ -1923,7 +1941,7 @@ mod tests {
             ]);
             check(
                 at(t0, spent(stage, Some(t0)), UiSupport::Untried),
-                signal(gone, false),
+                Event::Signal(gone),
                 ms(t0, 400),
                 &NO_UI,
                 Phase::Idle,
@@ -1950,19 +1968,19 @@ mod tests {
         let fresh = || fault_of(Recovery::Retry(Reason::FreshDriver));
         let mut state = at(t0, video(Stage::Running), UiSupport::Untried);
         for _ in 0..2 {
-            state = next(state, acquired(Err(fresh()), false), t0, &RULES).state;
+            state = next(state, Event::Acquired(Err(fresh())), t0, &RULES).state;
             assert_eq!(state.phase, spent(Stage::Closed, None));
             state = next(state, Event::Opened, t0, &RULES).state;
             state = next(
                 state,
-                acquired(Ok(Acquired::Frame(frame())), true),
+                Event::Acquired(Ok(Acquired::Frame(frame()))),
                 t0,
                 &RULES,
             )
             .state;
             assert_eq!(state.phase, video(Stage::Running));
         }
-        let step = next(state, acquired(Err(fresh()), false), t0, &RULES);
+        let step = next(state, Event::Acquired(Err(fresh())), t0, &RULES);
         assert_eq!(step.state.phase, spent(Stage::Closed, None));
         let failed = next(step.state, Event::OpenFailed(fresh()), t0, &RULES);
         assert_eq!(failed.state.phase, Phase::Idle);
@@ -2004,18 +2022,17 @@ mod tests {
     #[test]
     fn a_withholding_and_a_refusal_are_one_refused_state() {
         let t0 = Instant::now();
-        let change =
-            |sequence, created_only| signal(ready(Video::Available, 0, sequence), created_only);
+        let change = |sequence| Event::Signal(ready(Video::Available, 0, sequence));
         let (state, actions) = run(
             t0,
             at(t0, video(Stage::Running), UiSupport::Untried),
             vec![
-                (0, acquired(Err(fault_of(Recovery::Withheld)), false)),
-                (100, change(2, false)),
+                (0, Event::Acquired(Err(fault_of(Recovery::Withheld)))),
+                (100, change(2)),
                 (100, Event::Opened),
-                (200, acquired(Ok(Acquired::Refused), true)),
-                (300, change(3, true)),
-                (300, acquired(Ok(Acquired::NotReady), true)),
+                (200, Event::Acquired(Ok(Acquired::Refused))),
+                (300, change(3)),
+                (300, Event::Acquired(Ok(Acquired::NotReady))),
             ],
             &RULES,
         );
@@ -2038,7 +2055,7 @@ mod tests {
         let (state, actions) = run(
             t0,
             state,
-            vec![(400, acquired(Ok(Acquired::Frame(frame())), false))],
+            vec![(400, Event::Acquired(Ok(Acquired::Frame(frame()))))],
             &RULES,
         );
         assert_eq!(refused_told(&actions), [false]);
@@ -2058,7 +2075,7 @@ mod tests {
     #[test]
     fn a_signal_change_gives_the_new_driver_back() {
         let t0 = Instant::now();
-        let pending = || acquired(Ok(Acquired::Pending), false);
+        let pending = || Event::Acquired(Ok(Acquired::Pending));
         let (state, actions) = run(
             t0,
             at(t0, video(Stage::Running), UiSupport::Untried),
@@ -2066,7 +2083,7 @@ mod tests {
                 (0, pending()),
                 (2000, pending()),
                 (2000, Event::Opened),
-                (2000, acquired(Ok(Acquired::Pending), true)),
+                (2000, Event::Acquired(Ok(Acquired::Pending))),
                 (4000, pending()),
             ],
             &RULES,
@@ -2077,7 +2094,7 @@ mod tests {
             t0,
             state,
             vec![
-                (5000, signal(ready(Video::Available, 0, 2), false)),
+                (5000, Event::Signal(ready(Video::Available, 0, 2))),
                 (5000, Event::Opened),
             ],
             &RULES,
@@ -2085,7 +2102,7 @@ mod tests {
         let error = || Error::other("interrupted");
         let state = check(
             state,
-            acquired(Err(fault()), true),
+            Event::Acquired(Err(fault())),
             ms(t0, 5100),
             &RULES,
             spent(Stage::Closed, Some(ms(t0, 4000))),
@@ -2170,13 +2187,13 @@ mod tests {
         );
         assert_eq!(state.ui, UiSupport::Failed);
         let back = ready(Video::Available, 0, 2);
-        let state = next(state, signal(back, false), ms(t0, 200), &RULES).state;
+        let state = next(state, Event::Signal(back), ms(t0, 200), &RULES).state;
         assert_eq!(state.ui, UiSupport::Reopenable);
         let state = next(state, Event::Opened, ms(t0, 200), &RULES).state;
         let gone = ready(Video::Unavailable, 0, 3);
         let state = check(
             state,
-            signal(gone, false),
+            Event::Signal(gone),
             ms(t0, 300),
             &RULES,
             Phase::Ui { held: false },
@@ -2222,7 +2239,7 @@ mod tests {
         let reset = ready(Video::Unavailable, 1, 2);
         check(
             state,
-            signal(reset, false),
+            Event::Signal(reset),
             ms(t0, 100),
             &RULES,
             Phase::Ui { held: false },
@@ -2233,7 +2250,7 @@ mod tests {
         let same = ready(Video::Unavailable, 0, 2);
         check(
             state,
-            signal(same, false),
+            Event::Signal(same),
             ms(t0, 100),
             &RULES,
             Phase::Idle,
@@ -2267,7 +2284,7 @@ mod tests {
         );
         let mut state = state.state;
         for (sequence, video) in [(2, Video::Available), (3, Video::Unavailable)] {
-            state = next(state, signal(ready(video, 1, sequence), false), t0, &RULES).state;
+            state = next(state, Event::Signal(ready(video, 1, sequence)), t0, &RULES).state;
         }
         assert_eq!(state.ui, UiSupport::Unsupported);
         assert_eq!(state.phase, Phase::Idle);
@@ -2292,10 +2309,10 @@ mod tests {
         let running = at(t0, video(Stage::Running), UiSupport::Untried);
         let gone = ready(Video::Unavailable, 0, 2);
         let back = ready(Video::Available, 0, 3);
-        let apart = next(running, signal(gone, false), t0, &NO_UI).state;
+        let apart = next(running, Event::Signal(gone), t0, &NO_UI).state;
         check(
             apart,
-            signal(back, false),
+            Event::Signal(back),
             t0,
             &NO_UI,
             video(Stage::Closed),
@@ -2307,7 +2324,7 @@ mod tests {
         );
         check(
             running,
-            signal(back, false),
+            Event::Signal(back),
             t0,
             &NO_UI,
             video(Stage::Running),
@@ -2321,19 +2338,19 @@ mod tests {
         );
         let once = next(
             refused,
-            signal(ready(Video::Available, 0, 3), true),
+            Event::Signal(ready(Video::Available, 0, 3)),
             t0,
             &RULES,
         );
         let first = next(
             refused,
-            signal(ready(Video::Available, 0, 2), true),
+            Event::Signal(ready(Video::Available, 0, 2)),
             t0,
             &RULES,
         );
         let twice = next(
             first.state,
-            signal(ready(Video::Available, 0, 3), true),
+            Event::Signal(ready(Video::Available, 0, 3)),
             t0,
             &RULES,
         );
@@ -2449,7 +2466,7 @@ mod tests {
             expected.extend(actions);
             check(
                 state,
-                signal(reset, false),
+                Event::Signal(reset),
                 t0,
                 &rules,
                 after,

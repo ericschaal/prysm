@@ -71,11 +71,6 @@ impl Fault {
 /// The open video tap. Created, used and released on the native thread.
 pub(crate) trait Tap {
     fn acquire(&mut self) -> Result<Acquired, Fault>;
-    /// Its driver is created and not initialized, as the driver itself
-    /// says (after its open, and after a refused or not-ready
-    /// initialization): releasing it undoes only the creation, and the
-    /// next acquisition initializes it.
-    fn created_only(&self) -> bool;
     /// `Ok` certifies the driver released the tap.
     fn release(self: Box<Self>) -> Result<()>;
 }
