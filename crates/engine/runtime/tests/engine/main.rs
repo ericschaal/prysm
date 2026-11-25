@@ -7,3 +7,4 @@ mod output_release;
 mod own_end;
 mod settings;
 mod shutdown;
+mod waits;
