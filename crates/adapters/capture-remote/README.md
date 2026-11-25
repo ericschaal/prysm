@@ -185,7 +185,7 @@ sender reads them as `WireError::Closed(Some(Close::…))`:
 | Code | `Close` | When | The slim TV |
 | --- | --- | --- | --- |
 | 4000 | `Stopped` | The source closed (lighting stopped, or the capture settings changed); also, before the request, a newer sender that connected while the source closed | Releases capture and encoder, shows *paused*, reconnects every second. Before the request it is a failed connect: the TV shows *waiting* (or keeps *paused*) and retries every second |
-| 4001 | `Replaced` | A newer sender's connection replaced this one | Releases capture and encoder, shows a failure of kind `replaced`, connects no more until the worker restarts (capture stopped and started, the TV waking, or a new Prysm address) |
+| 4001 | `Replaced` | A newer sender's connection replaced this one | The worker fails, releasing capture and encoder, and the TV asks the person to try again |
 | 4002 | `Failed` | The source failed after its request: the sender refused it, its H.264 keyframe does not decode, or no decoder starts. The source's failure says why | Releases capture and encoder, shows a failure of kind `receiver_failed`, reconnects every second |
 
 Any other close, or none (a crash, the network), is a dropped connection:

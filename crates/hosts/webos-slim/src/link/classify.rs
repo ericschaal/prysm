@@ -1,7 +1,7 @@
 //! The uplink's one classification: what it heard after a failed
-//! connection attempt or a lost connection.
+//! connection attempt or a lost connection, or that it ends.
 use prysm_capture_remote::{Close, RemoteSettings, SendError, WireError};
-use prysm_ports::{Error, chain};
+use prysm_ports::{Error, Escalation, Fix, chain};
 
 /// What failed on the uplink.
 #[derive(Debug)]
@@ -29,47 +29,52 @@ pub(crate) enum Heard {
         request: RemoteSettings,
         reason: String,
     },
-    /// Another sender replaced this one at the receiver, and how it was
-    /// told.
-    Replaced(String),
 }
 
-/// The uplink's rules, one row per cause. Another version counts only at
-/// the upgrade, a close code only on an open connection; otherwise each is
-/// waited out like an absent receiver.
-pub(crate) fn heard(cause: Cause<'_>) -> Heard {
+/// The uplink's rules, one row per cause. `Err`: waiting cannot help, so
+/// the uplink ends and the worker fails with this escalation; the TV asks
+/// the person. Another sender replaced this one (it takes the stream until
+/// its own user stops it, so two TVs never take it from each other in
+/// turn), a wrong address (`404`: no portal there, or an older Prysm), a
+/// certificate this end cannot trust, or a receiver that speaks the
+/// protocol wrongly, which the same Prysm repeats. Another version counts
+/// only at the upgrade, the other close codes only on an open connection;
+/// everything else is waited out like an absent receiver.
+pub(crate) fn heard(cause: Cause<'_>) -> Result<Heard, Escalation> {
     use WireError as W;
     let (open, error) = match cause {
         Cause::Lost(request, SendError::Refused(error)) => {
-            return Heard::Refused {
+            return Ok(Heard::Refused {
                 request,
                 reason: chain(error),
-            };
+            });
         }
         Cause::Lost(_, SendError::Connection(error)) => (true, error),
         Cause::Attempt(error) => (false, error),
     };
     let waiting = || format!("waiting for the receiver: {}", chain(error));
-    match (open, error.cause::<WireError>()) {
+    Ok(match (open, error.cause::<WireError>()) {
+        (_, Some(W::Closed(Some(Close::Replaced)))) => return Err(Escalation::FAIL_FAST),
+        (_, Some(W::Unavailable(404) | W::Untrusted(_))) => {
+            return Err(Escalation::Ask(Fix::ChangeSettings));
+        }
+        (_, Some(W::Json(_) | W::Unexpected | W::TextTooLarge(_))) => {
+            return Err(Escalation::FAIL_FAST);
+        }
         (false, Some(W::Version { .. })) => Heard::OtherVersion(waiting()),
         (true, Some(W::Closed(Some(Close::Stopped)))) => Heard::Stopped,
-        (true, Some(W::Closed(Some(Close::Replaced)))) => Heard::Replaced(chain(error)),
         (true, Some(W::Closed(Some(Close::Failed)))) => Heard::Failed(chain(error)),
-        (false, Some(W::Closed(Some(_))))
+        (false, Some(W::Closed(Some(Close::Stopped | Close::Failed))))
         | (true, Some(W::Version { .. }))
         | (
             _,
             None
             | Some(
                 W::Unavailable(_)
-                | W::Untrusted(_)
                 | W::NoRequest
-                | W::Json(_)
                 | W::Request(_)
-                | W::Unexpected
                 | W::Refused(_)
                 | W::Closed(None)
-                | W::TextTooLarge(_)
                 | W::Short(_)
                 | W::FormatCode { .. }
                 | W::Format(_)
@@ -81,7 +86,7 @@ pub(crate) fn heard(cause: Cause<'_>) -> Heard {
                 | W::Geometry(_),
             ),
         ) => Heard::Absent(waiting()),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -98,20 +103,31 @@ mod tests {
         encoding: StreamEncoding::Raw,
     };
 
-    fn absent(error: &Error) -> Heard {
-        Heard::Absent(format!("waiting for the receiver: {}", chain(error)))
+    type Outcome = Result<Heard, Escalation>;
+
+    fn absent(error: &Error) -> Outcome {
+        Ok(Heard::Absent(format!(
+            "waiting for the receiver: {}",
+            chain(error)
+        )))
     }
-    fn other_version(error: &Error) -> Heard {
-        Heard::OtherVersion(format!("waiting for the receiver: {}", chain(error)))
+    fn other_version(error: &Error) -> Outcome {
+        Ok(Heard::OtherVersion(format!(
+            "waiting for the receiver: {}",
+            chain(error)
+        )))
     }
-    fn stopped(_: &Error) -> Heard {
-        Heard::Stopped
+    fn stopped(_: &Error) -> Outcome {
+        Ok(Heard::Stopped)
     }
-    fn replaced(error: &Error) -> Heard {
-        Heard::Replaced(chain(error))
+    fn failed(error: &Error) -> Outcome {
+        Ok(Heard::Failed(chain(error)))
     }
-    fn failed(error: &Error) -> Heard {
-        Heard::Failed(chain(error))
+    fn fail_fast(_: &Error) -> Outcome {
+        Err(Escalation::FAIL_FAST)
+    }
+    fn change_settings(_: &Error) -> Outcome {
+        Err(Escalation::Ask(Fix::ChangeSettings))
     }
 
     /// One row per `WireError` variant, and per close code: what an attempt
@@ -119,26 +135,27 @@ mod tests {
     #[test]
     fn each_cause_is_heard_once() {
         use WireError as W;
-        type Rule = fn(&Error) -> Heard;
+        type Rule = fn(&Error) -> Outcome;
         let closed = |close| Some(W::Closed(close));
         let pixels = PixelFormat::RGB24;
         #[rustfmt::skip]
-        let rows: [(Option<WireError>, Rule, Rule); 24] = [
+        let rows: [(Option<WireError>, Rule, Rule); 25] = [
             (None, absent, absent),
             (Some(W::Version { ours: 6, theirs: Some(9) }), other_version, absent),
             (Some(W::Unavailable(503)), absent, absent),
-            (Some(W::Unavailable(404)), absent, absent),
-            (Some(W::Untrusted("x".into())), absent, absent),
+            (Some(W::Unavailable(500)), absent, absent),
+            (Some(W::Unavailable(404)), change_settings, change_settings),
+            (Some(W::Untrusted("x".into())), change_settings, change_settings),
             (Some(W::NoRequest), absent, absent),
-            (Some(W::Json("x".into())), absent, absent),
+            (Some(W::Json("x".into())), fail_fast, fail_fast),
             (Some(W::Request(ValidationError::new("fps", "x"))), absent, absent),
-            (Some(W::Unexpected), absent, absent),
+            (Some(W::Unexpected), fail_fast, fail_fast),
             (Some(W::Refused("x".into())), absent, absent),
             (closed(None), absent, absent),
             (closed(Some(Close::Stopped)), absent, stopped),
-            (closed(Some(Close::Replaced)), absent, replaced),
+            (closed(Some(Close::Replaced)), fail_fast, fail_fast),
             (closed(Some(Close::Failed)), absent, failed),
-            (Some(W::TextTooLarge(1)), absent, absent),
+            (Some(W::TextTooLarge(1)), fail_fast, fail_fast),
             (Some(W::Short(1)), absent, absent),
             (Some(W::FormatCode { format: 9, range: 0, matrix: 0 }), absent, absent),
             (Some(W::Format(pixels)), absent, absent),
@@ -166,10 +183,10 @@ mod tests {
         let refused = SendError::Refused(Error::other("the encoder is busy"));
         assert_eq!(
             heard(Cause::Lost(REQUEST, &refused)),
-            Heard::Refused {
+            Ok(Heard::Refused {
                 request: REQUEST,
                 reason: "the encoder is busy".into(),
-            }
+            })
         );
     }
 
@@ -183,14 +200,16 @@ mod tests {
             ))
         };
         assert_eq!(
-            heard(Cause::Lost(REQUEST, &closed(Some(Close::Replaced)))),
-            Heard::Replaced("the stream failed: another sender replaced this one at Prysm".into())
+            heard(Cause::Lost(REQUEST, &closed(Some(Close::Failed)))),
+            Ok(Heard::Failed(
+                "the stream failed: Prysm stopped receiving after a failure, which it shows".into()
+            ))
         );
         assert_eq!(
             heard(Cause::Lost(REQUEST, &closed(None))),
-            Heard::Absent(
+            Ok(Heard::Absent(
                 "waiting for the receiver: the stream failed: the peer closed the stream".into()
-            )
+            ))
         );
     }
 }

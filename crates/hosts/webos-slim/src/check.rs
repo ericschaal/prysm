@@ -26,8 +26,8 @@ checks that every 16x16 block shows its own picture, not one up to two before
 or after, restarts the session half way (as on a keyframe request), and
 prints timings and sizes. With --prysm, then streams the same pictures to that
 Prysm for --frames more frames, at the default bitrate; its remote capture must
-request this encoding, size and rate. A sending TV worker is replaced and stops
-until it restarts. Exit 0 when every check passed.";
+request this encoding, size and rate. A sending TV worker is replaced: it fails,
+and the TV asks to try again. Exit 0 when every check passed.";
 
 #[derive(Debug, Clone, Parser)]
 #[command(after_help = AFTER_HELP)]

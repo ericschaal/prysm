@@ -6,7 +6,7 @@ use futures::future::BoxFuture;
 use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError};
 use prysm_capture_webos::VideoSignal;
 use prysm_core::Frame;
-use prysm_ports::{FrameSink, Result, StreamEncoding};
+use prysm_ports::{Error, Escalation, FrameSink, Result, StreamEncoding};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{Command, Event, HEARTBEAT, SlimLink, SlimStatus, WorkerStatus};
@@ -72,11 +72,6 @@ enum UplinkState {
     /// The receiver's source failed with this stream, and how it said so:
     /// the capture is released until a receiver takes a connection again.
     ReceiverFailed(String),
-    /// Another sender replaced this one at the receiver, and how it was
-    /// told: the uplink no longer connects and the capture is released
-    /// until the worker restarts, so two TVs never take the stream from
-    /// each other in turn.
-    Replaced(String),
 }
 
 /// What happened to the uplink.
@@ -100,24 +95,22 @@ enum Action {
 }
 
 impl Report {
-    /// The state after `event`, and what to do with the connection. Once
-    /// replaced, nothing changes. A connection with the refused request is
-    /// refused again; any other is sent on. Another version replaces
-    /// whatever was shown (it came from the Prysm before its update); an
-    /// unavailable receiver does not replace a stopped stream, an encoder
-    /// failure, a failed receiver or another version, which are still the
-    /// news.
+    /// The state after `event`, and what to do with the connection. A
+    /// connection with the refused request is refused again; any other is
+    /// sent on. Another version replaces whatever was shown (it came from
+    /// the Prysm before its update); an unavailable receiver does not
+    /// replace a stopped stream, an encoder failure, a failed receiver or
+    /// another version, which are still the news.
     fn next(&self, event: UplinkEvent) -> (Self, Action) {
         use UplinkState::{
-            EncoderFailed, ReceiverFailed, Replaced, Sending, Stopped, VersionDiffers, Waiting,
+            EncoderFailed, ReceiverFailed, Sending, Stopped, VersionDiffers, Waiting,
         };
         let shown = |uplink| Self {
             uplink,
             ..self.clone()
         };
         match (&self.uplink, event) {
-            (Replaced(_), _)
-            | (
+            (
                 Stopped | EncoderFailed(_) | ReceiverFailed(_) | VersionDiffers(_),
                 UplinkEvent::Heard(Heard::Absent(_)),
             ) => (self.clone(), Action::Drop),
@@ -148,7 +141,6 @@ impl Report {
                 (next, Action::Drop)
             }
             (_, UplinkEvent::Heard(Heard::Stopped)) => (shown(Stopped), Action::Drop),
-            (_, UplinkEvent::Heard(Heard::Replaced(why))) => (shown(Replaced(why)), Action::Drop),
             (_, UplinkEvent::Heard(Heard::Failed(why))) => {
                 (shown(ReceiverFailed(why)), Action::Drop)
             }
@@ -161,8 +153,7 @@ impl Report {
             UplinkState::Stopped
             | UplinkState::EncoderFailed(_)
             | UplinkState::ReceiverFailed(_)
-            | UplinkState::VersionDiffers(_)
-            | UplinkState::Replaced(_) => None,
+            | UplinkState::VersionDiffers(_) => None,
             UplinkState::Starting | UplinkState::Sending(_) | UplinkState::Waiting(_) => {
                 self.requested
             }
@@ -193,9 +184,6 @@ impl Report {
             UplinkState::ReceiverFailed(why) => SlimLink::ReceiverFailed {
                 message: why.clone(),
             },
-            UplinkState::Replaced(why) => SlimLink::Replaced {
-                message: why.clone(),
-            },
         }
     }
 }
@@ -214,9 +202,9 @@ impl Flow {
     /// What to capture for: the receiver's latest request, kept while it is
     /// away; `None` before the first connection, while the receiver has
     /// stopped the stream, while its request is refused (the encoder
-    /// failed), while it speaks another version and once another sender
-    /// replaced this one. Connection attempts go on meanwhile (each idle
-    /// capture wait ticks the uplink), so a new request still gets through.
+    /// failed) and while it speaks another version. Connection attempts go
+    /// on meanwhile (each idle capture wait ticks the uplink), so a new
+    /// request still gets through.
     pub fn wanted(&self) -> Option<RemoteSettings> {
         self.lock().wanted()
     }
@@ -274,7 +262,8 @@ impl Upstream for RemoteSender {
 }
 
 /// A [`FrameSink`] that delivers to whatever `connect` opens and keeps
-/// reconnecting; it never fails. The receiver only listens while its host is
+/// reconnecting; it fails only where waiting cannot help
+/// ([`classify::heard`]). The receiver only listens while its host is
 /// lighting, so a refused connection or a dropped receiver is a normal wait:
 /// frames are dropped, a new connection is tried at most every
 /// [`RECONNECT`] (on the next frame or tick after it), and [`Flow`]
@@ -289,13 +278,10 @@ impl Upstream for RemoteSender {
 /// crash, the network) leaves the capture running.
 ///
 /// A receiver that closes the stream as replaced (another sender took it
-/// over) stops the uplink: it releases the capture, reports a failure of
-/// kind `replaced` and connects no more. That is this process's state, so it
-/// lasts until the worker restarts: capture stopped and started in the TV
-/// app, the TV waking from standby, a new Prysm address, or a restart after
-/// a failure. The replaced connection is always the live one: the uplink
-/// drops a failed connection, closing its socket, before it connects again,
-/// so a TV that reconnects after a network drop never hears its own old
+/// over) fails the uplink, and so the worker: the TV asks the person to try
+/// again. The replaced connection is always the live one: the uplink drops
+/// a failed connection, closing its socket, before it connects again, so a
+/// TV that reconnects after a network drop never hears its own old
 /// connection replaced.
 ///
 /// A Prysm of another capture stream version ([`WireError::Version`]) is
@@ -344,26 +330,25 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
     }
 
     /// Whether to attempt a connection at `now`: [`RECONNECT`] after the
-    /// last attempt, never once replaced.
+    /// last attempt.
     fn due(&self, now: Instant) -> bool {
-        if matches!(self.flow.lock().uplink, UplinkState::Replaced(_)) {
-            return false;
-        }
         self.attempted
             .is_none_or(|at| now.saturating_duration_since(at) >= self.retry)
     }
 
-    fn reconnect(&mut self, now: Instant) {
+    /// # Errors
+    /// The attempt failed where waiting cannot help.
+    fn reconnect(&mut self, now: Instant) -> Result<()> {
         if !self.due(now) {
-            return;
+            return Ok(());
         }
         self.attempted = Some(now);
         let (event, sink) = match (self.connect)() {
             Ok(sink) => (UplinkEvent::Connected(sink.request()), Some(sink)),
-            Err(error) => (
-                UplinkEvent::Heard(classify::heard(Cause::Attempt(&error))),
-                None,
-            ),
+            Err(error) => match classify::heard(Cause::Attempt(&error)) {
+                Ok(heard) => (UplinkEvent::Heard(heard), None),
+                Err(escalation) => return Err(ended(error, escalation)),
+            },
         };
         match (self.flow.apply(event), sink) {
             (Action::Keep, sink) => self.sink = sink,
@@ -371,15 +356,22 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
             (Action::Refuse(_) | Action::Drop, _) => {}
         }
         self.check();
+        Ok(())
     }
 
     /// The connection ended, and its socket closes.
-    fn lost(&mut self, error: &SendError) {
+    ///
+    /// # Errors
+    /// It ended where waiting cannot help.
+    fn lost(&mut self, error: SendError) -> Result<()> {
         if let Some(sink) = self.sink.take() {
-            let heard = classify::heard(Cause::Lost(sink.request(), error));
-            self.flow.apply(UplinkEvent::Heard(heard));
+            match classify::heard(Cause::Lost(sink.request(), &error)) {
+                Ok(heard) => self.flow.apply(UplinkEvent::Heard(heard)),
+                Err(escalation) => return Err(ended(error.into(), escalation)),
+            };
         }
         self.check();
+        Ok(())
     }
 
     /// A connection is open exactly while sending.
@@ -391,32 +383,35 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
     }
 }
 
+/// The uplink's failure: `error`, escalating as [`classify::heard`] says.
+fn ended(error: Error, escalation: Escalation) -> Error {
+    Error::adapter_escalating("the TV stopped streaming to Prysm", error, escalation)
+}
+
 impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
     fn send(&mut self, frame: &Frame) -> Result<()> {
         let Some(sink) = &mut self.sink else {
-            self.reconnect(Instant::now());
-            return Ok(());
+            return self.reconnect(Instant::now());
         };
         match sink.deliver(frame) {
             Ok(()) => {
                 self.flow.sent.fetch_add(1, Ordering::Relaxed);
+                Ok(())
             }
-            Err(error) => self.lost(&error),
+            Err(error) => self.lost(error),
         }
-        Ok(())
     }
 
     /// Reconnect, or read the receiver's messages while the capture
     /// delivers nothing.
     fn tick(&mut self) -> Result<()> {
         let Some(sink) = &mut self.sink else {
-            self.reconnect(Instant::now());
-            return Ok(());
+            return self.reconnect(Instant::now());
         };
-        if let Err(error) = sink.tick() {
-            self.lost(&SendError::Connection(error));
+        match sink.tick() {
+            Ok(()) => Ok(()),
+            Err(error) => self.lost(SendError::Connection(error)),
         }
-        Ok(())
     }
 }
 
@@ -425,7 +420,7 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
 /// (with its encoding and frames sent per second), paused while the
 /// receiver has stopped the stream, waiting while it is unavailable, or
 /// failed with the encoder failure, Prysm's other capture stream version or
-/// the sender that replaced this one.
+/// the receiver's failure.
 /// `Target` is protocol misuse here and stops the worker as failed.
 pub struct ForwarderLink {
     link: Link,
@@ -526,8 +521,7 @@ impl Surface<()> for ForwarderLink {
 mod tests {
     use super::*;
     use UplinkState::{
-        EncoderFailed, ReceiverFailed, Replaced, Sending, Starting, Stopped, VersionDiffers,
-        Waiting,
+        EncoderFailed, ReceiverFailed, Sending, Starting, Stopped, VersionDiffers, Waiting,
     };
 
     /// The request before each event.
@@ -584,7 +578,6 @@ mod tests {
             })
         };
         let stopped = || heard(Heard::Stopped);
-        let replaced = || heard(Heard::Replaced(text("r")));
         let failed = || heard(Heard::Failed(text("f")));
         let software = Sending(StreamEncoding::H264Software);
         let hardware = Sending(StreamEncoding::H264Hardware);
@@ -598,7 +591,6 @@ mod tests {
             (Starting, version(), VersionDiffers(text("v")), drop.clone(), None),
             (Starting, refused(), EncoderFailed(text("e")), drop.clone(), None),
             (Starting, stopped(), Stopped, drop.clone(), None),
-            (Starting, replaced(), Replaced(text("r")), drop.clone(), None),
             (Starting, failed(), ReceiverFailed(text("f")), drop.clone(), None),
 
             (raw.clone(), connected(NEW), software.clone(), keep.clone(), Some(NEW)),
@@ -607,7 +599,6 @@ mod tests {
             (raw.clone(), version(), VersionDiffers(text("v")), drop.clone(), None),
             (raw.clone(), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (raw.clone(), stopped(), Stopped, drop.clone(), None),
-            (raw.clone(), replaced(), Replaced(text("r")), drop.clone(), None),
             (raw.clone(), failed(), ReceiverFailed(text("f")), drop.clone(), None),
 
             (Stopped, connected(NEW), software.clone(), keep.clone(), Some(NEW)),
@@ -616,7 +607,6 @@ mod tests {
             (Stopped, version(), VersionDiffers(text("v")), drop.clone(), None),
             (Stopped, refused(), EncoderFailed(text("e")), drop.clone(), None),
             (Stopped, stopped(), Stopped, drop.clone(), None),
-            (Stopped, replaced(), Replaced(text("r")), drop.clone(), None),
             (Stopped, failed(), ReceiverFailed(text("f")), drop.clone(), None),
 
             (Waiting(text("w0")), connected(NEW), software.clone(), keep.clone(), Some(NEW)),
@@ -625,7 +615,6 @@ mod tests {
             (Waiting(text("w0")), version(), VersionDiffers(text("v")), drop.clone(), None),
             (Waiting(text("w0")), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (Waiting(text("w0")), stopped(), Stopped, drop.clone(), None),
-            (Waiting(text("w0")), replaced(), Replaced(text("r")), drop.clone(), None),
             (Waiting(text("w0")), failed(), ReceiverFailed(text("f")), drop.clone(), None),
 
             (VersionDiffers(text("v0")), connected(NEW), software.clone(), keep.clone(), Some(NEW)),
@@ -634,7 +623,6 @@ mod tests {
             (VersionDiffers(text("v0")), version(), VersionDiffers(text("v")), drop.clone(), None),
             (VersionDiffers(text("v0")), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (VersionDiffers(text("v0")), stopped(), Stopped, drop.clone(), None),
-            (VersionDiffers(text("v0")), replaced(), Replaced(text("r")), drop.clone(), None),
             (VersionDiffers(text("v0")), failed(), ReceiverFailed(text("f")), drop.clone(), None),
 
             (EncoderFailed(text("e0")), connected(NEW), software.clone(), keep.clone(), Some(NEW)),
@@ -643,7 +631,6 @@ mod tests {
             (EncoderFailed(text("e0")), version(), VersionDiffers(text("v")), drop.clone(), None),
             (EncoderFailed(text("e0")), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (EncoderFailed(text("e0")), stopped(), Stopped, drop.clone(), None),
-            (EncoderFailed(text("e0")), replaced(), Replaced(text("r")), drop.clone(), None),
             (EncoderFailed(text("e0")), failed(), ReceiverFailed(text("f")), drop.clone(), None),
 
             (ReceiverFailed(text("f0")), connected(NEW), software, keep, Some(NEW)),
@@ -652,19 +639,9 @@ mod tests {
             (ReceiverFailed(text("f0")), version(), VersionDiffers(text("v")), drop.clone(), None),
             (ReceiverFailed(text("f0")), refused(), EncoderFailed(text("e")), drop.clone(), None),
             (ReceiverFailed(text("f0")), stopped(), Stopped, drop.clone(), None),
-            (ReceiverFailed(text("f0")), replaced(), Replaced(text("r")), drop.clone(), None),
-            (ReceiverFailed(text("f0")), failed(), ReceiverFailed(text("f")), drop.clone(), None),
-
-            (Replaced(text("r0")), connected(NEW), Replaced(text("r0")), drop.clone(), None),
-            (Replaced(text("r0")), connected(FAILED), Replaced(text("r0")), drop.clone(), None),
-            (Replaced(text("r0")), absent(), Replaced(text("r0")), drop.clone(), None),
-            (Replaced(text("r0")), version(), Replaced(text("r0")), drop.clone(), None),
-            (Replaced(text("r0")), refused(), Replaced(text("r0")), drop.clone(), None),
-            (Replaced(text("r0")), stopped(), Replaced(text("r0")), drop.clone(), None),
-            (Replaced(text("r0")), replaced(), Replaced(text("r0")), drop.clone(), None),
-            (Replaced(text("r0")), failed(), Replaced(text("r0")), drop, None),
+            (ReceiverFailed(text("f0")), failed(), ReceiverFailed(text("f")), drop, None),
         ];
-        assert_eq!(table.len(), 8 * 8);
+        assert_eq!(table.len(), 7 * 7);
         for (state, event, uplink, action, wanted) in table {
             let before = from(state);
             let shown = format!("{:?} x {event:?}", before.uplink);
@@ -684,12 +661,11 @@ mod tests {
                 "{shown}"
             );
             // A refusal is remembered; a request that is sent on clears it.
-            let refused = match (&before.uplink, &event, &done) {
-                (Replaced(_), _, _) => before.refused.clone(),
-                (_, UplinkEvent::Heard(Heard::Refused { request, reason }), _) => {
+            let refused = match (&event, &done) {
+                (UplinkEvent::Heard(Heard::Refused { request, reason }), _) => {
                     Some((*request, reason.clone()))
                 }
-                (_, _, Action::Keep) => None,
+                (_, Action::Keep) => None,
                 _ => before.refused.clone(),
             };
             assert_eq!(next.refused, refused, "{shown}");
@@ -722,10 +698,6 @@ mod tests {
                 ReceiverFailed(text("f")),
                 SlimLink::ReceiverFailed { message: text("f") },
             ),
-            (
-                Replaced(text("r")),
-                SlimLink::Replaced { message: text("r") },
-            ),
         ] {
             assert_eq!(from(uplink.clone()).link(7, false), link);
             // Refused only while sending.
@@ -756,7 +728,7 @@ mod tests {
     }
 
     /// The first attempt is at once; the next one [`RECONNECT`] after the
-    /// last, and none once replaced.
+    /// last.
     #[test]
     fn attempts_follow_the_state() {
         let (mut uplink, flow) = Uplink::new(|| -> Result<Never> { unreachable!() });
@@ -777,9 +749,5 @@ mod tests {
             assert!(!uplink.due(after(wait - 1)), "{state:?}");
             assert!(uplink.due(after(wait)), "{state:?}");
         }
-        flow.lock().uplink = Replaced(text("r"));
-        assert!(!uplink.due(after(3_600_000)));
-        uplink.attempted = None;
-        assert!(!uplink.due(t0));
     }
 }

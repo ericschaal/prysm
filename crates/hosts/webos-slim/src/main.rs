@@ -106,8 +106,10 @@ fn main() -> ExitCode {
 /// wait like a receiver that is not listening. Each attempt carries the
 /// TV's offer (its capture modes within each encoder's limits), so Prysm
 /// knows what the TV streams even while it refuses the stream. While the
-/// receiver has stopped the stream the TV capture is closed; once another
-/// sender replaced this one, the uplink stops until the worker restarts.
+/// receiver has stopped the stream the TV capture is closed. Where waiting
+/// cannot help (another sender replaced this one, a wrong address, an
+/// untrusted certificate, a receiver that breaks the protocol) the worker
+/// fails and the TV asks the person.
 async fn run(args: SlimArgs, link: Link) -> Result<()> {
     let url = args.prysm.capture_stream();
     let mut prysm = Resolver::new(args.prysm);
