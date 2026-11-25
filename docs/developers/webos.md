@@ -54,34 +54,38 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   TV is active), `reset_video` (input, app or picture mode changed) and
   `target` (full only, numbered from 1 by
   `sequence`; a slim worker takes it as protocol misuse); the events
-  `status` (the full worker's says the `sequence` it last `applied`),
-  `failed` and `faulted`. The worker
-  exits 0 when stopped (SIGTERM, stdin closed), 1 failed, 2 for bad
-  arguments, 3 faulted (a hung or unconfirmed native resource). Types:
+  `status` (the full worker's says the `sequence` it last `applied`) and
+  `failed`. The worker exits 0 when stopped (SIGTERM, stdin closed) and 1
+  otherwise; the supervisor gives it no meaning. Types:
   [webos-link](../../crates/engine/webos-link/src/lib.rs).
 - The worker reports status on every change and every 5 s; 15 s of silence is
   a hang. Stop sends TERM, then KILL 8 s later; a worker still not reaped 8 s
   after its KILL is let go and taken as killed, so a stop always ends.
 - An exit is handled once the worker's last events are read, at most 1 s
   after it is reaped (a process it left behind can hold the pipe).
-- An exit while running is published as a failure: the exit's description,
-  then the last cause or report; an `encoder`, `version` or `replaced`
-  report keeps its kind, anything else is `other`.
-- Turning slim capture off (`setEnabled` false), the TV going to standby, a shutdown
-  and a new Prysm address clear the published failure and the backoff, in
-  every phase (also with no worker, during a backoff or while a failed
-  worker stops); turning it off is how a failure is dismissed. A stop asked
-  for this way still ends in a failure when the worker faults (exit 3, its
-  last cause kept), dies of a signal other than SIGTERM, or has to be
-  killed: then it may not have released the TV capture. (SIGTERM before
-  the worker's handlers are in is the asked-for stop.) While a failed
-  worker stops, the supervisor's reason is the published failure. A worker
-  let go after its KILL is followed by a backoff, not an immediate start.
+- A failure carries its escalation, copied where the error is met: the
+  worker's `failed` event, a full status's `failure`, or the supervisor's
+  own observation (a failed spawn, a broken link, 15 s of silence, an exit
+  without `failed`, a worker let go after its KILL). The supervisor reads it
+  in one place ([`recovery.rs`](../../crates/hosts/webos-service/src/machine/recovery.rs)).
+  `restart`: it stops the worker and starts a new one at once, once; the
+  same again before the new one delivered a frame, with no choice of the
+  person or the TV between, asks to try again. Anything else is asked: no
+  worker runs (phase `asking`, with its `problem`), except that a running
+  full worker keeps running with it, since its portal is where settings
+  change. A restart is never shown as a failure; its cause goes to the log.
+  Nothing restarts on a timer.
+- A choice of the person or the TV (a lighting target, capture on or off,
+  standby, a shutdown, a new Prysm address) answers what is asked and gives
+  the restart back; a worker that stops then is followed only by a new one
+  if one is wanted. While it asks, the full TV app sends the lighting modes
+  and Try again to `setTarget`, since no portal answers; after setting the
+  service up again, the app answers it the same way (slim: `setEnabled`).
 - Each status names its package (`"flavor": "full"` or `"slim"`) and has only
   that package's fields; a status of the other package breaks the link. A
   worker whose run ends with an error says why (`failed`, also before its
-  first status), then exits (failed, or faulted when the error is a fault).
-  A protocol misuse or a lost link exits failed without it.
+  first status), then exits 1. A protocol misuse or a lost link exits 1
+  without it.
 - The worker stops when its supervisor dies: it gets SIGTERM (parent-death
   signal) and its stdin closes, and it stops as usual, releasing the capture
   tap. Nothing SIGKILLs it then: a worker killed inside a native capture call
@@ -107,13 +111,11 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   the capture source at once, without reopening its tap; the cause says
   whether a name was denied ("Invalid permissions"), stayed registered, or
   Luna failed otherwise (LS2 has no typed denial, so that may be a denial
-  worded differently). What follows is the package's: the full worker
-  re-applies the lighting with its backoff (1 s doubling to 30 s), which
-  opens a new source and checks again in the same process; the slim worker
-  fails, and the supervisor starts a new one after its backoff. A name that
-  stays registered, or a failed driver creation (`vtCapture_create`), cannot
-  succeed again in the process, so the full worker fails then too (exit 1)
-  instead of retrying in place. Every other video failure has one row in
+  worded differently). A denial asks to set the service up again; a name
+  that stays registered, or a failed driver creation (`vtCapture_create`),
+  cannot succeed again in the process, so it escalates `restart`; any other
+  Luna failure asks to try again. The full worker reports it in its status
+  and keeps running; the slim worker fails. Every other video failure has one row in
   the [classification](../../crates/adapters/capture-webos/src/classify.rs).
   A buffer status 12 (the TV's resource policy took the capture) or a plane
   status 13 (no video plane, as under AirPlay mirroring) releases the tap,
@@ -171,8 +173,8 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   driver; its first acquisition initializes it, so a refusal's count of
   initializations in a row includes every initialization.
 - The supervisor reaps a worker before starting another (or lets go of one
-  still not reaped 8 s after its KILL). Failures back off
-  from 1 s doubling to 30 s; 60 s of running resets the backoff.
+  still not reaped 8 s after its KILL, which asks to restart the TV: it may
+  still hold the capture).
 - A worker runs while the TV is on (active or screen saver) and, for slim,
   while capture is enabled and `prysm_address` is set. Video is reported
   unavailable unless the TV is active.
@@ -180,9 +182,10 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   in `resume.json`: a service restart in the same boot resumes it, a reboot
   starts from **Start with TV** (`autostart`).
 
-Full worker: re-applies a non-off target after a session failure (same
-backoff); lights that do not answer are no failure (the session waits for
-them itself), so its status says them in `lights` instead. It advertises its
+Full worker: tries nothing again by itself: a session failure stays in its
+status until a command changes it. Lights that do not answer are no failure
+(the session waits for them itself), so its status says them in `lights`
+instead. It advertises its
 LAN portal URL (looked up again at every heartbeat), and seeds
 `settings.json` with `capture.kind = "webos"` when missing.
 
@@ -190,13 +193,13 @@ Slim worker: connects to the receiver at most once a second, also while
 Prysm speaks another capture stream version, resolving a host name at each
 attempt; follows the receiver's stream request (size, rate,
 menus, encoding); closes capture while the receiver has stopped the stream
-(lighting off). An encoder failure is reported with `failure.kind` `encoder`
+(lighting off). An encoder failure is reported as the link `encoder_failed`
 and refused until the desktop asks for another encoding; nothing falls back on
 its own. A receiver whose source failed with the stream (it refused the
 request, a keyframe did not decode, or it has no decoder; close code 4002) is
-reported with `failure.kind` `receiver_failed`. When another TV takes the
+reported as `receiver_failed`. When another TV takes the
 stream over, the worker releases capture
-and encoder, reports `failure.kind` `replaced` and connects no more until the
+and encoder, reports `replaced` and connects no more until the
 worker restarts (capture stopped and started, the TV waking, or a new Prysm
 address), so two TVs never take the stream from each other in turn. A
 stopped stream, an encoder failure, a failed receiver or another version
@@ -206,9 +209,10 @@ closed, and connection attempts go on, so a receiver that asks again
 carries the uplink as one `link` tagged by `state`: `starting`, `sending`
 (`encoding`, `fps`), `refused` (connected, but the TV refuses to share the
 video it shows, so nothing goes out until the video changes), `paused`,
-`waiting` (the receiver wait) or `failed` (the encoder, version, replaced or
-receiver-failed failure); the supervisor counts it as up once `sending`,
-`refused` or `paused`. A stop shuts the uplink's socket
+`waiting` (the receiver wait), `encoder_failed`, `version_differs`,
+`replaced` or `receiver_failed`, the last five with their `message`. They
+are the worker's own states, not what the supervisor asks; a frame sent
+gives the supervisor's restart back. A stop shuts the uplink's socket
 down, which ends a connect, read or write at once, and no capture opens after
 it; what is left is one pump round (its 50 ms pull, and a send's 1 s
 hardware encoder wait or 0.5 s host name lookup), the encoder's 0.5 s
@@ -228,7 +232,7 @@ inputs are TV power and video, preferences (already validated and
 persisted), enable, worker events, logs and exits, a broken event stream, a
 failed spawn, a tick (at the time `Machine::next_due` names) and shutdown;
 effects are `Spawn`, `Send`, `Terminate`, `Kill`, `Abandon` (let go of a
-worker not reaped after its kill) and `Publish`. Its phases are idle, running, stopping and retrying. A worker is
+worker not reaped after its kill) and `Publish`. Its phases are idle, running, stopping and asking. A worker is
 spawned only from idle, and only a reaped (or let-go) exit leaves running or
 stopping, so a worker is always reaped before the next one starts. Time is an
 argument, so its tests are tables without sleeps.
@@ -239,18 +243,17 @@ argument, so its tests are tables without sleeps.
   not applied that `target` command yet (its `applied` is lower than the
   command's `sequence`) does not change the published target back; a new
   worker counts from 0 again.
-- While a failed worker waits to restart, the state says the whole seconds
-  left, rounded up, as of when it was sent; the app counts down from when it
-  received it, so no clock is shared.
-- The slim worker's forwarder reports an unconfirmed capture release as a
-  failure (exit 1), not a fault; either way the process is restarted.
+- A stop that will ask publishes its `problem` while the worker stops; a
+  stop followed by a restart, or by nothing, publishes none.
+- An unconfirmed capture release escalates `restart` in both workers: the
+  slim worker's forwarder fails with it, the full worker's session faults.
 
 The driver ([service.rs](../../crates/hosts/webos-service/src/service.rs))
 runs it on the GLib thread without polling: requests and subscription
 replies arrive as callbacks, and a socket wakes the loop when the worker
 writes a line or its output ends, a child exits (SIGCHLD) or a stop signal
 comes. After each of these, and at the next due time (the machine's
-`SILENCE`, `HEALTHY`, kill, letting go and backoff times, the end of an
+`SILENCE`, kill and letting go times, the end of an
 exited worker's 1 s wait for its last lines, a subscription renewal after 5 s
 without a good reply, and a probe's `--run-for`), the driver drains worker
 output, reaps, ticks the machine and renews subscriptions, then arms one
@@ -281,33 +284,42 @@ Service `io.github.ericschaal.prysm.service`: `getState` (any caller, subscribab
 `setPreferences`, `setTarget` (full), `setEnabled` (slim) and `uninstall`
 (the app only, checked by LS2 application ID). Each package refuses the
 other's lighting method. `setTarget { target }` takes `off`, `screen_sync`
-or `effects` and replies with the state; the TV app retries a failure with
-`setTarget off` and then the target that failed. `setEnabled { enabled }`
+or `effects` and replies with the state; it also answers what the
+supervisor asks. The TV app tries a failure again with `setTarget off` and
+then the target while the worker runs, and with the target alone while
+the supervisor asks. `setEnabled { enabled }`
 says whether slim capture streams; slim has no target, since the desktop
 Prysm decides what the lights do. The state has the fields both packages
-share (`preferences`, `power`, `video`, `failure`, `log`) and the installed
-package's own, tagged by `flavor`: full `target` and a `worker` that reports
-`capturing`, `fps`, `lights` (the lights' device issue, such as
-`unreachable` while lighting waits for lights that do not answer) and
-`portal` while it runs (`portal` also while it stops); slim `enabled` and a `worker` that reports `capturing` and its
-`link` (as in the worker's status) while it runs. `autostart` starts the
+share (`preferences`, `power`, `video`, `unreadable`, `log`) and the
+installed package's own, tagged by `flavor`: full `target` and a `worker`
+that reports `capturing`, `fps`, `lights` (the lights' device issue, such
+as `unreachable` while lighting waits for lights that do not answer) and
+`portal` while it runs (`portal` also while it stops); slim `enabled` and a
+`worker` that reports `capturing` and its `link` (as in the worker's
+status) while it runs. The worker's `phase` is `stopped`, `running`,
+`stopping` or `asking`. A `problem` (`asked`, `message`) says what the
+person is asked: always while asking, while a stop will ask, and (full)
+what a running worker asks. `asked` is `{ "step": "unanswered" }` (the
+lights do not answer and Prysm stopped trying) or `{ "step": "ask", "fix":
+… }` with `try_again`, `change_settings`, `set_up`, `unsupported` or
+`restart_tv`. `autostart` starts the
 full package's screen sync, or slim streaming, when the service starts. A
 restart within one boot resumes the intent from `resume.json`
 (`{ "boot": …, "intent": "off" | "screen_sync" | "effects" }`; slim
 streaming is `screen_sync`); one it cannot read is ignored and `autostart`
-applies. API version 4 (the document's `info.version`).
+applies. API version 5 (the document's `info.version`).
 
 Values the service sends are open, as on HTTP
 ([decision](decisions/2026-11-22-open-response-enums.md)): the app reads a
 newer `target` or worker `phase` as `unknown` (never off or stopped; a phase
-shows "Updating…" with no start or stop), a newer `failure.kind` as
-`other`, a newer full `lights` issue in general words ("Not showing screen
+shows "Updating…" with no start or stop), a newer `asked` step or fix as
+`try_again`, a newer full `lights` issue in general words ("Not showing screen
 sync"), a newer slim `link.state` as starting, a newer `link.encoding` as
 sent, and a newer `flavor` as a state it cannot show. Requests stay closed:
 the service refuses a value it does not know. Preferences hold only
 `autostart` and, for slim, `prysm_address` (the desktop Prysm's portal
-address, where frames go). An absent value (no failure, `fps`, `lights`,
-`portal` or `prysm_address`) is omitted, never `null`, here and in the worker's status
+address, where frames go). An absent value (no `problem`, `unreadable`,
+`fps`, `lights`, `portal` or `prysm_address`) is omitted, never `null`, here and in the worker's status
 lines. Picture settings live in a portal, never in Luna. Types: generated
 `@prysm/contracts/luna` from
 [schema.rs](../../crates/hosts/webos-service/src/schema.rs).
@@ -329,9 +341,9 @@ other field as read (full keeps slim's `prysm_address`; a newer version's
 fields stay too). `setPreferences` replaces only the installed package's
 fields and writes the rest back with them. A file that cannot be read (not a
 regular file, too large, not JSON, a field of the wrong type, or for slim an
-invalid address) is reported as `failure.kind` `preferences`, the defaults
-apply, and the file is left as it is until the next `setPreferences`
-replaces it. Any other current failure is shown first.
+invalid address) is reported in `unreadable`, the defaults apply, and the
+file is left as it is until the next `setPreferences` replaces it. The app
+says what is asked first.
 
 The TV app sets the service up through the Homebrew Channel's `exec` of
 `setup.sh`, because the service does not exist yet at that point.

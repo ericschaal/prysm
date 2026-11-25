@@ -63,7 +63,7 @@ has one reading.
 | Preview and colors streams | event `type` | skipped |
 | Light card, TV lights card | `device.issue` | "The lights aren’t showing screen sync." |
 | TV service (`decodeState` in `webos-platform`) | `power`, `video` | `unknown` |
-| | `failure.kind` | `other` |
+| | `problem.asked` step or fix | `try_again` |
 | | full `target` | `unknown` |
 | | worker `phase` | `unknown`: "Updating…", with no start or stop |
 | | full worker `lights` | kept; the status card says "Not showing screen sync" |
@@ -126,18 +126,20 @@ the lights off. A faulted session's `message` (what did not finish) is under
 Details, on the light card and the section pages. All of them read that
 one situation, and `describeSituation` gives its words.
 
-The full TV package's status follows the portal's situation once it is
-known: the worker reports its session's failure to the supervisor, and the
-situation says what it means (off is off, effects showing are on). A
-faulted or failed session comes before the TV's power and video, since it
-needs the user and waking the TV would not end it; lights that are fine let
-power and video speak first. Try
-again is offered only for a failed mode (`screen_sync` or `effects`) and
-sends `setTarget off`, then that target again. Before the portal answers,
-or while the supervisor retries a worker, the supervisor's failure is the
-headline (before the portal answers, only for a mode: lights that are off
-are said as off). A worker phase newer than the app shows "Updating…" unless a
-failure is reported.
+What the TV service asks (the worker's `problem`) is the one fix on the
+status card, in both packages: each package words it from a `Record` keyed
+by every fix (`status/*-copy.ts`), and its button follows from it (Try
+again, Set up service, or none where trying again cannot help). The full
+package's headline is what the portal says the lights do or what failed
+(off is off, effects showing are on), else what the target was. What is
+asked, or a faulted or failed session, comes before the TV's power and
+video, since it needs the user and waking the TV would not end it; lights
+that are fine let power and video speak first. While the supervisor asks,
+no worker runs and no portal answers: the lighting modes and Try again go
+to Luna's `setTarget`, which answers it and starts the worker again
+(`modeRoute` in `tv-ui/modes.ts`). A restart in progress says "Restarting
+Prysm…"; a stop that will ask says what it asks. A worker phase newer than
+the app shows "Updating…".
 
 ## Saving from a page
 

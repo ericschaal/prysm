@@ -139,8 +139,8 @@ the portal. Uncompressed needs about ten times the network.
 - **Start with TV** starts Screen sync (full) or capture (slim) when the TV
   turns on. OK switches it on or off and it is saved at once. Turn it on only
   after you have tested standby, wake and a cold boot.
-- If Screen sync stops and the TV does not try again by itself, choose
-  **Try again** (full package).
+- If Screen sync stops, the card says what to do: **Try again** or another
+  mode (full package), or **Stop capture** and **Start capture** (slim).
 - **Service options** has **Set up or repair service**, **View diagnostics**
   and **Remove service setup…**.
 - [Calibrate colours](calibration.md) from the app.

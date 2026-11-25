@@ -35,9 +35,15 @@ The full wire mapping is in the
   a restart, a session that ended as the lights' own effects were asked for)
   is logged at `warn` and is neither published nor the reply. The target
   stays as requested, so the next settings change retries. Apart from the
-  wait for the lights below, the engine does not retry on its own; on the
-  TV, the full worker re-applies the
-  target after a session failure with a backoff
+  wait for the lights below, the engine does not retry on its own, and
+  neither does the TV's full worker: it reports the failure with its
+  escalation.
+- On the TV the supervisor is the one reader of an escalation
+  ([`recovery.rs`](../../crates/hosts/webos-service/src/machine/recovery.rs)).
+  `Restart` gets one new process; the same again before that process
+  delivered a frame, with no choice of the person or the TV between, is
+  asked as `try_again`. Anything else is asked as it is, and only the
+  person's or the TV's next choice ends it
   ([TV lifecycle](webos.md#supervisor-and-worker)).
 - An output's `idle` runs on every session exit; a failure there is reported,
   not hidden.
@@ -53,8 +59,7 @@ The full wire mapping is in the
   lights"), and the request is tried again every 5 s
   ([`UNANSWERED_INTERVAL`](../../crates/engine/runtime/src/leds.rs)) until
   the lights answer or a command asks for something else; a shutdown tries
-  once more and fails. As it is no failure, nothing else retries it (the
-  TV's backoff included).
+  once more and fails. As it is no failure, nothing else retries it.
 - An output open the lights did not answer does not end the session: it
   tries the open again at the first frame every 5 s. It writes no frames
   meanwhile and holds no output. A quiet spell

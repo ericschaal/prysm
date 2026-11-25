@@ -320,7 +320,7 @@ A page from another site gets `403 forbidden`.
 ### TV service (Luna)
 
 The service is `io.github.ericschaal.prysm.service` (rc.1:
-`io.prysm.tv.service`). Its API version is 4 (rc.1: 1). See the
+`io.prysm.tv.service`). Its API version is 5 (rc.1: 1). See the
 [Luna API](../developers/webos.md#luna-api).
 
 - `getState` carries only the installed package's fields, tagged by
@@ -337,10 +337,14 @@ The service is `io.github.ericschaal.prysm.service` (rc.1:
 - The preference `instance` is `prysm_address`.
 - An absent value is omitted, never `null`.
 - A failed call replies `{ "returnValue": false, "errorKind": …, "errorText": … }`.
-- New `failure.kind` values: `replaced` (slim: another TV took over the
-  stream), `receiver_failed` (slim: Prysm's receiving source failed with
-  this TV's stream) and `preferences` (the TV's saved preferences could not
-  be read).
+- `failure` is gone. What the person is asked is the worker's `problem`
+  (`asked`, `message`), in the new phase `asking` (no worker), in
+  `stopping` and (full) in `running`; rc.1's `retrying` phase and its
+  countdown are gone, since the service restarts a worker at most once
+  and then asks. Slim's own waits and failures are its `link` states
+  (`waiting`, `encoder_failed`, `version_differs`, `replaced`,
+  `receiver_failed`, each with a `message`). Saved preferences that cannot
+  be read are `unreadable`.
 
 ### Exit codes
 
