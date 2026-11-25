@@ -412,7 +412,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 let request: GetStateRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 Ok(Reply {
-                    payload: self.state_json(Some(request.subscribe), now),
+                    payload: self.state_json(Some(request.subscribe)),
                     subscribe: request.subscribe,
                 })
             }
@@ -432,21 +432,21 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                     .map_err(|error| Refusal::new(ErrorKind::SaveFailed, chain(&error)))?;
                 self.file = file;
                 self.input(bus, Input::Preferences(preferences), now);
-                Ok(self.state_reply(now))
+                Ok(self.state_reply())
             }
             Method::SetTarget => {
                 self.only_for(Flavor::Full, name)?;
                 let request: SetTargetRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 self.input(bus, Input::Target(request.target), now);
-                Ok(self.state_reply(now))
+                Ok(self.state_reply())
             }
             Method::SetEnabled => {
                 self.only_for(Flavor::Slim, name)?;
                 let request: SetEnabledRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 self.input(bus, Input::Enabled(request.enabled), now);
-                Ok(self.state_reply(now))
+                Ok(self.state_reply())
             }
             Method::Uninstall => {
                 let UninstallRequest {} = serde_json::from_value(payload).map_err(parse_error)?;
@@ -552,9 +552,9 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     /// machine's next due time, a subscription renewal, or the end of the
     /// wait for an exited worker's last lines.
     #[must_use]
-    pub fn next_due(&self, now: Instant) -> Option<Instant> {
+    pub fn next_due(&self) -> Option<Instant> {
         [
-            self.machine.next_due(now),
+            self.machine.next_due(),
             self.renew.power,
             self.renew.video,
             self.worker.as_ref().and_then(Worker::due),
@@ -654,7 +654,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                     }
                 }
                 Effect::Publish => {
-                    let payload = self.state_json(Some(true), now);
+                    let payload = self.state_json(Some(true));
                     if self.published.as_ref() != Some(&payload) {
                         bus.publish(&payload);
                         self.published = Some(payload);
@@ -667,15 +667,15 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         }
     }
 
-    fn state_reply(&self, now: Instant) -> Reply {
+    fn state_reply(&self) -> Reply {
         Reply {
-            payload: self.state_json(None, now),
+            payload: self.state_json(None),
             subscribe: false,
         }
     }
 
-    fn state_json(&self, subscribed: Option<bool>, now: Instant) -> String {
-        encode_reply(&StateReply::new(self.machine.state(now), subscribed))
+    fn state_json(&self, subscribed: Option<bool>) -> String {
+        encode_reply(&StateReply::new(self.machine.state(), subscribed))
     }
 }
 

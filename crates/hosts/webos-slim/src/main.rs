@@ -97,8 +97,8 @@ fn main() -> ExitCode {
 /// or, for an `https://` address, `wss://`) only while it is lighting with
 /// the remote capture, so the uplink
 /// reconnects on its own and an unavailable receiver is reported in the
-/// status rather than ending the worker (which would back off and show a
-/// failure). Each connection brings the receiver's request: the capture
+/// status rather than ending the worker (its supervisor would then ask
+/// the person). Each connection brings the receiver's request: the capture
 /// follows its size, rate and menus, the sender its encoding. A failing
 /// encoder is reported and refused to the receiver until the request
 /// changes; a failing capture ends the worker. The receiver's host name is

@@ -154,7 +154,7 @@ where
             return sys::Next::Stop;
         }
         let deadline = self.deadline.filter(|_| !self.stopping);
-        [self.service.next_due(now), deadline]
+        [self.service.next_due(), deadline]
             .into_iter()
             .flatten()
             .min()

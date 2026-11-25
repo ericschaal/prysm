@@ -278,7 +278,7 @@ async fn the_fault_is_reported_until_the_stop(mut peer: Peer, task: Running) {
     assert_eq!(stop, Some(Stop::Requested("stdin closed")));
     assert_eq!(
         prysm_webos_link::worker::exit_code(stop.as_ref(), &result),
-        prysm_webos_link::exit::FAULTED
+        1
     );
 }
 

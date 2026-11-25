@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 const BINARY: &str = env!("CARGO_BIN_EXE_prysm-webos-slim");
 
 #[test]
-fn bad_arguments_exit_with_usage() {
+fn bad_arguments_fail() {
     let bare = ["--prysm", "127.0.0.1:8787"].map(str::to_owned);
     let unknown = ["--prysm", "http://127.0.0.1:8787", "--bogus"].map(str::to_owned);
     for argv in [
@@ -22,7 +22,7 @@ fn bad_arguments_exit_with_usage() {
         vec!["slim".to_owned()],
     ] {
         let output = Command::new(BINARY).args(&argv).output().unwrap();
-        assert_eq!(output.status.code(), Some(2), "{argv:?}");
+        assert_eq!(output.status.code(), Some(1), "{argv:?}");
         assert!(output.stdout.is_empty());
     }
 }
@@ -156,5 +156,5 @@ fn check_encoder_reports_the_encoder_it_used() {
         .args(["check-encoder", "--width", "3"])
         .output()
         .unwrap();
-    assert_eq!(usage.status.code(), Some(2));
+    assert_eq!(usage.status.code(), Some(1));
 }

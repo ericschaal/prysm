@@ -12,10 +12,10 @@ const BINARY: &str = env!("CARGO_BIN_EXE_prysm-webos");
 const EXIT: Duration = Duration::from_secs(10);
 
 #[test]
-fn bad_arguments_exit_with_usage() {
+fn bad_arguments_fail() {
     for args in [&[][..], &["--settings", "x"][..], &["full"][..]] {
         let output = Command::new(BINARY).args(args).output().unwrap();
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
         assert!(output.stdout.is_empty(), "no events before the link exists");
         assert!(String::from_utf8_lossy(&output.stderr).contains("Usage:"));
     }

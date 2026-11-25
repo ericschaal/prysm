@@ -183,7 +183,6 @@ pub(crate) enum Process {
     Stopped,
     Running,
     Stopping,
-    Retrying { seconds: u32 },
 }
 
 impl FullWorker {
@@ -202,7 +201,6 @@ impl FullWorker {
                 portal: portal(),
             },
             Process::Stopping => Self::Stopping { portal: portal() },
-            Process::Retrying { seconds } => Self::Retrying { seconds },
         }
     }
 }
@@ -219,7 +217,6 @@ impl SlimWorker {
                 Self::Running { capturing, link }
             }
             Process::Stopping => Self::Stopping,
-            Process::Retrying { seconds } => Self::Retrying { seconds },
         }
     }
 }

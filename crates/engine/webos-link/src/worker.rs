@@ -9,7 +9,7 @@
 //! stops the worker.
 use crate::{
     Command, Event, Failure, FullStatus, LineReader, LinkError, SlimLink, SlimStatus,
-    WorkerFailure, WorkerStatus, encode, exit,
+    WorkerFailure, WorkerStatus, encode,
 };
 use prysm_ports::{Error, chain};
 use std::future::Future;
@@ -21,9 +21,9 @@ use tokio::sync::{mpsc, watch};
 /// Why a worker is stopping. The first reason wins.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stop {
-    /// SIGTERM, SIGINT or stdin EOF: exit [`exit::STOPPED`].
+    /// SIGTERM, SIGINT or stdin EOF: exit 0.
     Requested(&'static str),
-    /// Protocol misuse or a lost link: exit [`exit::FAILED`].
+    /// Protocol misuse or a lost link: exit 1.
     Failed(String),
 }
 
@@ -309,14 +309,14 @@ impl Stdio {
 }
 
 /// Take over stdio for the program `name` (see the module documentation);
-/// prints the error and exits [`exit::FAILED`] when it cannot. The only way
+/// prints the error and exits 1 when it cannot. The only way
 /// to a [`Stdio`]: called once, as the worker's first statement, since a
 /// second call would keep stderr as the events' stdout.
 #[must_use]
 pub fn take_stdio(name: &'static str) -> Stdio {
     Stdio::take().unwrap_or_else(|error| {
         eprintln!("{name}: cannot take over stdio: {error}");
-        std::process::exit(exit::FAILED.into())
+        std::process::exit(1)
     })
 }
 
@@ -344,13 +344,15 @@ fn read_commands(
     }
 }
 
-/// The exit code for how a worker ended.
+/// The exit code for how a worker ended: 0 for a stop asked for (or none),
+/// 1 for anything else. The supervisor gives it no meaning: a worker says
+/// why it fails ([`Event::Failed`]), and an exit without it is a worker
+/// lost.
 #[must_use]
 pub fn exit_code(stop: Option<&Stop>, result: &prysm_ports::Result<()>) -> u8 {
     match (stop, result) {
-        (_, Err(Error::Faulted(_))) => exit::FAULTED,
-        (Some(Stop::Failed(_)), _) | (_, Err(_)) => exit::FAILED,
-        _ => exit::STOPPED,
+        (Some(Stop::Failed(_)), _) | (_, Err(_)) => 1,
+        (Some(Stop::Requested(_)) | None, Ok(())) => 0,
     }
 }
 
@@ -372,8 +374,8 @@ pub fn exit_code(stop: Option<&Stop>, result: &prysm_ports::Result<()>) -> u8 {
 /// adapter before abandoning it; the runtime is shut down without waiting
 /// for such a call, so `main` returns and the process exits. Until it has exited it holds the capture
 /// adapter's cross-process lock (and the full worker its portal port), so a
-/// new worker cannot open a tap meanwhile: it fails and its supervisor backs
-/// off. A thread stuck in the kernel keeps the process, and so the lock,
+/// new worker cannot open a tap meanwhile: it fails, and its supervisor
+/// asks the person. A thread stuck in the kernel keeps the process, and so the lock,
 /// until it returns.
 ///
 /// # Errors
@@ -392,8 +394,7 @@ pub fn guard_parent() -> Result<(), String> {
 
 /// The worker's arguments, parsed by clap for the program `name`. Prints help
 /// (to stderr after [`take_stdio`]) and exits 0 on `--help`; prints the error
-/// and exits [`exit::USAGE`] on arguments the worker does not accept (a
-/// packaging bug).
+/// and exits 1 on arguments the worker does not accept (a packaging bug).
 #[must_use]
 pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
     let mut command = A::command().name(name).bin_name(name).about(about);
@@ -403,11 +404,7 @@ pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
         .map_err(|error| error.format(&mut command));
     parsed.unwrap_or_else(|error| {
         let _ = error.print();
-        std::process::exit(if error.use_stderr() {
-            exit::USAGE.into()
-        } else {
-            0
-        })
+        std::process::exit(i32::from(error.use_stderr()))
     })
 }
 
@@ -424,13 +421,13 @@ where
 {
     if let Err(message) = guard_parent() {
         eprintln!("{name}: {message}");
-        return ExitCode::from(exit::FAILED);
+        return ExitCode::FAILURE;
     }
     let link = match Link::stdio(stdio) {
         Ok(link) => link,
         Err(error) => {
             eprintln!("{name}: cannot set up the supervisor link: {error}");
-            return ExitCode::from(exit::FAILED);
+            return ExitCode::FAILURE;
         }
     };
     let (stop, events) = (link.stop.clone(), link.events.clone());
@@ -443,7 +440,7 @@ where
             let error = Error::adapter("cannot start the async runtime", error);
             eprintln!("{name}: {}", chain(&error));
             events.send(&Event::Failed(Failure::of(&error)));
-            return ExitCode::from(exit::FAILED);
+            return ExitCode::FAILURE;
         }
     };
     let result = runtime.block_on(async {
@@ -490,22 +487,20 @@ mod tests {
         let ok = Ok(());
         let faulted = Err(Error::Faulted(SessionPhase::ClosingSource));
         let failed = Err(Error::other("no receiver"));
-        assert_eq!(exit_code(None, &ok), exit::STOPPED);
-        assert_eq!(exit_code(Some(&Stop::Requested("x")), &ok), exit::STOPPED);
-        assert_eq!(exit_code(None, &failed), exit::FAILED);
-        assert_eq!(
-            exit_code(Some(&Stop::Failed("x".into())), &ok),
-            exit::FAILED
-        );
-        assert_eq!(exit_code(None, &faulted), exit::FAULTED);
-        assert_eq!(
-            exit_code(Some(&Stop::Failed("x".into())), &faulted),
-            exit::FAULTED
-        );
-        assert_eq!(
-            exit_code(Some(&Stop::Requested("x")), &faulted),
-            exit::FAULTED
-        );
+        let requested = Stop::Requested("x");
+        let misused = Stop::Failed("x".into());
+        let rows = [
+            (None, &ok, 0),
+            (Some(&requested), &ok, 0),
+            (Some(&misused), &ok, 1),
+            (None, &failed, 1),
+            (None, &faulted, 1),
+            (Some(&requested), &faulted, 1),
+            (Some(&misused), &faulted, 1),
+        ];
+        for (stop, result, code) in rows {
+            assert_eq!(exit_code(stop, result), code, "{stop:?}, {result:?}");
+        }
     }
 
     #[test]

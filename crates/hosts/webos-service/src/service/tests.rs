@@ -416,7 +416,7 @@ fn a_missing_preferences_file_is_no_failure() {
         FakeInstaller::default(),
         Instant::now(),
     );
-    let state = service.machine().state(Instant::now());
+    let state = service.machine().state();
     assert_eq!(state.failure, None);
     assert_eq!(state.preferences, Preferences::default());
 }
@@ -561,6 +561,33 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
     );
     assert!(h.tick(60_000));
     assert!(h.log().is_empty(), "the person is asked: nothing respawns");
+}
+
+/// A worker that dies without a word (its event stream ends cleanly) is
+/// restarted at once, with nothing shown; dying again before a frame asks.
+#[test]
+fn a_worker_that_dies_is_restarted_once() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    h.world.borrow_mut().exit = Some(Exit::Signal(9));
+    assert!(h.tick(100));
+    let log = h.log();
+    assert!(log[0].starts_with("spawn "), "{log:?}");
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "running");
+    assert_eq!(published.get("failure"), None);
+    h.world.borrow_mut().exit = Some(Exit::Signal(9));
+    assert!(h.tick(200));
+    assert!(h.log().is_empty(), "no second restart");
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "stopped");
+    assert!(
+        published["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("again after a restart: worker killed by signal 9")
+    );
 }
 
 #[test]

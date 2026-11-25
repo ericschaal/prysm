@@ -5,8 +5,9 @@
 //! - Start: typed argv ([`FullArgs`], [`SlimArgs`]), built without a shell.
 //! - Supervisor → worker: [`Command`] lines on the worker's stdin.
 //! - Worker → supervisor: [`Event`] lines on the worker's original stdout.
-//! - End: the worker's [`exit`] code.
-//! - The supervisor's retry [`Backoff`].
+//! - End: the worker's exit, its code 0 for a stop asked for and 1 for
+//!   anything else (`worker::exit_code`); the supervisor gives it no
+//!   meaning.
 //!
 //! Framing ([`encode`], [`LineReader`]): one JSON object per line, at most
 //! [`MAX_LINE`] bytes including the newline, unknown fields rejected. A bad
@@ -47,7 +48,7 @@ pub enum Command {
     /// Full only: the lighting target the TV app chose. `sequence` counts
     /// the targets sent to this worker from 1; its status says the last one
     /// it applied ([`FullStatus::applied`]). A slim worker treats it as
-    /// protocol misuse and exits [`exit::FAILED`].
+    /// protocol misuse and exits.
     Target {
         target: LightingTarget,
         sequence: u64,
@@ -77,12 +78,11 @@ pub enum Event {
     /// Sent on every change and at least every [`HEARTBEAT`].
     Status(WorkerStatus),
     /// Why the worker's run ends with an error (at startup or while
-    /// running); it exits next, [`exit::FAULTED`] when the error is a
-    /// [`prysm_ports::Error::Faulted`], else [`exit::FAILED`]. Not a status:
-    /// a worker can fail before it has anything of its package to report.
-    /// Not every failed exit is preceded by one: a protocol misuse or lost
-    /// link (a stop reason, not an error) exits [`exit::FAILED`] without it,
-    /// as does a failure before the link exists.
+    /// running); it exits next. Not a status: a worker can fail before it
+    /// has anything of its package to report. Not every failed exit is
+    /// preceded by one: a protocol misuse or lost link (a stop reason, not
+    /// an error) exits without it, as does a failure before the link
+    /// exists.
     Failed(Failure),
 }
 
@@ -233,47 +233,6 @@ impl WorkerFailure {
     }
 }
 
-/// Delays between attempts after failures: [`Backoff::MIN`] doubling to
-/// [`Backoff::MAX`], back to the start after [`Backoff::HEALTHY`]. The
-/// supervisor uses it to restart a failed worker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Backoff {
-    first: Duration,
-    next: Duration,
-}
-
-impl Backoff {
-    pub const MIN: Duration = Duration::from_secs(1);
-    pub const MAX: Duration = Duration::from_secs(30);
-    /// Running this long without a failure resets the delay.
-    pub const HEALTHY: Duration = Duration::from_secs(60);
-
-    /// Starting at `first` instead of [`Backoff::MIN`] (tests).
-    #[must_use]
-    pub const fn starting_at(first: Duration) -> Self {
-        Self { first, next: first }
-    }
-
-    /// The delay before the next attempt; the one after it doubles, up to
-    /// [`Backoff::MAX`].
-    pub fn delay(&mut self) -> Duration {
-        let delay = self.next;
-        self.next = (delay * 2).min(Self::MAX);
-        delay
-    }
-
-    /// Start over at the first delay.
-    pub fn reset(&mut self) {
-        self.next = self.first;
-    }
-}
-
-impl Default for Backoff {
-    fn default() -> Self {
-        Self::starting_at(Self::MIN)
-    }
-}
-
 /// What a reported failure is, so the TV app can offer the matching fix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -305,30 +264,6 @@ pub enum FailureKind {
     Preferences,
     /// Anything else.
     Other,
-}
-
-/// Worker exit codes.
-pub mod exit {
-    /// SIGTERM or stdin EOF; not a failure.
-    pub const STOPPED: u8 = 0;
-    /// Startup or runtime failure, or protocol misuse.
-    pub const FAILED: u8 = 1;
-    /// Bad argv: a packaging bug.
-    pub const USAGE: u8 = 2;
-    /// A hung or unconfirmed native resource; only a new process recovers.
-    pub const FAULTED: u8 = 3;
-
-    /// A short description of a worker exit code for diagnostics.
-    #[must_use]
-    pub fn describe(code: i32) -> String {
-        match u8::try_from(code) {
-            Ok(STOPPED) => "worker stopped".into(),
-            Ok(FAILED) => "worker failed".into(),
-            Ok(USAGE) => "worker rejected its arguments (packaging bug)".into(),
-            Ok(FAULTED) => "worker faulted".into(),
-            _ => format!("worker exited with code {code}"),
-        }
-    }
 }
 
 #[cfg(test)]

@@ -355,24 +355,3 @@ fn slim_args_carry_only_the_prysm_address() {
         strings(&["--prysm", "https://prysm.example.com"])
     );
 }
-
-#[test]
-fn backoff_doubles_to_the_cap_and_resets() {
-    let mut backoff = Backoff::default();
-    let delays: Vec<u64> = (0..7).map(|_| backoff.delay().as_secs()).collect();
-    assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30]);
-    backoff.reset();
-    assert_eq!(backoff.delay(), Backoff::MIN);
-    let mut short = Backoff::starting_at(std::time::Duration::from_millis(20));
-    assert_eq!(short.delay().as_millis(), 20);
-    assert_eq!(short.delay().as_millis(), 40);
-    short.reset();
-    assert_eq!(short.delay().as_millis(), 20);
-}
-
-#[test]
-fn exit_codes_are_described() {
-    assert_eq!(exit::describe(3), "worker faulted");
-    assert!(exit::describe(2).contains("packaging"));
-    assert_eq!(exit::describe(-1), "worker exited with code -1");
-}
