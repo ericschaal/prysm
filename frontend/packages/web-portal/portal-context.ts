@@ -132,8 +132,8 @@ export interface Chrome {
   connectionLabel: string;
   /** The connection has been missing long enough to say so. */
   outOfTouch: boolean;
-  /** Why the portal refuses this page (`forbidden`); no reconnect follows. */
-  refusal: string | null;
+  /** Why the state stream stopped, said by Prysm; no reconnect follows. */
+  stopped: string | null;
   developer: boolean;
   /** Prysm was updated under this page: every page offers a reload. */
   updated: boolean;

@@ -3814,26 +3814,40 @@ test('with the state in the page, the first render is Home, whole and live, befo
   }
 });
 
-test('with the state in the page, a refused stream keeps Home and says the refusal, not a reconnect', async () => {
-  const portal = await renderPortal(
-    HeadlessWebPortal,
-    { capture, output },
-    undefined,
-    {},
-    { embedded: true, held: true },
-  );
-  const refusal = 'Prysm refuses requests from this page.';
-  try {
-    await portal.answer({ kind: 'forbidden', message: refusal });
-    await act(async () => sleep(connectionGraceMs + 100));
-    assert($('.light-card') && $('.setup-card'), 'Home stays');
-    assert.equal($('.notice[role="alert"]').textContent, refusal);
-    assert.equal($('.connection').textContent, 'Offline');
-    assert(!document.body.textContent.includes('Reconnecting'));
-  } finally {
-    await portal.unmount();
-  }
-});
+for (const [stop, failure] of [
+  [
+    'a refused stream',
+    { kind: 'forbidden', message: 'Prysm refuses requests from this page.' },
+  ],
+  [
+    'an unreadable stream',
+    {
+      kind: 'internal',
+      message:
+        'This page can’t read the state stream from Prysm. Reload the page.',
+    },
+  ],
+]) {
+  test(`with the state in the page, ${stop} keeps Home and says why, not a reconnect`, async () => {
+    const portal = await renderPortal(
+      HeadlessWebPortal,
+      { capture, output },
+      undefined,
+      {},
+      { embedded: true, held: true },
+    );
+    try {
+      await portal.answer(failure);
+      await act(async () => sleep(connectionGraceMs + 100));
+      assert($('.light-card') && $('.setup-card'), 'Home stays');
+      assert.equal($('.notice[role="alert"]').textContent, failure.message);
+      assert.equal($('.connection').textContent, 'Offline');
+      assert(!document.body.textContent.includes('Reconnecting'));
+    } finally {
+      await portal.unmount();
+    }
+  });
+}
 
 test('without a state in the page, Home waits in its own frame, says so only once the wait lasts, and the cards take the blocks’ places', async () => {
   const portal = await renderPortal(

@@ -64,7 +64,7 @@ export function SaveStatusProvider({ children }: { children: ReactNode }) {
  */
 export function SaveStatus({ online }: { online: boolean }) {
   const phase = use(SaveContext)?.phase ?? 'all-saved';
-  const { refusal } = useChrome();
+  const { stopped } = useChrome();
   // Offline nothing can be saved; what was changed is kept for later.
   return (
     <p
@@ -73,7 +73,7 @@ export function SaveStatus({ online }: { online: boolean }) {
       role="status"
     >
       <span className="save-status-mark" aria-hidden="true" />
-      {online ? phaseTexts[phase] : (refusal ?? 'Not connected. Reconnecting…')}
+      {online ? phaseTexts[phase] : (stopped ?? 'Not connected. Reconnecting…')}
     </p>
   );
 }

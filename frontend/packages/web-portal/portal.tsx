@@ -2,6 +2,7 @@ import {
   lightingSituation,
   plainFailure,
   situationFailure,
+  streamStep,
 } from '@prysm/application-client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -113,17 +114,19 @@ function PortalFrame() {
 
   // Disabled at once while offline, but said only once it lasts.
   const outOfTouch = useLingering(!online, connectionGraceMs, 0);
-  // A refusal is for good: the stream is not opened again.
-  const refusal =
-    connection.error?.kind === 'forbidden' ? connection.error.message : null;
+  // A stop is for good: the stream is not opened again, and the failure
+  // says what to do instead.
+  const { error } = connection;
+  const stopped =
+    error && streamStep[error.kind] !== 'reconnect' ? error.message : null;
   let connectionLabel = 'Offline';
   if (online) connectionLabel = 'Connected';
   else if (connection.status === 'connecting') connectionLabel = 'Connecting…';
-  else if (snapshot && !refusal) connectionLabel = 'Reconnecting…';
+  else if (snapshot && !stopped) connectionLabel = 'Reconnecting…';
   const chrome: Chrome = {
     connectionLabel,
     outOfTouch,
-    refusal,
+    stopped,
     developer: useDeveloper(),
     updated: useReplaced(online, host.replaced),
   };
