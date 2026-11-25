@@ -2,7 +2,7 @@
 //! current time in, the next state and the actions to perform out. No clock,
 //! no logging, no backend, no worker; every rule is table-tested.
 use super::{Acquired, Fault, Limits, UiFault};
-use crate::classify::{self, GiveUp, Reason, Recovery, UiRecovery, VideoCause};
+use crate::classify::{self, GiveUp, Recovery, UiRecovery, VideoCause};
 use crate::{Readiness, Video};
 use prysm_core::Frame;
 use prysm_ports::{Attempts, Error, Schedule};
@@ -81,8 +81,9 @@ pub(super) enum Phase {
     Idle,
     Video {
         stage: Stage,
-        /// The one new driver a fault opens ([`Reason::FreshDriver`],
-        /// [`Reason::StalledDriver`]); a frame or a change of the video
+        /// The one new driver a fault opens
+        /// ([`classify::Reason::FreshDriver`],
+        /// [`classify::Reason::StalledDriver`]); a frame or a change of the video
         /// signal gives it back.
         fresh: Attempts,
         /// Since when the pulls are told refused: from the period's first
@@ -371,13 +372,14 @@ impl Stage {
 impl Phase {
     /// A new period for `kind`, with no tap: a video period has its new
     /// driver to open and the pulls not told refused.
-    fn begin(kind: Option<Kind>, limits: &Limits) -> Self {
+    fn begin(kind: Option<Kind>) -> Self {
         match kind {
             None => Self::Idle,
-            // The two reasons that open a new driver share its one try.
+            // A new driver is tried one time, for either reason that opens
+            // one.
             Some(Kind::Video) => Self::Video {
                 stage: Stage::Closed,
-                fresh: Attempts::new(Reason::FreshDriver.schedule(limits)),
+                fresh: Attempts::new(Schedule::Once),
                 refused_since: None,
             },
             Some(Kind::Ui) => Self::Ui { held: false },
@@ -565,7 +567,7 @@ impl State {
                     elapsed_ms: millis(since, now),
                 }));
             }
-            self.phase = Phase::begin(kind, &rules.limits);
+            self.phase = Phase::begin(kind);
             return;
         }
         match self.phase {
@@ -709,11 +711,7 @@ impl State {
             // not on an `Attempts`, whose clock starts at its own first
             // failure.
             Ok(Acquired::NotReady) => {
-                let Schedule::Within { every, limit } =
-                    Reason::DriverPreparing.schedule(&rules.limits)
-                else {
-                    unreachable!("a preparing driver is retried within a limit")
-                };
+                let limit = rules.limits.preparation;
                 let since = stage.waiting_since(now);
                 if now.duration_since(since) >= limit {
                     let error = Error::other(format!("webOS video was not ready within {limit:?}"));
@@ -722,7 +720,7 @@ impl State {
                 self.phase = self.phase.at(Stage::Waiting {
                     since,
                     pending_since: None,
-                    at: now + every,
+                    at: now + rules.limits.not_ready_retry,
                 });
             }
             // Not preparation: no deadline runs while the TV refuses.
@@ -794,7 +792,7 @@ impl State {
 
     /// A video fault, as its [`Recovery`] says: one that escalates fails
     /// the source; a retry releases the tap and opens a new one at once,
-    /// one time until a frame, then gives up as its [`Reason`] says; a
+    /// one time until a frame, then gives up as its [`classify::Reason`] says; a
     /// wait for withheld video releases the tap until the signal changes.
     fn video_fault(&mut self, fault: Fault, now: Instant, out: &mut Out) {
         let Phase::Video { stage, fresh, .. } = &mut self.phase else {
@@ -804,16 +802,16 @@ impl State {
         let reason = match fault.recovery {
             Recovery::Escalate(_) => return self.fail(fault.error, out),
             Recovery::Wait => return self.withhold(fault.error, now, out),
-            Recovery::Retry(Reason::DriverPreparing) => {
-                unreachable!("a driver not ready answers, it does not fault")
-            }
-            Recovery::Retry(reason @ (Reason::FreshDriver | Reason::StalledDriver)) => reason,
+            Recovery::Retry(reason) => reason,
         };
-        if fresh.failed(now).is_err() {
-            return match reason.gives_up() {
-                GiveUp::Fail => self.fail(fault.error, out),
-                GiveUp::Wait => self.withhold(fault.error, now, out),
-            };
+        match fresh.failed(now) {
+            Ok(_now) => {}
+            Err(_spent) => {
+                return match reason.gives_up() {
+                    GiveUp::Fail => self.fail(fault.error, out),
+                    GiveUp::Wait => self.withhold(fault.error, now, out),
+                };
+            }
         }
         out.push(Action::Note(Note::VideoRetrying { error: fault.error }));
         if held {
@@ -862,6 +860,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::classify::Reason;
     use prysm_core::PixelFormat;
 
     const LIMITS: Limits = Limits::TV;

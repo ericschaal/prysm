@@ -2,14 +2,13 @@
 //! each cause. Retried only where a reason says why the retry converges;
 //! everything else waits for a change of the video signal or leaves this
 //! layer ([`prysm_ports::Escalation`]).
-use crate::source::Limits;
 use prysm_capture_webos_sys as sys;
-use prysm_ports::{Escalation, Fix, Schedule};
+use prysm_ports::{Escalation, Fix};
 
 /// What the video tap does after a fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Recovery {
-    /// Try again on a schedule, for this reason.
+    /// Open a new driver, for this reason.
     Retry(Reason),
     /// Nothing tells when the TV will give this video except a change of
     /// the video signal: wait for one.
@@ -21,9 +20,6 @@ pub(crate) enum Recovery {
 /// Why trying the video tap again converges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reason {
-    /// The driver answers not ready while the TV's video pipeline starts,
-    /// which it finishes within [`Limits::preparation`].
-    DriverPreparing,
     /// A driver that failed may hold broken state that a new one does not:
     /// one new driver tells, and a second failure with no frame or change
     /// of the video signal between proves it is not that.
@@ -35,7 +31,7 @@ pub(crate) enum Reason {
     StalledDriver,
 }
 
-/// What a [`Reason`]'s retries end in once its schedule gives up.
+/// What a [`Reason`]'s retry ends in once its new driver failed too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GiveUp {
     /// The source fails fast.
@@ -45,19 +41,9 @@ pub(crate) enum GiveUp {
 }
 
 impl Reason {
-    pub(crate) fn schedule(self, limits: &Limits) -> Schedule {
-        match self {
-            Self::DriverPreparing => Schedule::Within {
-                every: limits.not_ready_retry,
-                limit: limits.preparation,
-            },
-            Self::FreshDriver | Self::StalledDriver => Schedule::Once,
-        }
-    }
-
     pub(crate) fn gives_up(self) -> GiveUp {
         match self {
-            Self::DriverPreparing | Self::FreshDriver => GiveUp::Fail,
+            Self::FreshDriver => GiveUp::Fail,
             Self::StalledDriver => GiveUp::Wait,
         }
     }
@@ -80,7 +66,8 @@ pub(crate) enum VideoCause<'a> {
     Native(&'a sys::Error),
     /// The frame pool could not allocate a frame.
     Allocation,
-    /// The initialized driver gave no buffer for [`Limits::pending`].
+    /// The initialized driver gave no buffer for
+    /// [`crate::source::Limits::pending`].
     Stall,
     /// The capture thread could not block its signals.
     SignalMask,
@@ -327,22 +314,7 @@ mod tests {
 
     #[test]
     fn every_reason_has_its_schedule() {
-        let limits = Limits::TV;
-        for (reason, schedule) in [
-            (
-                Reason::DriverPreparing,
-                Schedule::Within {
-                    every: limits.not_ready_retry,
-                    limit: limits.preparation,
-                },
-            ),
-            (Reason::FreshDriver, Schedule::Once),
-            (Reason::StalledDriver, Schedule::Once),
-        ] {
-            assert_eq!(reason.schedule(&limits), schedule, "{reason:?}");
-        }
         for (reason, give_up) in [
-            (Reason::DriverPreparing, GiveUp::Fail),
             (Reason::FreshDriver, GiveUp::Fail),
             (Reason::StalledDriver, GiveUp::Wait),
         ] {

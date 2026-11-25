@@ -22,8 +22,8 @@ pub(crate) enum Acquired {
     Frame(Frame),
     /// No new buffer yet.
     Pending,
-    /// The driver is (re)initializing; tried again as
-    /// [`crate::classify::Reason::DriverPreparing`] says.
+    /// The driver is (re)initializing; asked again as
+    /// [`Limits::preparation`] says.
     NotReady,
     /// The driver refuses to capture this video (`vtCapture_init`
     /// answered 17); its driver stays created, and the next acquisition
@@ -96,7 +96,10 @@ pub(crate) struct Limits {
     /// Longest a single native call may run before the source fails.
     pub watchdog: Duration,
     /// Longest without a frame, counted from the first answer without one,
-    /// at which an [`Acquired::NotReady`] fails the source.
+    /// at which an [`Acquired::NotReady`] fails the source; until then a
+    /// driver not ready is asked again every [`Self::not_ready_retry`].
+    /// This converges: the driver answers not ready while the TV's video
+    /// pipeline starts, which it finishes within this limit.
     pub preparation: Duration,
     /// Longest without a frame, counted from the first of the
     /// [`Acquired::Pending`] answers since the driver last answered
