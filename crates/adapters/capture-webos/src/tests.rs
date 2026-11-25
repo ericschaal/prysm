@@ -1045,48 +1045,6 @@ fn only_a_missing_ui_library_or_device_is_permanent() {
     assert!(fatal(backend::ui_open_fault(load)));
 }
 
-/// Only a failed driver creation or a name left registered needs a new
-/// process; every other failure leaves the host free to open a new source.
-#[test]
-fn only_a_failed_create_or_a_stuck_name_needs_a_new_process() {
-    use prysm_capture_webos_sys as sys;
-    use prysm_webos_luna_sys::Error as Luna;
-    let status = || sys::Error::Status {
-        operation: sys::Operation::VtInit,
-        code: 11,
-    };
-    let message = || "failed".to_owned();
-    for (error, restart) in [
-        (sys::Error::Create(Box::new(status())), true),
-        (
-            sys::Error::from(Luna::Unremoved {
-                name: "a".into(),
-                message: message(),
-            }),
-            true,
-        ),
-        (
-            sys::Error::from(Luna::Denied {
-                name: "a".into(),
-                message: message(),
-            }),
-            false,
-        ),
-        (
-            sys::Error::from(Luna::Luna {
-                operation: "LSRegister",
-                message: message(),
-            }),
-            false,
-        ),
-        (status(), false),
-    ] {
-        let failure = backend::fault("cannot open webOS video capture", error).error;
-        assert_eq!(needs_new_process(&failure), restart, "{}", chain(&failure));
-    }
-    assert!(!needs_new_process(&Error::other("anything else")));
-}
-
 /// Any failed Luna registration check ends video capture at once, whatever
 /// LS2 answered; the cause still says which failure it was.
 #[test]

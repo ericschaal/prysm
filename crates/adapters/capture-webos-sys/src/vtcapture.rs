@@ -84,17 +84,6 @@ pub enum Error {
     },
 }
 
-impl Error {
-    /// No capture can succeed again in this process: driver creation failed
-    /// (it can leave live threads and stale globals), or a client name stays
-    /// registered (every later check fails). A new process has new names and
-    /// a fresh driver.
-    #[must_use]
-    pub fn needs_new_process(&self) -> bool {
-        matches!(self, Self::Create(_) | Self::Registered(_))
-    }
-}
-
 /// A library that does not load is [`Error::Load`], a denied name
 /// [`Error::Permission`], a name left registered [`Error::Registered`], and
 /// any other Luna failure [`Error::Luna`].
@@ -392,9 +381,7 @@ impl VtCapture {
     /// initializes and starts the driver.
     ///
     /// # Errors
-    /// Invalid options, or library, permission or driver creation failures;
-    /// [`Error::needs_new_process`] says whether the process must restart
-    /// before retrying.
+    /// Invalid options, or library, permission or driver creation failures.
     pub fn open(options: &Options) -> Result<Self, Error> {
         let properties = Properties {
             dump: if options.include_ui { 3 } else { 2 },

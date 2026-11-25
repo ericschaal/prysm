@@ -268,8 +268,7 @@ mod tests {
         }
     }
 
-    /// The source's error carries the row's escalation, and only a
-    /// restart is what the hosts' `needs_new_process` reads.
+    /// The source's error carries the row's escalation.
     #[test]
     fn a_native_fault_escalates_as_its_row_says() {
         for (error, recovery, _) in rows() {
@@ -277,11 +276,6 @@ mod tests {
             let fault = crate::backend::fault("cannot open webOS video capture", error);
             assert_eq!(fault.recovery, recovery, "{shown}");
             assert_eq!(fault.error.escalation(), recovery.escalation(), "{shown}");
-            assert_eq!(
-                crate::needs_new_process(&fault.error),
-                recovery == Recovery::Escalate(Escalation::Restart),
-                "{shown}"
-            );
         }
     }
 
