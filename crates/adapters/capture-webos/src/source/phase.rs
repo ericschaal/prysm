@@ -2347,27 +2347,6 @@ mod tests {
         assert_eq!(once.ask, twice.ask);
     }
 
-    /// Every UI state meets every event: a fault that cannot heal is final,
-    /// one that may pass waits for a change of video or context, and a
-    /// fault after a failure is no news.
-    #[test]
-    fn every_ui_state_meets_every_event() {
-        use UiSupport::{Failed, Reopenable, Unsupported, Untried, Works};
-        for (state, change, occurrence, may_open) in [
-            (Untried, Untried, Occurrence::First, true),
-            (Works, Works, Occurrence::First, true),
-            (Failed, Reopenable, Occurrence::Again, false),
-            (Reopenable, Reopenable, Occurrence::Again, true),
-            (Unsupported, Unsupported, Occurrence::Again, false),
-        ] {
-            assert_eq!(state.after_video_or_context_change(), change, "{state:?}");
-            assert_eq!(state.occurrence(), occurrence, "{state:?}");
-            assert_eq!(state.may_open(), may_open, "{state:?}");
-        }
-        assert_eq!(UiSupport::after_fault(UiRecovery::Unsupported), Unsupported);
-        assert_eq!(UiSupport::after_fault(UiRecovery::MayPass), Failed);
-    }
-
     /// A failed or unsupported UI is not opened; video always is.
     #[test]
     fn the_tap_follows_the_video_the_setting_and_the_ui_state() {

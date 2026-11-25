@@ -153,7 +153,7 @@ impl<B: Backend> Native<B> {
     /// Release the held tap, if any. A failed release, whenever it comes,
     /// fails the source with its cause and is the thread's result: the
     /// device may still be held, so its release is unconfirmed and
-    /// escalates as [`classify::unconfirmed_release`] says.
+    /// escalates as [`classify::UNCONFIRMED_RELEASE`] says.
     fn release_tap(&mut self) -> Result<()> {
         let Some(held) = self.tap.take() else {
             return Ok(());
@@ -171,7 +171,7 @@ impl<B: Backend> Native<B> {
         };
         released
             .map_err(|error| {
-                Error::adapter_escalating(unconfirmed, error, classify::unconfirmed_release())
+                Error::adapter_escalating(unconfirmed, error, classify::UNCONFIRMED_RELEASE)
             })
             .inspect_err(|error| self.worker.fail(error.clone()))
     }
