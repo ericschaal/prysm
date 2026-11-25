@@ -4,7 +4,7 @@
 //!
 //! Every decision is [`phase::next`]'s; this shell reads the clock and the
 //! signal, tells the machine what happened and performs what it asks.
-use super::phase::{self, Action, Event, Kind, Note, Occurrence, Rules, State};
+use super::phase::{self, Action, Event, Kind, Note, Occurrence, Rules, State, Then};
 use super::{Backend, Limits, Tap};
 use crate::{Readiness, VideoSignal, WebosSettings};
 use prysm_ports::{Error, Result, Worker, chain};
@@ -32,7 +32,7 @@ impl<B: Backend> Native<B> {
         let rules = Rules {
             limits,
             include_ui: settings.include_ui,
-            period: Duration::from_secs(1) / settings.fps.max(1),
+            interval: Duration::from_secs(1) / settings.fps.max(1),
         };
         Self {
             tap: None,
@@ -77,7 +77,7 @@ impl<B: Backend> Native<B> {
                     match action {
                         Action::Open(kind) => event = Some(self.open(kind)),
                         Action::Acquire => event = Some(self.acquire()),
-                        Action::Release => {
+                        Action::Release(then) => {
                             let released = self.release_tap();
                             if ending {
                                 return released;
@@ -87,9 +87,8 @@ impl<B: Backend> Native<B> {
                                 self.worker.fail(error);
                                 return Ok(());
                             }
-                            // Only the release after a fault is answered.
-                            if state.releasing() {
-                                event = Some(Event::Released);
+                            if let Then::Reopen { wait } = then {
+                                event = Some(Event::Released { wait });
                             }
                         }
                         Action::Deliver(frame) => self.worker.offer(frame),
