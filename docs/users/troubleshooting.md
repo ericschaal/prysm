@@ -55,11 +55,12 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | TV is asleep, Screen saver is on | Capture continues when the TV wakes. |
 | Waiting for video | Play video or use an active HDMI input. The Home screen may give no picture. |
 | Video can’t be captured | The TV is not letting Prysm capture this video. The lights follow again when the video changes; if they do not, switch the app or input, or play the video again. |
-| Screen sync stopped, WLED effects stopped, Prysm stopped, Capture stopped | Choose **Try again** (full) or **Stop capture**, then **Start capture** (slim); on the full package another mode also starts again. The TV restarts Prysm once by itself when that can help, and asks when it does not. The reason is under **Service options → View diagnostics**. Stop other capture apps. |
-| "Change the settings in the web portal" | Prysm can't use its settings; trying again would not help. Correct them in the portal (slim: in Prysm's portal on the computer). |
-| Can’t reach the lights, "Prysm stopped trying" | WLED did not answer and Prysm gave up. Check that WLED is on and on the network, then choose **Try again** or a mode. |
+| Screen sync stopped, WLED effects stopped, Prysm stopped | Choose **Try again**. If it keeps stopping, the reason is under **Service options → View diagnostics**. Stop other capture apps. |
+| Capture stopped | Choose **Stop capture**, then **Start capture**. If it keeps stopping, the reason is under **Service options → View diagnostics**. Stop other capture apps. |
+| "Change the settings in the web portal" | Prysm can't use its settings; trying again would not help. Open Prysm's web portal and correct them. |
+| Can’t reach the lights, "Prysm stopped trying" | WLED did not answer and Prysm gave up. Check that WLED is on and on the network, then choose **Try again**. |
 | Capture not supported | This TV does not let Prysm capture its video. Nothing on the TV fixes it. |
-| Restart the TV | A Prysm process did not end and may still hold the TV's capture; only a restart of the TV frees it. Turn the TV off at the mains or restart it, then open Prysm again. |
+| Restart the TV | Prysm can't capture again until the TV restarts. Turn the TV off at the mains or restart it, then open Prysm again. |
 | Couldn’t read settings | The TV's saved settings could not be read, so Prysm uses its defaults and leaves the file as it is. Change a setting (**Start with TV**, or for slim the **Prysm address**) to save new ones. **View diagnostics** says what was wrong. |
 | Slim: Waiting for Prysm | Check the **Prysm address** (the one you open the portal with), that Prysm on the computer has the **LG TV on your network** source with its lights on, and, behind a reverse proxy, that it passes WebSockets on `/api/v1/capture/stream` without a login. |
 | Slim: Update Prysm or TV app | Prysm on the computer and the TV app send the picture in different ways. Update the older of the two; the TV checks again every second, so there is no need to restart it. |
