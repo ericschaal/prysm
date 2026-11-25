@@ -713,6 +713,48 @@ test('status card covers the supervisor states for both packages', () => {
     tvStatus(unreachable, draft(), syncing(null)).title,
     'Screen sync on',
   );
+  // With the lights off or their effects, lights that don't answer are said
+  // too, with the same headline: the target stays and is applied once they
+  // answer. By the worker's word, then by the portal's.
+  for (const [target, detail, answered] of [
+    [
+      'off',
+      'The lights switch off as soon as they answer.',
+      { kind: 'off', failure: null },
+    ],
+    [
+      'effects',
+      'WLED effects start as soon as the lights answer.',
+      { kind: 'effects', failure: null },
+    ],
+  ]) {
+    const waited = live(full({ target, lights: 'unreachable' }));
+    const said = (portal) => {
+      const status = tvStatus(waited, draft(), portal);
+      return [status.title, status.description, status.attention];
+    };
+    const expected = ['Can’t reach the lights', detail, true];
+    const facts = (lighting, issue) => ({
+      lights: true,
+      address: null,
+      lighting,
+      issue,
+    });
+    assert.deepEqual(said(), expected, target);
+    assert.equal(tvStatus(waited, draft()).action, 'none', target);
+    assert.deepEqual(
+      said(facts({ kind: 'unanswered', target }, 'unreachable')),
+      expected,
+      target,
+    );
+    // Once the portal says they answered, the target's own words.
+    assert.notEqual(said(facts(answered, null))[0], expected[0], target);
+  }
+  // Any other issue the worker still says is screen sync's alone.
+  assert.equal(
+    tvStatus(live(full({ target: 'off', lights: 'not_live' })), draft()).title,
+    'Lights off',
+  );
   const noFrames = tvStatus(live(full({ capturing: false })), draft());
   assert.equal(
     noFrames.title,
@@ -773,6 +815,8 @@ test('status card covers the supervisor states for both packages', () => {
       full({ target: 'effects' }),
       full({ capturing: true, lights: 'unreachable' }),
       full({ capturing: true, lights: 'not_live' }),
+      full({ target: 'off', lights: 'unreachable' }),
+      full({ target: 'effects', lights: 'unreachable' }),
       slim({ refused: true }),
       full({ failure: { kind: 'other', message: 'x' } }),
       full({ failure: { kind: 'preferences', message: 'x' } }),
@@ -2686,6 +2730,46 @@ test('full: the lights card says why the lights do not follow the picture', asyn
     tv.el('lighting-status').querySelector('.visually-hidden'),
     'the chosen mode says it; read out only',
   );
+  assert.doesNotMatch(
+    document.querySelector('.card.lighting').className,
+    /attention/,
+  );
+  await tv.unmount();
+});
+
+test('full: lights that don’t answer Off or their effects are said on both cards', async (t) => {
+  const tv = await mountTv(t, { flavor: 'full' });
+  for (const [target, detail] of [
+    ['off', 'The lights switch off as soon as they answer.'],
+    ['effects', 'WLED effects start as soon as the lights answer.'],
+  ]) {
+    await act(async () =>
+      tv.application.publish({
+        target,
+        session: { state: 'stopped' },
+        device: { issue: 'unreachable' },
+      }),
+    );
+    await settle();
+    assert.equal(
+      tv.text('lighting-status'),
+      `Can’t reach the lights. ${detail}`,
+      target,
+    );
+    assert.match(
+      document.querySelector('.card.lighting').className,
+      /attention/,
+      target,
+    );
+    assert.equal(tv.text('status-title'), 'Can’t reach the lights', target);
+    assert.equal(tv.text('status-description'), detail, target);
+  }
+  // They answer: the effects show, and nothing calls for attention.
+  await act(async () =>
+    tv.application.publish({ session: { state: 'effects' }, device: {} }),
+  );
+  await settle();
+  assert.equal(tv.text('status-title'), 'WLED effects on');
   assert.doesNotMatch(
     document.querySelector('.card.lighting').className,
     /attention/,

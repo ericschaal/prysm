@@ -28,7 +28,10 @@ export interface PortalFacts {
    * headline follows it, so it never disagrees with the lights card.
    */
   lighting?: LightingSituation;
-  /** Why the lights don't show screen sync, by the portal's own state. */
+  /**
+   * Why the lights don't show screen sync, or that they don't answer Off
+   * or their effects, by the portal's own state.
+   */
   issue?: OutputIssue | null;
 }
 

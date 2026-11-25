@@ -30,19 +30,23 @@ import {
 } from './situation';
 
 /**
- * Full: why the lights don't show screen sync (also while they don't
- * answer), as the lights card says it: by the portal's state once it is
- * known, as the worker last said before.
+ * Full: why the lights don't show screen sync, or that they don't answer
+ * whatever was chosen, as the lights card says it: by the portal's state
+ * once it is known (while screen sync runs or the lights are waited for),
+ * as the worker last said before.
  */
 function lightsIssue(
   state: State,
   portal: PortalFacts | null,
 ): OutputIssue | null {
   if (!portal?.lighting) return fullLights(state);
-  return portal.lighting.kind === 'sync' ? (portal.issue ?? null) : null;
+  const { kind } = portal.lighting;
+  return kind === 'sync' || kind === 'unanswered'
+    ? (portal.issue ?? null)
+    : null;
 }
 
-/** The target a running or starting situation was asked for. */
+/** The target a running, starting or waiting situation was asked for. */
 function targetOf(
   lighting: Exclude<
     LightingSituation,
@@ -56,6 +60,7 @@ function targetOf(
       return 'screen_sync';
     case 'effects':
       return 'effects';
+    case 'unanswered':
     case 'starting':
       return lighting.target;
     default:
@@ -76,7 +81,8 @@ export type FullSituation =
   | { kind: 'newer' }
   | { kind: 'off'; failure: LightingFailure | null }
   | { kind: 'effects' }
-  | { kind: 'lightsIssue'; issue: OutputIssue }
+  /** `target`: what was chosen; with Off or effects, only `unreachable`. */
+  | { kind: 'lightsIssue'; issue: OutputIssue; target: LightingTarget }
   | { kind: 'syncOn' }
   | { kind: 'starting' };
 
@@ -118,16 +124,20 @@ export function fullSituation(
     return { kind: 'newer' };
   // The supervisor hears of a change made in the portal a moment later.
   const target = lighting ? targetOf(lighting) : state.target;
+  // The lights don't show what was chosen; the lights card says why, as
+  // for a refused video. With the lights off or their effects, only lights
+  // that don't answer: the target stays and is applied once they answer.
+  const issue = lightsIssue(state, portal);
+  if (issue === 'unreachable' && (target === 'off' || target === 'effects'))
+    return { kind: 'lightsIssue', issue, target };
   if (target === 'off')
     return {
       kind: 'off',
       failure: lighting?.kind === 'off' ? lighting.failure : null,
     };
   if (target === 'effects') return { kind: 'effects' };
-  // Lighting runs, but the lights don't show it (also while they don't
-  // answer); the lights card says why, as for a refused video.
-  const issue = lightsIssue(state, portal);
-  if (issue) return { kind: 'lightsIssue', issue };
+  // Screen sync runs (also while it waits for lights that don't answer).
+  if (issue) return { kind: 'lightsIssue', issue, target: 'screen_sync' };
   // The portal's measure; it alone says why no picture arrives.
   const picture =
     lighting?.kind === 'sync' && lighting.input

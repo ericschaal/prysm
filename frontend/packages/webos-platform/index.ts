@@ -110,9 +110,9 @@ export function fullPortal(state: State): string | null {
 }
 
 /**
- * Full: why the running worker's lights are not showing screen sync (also
- * while they don't answer); else `null`. An issue newer than this app is
- * kept as sent.
+ * Full: why the running worker's lights are not showing screen sync, or
+ * that they don't answer whatever was chosen; else `null`. An issue newer
+ * than this app is kept as sent.
  */
 export function fullLights(state: State): OutputIssue | null {
   if (state.flavor !== 'full') return null;

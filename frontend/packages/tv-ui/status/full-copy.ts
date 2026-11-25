@@ -4,21 +4,24 @@ import {
   plainFailure,
   unreachable,
   unusableSettings,
+  whenLightsAnswer,
   type LightingSituation,
+  type LightingTarget,
   type OutputIssue,
 } from '@prysm/application-client';
 import { noPictureCopy, packageWords, sharedCopy, type Copy } from './copy';
 import type { FullSituation } from './full';
 
 /**
- * The detail under an issue's headline. Only lights that don't answer come
- * back by themselves; for every other issue (a newer one too) the person
- * acts, as the lights card says.
+ * The detail under an issue's headline, with `target` chosen. Only lights
+ * that don't answer come back by themselves, and the target is applied
+ * then; for every other issue (a newer one too) the person acts, as the
+ * lights card says.
  */
-function issueDetail(issue: OutputIssue): string {
+function issueDetail(issue: OutputIssue, target: LightingTarget): string {
   switch (issue) {
     case 'unreachable':
-      return 'The lights follow again as soon as they answer.';
+      return whenLightsAnswer(target, 'WLED effects');
     case 'off':
     case 'overridden':
     case 'not_live':
@@ -94,7 +97,7 @@ export function fullCopy(situation: FullSituation): Copy {
       // problem are both said with it.
       return {
         title: outputIssueHeadline(situation.issue),
-        description: issueDetail(situation.issue),
+        description: issueDetail(situation.issue, situation.target),
         attention: true,
       };
     case 'syncOn':

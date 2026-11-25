@@ -129,6 +129,10 @@ export function LightingCard({
     } else if (snapshot.device.issue && lighting.kind === 'sync') {
       message = describeOutputIssue(snapshot.device.issue);
       attention = true;
+    } else if (lighting.kind === 'unanswered') {
+      // The mode is kept and applied once they answer, as the portal says.
+      message = said;
+      attention = true;
     } else if (!full && kind !== 'remote') {
       message =
         'This Prysm uses another picture. Choose LG TV on your network in its web portal.';
