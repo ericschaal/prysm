@@ -290,8 +290,7 @@ test('the HTTP preview client follows the base URL, decodes events, skips newer 
   await assert.rejects(
     invalid.events[Symbol.asyncIterator]().next(),
     (error) =>
-      error instanceof ApplicationError &&
-      error.failure.message === 'Invalid preview event.',
+      error instanceof ApplicationError && error.failure.kind === 'internal',
   );
   assert.deepEqual(
     urls,

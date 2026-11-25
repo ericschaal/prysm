@@ -58,8 +58,7 @@ test('the HTTP colors client follows the base URL, decodes events, skips newer k
   await assert.rejects(
     invalid.events[Symbol.asyncIterator]().next(),
     (error) =>
-      error instanceof ApplicationError &&
-      error.failure.message === 'Invalid colors event.',
+      error instanceof ApplicationError && error.failure.kind === 'internal',
   );
   assert.deepEqual(
     urls,

@@ -40,10 +40,22 @@ function timeoutSignal(ms: number): AbortSignal {
 }
 
 /** A failure this page makes itself: one that carries only its message. */
-const failure = (kind: 'unavailable' | 'forbidden', message: string) =>
-  new ApplicationError({ kind, message });
+const failure = (
+  kind: 'unavailable' | 'forbidden' | 'internal',
+  message: string,
+) => new ApplicationError({ kind, message });
 
-/** Decode the server's failure body; anything else becomes `unavailable`. */
+/**
+ * A reply this page can't read: a defect, not a lost connection. A page
+ * older than Prysm is the usual cause, and a reload brings the current one.
+ */
+const unreadable = (what: string) =>
+  failure(
+    'internal',
+    `This page can’t read ${what} from Prysm. Reload the page.`,
+  );
+
+/** Decode the server's failure body; any other status is `unreadable`. */
 async function responseError(response: Response): Promise<ApplicationError> {
   const body: unknown = await response.json().catch(() => null);
   const detail = body as Partial<Failure> | null;
@@ -55,7 +67,7 @@ async function responseError(response: Response): Promise<ApplicationError> {
     return new ApplicationError(detail as Failure);
   if (response.status === 403)
     return failure('forbidden', 'Prysm refuses requests from this page.');
-  return failure('unavailable', `Unexpected response ${response.status}.`);
+  return unreadable(`a ${response.status} reply`);
 }
 
 export interface HttpClientOptions {
@@ -318,6 +330,7 @@ function validCandidate(value: unknown): value is Candidate {
   );
 }
 
+/** A stream's failure: one this page did not make is a lost connection. */
 function streamError(error: unknown) {
   return error instanceof ApplicationError
     ? error
@@ -353,7 +366,7 @@ async function openEvents(
       !response.headers.get('content-type')?.startsWith('text/event-stream') ||
       !response.body
     )
-      throw failure('unavailable', `Invalid ${name} stream response.`);
+      throw unreadable(`the ${name} stream`);
     events = decodeEvents(response.body, abort.signal, decode, name);
     return { events, close };
   } catch (error) {
@@ -585,11 +598,13 @@ async function* decodeEvents(
   let text = '';
   try {
     while (!signal.aborted) {
-      const chunk = await reader.read();
+      const chunk = await reader.read().catch((error: unknown) => {
+        throw streamError(error);
+      });
       if (chunk.done) return;
       text += decoder.decode(chunk.value, { stream: true });
       if (text.length > EVENT_LIMIT)
-        throw failure('unavailable', `The ${name} event is too large.`);
+        throw unreadable(`a ${name} event this large`);
       let boundary: RegExpExecArray | null;
       while ((boundary = /\r?\n\r?\n/.exec(text))) {
         const event = text.slice(0, boundary.index);
@@ -607,8 +622,7 @@ async function* decodeEvents(
           value = null;
         }
         const decoded = decode(value);
-        if (decoded === 'invalid')
-          throw failure('unavailable', `Invalid ${name} event.`);
+        if (decoded === 'invalid') throw unreadable(`a ${name} event`);
         if (decoded !== 'unknown') yield decoded.event;
       }
     }
