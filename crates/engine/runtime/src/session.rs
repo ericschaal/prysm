@@ -112,8 +112,8 @@ fn idle(leds: &mut Leds, mode: IdleMode, output: &Configured) -> Result<IdleMode
 /// [`Pull::Ended`](prysm_ports::Pull::Ended)) the feeds are cleared,
 /// `source.close()`, and the output is left in the stop's idle mode, or
 /// [`UNASKED`] when no stop asked: idled if held, else put in that mode
-/// without being opened, only if it was left in another one (never touched
-/// for `Off` if no frame came).
+/// without being opened, only if it may be in another one: the session
+/// starts from the device as the engine knows it.
 struct SessionLoop {
     processor: PrysmProcessor,
     leds: Leds,
@@ -251,12 +251,15 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    /// `device`: what the output shows before the session opens it.
+    ///
     /// # Errors
     /// The thread could not be spawned. The source comes back unclosed, so the
     /// caller can still release it.
     pub(crate) fn start(
         source: Box<dyn FrameSource>,
         output: Configured,
+        device: Device,
         config: Config,
         feeds: Feeds,
         stats: Arc<Stats>,
@@ -269,7 +272,7 @@ impl Session {
         });
         let session = SessionLoop {
             processor: PrysmProcessor::new(&config),
-            leds: Leds::Closed(Device::Left(IdleMode::Off)),
+            leds: Leds::Closed(device),
             last: None,
             last_frame: Instant::now(),
             previous_done: None,
@@ -410,6 +413,7 @@ mod tests {
         Session::start(
             source,
             output,
+            Device::Left(IdleMode::Off),
             Processing::default().config(),
             Feeds::default(),
             Arc::default(),

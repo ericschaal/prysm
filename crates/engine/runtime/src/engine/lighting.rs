@@ -11,7 +11,7 @@ mod unanswered;
 #[cfg(test)]
 mod tests;
 
-use crate::leds::{UNANSWERED_INTERVAL, UNREACHABLE};
+use crate::leds::{Device, UNANSWERED_INTERVAL, UNREACHABLE};
 use crate::meter::Meter;
 use crate::session::{Session, SessionEnd};
 use crate::worker::Exit;
@@ -188,6 +188,20 @@ impl Lighting {
             return None;
         }
         failure.filter(|failure| failure.section() == Some(Section::Output))
+    }
+
+    /// What the output shows as a session starts from these lights, with
+    /// the `failure` published or replied beside them: their own effects;
+    /// `Off`, unless that failure says they may not be off; any mode after a
+    /// wait for them.
+    pub(super) fn shows(&self, failure: Option<&Error>) -> Device {
+        match self {
+            Self::Effects => Device::Left(IdleMode::Native),
+            Self::Stopped if self.may_not_be_off(failure).is_none() => Device::Left(IdleMode::Off),
+            Self::Stopped | Self::ScreenSync(_) | Self::Unanswered { .. } | Self::Faulted(_) => {
+                Device::Unknown
+            }
+        }
     }
 
     /// The one rule for lights that do not answer: a request putting them in

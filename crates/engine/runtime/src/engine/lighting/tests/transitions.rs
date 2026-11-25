@@ -196,6 +196,31 @@ fn only_an_output_failure_when_stopped_may_leave_the_lights_on() {
     }
 }
 
+/// A session starts from the device as these lights leave it: off only
+/// when nothing says they may not be.
+#[test]
+fn a_session_starts_from_what_the_lights_show() {
+    use crate::leds::Device::{Left, Unknown};
+    let now = Instant::now();
+    let waiting = Lighting::Unanswered {
+        mode: IdleMode::Off,
+        since: now,
+        again: now,
+    };
+    let (output, capture) = (failure(), Error::other("no").in_section(Section::Capture));
+    #[rustfmt::skip]
+    let cases = [
+        (Lighting::Stopped, None,            Left(IdleMode::Off)),
+        (Lighting::Stopped, Some(&capture),  Left(IdleMode::Off)),
+        (Lighting::Stopped, Some(&output),   Unknown),
+        (Lighting::Effects, None,            Left(IdleMode::Native)),
+        (waiting,           None,            Unknown),
+    ];
+    for (row, (lighting, failure, shows)) in cases.into_iter().enumerate() {
+        assert_eq!(lighting.shows(failure), shows, "row {row}");
+    }
+}
+
 /// The rule for lights that do not answer: waited for only when every
 /// condition holds. Each row after the first two breaks one.
 #[test]

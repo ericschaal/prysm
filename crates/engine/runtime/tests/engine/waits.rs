@@ -155,6 +155,39 @@ async fn a_command_ends_a_wait_at_once() {
     engine.shutdown().await.unwrap();
 }
 
+/// Screen sync whose source delivers no frame opens no output: `Off` after
+/// it still puts in `Off` lights left in their effects, or waited for. The
+/// session runs and stops on the running clock.
+#[tokio::test]
+async fn off_after_screen_sync_without_a_frame_reaches_lights_left_on() {
+    for (idle, waits) in [
+        (FakeIdle::Idles, false),
+        (FakeIdle::UnansweredUntil(ANSWER.into()), true),
+    ] {
+        let log = CallLog::new();
+        let source = FakeSourceSettings {
+            name: "s".into(),
+            quiet_after: Some(0),
+            ..Default::default()
+        };
+        let output = FakeOutputSettings {
+            name: "o".into(),
+            idle,
+            ..Default::default()
+        };
+        let (handle, engine, _) = start(&log, settings(source, output), DEADLINE).await;
+        handle.set_target(LightingTarget::Effects).await.unwrap();
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert_eq!(log.count("output.idle:o:Off"), 1, "waits: {waits}");
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(waiting(&snapshot, LightingTarget::Off), waits);
+        assert!(snapshot.session.failure().is_none());
+        log.record(ANSWER);
+        engine.shutdown().await.unwrap();
+    }
+}
+
 /// A shutdown during a wait tries the request once more and waits for
 /// nothing: the lights' silence fails no shutdown.
 #[tokio::test(start_paused = true)]

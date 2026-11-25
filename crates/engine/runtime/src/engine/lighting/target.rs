@@ -2,7 +2,7 @@
 //! and putting the output in a mode without one.
 use super::{Lighting, Running, Step, Stopped, replaced_by_effects};
 use crate::engine::Core;
-use crate::leds::Configured;
+use crate::leds::{Configured, Device};
 use crate::meter::Meter;
 use crate::session::Session;
 use prysm_ports::{Error, IdleMode, LightingTarget, Result, Section};
@@ -65,13 +65,15 @@ impl Core {
                         "the replaced session did not stop cleanly"
                     );
                 }
-                self.start().await
+                let device = self.lighting.shows(stopped.as_ref().err());
+                self.start(device).await
             }
             Step::Start { ends_wait } => {
+                let device = self.lighting.shows(self.state.borrow().session.failure());
                 if ends_wait {
                     self.set_lighting(Lighting::Stopped);
                 }
-                self.start().await
+                self.start(device).await
             }
             Step::Stop(mode) => self.stop(mode).await,
             Step::Idle(mode) => self.idle_output(mode).await,
@@ -85,8 +87,9 @@ impl Core {
 
     /// Open the source and start a session. The output is validated here
     /// but opened by the session at its first frame, so a source without
-    /// frames never takes the device over.
-    async fn start(&mut self) -> Result<()> {
+    /// frames never takes the device over; its end puts the output in the
+    /// stop's mode unless it shows that mode already (`device`).
+    async fn start(&mut self, device: Device) -> Result<()> {
         let (capture, output) = {
             let snapshot = self.state.borrow();
             let settings = &snapshot.settings;
@@ -107,6 +110,7 @@ impl Core {
         let session = match Session::start(
             source,
             output,
+            device,
             config,
             self.feeds.clone(),
             self.stats.clone(),
