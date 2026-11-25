@@ -344,9 +344,9 @@ pub fn exit_code(stop: Option<&Stop>, result: &prysm_ports::Result<()>) -> u8 {
 /// Stop with the supervisor: its death sends this process SIGTERM
 /// (`PR_SET_PDEATHSIG` follows the spawning thread, which is the
 /// supervisor's long-lived loop thread). SIGTERM, not SIGKILL: the worker
-/// then runs its normal stop and releases the capture tap; a process killed
-/// inside a native capture call can leave the TV's capture locked until a
-/// reboot.
+/// then runs its normal stop and releases the capture tap. A killed process
+/// was once seen to leave the TV's capture locked until a reboot; later
+/// kills did not reproduce it.
 ///
 /// Called before [`main`] installs its signal handlers; a SIGTERM that
 /// arrives in between takes the default action and ends the process before

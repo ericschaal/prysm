@@ -88,8 +88,10 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   without it.
 - The worker stops when its supervisor dies: it gets SIGTERM (parent-death
   signal) and its stdin closes, and it stops as usual, releasing the capture
-  tap. Nothing SIGKILLs it then: a worker killed inside a native capture call
-  can leave the TV's capture locked until a reboot. One that does not finish
+  tap. Nothing SIGKILLs it then: a worker that died with the TV UI capture
+  open was once seen to leave the TV's capture locked until a reboot. Later
+  kill tests did not reproduce it (eight kills, each recovered in 1–2 s
+  without a TV restart), so it is rare, not excluded. One that does not finish
   is bounded by its own stop deadline and, until it exits, holds the capture
   lock `/tmp/prysm-capture.lock`, so no other worker opens a tap meanwhile
   ([`guard_parent`](../../crates/engine/webos-link/src/worker.rs)).
@@ -101,8 +103,8 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   source opens. Any other UI failure (a failed open, allocation or capture)
   stops the tries until the video signal changes: video comes back and goes
   again, or the input, app or picture mode changes. Never on a timer: a UI
-  tap can fail for good (a worker that died with it open left the graphics
-  driver's lock held until a reboot). The first failure since a UI frame
+  tap can fail for good (a worker that died with it open once left the graphics
+  driver's lock held until a reboot; later kills did not reproduce it). The first failure since a UI frame
   logs a warning, the rest debug. The capture thread waits for a change of the video signal
   without polling: each change wakes it
   ([native loop](../../crates/adapters/capture-webos/src/source/native.rs)).

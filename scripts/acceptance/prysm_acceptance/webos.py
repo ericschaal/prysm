@@ -257,8 +257,8 @@ class WebosTv:
         running) is waited for the same way.
 
         Raises `installed.Kept` while a Prysm process still runs: the install service would end it
-        abruptly, and a worker killed with the TV UI capture open leaves the TV's capture locked until a
-        reboot."""
+        abruptly, and a killed worker was once seen to leave the TV's capture locked until a reboot (later
+        kills did not reproduce it)."""
         stopping = self._run(commands.tv_uninstall(self.target), check=False)
         left = self.running()
         if left:

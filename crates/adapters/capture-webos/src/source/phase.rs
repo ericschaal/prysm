@@ -19,8 +19,9 @@ pub(super) enum Kind {
 /// logged. A UI fault that cannot heal makes it unsupported until the next
 /// source; any other stops the tries until the video or its context
 /// changes, never on a timer: a UI tap can fail for good (on the bench TV, a
-/// worker that died with the UI tap open left the graphics driver's lock
-/// held, and every later UI open failed until a reboot).
+/// worker that died with the UI tap open once left the graphics driver's
+/// lock held, and every later UI open failed until a reboot; later kills
+/// did not reproduce it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UiSupport {
     Untried,

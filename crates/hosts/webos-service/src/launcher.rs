@@ -342,9 +342,9 @@ impl Worker for ProcessWorker {
 
 impl Drop for ProcessWorker {
     /// Abnormal teardown only (the machine reaps before letting go): SIGTERM,
-    /// so the worker still runs its stop and releases the capture tap (SIGKILL
-    /// inside a native call can leave the TV's capture locked until a
-    /// reboot), and reap on a thread, so a process stuck in the kernel cannot
+    /// so the worker still runs its stop and releases the capture tap (a killed
+    /// worker was once seen to leave the TV's capture locked until a reboot;
+    /// later kills did not reproduce it), and reap on a thread, so a process stuck in the kernel cannot
     /// block us. A worker that does not finish is bounded by its own stop
     /// deadline (see `prysm_webos_link::worker::guard_parent`).
     fn drop(&mut self) {
