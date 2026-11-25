@@ -970,10 +970,10 @@ fn a_ui_failure_that_cannot_heal_makes_ui_capture_unsupported() {
 }
 
 /// A UI open or acquire failure that may pass stops the tries, without a
-/// failure, until the video signal changes: a new context, or video that
-/// comes back and goes again, opens the UI tap again.
+/// failure, until the video or its context changes: a new context, or video
+/// that comes back and goes again, opens the UI tap again.
 #[test]
-fn a_ui_failure_that_may_pass_waits_for_the_video_signal() {
+fn a_ui_failure_that_may_pass_waits_for_the_video_or_its_context() {
     for (open_fails, acquire_fails) in [(Some(false), false), (None, true)] {
         let driver = Driver::new();
         let video = VideoSignal::default();

@@ -136,7 +136,10 @@ pub(super) struct State {
 /// What the machine is told in a run of the loop.
 #[derive(Debug)]
 pub(super) enum Event {
-    /// The signal read has a new sequence.
+    /// A change of the video signal: the signal read has a new sequence,
+    /// which every `set` and `reset` bumps, a `set` to the same value
+    /// included. Only a change of the video (its availability) or of its
+    /// context (its generation) is news for the TV UI tap.
     Signal(Readiness),
     /// The tap [`Ask::Open`] asked for opened.
     Opened,
@@ -294,7 +297,7 @@ impl UiSupport {
 
     /// After the video or its context changed: a failed UI may be tried
     /// again.
-    fn after_change(self) -> Self {
+    fn after_video_or_context_change(self) -> Self {
         match self {
             Self::Failed => Self::Reopenable,
             other => other,
@@ -534,8 +537,8 @@ impl State {
 
     /// The signal changed to `readiness` (the first counts as a change of
     /// video). A change is new evidence, so it gives the one new driver
-    /// back; only a change of video or context lets a failed TV UI be tried
-    /// again. Returns whether the context changed.
+    /// back; only a change of the video or its context lets a failed TV UI
+    /// be tried again. Returns whether the context changed.
     fn signal(&mut self, readiness: Readiness, now: Instant, out: &mut Out) -> bool {
         let before = self.seen.replace(Seen { readiness, at: now });
         out.push(Action::Note(Note::SignalChanged(readiness)));
@@ -546,7 +549,7 @@ impl State {
         let context_changed =
             before.is_some_and(|before| before.readiness.generation != readiness.generation);
         if video_changed || context_changed {
-            self.ui = self.ui.after_change();
+            self.ui = self.ui.after_video_or_context_change();
         }
         if let Phase::Video { new_driver, .. } = &mut self.phase {
             *new_driver = NewDriver::Available;
@@ -2198,11 +2201,11 @@ mod tests {
         assert_eq!(state.ui, UiSupport::Failed);
     }
 
-    /// A UI fault ends the UI period with no timer: a wake without a
-    /// signal only idles, and a context reset that revives the UI opens it
-    /// at once.
+    /// A UI fault ends the UI period with no timer: a wake, or a signal
+    /// that changes neither the video nor its context, only idles; a context
+    /// reset revives the UI and opens it at once.
     #[test]
-    fn a_failed_ui_waits_for_a_signal() {
+    fn a_failed_ui_waits_for_the_video_or_its_context() {
         let t0 = Instant::now();
         let mut state = at(t0, Phase::Idle, UiSupport::Failed);
         state.seen = Some(Seen {
@@ -2357,7 +2360,7 @@ mod tests {
             (Reopenable, Reopenable, Occurrence::Again, true),
             (Unsupported, Unsupported, Occurrence::Again, false),
         ] {
-            assert_eq!(state.after_change(), change, "{state:?}");
+            assert_eq!(state.after_video_or_context_change(), change, "{state:?}");
             assert_eq!(state.occurrence(), occurrence, "{state:?}");
             assert_eq!(state.may_open(), may_open, "{state:?}");
         }

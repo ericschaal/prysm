@@ -231,7 +231,7 @@ fn log(note: Note) {
             occurrence,
             match recovery {
                 UiRecovery::MayPass => {
-                    "TV UI capture failed; tried again once the video signal changes"
+                    "TV UI capture failed; tried again once the video or its context changes"
                 }
                 UiRecovery::Unsupported => {
                     "TV UI capture is unsupported; no frames while there is no video"
