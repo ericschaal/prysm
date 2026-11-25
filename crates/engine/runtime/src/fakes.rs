@@ -286,6 +286,8 @@ pub struct FakeOutputSettings {
     pub idle: FakeIdle,
     /// `idle` panics after recording the call.
     pub panic_idle: bool,
+    /// `write` panics, before recording anything.
+    pub panic_write: bool,
     /// Rejected by `validate`.
     pub invalid: bool,
     /// `report` says the device is overridden after this many writes.
@@ -446,6 +448,7 @@ pub struct FakeOutput {
 
 impl LedOutput for FakeOutput {
     fn write(&mut self, _colors: &EdgeColors) -> Result<()> {
+        assert!(!self.settings.panic_write, "fake output panics in write");
         if self.settings.write_delay_ms > 0 {
             std::thread::sleep(Duration::from_millis(self.settings.write_delay_ms));
         }

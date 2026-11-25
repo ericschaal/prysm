@@ -173,14 +173,15 @@ impl Leds {
             Self::Unanswered { device, since, .. } => (*device, Some(*since)),
         };
         let failure = match output.open(stop) {
-            Ok(mut held) => {
+            Ok(held) => {
                 if let Some(since) = since {
                     log_answered(ready.saturating_duration_since(since));
                 }
                 stats.output_opened();
-                let wrote = write_held(&mut *held, colors, Instant::now(), stats);
+                // Held before the first write: the end idles it also when
+                // that write panics, as the open may have reached the device.
                 *self = Self::Held(held);
-                return wrote;
+                return self.write(colors, Instant::now(), output, stats, stop);
             }
             Err(failure) => failure,
         };

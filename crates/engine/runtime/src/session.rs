@@ -531,6 +531,27 @@ mod tests {
         );
     }
 
+    /// An output that panics in its first write was opened, which may have
+    /// put the device in live mode: the session fails with the panic, and
+    /// the output is idled after the source's close, through itself.
+    #[tokio::test]
+    async fn a_first_write_that_panics_still_idles_the_opened_output() {
+        let log = CallLog::new();
+        let panicking = FakeOutputSettings {
+            panic_write: true,
+            ..Default::default()
+        };
+        let mut session = started(&log, FakeSourceSettings::default(), panicking);
+        let end = session.finished().await.unwrap();
+        assert!(matches!(end.exit, Exit::Failed(Error::Panicked(_))));
+        assert!(matches!(end.left, Ok(IdleMode::Off)));
+        assert_eq!(
+            log.events()[log.position("output.open:o").unwrap()..],
+            ["output.open:o", "source.close:s", "output.idle:o:Off"]
+        );
+        session.join().await;
+    }
+
     /// Lights that do not answer the open: the session runs on, says they
     /// are unreachable, and does not try the open again within its
     /// interval; the session's only failure is its source's.
