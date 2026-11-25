@@ -60,10 +60,11 @@ impl Lost {
 /// automatic recovery on the TV.
 ///
 /// A new process clears what only a process holds (a driver, a hung call,
-/// a lock). If the same happens again before the new one delivered a frame,
-/// with no action by the person or the TV in between, a restart did not fix
-/// it, so the person is asked. A frame, or such an action, gives the restart
-/// back: every restart then follows a working state.
+/// a lock). If the same happens again before the new one worked
+/// ([`super::phase::Report::worked`]), with no action by the person or the
+/// TV in between, a restart did not fix it, so the person is asked. A
+/// working state, or such an action, gives the restart back: every restart
+/// then follows a working state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Restart {
     Available,

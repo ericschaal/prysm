@@ -2,7 +2,7 @@
 use super::Package;
 use super::recovery::{After, Restart, after};
 use crate::state::Problem;
-use prysm_webos_link::{Failure, FullStatus, SlimStatus, WorkerStatus};
+use prysm_webos_link::{Failure, FullStatus, LightingTarget, SlimStatus, WorkerStatus};
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +111,31 @@ impl Report {
             }
         }
         true
+    }
+
+    /// Whether the worker shows a working state, which gives its restart
+    /// back ([`Restart`]): frames arrive (slim, or full screen sync; screen
+    /// sync waiting for video does not count), or, full, the effects target
+    /// it was last sent is applied, with no failure and no lights issue.
+    ///
+    /// `Off` never counts: no fact in the report says it works, and a
+    /// stopped engine without a failure is also what every first status
+    /// says, so a worker that crashes after it would restart for ever.
+    pub(super) fn worked(&self) -> bool {
+        match self {
+            Self::Full {
+                sent,
+                status: Some(status),
+            } => {
+                status.capturing
+                    || (status.target == LightingTarget::Effects
+                        && status.applied >= *sent
+                        && status.failure.is_none()
+                        && status.lights.is_none())
+            }
+            Self::Full { status: None, .. } => false,
+            Self::Slim(status) => status.as_ref().is_some_and(|status| status.capturing),
+        }
     }
 
     pub(super) fn full(&self) -> Option<&FullStatus> {

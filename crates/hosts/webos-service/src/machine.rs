@@ -529,26 +529,22 @@ impl Machine {
         }
     }
 
-    /// A running worker's report. Frames give its restart back; a full
-    /// worker's failure that a new process recovers stops it, any other
-    /// keeps it running.
+    /// A running worker's report. A working state ([`Report::worked`])
+    /// gives its restart back; a full worker's failure that a new process
+    /// recovers stops it, any other keeps it running.
     fn report(&mut self, status: WorkerStatus, now: Instant, effects: &mut Vec<Effect>) {
         let Phase::Running(run) = &mut self.phase else {
             return;
         };
-        let (capturing, target, failure) = match &status {
-            WorkerStatus::Full(full) => (
-                full.capturing,
-                Some((full.target, full.applied)),
-                full.failure.clone(),
-            ),
-            WorkerStatus::Slim(slim) => (slim.capturing, None, None),
+        let (target, failure) = match &status {
+            WorkerStatus::Full(full) => (Some((full.target, full.applied)), full.failure.clone()),
+            WorkerStatus::Slim(_) => (None, None),
         };
         if !run.report.keep(status) {
             let why = "the worker reported the other package's status";
             return self.lose(Lost::Broken(why.into()), now, effects);
         }
-        if capturing {
+        if run.report.worked() {
             run.restart = Restart::Available;
         }
         let restart = run.restart;

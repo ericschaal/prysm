@@ -69,8 +69,10 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
   without `failed`, a worker let go after its KILL). The supervisor reads it
   in one place ([`recovery.rs`](../../crates/hosts/webos-service/src/machine/recovery.rs)).
   `restart`: it stops the worker and starts a new one at once, once; the
-  same again before the new one delivered a frame, with no choice of the
-  person or the TV between, asks to try again. Anything else is asked: no
+  same again before the new one worked (frames arrived, or the full
+  worker's effects target is applied with no failure and no lights issue;
+  `off` never counts), with no choice of the person or the TV between,
+  asks to try again. Anything else is asked: no
   worker runs (phase `asking`, with its `problem`), except that a running
   full worker keeps running with it, since its portal is where settings
   change. A restart is never shown as a failure; its cause goes to the log.

@@ -1,9 +1,57 @@
-//! Restart-once over several workers: given back by a frame or by an
-//! action of the person or the TV, never by time.
+//! Restart-once over several workers: given back by a working state or by
+//! an action of the person or the TV, never by time.
 use super::*;
+use prysm_webos_link::OutputIssue;
 
 fn start() -> Vec<Effect> {
     vec![spawn_full(LightingTarget::Off), video(Video::Unknown)]
+}
+
+/// Whether `report`, from the worker that is the restart, gives the
+/// restart back: its next exit restarts again instead of asking.
+fn gives_the_restart_back(report: FullStatus) -> bool {
+    let (mut m, t0) = (full(), Instant::now());
+    script(
+        &mut m,
+        t0,
+        vec![
+            (0, Pw(Active), start()),
+            (1, Exited(Exit::Signal(9)), start()),
+            (2, full_status(report), vec![]),
+        ],
+    );
+    m.handle(Exited(Exit::Signal(9)), t0 + Duration::from_millis(3));
+    m.state().package.problem().is_none()
+}
+
+/// Effects applied, with no failure and no lights issue, is a working
+/// state; with the lights not answering, or a failure, it is not.
+#[test]
+fn effects_earns_the_restart_back() {
+    let effects = full_report(LightingTarget::Effects);
+    assert!(gives_the_restart_back(effects.clone()));
+    assert!(!gives_the_restart_back(FullStatus {
+        lights: Some(OutputIssue::Unreachable),
+        ..effects.clone()
+    }));
+    assert!(!gives_the_restart_back(FullStatus {
+        failure: Some(failure(Escalation::Unanswered, "no answer")),
+        ..effects
+    }));
+}
+
+/// Off says nothing that works: also what every first status says.
+#[test]
+fn off_does_not_earn_the_restart_back() {
+    assert!(!gives_the_restart_back(full_report(LightingTarget::Off)));
+}
+
+#[test]
+fn screen_sync_waiting_for_video_does_not_earn_the_restart_back() {
+    assert!(!gives_the_restart_back(FullStatus {
+        fps: Some(0),
+        ..full_report(LightingTarget::ScreenSync)
+    }));
 }
 
 fn capturing() -> Input {
