@@ -6,7 +6,7 @@ use crate::install::InstallError;
 use crate::launcher::Output;
 use crate::machine::Exit;
 use crate::preferences::{MemoryStore, StoreError};
-use prysm_webos_link::{Command, Event, FullStatus, WorkerStatus};
+use prysm_webos_link::{Command, Event, FullStatus, Video, WorkerStatus};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
@@ -634,6 +634,42 @@ fn silent_subscriptions_are_renewed() {
     );
     assert!(h.tick(10_200));
     assert_eq!(h.bus.resubscribed.last(), Some(&Watch::Power));
+}
+
+fn video_renewals(h: &Harness) -> usize {
+    let renewals = h.bus.resubscribed.iter();
+    renewals.filter(|watch| **watch == Watch::Video).count()
+}
+
+#[test]
+fn a_live_video_subscription_reading_unknown_is_not_renewed() {
+    let mut h = Harness::new(config(), None);
+    let incomplete = ACTIVE_VIDEO.replace(r#""frameRate":60"#, r#""frameRate":null"#);
+    let now = h.at(100);
+    h.service.video(&mut h.bus, &incomplete, now);
+    assert!(h.tick(5_100));
+    assert!(h.tick(60_000));
+    assert_eq!(video_renewals(&h), 0, "its next reply says more");
+}
+
+#[test]
+fn a_lost_video_subscription_reads_unknown_and_is_renewed_until_live() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    let now = h.at(100);
+    h.service.video(&mut h.bus, ACTIVE_VIDEO, now);
+    let lost = ACTIVE_VIDEO.replace(r#""subscribed":true"#, r#""subscribed":false"#);
+    let now = h.at(200);
+    h.service.video(&mut h.bus, &lost, now);
+    assert_eq!(h.bus.published.last().unwrap()["video"], "unknown");
+    assert!(h.tick(5_199));
+    assert_eq!(video_renewals(&h), 0);
+    assert!(h.tick(5_200));
+    assert_eq!(video_renewals(&h), 1);
+    let now = h.at(5_300);
+    h.service.video(&mut h.bus, ACTIVE_VIDEO, now);
+    assert!(h.tick(60_000));
+    assert_eq!(video_renewals(&h), 1, "a live subscription is left alone");
 }
 
 #[test]

@@ -256,8 +256,8 @@ replies arrive as callbacks, and a socket wakes the loop when the worker
 writes a line or its output ends, a child exits (SIGCHLD) or a stop signal
 comes. After each of these, and at the next due time (the machine's
 `SILENCE`, kill and letting go times, the end of an
-exited worker's 1 s wait for its last lines, a subscription renewal after 5 s
-without a good reply, and a probe's `--run-for`), the driver drains worker
+exited worker's 1 s wait for its last lines, a subscription renewal
+every 5 s until it is live, and a probe's `--run-for`), the driver drains worker
 output, reaps, ticks the machine and renews subscriptions, then arms one
 timer for the next due time.
 

@@ -9,7 +9,7 @@ use crate::observe;
 use crate::preferences::{Preferences, PreferencesFile, PreferencesStore};
 use crate::state::{Flavor, Power, State};
 use prysm_ports::chain;
-use prysm_webos_link::{LightingTarget, Video};
+use prysm_webos_link::LightingTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -18,7 +18,12 @@ use tracing::{debug, error, warn};
 
 /// Largest accepted request payload.
 pub const MAX_PAYLOAD: usize = 4096;
-/// A subscription without a good reply for this long is renewed.
+/// Delay before a subscription that is not live is made again: at start
+/// until its first good reply, and after an error reply or one that is not
+/// subscribed. The TV's service may not be registered yet (boot) or may have
+/// restarted, and nothing else brings a failed subscription back. A live
+/// one is left alone: an hour on a TV showed it reports every change by
+/// itself, however long the gap.
 pub const RESUBSCRIBE: Duration = Duration::from_secs(5);
 
 /// A Luna method this service registers.
@@ -78,7 +83,7 @@ pub enum Watch {
     Video = 1,
 }
 
-/// When each subscription is renewed, unless a good reply came first.
+/// When each subscription is renewed, unless it became live first.
 #[derive(Debug, Clone, Copy)]
 struct Renewals {
     power: Option<Instant>,
@@ -490,9 +495,11 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         let value = serde_json::from_str(payload).unwrap_or(Value::Null);
         let reading = observe::video(&value);
         let slot = self.renew.of(Watch::Video);
-        if reading.settled {
+        if reading.live {
             *slot = None;
         } else {
+            // The reading is Unknown until it is live: capture still tries,
+            // bounded by the adapter.
             slot.get_or_insert(now + RESUBSCRIBE);
         }
         if let Some(context) = reading.context {
@@ -531,12 +538,8 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             let slot = self.renew.of(watch);
             if slot.is_some_and(|at| now >= at) {
                 *slot = Some(now + RESUBSCRIBE);
-                debug!(?watch, "renewing a subscription without a good reply");
+                debug!(?watch, "renewing a subscription that is not live");
                 bus.resubscribe(watch);
-                if watch == Watch::Video {
-                    // Unknown video still lets capture try, bounded by the adapter.
-                    self.input(bus, Input::Video(Video::Unknown), now);
-                }
             }
         }
         if !self.machine.finished() {
