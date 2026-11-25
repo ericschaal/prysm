@@ -9,6 +9,7 @@
 mod native;
 mod phase;
 
+use crate::classify::{Recovery, UiRecovery};
 use crate::{VideoSignal, WebosSettings};
 use native::Native;
 use prysm_core::Frame;
@@ -21,7 +22,8 @@ pub(crate) enum Acquired {
     Frame(Frame),
     /// No new buffer yet.
     Pending,
-    /// The driver is (re)initializing; try again after [`Limits::retry`].
+    /// The driver is (re)initializing; tried again as
+    /// [`crate::classify::Reason::DriverPreparing`] says.
     NotReady,
     /// The driver refuses to capture this video (`vtCapture_init`
     /// answered 17); its driver stays created, and the next acquisition
@@ -29,52 +31,48 @@ pub(crate) enum Acquired {
     Refused,
 }
 
-/// A native failure. Recoverable ones release the tap and reopen it.
+/// A native failure, with what its tap does next as [`crate::classify`]
+/// says: a video fault's [`Recovery`], or a TV UI fault's [`UiRecovery`].
 #[derive(Debug)]
-pub(crate) struct Fault {
+pub(crate) struct Fault<R = Recovery> {
     pub error: Error,
-    pub recovery: Recovery,
+    pub recovery: R,
 }
 
-/// Whether a native fault can heal in this process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Recovery {
-    /// Retrying in this process cannot succeed: a video fault ends the
-    /// source, a TV UI fault disables UI capture for the session.
-    Never,
-    /// The tap is reopened later.
-    Reopen,
-}
+/// A fault of the TV UI tap.
+pub(crate) type UiFault = Fault<UiRecovery>;
 
 impl Fault {
-    /// A failure that cannot heal in this process.
-    pub(crate) fn fatal(error: Error) -> Self {
+    /// A video fault: `source` under `context`, its error escalating as
+    /// `recovery` says.
+    pub(crate) fn video(
+        context: &str,
+        source: impl std::error::Error + Send + Sync + 'static,
+        recovery: Recovery,
+    ) -> Self {
         Self {
-            error,
-            recovery: Recovery::Never,
-        }
-    }
-
-    /// A failure after which the tap is reopened.
-    pub(crate) fn recoverable(error: Error) -> Self {
-        Self {
-            error,
-            recovery: Recovery::Reopen,
+            error: Error::adapter_escalating(context, source, recovery.escalation()),
+            recovery,
         }
     }
 }
 
-/// An open native tap. Created, used and released on the native thread.
+/// The open video tap. Created, used and released on the native thread.
 pub(crate) trait Tap {
     fn acquire(&mut self) -> Result<Acquired, Fault>;
     /// Its driver is created and not initialized, as the driver itself
-    /// says (a video tap is after its open, and after a refused or
-    /// not-ready initialization): releasing it undoes only the creation, and the next
-    /// acquisition initializes it. A tap without a separate initialization
-    /// (the TV UI) never is.
-    fn created_only(&self) -> bool {
-        false
-    }
+    /// says (after its open, and after a refused or not-ready
+    /// initialization): releasing it undoes only the creation, and the
+    /// next acquisition initializes it.
+    fn created_only(&self) -> bool;
+    /// `Ok` certifies the driver released the tap.
+    fn release(self: Box<Self>) -> Result<()>;
+}
+
+/// The open TV UI tap. It has no separate initialization, so it answers
+/// only a frame or a fault.
+pub(crate) trait UiTap {
+    fn acquire(&mut self) -> Result<Frame, UiFault>;
     /// `Ok` certifies the driver released the tap.
     fn release(self: Box<Self>) -> Result<()>;
 }
@@ -85,7 +83,7 @@ pub(crate) trait Backend: Send + 'static {
     /// The video tap (blended with menus when `include_ui` is on).
     fn open(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault>;
     /// The TV UI (graphics plane) tap, used only while there is no video.
-    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault>;
+    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn UiTap>, UiFault>;
 }
 
 /// How long closing a [`WebosFrames`] waits for the driver's certified

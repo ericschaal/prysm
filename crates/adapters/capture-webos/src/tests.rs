@@ -1,7 +1,8 @@
 //! Development-host tests through the native seam: no SDK, no hardware, every
 //! wait bounded.
 use super::*;
-use crate::source::{Acquired, Backend, Fault, Limits, Recovery, Tap};
+use crate::classify::{Reason, Recovery, UiRecovery};
+use crate::source::{Acquired, Backend, Fault, Limits, Tap, UiFault, UiTap};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Error, Pull, Registry, Settings, chain};
 use prysm_testkit::{eventually, within};
@@ -21,11 +22,21 @@ const TEST: Limits = Limits {
     release: Duration::from_secs(2),
 };
 
+/// A video fault that fails the source, or one retried with a new driver.
 fn recovery(fatal: bool) -> Recovery {
     if fatal {
-        Recovery::Never
+        Recovery::Escalate(prysm_ports::Escalation::FAIL_FAST)
     } else {
-        Recovery::Reopen
+        Recovery::Retry(Reason::FreshDriver)
+    }
+}
+
+/// A TV UI fault that cannot heal, or one that may pass.
+fn ui_recovery(fatal: bool) -> UiRecovery {
+    if fatal {
+        UiRecovery::Unsupported
+    } else {
+        UiRecovery::MayPass
     }
 }
 
@@ -186,18 +197,18 @@ impl Backend for Driver {
         Ok(Box::new(FakeTap(self.clone())))
     }
 
-    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
+    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn UiTap>, UiFault> {
         assert_eq!(settings.ui_size(), (320, 180));
         let mut script = self.enter("UI open");
         script.ui_opens += 1;
         script.record("UI open");
         if let Some(fatal) = script.ui_open_fails {
-            return Err(Fault {
+            return Err(UiFault {
                 error: Error::adapter(
                     "cannot open webOS UI capture",
                     std::io::Error::other("HAL_GAL_Init failed with status -1"),
                 ),
-                recovery: recovery(fatal),
+                recovery: ui_recovery(fatal),
             });
         }
         script.opened();
@@ -207,17 +218,17 @@ impl Backend for Driver {
 
 struct FakeUiTap(Driver);
 
-impl Tap for FakeUiTap {
-    fn acquire(&mut self) -> Result<Acquired, Fault> {
+impl UiTap for FakeUiTap {
+    fn acquire(&mut self) -> Result<Frame, UiFault> {
         let mut script = self.0.enter("UI acquire");
         script.record("UI acquire");
         if script.ui_fails || std::mem::take(&mut script.ui_fail_once) {
-            return Err(Fault {
+            return Err(UiFault {
                 error: Error::other("HAL_GAL_CaptureFrameBuffer failed with status -1"),
-                recovery: Recovery::Reopen,
+                recovery: UiRecovery::MayPass,
             });
         }
-        Ok(Acquired::Frame(ui_frame(script.ui_value)))
+        Ok(ui_frame(script.ui_value))
     }
 
     fn release(self: Box<Self>) -> prysm_ports::Result<()> {
@@ -726,7 +737,7 @@ fn recoverable_failure_reopens_without_an_error() {
     assert_eq!(driver.count(|s| s.opens), 2);
     assert_eq!(driver.count(|s| s.releases), 1);
 
-    driver.with(|s| s.open_fails = Some(Recovery::Reopen));
+    driver.with(|s| s.open_fails = Some(Recovery::Retry(Reason::FreshDriver)));
     video.reset();
     eventually("`driver.count(|s| s.opens) >= 4`", LIMIT, || {
         (driver.count(|s| s.opens) >= 4).then_some(())
@@ -776,7 +787,7 @@ fn fatal_failure_propagates_with_its_cause_and_release_is_certified() {
 fn fatal_open_failure_propagates() {
     let driver = Driver::new();
     let video = VideoSignal::default();
-    driver.with(|s| s.open_fails = Some(Recovery::Never));
+    driver.with(|s| s.open_fails = Some(recovery(true)));
     let mut frames = start(&driver, &video);
     assert_eq!(failure(&mut frames).to_string(), "driver refused");
     closes_cleanly(frames);
@@ -995,7 +1006,7 @@ fn only_a_missing_ui_library_or_device_is_permanent() {
         path: "/dev/gfx",
         source: std::io::Error::from(kind),
     };
-    let fatal = |fault: Fault| fault.recovery == Recovery::Never;
+    let fatal = |fault: UiFault| fault.recovery == UiRecovery::Unsupported;
     assert!(fatal(backend::ui_open_fault(device(
         std::io::ErrorKind::NotFound
     ))));
@@ -1007,7 +1018,7 @@ fn only_a_missing_ui_library_or_device_is_permanent() {
         code: -1,
     };
     let fault = backend::ui_open_fault(status);
-    assert_eq!(fault.recovery, Recovery::Reopen);
+    assert_eq!(fault.recovery, UiRecovery::MayPass);
     assert_eq!(
         chain(&fault.error),
         "cannot open webOS UI capture: HAL_GAL_Init failed with status -1"
@@ -1065,7 +1076,7 @@ fn only_a_failed_create_or_a_stuck_name_needs_a_new_process() {
 /// Any failed Luna registration check ends video capture at once, whatever
 /// LS2 answered; the cause still says which failure it was.
 #[test]
-fn every_failed_registration_check_is_fatal_and_names_its_cause() {
+fn every_failed_registration_check_escalates_and_names_its_cause() {
     use prysm_capture_webos_sys as sys;
     use prysm_webos_luna_sys::Error as Luna;
     let open = |error| backend::fault("cannot open webOS video capture", error);
@@ -1094,7 +1105,11 @@ fn every_failed_registration_check_is_fatal_and_names_its_cause() {
         ),
     ] {
         let fault = open(sys::Error::from(error));
-        assert_eq!(fault.recovery, Recovery::Never, "{}", chain(&fault.error));
+        assert!(
+            matches!(fault.recovery, Recovery::Escalate(_)),
+            "{}",
+            chain(&fault.error)
+        );
         assert!(
             chain(&fault.error).starts_with(&format!("cannot open webOS video capture: {cause}")),
             "{}",
@@ -1107,7 +1122,7 @@ fn every_failed_registration_check_is_fatal_and_names_its_cause() {
             code: 1,
         })
         .recovery,
-        Recovery::Reopen
+        Recovery::Retry(Reason::FreshDriver)
     );
 }
 
@@ -1271,7 +1286,7 @@ impl Backend for PanickingBackend {
         }))
     }
 
-    fn open_ui(&mut self, _: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
+    fn open_ui(&mut self, _: &WebosSettings) -> Result<Box<dyn UiTap>, UiFault> {
         unreachable!("video-only settings")
     }
 }
@@ -1284,6 +1299,10 @@ struct PanickingTap {
 impl Tap for PanickingTap {
     fn acquire(&mut self) -> Result<Acquired, Fault> {
         panic!("native bug");
+    }
+
+    fn created_only(&self) -> bool {
+        true
     }
 
     fn release(self: Box<Self>) -> prysm_ports::Result<()> {

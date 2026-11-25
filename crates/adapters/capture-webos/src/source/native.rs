@@ -5,15 +5,21 @@
 //! Every decision is [`phase::next`]'s; this shell reads the clock and the
 //! signal, tells the machine what happened and performs what it asks.
 use super::phase::{self, Action, Event, Kind, Note, Occurrence, Rules, State, Then};
-use super::{Backend, Limits, Tap};
+use super::{Backend, Limits, Tap, UiTap};
 use crate::{Readiness, VideoSignal, WebosSettings};
 use prysm_ports::{Error, Result, Worker, chain};
 use std::time::{Duration, Instant};
 
+/// The held tap: one kind at a time.
+enum Held {
+    Video(Box<dyn Tap>),
+    Ui(Box<dyn UiTap>),
+}
+
 pub(super) struct Native<B> {
     /// Declared before `backend`: fields drop in order, so on a panic the
     /// tap's native cleanup still runs while the backend holds the device lock.
-    tap: Option<(Kind, Box<dyn Tap>)>,
+    tap: Option<Held>,
     backend: B,
     settings: WebosSettings,
     video: VideoSignal,
@@ -117,40 +123,46 @@ impl<B: Backend> Native<B> {
 
     /// The held tap's driver is created and not initialized, as it says.
     fn created_only(&self) -> bool {
-        self.tap.as_ref().is_some_and(|(_, tap)| tap.created_only())
+        matches!(&self.tap, Some(Held::Video(tap)) if tap.created_only())
     }
 
     fn open(&mut self, kind: Kind) -> Event {
         let worker = &self.worker;
         let opened = match kind {
-            Kind::Video => worker.watch("open", || self.backend.open(&self.settings)),
-            Kind::Ui => worker.watch("UI open", || self.backend.open_ui(&self.settings)),
+            Kind::Video => worker
+                .watch("open", || self.backend.open(&self.settings))
+                .map(Held::Video)
+                .map_err(Event::OpenFailed),
+            Kind::Ui => worker
+                .watch("UI open", || self.backend.open_ui(&self.settings))
+                .map(Held::Ui)
+                .map_err(Event::UiOpenFailed),
         };
         match opened {
-            Ok(tap) => {
-                self.tap = Some((kind, tap));
+            Ok(held) => {
+                self.tap = Some(held);
                 Event::Opened
             }
-            Err(fault) => Event::OpenFailed(fault),
+            Err(failed) => failed,
         }
     }
 
     /// One acquisition of the held tap, told with whether it initializes a
     /// created-only driver.
     fn acquire(&mut self) -> Event {
-        let (kind, tap) = self
+        match self
             .tap
             .as_mut()
-            .expect("the machine acquires only a held tap");
-        let initializing = tap.created_only();
-        let operation = match kind {
-            Kind::Video => "acquire",
-            Kind::Ui => "UI acquire",
-        };
-        let answer = self.worker.watch(operation, || tap.acquire());
-        Event::Acquired {
-            answer,
-            initializing,
+            .expect("the machine acquires only a held tap")
+        {
+            Held::Video(tap) => {
+                let initializing = tap.created_only();
+                Event::Acquired {
+                    answer: self.worker.watch("acquire", || tap.acquire()),
+                    initializing,
+                }
+            }
+            Held::Ui(tap) => Event::UiAcquired(self.worker.watch("UI acquire", || tap.acquire())),
         }
     }
 
@@ -158,15 +170,21 @@ impl<B: Backend> Native<B> {
     /// fails the source with its cause and is the thread's result: the
     /// device may still be held, so its release is unconfirmed.
     fn release_tap(&mut self) -> Result<()> {
-        let Some((kind, tap)) = self.tap.take() else {
+        let Some(held) = self.tap.take() else {
             return Ok(());
         };
-        let (operation, unconfirmed) = match kind {
-            Kind::Video => ("release", "webOS video release is unconfirmed"),
-            Kind::Ui => ("UI release", "webOS UI capture release is unconfirmed"),
+        let worker = &self.worker;
+        let (released, unconfirmed) = match held {
+            Held::Video(tap) => (
+                worker.watch("release", || tap.release()),
+                "webOS video release is unconfirmed",
+            ),
+            Held::Ui(tap) => (
+                worker.watch("UI release", || tap.release()),
+                "webOS UI capture release is unconfirmed",
+            ),
         };
-        self.worker
-            .watch(operation, || tap.release())
+        released
             .map_err(|error| Error::adapter(unconfirmed, error))
             .inspect_err(|error| self.worker.fail(error.clone()))
     }

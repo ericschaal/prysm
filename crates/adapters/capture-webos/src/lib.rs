@@ -25,6 +25,7 @@
 //!
 //! All `unsafe` FFI is in `prysm-capture-webos-sys`.
 mod backend;
+mod classify;
 mod settings;
 mod source;
 mod ui;

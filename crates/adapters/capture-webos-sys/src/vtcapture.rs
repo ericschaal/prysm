@@ -82,17 +82,6 @@ pub enum Error {
 }
 
 impl Error {
-    /// The tap is not reopened: driver creation failed, or the registration
-    /// check failed in any way. The source that met it ends; whether a new
-    /// source is tried is its host's decision (see [`Self::needs_new_process`]).
-    #[must_use]
-    pub fn is_fatal(&self) -> bool {
-        matches!(
-            self,
-            Self::Create(_) | Self::Permission(_) | Self::Registered(_) | Self::Luna(_)
-        )
-    }
-
     /// No capture can succeed again in this process: driver creation failed
     /// (it can leave live threads and stale globals), or a client name stays
     /// registered (every later check fails). A new process has new names and
@@ -401,8 +390,8 @@ impl VtCapture {
     ///
     /// # Errors
     /// Invalid options, or library, permission or driver creation failures;
-    /// [`Error::is_fatal`] says whether the process must restart before
-    /// retrying.
+    /// [`Error::needs_new_process`] says whether the process must restart
+    /// before retrying.
     pub fn open(options: &Options) -> Result<Self, Error> {
         let properties = Properties {
             dump: if options.include_ui { 3 } else { 2 },
@@ -1011,18 +1000,18 @@ mod tests {
     }
 
     #[test]
-    fn every_failed_registration_check_is_fatal() {
+    fn every_failed_registration_check_names_its_failure() {
         use prysm_webos_luna_sys::Error as Luna;
         let denied = Error::from(Luna::Denied {
             name: "com.webos.rm.client.prysm.1".into(),
             message: "Invalid permissions for com.webos.rm.client.prysm.1".into(),
         });
-        assert!(matches!(denied, Error::Permission(_)) && denied.is_fatal());
+        assert!(matches!(denied, Error::Permission(_)), "{denied}");
         let unremoved = Error::from(Luna::Unremoved {
             name: "com.webos.rm.client.prysm.1".into(),
             message: "failed".into(),
         });
-        assert!(matches!(unremoved, Error::Registered(_)) && unremoved.is_fatal());
+        assert!(matches!(unremoved, Error::Registered(_)), "{unremoved}");
         for other in [
             Luna::Luna {
                 operation: "LSRegister",
@@ -1035,10 +1024,7 @@ mod tests {
             Luna::Nul,
         ] {
             let error = Error::from(other);
-            assert!(
-                matches!(error, Error::Luna(_)) && error.is_fatal(),
-                "{error}"
-            );
+            assert!(matches!(error, Error::Luna(_)), "{error}");
         }
     }
 
@@ -1058,7 +1044,6 @@ mod tests {
         let capture = fake.capture(Reached::Running);
         let error = capture.release().unwrap_err();
         assert_eq!(error.to_string(), "vtCapture_stop failed with status 5");
-        assert!(!error.is_fatal());
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }
 
@@ -1084,6 +1069,5 @@ mod tests {
             panic!("no LG library on the development host");
         };
         assert!(matches!(error, Error::Load { .. }), "{error}");
-        assert!(!error.is_fatal());
     }
 }

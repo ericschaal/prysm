@@ -1,10 +1,12 @@
 //! The native thread's decisions as a pure state machine: an event and the
 //! current time in, the next state and the actions to perform out. No clock,
 //! no logging, no backend, no worker; every rule is table-tested.
-use super::{Acquired, Fault, Limits, Recovery};
+use super::{Acquired, Fault, Limits, UiFault};
+use crate::classify::{self, Reason, Recovery, UiRecovery, VideoCause};
 use crate::{Readiness, Video};
 use prysm_core::Frame;
 use prysm_ports::Error;
+use prysm_ports::Schedule;
 use std::time::{Duration, Instant};
 
 /// Which tap the native thread holds. The two never run together.
@@ -122,12 +124,15 @@ pub(super) enum Event {
     /// The tap [`Action::Open`] asked for opened.
     Opened,
     OpenFailed(Fault),
-    /// An acquisition answered; `initializing`: the driver was created-only
-    /// before it, as the tap said.
+    UiOpenFailed(UiFault),
+    /// A video acquisition answered; `initializing`: the driver was
+    /// created-only before it, as the tap said.
     Acquired {
         answer: Result<Acquired, Fault>,
         initializing: bool,
     },
+    /// A TV UI acquisition answered.
+    UiAcquired(Result<Frame, UiFault>),
     /// The release of a [`Then::Reopen`] completed; `wait` is the one it
     /// carried.
     Released {
@@ -263,10 +268,10 @@ pub(super) struct Step {
 
 impl UiSupport {
     /// After a TV UI fault.
-    fn after_fault(recovery: Recovery) -> Self {
+    fn after_fault(recovery: UiRecovery) -> Self {
         match recovery {
-            Recovery::Never => Self::Unsupported,
-            Recovery::Reopen => Self::Failed,
+            UiRecovery::Unsupported => Self::Unsupported,
+            UiRecovery::MayPass => Self::Failed,
         }
     }
 
@@ -308,9 +313,9 @@ enum Reopen {
 /// source fails.
 fn video_wait(recovery: Recovery, reopen: Reopen, limits: &Limits) -> Option<Duration> {
     match (recovery, reopen) {
-        (Recovery::Never, _) => None,
-        (Recovery::Reopen, Reopen::AtOnce) => Some(Duration::ZERO),
-        (Recovery::Reopen, Reopen::AfterRetry) => Some(limits.retry),
+        (Recovery::Escalate(_), _) => None,
+        (Recovery::Retry(_) | Recovery::Wait, Reopen::AtOnce) => Some(Duration::ZERO),
+        (Recovery::Retry(_) | Recovery::Wait, Reopen::AfterRetry) => Some(limits.retry),
     }
 }
 
@@ -438,11 +443,13 @@ pub(super) fn next(mut state: State, event: Event, now: Instant, rules: &Rules) 
         }
         Event::Woke => state.decide(now, out),
         Event::Opened => state.opened(out),
-        Event::OpenFailed(fault) => state.recover(fault, Reopen::AfterRetry, now, rules, out),
+        Event::OpenFailed(fault) => state.video_fault(fault, Reopen::AfterRetry, now, rules, out),
+        Event::UiOpenFailed(fault) => state.ui_fault(fault, now, out),
         Event::Acquired {
             answer,
             initializing,
         } => state.acquired(answer, initializing, now, rules, out),
+        Event::UiAcquired(answer) => state.ui_acquired(answer, now, rules, out),
         Event::Released { wait } => {
             state.phase = state.phase.at(Stage::Closed { at: now + wait });
             state.pace(now, rules, out);
@@ -608,10 +615,9 @@ impl State {
 }
 
 impl State {
-    /// Act on one acquisition; a TV UI answer goes to [`Self::ui_acquired`].
-    /// For video, an `initializing` one if the driver was created-only: a
-    /// refusal starts, goes on or ends; then publish a frame, time the wait
-    /// for one, or recover from a fault.
+    /// Act on one video acquisition, an `initializing` one if the driver
+    /// was created-only: a refusal starts, goes on or ends; then publish a
+    /// frame, time the wait for one, or recover from a fault.
     fn acquired(
         &mut self,
         answer: Result<Acquired, Fault>,
@@ -620,12 +626,8 @@ impl State {
         rules: &Rules,
         out: &mut Vec<Action>,
     ) {
-        let stage = match self.phase {
-            Phase::Video { stage, .. } => stage,
-            Phase::Ui { .. } => return self.ui_acquired(answer, now, rules, out),
-            Phase::Idle => {
-                unreachable!("an acquisition answers an acquire, asked only of a tap's period")
-            }
+        let Phase::Video { stage, .. } = self.phase else {
+            unreachable!("a video acquisition answers an acquire of a video period")
         };
         let outcome = Answer::of(&answer);
         if initializing {
@@ -668,49 +670,59 @@ impl State {
             Ok(Acquired::Pending) => {
                 let since = stage.waiting_since(now);
                 if now.duration_since(since) >= rules.limits.pending {
-                    let stalled = Fault::recoverable(Error::other(format!(
-                        "webOS video produced no frame for {:?}",
-                        rules.limits.pending
-                    )));
-                    return self.recover(stalled, Reopen::AtOnce, now, rules, out);
+                    let recovery = classify::video(VideoCause::Stall);
+                    let stalled = Fault {
+                        error: Error::other_escalating(
+                            format!(
+                                "webOS video produced no frame for {:?}",
+                                rules.limits.pending
+                            ),
+                            recovery.escalation(),
+                        ),
+                        recovery,
+                    };
+                    return self.video_fault(stalled, Reopen::AtOnce, now, rules, out);
                 }
                 self.phase = self.phase.at(Stage::Waiting { since, at: now });
             }
+            // Timed on the wait for a frame, which a pending answer may
+            // have started: not on an `Attempts`, whose clock starts at its
+            // own first failure.
             Ok(Acquired::NotReady) => {
+                let Schedule::Within { every, limit } =
+                    Reason::DriverPreparing.schedule(&rules.limits)
+                else {
+                    unreachable!("a preparing driver is retried within a limit")
+                };
                 let since = stage.waiting_since(now);
-                if now.duration_since(since) >= rules.limits.preparation {
-                    let error = Error::other(format!(
-                        "webOS video was not ready within {:?}",
-                        rules.limits.preparation
-                    ));
+                if now.duration_since(since) >= limit {
+                    let error = Error::other(format!("webOS video was not ready within {limit:?}"));
                     return self.fail(error, out);
                 }
                 self.phase = self.phase.at(Stage::Waiting {
                     since,
-                    at: now + rules.limits.retry,
+                    at: now + every,
                 });
             }
             // Set by `refused`; not preparation: no deadline runs while the
             // TV refuses.
             Ok(Acquired::Refused) => {}
-            Err(fault) => return self.recover(fault, Reopen::AfterRetry, now, rules, out),
+            Err(fault) => return self.video_fault(fault, Reopen::AfterRetry, now, rules, out),
         }
         self.pace(now, rules, out);
     }
 
-    /// A TV UI tap answers only a frame or a fault, as its tap
-    /// ([`super::Tap`] over the HAL GAL plane) is written: the first frame
-    /// since a fault is reported once, delivered and paced; a fault ends
-    /// the UI period.
+    /// A TV UI frame is delivered and paced, the first since a fault
+    /// reported once; a fault ends the UI period.
     fn ui_acquired(
         &mut self,
-        answer: Result<Acquired, Fault>,
+        answer: Result<Frame, UiFault>,
         now: Instant,
         rules: &Rules,
         out: &mut Vec<Action>,
     ) {
         match answer {
-            Ok(Acquired::Frame(frame)) => {
+            Ok(frame) => {
                 if self.ui != UiSupport::Works {
                     self.ui = UiSupport::Works;
                     out.push(Action::Note(Note::UiCapturing {
@@ -722,7 +734,6 @@ impl State {
                 self.pace(now, rules, out);
             }
             Err(fault) => self.ui_fault(fault, now, out),
-            Ok(other) => unreachable!("a TV UI tap answers only a frame or a fault, not {other:?}"),
         }
     }
 }
@@ -754,30 +765,11 @@ impl State {
         self.phase = self.phase.at(Stage::Refused(refusal));
     }
 
-    /// A fault of the period's open or acquire: a TV UI fault or a video
-    /// one.
-    fn recover(
-        &mut self,
-        fault: Fault,
-        reopen: Reopen,
-        now: Instant,
-        rules: &Rules,
-        out: &mut Vec<Action>,
-    ) {
-        match self.phase {
-            Phase::Video { .. } => self.video_fault(fault, reopen, now, rules, out),
-            Phase::Ui { .. } => self.ui_fault(fault, now, out),
-            Phase::Idle => {
-                unreachable!("a fault answers an open or acquire, asked only of a tap's period")
-            }
-        }
-    }
-
     /// A TV UI fault never ends the source, and ends the UI period: a held
     /// tap is released and lighting idles without video until the video or
     /// its context changes (a fault that may pass) or the next source (one
     /// that cannot).
-    fn ui_fault(&mut self, fault: Fault, now: Instant, out: &mut Vec<Action>) {
+    fn ui_fault(&mut self, fault: UiFault, now: Instant, out: &mut Vec<Action>) {
         let occurrence = self.ui.occurrence();
         self.ui = UiSupport::after_fault(fault.recovery);
         let error = fault.error;
@@ -792,8 +784,8 @@ impl State {
         self.decide(now, out);
     }
 
-    /// A fatal video fault ends the source; any other releases the tap and
-    /// reopens it later.
+    /// A video fault that escalates ends the source; any other releases
+    /// the tap and reopens it later.
     fn video_fault(
         &mut self,
         fault: Fault,
@@ -892,7 +884,25 @@ mod tests {
     }
 
     fn fault() -> Fault {
-        Fault::recoverable(Error::other("interrupted"))
+        Fault {
+            error: Error::other("interrupted"),
+            recovery: Recovery::Retry(Reason::FreshDriver),
+        }
+    }
+
+    fn fatal(error: Error) -> Fault {
+        Fault {
+            error,
+            recovery: Recovery::Escalate(prysm_ports::Escalation::FAIL_FAST),
+        }
+    }
+
+    fn ui_fault(recovery: UiRecovery) -> UiFault {
+        let error = match recovery {
+            UiRecovery::MayPass => Error::other("interrupted"),
+            UiRecovery::Unsupported => Error::other("no library"),
+        };
+        UiFault { error, recovery }
     }
 
     /// A source at `phase` that saw available video at `t0`, its pace due
@@ -1049,7 +1059,7 @@ mod tests {
             actions.extend([Action::Deliver(frame.clone()), Action::Sleep(INTERVAL)]);
             let state = check(
                 at(t0, Phase::Ui { held: true }, ui),
-                acquired(Ok(Acquired::Frame(frame.clone())), false),
+                Event::UiAcquired(Ok(frame.clone())),
                 t0,
                 &RULES,
                 Phase::Ui { held: true },
@@ -1511,7 +1521,7 @@ mod tests {
                         elapsed_ms: 0,
                     }));
                 }
-                let mut fatal = expected.clone();
+                let mut failing = expected.clone();
                 expected.push(note(Note::VideoRetrying {
                     error: Error::other("interrupted"),
                     retry_in: LIMITS.retry,
@@ -1534,15 +1544,15 @@ mod tests {
                     &expected,
                 );
                 let error = Error::other("gone");
-                let answer = Err(Fault::fatal(error.clone()));
-                fatal.extend([Action::Fail(error), Action::Release(Then::Nothing)]);
+                let answer = Err(fatal(error.clone()));
+                failing.extend([Action::Fail(error), Action::Release(Then::Nothing)]);
                 check(
                     state,
                     acquired(answer, false),
                     t0,
                     &RULES,
                     Phase::Idle,
-                    &fatal,
+                    &failing,
                 );
             }
         }
@@ -1551,7 +1561,7 @@ mod tests {
         let error = Error::other("no library");
         check(
             at(t0, closed, UiSupport::Untried),
-            Event::OpenFailed(Fault::fatal(error.clone())),
+            Event::OpenFailed(fatal(error.clone())),
             t0,
             &RULES,
             Phase::Idle,
@@ -1613,7 +1623,7 @@ mod tests {
         };
         let state = check(
             state,
-            acquired(Err(fault()), false),
+            Event::UiAcquired(Err(ui_fault(UiRecovery::MayPass))),
             t0,
             &RULES,
             Phase::Idle,
@@ -1644,7 +1654,7 @@ mod tests {
         );
         let state = check(
             state,
-            Event::OpenFailed(fault()),
+            Event::UiOpenFailed(ui_fault(UiRecovery::MayPass)),
             ms(t0, 300),
             &RULES,
             Phase::Idle,
@@ -1697,10 +1707,11 @@ mod tests {
     #[test]
     fn an_unsupported_ui_is_never_opened_again() {
         let t0 = Instant::now();
-        let error = Error::other("no library");
+        let fault = ui_fault(UiRecovery::Unsupported);
+        let error = fault.error.clone();
         let state = next(
             at(t0, Phase::Ui { held: false }, UiSupport::Untried),
-            Event::OpenFailed(Fault::fatal(error.clone())),
+            Event::UiOpenFailed(fault),
             t0,
             &RULES,
         );
@@ -1792,15 +1803,19 @@ mod tests {
         );
     }
 
-    /// Every video fault's recovery meets every reopen: a fatal fault ends
-    /// the source, a stall reopens at once, any other after `retry`.
+    /// Every video fault's recovery meets every reopen: an escalating
+    /// fault ends the source, a stall reopens at once, any other after
+    /// `retry`.
     #[test]
     fn every_video_fault_meets_every_reopen() {
+        let fail = Recovery::Escalate(prysm_ports::Escalation::FAIL_FAST);
+        let retry = Recovery::Retry(Reason::FreshDriver);
         for (recovery, reopen, wait) in [
-            (Recovery::Never, Reopen::AtOnce, None),
-            (Recovery::Never, Reopen::AfterRetry, None),
-            (Recovery::Reopen, Reopen::AtOnce, Some(Duration::ZERO)),
-            (Recovery::Reopen, Reopen::AfterRetry, Some(LIMITS.retry)),
+            (fail, Reopen::AtOnce, None),
+            (fail, Reopen::AfterRetry, None),
+            (retry, Reopen::AtOnce, Some(Duration::ZERO)),
+            (retry, Reopen::AfterRetry, Some(LIMITS.retry)),
+            (Recovery::Wait, Reopen::AfterRetry, Some(LIMITS.retry)),
         ] {
             assert_eq!(
                 video_wait(recovery, reopen, &LIMITS),
@@ -1827,8 +1842,8 @@ mod tests {
             assert_eq!(state.occurrence(), occurrence, "{state:?}");
             assert_eq!(state.may_open(), may_open, "{state:?}");
         }
-        assert_eq!(UiSupport::after_fault(Recovery::Never), Unsupported);
-        assert_eq!(UiSupport::after_fault(Recovery::Reopen), Failed);
+        assert_eq!(UiSupport::after_fault(UiRecovery::Unsupported), Unsupported);
+        assert_eq!(UiSupport::after_fault(UiRecovery::MayPass), Failed);
     }
 
     /// A failed or unsupported UI is not opened; video always is.
@@ -1856,25 +1871,18 @@ mod tests {
     #[test]
     fn a_ui_fault_goes_straight_to_no_tap() {
         let t0 = Instant::now();
-        for (held, fault, ui) in [
-            (false, fault(), UiSupport::Failed),
-            (true, fault(), UiSupport::Failed),
-            (
-                false,
-                Fault::fatal(Error::other("x")),
-                UiSupport::Unsupported,
-            ),
-            (
-                true,
-                Fault::fatal(Error::other("x")),
-                UiSupport::Unsupported,
-            ),
+        for (held, recovery, ui) in [
+            (false, UiRecovery::MayPass, UiSupport::Failed),
+            (true, UiRecovery::MayPass, UiSupport::Failed),
+            (false, UiRecovery::Unsupported, UiSupport::Unsupported),
+            (true, UiRecovery::Unsupported, UiSupport::Unsupported),
         ] {
+            let fault = ui_fault(recovery);
             let error = fault.error.clone();
             let event = if held {
-                acquired(Err(fault), false)
+                Event::UiAcquired(Err(fault))
             } else {
-                Event::OpenFailed(fault)
+                Event::UiOpenFailed(fault)
             };
             let occurrence = Occurrence::First;
             let mut actions = vec![note(match ui {
@@ -1888,26 +1896,6 @@ mod tests {
             let state = at(t0, Phase::Ui { held }, UiSupport::Works);
             let after = check(state, event, t0, &RULES, Phase::Idle, &actions);
             assert_eq!(after.ui, ui, "{held}");
-        }
-    }
-
-    /// A TV UI tap answers only a frame or a fault; any other answer is a
-    /// broken tap.
-    #[test]
-    fn a_ui_tap_answers_only_a_frame_or_a_fault() {
-        for answer in [Acquired::Pending, Acquired::NotReady, Acquired::Refused] {
-            let t0 = Instant::now();
-            let state = at(t0, Phase::Ui { held: true }, UiSupport::Works);
-            let broken =
-                std::panic::catch_unwind(|| next(state, acquired(Ok(answer), false), t0, &RULES))
-                    .expect_err("a UI tap's non-frame answer panics");
-            let message = broken
-                .downcast_ref::<String>()
-                .expect("a formatted panic message");
-            assert!(
-                message.contains("a TV UI tap answers only a frame or a fault"),
-                "{message}"
-            );
         }
     }
 

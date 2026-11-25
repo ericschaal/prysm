@@ -584,6 +584,5 @@ mod tests {
         }
         let error = UiCapture::open(320, 180).err().unwrap();
         assert!(matches!(error, Error::Load { .. }), "{error}");
-        assert!(!error.is_fatal());
     }
 }
