@@ -5,7 +5,7 @@ use super::publish::log_unpublished;
 use crate::engine::Core;
 use crate::session::{SessionEnd, Stop};
 use crate::worker::Exit;
-use prysm_ports::{Error, IdleMode, LightingTarget, Result};
+use prysm_ports::{Error, IdleMode, Result};
 
 impl Core {
     /// Handle the end of a session whose loop already ended on its own, as
@@ -44,15 +44,10 @@ impl Core {
 
     /// A session ended on its own: a failure, or its source ended; seen when
     /// it ended, or by a stop that came after. Publish what it left with its
-    /// failure, and return that failure. An ended source is completion: a
-    /// `ScreenSync` target becomes `Off`, so lighting does not restart (a
-    /// file would replay) until asked again; any other target was set by a
-    /// command, and stands.
+    /// failure, and return that failure; with the target it leaves
+    /// ([`Lighting::ended`]): a changed target ends calibration.
     pub(in crate::engine) fn ended(&mut self, end: Result<SessionEnd>) -> Result<()> {
-        let (lighting, ended) = match &end {
-            Ok(end) => (Lighting::left_by(end), matches!(end.exit, Exit::Ended)),
-            Err(error) => (Lighting::failed(error), false),
-        };
+        let (lighting, target) = Lighting::ended(&end, self.state.borrow().target);
         // The result is the first failure: a release or an idle that failed
         // after it is said only here.
         for later in end.iter().flat_map(hidden) {
@@ -63,13 +58,12 @@ impl Core {
         }
         let result = end.and_then(SessionEnd::result);
         let failure = result.as_ref().err().cloned();
-        let complete = ended && self.state.borrow().target == LightingTarget::ScreenSync;
         self.set_lighting_and(lighting, failure, |s| {
-            if complete {
-                s.target = LightingTarget::Off;
+            if let Some(target) = target {
+                s.target = target;
             }
         });
-        if complete {
+        if target.is_some() {
             self.calibrate(None);
         }
         result

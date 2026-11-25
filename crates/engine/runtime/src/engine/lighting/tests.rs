@@ -1,3 +1,5 @@
+mod transitions;
+
 use super::end::hidden;
 use super::publish::unpublished;
 use super::*;
