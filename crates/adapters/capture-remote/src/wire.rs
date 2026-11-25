@@ -252,7 +252,6 @@ impl fmt::Display for Close {
 /// a message out of turn, the peer's close), or a message or frame that
 /// cannot be encoded or was rejected.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
-#[non_exhaustive]
 pub enum WireError {
     /// The two ends speak different protocol versions; the older one needs
     /// updating. `theirs` is the highest version the peer named, `None`
@@ -267,6 +266,10 @@ pub enum WireError {
     /// not `remote`), `404` without the path (no portal, or an older Prysm).
     #[error("Prysm answered HTTP {0} instead of opening the capture stream")]
     Unavailable(u16),
+    /// TLS cannot trust Prysm's certificate, in rustls's words: it does not
+    /// verify, or the system has no certificate authorities.
+    #[error("{0}")]
+    Untrusted(String),
     /// The receiver did not send its request after the upgrade.
     #[error("the receiver did not send its request")]
     NoRequest,
