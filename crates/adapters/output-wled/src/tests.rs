@@ -1115,6 +1115,30 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
     }
 }
 
+/// A send error with no row in `classify::send` fails the first `write`,
+/// with its cause: no datagram can be sent to DDP port 0.
+#[test]
+fn a_send_error_with_no_row_fails_write_at_once() {
+    let device = Device::new(vec![Reply::Json(OK)]);
+    let mut output = Wled::local(0)
+        .open(&device.settings(one_each(), true), &Hangup::default())
+        .map_err(OpenFailure::into_error)
+        .unwrap();
+    device.expect(&[live()]);
+    let error = output.write(&EdgeColors::default()).unwrap_err();
+    assert!(
+        prysm_ports::chain(&error).starts_with("cannot send colours to WLED at 127.0.0.1:"),
+        "{}",
+        prysm_ports::chain(&error)
+    );
+    assert!(
+        source(&error)
+            .downcast_ref::<ddp_rs::error::DDPError>()
+            .is_some(),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn idle_abandons_a_check_in_flight_and_restores_the_device() {
     for (mode, state) in [

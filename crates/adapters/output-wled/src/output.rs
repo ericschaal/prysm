@@ -283,7 +283,7 @@ impl LedOutput for WledOutput {
         self.encoding
             .follow(self.observer.transfer(), self.observer.level());
         self.renderer
-            .render_edges(colors, self.leds, &self.encoding, Instant::now())
+            .render_edges(colors, self.leds, &self.encoding)
             .map_err(|source| {
                 Error::adapter(
                     format!("cannot send colours to WLED at {}", self.device.label),

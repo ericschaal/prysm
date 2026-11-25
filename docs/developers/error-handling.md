@@ -40,6 +40,10 @@ The full wire mapping is in the
   ([TV lifecycle](webos.md#supervisor-and-worker)).
 - An output's `idle` runs on every session exit; a failure there is reported,
   not hidden.
+- A WLED colour frame whose send cannot leave now (a full buffer, no route
+  to the device) is dropped, and the next frame is the next try; any other
+  send error fails the output at once
+  ([`classify.rs`](../../crates/adapters/output-wled/src/classify.rs)).
 - Surface failures (a portal listener that dies) are recorded in
   `surface_failures`; lighting continues.
 - A settings store that cannot be read is no reason not to start: the
