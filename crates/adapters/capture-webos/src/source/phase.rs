@@ -47,11 +47,17 @@ pub(super) enum Occurrence {
 pub(super) enum Stage {
     /// No tap: opened at once.
     Closed,
+    /// A created-only driver that a change of its video context found not
+    /// ready: initialized again at once, since the change restarts the TV's
+    /// video pipeline, which may make the driver ready. None of its answers
+    /// counts any more: [`Limits::preparation`] counts again from its next.
+    Created,
     /// A tap with no deadline running: acquired at the pace.
     Running,
     /// A held driver with no frame since `since`, the first answer without
-    /// one (not ready or a pending buffer) since the tap opened or last
-    /// delivered a frame: the preparation limit counts from it.
+    /// one (not ready or a pending buffer) since the tap opened, last
+    /// delivered a frame or was [`Stage::Created`]: the preparation limit
+    /// counts from it.
     /// `pending_since` is the first of the pending answers since the driver
     /// last answered anything else (it was initialized then), `None` after
     /// a not-ready one: the stall counts from it. Acquired again at `at`: [`Limits::not_ready_retry`]
@@ -323,7 +329,8 @@ impl Stage {
     fn holds_tap(self) -> bool {
         match self {
             Self::Closed | Self::Withheld => false,
-            Self::Running
+            Self::Created
+            | Self::Running
             | Self::NoFrame { .. }
             | Self::Refused { .. }
             | Self::Reinitializing { .. } => true,
@@ -336,7 +343,11 @@ impl Stage {
             Self::Refused { initializations } | Self::Reinitializing { initializations } => {
                 Some(initializations)
             }
-            Self::Closed | Self::Running | Self::NoFrame { .. } | Self::Withheld => None,
+            Self::Closed
+            | Self::Created
+            | Self::Running
+            | Self::NoFrame { .. }
+            | Self::Withheld => None,
         }
     }
 
@@ -543,7 +554,8 @@ impl State {
     /// is initialized once more, withheld video gets a new driver, and a
     /// change of the video context releases and reopens a held tap, except
     /// a created-only one: it holds no video context and its release can
-    /// hang. A refused driver stays created-only, so it is always kept.
+    /// hang, so it is [`Stage::Created`]. A refused driver stays
+    /// created-only, so it is always kept.
     fn choose_tap(
         &mut self,
         context_changed: bool,
@@ -590,8 +602,12 @@ impl State {
                         Stage::Closed
                     }
                     stage if !context_changed => stage,
-                    Stage::Running | Stage::NoFrame { .. } if created_only => Stage::Running,
-                    Stage::Running | Stage::NoFrame { .. } => {
+                    // Initialized again at once, the preparation limit
+                    // counting anew.
+                    Stage::Created | Stage::Running | Stage::NoFrame { .. } if created_only => {
+                        Stage::Created
+                    }
+                    Stage::Created | Stage::Running | Stage::NoFrame { .. } => {
                         out.push(Action::Release);
                         Stage::Closed
                     }
@@ -707,9 +723,10 @@ impl State {
                 });
             }
             // Timed on the whole wait for a frame, which a pending answer
-            // may have started, so alternating answers cannot postpone it:
-            // not on an `Attempts`, whose clock starts at its own first
-            // failure.
+            // may have started, so alternating answers cannot postpone it;
+            // only a new tap or a change of the video context
+            // ([`Stage::Created`]) starts it again. Not on an `Attempts`,
+            // whose clock starts at its own first failure.
             Ok(Acquired::NotReady) => {
                 answered(Answer::NotReady, out);
                 let limit = rules.limits.preparation;
@@ -1333,6 +1350,35 @@ mod tests {
         }
     }
 
+    /// A change of the video context initializes a driver not ready again
+    /// at once, without waiting out `not_ready_retry`, and the preparation
+    /// limit counts again from its next answer; a signal that changes only
+    /// the sequence waits it out and keeps the count.
+    #[test]
+    fn a_context_change_restarts_the_preparation_limit() {
+        let t0 = Instant::now();
+        let preparing =
+            |since_ms, at_ms| video(no_frame_not_ready(ms(t0, since_ms), ms(t0, at_ms)));
+        let not_ready = || acquired(Ok(Acquired::NotReady), true);
+        let reset = |sequence| signal(ready(Video::Available, 1, sequence), true);
+        let same = signal(ready(Video::Available, 0, 2), true);
+        let path = [
+            (0, not_ready(), preparing(0, 1000), None),
+            (500, same, preparing(0, 1000), None),
+            (9000, reset(3), video(Stage::Created), Some(Ask::Acquire)),
+            (9000, not_ready(), preparing(9000, 10_000), None),
+            (10_000, not_ready(), preparing(9000, 11_000), None),
+            (18_999, not_ready(), preparing(9000, 19_999), None),
+            (19_000, not_ready(), Phase::Idle, None),
+        ];
+        let mut state = at(t0, video(Stage::Running), UiSupport::Untried);
+        for (now, event, phase, ask) in path {
+            let step = next(state, event, ms(t0, now), &RULES);
+            assert_eq!((step.state.phase, step.ask), (phase, ask), "at {now} ms");
+            state = step.state;
+        }
+    }
+
     /// The pace skips missed ticks instead of bursting.
     #[test]
     fn the_pace_skips_missed_ticks() {
@@ -1517,7 +1563,7 @@ mod tests {
             (
                 no_frame_not_ready(t0, ms(t0, 900)),
                 true,
-                video(Stage::Running),
+                video(Stage::Created),
                 vec![],
                 Some(Ask::Acquire),
             ),

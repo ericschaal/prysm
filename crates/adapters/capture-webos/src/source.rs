@@ -99,7 +99,9 @@ pub(crate) struct Limits {
     /// at which an [`Acquired::NotReady`] fails the source; until then a
     /// driver not ready is asked again every [`Self::not_ready_retry`].
     /// This converges: the driver answers not ready while the TV's video
-    /// pipeline starts, which it finishes within this limit.
+    /// pipeline starts, which it finishes within this limit. A change of
+    /// the video context restarts that pipeline, so it initializes a driver
+    /// not ready again at once and the count starts again from its answer.
     pub preparation: Duration,
     /// Longest without a frame, counted from the first of the
     /// [`Acquired::Pending`] answers since the driver last answered
