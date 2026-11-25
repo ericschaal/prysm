@@ -147,10 +147,11 @@ Prysm keeps sending `settings.output.leds` either way and changes none of them.
 
 `input`, while a session runs, is measured about once a second: `fps`
 (frames from the source per second), `picture`, `sent_fps` (frames whose
-colours were written to the output per second) and `latency`. `latency` is
-`{ "capture_ms"?: …, "output_ms": … }`, each the mean per frame over the
-window: `output_ms` from Prysm receiving a frame from its source to the output
-write for its colours returning; `capture_ms` from the source capturing the
+colours were handed to the output per second; an output may drop a frame it
+cannot send now, and `device.issue` says when the lights do not answer) and
+`latency`. `latency` is `{ "capture_ms"?: …, "output_ms": … }`, each the
+mean per frame over the window: `output_ms` from Prysm receiving a frame from
+its source to the output write for its colours returning; `capture_ms` from the source capturing the
 frame to Prysm receiving it, present only when every frame in the window
 carried a capture time (video devices on macOS and on Linux with monotonic
 V4L2 timestamps). Both are measured by Prysm (not from the screen, and not
@@ -397,7 +398,7 @@ metrics and no histograms.
 | `prysm_settings_revision` | gauge | `State.revision` (random start per process) |
 | `prysm_input_fps` | gauge | `State.input.fps`; 0 while no session runs |
 | `prysm_frames_received_total` | counter | Frames taken from the capture source (frames from a remote TV included) |
-| `prysm_frames_sent_total` | counter | Frames whose colors were written to the output |
+| `prysm_frames_sent_total` | counter | Frames whose colors were handed to the output (an output may drop a frame it cannot send now) |
 | `prysm_processing_seconds_sum`, `_count` | summary | Time turning frames into colors, and how many frames |
 | `prysm_frame_flush_seconds_sum`, `_count` | summary | Per frame, from Prysm receiving it from the source to its output write returning, and how many frames |
 | `prysm_output_write_seconds_sum`, `_count` | summary | Time in output writes, and how many: frames and keep-alive rewrites, failed ones included |

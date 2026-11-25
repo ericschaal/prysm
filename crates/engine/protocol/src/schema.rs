@@ -268,8 +268,9 @@ pub struct InputSchema {
     fps: f32,
     /// Whether frames arrived in the last second, and if not, why.
     picture: PictureSchema,
-    /// Frames per second whose colours were written to the output over the
-    /// last second, to one decimal.
+    /// Frames per second whose colours were handed to the output over the
+    /// last second, to one decimal. An output may drop a frame it cannot
+    /// send now; the device issue says when the lights do not answer.
     #[schema(minimum = 0, example = 29.9)]
     #[serde(default)]
     sent_fps: f32,

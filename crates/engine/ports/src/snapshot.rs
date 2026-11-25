@@ -171,8 +171,9 @@ pub struct Input {
     pub fps: f32,
     /// Whether frames arrived in the last window, and if not, why.
     pub picture: Picture,
-    /// Frames per second whose colours were written to the output over the
-    /// last window, to one decimal.
+    /// Frames per second whose colours were handed to the output over the
+    /// last window, to one decimal. An output may drop a frame it cannot
+    /// send now; the device issue says when the lights do not answer.
     #[serde(default)]
     pub sent_fps: f32,
     /// The mean time per frame along the path, in two parts, over the last

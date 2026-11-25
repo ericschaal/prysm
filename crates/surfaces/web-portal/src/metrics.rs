@@ -151,7 +151,7 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
     );
     text.counter(
         "prysm_frames_sent_total",
-        "Frames whose colors were written to the output.",
+        "Frames whose colors were handed to the output.",
         counters.frames_sent,
     );
     text.summary(
@@ -250,7 +250,7 @@ prysm_input_fps 29.9
 # HELP prysm_frames_received_total Frames taken from the capture source.
 # TYPE prysm_frames_received_total counter
 prysm_frames_received_total 1200
-# HELP prysm_frames_sent_total Frames whose colors were written to the output.
+# HELP prysm_frames_sent_total Frames whose colors were handed to the output.
 # TYPE prysm_frames_sent_total counter
 prysm_frames_sent_total 1199
 # HELP prysm_processing_seconds Time spent turning frames into colors.

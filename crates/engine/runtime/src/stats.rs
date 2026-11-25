@@ -15,12 +15,14 @@ pub(crate) struct Stats(Mutex<Totals>);
 pub struct Counters {
     /// Frames taken from the source.
     pub frames_received: u64,
-    /// Frames whose colors were written to the output.
+    /// Frames whose colors were handed to the output. An output may drop a
+    /// frame it cannot send now; the device issue says when the lights do
+    /// not answer.
     pub frames_sent: u64,
     /// Turning frames into colors.
     pub processing: Timing,
-    /// Frames whose colors reached the output, each timed from when Prysm
-    /// received it from the source to when the output write returned.
+    /// Frames whose colors were handed to the output, each timed from when
+    /// Prysm received it from the source to when the output write returned.
     pub flushed: Timing,
     /// Every output write: frames and the keep-alive rewrites, failed ones included.
     pub output_writes: Timing,
@@ -101,8 +103,9 @@ impl Stats {
     }
 
     /// One frame taken from the source: counted and its processing timed;
-    /// if its colors reached the output, also counted as sent and its spans
-    /// from receipt (and from capture, if known) to the write returning.
+    /// if its colors were handed to the output, also counted as sent and
+    /// its spans from receipt (and from capture, if known) to the write
+    /// returning.
     pub(crate) fn frame(&self, times: FrameTimes) {
         let processing = times.processed - times.received;
         let flushed = times.written.map(|written| {
