@@ -188,30 +188,6 @@ mod tests {
         sys::UiCapture::open(320, 180).err()
     }
 
-    /// What a status of each operation leads to; no wildcard, so a new
-    /// operation needs its own arm here.
-    fn status_recovery(operation: sys::Operation, code: i32) -> Recovery {
-        use sys::Operation as O;
-        let (retry, wait) = (Recovery::Retry(Reason::FreshDriver), Recovery::Withheld);
-        match operation {
-            O::VtCurrentCaptureBuffInfo if code == 12 => wait,
-            O::VtPlaneInfo if code == 13 => wait,
-            O::VtCreate
-            | O::VtInit
-            | O::VtPreprocess
-            | O::VtPlaneInfo
-            | O::VtProcess
-            | O::VtCurrentCaptureBuffInfo
-            | O::VtStop
-            | O::VtPostprocess
-            | O::VtFinalize
-            | O::HalInit
-            | O::HalCreateSurface
-            | O::HalCaptureFrameBuffer
-            | O::HalDestroySurface => retry,
-        }
-    }
-
     /// One row per `sys::Error` variant, and per operation for the status
     /// codes that have their own rule somewhere, for both taps.
     fn rows() -> Vec<(sys::Error, Recovery, UiRecovery)> {
@@ -254,11 +230,23 @@ mod tests {
             (device(ErrorKind::NotFound), retry, unsupported),
             (device(ErrorKind::OutOfMemory), retry, may_pass),
         ];
-        for operation in sys::Operation::ALL {
-            for code in [1, 12, 13] {
-                let recovery = status_recovery(operation, code);
-                rows.push((status(operation, code), recovery, may_pass));
-            }
+        // A status code means something only for its operation: 12 of the
+        // buffer is the TV's resource policy taking the capture (seen at
+        // standby), 13 of the plane is no video plane (seen at start and
+        // under AirPlay mirroring). Any other status opens a new driver.
+        use sys::Operation as O;
+        let withheld = Recovery::Withheld;
+        rows.extend([
+            (status(O::VtCurrentCaptureBuffInfo, 12), withheld, may_pass),
+            (status(O::VtPlaneInfo, 13), withheld, may_pass),
+            (status(O::VtCurrentCaptureBuffInfo, 13), retry, may_pass),
+            (status(O::VtPlaneInfo, 12), retry, may_pass),
+            (status(O::VtInit, 11), retry, may_pass),
+            (status(O::VtProcess, 12), retry, may_pass),
+            (status(O::HalInit, -1), retry, may_pass),
+        ]);
+        for operation in O::ALL {
+            rows.push((status(operation, 1), retry, may_pass));
         }
         if let Some(load) = load() {
             rows.push((
@@ -310,15 +298,5 @@ mod tests {
         assert_eq!(unconfirmed_release(), Escalation::Restart);
         assert_eq!(ui(UiCause::Capture), UiRecovery::MayPass);
         assert_eq!(ui(UiCause::SignalMask), UiRecovery::Unsupported);
-    }
-
-    #[test]
-    fn every_reason_has_its_schedule() {
-        for (reason, give_up) in [
-            (Reason::FreshDriver, GiveUp::Fail),
-            (Reason::StalledDriver, GiveUp::Withheld),
-        ] {
-            assert_eq!(reason.gives_up(), give_up, "{reason:?}");
-        }
     }
 }

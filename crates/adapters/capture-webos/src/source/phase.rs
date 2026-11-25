@@ -2314,18 +2314,22 @@ mod tests {
     #[test]
     fn the_tap_follows_the_video_the_setting_and_the_ui_state() {
         use UiSupport::{Failed, Reopenable, Unsupported, Untried, Works};
-        for ui in [Untried, Works, Failed, Reopenable, Unsupported] {
+        let ui_tap = Some(Kind::Ui);
+        // Without video: the tap with `include_ui` on, and with it off.
+        for (ui, on, off) in [
+            (Untried, ui_tap, None),
+            (Works, ui_tap, None),
+            (Failed, None, None),
+            (Reopenable, ui_tap, None),
+            (Unsupported, None, None),
+        ] {
             for include_ui in [false, true] {
                 for video in [Video::Available, Video::Unknown] {
                     assert_eq!(wanted(video, include_ui, ui), Some(Kind::Video));
                 }
-                let ui_tap = (include_ui && ui.may_open()).then_some(Kind::Ui);
-                assert_eq!(
-                    wanted(Video::Unavailable, include_ui, ui),
-                    ui_tap,
-                    "{ui:?}, {include_ui}"
-                );
             }
+            assert_eq!(wanted(Video::Unavailable, true, ui), on, "{ui:?}");
+            assert_eq!(wanted(Video::Unavailable, false, ui), off, "{ui:?}");
         }
     }
 
