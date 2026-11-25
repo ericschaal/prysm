@@ -7,10 +7,7 @@
 //! stream; `clippy::print_stdout` is denied in the workspace besides. A
 //! reader thread decodes [`Command`]s from stdin; stdin EOF or a bad line
 //! stops the worker.
-use crate::{
-    Command, Event, Failure, FullStatus, LineReader, LinkError, SlimLink, SlimStatus,
-    WorkerFailure, WorkerStatus, encode,
-};
+use crate::{Command, Event, Failure, FullStatus, LineReader, LinkError, WorkerStatus, encode};
 use prysm_ports::{Error, chain};
 use std::future::Future;
 use std::io::{self, Write};
@@ -127,11 +124,7 @@ fn short(text: String, limit: usize) -> String {
 /// `event` with every free text cut to `limit` bytes.
 fn fit(event: Event, limit: usize) -> Event {
     let short = |text| short(text, limit);
-    let short_failure = |failure: WorkerFailure| WorkerFailure {
-        message: short(failure.message),
-        ..failure
-    };
-    let short_escalated = |failure: Failure| Failure {
+    let short_failure = |failure: Failure| Failure {
         message: short(failure.message),
         ..failure
     };
@@ -139,25 +132,17 @@ fn fit(event: Event, limit: usize) -> Event {
         Event::Status(WorkerStatus::Full(status)) => {
             Event::Status(WorkerStatus::Full(FullStatus {
                 portal: status.portal.map(short),
-                failure: status.failure.map(short_escalated),
+                failure: status.failure.map(short_failure),
                 ..status
             }))
         }
-        Event::Status(WorkerStatus::Slim(status)) => {
-            Event::Status(WorkerStatus::Slim(SlimStatus {
-                link: match status.link {
-                    SlimLink::Waiting { failure } => SlimLink::Waiting {
-                        failure: short_failure(failure),
-                    },
-                    SlimLink::Failed { failure } => SlimLink::Failed {
-                        failure: short_failure(failure),
-                    },
-                    link => link,
-                },
-                ..status
-            }))
+        Event::Status(WorkerStatus::Slim(mut status)) => {
+            if let Some(message) = status.link.message_mut() {
+                *message = short(std::mem::take(message));
+            }
+            Event::Status(WorkerStatus::Slim(status))
         }
-        Event::Failed(failure) => Event::Failed(short_escalated(failure)),
+        Event::Failed(failure) => Event::Failed(short_failure(failure)),
     }
 }
 
@@ -480,6 +465,7 @@ fn watch_signals(stop: &StopHandle) -> prysm_ports::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SlimLink, SlimStatus};
     use prysm_ports::SessionPhase;
 
     #[test]
@@ -561,14 +547,14 @@ mod tests {
         link.events
             .send(&Event::Status(WorkerStatus::Slim(SlimStatus {
                 capturing: false,
-                link: SlimLink::Failed {
-                    failure: WorkerFailure::other("w".repeat(10_000)),
+                link: SlimLink::Replaced {
+                    message: "w".repeat(10_000),
                 },
             })));
-        let Some(Event::Status(WorkerStatus::Slim(slim))) = peer.event().await else {
+        let Some(Event::Status(WorkerStatus::Slim(mut slim))) = peer.event().await else {
             panic!("expected a slim status");
         };
-        assert!(slim.link.failure().unwrap().message.len() < 2000);
+        assert!(slim.link.message_mut().unwrap().len() < 2000);
         peer.close();
         assert_eq!(link.commands.next().await, None);
         link.stop.stopped().await;
@@ -580,7 +566,7 @@ mod tests {
     /// stand-in event.
     #[test]
     fn every_event_fits_one_line_whatever_its_texts_escape_to() {
-        use crate::{FailureKind, MAX_LINE, decode};
+        use crate::{MAX_LINE, decode};
         use prysm_ports::StreamEncoding;
         let lines = Arc::new(Mutex::new(Vec::new()));
         let sent = Arc::clone(&lines);
@@ -594,8 +580,7 @@ mod tests {
         for unit in ["\"", "\\", "\u{1}", "\n", "é", "😀", "x"] {
             for length in [MAX_TEXT - 1, MAX_TEXT, MAX_TEXT + 1, 10_000] {
                 let text = unit.repeat(length.div_ceil(unit.len()));
-                let failure = || WorkerFailure::new(FailureKind::Encoder, text.clone());
-                let escalated = || Failure {
+                let failure = || Failure {
                     escalation: prysm_ports::Escalation::Ask(prysm_ports::Fix::ChangeSettings),
                     message: text.clone(),
                 };
@@ -607,11 +592,13 @@ mod tests {
                         lights: Some(prysm_ports::OutputIssue::OtherSender),
                         applied: u64::MAX,
                         portal: Some(text.clone()),
-                        failure: Some(escalated()),
+                        failure: Some(failure()),
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
-                        link: SlimLink::Waiting { failure: failure() },
+                        link: SlimLink::EncoderFailed {
+                            message: text.clone(),
+                        },
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
@@ -620,7 +607,7 @@ mod tests {
                             fps: u16::MAX,
                         },
                     })),
-                    Event::Failed(escalated()),
+                    Event::Failed(failure()),
                 ] {
                     events.send(&event);
                     let line = lines.lock().unwrap().pop().expect("a line");

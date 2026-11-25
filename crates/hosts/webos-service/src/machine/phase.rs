@@ -1,7 +1,8 @@
 //! Where the worker is, with what is valid only there.
 use super::Package;
-use super::recovery::{After, Problem, Restart, after};
-use prysm_webos_link::{Failure, FullStatus, SlimStatus, WorkerFailure, WorkerStatus};
+use super::recovery::{After, Restart, after};
+use crate::state::Problem;
+use prysm_webos_link::{Failure, FullStatus, SlimStatus, WorkerStatus};
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,12 +114,6 @@ impl Report {
             }
         }
         true
-    }
-
-    /// A slim worker's uplink failure or receiver wait, as the TV app is
-    /// shown one.
-    pub(super) fn link_failure(&self) -> Option<WorkerFailure> {
-        self.slim()?.link.failure().cloned()
     }
 
     pub(super) fn full(&self) -> Option<&FullStatus> {

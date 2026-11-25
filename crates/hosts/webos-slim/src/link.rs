@@ -8,9 +8,7 @@ use prysm_core::Frame;
 use prysm_ports::{Error, FrameSink, Result, StreamEncoding, chain};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
-use prysm_webos_link::{
-    Command, Event, FailureKind, HEARTBEAT, SlimLink, SlimStatus, WorkerFailure, WorkerStatus,
-};
+use prysm_webos_link::{Command, Event, HEARTBEAT, SlimLink, SlimStatus, WorkerStatus};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -216,9 +214,6 @@ impl Report {
     /// while sending, refused while sending and the capture says the TV
     /// refuses its video. A stopped stream is paused, not a failure.
     fn link(&self, fps: u16, refused: bool) -> SlimLink {
-        let failed = |kind, why: &String| SlimLink::Failed {
-            failure: WorkerFailure::new(kind, why.clone()),
-        };
         match &self.uplink {
             UplinkState::Starting => SlimLink::Starting {},
             UplinkState::Sending(_) if refused => SlimLink::Refused {},
@@ -228,19 +223,27 @@ impl Report {
             },
             UplinkState::Stopped => SlimLink::Paused {},
             UplinkState::Waiting(why) => SlimLink::Waiting {
-                failure: WorkerFailure::new(FailureKind::Receiver, why.clone()),
+                message: why.clone(),
             },
-            UplinkState::VersionDiffers(why) => failed(FailureKind::Version, why),
+            UplinkState::VersionDiffers(why) => SlimLink::VersionDiffers {
+                message: why.clone(),
+            },
             UplinkState::EncoderFailed => {
                 // `next` enters it only together with the refusal.
                 let (_, why) = self
                     .refused
                     .as_ref()
                     .expect("an encoder failure keeps its refusal");
-                failed(FailureKind::Encoder, why)
+                SlimLink::EncoderFailed {
+                    message: why.clone(),
+                }
             }
-            UplinkState::ReceiverFailed(why) => failed(FailureKind::ReceiverFailed, why),
-            UplinkState::Replaced(why) => failed(FailureKind::Replaced, why),
+            UplinkState::ReceiverFailed(why) => SlimLink::ReceiverFailed {
+                message: why.clone(),
+            },
+            UplinkState::Replaced(why) => SlimLink::Replaced {
+                message: why.clone(),
+            },
         }
     }
 }
@@ -797,9 +800,6 @@ mod tests {
     /// What the status says in each state.
     #[test]
     fn each_state_is_reported_as_its_link() {
-        let failed = |kind, why: &str| SlimLink::Failed {
-            failure: WorkerFailure::new(kind, why),
-        };
         for (uplink, link) in [
             (Starting, SlimLink::Starting {}),
             (
@@ -810,19 +810,25 @@ mod tests {
                 },
             ),
             (Stopped, SlimLink::Paused {}),
+            (Waiting(text("w")), SlimLink::Waiting { message: text("w") }),
             (
-                Waiting(text("w")),
-                SlimLink::Waiting {
-                    failure: WorkerFailure::new(FailureKind::Receiver, "w"),
+                VersionDiffers(text("v")),
+                SlimLink::VersionDiffers { message: text("v") },
+            ),
+            (
+                EncoderFailed,
+                SlimLink::EncoderFailed {
+                    message: text("busy"),
                 },
             ),
-            (VersionDiffers(text("v")), failed(FailureKind::Version, "v")),
-            (EncoderFailed, failed(FailureKind::Encoder, "busy")),
             (
                 ReceiverFailed(text("f")),
-                failed(FailureKind::ReceiverFailed, "f"),
+                SlimLink::ReceiverFailed { message: text("f") },
             ),
-            (Replaced(text("r")), failed(FailureKind::Replaced, "r")),
+            (
+                Replaced(text("r")),
+                SlimLink::Replaced { message: text("r") },
+            ),
         ] {
             assert_eq!(from(uplink.clone()).link(7, false), link);
             // Refused only while sending.

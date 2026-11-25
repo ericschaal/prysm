@@ -1028,8 +1028,14 @@
       "target": "screen_sync",
       "video": "available",
       "worker": {
-        "phase": "retrying",
-        "seconds": 2
+        "phase": "stopping",
+        "problem": {
+          "asked": {
+            "fix": "try_again",
+            "step": "ask"
+          },
+          "message": "again after a restart: worker killed by signal 9"
+        }
       }
     },
     {
@@ -1052,11 +1058,162 @@
       }
     },
     {
-      "enabled": true,
-      "failure": {
-        "kind": "encoder",
-        "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
       },
+      "target": "effects",
+      "video": "available",
+      "worker": {
+        "capturing": false,
+        "phase": "running",
+        "portal": "http://192.168.1.5:8787/",
+        "problem": {
+          "asked": {
+            "step": "unanswered"
+          },
+          "message": "switch to effects: output: no answer"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "try_again",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "change_settings",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "set_up",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "unsupported",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "restart_tv",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "unreadable": "invalid tv.json: expected a boolean",
+      "video": "unknown",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "try_again",
+            "step": "ask"
+          },
+          "message": "cannot start the worker: no such file"
+        }
+      }
+    },
+    {
+      "enabled": false,
       "flavor": "slim",
       "log": [],
       "power": "screen_saver",
@@ -1066,8 +1223,21 @@
       },
       "video": "unknown",
       "worker": {
-        "phase": "retrying",
-        "seconds": 4
+        "phase": "stopped"
+      }
+    },
+    {
+      "enabled": false,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "phase": "stopping"
       }
     },
     {
@@ -1107,7 +1277,7 @@
       }
     },
     {
-      "enabled": false,
+      "enabled": true,
       "flavor": "slim",
       "log": [],
       "power": "screen_saver",
@@ -1117,11 +1287,16 @@
       },
       "video": "unknown",
       "worker": {
-        "phase": "stopped"
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "waiting"
+        },
+        "phase": "running"
       }
     },
     {
-      "enabled": false,
+      "enabled": true,
       "flavor": "slim",
       "log": [],
       "power": "screen_saver",
@@ -1131,7 +1306,69 @@
       },
       "video": "unknown",
       "worker": {
-        "phase": "stopping"
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "encoder_failed"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "version_differs"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "replaced"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "receiver_failed"
+        },
+        "phase": "running"
       }
     }
   ],
@@ -1158,10 +1395,6 @@
     },
     {
       "enabled": true,
-      "failure": {
-        "kind": "encoder",
-        "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
-      },
       "flavor": "slim",
       "log": [],
       "power": "screen_saver",
@@ -1170,10 +1403,17 @@
         "prysm_address": "http://192.168.1.20:8787"
       },
       "returnValue": true,
+      "unreadable": "invalid tv.json: expected a boolean",
       "video": "unknown",
       "worker": {
-        "phase": "retrying",
-        "seconds": 4
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "try_again",
+            "step": "ask"
+          },
+          "message": "cannot start the worker: no such file"
+        }
       }
     }
   ],

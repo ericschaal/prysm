@@ -7,8 +7,7 @@
 use crate::preferences::Preferences;
 use crate::state::{self, FullWorker, Power, Process, SlimWorker, State};
 use prysm_webos_link::{
-    Command, Event, FailureKind, FullArgs, KILL_AFTER, LightingTarget, SILENCE, SlimArgs, Video,
-    WorkerFailure, WorkerStatus,
+    Command, Event, FullArgs, KILL_AFTER, LightingTarget, SILENCE, SlimArgs, Video, WorkerStatus,
 };
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -18,7 +17,7 @@ use std::time::Instant;
 mod phase;
 mod recovery;
 use phase::{Phase, Report, Run, Sent, Stopping, Then};
-use recovery::{After, Lost, Restart, after, interim_failure};
+use recovery::{After, Lost, Restart, after};
 
 pub const LOG_LINES: usize = 20;
 
@@ -120,10 +119,9 @@ pub struct Machine {
     power: Power,
     video: Video,
     phase: Phase,
-    /// Why the saved preferences could not be read (kind
-    /// [`FailureKind::Preferences`]), until the app saves new ones. Shown
-    /// only while no other failure is current.
-    unreadable: Option<WorkerFailure>,
+    /// Why the saved preferences could not be read, until the app saves
+    /// new ones.
+    unreadable: Option<String>,
     log: VecDeque<String>,
     shutdown: bool,
 }
@@ -170,7 +168,7 @@ impl Machine {
     /// preferences ([`Input::Preferences`]).
     #[must_use]
     pub fn with_unreadable_preferences(mut self, why: impl Into<String>) -> Self {
-        self.unreadable = Some(WorkerFailure::new(FailureKind::Preferences, why));
+        self.unreadable = Some(why.into());
         self
     }
 
@@ -251,16 +249,23 @@ impl Machine {
             preferences: self.preferences.clone(),
             power: self.power,
             video: self.video,
-            failure: self.current_failure(),
+            unreadable: self.unreadable.clone(),
             log: self.log.iter().cloned().collect(),
         }
     }
 
+    /// Where the worker is, with what the person is asked there: also
+    /// while the worker that failed stops, and what a running worker asks.
+    /// A restart is never asked.
     fn process(&self) -> Process {
-        match self.phase {
-            Phase::Idle | Phase::Asking(_) => Process::Stopped,
-            Phase::Running(_) => Process::Running,
-            Phase::Stopping(_) => Process::Stopping,
+        match &self.phase {
+            Phase::Idle => Process::Stopped,
+            Phase::Running(run) => Process::Running(run.problem()),
+            Phase::Stopping(stopping) => Process::Stopping(match &stopping.then {
+                Then::Ask(problem) => Some(problem.clone()),
+                Then::Idle | Then::Restart => None,
+            }),
+            Phase::Asking(problem) => Process::Asking(problem.clone()),
         }
     }
 
@@ -271,30 +276,6 @@ impl Machine {
             Phase::Stopping(stopping) => Some(&stopping.report),
             Phase::Idle | Phase::Asking(_) => None,
         }
-    }
-
-    /// What the person is asked, also while the worker that failed stops;
-    /// else what a running worker asks or its link's failure (slim). A
-    /// restart is never a failure. Unreadable preferences come last: the
-    /// others name the fix for what is failing now.
-    fn current_failure(&self) -> Option<WorkerFailure> {
-        match &self.phase {
-            Phase::Asking(problem)
-            | Phase::Stopping(Stopping {
-                then: Then::Ask(problem),
-                ..
-            }) => Some(interim_failure(problem)),
-            Phase::Running(run) => run
-                .problem()
-                .map(|problem| interim_failure(&problem))
-                .or_else(|| run.report.link_failure()),
-            Phase::Idle
-            | Phase::Stopping(Stopping {
-                then: Then::Idle | Then::Restart,
-                ..
-            }) => None,
-        }
-        .or_else(|| self.unreadable.clone())
     }
 
     fn running(&self) -> bool {

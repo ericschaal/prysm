@@ -625,14 +625,14 @@ def _quiet(prysm: Prysm, found: Tv, seconds: float) -> dict[str, object]:
                 'running': prysm_api.running(state),
                 'input': state.get('input'),
                 'failure': prysm_api.failure(state),
-                'tv_failure': tv_state.get('failure'),
+                'tv_problem': tv.problem(tv_state),
                 'tv_capturing': tv.capturing(tv_state),
             }
         )
         time.sleep(1)
     evidence: dict[str, object] = {'samples': samples, 'size': prysm.source_size()}
     framed = [s for s in samples if s['running']]
-    failing = [s for s in samples if s['failure'] or s['tv_failure'] or s['session'] == SessionState.FAULTED]
+    failing = [s for s in samples if s['failure'] or s['tv_problem'] or s['session'] == SessionState.FAULTED]
     if framed or evidence['size']:
         raise Failed(f'frames arrive without video and without the UI ({evidence["size"]})', evidence)
     if failing:

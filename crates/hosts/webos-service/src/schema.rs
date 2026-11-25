@@ -21,7 +21,7 @@ use crate::service::{
     DoneReply, ErrorKind, ErrorReply, GetStateRequest, SetEnabledRequest, SetTargetRequest,
     StateReply, UninstallRequest,
 };
-use crate::state::{FullWorker, Package, Power, SlimWorker, State};
+use crate::state::{Asked, FullWorker, Package, Power, Problem, SlimWorker, State};
 use prysm_ports::StreamEncoding;
 use serde::{Deserialize, Serialize};
 pub use utoipa::openapi::OpenApi;
@@ -30,7 +30,7 @@ use utoipa::{OpenApi as _, ToSchema};
 
 /// The Luna API's own version, in the document's `info.version`; not the
 /// product version, which only `VERSION` carries.
-pub const API_VERSION: &str = "4";
+pub const API_VERSION: &str = "5";
 
 // Mirrors `prysm_webos_link::Video`.
 /// The TV's main video output. Open: an app reads a value it does not know
@@ -44,45 +44,22 @@ pub enum VideoSchema {
     Available,
 }
 
-// Mirrors `prysm_webos_link::FailureKind`.
-/// What a failure is, so the app can offer the matching fix. `encoder`
-/// (slim): the encoder the receiver requested could not start or failed;
-/// the receiver is told, and another encoding chosen in its portal may work.
-/// `receiver` (slim): the receiver is unavailable (not lighting, unreachable,
-/// or its name does not resolve); the worker keeps reconnecting. `version`
-/// (slim): Prysm speaks another capture stream version; the older one needs
-/// updating, and the worker keeps reconnecting. `replaced` (slim): another
-/// TV took over the stream at Prysm; this one stopped sending until the
-/// worker restarts (capture stopped and started, the TV waking, or a new
-/// Prysm address). `receiver_failed` (slim): Prysm's receiving source failed
-/// with this TV's stream (a refusal, a keyframe that does not decode, no
-/// decoder), and Prysm shows why; the worker released the capture and keeps
-/// reconnecting. `preferences`: the TV's saved preferences could not be
-/// read; the service runs with the defaults and keeps the file until the app
-/// saves preferences. `other`: anything else. Open: an app reads a kind it
-/// does not know as `other`.
+// Mirrors `prysm_ports::Fix`.
+/// The person's next step. `try_again`: start again. `change_settings`:
+/// change the settings (in the portal); a save that validates replaces them.
+/// `set_up`: set up the service again: it lacks a permission it needs.
+/// `unsupported`: nothing makes this work on this TV. `restart_tv`: restart
+/// the TV: a worker that did not end may still hold the capture. Open: an
+/// app reads a fix it does not know as `try_again`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = FailureKind)]
+#[schema(as = Fix)]
 #[serde(rename_all = "snake_case")]
-pub enum FailureKindSchema {
-    Encoder,
-    Receiver,
-    Version,
-    Replaced,
-    ReceiverFailed,
-    Preferences,
-    Other,
-}
-
-// Mirrors `prysm_webos_link::WorkerFailure`.
-/// A failure: what it is and its message with the causes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = WorkerFailure)]
-#[serde(deny_unknown_fields)]
-pub struct WorkerFailureSchema {
-    pub kind: FailureKindSchema,
-    /// What failed, with its cause chain (cut to 1 KiB).
-    pub message: String,
+pub enum FixSchema {
+    TryAgain,
+    ChangeSettings,
+    SetUp,
+    Unsupported,
+    RestartTv,
 }
 
 // Mirrors `prysm_ports::LightingTarget`.
@@ -97,7 +74,7 @@ pub enum LightingTargetSchema {
 }
 
 // Mirrors `prysm_ports::OutputIssue`.
-/// Why the lights are not showing screen sync while lighting runs. `off`:
+/// Why the lights do not show what was chosen. `off`:
 /// switched off on the device. `overridden`: the device's own override is
 /// on (WLED: live override). `not_live`: the device is not taking the
 /// colours (WLED: not in live mode, or no DDP arriving). `other_sender`:
@@ -125,9 +102,18 @@ pub enum OutputIssueSchema {
 /// when the video changes, not a failure. `paused`: the
 /// receiver stopped the stream because its lighting is off; the TV capture
 /// is released until a receiver takes a connection again, not a failure.
-/// `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
-/// `failed`: the encoder, version, replaced or receiver-failed failure. The
-/// state's own `failure` is the one to show.
+/// `waiting`: the receiver is unavailable (not lighting, unreachable, or its
+/// name does not resolve); the worker keeps reconnecting, not a failure.
+/// `encoder_failed`: the encoder the receiver requested could not start or
+/// failed; the receiver is told, and another encoding chosen in its portal
+/// may work. `version_differs`: Prysm speaks another capture stream version;
+/// the older one needs updating, and the worker keeps reconnecting.
+/// `replaced`: another TV took over the stream at Prysm; this one sends no
+/// more until capture is stopped and started, the TV wakes, or the Prysm
+/// address changes. `receiver_failed`: Prysm's receiving source failed with
+/// this TV's stream (a refusal, a keyframe that does not decode, no
+/// decoder), and Prysm shows why; the worker released the capture and keeps
+/// reconnecting. `message` says why, with the causes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = SlimLink)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -141,10 +127,19 @@ pub enum SlimLinkSchema {
     Refused {},
     Paused {},
     Waiting {
-        failure: WorkerFailureSchema,
+        message: String,
     },
-    Failed {
-        failure: WorkerFailureSchema,
+    EncoderFailed {
+        message: String,
+    },
+    VersionDiffers {
+        message: String,
+    },
+    Replaced {
+        message: String,
+    },
+    ReceiverFailed {
+        message: String,
     },
 }
 
@@ -174,8 +169,9 @@ pub(crate) fn always_false() -> ObjectBuilder {
     Preferences,
     StreamEncoding,
     SlimLinkSchema,
-    FailureKindSchema,
-    WorkerFailureSchema,
+    Problem,
+    Asked,
+    FixSchema,
     VideoSchema,
     LightingTargetSchema,
     OutputIssueSchema,
@@ -202,9 +198,7 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{
-        FailureKind, LightingTarget, OutputIssue, SlimLink, Video, WorkerFailure,
-    };
+    use prysm_webos_link::{Fix, LightingTarget, OutputIssue, SlimLink, Video};
 
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::{Value, json};
@@ -220,19 +214,8 @@ mod tests {
         for issue in OutputIssue::ALL {
             assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
         }
-        for kind in [
-            FailureKind::Encoder,
-            FailureKind::Receiver,
-            FailureKind::Version,
-            FailureKind::Replaced,
-            FailureKind::ReceiverFailed,
-            FailureKind::Preferences,
-            FailureKind::Other,
-        ] {
-            assert_mirror_round_trips::<FailureKind, FailureKindSchema>(&kind);
-            assert_mirror_round_trips::<WorkerFailure, WorkerFailureSchema>(&WorkerFailure::new(
-                kind, "x",
-            ));
+        for fix in Fix::ALL {
+            assert_mirror_round_trips::<Fix, FixSchema>(&fix);
         }
         for encoding in StreamEncoding::ALL {
             assert_mirror_round_trips::<SlimLink, SlimLinkSchema>(&SlimLink::Sending {
@@ -245,10 +228,19 @@ mod tests {
             SlimLink::Refused {},
             SlimLink::Paused {},
             SlimLink::Waiting {
-                failure: WorkerFailure::new(FailureKind::Receiver, "x"),
+                message: "x".into(),
             },
-            SlimLink::Failed {
-                failure: WorkerFailure::new(FailureKind::Encoder, "x"),
+            SlimLink::EncoderFailed {
+                message: "x".into(),
+            },
+            SlimLink::VersionDiffers {
+                message: "x".into(),
+            },
+            SlimLink::Replaced {
+                message: "x".into(),
+            },
+            SlimLink::ReceiverFailed {
+                message: "x".into(),
             },
         ] {
             assert_mirror_round_trips::<SlimLink, SlimLinkSchema>(&link);
@@ -280,7 +272,7 @@ mod tests {
     #[test]
     fn document_describes_both_flavors_in_one_set_of_schemas() {
         let document = serde_json::to_value(document()).unwrap();
-        assert_eq!(document["info"]["version"], json!("4"));
+        assert_eq!(document["info"]["version"], json!("5"));
         let schemas = &document["components"]["schemas"];
         // The common fields, and the package's own tagged by `flavor`.
         let parts = schemas["State"]["allOf"].as_array().unwrap();
@@ -310,7 +302,10 @@ mod tests {
         assert_eq!(required(running), ["capturing", "phase"]);
         let mut fields: Vec<_> = running["properties"].as_object().unwrap().keys().collect();
         fields.sort_unstable();
-        assert_eq!(fields, ["capturing", "fps", "lights", "phase", "portal"]);
+        assert_eq!(
+            fields,
+            ["capturing", "fps", "lights", "phase", "portal", "problem"]
+        );
         assert_eq!(
             running["properties"]["lights"]["$ref"],
             json!("#/components/schemas/OutputIssue")
@@ -329,17 +324,41 @@ mod tests {
         for (state, fields) in [
             ("starting", vec!["state"]),
             ("paused", vec!["state"]),
-            ("waiting", vec!["failure", "state"]),
-            ("failed", vec!["failure", "state"]),
+            ("waiting", vec!["message", "state"]),
+            ("encoder_failed", vec!["message", "state"]),
+            ("version_differs", vec!["message", "state"]),
+            ("replaced", vec!["message", "state"]),
+            ("receiver_failed", vec!["message", "state"]),
         ] {
             assert_eq!(
                 required(variant(schemas, "SlimLink", "state", state)),
                 fields
             );
         }
+        // Only asking always has a problem.
+        for worker in ["FullWorker", "SlimWorker"] {
+            assert_eq!(
+                required(variant(schemas, worker, "phase", "stopping")),
+                ["phase"]
+            );
+            let asking = variant(schemas, worker, "phase", "asking");
+            assert_eq!(required(asking), ["phase", "problem"]);
+            assert_eq!(
+                asking["properties"]["problem"]["$ref"],
+                json!("#/components/schemas/Problem")
+            );
+        }
+        assert_eq!(required(&schemas["Problem"]), ["asked", "message"]);
+        // What is asked is one tag, with the fix only for `ask`.
         assert_eq!(
-            required(variant(schemas, "SlimWorker", "phase", "stopping")),
-            ["phase"]
+            required(variant(schemas, "Asked", "step", "unanswered")),
+            ["step"]
+        );
+        let ask = variant(schemas, "Asked", "step", "ask");
+        assert_eq!(required(ask), ["fix", "step"]);
+        assert_eq!(
+            ask["properties"]["fix"]["$ref"],
+            json!("#/components/schemas/Fix")
         );
         let preferences = &schemas["Preferences"];
         assert_eq!(preferences["additionalProperties"], json!(false));

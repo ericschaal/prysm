@@ -71,15 +71,33 @@ fn events_round_trip() {
         (SlimLink::Refused {}, r#"{"state":"refused"}"#),
         (
             SlimLink::Waiting {
-                failure: WorkerFailure::new(FailureKind::Receiver, "refused"),
+                message: "refused".into(),
             },
-            r#"{"state":"waiting","failure":{"kind":"receiver","message":"refused"}}"#,
+            r#"{"state":"waiting","message":"refused"}"#,
         ),
         (
-            SlimLink::Failed {
-                failure: WorkerFailure::new(FailureKind::Encoder, "busy"),
+            SlimLink::EncoderFailed {
+                message: "busy".into(),
             },
-            r#"{"state":"failed","failure":{"kind":"encoder","message":"busy"}}"#,
+            r#"{"state":"encoder_failed","message":"busy"}"#,
+        ),
+        (
+            SlimLink::VersionDiffers {
+                message: "v2".into(),
+            },
+            r#"{"state":"version_differs","message":"v2"}"#,
+        ),
+        (
+            SlimLink::Replaced {
+                message: "r".into(),
+            },
+            r#"{"state":"replaced","message":"r"}"#,
+        ),
+        (
+            SlimLink::ReceiverFailed {
+                message: "f".into(),
+            },
+            r#"{"state":"receiver_failed","message":"f"}"#,
         ),
     ] {
         let status = Event::Status(WorkerStatus::Slim(SlimStatus {

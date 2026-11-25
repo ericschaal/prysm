@@ -282,8 +282,8 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
 }
 
 impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
-    /// Load preferences. Unreadable ones are reported (the state's failure
-    /// `preferences`), the defaults used, and the file left as it is until
+    /// Load preferences. Unreadable ones are reported (the state's
+    /// `unreadable`), the defaults used, and the file left as it is until
     /// the app saves preferences.
     pub fn new(config: Config, launcher: L, mut store: S, installer: I, now: Instant) -> Self {
         let flavor = config.flavor;

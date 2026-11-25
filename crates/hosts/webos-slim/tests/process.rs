@@ -74,9 +74,8 @@ fn an_unreachable_receiver_is_a_reported_wait() {
     let status = events(&mut child, |event| {
         event["type"] == "status" && event["link"]["state"] == "waiting"
     });
-    assert_eq!(status["link"]["failure"]["kind"], "receiver", "{status}");
     assert!(
-        status["link"]["failure"]["message"]
+        status["link"]["message"]
             .as_str()
             .unwrap()
             .starts_with("waiting for the receiver"),

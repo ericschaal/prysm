@@ -9,9 +9,9 @@ use prysm_ports::StreamEncoding;
 use prysm_ports::{Error, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
+use prysm_webos_link::SlimLink;
 use prysm_webos_link::worker::{Link, Peer, Stop, StopHandle};
 use prysm_webos_link::{Command, Event, LightingTarget, SlimStatus, Video, WorkerStatus};
-use prysm_webos_link::{FailureKind, SlimLink};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -145,28 +145,32 @@ fn paused(event: &Event) -> bool {
     status(event).is_some_and(|status| status.link == SlimLink::Paused {} && !status.capturing)
 }
 
-/// The link's wait or failure message, if it is of `kind`.
-fn failure(event: &Event, kind: FailureKind) -> Option<&str> {
-    link(event)
-        .and_then(SlimLink::failure)
-        .filter(|failure| failure.kind == kind)
-        .map(|failure| failure.message.as_str())
-}
-
 fn waiting(event: &Event) -> Option<&str> {
-    failure(event, FailureKind::Receiver).filter(|_| capturing(event) == Some(false))
+    match link(event)? {
+        SlimLink::Waiting { message } if capturing(event) == Some(false) => Some(message),
+        _ => None,
+    }
 }
 
 fn version_differs(event: &Event) -> Option<&str> {
-    failure(event, FailureKind::Version)
+    match link(event)? {
+        SlimLink::VersionDiffers { message } => Some(message),
+        _ => None,
+    }
 }
 
 fn encoder_failure(event: &Event) -> Option<&str> {
-    failure(event, FailureKind::Encoder)
+    match link(event)? {
+        SlimLink::EncoderFailed { message } => Some(message),
+        _ => None,
+    }
 }
 
 fn replaced(event: &Event) -> Option<&str> {
-    failure(event, FailureKind::Replaced)
+    match link(event)? {
+        SlimLink::Replaced { message } => Some(message),
+        _ => None,
+    }
 }
 
 fn encoding(event: &Event) -> Option<StreamEncoding> {

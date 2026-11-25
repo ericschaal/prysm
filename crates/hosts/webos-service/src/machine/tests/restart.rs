@@ -30,10 +30,13 @@ fn a_restart_that_did_not_help_asks_the_person() {
         ],
     );
     let state = m.state();
-    assert_eq!(full_state(&state).1, &FullWorker::Stopped);
+    assert!(matches!(full_state(&state).1, FullWorker::Asking { .. }));
     assert_eq!(
-        message(&state),
-        Some("again after a restart: worker killed by signal 9 (try again)")
+        asked(&state),
+        Some((
+            TRY_AGAIN,
+            "again after a restart: worker killed by signal 9"
+        ))
     );
     assert_eq!(
         state.log,
@@ -69,7 +72,7 @@ fn a_frame_gives_the_restart_back_each_time() {
     }
     script(&mut m, t0, steps);
     let state = m.state();
-    assert_eq!(state.failure, None);
+    assert_eq!(state.package.problem(), None);
     assert_eq!(state.log.len(), 3, "each restart is in the tail");
 }
 
@@ -94,7 +97,7 @@ fn standby_gives_the_restart_back() {
             (4_000, Exited(Exit::Signal(9)), start()),
         ],
     );
-    assert_eq!(m.state().failure, None);
+    assert_eq!(m.state().package.problem(), None);
 }
 
 /// A worker let go during standby may still hold the capture: the person
@@ -118,10 +121,13 @@ fn a_worker_let_go_in_standby_is_asked_about_at_wake() {
         ],
     );
     let state = m.state();
-    assert_eq!(full_state(&state).1, &FullWorker::Stopped);
+    assert!(matches!(full_state(&state).1, FullWorker::Asking { .. }));
     assert_eq!(
-        message(&state),
-        Some("worker not reaped 8 s after its kill (restart the TV)")
+        asked(&state),
+        Some((
+            Asked::Ask(Fix::RestartTv),
+            "worker not reaped 8 s after its kill"
+        ))
     );
     script(
         &mut m,
@@ -153,8 +159,8 @@ fn a_slim_worker_is_restarted_once_then_asks() {
         ],
     );
     assert_eq!(
-        message(&m.state()),
-        Some("again after a restart: release unconfirmed (try again)")
+        asked(&m.state()),
+        Some((TRY_AGAIN, "again after a restart: release unconfirmed"))
     );
     script(&mut m, t0, vec![(5, Enabled(true), start())]);
 }
@@ -179,9 +185,15 @@ fn a_stopping_workers_frames_do_not_count() {
             (4, Exited(Exit::Code(1)), vec![]),
         ],
     );
-    assert_eq!(full_state(&m.state()).1, &FullWorker::Stopped);
+    assert!(matches!(
+        full_state(&m.state()).1,
+        FullWorker::Asking { .. }
+    ));
     assert_eq!(
-        message(&m.state()),
-        Some("again after a restart: worker exited with code 1 (try again)")
+        asked(&m.state()),
+        Some((
+            TRY_AGAIN,
+            "again after a restart: worker exited with code 1"
+        ))
     );
 }

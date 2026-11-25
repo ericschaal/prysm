@@ -3,6 +3,20 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description What the person is asked: what nothing on the TV recovers, as
+         *     `{ "step": … }`, with the person's next step for `ask`. Open: an app
+         *     reads a step it does not know as `ask` with `try_again`.
+         */
+        Asked: {
+            /** @enum {string} */
+            step: "unanswered";
+        } | {
+            /** @description The person must act, by this step. */
+            fix: components["schemas"]["Fix"];
+            /** @enum {string} */
+            step: "ask";
+        };
         /** @description The `uninstall` reply. */
         DoneReply: {
             /** @enum {boolean} */
@@ -33,63 +47,62 @@ export interface components {
             returnValue: false;
         };
         /**
-         * @description What a failure is, so the app can offer the matching fix. `encoder`
-         *     (slim): the encoder the receiver requested could not start or failed;
-         *     the receiver is told, and another encoding chosen in its portal may work.
-         *     `receiver` (slim): the receiver is unavailable (not lighting, unreachable,
-         *     or its name does not resolve); the worker keeps reconnecting. `version`
-         *     (slim): Prysm speaks another capture stream version; the older one needs
-         *     updating, and the worker keeps reconnecting. `replaced` (slim): another
-         *     TV took over the stream at Prysm; this one stopped sending until the
-         *     worker restarts (capture stopped and started, the TV waking, or a new
-         *     Prysm address). `receiver_failed` (slim): Prysm's receiving source failed
-         *     with this TV's stream (a refusal, a keyframe that does not decode, no
-         *     decoder), and Prysm shows why; the worker released the capture and keeps
-         *     reconnecting. `preferences`: the TV's saved preferences could not be
-         *     read; the service runs with the defaults and keeps the file until the app
-         *     saves preferences. `other`: anything else. Open: an app reads a kind it
-         *     does not know as `other`.
+         * @description The person's next step. `try_again`: start again. `change_settings`:
+         *     change the settings (in the portal); a save that validates replaces them.
+         *     `set_up`: set up the service again: it lacks a permission it needs.
+         *     `unsupported`: nothing makes this work on this TV. `restart_tv`: restart
+         *     the TV: a worker that did not end may still hold the capture. Open: an
+         *     app reads a fix it does not know as `try_again`.
          * @enum {string}
          */
-        FailureKind: "encoder" | "receiver" | "version" | "replaced" | "receiver_failed" | "preferences" | "other";
+        Fix: "try_again" | "change_settings" | "set_up" | "unsupported" | "restart_tv";
         /** @description The full package's worker process, as `{ "phase": … }`. */
         FullWorker: {
             /** @enum {string} */
             phase: "stopped";
         } | {
-            /** @description Lighting runs and frames arrive (false while it waits for video). */
+            /**
+             * @description Screen sync runs and frames arrive (false while it waits for
+             *     video).
+             */
             capturing: boolean;
             /**
              * Format: int32
              * @description Frames per second over about the last second, rounded, while
-             *     lighting runs; 0 while it waits for frames.
+             *     screen sync runs; 0 while it waits for frames.
              */
             fps?: number;
             /**
-             * @description Why the lights are not showing screen sync while lighting runs,
-             *     as the worker last reported it: `unreachable` also while it
-             *     waits for lights that do not answer.
+             * @description Why the lights do not show what was chosen, as the worker last
+             *     reported it: with screen sync any issue, `unreachable` also while
+             *     it waits for lights that do not answer; with off or effects
+             *     `unreachable` alone, while the lights do not answer the request
+             *     that puts them in that mode (tried again until they do).
              */
             lights?: components["schemas"]["OutputIssue"];
             /** @enum {string} */
             phase: "running";
             /** @description The portal's LAN address once the worker reported it. */
             portal?: string;
+            /**
+             * @description What the worker asks of the person: it keeps running, since its
+             *     portal is where settings change.
+             */
+            problem?: components["schemas"]["Problem"];
         } | {
             /** @enum {string} */
             phase: "stopping";
             /** @description The portal's LAN address the worker last reported. */
             portal?: string;
+            /**
+             * @description What the person is asked once it exited; absent when a new
+             *     worker follows (a restart), or none is wanted.
+             */
+            problem?: components["schemas"]["Problem"];
         } | {
             /** @enum {string} */
-            phase: "retrying";
-            /**
-             * Format: int32
-             * @description Whole seconds until the next start, rounded up, when this state
-             *     was sent (at least 1). The app counts down from when it received
-             *     it; no clock is shared.
-             */
-            seconds: number;
+            phase: "asking";
+            problem: components["schemas"]["Problem"];
         };
         /** @description `getState` request. */
         GetStateRequest: {
@@ -102,7 +115,7 @@ export interface components {
          */
         LightingTarget: "off" | "screen_sync" | "effects";
         /**
-         * @description Why the lights are not showing screen sync while lighting runs. `off`:
+         * @description Why the lights do not show what was chosen. `off`:
          *     switched off on the device. `overridden`: the device's own override is
          *     on (WLED: live override). `not_live`: the device is not taking the
          *     colours (WLED: not in live mode, or no DDP arriving). `other_sender`:
@@ -158,6 +171,12 @@ export interface components {
              */
             prysm_address?: string;
         };
+        /** @description A failure the person is asked about. */
+        Problem: {
+            asked: components["schemas"]["Asked"];
+            /** @description What failed, with its causes. */
+            message: string;
+        };
         /** @description `setEnabled` request (slim package). */
         SetEnabledRequest: {
             /** @description Frames should flow to the receiver. */
@@ -177,9 +196,18 @@ export interface components {
          *     when the video changes, not a failure. `paused`: the
          *     receiver stopped the stream because its lighting is off; the TV capture
          *     is released until a receiver takes a connection again, not a failure.
-         *     `waiting`: the receiver is unavailable (`failure.kind` `receiver`).
-         *     `failed`: the encoder, version, replaced or receiver-failed failure. The
-         *     state's own `failure` is the one to show.
+         *     `waiting`: the receiver is unavailable (not lighting, unreachable, or its
+         *     name does not resolve); the worker keeps reconnecting, not a failure.
+         *     `encoder_failed`: the encoder the receiver requested could not start or
+         *     failed; the receiver is told, and another encoding chosen in its portal
+         *     may work. `version_differs`: Prysm speaks another capture stream version;
+         *     the older one needs updating, and the worker keeps reconnecting.
+         *     `replaced`: another TV took over the stream at Prysm; this one sends no
+         *     more until capture is stopped and started, the TV wakes, or the Prysm
+         *     address changes. `receiver_failed`: Prysm's receiving source failed with
+         *     this TV's stream (a refusal, a keyframe that does not decode, no
+         *     decoder), and Prysm shows why; the worker released the capture and keeps
+         *     reconnecting. `message` says why, with the causes.
          */
         SlimLink: {
             /** @enum {string} */
@@ -200,13 +228,25 @@ export interface components {
             /** @enum {string} */
             state: "paused";
         } | {
-            failure: components["schemas"]["WorkerFailure"];
+            message: string;
             /** @enum {string} */
             state: "waiting";
         } | {
-            failure: components["schemas"]["WorkerFailure"];
+            message: string;
             /** @enum {string} */
-            state: "failed";
+            state: "encoder_failed";
+        } | {
+            message: string;
+            /** @enum {string} */
+            state: "version_differs";
+        } | {
+            message: string;
+            /** @enum {string} */
+            state: "replaced";
+        } | {
+            message: string;
+            /** @enum {string} */
+            state: "receiver_failed";
         };
         /** @description The slim package's worker process, as `{ "phase": … }`. */
         SlimWorker: {
@@ -220,7 +260,7 @@ export interface components {
             capturing: boolean;
             /**
              * @description Where the uplink to the receiver stands, as the worker last
-             *     reported it.
+             *     reported it; it says the worker's own waits and failures.
              */
             link: components["schemas"]["SlimLink"];
             /** @enum {string} */
@@ -228,16 +268,15 @@ export interface components {
         } | {
             /** @enum {string} */
             phase: "stopping";
+            /**
+             * @description What the person is asked once it exited; absent when a new
+             *     worker follows (a restart), or none is wanted.
+             */
+            problem?: components["schemas"]["Problem"];
         } | {
             /** @enum {string} */
-            phase: "retrying";
-            /**
-             * Format: int32
-             * @description Whole seconds until the next start, rounded up, when this state
-             *     was sent (at least 1). The app counts down from when it received
-             *     it; no clock is shared.
-             */
-            seconds: number;
+            phase: "asking";
+            problem: components["schemas"]["Problem"];
         };
         /**
          * @description The `getState` reply and subscription payload (plus LS2's `returnValue`):
@@ -246,17 +285,18 @@ export interface components {
          */
         State: components["schemas"]["Package"] & {
             /**
-             * @description The current failure (or, slim, the receiver wait): what it is and
-             *     its message with the causes.
-             */
-            failure?: components["schemas"]["WorkerFailure"];
-            /**
              * @description The latest log lines of the supervisor and the worker, oldest first
              *     (at most 20).
              */
             log: string[];
             power: components["schemas"]["Power"];
             preferences: components["schemas"]["Preferences"];
+            /**
+             * @description Why the saved preferences could not be read: the service runs with
+             *     the defaults and keeps the file as it is until the app saves
+             *     preferences. Nothing stopped for it.
+             */
+            unreadable?: string;
             video: components["schemas"]["Video"];
         };
         /** @description A successful state reply: [`State`] with LS2's `returnValue`. */
@@ -284,12 +324,6 @@ export interface components {
          * @enum {string}
          */
         Video: "unknown" | "unavailable" | "available";
-        /** @description A failure: what it is and its message with the causes. */
-        WorkerFailure: {
-            kind: components["schemas"]["FailureKind"];
-            /** @description What failed, with its cause chain (cut to 1 KiB). */
-            message: string;
-        };
     };
     responses: never;
     parameters: never;
@@ -297,10 +331,11 @@ export interface components {
     headers: never;
     pathItems: never;
 }
+export type Asked = components['schemas']['Asked'];
 export type DoneReply = components['schemas']['DoneReply'];
 export type ErrorKind = components['schemas']['ErrorKind'];
 export type ErrorReply = components['schemas']['ErrorReply'];
-export type FailureKind = components['schemas']['FailureKind'];
+export type Fix = components['schemas']['Fix'];
 export type FullWorker = components['schemas']['FullWorker'];
 export type GetStateRequest = components['schemas']['GetStateRequest'];
 export type LightingTarget = components['schemas']['LightingTarget'];
@@ -308,6 +343,7 @@ export type OutputIssue = components['schemas']['OutputIssue'];
 export type Package = components['schemas']['Package'];
 export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];
+export type Problem = components['schemas']['Problem'];
 export type SetEnabledRequest = components['schemas']['SetEnabledRequest'];
 export type SetTargetRequest = components['schemas']['SetTargetRequest'];
 export type SlimLink = components['schemas']['SlimLink'];
@@ -317,6 +353,5 @@ export type StateReply = components['schemas']['StateReply'];
 export type StreamEncoding = components['schemas']['StreamEncoding'];
 export type UninstallRequest = components['schemas']['UninstallRequest'];
 export type Video = components['schemas']['Video'];
-export type WorkerFailure = components['schemas']['WorkerFailure'];
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;

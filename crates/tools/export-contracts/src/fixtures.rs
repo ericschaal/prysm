@@ -18,13 +18,15 @@ use prysm_protocol::{
     SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_runtime::{NullOutput, NullSettings};
-use prysm_webos_link::{FailureKind, SlimLink, Video, WorkerFailure};
+use prysm_webos_link::{Fix, SlimLink, Video};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
     ErrorKind, ErrorReply, GetStateRequest, SetEnabledRequest, SetTargetRequest, StateReply,
     UninstallRequest,
 };
-use prysm_webos_service::state::{FullWorker, Package, Power, SlimWorker, State as TvState};
+use prysm_webos_service::state::{
+    Asked, FullWorker, Package, Power, Problem, SlimWorker, State as TvState,
+};
 use serde_json::{Value, json};
 
 /// A fixture key `module/Name` names a schema of one document; a plain
@@ -41,13 +43,17 @@ pub fn serialized() -> Value {
 }
 
 /// The TV supervisor's Luna values: a state for each package in each worker
-/// phase.
+/// phase, each slim link state, and each kind of what is asked.
 fn luna() -> Value {
     let slim_preferences = Preferences {
         autostart: true,
         prysm_address: Some("http://192.168.1.20:8787".parse().expect("a Prysm address")),
     };
     let portal = || Some("http://192.168.1.5:8787/".to_owned());
+    let problem = |asked, message: &str| Problem {
+        asked,
+        message: message.into(),
+    };
     let full = |target, worker| Package::Full { target, worker };
     let slim = |enabled, worker| Package::Slim { enabled, worker };
     let running = full(
@@ -57,6 +63,7 @@ fn luna() -> Value {
             fps: Some(30),
             lights: None,
             portal: portal(),
+            problem: None,
         },
     );
     let full_states = [
@@ -64,11 +71,21 @@ fn luna() -> Value {
         full(LightingTarget::Off, FullWorker::Stopped),
         full(
             LightingTarget::Effects,
-            FullWorker::Stopping { portal: portal() },
+            FullWorker::Stopping {
+                portal: portal(),
+                problem: None,
+            },
         ),
+        // A stop that asks once the worker exited.
         full(
             LightingTarget::ScreenSync,
-            FullWorker::Retrying { seconds: 2 },
+            FullWorker::Stopping {
+                portal: None,
+                problem: Some(problem(
+                    Asked::Ask(Fix::TryAgain),
+                    "again after a restart: worker killed by signal 9",
+                )),
+            },
         ),
         // Lighting runs while the lights do not answer.
         full(
@@ -78,58 +95,88 @@ fn luna() -> Value {
                 fps: Some(30),
                 lights: Some(OutputIssue::Unreachable),
                 portal: portal(),
+                problem: None,
+            },
+        ),
+        // A running worker asks; its portal is where settings change.
+        full(
+            LightingTarget::Effects,
+            FullWorker::Running {
+                capturing: false,
+                fps: None,
+                lights: None,
+                portal: portal(),
+                problem: Some(problem(
+                    Asked::Unanswered,
+                    "switch to effects: output: no answer",
+                )),
             },
         ),
     ]
+    .into_iter()
+    .chain(Fix::ALL.map(|fix| {
+        full(
+            LightingTarget::ScreenSync,
+            FullWorker::Asking {
+                problem: problem(Asked::Ask(fix), "open capture: denied"),
+            },
+        )
+    }))
     .map(|package| TvState {
         package,
         preferences: Preferences::default(),
         power: Power::Active,
         video: Video::Available,
-        failure: None,
+        unreadable: None,
         log: vec!["prysm-webos: portal on 0.0.0.0:8787".into()],
-    });
-    let encoder = WorkerFailure::new(
-        FailureKind::Encoder,
-        "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable",
-    );
-    let slim_states = [
-        (
-            slim(true, SlimWorker::Retrying { seconds: 4 }),
-            Some(encoder),
-        ),
-        (
-            slim(
-                true,
-                SlimWorker::Running {
-                    capturing: false,
-                    link: SlimLink::Paused {},
-                },
-            ),
-            None,
-        ),
+    })
+    .collect::<Vec<_>>();
+    let message = || "waiting for the receiver: connection refused".to_owned();
+    let links = [
+        SlimLink::Paused {},
         // The TV refuses to share the video it shows.
-        (
-            slim(
-                true,
-                SlimWorker::Running {
-                    capturing: false,
-                    link: SlimLink::Refused {},
-                },
-            ),
-            None,
-        ),
-        (slim(false, SlimWorker::Stopped), None),
-        (slim(false, SlimWorker::Stopping), None),
+        SlimLink::Refused {},
+        SlimLink::Waiting { message: message() },
+        SlimLink::EncoderFailed { message: message() },
+        SlimLink::VersionDiffers { message: message() },
+        SlimLink::Replaced { message: message() },
+        SlimLink::ReceiverFailed { message: message() },
     ]
-    .map(|(package, failure)| TvState {
+    .map(|link| {
+        slim(
+            true,
+            SlimWorker::Running {
+                capturing: false,
+                link,
+            },
+        )
+    });
+    let slim_states = [
+        slim(
+            true,
+            SlimWorker::Asking {
+                problem: problem(
+                    Asked::Ask(Fix::TryAgain),
+                    "cannot start the worker: no such file",
+                ),
+            },
+        ),
+        slim(false, SlimWorker::Stopped),
+        slim(false, SlimWorker::Stopping { problem: None }),
+    ]
+    .into_iter()
+    .chain(links)
+    .enumerate()
+    .map(|(index, package)| TvState {
         package,
         preferences: slim_preferences.clone(),
         power: Power::ScreenSaver,
         video: Video::Unknown,
-        failure,
+        // Unreadable preferences, once.
+        unreadable: (index == 0).then(|| "invalid tv.json: expected a boolean".into()),
         log: Vec::new(),
-    });
+    })
+    .collect::<Vec<_>>();
     let (full, slim) = (&full_states[0], &slim_states[0]);
     let states: Vec<&TvState> = full_states.iter().chain(&slim_states).collect();
     let errors = [

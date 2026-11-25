@@ -4,10 +4,9 @@ use super::*;
 mod restart;
 mod table;
 
+use crate::state::Asked;
 use prysm_ports::StreamEncoding;
-use prysm_webos_link::{
-    Escalation, Failure, FailureKind, FullStatus, PrysmAddress, SlimLink, SlimStatus, WorkerFailure,
-};
+use prysm_webos_link::{Escalation, Failure, Fix, FullStatus, PrysmAddress, SlimLink, SlimStatus};
 use serde_json::json;
 use std::time::Duration;
 
@@ -73,17 +72,15 @@ fn send_target(target: LightingTarget, sequence: u64) -> Effect {
     Effect::Send(Command::Target { target, sequence })
 }
 
-/// The published failure's message.
-fn message(state: &State) -> Option<&str> {
-    state
-        .failure
-        .as_ref()
-        .map(|failure| failure.message.as_str())
-}
+/// The fix most failures ask for.
+const TRY_AGAIN: Asked = Asked::Ask(Fix::TryAgain);
 
-/// The published failure's kind.
-fn kind(state: &State) -> Option<FailureKind> {
-    state.failure.as_ref().map(|failure| failure.kind)
+/// What the published state asks of the person, and why.
+fn asked(state: &State) -> Option<(Asked, &str)> {
+    state
+        .package
+        .problem()
+        .map(|problem| (problem.asked, problem.message.as_str()))
 }
 
 /// A full worker's report of `target`: no frames, no portal, no failure,
@@ -143,15 +140,6 @@ fn slim_link(link: SlimLink) -> Input {
     slim_status(SlimStatus {
         capturing: false,
         link,
-    })
-}
-
-/// A slim worker reports `failure`: a wait for the receiver, or failed.
-fn slim_failure(kind: FailureKind, message: &str) -> Input {
-    let failure = WorkerFailure::new(kind, message);
-    slim_link(match kind {
-        FailureKind::Receiver => SlimLink::Waiting { failure },
-        _ => SlimLink::Failed { failure },
     })
 }
 
@@ -465,7 +453,7 @@ fn slim_receiver_change_restarts_without_backoff_after_reaping() {
             ),
         ],
     );
-    assert_eq!(m.state().failure, None);
+    assert_eq!(m.state().package.problem(), None);
 }
 
 /// Silence is a hang: TERM, one KILL, and on its exit the restart, at once
@@ -498,7 +486,7 @@ fn silence_is_a_hang_then_term_then_one_kill() {
         ],
     );
     let state = m.state();
-    assert_eq!(message(&state), None);
+    assert_eq!(asked(&state), None);
     assert_eq!(
         state.log,
         ["restarting the worker: worker sent nothing for 15 s"]
@@ -532,9 +520,12 @@ fn the_other_packages_status_breaks_the_link() {
         ],
     );
     let state = m.state();
-    assert_eq!(full_state(&state).1, &FullWorker::Stopped);
     assert!(
-        message(&state).is_some_and(|text| text.contains("other package")),
+        matches!(full_state(&state).1, FullWorker::Asking { .. }),
+        "{state:?}"
+    );
+    assert!(
+        asked(&state).is_some_and(|(_, text)| text.contains("other package")),
         "{state:?}"
     );
 
@@ -558,7 +549,14 @@ fn the_other_packages_status_breaks_the_link() {
             ),
         ],
     );
-    assert_eq!(slim_state(&m.state()), (true, &SlimWorker::Stopping));
+    let state = m.state();
+    assert!(
+        matches!(
+            slim_state(&state),
+            (true, SlimWorker::Stopping { problem: Some(_) })
+        ),
+        "{state:?}"
+    );
 }
 
 #[test]
@@ -690,6 +688,7 @@ fn published_state_reflects_the_worker() {
                 fps: None,
                 lights: None,
                 portal: None,
+                problem: None,
             }
         )
     );
@@ -814,18 +813,24 @@ fn only_a_running_worker_is_capturing() {
     assert_eq!(
         full_state(&m.state()).1,
         &FullWorker::Stopping {
-            portal: Some("http://10.0.0.2:8787/".into())
+            portal: Some("http://10.0.0.2:8787/".into()),
+            problem: None,
         }
     );
 }
 
+/// What the person is asked is published in the phase that asks it, with
+/// what is asked; a slim worker's waits and failures are its link's.
 #[test]
-fn failures_carry_their_kind() {
+fn what_is_asked_is_published_where_it_is_asked() {
     let mut m = slim(Preferences {
         autostart: true,
         ..slim_prefs()
     });
     let t0 = Instant::now();
+    let waiting = SlimLink::Waiting {
+        message: "waiting for the receiver: refused".into(),
+    };
     script(
         &mut m,
         t0,
@@ -835,52 +840,18 @@ fn failures_carry_their_kind() {
                 Pw(Active),
                 vec![spawn_slim(&receiver()), video(Video::Unknown)],
             ),
-            (
-                1,
-                slim_failure(FailureKind::Receiver, "waiting for the receiver: refused"),
-                vec![],
-            ),
+            (1, slim_link(waiting.clone()), vec![]),
         ],
     );
     let state = m.state();
-    assert_eq!(kind(&state), Some(FailureKind::Receiver));
+    assert_eq!(asked(&state), None);
     assert_eq!(
-        serde_json::to_value(&state).unwrap()["failure"]["kind"],
-        "receiver"
+        slim_state(&state).1,
+        &SlimWorker::Running {
+            capturing: false,
+            link: waiting,
+        }
     );
-
-    // Prysm of another capture stream version: its own kind, not a wait.
-    script(
-        &mut m,
-        t0,
-        vec![(
-            1,
-            slim_failure(
-                FailureKind::Version,
-                "waiting for the receiver: the capture stream versions differ",
-            ),
-            vec![],
-        )],
-    );
-    let state = m.state();
-    assert_eq!(kind(&state), Some(FailureKind::Version));
-    assert_eq!(
-        serde_json::to_value(&state).unwrap()["failure"]["kind"],
-        "version"
-    );
-
-    script(
-        &mut m,
-        t0,
-        vec![(
-            2,
-            slim_failure(FailureKind::Encoder, "hardware H.264 cannot start"),
-            vec![],
-        )],
-    );
-    assert_eq!(kind(&m.state()), Some(FailureKind::Encoder));
-
-    // What the person is asked is `other` until the Luna job.
     script(
         &mut m,
         t0,
@@ -893,17 +864,37 @@ fn failures_carry_their_kind() {
             (4, Input::SpawnFailed("no such file".into()), vec![]),
         ],
     );
-    assert_eq!(kind(&m.state()), Some(FailureKind::Other));
-    let mut full = full();
-    full.handle(Pw(Active), t0);
-    full.handle(
-        full_status(FullStatus {
-            failure: Some(failure(Escalation::FAIL_FAST, "x")),
-            ..full_report(LightingTarget::Off)
-        }),
-        t0,
+    assert_eq!(
+        serde_json::to_value(m.state()).unwrap()["worker"],
+        json!({
+            "phase": "asking",
+            "problem": {
+                "asked": { "step": "ask", "fix": "try_again" },
+                "message": "cannot start the worker: no such file",
+            },
+        })
     );
-    assert_eq!(kind(&full.state()), Some(FailureKind::Other));
+    // A running full worker keeps running with what it asks.
+    for (escalation, json) in [
+        (
+            Escalation::Ask(Fix::ChangeSettings),
+            json!({ "step": "ask", "fix": "change_settings" }),
+        ),
+        (Escalation::Unanswered, json!({ "step": "unanswered" })),
+    ] {
+        let mut full = full();
+        full.handle(Pw(Active), t0);
+        full.handle(
+            full_status(FullStatus {
+                failure: Some(failure(escalation, "x")),
+                ..full_report(LightingTarget::Off)
+            }),
+            t0,
+        );
+        let worker = &serde_json::to_value(full.state()).unwrap()["worker"];
+        assert_eq!(worker["phase"], "running");
+        assert_eq!(worker["problem"], json!({ "asked": json, "message": "x" }));
+    }
 }
 
 /// A receiver that paused the stream (its lighting is off) is not a
@@ -936,7 +927,7 @@ fn a_paused_receiver_is_published_without_a_failure() {
             link: SlimLink::Paused {},
         }
     );
-    assert_eq!(state.failure, None);
+    assert_eq!(state.package.problem(), None);
     assert_eq!(
         serde_json::to_value(m.state()).unwrap()["worker"]["link"],
         json!({ "state": "paused" })
@@ -952,7 +943,7 @@ fn a_paused_receiver_is_published_without_a_failure() {
     );
     assert_eq!(
         slim_state(&m.state()).1,
-        &SlimWorker::Stopping,
+        &SlimWorker::Stopping { problem: None },
         "a worker being stopped is not paused"
     );
 }
@@ -978,7 +969,7 @@ fn a_refused_video_is_published_without_a_failure() {
         ],
     );
     let state = m.state();
-    assert_eq!(state.failure, None);
+    assert_eq!(state.package.problem(), None);
     assert_eq!(
         serde_json::to_value(&state).unwrap()["worker"]["link"],
         json!({ "state": "refused" })
@@ -1045,7 +1036,7 @@ fn a_requested_stop_clears_the_failure_in_every_phase() {
                 (1, Exited(Exit::Code(1)), vec![]),
             ],
         );
-        assert_eq!(message(&m.state()), Some("no capture (try again)"));
+        assert_eq!(asked(&m.state()), Some((TRY_AGAIN, "no capture")));
         m
     };
     for input in [Enabled(false), Pw(Asleep)] {
@@ -1053,7 +1044,7 @@ fn a_requested_stop_clears_the_failure_in_every_phase() {
         script(&mut m, t0, vec![(2, input.clone(), vec![])]);
         let state = m.state();
         assert_eq!(slim_state(&state).1, &SlimWorker::Stopped, "{input:?}");
-        assert_eq!(state.failure, None, "{input:?}");
+        assert_eq!(state.package.problem(), None, "{input:?}");
     }
     // Capture on, or a new address: the new worker starts without the old
     // one's failure.
@@ -1067,7 +1058,7 @@ fn a_requested_stop_clears_the_failure_in_every_phase() {
             vec![spawn_slim(&receiver()), video(Video::Unknown)],
         )],
     );
-    assert_eq!(m.state().failure, None);
+    assert_eq!(m.state().package.problem(), None);
     let mut m = asking();
     let other = other_receiver();
     script(
@@ -1082,7 +1073,7 @@ fn a_requested_stop_clears_the_failure_in_every_phase() {
             vec![spawn_slim(&other), video(Video::Unknown)],
         )],
     );
-    assert_eq!(m.state().failure, None);
+    assert_eq!(m.state().package.problem(), None);
     // A failed worker being stopped, then disabled: stopped, no failure.
     let mut m = slim(Preferences {
         autostart: true,
@@ -1108,7 +1099,7 @@ fn a_requested_stop_clears_the_failure_in_every_phase() {
     );
     let state = m.state();
     assert_eq!(slim_state(&state).1, &SlimWorker::Stopped);
-    assert_eq!(state.failure, None);
+    assert_eq!(state.package.problem(), None);
 }
 
 /// While a failed worker stops, the supervisor's reason is the failure, not
@@ -1131,7 +1122,9 @@ fn a_failed_stop_shows_why_it_was_stopped() {
             ),
             (
                 1,
-                slim_failure(FailureKind::Receiver, "waiting for the receiver: refused"),
+                slim_link(SlimLink::Waiting {
+                    message: "waiting for the receiver: refused".into(),
+                }),
                 vec![],
             ),
             (
@@ -1143,10 +1136,9 @@ fn a_failed_stop_shows_why_it_was_stopped() {
     );
     let state = m.state();
     assert_eq!(
-        message(&state),
-        Some("worker link broke: malformed (try again)")
+        asked(&state),
+        Some((TRY_AGAIN, "worker link broke: malformed"))
     );
-    assert_eq!(kind(&state), Some(FailureKind::Other));
 }
 
 /// A worker that is not reaped [`KILL_AFTER`] after its kill is let go, so
@@ -1175,12 +1167,13 @@ fn a_worker_never_reaped_after_its_kill_is_let_go() {
 const UNREADABLE: &str = "invalid tv.json";
 
 /// Unreadable preferences stay reported through standby, a healthy worker
-/// and its failures, and end only when preferences are saved (published).
+/// and its failures, beside what the person is asked, and end only when
+/// preferences are saved (published).
 #[test]
 fn unreadable_preferences_are_reported_until_saved() {
     let t0 = Instant::now();
     let mut m = full().with_unreadable_preferences(UNREADABLE);
-    let unreadable = |m: &Machine| kind(&m.state()) == Some(FailureKind::Preferences);
+    let unreadable = |m: &Machine| m.state().unreadable.as_deref() == Some(UNREADABLE);
     assert!(unreadable(&m));
     script(
         &mut m,
@@ -1199,16 +1192,17 @@ fn unreadable_preferences_are_reported_until_saved() {
             (2, Exited(Exit::Code(1)), vec![]),
         ],
     );
-    // What the person is asked comes first; standby dismisses it, not this.
+    // Standby dismisses what the person is asked, not this.
     assert_eq!(
-        message(&m.state()),
-        Some("worker link broke: bad line (try again)")
+        asked(&m.state()),
+        Some((TRY_AGAIN, "worker link broke: bad line"))
     );
+    assert!(unreadable(&m));
     script(&mut m, t0, vec![(2, Pw(Asleep), vec![])]);
     assert!(unreadable(&m));
     let effects = m.handle(Input::Preferences(Preferences::default()), t0);
     assert_eq!(effects, [Effect::Publish]);
-    assert_eq!(m.state().failure, None);
+    assert_eq!(m.state().unreadable, None);
 }
 
 /// The full package's lighting inputs from each target, with the worker in

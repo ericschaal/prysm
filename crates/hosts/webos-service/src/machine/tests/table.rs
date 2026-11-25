@@ -126,7 +126,14 @@ impl Given {
     }
 }
 
-type Row = (Given, u64, Input, Vec<Effect>, Is, Option<&'static str>);
+type Row = (
+    Given,
+    u64,
+    Input,
+    Vec<Effect>,
+    Is,
+    Option<(Asked, &'static str)>,
+);
 
 /// While a worker runs: what it reports, how it ends, and what the person
 /// or the TV does.
@@ -136,21 +143,21 @@ fn running() -> Vec<Row> {
     let term = || vec![Effect::Terminate];
     let restarting = Is::Stopping(Sent::Terminate, Next::Restart);
     let giving_up = Is::Stopping(Sent::Terminate, Next::Ask);
-    let again = Some("again after a restart: release unconfirmed (try again)");
+    let again = Some((TRY_AGAIN, "again after a restart: release unconfirmed"));
     vec![
         (Running, 1_000, capturing(), vec![], Is::Running(Available), None),
         (Running, 1_000, faulty(Escalation::Restart, "release unconfirmed"), term(), restarting, None),
         (
             Running, 1_000, faulty(Escalation::Ask(Fix::ChangeSettings), "bad"),
-            vec![], Is::Running(Available), Some("bad (change the settings)"),
+            vec![], Is::Running(Available), Some((Asked::Ask(Fix::ChangeSettings), "bad")),
         ),
         (
             Running, 1_000, faulty(Escalation::Unanswered, "no answer"), vec![], Is::Running(Available),
-            Some("no answer (check that the lights are on and on the network)"),
+            Some((Asked::Unanswered, "no answer")),
         ),
         (
             Running, 1_000, failed_with(Escalation::Ask(Fix::SetUp), "denied"), vec![],
-            Is::Running(Available), Some("denied (set up the service again)"),
+            Is::Running(Available), Some((Asked::Ask(Fix::SetUp), "denied")),
         ),
         (Running, 1_000, failed_with(Escalation::Restart, "faulted"), vec![], Is::Running(Available), None),
         (Running, 1_000, Exited(Exit::Code(0)), start(), Is::Running(Spent), None),
@@ -158,11 +165,11 @@ fn running() -> Vec<Row> {
         (Running, 1_000, Exited(Exit::Signal(9)), start(), Is::Running(Spent), None),
         (
             Running, 1_000, Input::WorkerBroken("y".into()), term(), giving_up,
-            Some("worker link broke: y (try again)"),
+            Some((TRY_AGAIN, "worker link broke: y")),
         ),
         (
             Running, 1_000, Input::SpawnFailed("s".into()), vec![], Is::Asking,
-            Some("cannot start the worker: s (try again)"),
+            Some((TRY_AGAIN, "cannot start the worker: s")),
         ),
         (Running, 14_999, Tick, vec![], Is::Running(Available), None),
         (Running, 15_000, Tick, term(), restarting, None),
@@ -173,18 +180,18 @@ fn running() -> Vec<Row> {
         ),
         (Running, 1_000, Input::Shutdown, term(), Is::Stopping(Sent::Terminate, Next::Idle), None),
         // Why it said its run ends wins over how it ends.
-        (Said(Escalation::Ask(Fix::SetUp)), 1_000, Exited(Exit::Code(1)), vec![], Is::Asking, Some("said (set up the service again)")),
-        (Said(Escalation::Ask(Fix::SetUp)), 15_500, Tick, term(), giving_up, Some("said (set up the service again)")),
+        (Said(Escalation::Ask(Fix::SetUp)), 1_000, Exited(Exit::Code(1)), vec![], Is::Asking, Some((Asked::Ask(Fix::SetUp), "said"))),
+        (Said(Escalation::Ask(Fix::SetUp)), 15_500, Tick, term(), giving_up, Some((Asked::Ask(Fix::SetUp), "said"))),
         (Said(Escalation::Restart), 1_000, Exited(Exit::Code(1)), start(), Is::Running(Spent), None),
         // The restart is spent: the next fault before a frame asks.
         (Restarted, 1_000, faulty(Escalation::Restart, "release unconfirmed"), term(), giving_up, again),
         (
             Restarted, 1_000, Exited(Exit::Signal(9)), vec![], Is::Asking,
-            Some("again after a restart: worker killed by signal 9 (try again)"),
+            Some((TRY_AGAIN, "again after a restart: worker killed by signal 9")),
         ),
         (
             Restarted, 15_100, Tick, term(), giving_up,
-            Some("again after a restart: worker sent nothing for 15 s (try again)"),
+            Some((TRY_AGAIN, "again after a restart: worker sent nothing for 15 s")),
         ),
         (Restarted, 1_000, status(LightingTarget::Off), vec![], Is::Running(Spent), None),
         // A frame, or the person's choice, gives it back.
@@ -198,8 +205,8 @@ fn running() -> Vec<Row> {
 fn stopping_and_asking() -> Vec<Row> {
     use Given::{Asking, KilledAsked, Sleeping, KilledToRestart, StoppingAsked, StoppingToAsk, StoppingToRestart};
     use Sent::{Kill, Terminate};
-    let broken = Some("worker link broke: x (try again)");
-    let abandoned = Some("worker not reaped 8 s after its kill (restart the TV)");
+    let broken = Some((TRY_AGAIN, "worker link broke: x"));
+    let abandoned = Some((Asked::Ask(Fix::RestartTv), "worker not reaped 8 s after its kill"));
     let effects = || Target(LightingTarget::Effects);
     let asked = Is::Stopping(Terminate, Next::Idle);
     vec![
@@ -242,9 +249,8 @@ fn stopping_and_asking() -> Vec<Row> {
     ]
 }
 
-/// Every row; with unreadable preferences, each the same except that the
-/// unreadable file is the failure wherever no other one is, until
-/// preferences are saved.
+/// Every row; with unreadable preferences, each the same, and the
+/// unreadable file reported beside it until preferences are saved.
 #[test]
 fn every_transition_is_one_row() {
     let t0 = Instant::now();
@@ -262,11 +268,9 @@ fn every_transition_is_one_row() {
             assert_eq!(done, effects, "{what}");
             assert_eq!(is(&m.phase), to, "{what}");
             let state = m.state();
-            if unreadable && !saves && shown.is_none() {
-                assert_eq!(message(&state), Some(UNREADABLE), "{what}");
-            } else {
-                assert_eq!(message(&state), shown, "{what}");
-            }
+            assert_eq!(asked(&state), shown, "{what}");
+            let kept = (unreadable && !saves).then_some(UNREADABLE);
+            assert_eq!(state.unreadable.as_deref(), kept, "{what}");
         }
     }
 }

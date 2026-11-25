@@ -2,7 +2,8 @@
 //! once ([`Lost::escalation`]), and the one reading of an escalation
 //! ([`after`]), with the one automatic recovery, a restart ([`Restart`]).
 use super::Exit;
-use prysm_webos_link::{Escalation, Failure, Fix, KILL_AFTER, SILENCE, WorkerFailure};
+use crate::state::{Asked, Problem};
+use prysm_webos_link::{Escalation, Failure, Fix, KILL_AFTER, SILENCE};
 
 /// Why the supervisor lost a worker, by its own observation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,21 +71,6 @@ pub(super) enum Restart {
     Spent,
 }
 
-/// What the person is asked: an escalation nothing on the TV recovers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Asked {
-    /// The lights do not answer.
-    Unanswered,
-    Ask(Fix),
-}
-
-/// A failure the person is asked about, and its message with the causes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Problem {
-    pub(super) asked: Asked,
-    pub(super) message: String,
-}
-
 /// What follows a worker's failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum After {
@@ -122,22 +108,6 @@ pub(super) fn after(restart: Restart, failure: Failure) -> After {
             message,
         }),
     }
-}
-
-/// Interim, replaced by the Luna job, which publishes the problem with what
-/// is asked: `problem` as the TV app reads a failure today, kind `other`
-/// (shown as one that "Try again" may fix), its message ending in what is
-/// asked, for the app's diagnostics.
-pub(super) fn interim_failure(problem: &Problem) -> WorkerFailure {
-    let asked = match problem.asked {
-        Asked::Unanswered => "check that the lights are on and on the network",
-        Asked::Ask(Fix::TryAgain) => "try again",
-        Asked::Ask(Fix::ChangeSettings) => "change the settings",
-        Asked::Ask(Fix::SetUp) => "set up the service again",
-        Asked::Ask(Fix::Unsupported) => "not supported on this TV",
-        Asked::Ask(Fix::RestartTv) => "restart the TV",
-    };
-    WorkerFailure::other(format!("{} ({asked})", problem.message))
 }
 
 #[cfg(test)]

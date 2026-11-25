@@ -97,27 +97,3 @@ fn every_escalation_has_one_reading() {
         );
     }
 }
-
-/// Until the Luna job: every problem is published as kind `other`, its
-/// message ending in what is asked.
-#[test]
-fn a_problem_is_published_as_a_failure_until_the_luna_job() {
-    let rows = [
-        (
-            Asked::Unanswered,
-            "x (check that the lights are on and on the network)",
-        ),
-        (Asked::Ask(Fix::TryAgain), "x (try again)"),
-        (Asked::Ask(Fix::ChangeSettings), "x (change the settings)"),
-        (Asked::Ask(Fix::SetUp), "x (set up the service again)"),
-        (Asked::Ask(Fix::Unsupported), "x (not supported on this TV)"),
-        (Asked::Ask(Fix::RestartTv), "x (restart the TV)"),
-    ];
-    for (asked, message) in rows {
-        assert_eq!(
-            interim_failure(&ask(asked, "x")),
-            WorkerFailure::other(message),
-            "{asked:?}"
-        );
-    }
-}

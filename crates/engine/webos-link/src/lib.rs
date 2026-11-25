@@ -184,19 +184,38 @@ pub enum SlimLink {
     /// capture is released until a receiver takes a connection again. Not a
     /// failure.
     Paused {},
-    /// The receiver is unavailable (kind [`FailureKind::Receiver`]); the
-    /// worker keeps reconnecting.
-    Waiting { failure: WorkerFailure },
-    /// The encoder, version, replaced or receiver-failed failure.
-    Failed { failure: WorkerFailure },
+    /// The receiver is unavailable (its host is not lighting, is
+    /// unreachable or its name does not resolve), and why. The worker keeps
+    /// reconnecting. Not a failure.
+    Waiting { message: String },
+    /// The encoder the receiver requested could not start or failed. The
+    /// worker refuses that request (the receiver is told) until the
+    /// receiver asks for another; it never switches on its own.
+    EncoderFailed { message: String },
+    /// Prysm speaks another capture stream version than this TV app; the
+    /// older one needs updating. The worker keeps reconnecting, so an update
+    /// on either side is picked up without restarting it.
+    VersionDiffers { message: String },
+    /// Another sender (another TV) took over the stream at Prysm. The worker
+    /// released the capture and connects no more until it restarts (capture
+    /// stopped and started, the TV waking, or a new Prysm address).
+    Replaced { message: String },
+    /// Prysm's receiving source failed with this TV's stream (it refused the
+    /// request, a keyframe did not decode, or Prysm has no decoder); Prysm
+    /// shows why. The worker released the capture and keeps reconnecting, so
+    /// the next lighting start on the computer gets through.
+    ReceiverFailed { message: String },
 }
 
 impl SlimLink {
-    /// The wait or the failure, if any.
-    #[must_use]
-    pub fn failure(&self) -> Option<&WorkerFailure> {
+    /// Why it waits or does not send, in the states that say.
+    pub fn message_mut(&mut self) -> Option<&mut String> {
         match self {
-            Self::Waiting { failure } | Self::Failed { failure } => Some(failure),
+            Self::Waiting { message }
+            | Self::EncoderFailed { message }
+            | Self::VersionDiffers { message }
+            | Self::Replaced { message }
+            | Self::ReceiverFailed { message } => Some(message),
             Self::Starting {} | Self::Sending { .. } | Self::Refused {} | Self::Paused {} => None,
         }
     }
@@ -206,64 +225,6 @@ impl Default for SlimLink {
     fn default() -> Self {
         Self::Starting {}
     }
-}
-
-/// A failure a worker or the supervisor reports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkerFailure {
-    pub kind: FailureKind,
-    /// What failed, with its cause chain.
-    pub message: String,
-}
-
-impl WorkerFailure {
-    #[must_use]
-    pub fn new(kind: FailureKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    /// A failure of kind [`FailureKind::Other`].
-    #[must_use]
-    pub fn other(message: impl Into<String>) -> Self {
-        Self::new(FailureKind::Other, message)
-    }
-}
-
-/// What a reported failure is, so the TV app can offer the matching fix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FailureKind {
-    /// Slim: the encoder the receiver requested could not start or failed.
-    /// The worker refuses that request (the receiver is told) until the
-    /// receiver asks for another; it never switches on its own.
-    Encoder,
-    /// Slim: the receiver is unavailable (its host is not lighting, is
-    /// unreachable or its name does not resolve). The worker keeps
-    /// reconnecting.
-    Receiver,
-    /// Slim: Prysm speaks another capture stream version than this TV app;
-    /// the older one needs updating. The worker keeps reconnecting, so an
-    /// update on either side is picked up without restarting it.
-    Version,
-    /// Slim: another sender (another TV) took over the stream at Prysm. The
-    /// worker released the capture and connects no more until it restarts
-    /// (capture stopped and started, the TV waking, or a new Prysm address).
-    Replaced,
-    /// Slim: Prysm's receiving source failed with this TV's stream (it
-    /// refused the request, a keyframe did not decode, or Prysm has no
-    /// decoder); Prysm shows why. The worker released the capture and keeps
-    /// reconnecting, so the next lighting start on the computer gets through.
-    ReceiverFailed,
-    /// The supervisor could not read the TV's preferences (`tv.json`): it
-    /// runs with the defaults and leaves the file as it is until the app
-    /// saves preferences. Never sent by a worker.
-    Preferences,
-    /// Anything else.
-    Other,
 }
 
 #[cfg(test)]

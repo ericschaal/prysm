@@ -589,7 +589,7 @@ def taken(check: Check) -> Check:
 def test_registered(cell: TvCell, target: OnTv, package: LunaReply, record: Record) -> None:
     """The service is registered: getState answers as this package with its worker; the app, service,
     manifests and boot hook are there."""
-    state = tv.wait_state(target.tv.get_state, lambda s: s['worker']['phase'] in ('running', 'stopped', 'retrying'), 20)
+    state = tv.wait_state(target.tv.get_state, lambda s: s['worker']['phase'] in ('running', 'stopped', 'asking'), 20)
     if state is None or state['flavor'] != cell.flavour:
         raise Failed(f'getState does not answer as {cell.flavour}', state)
     present = target.tv.paths()

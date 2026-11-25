@@ -394,7 +394,7 @@ fn a_failed_save_changes_nothing() {
         "{refused}"
     );
     let state = call("getState", "{}");
-    assert_eq!(state["failure"]["kind"], "preferences", "{state}");
+    assert!(state["unreadable"].is_string(), "{state}");
     assert_eq!(
         state["preferences"],
         serde_json::json!({ "autostart": false })
@@ -417,12 +417,12 @@ fn a_missing_preferences_file_is_no_failure() {
         Instant::now(),
     );
     let state = service.machine().state();
-    assert_eq!(state.failure, None);
+    assert_eq!(state.unreadable, None);
     assert_eq!(state.preferences, Preferences::default());
 }
 
-/// An unreadable `tv.json` is reported as the `preferences` failure, the
-/// defaults are used, and the file stays as it is until preferences are
+/// An unreadable `tv.json` is reported as `unreadable`, the defaults are
+/// used, and the file stays as it is until preferences are
 /// saved.
 #[test]
 fn unreadable_preferences_are_reported_and_kept_until_saved() {
@@ -447,12 +447,8 @@ fn unreadable_preferences_are_reported_and_kept_until_saved() {
             serde_json::from_str(&reply.payload).unwrap()
         };
         let state = call("getState", r#"{"subscribe":true}"#);
-        assert_eq!(state["failure"]["kind"], "preferences", "{content}");
         assert!(
-            state["failure"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("invalid"),
+            state["unreadable"].as_str().unwrap().contains("invalid"),
             "{state}"
         );
         assert_eq!(
@@ -548,13 +544,13 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
     h.world.borrow_mut().exit = Some(Exit::Code(1));
     assert!(h.tick(300));
     let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "asking");
     assert_eq!(
-        published["worker"],
-        serde_json::json!({ "phase": "stopped" })
+        published["worker"]["problem"]["asked"],
+        serde_json::json!({ "step": "ask", "fix": "try_again" })
     );
-    assert_eq!(published["failure"]["kind"], "other");
     assert!(
-        published["failure"]["message"]
+        published["worker"]["problem"]["message"]
             .as_str()
             .unwrap()
             .contains("malformed")
@@ -576,14 +572,14 @@ fn a_worker_that_dies_is_restarted_once() {
     assert!(log[0].starts_with("spawn "), "{log:?}");
     let published = h.bus.published.last().unwrap();
     assert_eq!(published["worker"]["phase"], "running");
-    assert_eq!(published.get("failure"), None);
+    assert_eq!(published["worker"].get("problem"), None);
     h.world.borrow_mut().exit = Some(Exit::Signal(9));
     assert!(h.tick(200));
     assert!(h.log().is_empty(), "no second restart");
     let published = h.bus.published.last().unwrap();
-    assert_eq!(published["worker"]["phase"], "stopped");
+    assert_eq!(published["worker"]["phase"], "asking");
     assert!(
-        published["failure"]["message"]
+        published["worker"]["problem"]["message"]
             .as_str()
             .unwrap()
             .starts_with("again after a restart: worker killed by signal 9")
@@ -596,9 +592,9 @@ fn a_spawn_failure_asks_without_a_worker() {
     h.world.borrow_mut().refuse_spawn = true;
     h.power("Active", 0);
     let published = h.bus.published.last().unwrap();
-    assert_eq!(published["worker"]["phase"], "stopped");
+    assert_eq!(published["worker"]["phase"], "asking");
     assert!(
-        published["failure"]["message"]
+        published["worker"]["problem"]["message"]
             .as_str()
             .unwrap()
             .contains("no such file")
@@ -802,7 +798,6 @@ fn each_package_refuses_the_other_packages_lighting_method() {
 #[test]
 fn replies_keep_their_bytes() {
     use crate::state::{FullWorker, Package, SlimWorker};
-    use prysm_webos_link::{FailureKind, WorkerFailure};
     let full = State {
         package: Package::Full {
             target: LightingTarget::Off,
@@ -811,7 +806,7 @@ fn replies_keep_their_bytes() {
         preferences: Preferences::default(),
         power: Power::Active,
         video: Video::Available,
-        failure: Some(WorkerFailure::new(FailureKind::Other, "x")),
+        unreadable: Some("x".into()),
         log: vec!["a".into()],
     };
     let slim = State {
@@ -819,14 +814,14 @@ fn replies_keep_their_bytes() {
             enabled: true,
             worker: SlimWorker::Stopped,
         },
-        failure: None,
+        unreadable: None,
         log: Vec::new(),
         ..full.clone()
     };
     for (reply, expected) in [
         (
             encode_reply(&StateReply::new(full, Some(true))),
-            r#"{"failure":{"kind":"other","message":"x"},"flavor":"full","log":["a"],"power":"active","preferences":{"autostart":false},"returnValue":true,"subscribed":true,"target":"off","video":"available","worker":{"phase":"stopped"}}"#,
+            r#"{"flavor":"full","log":["a"],"power":"active","preferences":{"autostart":false},"returnValue":true,"subscribed":true,"target":"off","unreadable":"x","video":"available","worker":{"phase":"stopped"}}"#,
         ),
         (
             encode_reply(&StateReply::new(slim, None)),
