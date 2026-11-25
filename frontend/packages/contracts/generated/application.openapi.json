@@ -573,7 +573,7 @@
             "description": "Whether frames arrived in the last second, and if not, why."
           },
           "sent_fps": {
-            "description": "Frames per second whose colours were written to the output over the\nlast second, to one decimal.",
+            "description": "Frames per second whose colours were handed to the output over the\nlast second, to one decimal. An output may drop a frame it cannot\nsend now; the device issue says when the lights do not answer.",
             "example": 29.9,
             "format": "float",
             "minimum": 0,

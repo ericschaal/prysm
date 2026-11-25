@@ -51,12 +51,17 @@ The full wire mapping is in the
   every 5 s, without end, until the lights answer, lighting stops or the
   settings change. It writes no frames meanwhile and holds no output, and,
   as it is no failure, nothing else retries it (the TV's backoff included).
-  The portal and the TV app say "Can’t reach the lights".
-  Every other failed open ends the session at once. The rule and why it
-  converges are `UNANSWERED_INTERVAL` in
+  The portal and the TV app say "Can’t reach the lights". A quiet spell
+  (no frames for 3 s) ends the wait with nothing tried: the issue goes,
+  and the next frame tries the open at once. The release after a quiet
+  spell that the lights do not answer is no failure either: the output is
+  closed, its device's mode unknown, and the stop's idle sets it. Every
+  other failed open or release ends the session at once. The rule and why
+  it converges are `UNANSWERED_INTERVAL` and `Leds::quiet` in
   [`leds.rs`](../../crates/engine/runtime/src/leds.rs).
-- A held WLED output whose state checks get no answer reports the same
-  issue and keeps sending; its checks go on once a second, without backoff.
+- A held WLED output whose state checks fail (no answer, or a reply that is
+  not WLED's state) reports the same issue and keeps sending; its checks go
+  on once a second, without backoff.
 - Surface failures (a portal listener that dies) are recorded in
   `surface_failures`; lighting continues.
 - A settings store that cannot be read is no reason not to start: the

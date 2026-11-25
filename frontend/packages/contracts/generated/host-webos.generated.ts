@@ -224,8 +224,9 @@ export interface components {
             picture: components["schemas"]["Picture"];
             /**
              * Format: float
-             * @description Frames per second whose colours were written to the output over the
-             *     last second, to one decimal.
+             * @description Frames per second whose colours were handed to the output over the
+             *     last second, to one decimal. An output may drop a frame it cannot
+             *     send now; the device issue says when the lights do not answer.
              * @example 29.9
              */
             sent_fps?: number;

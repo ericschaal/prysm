@@ -124,7 +124,8 @@ Setting the target to `screen_sync` opens the capture (a failure is the
 reply); the output is opened at the first frame, so an output that cannot
 open ends the session and appears only in `session.failure`, except lights
 that do not answer: the session runs on, `device.issue` is `unreachable`, and
-the open is tried again at a frame every 5 s until they answer. While no frames arrive, `input.picture` is `quiet` or
+the open is tried again at a frame every 5 s until they answer; a quiet spell
+ends that wait and the issue with it. While no frames arrive, `input.picture` is `quiet` or
 `refused` (waiting for video) and after a few seconds the output is returned to its own
 state until frames return.
 

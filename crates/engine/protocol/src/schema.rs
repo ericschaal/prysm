@@ -351,7 +351,7 @@ pub enum OutputIssueSchema {
     /// Another sender's colours reach the device.
     OtherSender,
     /// The device does not answer state requests, or lighting's open of it:
-    /// lighting runs and tries the open again every few seconds.
+    /// lighting runs and tries the open again at a frame every few seconds.
     Unreachable,
 }
 
