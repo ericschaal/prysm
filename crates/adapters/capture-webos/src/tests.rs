@@ -1182,6 +1182,28 @@ fn close_reports_failed_release() {
     );
 }
 
+/// A release that fails mid-run (here at a change of context) fails the
+/// source with its cause, and `close` reports the release unconfirmed.
+#[test]
+fn a_failed_release_mid_run_leaves_the_release_unconfirmed() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    driver.push([Step::Frame(1)]);
+    let mut frames = start(&driver, &video);
+    next(&mut frames);
+    driver.with(|s| s.release_fails = true);
+    video.reset();
+    let unconfirmed = "webOS video release is unconfirmed: vtCapture_stop failed with status 5";
+    assert_eq!(chain(&failure(&mut frames)), unconfirmed);
+    let error = close(frames).recv_timeout(LIMIT).unwrap().unwrap_err();
+    assert_eq!(chain(&error), unconfirmed);
+    assert_eq!(
+        (calls(&driver).0, calls(&driver).2),
+        (1, 1),
+        "released once, not reopened"
+    );
+}
+
 #[test]
 fn close_reports_unconfirmed_release_within_its_bound() {
     let driver = Driver::new();

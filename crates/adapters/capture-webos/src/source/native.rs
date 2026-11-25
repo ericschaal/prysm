@@ -57,13 +57,13 @@ impl<B: Backend> Native<B> {
     /// the signal's sequence, read at the start of each run of the loop, so
     /// one that comes during a step is seen at the next. Each answer is told
     /// at once, with no stop in between, and the clock is read after the
-    /// native call it answers. Returns the result of the release that ends
-    /// the source.
+    /// native call it answers. Returns `Ok` once stopped or failed with
+    /// every tap released, or the first failed release's error.
     fn capture(&mut self) -> Result<()> {
         self.video.wake(self.worker.wakeup());
         let mut state = State::new(Instant::now());
         loop {
-            // A stop or a failure: the next release, if any, ends the source.
+            // A stop or a failure: the source ends after this step.
             let mut ending = self.worker.stopped();
             let mut event = Some(if ending {
                 Event::Stop
@@ -78,15 +78,7 @@ impl<B: Backend> Native<B> {
                         Action::Open(kind) => event = Some(self.open(kind)),
                         Action::Acquire => event = Some(self.acquire()),
                         Action::Release(then) => {
-                            let released = self.release_tap();
-                            if ending {
-                                return released;
-                            }
-                            // Nothing is held after a failed release.
-                            if let Err(error) = released {
-                                self.worker.fail(error);
-                                return Ok(());
-                            }
+                            self.release_tap()?;
                             if let Then::Reopen { wait } = then {
                                 event = Some(Event::Released { wait });
                             }
@@ -162,6 +154,9 @@ impl<B: Backend> Native<B> {
         }
     }
 
+    /// Release the held tap, if any. A failed release, whenever it comes,
+    /// fails the source with its cause and is the thread's result: the
+    /// device may still be held, so its release is unconfirmed.
     fn release_tap(&mut self) -> Result<()> {
         let Some((kind, tap)) = self.tap.take() else {
             return Ok(());
@@ -173,6 +168,7 @@ impl<B: Backend> Native<B> {
         self.worker
             .watch(operation, || tap.release())
             .map_err(|error| Error::adapter(unconfirmed, error))
+            .inspect_err(|error| self.worker.fail(error.clone()))
     }
 }
 
