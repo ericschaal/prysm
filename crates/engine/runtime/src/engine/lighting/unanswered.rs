@@ -61,12 +61,17 @@ impl Core {
         }
     }
 
-    /// Try the request the lights did not answer again. While it runs,
-    /// commands wait in the mailbox: one request, bounded by the adapter.
+    /// Try the request the lights did not answer again, if a try is still
+    /// due ([`Self::again`]): the loop's timer may have been set before
+    /// shutdown began. While it runs, commands wait in the mailbox: one
+    /// request, bounded by the adapter.
     pub(in crate::engine) async fn try_again(&mut self) {
         let Lighting::Unanswered { mode, .. } = self.lighting else {
             return;
         };
+        if self.again().is_none() {
+            return;
+        }
         let result = self.idle_output(mode).await;
         if !matches!(self.lighting, Lighting::Unanswered { .. }) {
             self.record(&result);
