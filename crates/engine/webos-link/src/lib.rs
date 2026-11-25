@@ -6,7 +6,7 @@
 //! - Supervisor → worker: [`Command`] lines on the worker's stdin.
 //! - Worker → supervisor: [`Event`] lines on the worker's original stdout.
 //! - End: the worker's [`exit`] code.
-//! - Shared policy: the retry [`Backoff`] of both sides.
+//! - The supervisor's retry [`Backoff`].
 //!
 //! Framing ([`encode`], [`LineReader`]): one JSON object per line, at most
 //! [`MAX_LINE`] bytes including the newline, unknown fields rejected. A bad
@@ -146,7 +146,9 @@ pub struct FullStatus {
     /// while the TV has no LAN address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portal: Option<String>,
-    /// The last session or portal failure.
+    /// A faulted session (escalated as `Restart`), else the session's
+    /// failure, else the last portal failure. It stays until a command
+    /// changes it: the worker tries nothing again by itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<Failure>,
 }
@@ -232,9 +234,8 @@ impl WorkerFailure {
 }
 
 /// Delays between attempts after failures: [`Backoff::MIN`] doubling to
-/// [`Backoff::MAX`], back to the start after [`Backoff::HEALTHY`]. The full
-/// worker uses it to re-apply a failed session, the supervisor to restart a
-/// failed worker.
+/// [`Backoff::MAX`], back to the start after [`Backoff::HEALTHY`]. The
+/// supervisor uses it to restart a failed worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Backoff {
     first: Duration,

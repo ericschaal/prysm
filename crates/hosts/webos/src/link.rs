@@ -3,8 +3,8 @@ use futures::future::BoxFuture;
 use prysm_capture_webos::VideoSignal;
 use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
-use prysm_webos_link::worker::{Link, Stop};
-use prysm_webos_link::{Backoff, Command, Event, Failure, FullStatus, HEARTBEAT, WorkerStatus};
+use prysm_webos_link::worker::Link;
+use prysm_webos_link::{Command, Event, Failure, FullStatus, HEARTBEAT, WorkerStatus};
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until};
 
@@ -12,20 +12,18 @@ use tokio::time::{Instant, sleep_until};
 pub type PortalUrl = Box<dyn Fn() -> Option<String> + Send>;
 
 /// `Surface<EngineHandle>`: applies the initial target, then turns link
-/// commands into video signals and targets, reports every snapshot change
-/// (and a heartbeat) as status (the last one before a fault too),
-/// re-applies a non-Off target after a session failure with [`Backoff`],
-/// stops the worker on a faulted session, and fails it (for the supervisor
-/// to start a new one) on a capture failure no source in this process can
-/// recover from ([`needs_restart`]). The portal URL is looked up again
-/// at every heartbeat, so a new LAN address is reported within one.
+/// commands into video signals and targets and reports every snapshot
+/// change (and a heartbeat) as status. A failed or faulted session is in
+/// the status with its escalation ([`failure`]) and stays as it is until
+/// the next command: the worker decides nothing about it. The portal URL is
+/// looked up again at every heartbeat, so a new LAN address is reported
+/// within one.
 pub struct EngineLink {
     link: Link,
     video: VideoSignal,
     initial: LightingTarget,
     portal_url: PortalUrl,
     heartbeat: Duration,
-    backoff: Backoff,
 }
 
 impl EngineLink {
@@ -41,15 +39,13 @@ impl EngineLink {
             initial,
             portal_url,
             heartbeat: HEARTBEAT,
-            backoff: Backoff::default(),
         }
     }
 
-    /// Shorter timings for tests.
+    /// A shorter heartbeat for tests.
     #[cfg(test)]
-    pub fn with_timing(mut self, heartbeat: Duration, first_retry: Duration) -> Self {
+    pub fn with_heartbeat(mut self, heartbeat: Duration) -> Self {
         self.heartbeat = heartbeat;
-        self.backoff = Backoff::starting_at(first_retry);
         self
     }
 
@@ -57,7 +53,7 @@ impl EngineLink {
         let Link {
             mut commands,
             events,
-            stop,
+            ..
         } = self.link;
         if self.initial != LightingTarget::Off {
             apply(&engine, self.initial).await;
@@ -66,35 +62,16 @@ impl EngineLink {
         let mut portal = (self.portal_url)();
         let mut sent: Option<WorkerStatus> = None;
         let mut beat = Instant::now() + self.heartbeat;
-        let mut retry = Retry::new(self.backoff);
         // The last target command applied: 0 until one is.
         let mut applied = 0;
         loop {
-            // One clock read per round, so a retry and a heartbeat set in the
-            // same round fall due together.
-            let now = Instant::now();
             let snapshot = snapshots.borrow_and_update().clone();
             let status = status(&snapshot, portal.as_deref(), applied);
             if sent.as_ref() != Some(&status) {
                 events.send(&Event::Status(status.clone()));
                 sent = Some(status);
-                beat = now + self.heartbeat;
+                beat = Instant::now() + self.heartbeat;
             }
-            if let SessionState::Faulted(phase) = snapshot.session {
-                let failure = Failure::of(&Error::Faulted(phase));
-                events.send(&Event::Failed(failure.clone()));
-                stop.request(Stop::Failed(failure.message));
-                return Ok(());
-            }
-            if let Some(failure) = needs_restart(&snapshot) {
-                events.send(&Event::Failed(failure.clone()));
-                stop.request(Stop::Failed(failure.message));
-                return Ok(());
-            }
-            retry.observe(&snapshot, now);
-            let retry_at = retry.at;
-            // In this order when several are ready: a retry due with the
-            // heartbeat is applied before the heartbeat's status is sent.
             tokio::select! {
                 biased;
                 () = shutdown.requested() => return Ok(()),
@@ -104,16 +81,11 @@ impl EngineLink {
                     Some(Command::Video { video }) => self.video.set(video),
                     Some(Command::ResetVideo {}) => self.video.reset(),
                     Some(Command::Target { target, sequence }) => {
-                        retry.cancel();
                         apply(&engine, target).await;
                         applied = sequence;
                     }
                 },
                 changed = snapshots.changed() => if changed.is_err() { return Ok(()) },
-                () = wait(retry_at) => {
-                    retry.cancel();
-                    apply(&engine, snapshot.target).await;
-                }
                 // The heartbeat: the status again, with the current portal URL.
                 () = sleep_until(beat) => {
                     portal = (self.portal_url)();
@@ -135,24 +107,13 @@ impl Surface for EngineLink {
 }
 
 /// Ask for `target`. A failure is not returned: it lands in the snapshot,
-/// which reports it and retries it ([`Retry`]).
+/// which the status reports.
 async fn apply(engine: &EngineHandle, target: LightingTarget) {
     let _ = engine.set_target(target).await;
 }
 
-async fn wait(at: Option<Instant>) {
-    match at {
-        Some(at) => sleep_until(at).await,
-        None => std::future::pending().await,
-    }
-}
-
 /// The status after the target command `applied`.
 fn status(snapshot: &Snapshot, portal: Option<&str>, applied: u64) -> WorkerStatus {
-    let failure = snapshot
-        .session
-        .failure()
-        .or(snapshot.surface_failures.last());
     WorkerStatus::Full(FullStatus {
         // Running and frames arriving: false while waiting for video.
         capturing: matches!(snapshot.session, SessionState::ScreenSync)
@@ -164,8 +125,21 @@ fn status(snapshot: &Snapshot, portal: Option<&str>, applied: u64) -> WorkerStat
         lights: snapshot.device.issue,
         applied,
         portal: portal.map(str::to_owned),
-        failure: failure.map(Failure::of),
+        failure: failure(snapshot),
     })
+}
+
+/// What the status reports as the failure: a faulted session's
+/// ([`Error::Faulted`], escalated as `Restart`), else the session's, else
+/// the last surface failure; each copied with its escalation.
+fn failure(snapshot: &Snapshot) -> Option<Failure> {
+    match &snapshot.session {
+        SessionState::Faulted(phase) => Some(Failure::of(&Error::Faulted(*phase))),
+        session => session
+            .failure()
+            .or(snapshot.surface_failures.last())
+            .map(Failure::of),
+    }
 }
 
 /// A measured frame rate, rounded to whole frames per second.
@@ -178,158 +152,55 @@ fn whole_fps(fps: f32) -> u16 {
     fps.round().clamp(0.0, f32::from(u16::MAX)) as u16
 }
 
-/// When to re-apply the target after a session failure.
-struct Retry {
-    backoff: Backoff,
-    at: Option<Instant>,
-    running_since: Option<Instant>,
-}
-
-impl Retry {
-    fn new(backoff: Backoff) -> Self {
-        Self {
-            backoff,
-            at: None,
-            running_since: None,
-        }
-    }
-
-    fn observe(&mut self, snapshot: &Snapshot, now: Instant) {
-        if matches!(snapshot.session, SessionState::ScreenSync) {
-            self.running_since.get_or_insert(now);
-        }
-        if !wants_retry(snapshot) {
-            self.at = None;
-            return;
-        }
-        if self.at.is_some() {
-            return;
-        }
-        if self
-            .running_since
-            .take()
-            .is_some_and(|since| now.duration_since(since) >= Backoff::HEALTHY)
-        {
-            self.backoff.reset();
-        }
-        self.at = Some(now + self.backoff.delay());
-    }
-
-    fn cancel(&mut self) {
-        self.at = None;
-    }
-}
-
-/// Why the worker must restart to capture again, when its session ended with
-/// a capture failure no source in this process can recover from: the
-/// worker then fails (exit 1), and the supervisor starts a new one after its
-/// backoff instead of this worker retrying in place.
-fn needs_restart(snapshot: &Snapshot) -> Option<Failure> {
-    let SessionState::Stopped {
-        failure: Some(failure),
-    } = &snapshot.session
-    else {
-        return None;
-    };
-    prysm_capture_webos::needs_new_process(failure).then(|| Failure::of(failure))
-}
-
-/// A non-Off target whose session ended with a failure that a retry can fix.
-/// Invalid or missing settings wait for the user instead.
-fn wants_retry(snapshot: &Snapshot) -> bool {
-    snapshot.target != LightingTarget::Off
-        && matches!(
-            &snapshot.session,
-            SessionState::Stopped { failure: Some(failure) }
-                if !matches!(failure, Error::Invalid(_) | Error::Decode { .. })
-        )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_ports::ValidationError;
+    use prysm_ports::{Escalation, Fix, SessionPhase, ValidationError};
 
-    const FIRST: Duration = Duration::from_millis(100);
-
-    /// What a snapshot says, as far as retrying goes.
-    #[derive(Debug, Clone, Copy)]
-    enum Seen {
-        /// Lighting off after a failure: nothing to retry.
-        Off,
-        Running,
-        /// Stopped with a failure a retry can fix.
-        Failed,
-        /// Stopped because the settings are invalid: the user must act.
-        Invalid,
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    enum Event {
-        Observe(Seen),
-        /// A command, or the retry itself, applied a target.
-        Cancel,
-    }
-
-    fn snapshot(seen: Seen) -> Snapshot {
-        let stopped = |target, failure| Snapshot {
-            target,
-            session: SessionState::Stopped {
-                failure: Some(failure),
-            },
-            ..Snapshot::default()
-        };
-        match seen {
-            Seen::Off => stopped(LightingTarget::Off, Error::other("source failed")),
-            Seen::Running => Snapshot {
-                target: LightingTarget::ScreenSync,
-                session: SessionState::ScreenSync,
-                ..Snapshot::default()
-            },
-            Seen::Failed => stopped(LightingTarget::ScreenSync, Error::other("source failed")),
-            Seen::Invalid => stopped(
-                LightingTarget::ScreenSync,
-                Error::Invalid(ValidationError::new("output", "missing")),
-            ),
-        }
-    }
-
-    /// Only a stopped session whose capture cannot recover in this process
-    /// restarts the worker; a running one, or any other failure, does not.
+    /// A faulted session is reported as `Restart`, before any surface
+    /// failure; another session's failure, or else the last surface
+    /// failure, with its own escalation; nothing when there is none.
     #[test]
-    fn only_an_unrecoverable_capture_failure_restarts_the_worker() {
-        use prysm_capture_webos_sys as sys;
-        let unrecoverable = || {
-            Error::adapter(
-                "cannot open webOS video capture",
-                sys::Error::Create(Box::new(sys::Error::Exception("bad_alloc".into()))),
-            )
-        };
-        let stopped = Snapshot {
+    fn the_status_copies_the_failure_and_its_escalation() {
+        let portal = || Error::other("portal stopped");
+        let snapshot = |session| Snapshot {
             target: LightingTarget::ScreenSync,
-            session: SessionState::Stopped {
-                failure: Some(unrecoverable()),
-            },
+            session,
+            surface_failures: vec![portal()],
             ..Snapshot::default()
         };
-        assert_eq!(
-            needs_restart(&stopped)
-                .map(|failure| failure.message)
-                .as_deref(),
-            Some(
-                "cannot open webOS video capture: vtCapture_create failed: vtcapture exception: bad_alloc"
-            )
-        );
-        let showing_effects = Snapshot {
-            session: SessionState::Effects {
-                failure: Some(unrecoverable()),
-            },
-            ..stopped
-        };
-        assert_eq!(needs_restart(&showing_effects), None);
-        for seen in [Seen::Off, Seen::Running, Seen::Failed, Seen::Invalid] {
-            assert_eq!(needs_restart(&snapshot(seen)), None, "{seen:?}");
+        let invalid = || Error::Invalid(ValidationError::new("output", "missing"));
+        let cases = [
+            (
+                snapshot(SessionState::Faulted(SessionPhase::SourceUnreleased)),
+                Some(Failure::of(&Error::Faulted(SessionPhase::SourceUnreleased))),
+            ),
+            (
+                snapshot(SessionState::Stopped {
+                    failure: Some(invalid()),
+                }),
+                Some(Failure::of(&invalid())),
+            ),
+            (
+                snapshot(SessionState::ScreenSync),
+                Some(Failure::of(&portal())),
+            ),
+            (Snapshot::default(), None),
+        ];
+        for (snapshot, expected) in cases {
+            assert_eq!(failure(&snapshot), expected, "{}", snapshot.session);
         }
+        let escalation = |snapshot| failure(&snapshot).map(|failure| failure.escalation);
+        assert_eq!(
+            escalation(snapshot(SessionState::Faulted(SessionPhase::Running))),
+            Some(Escalation::Restart)
+        );
+        assert_eq!(
+            escalation(snapshot(SessionState::Stopped {
+                failure: Some(invalid())
+            })),
+            Some(Escalation::Ask(Fix::ChangeSettings))
+        );
     }
 
     /// The status says the lights' issue of the running session, the wait
@@ -352,83 +223,5 @@ mod tests {
             };
             assert_eq!(full.lights, issue);
         }
-    }
-
-    fn apply(retry: &mut Retry, event: Event, now: Instant) {
-        match event {
-            Event::Observe(seen) => retry.observe(&snapshot(seen), now),
-            Event::Cancel => retry.cancel(),
-        }
-    }
-
-    /// Every reachable state meets every event: when the retry is due and
-    /// since when a session has run, afterwards. (A scheduled retry with a
-    /// running session cannot happen: running clears the schedule.)
-    #[test]
-    fn every_state_meets_every_event() {
-        let t0 = Instant::now();
-        let now = t0 + Duration::from_secs(10);
-        let due = t0 + Duration::from_secs(5);
-        let idle = (None, None);
-        let scheduled = (Some(due), None);
-        let ran = (None, Some(t0));
-        let first = Some(now + FIRST);
-        #[rustfmt::skip]
-        let cases = [
-            (idle, Event::Observe(Seen::Off), (None, None)),
-            (idle, Event::Observe(Seen::Running), (None, Some(now))),
-            (idle, Event::Observe(Seen::Failed), (first, None)),
-            (idle, Event::Observe(Seen::Invalid), (None, None)),
-            (idle, Event::Cancel, (None, None)),
-            // Lighting turned off cancels a scheduled retry.
-            (scheduled, Event::Observe(Seen::Off), (None, None)),
-            (scheduled, Event::Observe(Seen::Running), (None, Some(now))),
-            // The same failure seen again keeps its time.
-            (scheduled, Event::Observe(Seen::Failed), (Some(due), None)),
-            (scheduled, Event::Observe(Seen::Invalid), (None, None)),
-            (scheduled, Event::Cancel, (None, None)),
-            (ran, Event::Observe(Seen::Off), (None, Some(t0))),
-            (ran, Event::Observe(Seen::Running), (None, Some(t0))),
-            (ran, Event::Observe(Seen::Failed), (first, None)),
-            (ran, Event::Observe(Seen::Invalid), (None, Some(t0))),
-            (ran, Event::Cancel, (None, Some(t0))),
-        ];
-        for ((at, running_since), event, expected) in cases {
-            let mut retry = Retry {
-                backoff: Backoff::starting_at(FIRST),
-                at,
-                running_since,
-            };
-            apply(&mut retry, event, now);
-            assert_eq!(
-                (retry.at, retry.running_since),
-                expected,
-                "{at:?} {running_since:?} meets {event:?}"
-            );
-        }
-    }
-
-    /// Each failure in a row waits twice as long as the one before, until a
-    /// session has run for [`Backoff::HEALTHY`].
-    #[test]
-    fn the_delay_doubles_until_a_session_runs_healthy() {
-        let t0 = Instant::now();
-        let mut retry = Retry::new(Backoff::starting_at(FIRST));
-        let fail_at = |retry: &mut Retry, now: Instant| {
-            apply(retry, Event::Observe(Seen::Failed), now);
-            let due = retry.at.expect("a retry is scheduled");
-            apply(retry, Event::Cancel, due);
-            due - now
-        };
-        assert_eq!(fail_at(&mut retry, t0), FIRST);
-        assert_eq!(fail_at(&mut retry, t0), FIRST * 2);
-        // A session too short to count as healthy keeps doubling.
-        let started = t0 + Duration::from_secs(1);
-        apply(&mut retry, Event::Observe(Seen::Running), started);
-        let short = started + Backoff::HEALTHY - Duration::from_millis(1);
-        assert_eq!(fail_at(&mut retry, short), FIRST * 4);
-        apply(&mut retry, Event::Observe(Seen::Running), short);
-        let healthy = short + Backoff::HEALTHY;
-        assert_eq!(fail_at(&mut retry, healthy), FIRST);
     }
 }

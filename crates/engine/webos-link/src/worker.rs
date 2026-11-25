@@ -23,8 +23,7 @@ use tokio::sync::{mpsc, watch};
 pub enum Stop {
     /// SIGTERM, SIGINT or stdin EOF: exit [`exit::STOPPED`].
     Requested(&'static str),
-    /// Protocol misuse, a lost link, or the worker's own failure: exit
-    /// [`exit::FAILED`].
+    /// Protocol misuse or a lost link: exit [`exit::FAILED`].
     Failed(String),
 }
 

@@ -665,6 +665,62 @@ fn faults_broken_links_and_spawn_failures_retry() {
     );
 }
 
+/// A running full worker that reports a failure escalated as `Restart` is
+/// stopped as failed and restarted after the backoff; one that reports any
+/// other failure keeps running and shows it.
+#[test]
+fn a_reported_restart_stops_the_full_worker_as_failed() {
+    let (mut m, t0) = (full(), Instant::now());
+    let reporting = |escalation| {
+        full_status(FullStatus {
+            failure: Some(failure(escalation, "release unconfirmed")),
+            ..full_report(LightingTarget::ScreenSync)
+        })
+    };
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (1, reporting(Escalation::FAIL_FAST), vec![]),
+            (2, reporting(Escalation::Unanswered), vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert!(matches!(full_state(&state).1, FullWorker::Running { .. }));
+    assert_eq!(message(&state), Some("release unconfirmed"));
+    script(
+        &mut m,
+        t0,
+        vec![
+            (3, reporting(Escalation::Restart), vec![Effect::Terminate]),
+            (4, reporting(Escalation::Restart), vec![]),
+        ],
+    );
+    let state = m.state(t0);
+    assert!(matches!(full_state(&state).1, FullWorker::Stopping { .. }));
+    assert_eq!(message(&state), Some("worker faulted: release unconfirmed"));
+    script(
+        &mut m,
+        t0,
+        vec![
+            (5, Exited(Exit::Code(3)), vec![]),
+            (
+                1_005,
+                Tick,
+                vec![
+                    spawn_full(LightingTarget::ScreenSync),
+                    video(Video::Unknown),
+                ],
+            ),
+        ],
+    );
+}
+
 #[test]
 fn an_exit_keeps_the_workers_last_failure() {
     let (mut m, t0) = (full(), Instant::now());

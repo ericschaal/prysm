@@ -2248,7 +2248,6 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-capture-webos",
- "prysm-capture-webos-sys",
  "prysm-host",
  "prysm-output-wled",
  "prysm-ports",

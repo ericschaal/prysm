@@ -615,19 +615,25 @@ impl Machine {
         }
     }
 
-    /// A running worker's report.
+    /// A running worker's report. A full worker's reported fault stops it
+    /// as failed ([`interim_fault`]).
     fn report(&mut self, status: WorkerStatus, now: Instant, effects: &mut Vec<Effect>) {
         // Up again (full: reporting without a failure; slim: it reached the
         // receiver, which takes its frames, waits for video the TV refuses to
         // share or paused the stream): the last
         // worker's failure is no longer current.
-        let (up, target) = match &status {
-            WorkerStatus::Full(full) => (full.failure.is_none(), Some((full.target, full.applied))),
+        let (up, target, fault) = match &status {
+            WorkerStatus::Full(full) => (
+                full.failure.is_none(),
+                Some((full.target, full.applied)),
+                full.failure.as_ref().and_then(interim_fault),
+            ),
             WorkerStatus::Slim(slim) => (
                 matches!(
                     slim.link,
                     SlimLink::Sending { .. } | SlimLink::Refused {} | SlimLink::Paused {}
                 ),
+                None,
                 None,
             ),
         };
@@ -641,6 +647,9 @@ impl Machine {
         }
         if let Some((target, applied)) = target {
             self.follow(target, applied);
+        }
+        if let Some(why) = fault {
+            self.fail(&why, now, effects);
         }
     }
 
@@ -760,7 +769,8 @@ impl Machine {
 
 /// Interim, deleted by the supervisor's recovery, which reads every
 /// escalation in one exhaustive match: what a running worker's
-/// [`Event::Failed`] meant before failures carried their escalation. A
+/// [`Event::Failed`], or a running full worker's reported failure, meant
+/// before failures carried their escalation. A
 /// `Restart` was the worker's fault: why it is stopped as failed at once,
 /// to be restarted after the backoff. Any other escalation (`None`) was a
 /// failure kept until the worker exits.
