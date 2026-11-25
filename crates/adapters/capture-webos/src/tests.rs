@@ -264,7 +264,7 @@ impl Tap for FakeTap {
             Step::NotReady => Ok(Acquired::NotReady),
             Step::Refused => Ok(Acquired::Refused),
             Step::Fail { fatal } => status("status 5", recovery(fatal)),
-            Step::Withheld => status("status 13", Recovery::Wait),
+            Step::Withheld => status("status 13", Recovery::Withheld),
         }
     }
 

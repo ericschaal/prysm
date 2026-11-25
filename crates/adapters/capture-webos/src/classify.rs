@@ -12,7 +12,7 @@ pub(crate) enum Recovery {
     Retry(Reason),
     /// Nothing tells when the TV will give this video except a change of
     /// the video signal: wait for one.
-    Wait,
+    Withheld,
     /// Leaves this layer.
     Escalate(Escalation),
 }
@@ -36,15 +36,15 @@ pub(crate) enum Reason {
 pub(crate) enum GiveUp {
     /// The source fails fast.
     Fail,
-    /// [`Recovery::Wait`].
-    Wait,
+    /// [`Recovery::Withheld`].
+    Withheld,
 }
 
 impl Reason {
     pub(crate) fn gives_up(self) -> GiveUp {
         match self {
             Self::FreshDriver => GiveUp::Fail,
-            Self::StalledDriver => GiveUp::Wait,
+            Self::StalledDriver => GiveUp::Withheld,
         }
     }
 }
@@ -55,7 +55,7 @@ impl Recovery {
     pub(crate) fn escalation(self) -> Escalation {
         match self {
             Self::Escalate(escalation) => escalation,
-            Self::Retry(_) | Self::Wait => Escalation::FAIL_FAST,
+            Self::Retry(_) | Self::Withheld => Escalation::FAIL_FAST,
         }
     }
 }
@@ -99,7 +99,7 @@ pub(crate) fn video(cause: VideoCause<'_>) -> Recovery {
         | VideoCause::Native(E::Status {
             operation: O::VtPlaneInfo,
             code: 13,
-        }) => Recovery::Wait,
+        }) => Recovery::Withheld,
         VideoCause::Native(
             E::Status { .. } | E::Exception(_) | E::Invalid(_) | E::Failed | E::Device { .. },
         )
@@ -192,7 +192,7 @@ mod tests {
     /// operation needs its own arm here.
     fn status_recovery(operation: sys::Operation, code: i32) -> Recovery {
         use sys::Operation as O;
-        let (retry, wait) = (Recovery::Retry(Reason::FreshDriver), Recovery::Wait);
+        let (retry, wait) = (Recovery::Retry(Reason::FreshDriver), Recovery::Withheld);
         match operation {
             O::VtCurrentCaptureBuffInfo if code == 12 => wait,
             O::VtPlaneInfo if code == 13 => wait,
@@ -316,7 +316,7 @@ mod tests {
     fn every_reason_has_its_schedule() {
         for (reason, give_up) in [
             (Reason::FreshDriver, GiveUp::Fail),
-            (Reason::StalledDriver, GiveUp::Wait),
+            (Reason::StalledDriver, GiveUp::Withheld),
         ] {
             assert_eq!(reason.gives_up(), give_up, "{reason:?}");
         }

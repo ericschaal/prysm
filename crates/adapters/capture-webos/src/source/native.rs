@@ -84,7 +84,7 @@ impl<B: Backend> Native<B> {
                     match action {
                         Action::Release => self.release_tap()?,
                         Action::Deliver(frame) => self.worker.offer(frame),
-                        Action::Refused(refused) => self.worker.refused(refused),
+                        Action::TellRefused(refused) => self.worker.refused(refused),
                         Action::Note(note) => log(note),
                         Action::Sleep(wait) => self.worker.sleep(wait),
                         Action::Idle => self.worker.idle(),
