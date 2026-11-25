@@ -7,8 +7,6 @@
 //! with a deadline and enforces the native-operation watchdog, so a hung
 //! driver call surfaces as an error instead of a hang.
 mod native;
-// Not wired into the native thread yet.
-#[allow(dead_code)]
 mod phase;
 
 use crate::{VideoSignal, WebosSettings};

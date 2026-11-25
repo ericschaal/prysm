@@ -389,8 +389,10 @@ impl State {
         }
     }
 
-    pub(super) fn phase(&self) -> Phase {
-        self.phase
+    /// The tap is being released after a fault: the shell answers that
+    /// release with [`Event::Released`], and no other.
+    pub(super) fn releasing(&self) -> bool {
+        matches!(self.phase.stage(), Some(Stage::Releasing { .. }))
     }
 
     /// The sequence of the signal last seen, so the shell tells only new
