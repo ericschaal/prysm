@@ -4,7 +4,7 @@
 //!
 //! Every decision is [`phase::next`]'s; this shell reads the clock and the
 //! signal, tells the machine what happened and performs what it asks.
-use super::phase::{self, Action, Event, Kind, Note, Occurrence, Rules, State};
+use super::phase::{self, Action, Ask, Event, Kind, Note, Occurrence, Rules, State};
 use super::{Backend, Limits, Tap, UiTap};
 use crate::classify;
 use crate::{Readiness, VideoSignal, WebosSettings};
@@ -72,18 +72,16 @@ impl<B: Backend> Native<B> {
         loop {
             // A stop or a failure: the source ends after this step.
             let mut ending = self.worker.stopped();
-            let mut event = Some(if ending {
+            let mut event = if ending {
                 Event::Stop
             } else {
                 self.signal(&state)
-            });
-            while let Some(told) = event.take() {
-                let step = phase::next(state, told, Instant::now(), &self.rules);
+            };
+            loop {
+                let step = phase::next(state, event, Instant::now(), &self.rules);
                 state = step.state;
                 for action in step.actions {
                     match action {
-                        Action::Open(kind) => event = Some(self.open(kind)),
-                        Action::Acquire => event = Some(self.acquire()),
                         Action::Release => self.release_tap()?,
                         Action::Deliver(frame) => self.worker.offer(frame),
                         Action::Refused(refused) => self.worker.refused(refused),
@@ -97,6 +95,11 @@ impl<B: Backend> Native<B> {
                         }
                     }
                 }
+                event = match step.ask {
+                    Some(Ask::Open(kind)) => self.open(kind),
+                    Some(Ask::Acquire) => self.acquire(),
+                    None => break,
+                };
             }
             if ending {
                 return Ok(());
