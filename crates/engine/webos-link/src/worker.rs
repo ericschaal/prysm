@@ -1,14 +1,13 @@
 //! The worker side of the link: stdio plumbing, why the worker stops, the
 //! exit code that follows, and a `main` that wires them together.
 //!
-//! At startup the worker keeps a duplicate of its original stdout for
-//! [`Event`]s and points fd 1 at stderr, so vendor libraries that print
-//! cannot corrupt the stream. A reader thread decodes [`Command`]s from stdin;
-//! stdin EOF or a bad line stops the worker.
-use crate::{
-    Command, Event, FullStatus, LineReader, LinkError, SlimLink, SlimStatus, WorkerFailure,
-    WorkerStatus, encode, exit,
-};
+//! The worker's first statement is [`take_stdio`]: it keeps a duplicate of
+//! the original stdout for [`Event`]s and points fd 1 at stderr, so nothing
+//! that prints (argument parsing, logging, vendor libraries) can corrupt the
+//! stream; `clippy::print_stdout` is denied in the workspace besides. A
+//! reader thread decodes [`Command`]s from stdin; stdin EOF or a bad line
+//! stops the worker.
+use crate::{Command, Event, Failure, FullStatus, LineReader, LinkError, WorkerStatus, encode};
 use prysm_ports::{Error, chain};
 use std::future::Future;
 use std::io::{self, Write};
@@ -19,11 +18,9 @@ use tokio::sync::{mpsc, watch};
 /// Why a worker is stopping. The first reason wins.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stop {
-    /// SIGTERM, SIGINT or stdin EOF: exit [`exit::STOPPED`].
+    /// SIGTERM, SIGINT or stdin EOF: exit 0.
     Requested(&'static str),
-    /// A native resource is unconfirmed: exit [`exit::FAULTED`].
-    Faulted(String),
-    /// Protocol misuse or a lost link: exit [`exit::FAILED`].
+    /// Protocol misuse or a lost link: exit 1.
     Failed(String),
 }
 
@@ -31,7 +28,7 @@ impl std::fmt::Display for Stop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Requested(why) => why,
-            Self::Faulted(why) | Self::Failed(why) => why,
+            Self::Failed(why) => why,
         })
     }
 }
@@ -127,7 +124,7 @@ fn short(text: String, limit: usize) -> String {
 /// `event` with every free text cut to `limit` bytes.
 fn fit(event: Event, limit: usize) -> Event {
     let short = |text| short(text, limit);
-    let short_failure = |failure: WorkerFailure| WorkerFailure {
+    let short_failure = |failure: Failure| Failure {
         message: short(failure.message),
         ..failure
     };
@@ -139,26 +136,13 @@ fn fit(event: Event, limit: usize) -> Event {
                 ..status
             }))
         }
-        Event::Status(WorkerStatus::Slim(status)) => {
-            Event::Status(WorkerStatus::Slim(SlimStatus {
-                link: match status.link {
-                    SlimLink::Waiting { failure } => SlimLink::Waiting {
-                        failure: short_failure(failure),
-                    },
-                    SlimLink::Failed { failure } => SlimLink::Failed {
-                        failure: short_failure(failure),
-                    },
-                    link => link,
-                },
-                ..status
-            }))
+        Event::Status(WorkerStatus::Slim(mut status)) => {
+            if let Some(message) = status.link.message_mut() {
+                *message = short(std::mem::take(message));
+            }
+            Event::Status(WorkerStatus::Slim(status))
         }
-        Event::Failed { cause } => Event::Failed {
-            cause: short(cause),
-        },
-        Event::Faulted { cause } => Event::Faulted {
-            cause: short(cause),
-        },
+        Event::Failed(failure) => Event::Failed(short_failure(failure)),
     }
 }
 
@@ -257,17 +241,13 @@ impl Link {
         (link, peer)
     }
 
-    /// Take over the process's stdio: events go to the original stdout, fd 1
-    /// becomes stderr, and a thread reads commands from stdin.
+    /// The link over the taken-over stdio: events go to the original stdout,
+    /// and a thread reads commands from stdin.
     ///
     /// # Errors
-    /// The descriptors cannot be duplicated or the thread cannot start.
-    pub fn stdio() -> io::Result<Self> {
-        use nix::fcntl::{FcntlArg, FdFlag, fcntl};
-        let original = nix::unistd::dup(io::stdout())?;
-        fcntl(&original, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
-        nix::unistd::dup2_stdout(io::stderr())?;
-        let out = Mutex::new(std::fs::File::from(original));
+    /// The thread cannot start.
+    pub fn stdio(stdio: Stdio) -> io::Result<Self> {
+        let out = Mutex::new(stdio.events);
         let sink: Sink = Arc::new(move |line: &[u8]| {
             let mut out = out.lock().unwrap_or_else(PoisonError::into_inner);
             out.write_all(line)?;
@@ -288,6 +268,41 @@ impl Link {
             stop,
         })
     }
+}
+
+/// The process's original stdout, kept for events after [`take_stdio`].
+#[derive(Debug)]
+pub struct Stdio {
+    events: std::fs::File,
+}
+
+impl Stdio {
+    /// Keep a duplicate of the original stdout (closed on exec) and point
+    /// fd 1 at stderr.
+    ///
+    /// # Errors
+    /// The descriptors cannot be duplicated.
+    fn take() -> io::Result<Self> {
+        use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+        let original = nix::unistd::dup(io::stdout())?;
+        fcntl(&original, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
+        nix::unistd::dup2_stdout(io::stderr())?;
+        Ok(Self {
+            events: original.into(),
+        })
+    }
+}
+
+/// Take over stdio for the program `name` (see the module documentation);
+/// prints the error and exits 1 when it cannot. The only way
+/// to a [`Stdio`]: called once, as the worker's first statement, since a
+/// second call would keep stderr as the events' stdout.
+#[must_use]
+pub fn take_stdio(name: &'static str) -> Stdio {
+    Stdio::take().unwrap_or_else(|error| {
+        eprintln!("{name}: cannot take over stdio: {error}");
+        std::process::exit(1)
+    })
 }
 
 fn read_commands(
@@ -314,22 +329,24 @@ fn read_commands(
     }
 }
 
-/// The exit code for how a worker ended.
+/// The exit code for how a worker ended: 0 for a stop asked for (or none),
+/// 1 for anything else. The supervisor gives it no meaning: a worker says
+/// why it fails ([`Event::Failed`]), and an exit without it is a worker
+/// lost.
 #[must_use]
 pub fn exit_code(stop: Option<&Stop>, result: &prysm_ports::Result<()>) -> u8 {
     match (stop, result) {
-        (Some(Stop::Faulted(_)), _) | (_, Err(Error::Faulted(_))) => exit::FAULTED,
-        (Some(Stop::Failed(_)), _) | (_, Err(_)) => exit::FAILED,
-        _ => exit::STOPPED,
+        (Some(Stop::Failed(_)), _) | (_, Err(_)) => 1,
+        (Some(Stop::Requested(_)) | None, Ok(())) => 0,
     }
 }
 
 /// Stop with the supervisor: its death sends this process SIGTERM
 /// (`PR_SET_PDEATHSIG` follows the spawning thread, which is the
 /// supervisor's long-lived loop thread). SIGTERM, not SIGKILL: the worker
-/// then runs its normal stop and releases the capture tap; a process killed
-/// inside a native capture call can leave the TV's capture locked until a
-/// reboot.
+/// then runs its normal stop and releases the capture tap. A killed process
+/// was once seen to leave the TV's capture locked until a reboot; later
+/// kills did not reproduce it.
 ///
 /// Called before [`main`] installs its signal handlers; a SIGTERM that
 /// arrives in between takes the default action and ends the process before
@@ -342,8 +359,8 @@ pub fn exit_code(stop: Option<&Stop>, result: &prysm_ports::Result<()>) -> u8 {
 /// adapter before abandoning it; the runtime is shut down without waiting
 /// for such a call, so `main` returns and the process exits. Until it has exited it holds the capture
 /// adapter's cross-process lock (and the full worker its portal port), so a
-/// new worker cannot open a tap meanwhile: it fails and its supervisor backs
-/// off. A thread stuck in the kernel keeps the process, and so the lock,
+/// new worker cannot open a tap meanwhile: it fails, and its supervisor
+/// asks the person. A thread stuck in the kernel keeps the process, and so the lock,
 /// until it returns.
 ///
 /// # Errors
@@ -361,8 +378,8 @@ pub fn guard_parent() -> Result<(), String> {
 }
 
 /// The worker's arguments, parsed by clap for the program `name`. Prints help
-/// and exits 0 on `--help`; prints the error and exits [`exit::USAGE`] on
-/// arguments the worker does not accept (a packaging bug).
+/// (to stderr after [`take_stdio`]) and exits 0 on `--help`; prints the error
+/// and exits 1 on arguments the worker does not accept (a packaging bug).
 #[must_use]
 pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
     let mut command = A::command().name(name).bin_name(name).about(about);
@@ -372,33 +389,30 @@ pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
         .map_err(|error| error.format(&mut command));
     parsed.unwrap_or_else(|error| {
         let _ = error.print();
-        std::process::exit(if error.use_stderr() {
-            exit::USAGE.into()
-        } else {
-            0
-        })
+        std::process::exit(i32::from(error.use_stderr()))
     })
 }
 
-/// Take over stdio, run `body` with the parsed `options` (see [`args`]) on a
-/// current-thread runtime until it returns, and exit with the code for how it
+/// Link to the supervisor over `stdio` (see [`take_stdio`]), run `body` with
+/// the parsed `options` (see [`args`]) on a current-thread runtime until it
+/// returns, and exit with the code for how it
 /// ended. An error from `body`, or a runtime that cannot start, is sent as a
 /// final [`Event::Failed`] first; a stop reason alone (protocol misuse, a lost
 /// link) is not, and nothing is sent before the link exists.
-pub fn main<A, F, Fut>(name: &'static str, options: A, body: F) -> ExitCode
+pub fn main<A, F, Fut>(name: &'static str, stdio: Stdio, options: A, body: F) -> ExitCode
 where
     F: FnOnce(A, Link) -> Fut,
     Fut: Future<Output = prysm_ports::Result<()>>,
 {
     if let Err(message) = guard_parent() {
         eprintln!("{name}: {message}");
-        return ExitCode::from(exit::FAILED);
+        return ExitCode::FAILURE;
     }
-    let link = match Link::stdio() {
+    let link = match Link::stdio(stdio) {
         Ok(link) => link,
         Err(error) => {
             eprintln!("{name}: cannot set up the supervisor link: {error}");
-            return ExitCode::from(exit::FAILED);
+            return ExitCode::FAILURE;
         }
     };
     let (stop, events) = (link.stop.clone(), link.events.clone());
@@ -408,10 +422,10 @@ where
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            let cause = format!("cannot start the async runtime: {error}");
-            eprintln!("{name}: {cause}");
-            events.send(&Event::Failed { cause });
-            return ExitCode::from(exit::FAILED);
+            let error = Error::adapter("cannot start the async runtime", error);
+            eprintln!("{name}: {}", chain(&error));
+            events.send(&Event::Failed(Failure::of(&error)));
+            return ExitCode::FAILURE;
         }
     };
     let result = runtime.block_on(async {
@@ -422,9 +436,8 @@ where
     runtime.shutdown_background();
     let code = exit_code(stop.reason().as_ref(), &result);
     if let Err(error) = &result {
-        let failure = chain(error);
-        eprintln!("{name}: {failure}");
-        events.send(&Event::Failed { cause: failure });
+        eprintln!("{name}: {}", chain(error));
+        events.send(&Event::Failed(Failure::of(error)));
     }
     match stop.reason() {
         Some(why) => eprintln!("{name}: {why}; exit {code}"),
@@ -452,6 +465,7 @@ fn watch_signals(stop: &StopHandle) -> prysm_ports::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SlimLink, SlimStatus};
     use prysm_ports::SessionPhase;
 
     #[test]
@@ -459,31 +473,29 @@ mod tests {
         let ok = Ok(());
         let faulted = Err(Error::Faulted(SessionPhase::ClosingSource));
         let failed = Err(Error::other("no receiver"));
-        assert_eq!(exit_code(None, &ok), exit::STOPPED);
-        assert_eq!(exit_code(Some(&Stop::Requested("x")), &ok), exit::STOPPED);
-        assert_eq!(exit_code(None, &failed), exit::FAILED);
-        assert_eq!(
-            exit_code(Some(&Stop::Failed("x".into())), &ok),
-            exit::FAILED
-        );
-        assert_eq!(exit_code(None, &faulted), exit::FAULTED);
-        assert_eq!(
-            exit_code(Some(&Stop::Faulted("x".into())), &failed),
-            exit::FAULTED
-        );
-        assert_eq!(
-            exit_code(Some(&Stop::Requested("x")), &faulted),
-            exit::FAULTED
-        );
+        let requested = Stop::Requested("x");
+        let misused = Stop::Failed("x".into());
+        let rows = [
+            (None, &ok, 0),
+            (Some(&requested), &ok, 0),
+            (Some(&misused), &ok, 1),
+            (None, &failed, 1),
+            (None, &faulted, 1),
+            (Some(&requested), &faulted, 1),
+            (Some(&misused), &faulted, 1),
+        ];
+        for (stop, result, code) in rows {
+            assert_eq!(exit_code(stop, result), code, "{stop:?}, {result:?}");
+        }
     }
 
     #[test]
     fn first_stop_reason_wins() {
         let stop = StopHandle::default();
         assert_eq!(stop.reason(), None);
-        stop.request(Stop::Faulted("tap".into()));
+        stop.request(Stop::Failed("tap".into()));
         stop.request(Stop::Requested("SIGTERM"));
-        assert_eq!(stop.reason(), Some(Stop::Faulted("tap".into())));
+        assert_eq!(stop.reason(), Some(Stop::Failed("tap".into())));
     }
 
     #[test]
@@ -507,22 +519,25 @@ mod tests {
         let (mut link, mut peer) = Link::memory();
         peer.send(Command::ResetVideo {});
         assert_eq!(link.commands.next().await, Some(Command::ResetVideo {}));
-        link.events.send(&Event::Faulted {
-            cause: "x".repeat(10_000),
-        });
-        let Some(Event::Faulted { cause }) = peer.event().await else {
-            panic!("expected a fault");
+        let long = |text: &str| Failure {
+            escalation: prysm_ports::Escalation::Restart,
+            message: text.repeat(10_000),
         };
-        assert!(cause.len() < 2000, "long causes are shortened");
-        let long = || Some(WorkerFailure::other("y".repeat(10_000)));
+        link.events.send(&Event::Failed(long("x")));
+        let Some(Event::Failed(failure)) = peer.event().await else {
+            panic!("expected a failure");
+        };
+        assert!(failure.message.len() < 2000, "long messages are shortened");
+        assert_eq!(failure.escalation, prysm_ports::Escalation::Restart);
         link.events
             .send(&Event::Status(WorkerStatus::Full(FullStatus {
                 capturing: false,
                 fps: None,
                 target: prysm_ports::LightingTarget::Off,
+                lights: None,
                 applied: 0,
                 portal: Some("z".repeat(10_000)),
-                failure: long(),
+                failure: Some(long("y")),
             })));
         let Some(Event::Status(WorkerStatus::Full(full))) = peer.event().await else {
             panic!("expected a full status");
@@ -532,21 +547,14 @@ mod tests {
         link.events
             .send(&Event::Status(WorkerStatus::Slim(SlimStatus {
                 capturing: false,
-                link: SlimLink::Failed {
-                    failure: long().unwrap(),
+                link: SlimLink::ReceiverFailed {
+                    message: "w".repeat(10_000),
                 },
             })));
-        let Some(Event::Status(WorkerStatus::Slim(slim))) = peer.event().await else {
+        let Some(Event::Status(WorkerStatus::Slim(mut slim))) = peer.event().await else {
             panic!("expected a slim status");
         };
-        assert!(slim.link.failure().unwrap().message.len() < 2000);
-        link.events.send(&Event::Failed {
-            cause: "w".repeat(10_000),
-        });
-        let Some(Event::Failed { cause }) = peer.event().await else {
-            panic!("expected a failure");
-        };
-        assert!(cause.len() < 2000);
+        assert!(slim.link.message_mut().unwrap().len() < 2000);
         peer.close();
         assert_eq!(link.commands.next().await, None);
         link.stop.stopped().await;
@@ -558,7 +566,7 @@ mod tests {
     /// stand-in event.
     #[test]
     fn every_event_fits_one_line_whatever_its_texts_escape_to() {
-        use crate::{FailureKind, MAX_LINE, decode};
+        use crate::{MAX_LINE, decode};
         use prysm_ports::StreamEncoding;
         let lines = Arc::new(Mutex::new(Vec::new()));
         let sent = Arc::clone(&lines);
@@ -572,20 +580,24 @@ mod tests {
         for unit in ["\"", "\\", "\u{1}", "\n", "é", "😀", "x"] {
             for length in [MAX_TEXT - 1, MAX_TEXT, MAX_TEXT + 1, 10_000] {
                 let text = unit.repeat(length.div_ceil(unit.len()));
-                let failure = || Some(WorkerFailure::new(FailureKind::Encoder, text.clone()));
+                let failure = || Failure {
+                    escalation: prysm_ports::Escalation::Ask(prysm_ports::Fix::ChangeSettings),
+                    message: text.clone(),
+                };
                 for event in [
                     Event::Status(WorkerStatus::Full(FullStatus {
                         capturing: true,
                         fps: Some(u16::MAX),
                         target: prysm_ports::LightingTarget::Effects,
+                        lights: Some(prysm_ports::OutputIssue::OtherSender),
                         applied: u64::MAX,
                         portal: Some(text.clone()),
-                        failure: failure(),
+                        failure: Some(failure()),
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
                         capturing: true,
-                        link: SlimLink::Waiting {
-                            failure: failure().unwrap(),
+                        link: SlimLink::EncoderFailed {
+                            message: text.clone(),
                         },
                     })),
                     Event::Status(WorkerStatus::Slim(SlimStatus {
@@ -595,12 +607,7 @@ mod tests {
                             fps: u16::MAX,
                         },
                     })),
-                    Event::Failed {
-                        cause: text.clone(),
-                    },
-                    Event::Faulted {
-                        cause: text.clone(),
-                    },
+                    Event::Failed(failure()),
                 ] {
                     events.send(&event);
                     let line = lines.lock().unwrap().pop().expect("a line");

@@ -16,6 +16,7 @@
 use prysm_core::{Config, Frame, FramePool, PixelFormat, Viewport, YuvRange, YuvStandardMatrix};
 use prysm_processor::PrysmProcessor;
 use std::hint::black_box;
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 const FORMAT: PixelFormat = PixelFormat::NV12 {
@@ -74,14 +75,16 @@ fn time(frames: u32, mut run: impl FnMut(u32)) -> Duration {
     start.elapsed() / frames
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     let count: u32 = std::env::args()
         .nth(1)
         .map_or(120, |n| n.parse().expect("frame count"));
-    println!(
+    let out = &mut io::stdout().lock();
+    writeln!(
+        out,
         "{:<10} {:>9} {:>9} {:>9} {:>9}",
         "size", "capture", "process", "no bars", "preview"
-    );
+    )?;
     for (width, height) in [(640_usize, 360), (960, 540), (1280, 720)] {
         let geometry = (width, height, width.next_multiple_of(256));
         let drivers: Vec<_> = (0..8)
@@ -114,13 +117,15 @@ fn main() {
         let preview = time(count, |i| {
             black_box(prysm_runtime::sample_rgb(&frames[i as usize % 8], full, 160, 90).unwrap());
         });
-        println!(
+        writeln!(
+            out,
             "{:<10} {:>9.2?} {:>9.2?} {:>9.2?} {:>9.2?}",
             format!("{width}x{height}"),
             capture,
             serial,
             no_bars,
             preview
-        );
+        )?;
     }
+    Ok(())
 }

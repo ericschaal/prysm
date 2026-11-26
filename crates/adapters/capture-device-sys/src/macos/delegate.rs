@@ -235,9 +235,9 @@ impl Delegate {
                 self.fail(error);
                 capture.sink.wake();
             }
-            // A quiet session has nothing to restart: it delivers again when
-            // its source does.
-            Verdict::Continue | Verdict::Restart { .. } => {}
+            // Only an interruption restarts, and a session is never
+            // interrupted: it delivers again when its source does.
+            Verdict::Continue | Verdict::Restart => {}
         }
     }
 

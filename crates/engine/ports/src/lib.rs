@@ -14,6 +14,7 @@ mod hangup;
 mod map_only;
 mod modes;
 mod owner;
+mod recovery;
 mod registry;
 mod resolve;
 mod settings;
@@ -38,13 +39,15 @@ pub use handoff::{
 pub use hangup::{CallError, Hangup, Registration, Stopping};
 pub use modes::{Mode, Modes, Span};
 pub use owner::{OwnerThread, Wakeup, Worker};
+pub use recovery::{Escalation, Fix};
 pub use registry::{
     Candidate, OpenFailure, OutputFactory, Registry, SOURCE_OPEN_LIMIT, SourceFactory,
 };
 pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
 pub use snapshot::{
-    Behind, DeviceReport, Input, Latency, LightingTarget, SessionPhase, SessionState, Snapshot,
+    Behind, DeviceReport, Input, Latency, LightingTarget, Picture, SessionPhase, SessionState,
+    Snapshot,
 };
 pub use style::{Style, StyleValues};
 

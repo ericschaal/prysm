@@ -276,11 +276,20 @@ button:disabled {
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
-.status-dot {
+/*
+ * The dot beside the title: what the card says, as a colour. It hangs in
+ * the column's padding, so the title starts where the lines under it do.
+ */
+.status-head {
   position: relative;
-  flex-shrink: 0;
-  width: 0.55rem;
-  height: 0.55rem;
+}
+.status-dot {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-top: -0.3rem;
   margin-right: var(--space-2);
   border-radius: 50%;
   background: rgba(var(--fg), 0.6);
@@ -312,7 +321,6 @@ button:disabled {
   text-overflow: ellipsis;
 }
 .overview h1 {
-  margin-top: var(--space-3);
   font-size: var(--text-hero);
   font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
@@ -325,25 +333,13 @@ button:disabled {
   font-size: var(--text-body);
   line-height: var(--leading);
 }
-/* The quiet line: a countdown or the frame rate, else empty but kept. */
+/* The quiet line: the frame rate, else empty but kept. */
 .meta {
   margin-top: var(--space-2);
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
   font-variant-numeric: tabular-nums;
   line-height: var(--leading);
-}
-/* The time left until the restart, before its words. */
-.retry-bar {
-  display: inline-block;
-  width: 6rem;
-  height: 0.12rem;
-  margin-right: var(--space-3);
-  border-radius: 0.06rem;
-  background: rgb(var(--alert));
-  vertical-align: middle;
-  transform-origin: 0 50%;
-  animation: countdown linear forwards;
 }
 /*
  * ---- Controls ----
@@ -973,14 +969,6 @@ button:active {
   to {
     opacity: 0;
     transform: scale(2.6);
-  }
-}
-@keyframes countdown {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
   }
 }
 @media (prefers-reduced-motion: reduce) {

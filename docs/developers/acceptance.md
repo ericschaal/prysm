@@ -567,8 +567,8 @@ after a failure, Ctrl-C, SIGTERM or SIGHUP:
   `removed`, then nothing of the above but the data files may be left (else
   the teardown fails, saying what is left). While a Prysm process still runs the app is
   NOT removed and the teardown fails: removing it would end Prysm abruptly,
-  and a worker killed with the TV UI capture open leaves the TV's capture
-  locked until a reboot;
+  and a killed worker was once seen to leave the TV's capture locked until
+  a reboot (later kills did not reproduce it);
 - **prysm**: full: the TV's portal at the address `getState` reports, given
   the run's settings (WLED output, neutral processing, the webOS capture at
   640 × 360 and 30 fps without the UI) with `PUT /api/v1/settings`; slim: the

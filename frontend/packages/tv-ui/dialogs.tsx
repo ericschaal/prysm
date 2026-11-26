@@ -1,6 +1,7 @@
 /** The TV app's dialogs: the Prysm address, service options, diagnostics, removal and closing. */
 import { useState, type FormEvent, type ReactNode, type Ref } from 'react';
-import { diagnostics, prysmAddress, shown } from './model';
+import { diagnostics } from './diagnostics';
+import { prysmAddress, shown } from './preferences';
 import type { TvServiceView } from './service';
 
 export type DialogId =
@@ -185,7 +186,10 @@ export function Dialogs({
       description = 'Service state and the latest messages.';
       content = (
         <pre className="diagnostics" id="diagnostics-text" data-scroll>
-          {diagnostics(tv.online === false ? null : tv.state, tv.problem)}
+          {diagnostics(
+            tv.link.status === 'missing' ? null : tv.state,
+            tv.problem,
+          )}
         </pre>
       );
       break;

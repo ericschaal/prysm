@@ -430,17 +430,6 @@ fn a_device_gone_is_released_and_still_unmapped() {
 }
 
 #[test]
-fn only_eio_interrupts_a_dequeue() {
-    assert!(interrupted(&io::Error::from_raw_os_error(libc::EIO)));
-    for errno in [libc::ENODEV, libc::EINVAL, libc::EPIPE] {
-        assert!(
-            !interrupted(&io::Error::from_raw_os_error(errno)),
-            "{errno}"
-        );
-    }
-}
-
-#[test]
 fn other_errors_still_fail_the_release() {
     for (stop, free, failed) in [
         (Some(libc::EIO), None, libc::EIO),
@@ -475,35 +464,4 @@ fn successful_release_is_idempotent_and_preserves_first_error() {
             panic!("already unmapped")
         })
         .unwrap();
-}
-
-#[test]
-fn a_device_gone_while_streaming_is_a_disconnection_with_its_cause() {
-    let gone = failed(
-        io::Error::from_raw_os_error(libc::ENODEV),
-        "error capturing frame",
-    );
-    let CaptureError::Disconnected {
-        source: Some(source),
-        ..
-    } = &gone
-    else {
-        panic!("expected a disconnection, got {gone:?}")
-    };
-    assert_eq!(source.raw_os_error(), Some(libc::ENODEV));
-    assert_eq!(
-        gone.to_string(),
-        "capture device disconnected: error capturing frame"
-    );
-
-    let CaptureError::Backend(other) = failed(
-        io::Error::from_raw_os_error(libc::EIO),
-        "error capturing frame",
-    ) else {
-        panic!("expected a backend error")
-    };
-    assert_eq!(
-        other.downcast_ref::<io::Error>().unwrap().raw_os_error(),
-        Some(libc::EIO)
-    );
 }

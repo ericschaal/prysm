@@ -43,7 +43,9 @@ pub(crate) struct Receiver {
 enum Leave {
     /// The connection closed or failed, or a write to it failed.
     SenderGone(LinkError),
-    /// The sender sent what this end does not take.
+    /// The sender sent what this end does not take. Both ends agreed the
+    /// version at the upgrade, so the same sender would send it again: the
+    /// source fails.
     Malformed(WireError),
     /// A newer sender connected; it replaces this one.
     Replaced(Accepted),
@@ -63,7 +65,7 @@ enum Leave {
 /// How the receive thread ends a connection it leaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ending {
-    /// Close the socket: the sender is gone, or misbehaved.
+    /// Close the socket: the sender is gone.
     Drop,
     /// Send a close (with a code if given), then close the socket. The
     /// sender was asked for nothing, so it sends nothing to read off.
@@ -90,14 +92,13 @@ impl Leave {
     /// What the sender is told.
     fn ending(&self) -> Ending {
         match self {
-            Self::SenderGone(_) | Self::Malformed(_) => Ending::Drop,
+            Self::SenderGone(_) => Ending::Drop,
             Self::Replaced(_) => Ending::CloseAndDrain(Close::Replaced),
             Self::Stopped => Ending::CloseAndDrain(Close::Stopped),
-            Self::Failed(_) => Ending::CloseAndDrain(Close::Failed),
+            Self::Failed(_) | Self::Malformed(_) => Ending::CloseAndDrain(Close::Failed),
             Self::StoppedUnasked => Ending::Close(Some(Close::Stopped)),
-            // The sender, still waiting for a request, fails with
-            // `NoRequest`; it checks the request against its offer itself.
-            Self::OfferExcluded(_) => Ending::Close(None),
+            // The sender, still waiting for a request, hears the failure.
+            Self::OfferExcluded(_) => Ending::Close(Some(Close::Failed)),
         }
     }
 
@@ -105,18 +106,20 @@ impl Leave {
     /// debug level, for diagnosing a sender, which is expected to reconnect.
     fn next(self) -> Next {
         match self {
-            Self::SenderGone(cause) => dropped(&cause),
-            Self::Malformed(cause) => dropped(&cause),
+            Self::SenderGone(cause) => {
+                tracing::debug!(cause = %chain(&cause), "dropped the remote sender's connection");
+                Next::Wait
+            }
+            Self::Malformed(cause) => {
+                let error = Error::adapter("the sender sent what Prysm does not take", cause);
+                tracing::warn!(error = %chain(&error), "remote stream failed");
+                Next::Stop(Some(error))
+            }
             Self::Replaced(newer) => Next::Switch(newer),
             Self::Stopped | Self::StoppedUnasked => Next::Stop(None),
             Self::Failed(error) | Self::OfferExcluded(error) => Next::Stop(Some(error)),
         }
     }
-}
-
-fn dropped(cause: &(dyn std::error::Error + 'static)) -> Next {
-    tracing::debug!(cause = %chain(cause), "dropped the remote sender's connection");
-    Next::Wait
 }
 
 /// What became of one H.264 picture.
@@ -168,7 +171,9 @@ impl Receiver {
     }
 
     /// The newest connection handed over, waiting for one (each offer wakes
-    /// this thread); `None` once stopped.
+    /// this thread); `None` once stopped. Without end: a sender comes at a
+    /// time nothing announces (the TV is switched on, or its capture
+    /// started).
     fn wait_for_sender(&self) -> Option<Accepted> {
         loop {
             if self.worker.stopped() {
@@ -218,9 +223,8 @@ impl Receiver {
         self.receive(link, offer)
     }
 
-    /// Receive frames until there is a reason to leave. Malformed input
-    /// drops the connection; a refusal or a broken H.264 stream fails the
-    /// source.
+    /// Receive frames until there is a reason to leave. Malformed input, a
+    /// refusal or a broken H.264 stream fails the source.
     fn receive(&mut self, link: &mut Link<TcpStream>, offer: Option<&Offer>) -> Leave {
         let encoding = self.request.encoding.into();
         let mut h264 = H264::Fresh;
@@ -264,6 +268,9 @@ impl Receiver {
                 Encoding::H264 => match h264.decode(&header, payload, pixels) {
                     Decoded::Picture => {}
                     Decoded::Skipped => continue,
+                    // A keyframe request converges: a keyframe resets the
+                    // decoder's references, and one that does not decode
+                    // fails the source (`Broken`).
                     Decoded::Unstarted => {
                         if let Err(error) = send(link, &ToSender::Keyframe) {
                             return Leave::SenderGone(error);
@@ -514,7 +521,11 @@ mod tests {
                 Ending::Drop,
                 Went::Wait,
             ),
-            (Leave::Malformed(WireError::Empty), Ending::Drop, Went::Wait),
+            (
+                Leave::Malformed(WireError::Empty),
+                Ending::CloseAndDrain(Close::Failed),
+                Went::Fail,
+            ),
             (
                 Leave::Replaced(accepted()),
                 Ending::CloseAndDrain(Close::Replaced),
@@ -537,7 +548,7 @@ mod tests {
             ),
             (
                 Leave::OfferExcluded(failure()),
-                Ending::Close(None),
+                Ending::Close(Some(Close::Failed)),
                 Went::Fail,
             ),
         ];

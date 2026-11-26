@@ -1,13 +1,13 @@
 //! One session: a thread owning a source, the processor and an output, and
 //! the engine's handle on it.
 use crate::feeds::Feeds;
-use crate::leds::{Configured, Leds};
+use crate::leds::{Configured, Device, Leds, Write};
 use crate::slot::LatestSlot;
 use crate::stats::{FrameTimes, Stats};
 use crate::worker::{Exit, Flags, Worker, guarded};
 use prysm_core::{Config, EdgeColors, Frame};
 use prysm_ports::{
-    DeviceReport, Error, FrameSource, Hangup, IdleMode, Result, Section, SessionPhase,
+    DeviceReport, Error, FrameSource, Hangup, IdleMode, Pull, Result, Section, SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -57,20 +57,6 @@ impl SessionEnd {
     }
 }
 
-/// How [`Session::stop`] found the session.
-pub(crate) enum Stop {
-    /// The thread stopped because it was asked to: the output was left in
-    /// the stop's mode, as `end.left` says.
-    AsAsked(SessionEnd),
-    /// The thread had ended on its own first. If it idled before the stop
-    /// asked, it left the output in [`UNASKED`], and the stop then put it
-    /// in its own mode through the session's output, unless the source's
-    /// release is unconfirmed: `end.left` is what the output was left in
-    /// last, or why that idle failed or did not return in time
-    /// ([`Error::Faulted`] with [`SessionPhase::IdlingOutput`]).
-    OnItsOwn(SessionEnd),
-}
-
 /// What the session thread hands back: how it ended, and its hold on the
 /// output for a stop that finds it ended in another mode.
 struct Finished {
@@ -91,7 +77,8 @@ struct Control {
     /// Set by the thread as soon as its loop ended on its own, before it
     /// releases anything; see [`Session::has_ended`].
     ended: AtomicBool,
-    /// What the held output last learned about its device; read by the
+    /// What the held output last learned about its device, or that the
+    /// lights do not answer; read by the
     /// engine about once a second.
     observed: Mutex<DeviceReport>,
 }
@@ -113,16 +100,20 @@ fn idle(leds: &mut Leds, mode: IdleMode, output: &Configured) -> Result<IdleMode
 /// Each frame: apply a pending config, process, write (opening the output if
 /// not held), record the frame's times, take the output's report, publish
 /// what is watched. A quiet tick rewrites the last colors (and takes the
-/// report), and after [`VIDEO_GRACE`] without frames idles the output in
-/// [`RELEASE`], clears the published colors and closes it until the next
-/// frame. The open and that idle end when a stop comes (it cuts the
-/// thread's [`Hangup`]), and are then not failures: the loop sees the stop.
+/// report), and after [`VIDEO_GRACE`] without frames ends the quiet spell
+/// as [`Leds::quiet`] says (a held output idled in [`RELEASE`] and closed,
+/// a wait for the lights ended), clears the published colors and report,
+/// until the next frame. While the lights do not answer an open, frames are
+/// not written, the report says they are unreachable, and the open is tried
+/// again as [`Leds::write`] says. The open and that idle end when a stop comes (it
+/// cuts the thread's [`Hangup`]), and are then not failures: the loop sees
+/// the stop.
 /// When the loop ends (stop, failure, or
 /// [`Pull::Ended`](prysm_ports::Pull::Ended)) the feeds are cleared,
 /// `source.close()`, and the output is left in the stop's idle mode, or
 /// [`UNASKED`] when no stop asked: idled if held, else put in that mode
-/// without being opened, only if it was left in another one (never touched
-/// for `Off` if no frame came).
+/// without being opened, only if it may be in another one: the session
+/// starts from the device as the engine knows it.
 struct SessionLoop {
     processor: PrysmProcessor,
     leds: Leds,
@@ -165,43 +156,52 @@ impl SessionLoop {
         let write = self
             .leds
             .write(&colors, processed, &self.output, &self.stats, stop);
-        // Recorded whether or not the write worked.
+        // Recorded whether or not the colors were written.
         self.stats.frame(FrameTimes {
             previous_done: self.previous_done.replace(Instant::now()),
             received,
             captured,
             processed,
-            written: write.as_ref().ok().copied().flatten(),
+            written: write.as_ref().ok().copied().and_then(Write::written),
         });
-        // `None`: the stop ended the open.
-        let Some(written) = write.map_err(lights)? else {
+        let write = write.map_err(lights)?;
+        if write == Write::Stopped {
             return Ok(());
-        };
+        }
+        // Also while the lights do not answer: the report says so.
         let observed = self.leds.report();
         self.report(observed);
-        self.feeds
-            .publish(&colors, shown, self.processor.viewport());
-        self.last = Some((colors, written));
+        if let Write::Written(written) = write {
+            self.feeds
+                .publish(&colors, shown, self.processor.viewport());
+            self.last = Some((colors, written));
+        }
         Ok(())
     }
 
-    fn on_quiet(&mut self, stop: &Hangup) -> Result<()> {
-        if !self.leds.is_held() {
+    /// No frame within a tick; `refused`: the source said its device refuses
+    /// the video. The quiet spell ends alike either way ([`Leds::quiet`]).
+    fn on_quiet(&mut self, refused: bool, stop: &Hangup) -> Result<()> {
+        self.stats.no_frame(refused);
+        if self.leds.is_closed() {
             return Ok(());
         }
         let now = Instant::now();
         if now - self.last_frame >= VIDEO_GRACE {
             self.last = None;
+            // The session's own state says what happens now: no lights
+            // line, also after a wait for the lights.
             self.report(DeviceReport::default());
             // The device shows its own state now, not these colors.
             self.feeds.clear_colors();
-            return self.leds.release(RELEASE, stop).map_err(lights);
+            return self.leds.quiet(RELEASE, stop).map_err(lights);
         }
-        if let Some((colors, written)) = &mut self.last
+        if self.leds.is_held()
+            && let Some((colors, written)) = &mut self.last
             && now - *written >= REFRESH
         {
             // Held: nothing is opened, so nothing for the stop to end.
-            if let Some(rewritten) = self
+            if let Write::Written(rewritten) = self
                 .leds
                 .write(colors, now, &self.output, &self.stats, stop)
                 .map_err(lights)?
@@ -251,12 +251,15 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    /// `device`: what the output shows before the session opens it.
+    ///
     /// # Errors
     /// The thread could not be spawned. The source comes back unclosed, so the
     /// caller can still release it.
     pub(crate) fn start(
         source: Box<dyn FrameSource>,
         output: Configured,
+        device: Device,
         config: Config,
         feeds: Feeds,
         stats: Arc<Stats>,
@@ -269,7 +272,7 @@ impl Session {
         });
         let session = SessionLoop {
             processor: PrysmProcessor::new(&config),
-            leds: Leds::Untouched,
+            leds: Leds::Closed(device),
             last: None,
             last_frame: Instant::now(),
             previous_done: None,
@@ -284,9 +287,9 @@ impl Session {
             "session thread",
             (source, session),
             |(mut source, mut session), flags| {
-                let exit = flags.pump(&mut *source, |frame| match frame {
-                    Some(frame) => session.on_frame(frame, flags.stopping()),
-                    None => session.on_quiet(flags.stopping()),
+                let exit = flags.pump(&mut *source, |pull| match pull {
+                    Pull::Frame(frame) => session.on_frame(frame, flags.stopping()),
+                    quiet => session.on_quiet(matches!(quiet, Pull::Refused), flags.stopping()),
                 });
                 session.finish(exit, source, flags)
             },
@@ -301,7 +304,8 @@ impl Session {
     }
 
     /// What the held output last learned about its device: why its LEDs are
-    /// not showing the session's colours, and its own brightness.
+    /// not showing the session's colours (also that the lights do not
+    /// answer an open), and its own brightness.
     #[must_use]
     pub fn observed(&self) -> DeviceReport {
         *self
@@ -326,17 +330,20 @@ impl Session {
         self.control.ended.load(Ordering::Acquire)
     }
 
-    /// Stop, release, idle with `mode` and join within `deadline`. A thread
-    /// that had ended on its own and idled before this stop asked left the
-    /// output in [`UNASKED`]: unless that is `mode` or its source's release
-    /// is unconfirmed, the output is then put in `mode` through the
-    /// session's own output, on a blocking thread and within the same
-    /// deadline, and the end's `left` says how that went.
+    /// Stop, release, idle with `mode` and join within `deadline`. The
+    /// end's exit is [`Exit::Stopped`] when the thread stopped as asked,
+    /// the output left in `mode`. A thread that had ended on its own and
+    /// idled before this stop asked left the output in [`UNASKED`]: unless
+    /// that is `mode` or its source's release is unconfirmed, the output is
+    /// then put in `mode` through the session's own output, on a blocking
+    /// thread and within the same deadline, and the end's `left` says how
+    /// that went: also [`Error::Faulted`] with
+    /// [`SessionPhase::IdlingOutput`] when it did not return in time.
     ///
     /// # Errors
     /// [`Error::Faulted`] with the phase the thread is stuck in when the
     /// deadline passes (the thread is then abandoned), or [`Error::Panicked`].
-    pub async fn stop(self, mode: IdleMode, deadline: Duration) -> Result<Stop> {
+    pub async fn stop(self, mode: IdleMode, deadline: Duration) -> Result<SessionEnd> {
         let until = tokio::time::Instant::now() + deadline;
         // Set before the stop request: a thread that sees the request reads it.
         let _ = self.control.stop_mode.set(mode);
@@ -346,15 +353,12 @@ impl Session {
             mut leds,
             output,
         } = self.worker.stop(deadline).await.map_err(Error::Faulted)??;
-        if matches!(end.exit, Exit::Stopped) {
-            return Ok(Stop::AsAsked(end));
-        }
-        // Idled in `mode` already (the thread read it before idling; a
-        // failure there is not tried twice), or a session whose source may
-        // still hold its device, which is not trusted with the output in
-        // another mode.
-        if idled_in == mode || end.released.is_err() {
-            return Ok(Stop::OnItsOwn(end));
+        // Stopped as asked, or idled in `mode` already (the thread read it
+        // before idling; a failure there is not tried twice), or a session
+        // whose source may still hold its device, which is not trusted with
+        // the output in another mode.
+        if matches!(end.exit, Exit::Stopped) || idled_in == mode || end.released.is_err() {
+            return Ok(end);
         }
         // The stop's idle replaces the thread's; its failure is said here.
         if let Err(error) = &end.left {
@@ -369,7 +373,7 @@ impl Session {
             Ok(left) => left.unwrap_or(Err(Error::Panicked("idling the output"))),
             Err(_) => Err(Error::Faulted(SessionPhase::IdlingOutput)),
         };
-        Ok(Stop::OnItsOwn(SessionEnd { left, ..end }))
+        Ok(SessionEnd { left, ..end })
     }
 
     /// Join after [`Session::finished`] returned.
@@ -382,9 +386,10 @@ impl Session {
 mod tests {
     use super::*;
     use crate::fakes::{
-        AtStop, CallLog, FakeOutputSettings, FakeOutputs, FakeSource, FakeSourceSettings,
+        AtStop, CallLog, FakeIdle, FakeOpen, FakeOutputSettings, FakeOutputs, FakeSource,
+        FakeSourceSettings,
     };
-    use prysm_ports::{AdapterSettings, OutputFactory, Processing, Registry};
+    use prysm_ports::{AdapterSettings, OutputFactory, OutputIssue, Processing, Registry};
     use prysm_testkit::within_async;
 
     const DEADLINE: Duration = Duration::from_secs(2);
@@ -408,6 +413,7 @@ mod tests {
         Session::start(
             source,
             output,
+            Device::Left(IdleMode::Off),
             Processing::default().config(),
             Feeds::default(),
             Arc::default(),
@@ -441,10 +447,9 @@ mod tests {
 
     /// A stop as asked, within [`ENDS_AT_ONCE`]; its end.
     async fn stopped_at_once(session: Session, mode: IdleMode) -> SessionEnd {
-        let stopped = within_async(ENDS_AT_ONCE, session.stop(mode, LATE)).await;
-        let Ok(Stop::AsAsked(end)) = stopped else {
-            panic!("stopped as asked");
-        };
+        let end = within_async(ENDS_AT_ONCE, session.stop(mode, LATE))
+            .await
+            .unwrap();
         assert!(matches!(end.exit, Exit::Stopped), "{:?}", end.exit);
         assert!(end.released.is_ok());
         end
@@ -453,7 +458,7 @@ mod tests {
     /// A stop that comes while the output opens ends the open at once, and
     /// the stop's own idle follows the source's close: once, through the
     /// output it held when the open finished, else without opening it, and
-    /// not at all for an untouched device the stop turns off.
+    /// not at all for a device left off that the stop turns off.
     #[tokio::test]
     async fn a_stop_ends_an_open_in_flight() {
         use IdleMode::{Native, Off};
@@ -469,7 +474,7 @@ mod tests {
         for (at_stop, mode, calls) in cases {
             let log = CallLog::new();
             let opening = FakeOutputSettings {
-                open_until_stop: Some(at_stop),
+                open: FakeOpen::UntilStop(at_stop),
                 ..Default::default()
             };
             let session = started(&log, FakeSourceSettings::default(), opening);
@@ -515,13 +520,145 @@ mod tests {
         );
     }
 
+    /// An output that panics in its first write was opened, which may have
+    /// put the device in live mode: the session fails with the panic, and
+    /// the output is idled after the source's close, through itself.
+    #[tokio::test]
+    async fn a_first_write_that_panics_still_idles_the_opened_output() {
+        let log = CallLog::new();
+        let panicking = FakeOutputSettings {
+            panic_write: true,
+            ..Default::default()
+        };
+        let mut session = started(&log, FakeSourceSettings::default(), panicking);
+        let end = session.finished().await.unwrap();
+        assert!(matches!(end.exit, Exit::Failed(Error::Panicked(_))));
+        assert!(matches!(end.left, Ok(IdleMode::Off)));
+        assert_eq!(
+            log.events()[log.position("output.open:o").unwrap()..],
+            ["output.open:o", "source.close:s", "output.idle:o:Off"]
+        );
+        session.join().await;
+    }
+
+    /// Lights that do not answer the open: the session runs on, says they
+    /// are unreachable, and does not try the open again within its
+    /// interval; the session's only failure is its source's.
+    #[tokio::test]
+    async fn unanswered_lights_are_reported_while_the_session_runs() {
+        let log = CallLog::new();
+        let gated = FakeSourceSettings {
+            fail_after: Some(3),
+            fail_at: Some("test.fail".into()),
+            ..Default::default()
+        };
+        let silent = FakeOutputSettings {
+            open: FakeOpen::Unanswered,
+            ..Default::default()
+        };
+        let mut session = started(&log, gated, silent);
+        // The source waits in its fourth pull, after three frames were done.
+        assert!(log.wait_for("source.failing:s", 1).await);
+        let unreachable = Some(OutputIssue::Unreachable);
+        assert_eq!(session.observed().issue, unreachable);
+        assert!(!session.has_ended());
+        assert_eq!(log.count("output.open_unanswered:o"), 1);
+        log.record("test.fail");
+        let end = session.finished().await.unwrap();
+        assert_eq!(end.result().unwrap_err().to_string(), "fake source failed");
+        assert_eq!(session.observed(), DeviceReport::default());
+        session.join().await;
+    }
+
+    /// A source quiet for longer than [`VIDEO_GRACE`] (and less than the
+    /// wait's interval), then delivering one more frame before it fails at
+    /// a gate the test opens.
+    fn quiet_once() -> FakeSourceSettings {
+        FakeSourceSettings {
+            quiet_after: Some(1),
+            quiet_for_ms: 3_500,
+            fail_after: Some(2),
+            fail_at: Some("test.fail".into()),
+            ..Default::default()
+        }
+    }
+
+    /// Lets the gated source of [`quiet_once`] fail: the session's only
+    /// failure is its source's.
+    async fn fails_by_its_source(mut session: Session, log: &CallLog) {
+        assert!(!session.has_ended());
+        log.record("test.fail");
+        let end = session.finished().await.unwrap();
+        assert_eq!(end.result().unwrap_err().to_string(), "fake source failed");
+        session.join().await;
+    }
+
+    /// Lights that do not answer the release after a quiet spell, as an
+    /// open they do not answer, fail nothing: the output is closed, the
+    /// next frame opens it again.
+    #[tokio::test]
+    async fn an_unanswered_release_is_no_failure() {
+        let log = CallLog::new();
+        let unanswered = FakeOutputSettings {
+            release_unanswered: true,
+            ..Default::default()
+        };
+        let session = started(&log, quiet_once(), unanswered);
+        assert!(log.wait_for("source.failing:s", 1).await);
+        assert_eq!(log.count("output.idle:o:Native"), 1);
+        assert_eq!(log.count("output.open:o"), 2);
+        fails_by_its_source(session, &log).await;
+    }
+
+    /// A quiet spell ends a wait for the lights with nothing tried: the
+    /// next frame tries the open at once, not at the wait's interval, and
+    /// says again that the lights do not answer.
+    #[tokio::test]
+    async fn a_quiet_spell_ends_a_wait_for_the_lights() {
+        let log = CallLog::new();
+        let silent = FakeOutputSettings {
+            open: FakeOpen::Unanswered,
+            ..Default::default()
+        };
+        let session = started(&log, quiet_once(), silent);
+        assert!(log.wait_for("source.failing:s", 1).await);
+        assert_eq!(log.count("output.open_unanswered:o"), 2);
+        assert_eq!(log.count("output.idle:o:Native"), 0, "nothing tried");
+        assert_eq!(session.observed().issue, Some(OutputIssue::Unreachable));
+        fails_by_its_source(session, &log).await;
+    }
+
+    /// A stop while waiting for the lights ends at once without another
+    /// open; the stop's idle follows the finish rules: a device left off
+    /// stays so for `Off`.
+    #[tokio::test]
+    async fn a_stop_ends_a_wait_for_the_lights() {
+        use IdleMode::{Native, Off};
+        #[rustfmt::skip]
+        let cases: [(IdleMode, &[&str]); 2] = [
+            (Off, &["source.close:s"]),
+            (Native, &["source.close:s", "output.idle:o:Native"]),
+        ];
+        for (mode, calls) in cases {
+            let log = CallLog::new();
+            let silent = FakeOutputSettings {
+                open: FakeOpen::Unanswered,
+                ..Default::default()
+            };
+            let session = started(&log, FakeSourceSettings::default(), silent);
+            assert!(log.wait_for("output.open_unanswered:o", 1).await);
+            let end = stopped_at_once(session, mode).await;
+            assert!(matches!(end.left, Ok(left) if left == mode), "{mode:?}");
+            let after = log.position("output.open_unanswered:o").unwrap() + 1;
+            assert_eq!(log.events()[after..], *calls, "{mode:?}");
+        }
+    }
+
     #[tokio::test]
     async fn a_stop_after_an_own_end_puts_the_output_in_its_mode() {
         let log = CallLog::new();
         let session = ended_on_its_own(&log, Default::default(), Default::default()).await;
-        let Stop::OnItsOwn(end) = session.stop(IdleMode::Native, DEADLINE).await.unwrap() else {
-            panic!("it ended on its own");
-        };
+        let end = session.stop(IdleMode::Native, DEADLINE).await.unwrap();
         assert!(matches!(end.exit, Exit::Failed(_)));
         assert!(matches!(end.left, Ok(IdleMode::Native)));
         assert_eq!(log.count("output.idle:o:Native"), 1);
@@ -537,9 +674,8 @@ mod tests {
             ..Default::default()
         };
         let session = ended_on_its_own(&log, unreleased, Default::default()).await;
-        let Stop::OnItsOwn(end) = session.stop(IdleMode::Native, DEADLINE).await.unwrap() else {
-            panic!("it ended on its own");
-        };
+        let end = session.stop(IdleMode::Native, DEADLINE).await.unwrap();
+        assert!(matches!(end.exit, Exit::Failed(_)), "it ended on its own");
         assert!(end.released.is_err());
         assert!(matches!(end.left, Ok(IdleMode::Off)), "left as it was");
         assert_eq!(log.count("output.idle:o:Native"), 0);
@@ -548,7 +684,7 @@ mod tests {
     /// A session whose source fails once a stop for `Native` was asked: the
     /// thread is inside the source's call, so it cannot see the stop before
     /// the failure. The stop is asked (its first poll), then the source fails.
-    async fn asked_then_failing(log: &CallLog, output: FakeOutputSettings) -> Result<Stop> {
+    async fn asked_then_failing(log: &CallLog, output: FakeOutputSettings) -> Result<SessionEnd> {
         let failing = FakeSourceSettings {
             fail_after: Some(2),
             fail_at: Some("test.fail".into()),
@@ -578,9 +714,7 @@ mod tests {
         let (stopped, ()) = tokio::join!(session.stop(IdleMode::Off, DEADLINE), async {
             log.record("test.fail");
         });
-        let Stop::OnItsOwn(end) = stopped.unwrap() else {
-            panic!("it failed on its own");
-        };
+        let end = stopped.unwrap();
         let Exit::Failed(failure) = &end.exit else {
             panic!("the write failed: {:?}", end.exit);
         };
@@ -594,10 +728,9 @@ mod tests {
     #[tokio::test]
     async fn an_own_end_after_a_stop_was_asked_idles_once_in_its_mode() {
         let log = CallLog::new();
-        let stopped = asked_then_failing(&log, FakeOutputSettings::default()).await;
-        let Stop::OnItsOwn(end) = stopped.unwrap() else {
-            panic!("it failed on its own");
-        };
+        let end = asked_then_failing(&log, FakeOutputSettings::default())
+            .await
+            .unwrap();
         assert!(matches!(end.exit, Exit::Failed(_)));
         assert!(matches!(end.left, Ok(IdleMode::Native)));
         assert_eq!(log.count("output.idle:o:Off"), 0);
@@ -610,12 +743,11 @@ mod tests {
     async fn a_failed_idle_in_the_asked_mode_is_reported() {
         let log = CallLog::new();
         let failing = FakeOutputSettings {
-            fail_idle: true,
+            idle: FakeIdle::Fails,
             ..Default::default()
         };
-        let Stop::OnItsOwn(end) = asked_then_failing(&log, failing).await.unwrap() else {
-            panic!("it failed on its own");
-        };
+        let end = asked_then_failing(&log, failing).await.unwrap();
+        assert!(matches!(end.exit, Exit::Failed(_)), "it failed on its own");
         assert!(end.left.is_err(), "the idle in the asked mode failed");
         assert_eq!(log.count("output.idle:o:Native"), 1, "tried once");
     }
@@ -633,9 +765,8 @@ mod tests {
         let stopped = session
             .stop(IdleMode::Native, Duration::from_millis(300))
             .await;
-        let Ok(Stop::OnItsOwn(end)) = stopped else {
-            panic!("the end is kept");
-        };
+        let end = stopped.expect("the end is kept");
+        assert!(matches!(end.exit, Exit::Failed(_)), "it failed on its own");
         assert!(matches!(
             end.left,
             Err(Error::Faulted(SessionPhase::IdlingOutput))

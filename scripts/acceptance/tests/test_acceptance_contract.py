@@ -87,9 +87,9 @@ class Fields(unittest.TestCase):
         reply = set(names(LUNA, LUNA['StateReply'])) | set(names(LUNA, LUNA['ErrorReply']))
         self.assertLessEqual(read(webos.LunaReply), reply)
         self.assertLessEqual(read(webos.Preferences), set(names(LUNA, LUNA['Preferences'])))
-        self.assertLessEqual(read(tv.TvFailure), set(names(LUNA, LUNA['WorkerFailure'])))
+        self.assertLessEqual(read(tv.Problem), set(names(LUNA, LUNA['Problem'])))
         workers = set(names(LUNA, LUNA['FullWorker'])) | set(names(LUNA, LUNA['SlimWorker']))
-        for kind in (tv.StoppedWorker, tv.RunningWorker, tv.StoppingWorker, tv.RetryingWorker):
+        for kind in (tv.StoppedWorker, tv.RunningWorker, tv.StoppingWorker, tv.AskingWorker):
             with self.subTest(kind.__name__):
                 self.assertLessEqual(read(kind), workers)
 
@@ -142,7 +142,7 @@ class Examples(unittest.TestCase):
         for state in [*FIXTURES['luna/StateReply'], *FIXTURES['luna/State']]:
             reply = webos.luna_reply(Result(0, 'garbage\n' + json.dumps(state) + '\n'))
             self.assertIn(reply['flavor'], tuple(Flavour))
-            self.assertIn(reply['worker']['phase'], ('stopped', 'running', 'stopping', 'retrying'))
+            self.assertIn(reply['worker']['phase'], ('stopped', 'running', 'stopping', 'asking'))
             # Each package's intent: full its lighting target, slim whether enabled.
             if reply['flavor'] == Flavour.FULL:
                 self.assertIn(reply.get('target'), tuple(Target))
@@ -154,11 +154,17 @@ class Examples(unittest.TestCase):
             self.assertIsInstance(tv.capturing(reply), bool)
             if reply['worker']['phase'] != 'running':
                 self.assertEqual((tv.capturing(reply), tv.fps(reply)), (False, None))
-            # Full reports its portal while running or stopping; the slim example runs paused.
+            # Full reports its portal while running, and while stopping when it has one; one slim example
+            # runs paused.
             shown = (reply['flavor'], reply['worker']['phase'])
-            portal = 'http://192.168.1.5:8787/' if shown in {('full', 'running'), ('full', 'stopping')} else None
-            self.assertEqual(tv.portal(reply), portal, shown)
-            self.assertEqual(tv.paused(reply), shown == ('slim', 'running'), shown)
+            if shown == ('full', 'running'):
+                self.assertEqual(tv.portal(reply), 'http://192.168.1.5:8787/')
+            elif shown == ('full', 'stopping'):
+                self.assertEqual(tv.portal(reply), reply['worker'].get('portal'))
+            else:
+                self.assertIsNone(tv.portal(reply), shown)
+            link = reply['worker'].get('link') or {}
+            self.assertEqual(tv.paused(reply), link.get('state') == 'paused', shown)
 
 
 def sent(call: Callable[[prysm_api.Prysm], object]) -> Any:

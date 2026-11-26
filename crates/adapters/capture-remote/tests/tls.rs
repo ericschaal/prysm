@@ -39,15 +39,38 @@ fn wss_through_a_tls_terminating_proxy() {
         let source = portal.source(RAW);
         let error = RemoteSender::connect(&url, proxy, &prysm_capture_remote::testkit::offer())
             .unwrap_err();
-        let text = prysm_ports::chain(&error);
         // A certificate refusal naming the authority, not a lost connection.
-        assert!(
-            text.contains("invalid peer certificate: UnknownIssuer"),
-            "{text}"
+        assert_eq!(
+            error.cause::<WireError>(),
+            Some(&WireError::Untrusted(
+                "invalid peer certificate: UnknownIssuer".into()
+            )),
+            "{error}"
         );
         Box::new(source).close().unwrap();
         return;
     }
+
+    // A peer that answers TLS in plain HTTP fails the handshake in rustls,
+    // but not as an untrusted certificate.
+    let plain = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = plain.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut peer, _) = plain.accept().unwrap();
+        // Read the ClientHello first, so closing does not reset the answer.
+        let _ = std::io::Read::read(&mut peer, &mut [0; 1024]);
+        let _ = std::io::Write::write_all(&mut peer, b"HTTP/1.1 400 Bad Request\r\n\r\n");
+    });
+    let plain = format!("wss://localhost:{}/", address.port());
+    let error = RemoteSender::connect(
+        &plain.parse().unwrap(),
+        address,
+        &prysm_capture_remote::testkit::offer(),
+    )
+    .unwrap_err();
+    assert_eq!(error.cause::<WireError>(), None, "{error}");
+    // rustls's error sits inside the I/O error, out of the source chain.
+    assert!(format!("{error:?}").contains("InvalidMessage"), "{error:?}");
 
     let mut source = portal.source(RAW);
     let mut sender =
@@ -64,15 +87,8 @@ fn wss_through_a_tls_terminating_proxy() {
     let error = eventually("the sender to notice the close", BOUND, || {
         sender.tick().err()
     });
-    let prysm_ports::Error::Adapter {
-        source: Some(cause),
-        ..
-    } = &error
-    else {
-        panic!("{error:?}");
-    };
     assert_eq!(
-        cause.downcast_ref::<WireError>(),
+        error.cause::<WireError>(),
         Some(&WireError::Closed(Some(Close::Stopped))),
         "{error}"
     );

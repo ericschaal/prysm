@@ -1,7 +1,8 @@
-import type {
-  AdapterSide,
-  ApplicationSnapshot,
-  DiscoveryClient,
+import {
+  pictureOf,
+  type AdapterSide,
+  type ApplicationSnapshot,
+  type DiscoveryClient,
 } from '@prysm/application-client';
 import type { Processing } from '@prysm/contracts/application';
 import {
@@ -220,6 +221,7 @@ const sessionLabels = {
   stopped: 'Stopped',
   screen_sync: 'Screen sync',
   effects: 'Showing the lights’ own effects',
+  unanswered: 'Waiting for the lights to answer',
   faulted: 'Stopped by a fault; restart Prysm',
   unknown: 'Unknown: Prysm is newer than this page',
 } as const satisfies Record<
@@ -244,7 +246,7 @@ export function AboutPage({
         <RowFact
           label="Frames per second"
           value={
-            snapshot.input?.receiving
+            snapshot.input && pictureOf(snapshot.input) === 'arriving'
               ? String(Math.round(snapshot.input.fps))
               : 'No picture'
           }

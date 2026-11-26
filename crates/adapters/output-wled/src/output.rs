@@ -1,4 +1,5 @@
 use crate::address::{Host, Names};
+use crate::classify::{self, Cause};
 use crate::ddp::WledRenderer;
 use crate::dither::Encoding;
 use crate::http::{self, Deadline};
@@ -128,31 +129,35 @@ impl OutputFactory for Wled {
             .map_err(OpenFailure::Untouched)?;
         let ddp = SocketAddr::new(device.http.ip(), self.ddp_port);
         let renderer = WledRenderer::new(ddp).map_err(|source| {
-            OpenFailure::Untouched(Error::adapter(
+            OpenFailure::Untouched(Error::adapter_escalating(
                 format!("cannot open DDP socket to {ddp}"),
                 source,
+                classify::escalation(Cause::Socket),
             ))
         })?;
         if let Err(live) = device.enter(Mode::Live, take_over, stop) {
             let context = device.context(Mode::Live);
             if !live.reached {
-                return Err(OpenFailure::Untouched(Error::adapter(context, live.error)));
+                return Err(OpenFailure::Untouched(request_failed(context, live.error)));
             }
             let live = live.error;
             // Whoever cut it puts the device in a mode next.
             if matches!(live, http::RequestError::Stopped(_)) {
-                return Err(OpenFailure::Touched(Error::adapter(context, live)));
+                return Err(OpenFailure::Touched(request_failed(context, live)));
             }
             return Err(OpenFailure::Touched(
                 match device.enter(Mode::Off, deadline, stop) {
-                    Ok(()) => Error::adapter(context, live),
-                    Err(off) => Error::adapter(
-                        context,
-                        NotTurnedOff {
+                    Ok(()) => request_failed(context, live),
+                    Err(off) => {
+                        // Both escalate as the live cause, why the open
+                        // failed; turning off again only compensated.
+                        let escalation = classify::escalation(Cause::Request(&live));
+                        let both = NotTurnedOff {
                             live,
                             off: off.error,
-                        },
-                    ),
+                        };
+                        Error::adapter_escalating(context, both, escalation)
+                    }
                 },
             ));
         }
@@ -174,7 +179,7 @@ impl OutputFactory for Wled {
         let mode = Mode::from(mode);
         device
             .enter(mode, deadline, &never)
-            .map_err(|failed| Error::adapter(device.context(mode), failed.error))
+            .map_err(|failed| request_failed(device.context(mode), failed.error))
     }
 }
 
@@ -186,6 +191,12 @@ impl OutputFactory for Wled {
 pub(crate) struct NotTurnedOff {
     pub(crate) live: http::RequestError,
     pub(crate) off: http::RequestError,
+}
+
+/// `error` of a request under `context`, escalating by its row.
+fn request_failed(context: String, error: http::RequestError) -> Error {
+    let escalation = classify::escalation(Cause::Request(&error));
+    Error::adapter_escalating(context, error, escalation)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -283,11 +294,12 @@ impl LedOutput for WledOutput {
         self.encoding
             .follow(self.observer.transfer(), self.observer.level());
         self.renderer
-            .render_edges(colors, self.leds, &self.encoding, Instant::now())
+            .render_edges(colors, self.leds, &self.encoding)
             .map_err(|source| {
-                Error::adapter(
+                Error::adapter_escalating(
                     format!("cannot send colours to WLED at {}", self.device.label),
                     source,
+                    classify::escalation(Cause::Send),
                 )
             })
     }
@@ -298,7 +310,7 @@ impl LedOutput for WledOutput {
         let mode = Mode::from(mode);
         self.device
             .enter(mode, Deadline::after(IDLE_LIMIT), stop)
-            .map_err(|failed| Error::adapter(self.device.context(mode), failed.error))
+            .map_err(|failed| request_failed(self.device.context(mode), failed.error))
     }
 
     fn report(&mut self) -> DeviceReport {

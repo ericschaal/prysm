@@ -214,10 +214,11 @@ pub enum Close {
     /// stops until its user starts it again, so two senders never take the
     /// stream from each other in turn.
     Replaced,
-    /// The receiving source failed after it sent the request (the sender
-    /// refused it, its H.264 keyframe does not decode, or no decoder
-    /// starts): code 4002. Prysm shows why; the sender releases its capture
-    /// and encoder until a receiver takes a connection again.
+    /// The receiving source failed with this sender: its offer excludes the
+    /// request (before the request), or it refused the request, sent what
+    /// the receiver does not take, its H.264 keyframe does not decode, or
+    /// no decoder starts: code 4002. Prysm shows why; the sender releases
+    /// its capture and encoder until a receiver takes a connection again.
     Failed,
 }
 
@@ -252,7 +253,6 @@ impl fmt::Display for Close {
 /// a message out of turn, the peer's close), or a message or frame that
 /// cannot be encoded or was rejected.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
-#[non_exhaustive]
 pub enum WireError {
     /// The two ends speak different protocol versions; the older one needs
     /// updating. `theirs` is the highest version the peer named, `None`
@@ -267,6 +267,10 @@ pub enum WireError {
     /// not `remote`), `404` without the path (no portal, or an older Prysm).
     #[error("Prysm answered HTTP {0} instead of opening the capture stream")]
     Unavailable(u16),
+    /// TLS cannot trust Prysm's certificate, in rustls's words: it does not
+    /// verify, or the system has no certificate authorities.
+    #[error("{0}")]
+    Untrusted(String),
     /// The receiver did not send its request after the upgrade.
     #[error("the receiver did not send its request")]
     NoRequest,

@@ -72,7 +72,7 @@ test('the state stream decodes split events and comments, sends no credentials a
   assert.deepEqual(calls, ['/api/v1/state/stream']);
 });
 
-test('invalid events end the stream as unavailable', async () => {
+test('an invalid event ends the stream as internal, asking for a reload', async () => {
   const client = httpApplicationClient({
     fetch: async () =>
       new Response(encode('data: {"kind":"snapshot"}\n\n'), {
@@ -82,11 +82,37 @@ test('invalid events end the stream as unavailable', async () => {
   await assert.rejects(
     client.observe(new AbortController().signal),
     (error) =>
+      error instanceof ApplicationError &&
+      error.failure.kind === 'internal' &&
+      error.failure.message.endsWith('Reload the page.'),
+  );
+});
+
+test('a connection lost mid-stream ends the stream as unavailable', async () => {
+  let stream;
+  const client = httpApplicationClient({
+    fetch: async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            stream = controller;
+            controller.enqueue(encode(`data: ${JSON.stringify(state())}\n\n`));
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      ),
+  });
+  const observation = await client.observe(new AbortController().signal);
+  const next = observation.updates[Symbol.asyncIterator]().next();
+  stream.error(new TypeError('network down'));
+  await assert.rejects(
+    next,
+    (error) =>
       error instanceof ApplicationError && error.failure.kind === 'unavailable',
   );
 });
 
-test('a state without its device or version ends the stream as unavailable', async () => {
+test('a state without its device or version ends the stream as internal', async () => {
   for (const invalid of [
     state({ device: undefined }),
     state({ device: null }),
@@ -101,8 +127,7 @@ test('a state without its device or version ends the stream as unavailable', asy
     await assert.rejects(
       client.observe(new AbortController().signal),
       (error) =>
-        error instanceof ApplicationError &&
-        error.failure.kind === 'unavailable',
+        error instanceof ApplicationError && error.failure.kind === 'internal',
     );
   }
 });
@@ -316,10 +341,7 @@ test('server failures keep their kind, field and current revision', async () => 
     (await failure(() => client.setTarget('off'))).kind,
     'forbidden',
   );
-  assert.equal(
-    (await failure(() => client.setTarget('off'))).kind,
-    'unavailable',
-  );
+  assert.equal((await failure(() => client.setTarget('off'))).kind, 'internal');
 });
 
 test('a lost reply is unavailable, not a definite rejection', async () => {

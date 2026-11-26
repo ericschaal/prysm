@@ -236,6 +236,19 @@ interface FailedSave {
 }
 
 /**
+ * The last save: none, or the last one answered (`idle`); one on its way;
+ * refused as stale at revision `at` (sent again once newer settings
+ * arrive); or failed.
+ */
+type SavePhase =
+  | { kind: 'idle' }
+  | { kind: 'saving' }
+  | { kind: 'stale'; at: number }
+  | ({ kind: 'failed' } & FailedSave);
+
+const idle: SavePhase = { kind: 'idle' };
+
+/**
  * The processing section as a draft that saves itself: each change is applied
  * shortly after the user stops adjusting it, and `commit` applies one at once.
  * Shared by the Picture panel, the light card and the calibration wizard, so
@@ -250,7 +263,9 @@ interface FailedSave {
  * A save refused because the settings changed elsewhere is not lost: once
  * the newer settings arrive, the user's changes are moved onto them and
  * saved again. A failed save is shown at the control that was changed, with
- * a retry there, until a newer state shows its value saved after all.
+ * a retry there, until the draft is changed to another value, it is retried,
+ * or a newer state shows its value saved after all. While a save is on its way
+ * the state is `saving`.
  */
 export function useLiveProcessing({
   processing,
@@ -274,12 +289,9 @@ export function useLiveProcessing({
     fresh: () => saved,
   });
   const errors = useFieldErrors();
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState<FailedSave | null>(null);
+  const [phase, setPhase] = useState<SavePhase>(idle);
   /** The control last changed, where a failed save is shown. */
   const changedRef = useRef('');
-  /** Refused as stale at this revision: wait for newer settings. */
-  const [staleAt, setStaleAt] = useState<number | null>(null);
   /** A slider is held: its value is tried on the lights and saved on release. */
   const [held, setHeld] = useState(false);
   // Also as a ref: a key's change follows its keydown before a render.
@@ -289,21 +301,26 @@ export function useLiveProcessing({
   const [tried, setTried] = useState(false);
   // A save whose answer never came may have run all the same: a newer state
   // that shows its value answers it.
-  if (failed && revision !== failed.sentAt && same(failed.value, saved)) {
-    setFailed(null);
+  if (
+    phase.kind === 'failed' &&
+    revision !== phase.sentAt &&
+    same(phase.value, saved)
+  ) {
+    setPhase(idle);
     errors.clearServer();
   }
   /** A field's own check or the server refuses a value. */
   const invalid =
     Object.keys(errors.local).length > 0 ||
     Object.keys(errors.server).length > 0;
+  /** A save is on its way, or the state has not shown the last one yet. */
+  const saving = phase.kind === 'saving' || draft.syncing;
   const blocked =
     disabled ||
-    busy ||
-    draft.syncing ||
-    staleAt === revision ||
+    saving ||
+    (phase.kind === 'stale' && phase.at === revision) ||
     invalid ||
-    (failed !== null && same(failed.value, draft.draft));
+    (phase.kind === 'failed' && same(phase.value, draft.draft));
 
   /**
    * The latest render's state, for a save that waited for the one before it:
@@ -353,8 +370,10 @@ export function useLiveProcessing({
       value = rebased(current.saved, current.draft.base, edited);
       current.draft.rebase(value);
     }
-    setBusy(true);
-    setStaleAt(null);
+    // A save on its way answers the one before it: its failure, the
+    // controls it marked, or its wait for newer settings.
+    errors.clearServer();
+    setPhase({ kind: 'saving' });
     try {
       // A trial still on its way must not land after the save.
       await trials.settle();
@@ -362,29 +381,26 @@ export function useLiveProcessing({
       const next = await save(expected, whole(value));
       lastSave.current = { sentAt: current.revision, savedAs: next };
       current.draft.saved(value, next);
-      // The whole section is saved: what a failed save marked is answered.
-      errors.clearServer();
-      setFailed(null);
+      setPhase(idle);
       return value;
     } catch (error) {
       const reason = failureOf(error);
       // Saved again once the newer settings arrive.
       if (reason.kind === 'stale_revision') {
-        setStaleAt(expected);
+        setPhase({ kind: 'stale', at: expected });
         return null;
       }
       const invalid = reason.kind === 'invalid';
       const at = (invalid && reason.field) || changedRef.current;
       if (at) errors.setServer({ [at]: invalid ? refusedValue : 'Not saved.' });
-      setFailed({
+      setPhase({
+        kind: 'failed',
         value,
         message: saveProblem(reason),
         retryAt: at && !invalid ? at : null,
         sentAt: current.revision,
       });
       return null;
-    } finally {
-      setBusy(false);
     }
   }
   // Debounce: every change restarts the wait. A new revision (another section
@@ -402,7 +418,7 @@ export function useLiveProcessing({
   }, [draft.draft, pending, blocked, held, revision]);
 
   const { clearServer } = errors;
-  const retryAt = failed?.retryAt ?? null;
+  const retryAt = phase.kind === 'failed' ? phase.retryAt : null;
   const retry = useMemo(
     () =>
       retryAt === null
@@ -411,10 +427,10 @@ export function useLiveProcessing({
             path: retryAt,
             run: () => {
               clearServer();
-              setFailed(null);
+              setPhase((now) => (now.kind === 'failed' ? idle : now));
             },
           },
-    [retryAt, clearServer, setFailed],
+    [retryAt, clearServer, setPhase],
   );
   const scope = useFieldScope(disabled, errors, true, retry);
 
@@ -422,20 +438,28 @@ export function useLiveProcessing({
   function replace(next: ProcessingControls, path?: string) {
     if (path) changedRef.current = path;
     draft.setDraft(next);
+    // Another value answers a failed save, and is saved in its turn; a
+    // refused value stays marked until its field is edited.
+    if (phase.kind === 'failed' && !same(phase.value, next)) {
+      if (phase.retryAt !== null) clearServer();
+      setPhase((now) =>
+        now.kind === 'failed' && !same(now.value, next) ? idle : now,
+      );
+    }
   }
   let state: SaveState = 'idle';
-  if (failed || invalid) state = 'failed';
-  else if (busy || draft.syncing || draft.dirty) state = 'saving';
+  if (phase.kind === 'failed' || invalid) state = 'failed';
+  else if (saving || draft.dirty) state = 'saving';
   return {
     value: draft.draft,
     /** Changes when the draft is replaced from outside, to remount inputs. */
     generation: draft.generation,
     dirty: draft.dirty,
     /** A save is on its way. */
-    saving: busy || draft.syncing,
+    saving,
     /** For the page's save status: changes apply by themselves. */
     state,
-    failure: failed?.message ?? '',
+    failure: phase.kind === 'failed' ? phase.message : '',
     /** Try the failed save again, if it may work. */
     retry: retry?.run,
     scope,

@@ -207,12 +207,12 @@ class TheTv(unittest.TestCase):
         self.assertEqual(recorded(('tv.get-state', ok(STATE))).portal().base, 'http://192.0.2.50:8787')
         with self.assertRaisesRegex(Failed, 'no portal address'):
             recorded(('tv.get-state', ok(SLIM))).portal()
-        retrying = STATE.replace(
+        asking = STATE.replace(
             '"worker":{"phase":"running","capturing":true,"fps":30,"portal":"http://192.0.2.50:8787"}',
-            '"worker":{"phase":"retrying","seconds":4}',
+            '"worker":{"phase":"asking","problem":{"asked":{"step":"ask","fix":"try_again"},"message":"m"}}',
         )
         with self.assertRaisesRegex(Failed, 'no portal address'):
-            recorded(('tv.get-state', ok(retrying))).portal()
+            recorded(('tv.get-state', ok(asking))).portal()
 
     def test_the_state_is_read_in_its_packages_terms(self) -> None:
         full = webos.luna_reply(ok(STATE))

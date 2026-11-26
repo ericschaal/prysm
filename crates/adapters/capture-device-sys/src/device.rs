@@ -85,8 +85,8 @@ pub fn list_formats(device: &str) -> Option<Vec<prysm_ports::Mode>> {
 /// BGR frame), without a stall, for 3 s and that long's worth of frames is
 /// [`CaptureError::Unusable`], with the last buffer's
 /// [`crate::BufferRejection`]; a single unusable buffer is dropped. On Linux
-/// a stream that fails in a way that may pass (EIO, or a restart that fails)
-/// is restarted for up to 3 s.
+/// an I/O error restarts the stream once; a second one before a frame, or a
+/// restart that fails, ends capture. A stall is waited out.
 pub fn capture(
     device: Option<&str>,
     width: u32,

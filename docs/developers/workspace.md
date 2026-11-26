@@ -14,7 +14,7 @@ The implementation before 1.0 is in the tag `pre-1.0-consolidation`.
 
 | Directory | Crates | Role |
 | --- | --- | --- |
-| `crates/engine/` | [`prysm-core`](../../crates/engine/core/src/lib.rs), [`prysm-processor`](../../crates/engine/processor/src/lib.rs), [`prysm-ports`](../../crates/engine/ports/src/lib.rs), [`prysm-runtime`](../../crates/engine/runtime/src/lib.rs), [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs), [`prysm-webos-link`](../../crates/engine/webos-link/src/lib.rs), [`prysm-version`](../../crates/engine/version/src/lib.rs) | Frame and colour types, colour correction; edge sampling and smoothing; ports and settings; engine, session, builder; JSON wire types; TV supervisor ↔ worker protocol; the product version from `VERSION` |
+| `crates/engine/` | [`prysm-core`](../../crates/engine/core/src/lib.rs), [`prysm-processor`](../../crates/engine/processor/src/lib.rs), [`prysm-ports`](../../crates/engine/ports/src/lib.rs), [`prysm-runtime`](../../crates/engine/runtime/src/lib.rs), [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs), [`prysm-webos-link`](../../crates/engine/webos-link/src/lib.rs), [`prysm-version`](../../crates/engine/version/src/lib.rs), [`prysm-logging`](../../crates/engine/logging/src/lib.rs) | Frame and colour types, colour correction; edge sampling and smoothing; ports and settings; engine, session, builder; JSON wire types; TV supervisor ↔ worker protocol; the product version from `VERSION`; the processes' `tracing` subscriber, without a runtime for the TV supervisor |
 | `crates/adapters/` | [`capture-device`](../../crates/adapters/capture-device/src/lib.rs) (+ [`-sys`](../../crates/adapters/capture-device-sys/src/lib.rs): V4L2 and AVFoundation), [`capture-file`](../../crates/adapters/capture-file/src/lib.rs), [`capture-remote`](../../crates/adapters/capture-remote/README.md), [`capture-webos`](../../crates/adapters/capture-webos/src/lib.rs) (+ `-sys`), [`h264`](../../crates/adapters/h264/src/lib.rs) (+ [`-rvenc-sys`](../../crates/adapters/h264-rvenc-sys/src/lib.rs)), [`webos-luna-sys`](../../crates/adapters/webos-luna-sys/src/lib.rs), [`output-wled`](../../crates/adapters/output-wled/src/lib.rs), [`settings-file`](../../crates/adapters/settings-file/README.md) | `FrameSource`, `FrameSink`, `LedOutput` and `SettingsStore` implementations; the Luna bus; H.264 for the remote stream |
 | `crates/surfaces/` | [`tui`](../../crates/surfaces/tui/src/lib.rs), [`web-portal`](../../crates/surfaces/web-portal/HTTP-CONTRACT.md) | Ways in and out of a running engine |
 | `crates/hosts/` | [`headless`](../../crates/hosts/headless/src/main.rs), [`tui`](../../crates/hosts/tui/src/main.rs), [`common`](../../crates/hosts/common/src/lib.rs) (`prysm-host`); TV: [`webos`](../../crates/hosts/webos/src/main.rs), [`webos-slim`](../../crates/hosts/webos-slim/src/main.rs), [`webos-service`](../../crates/hosts/webos-service/src/lib.rs) | Executables: a builder list plus process options; the TV workers and their supervisor ([LG TV](webos.md)) |
@@ -127,7 +127,8 @@ impl SourceFactory for Camera {
     fn validate(&self, s: &CameraSettings) -> Result<(), ValidationError> { s.validate() }
     fn open(&self, s: &CameraSettings) -> Result<Box<dyn FrameSource>> { Ok(Box::new(Frames::open(s)?)) }
 }
-// Frames: next_frame(timeout) -> Ok(Pull::Frame(f)), Ok(Pull::Idle) on timeout,
+// Frames: next_frame(timeout) -> Ok(Pull::Frame(f)), Ok(Pull::Quiet) on timeout
+// (Ok(Pull::Refused) when the device refuses to share its video),
 // Ok(Pull::Ended) when finished (lighting stops cleanly); close(self: Box<Self>) releases.
 // A push-style backend runs on an OwnerThread, publishes through its Worker
 // and takes the newest frame in next_frame.
@@ -150,6 +151,10 @@ comes from `bri` in its state and, every 30th check instead of the state,
 output at the source's first frame, not at start, and idles it `Native` (the
 device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
 at the next frame; a source that never delivers never takes the device over.
+An open that fails with `Escalation::Unanswered` (lights that do not answer)
+does not end the session: it reports `OutputIssue::Unreachable` and is tried
+again at a frame every `UNANSWERED_INTERVAL` (5 s); every other failed open
+ends it ([error handling](error-handling.md#rules)).
 To put a device nobody holds in another idle mode (lights off after such a
 release, or the device's own effects without a session) the engine calls
 `OutputFactory::idle(settings, mode)`, which by default opens and idles; an

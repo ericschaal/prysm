@@ -9,15 +9,21 @@ use crate::observe;
 use crate::preferences::{Preferences, PreferencesFile, PreferencesStore};
 use crate::state::{Flavor, Power, State};
 use prysm_ports::chain;
-use prysm_webos_link::{LightingTarget, Video};
+use prysm_webos_link::LightingTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use tracing::{debug, error, warn};
 
 /// Largest accepted request payload.
 pub const MAX_PAYLOAD: usize = 4096;
-/// A subscription without a good reply for this long is renewed.
+/// Delay before a subscription that is not live is made again: at start
+/// until its first good reply, and after an error reply or one that is not
+/// subscribed. The TV's service may not be registered yet (boot) or may have
+/// restarted, and nothing else brings a failed subscription back. A live
+/// one is left alone: an hour on a TV showed it reports every change by
+/// itself, however long the gap.
 pub const RESUBSCRIBE: Duration = Duration::from_secs(5);
 
 /// A Luna method this service registers.
@@ -77,7 +83,7 @@ pub enum Watch {
     Video = 1,
 }
 
-/// When each subscription is renewed, unless a good reply came first.
+/// When each subscription is renewed, unless it became live first.
 #[derive(Debug, Clone, Copy)]
 struct Renewals {
     power: Option<Instant>,
@@ -281,8 +287,8 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
 }
 
 impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
-    /// Load preferences. Unreadable ones are reported (the state's failure
-    /// `preferences`), the defaults used, and the file left as it is until
+    /// Load preferences. Unreadable ones are reported (the state's
+    /// `unreadable`), the defaults used, and the file left as it is until
     /// the app saves preferences.
     pub fn new(config: Config, launcher: L, mut store: S, installer: I, now: Instant) -> Self {
         let flavor = config.flavor;
@@ -299,7 +305,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         let (file, preferences, unreadable) = match loaded {
             Ok((file, preferences)) => (file, preferences, None),
             Err(why) => {
-                log!("using the default preferences: {why}");
+                warn!(error = %why, "using the default preferences");
                 (
                     PreferencesFile::default(),
                     Preferences::default(),
@@ -411,7 +417,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 let request: GetStateRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 Ok(Reply {
-                    payload: self.state_json(Some(request.subscribe), now),
+                    payload: self.state_json(Some(request.subscribe)),
                     subscribe: request.subscribe,
                 })
             }
@@ -431,21 +437,21 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                     .map_err(|error| Refusal::new(ErrorKind::SaveFailed, chain(&error)))?;
                 self.file = file;
                 self.input(bus, Input::Preferences(preferences), now);
-                Ok(self.state_reply(now))
+                Ok(self.state_reply())
             }
             Method::SetTarget => {
                 self.only_for(Flavor::Full, name)?;
                 let request: SetTargetRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 self.input(bus, Input::Target(request.target), now);
-                Ok(self.state_reply(now))
+                Ok(self.state_reply())
             }
             Method::SetEnabled => {
                 self.only_for(Flavor::Slim, name)?;
                 let request: SetEnabledRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 self.input(bus, Input::Enabled(request.enabled), now);
-                Ok(self.state_reply(now))
+                Ok(self.state_reply())
             }
             Method::Uninstall => {
                 let UninstallRequest {} = serde_json::from_value(payload).map_err(parse_error)?;
@@ -489,9 +495,11 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         let value = serde_json::from_str(payload).unwrap_or(Value::Null);
         let reading = observe::video(&value);
         let slot = self.renew.of(Watch::Video);
-        if reading.settled {
+        if reading.live {
             *slot = None;
         } else {
+            // The reading is Unknown until it is live: capture still tries,
+            // bounded by the adapter.
             slot.get_or_insert(now + RESUBSCRIBE);
         }
         if let Some(context) = reading.context {
@@ -507,6 +515,11 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         self.input(bus, Input::Video(reading.video), now);
     }
 
+    /// A line for the state's tail.
+    pub fn log(&mut self, bus: &mut impl Bus, line: String, now: Instant) {
+        self.input(bus, Input::Log(line), now);
+    }
+
     /// Stop the worker and then the service.
     pub fn shutdown(&mut self, bus: &mut impl Bus, now: Instant) {
         self.input(bus, Input::Shutdown, now);
@@ -514,20 +527,23 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
 
     /// Called at every event (a request, a reply, the worker said something
     /// or exited, a signal) and at [`Self::next_due`]: reads and reaps the
-    /// worker, runs the machine's due times and renews subscriptions.
-    /// Returns `false` once the service should exit.
+    /// worker, hears of a worker let go that no longer exists, runs the
+    /// machine's due times and renews subscriptions. Returns `false` once
+    /// the service should exit.
     pub fn tick(&mut self, bus: &mut impl Bus, now: Instant) -> bool {
         self.poll_worker(bus, now);
-        self.input(bus, Input::Tick, now);
+        if self.launcher.let_go_reaped() {
+            self.input(bus, Input::LetGoReaped, now);
+        }
+        if self.held().is_none() {
+            self.input(bus, Input::Tick, now);
+        }
         for watch in [Watch::Power, Watch::Video] {
             let slot = self.renew.of(watch);
             if slot.is_some_and(|at| now >= at) {
                 *slot = Some(now + RESUBSCRIBE);
+                debug!(?watch, "renewing a subscription that is not live");
                 bus.resubscribe(watch);
-                if watch == Watch::Video {
-                    // Unknown video still lets capture try, bounded by the adapter.
-                    self.input(bus, Input::Video(Video::Unknown), now);
-                }
             }
         }
         if !self.machine.finished() {
@@ -536,25 +552,31 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         if self.uninstall == Uninstall::Requested
             && let Err(error) = self.installer.uninstall()
         {
-            log!("uninstall failed: {}", chain(&error));
+            error!(error = %chain(&error), "uninstall failed");
         }
         false
     }
 
     /// When [`Self::tick`] next has something to do without an event: the
-    /// machine's next due time, a subscription renewal, or the end of the
-    /// wait for an exited worker's last lines.
+    /// machine's next due time, or the end of the wait for an exited
+    /// worker's last lines instead, and a subscription renewal.
     #[must_use]
-    pub fn next_due(&self, now: Instant) -> Option<Instant> {
+    pub fn next_due(&self) -> Option<Instant> {
         [
-            self.machine.next_due(now),
+            self.held().or_else(|| self.machine.next_due()),
             self.renew.power,
             self.renew.video,
-            self.worker.as_ref().and_then(Worker::due),
         ]
         .into_iter()
         .flatten()
         .min()
+    }
+
+    /// Until when a reaped worker's exit is held back for its last lines
+    /// ([`Worker::due`]). Meanwhile the machine's due times wait: they stop
+    /// or let go of a live process, and this one's exit comes by then.
+    fn held(&self) -> Option<Instant> {
+        self.worker.as_ref().and_then(Worker::due)
     }
 
     fn poll_worker(&mut self, bus: &mut impl Bus, now: Instant) {
@@ -568,7 +590,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 // Logged once per worker; the machine lets it go after its kill.
                 if !self.wait_failed {
                     self.wait_failed = true;
-                    log!("cannot wait for the worker: {error}");
+                    warn!(%error, "cannot wait for the worker");
                 }
                 None
             }
@@ -581,7 +603,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         for output in outputs {
             let input = match output {
                 Output::Event(event) => Input::Worker(event),
-                Output::Log(line) => Input::WorkerLog(line),
+                Output::Log(line) => Input::Log(line),
                 Output::Broken(why) => Input::WorkerBroken(why),
             };
             self.input(bus, input, now);
@@ -599,7 +621,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             // Best effort, reported once per change.
             self.remembered = Some(intent);
             if let Err(error) = self.store.remember(intent) {
-                log!("{}", chain(&error));
+                warn!(error = %chain(&error), "cannot remember the intent");
             }
         }
     }
@@ -624,30 +646,32 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                         let _ = worker.send(&command);
                     }
                 }
-                // A signal that cannot be sent (the worker already exited)
-                // is logged; its exit follows either way.
+                // A signal that cannot be sent (the worker already exited,
+                // or waiting for it failed) is logged; its exit, or its
+                // late reap once let go, follows either way.
                 Effect::Terminate => {
                     if let Some(worker) = &mut self.worker
                         && let Err(error) = worker.terminate()
                     {
-                        log!("cannot stop the worker: {error}");
+                        warn!(%error, "cannot stop the worker");
                     }
                 }
                 Effect::Kill => {
                     if let Some(worker) = &mut self.worker
                         && let Err(error) = worker.kill()
                     {
-                        log!("cannot kill the worker: {error}");
+                        warn!(%error, "cannot kill the worker");
                     }
                 }
-                // Dropping it reaps it on a thread, if it ever can be.
+                // Dropping it reaps it on a thread, if it ever can be, and
+                // the launcher says when ([`Launcher::let_go_reaped`]).
                 Effect::Abandon => {
                     if self.worker.take().is_some() {
-                        log!("letting go of a worker not reaped after its kill");
+                        warn!("letting go of a worker not reaped after its kill");
                     }
                 }
                 Effect::Publish => {
-                    let payload = self.state_json(Some(true), now);
+                    let payload = self.state_json(Some(true));
                     if self.published.as_ref() != Some(&payload) {
                         bus.publish(&payload);
                         self.published = Some(payload);
@@ -660,15 +684,15 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         }
     }
 
-    fn state_reply(&self, now: Instant) -> Reply {
+    fn state_reply(&self) -> Reply {
         Reply {
-            payload: self.state_json(None, now),
+            payload: self.state_json(None),
             subscribe: false,
         }
     }
 
-    fn state_json(&self, subscribed: Option<bool>, now: Instant) -> String {
-        encode_reply(&StateReply::new(self.machine.state(now), subscribed))
+    fn state_json(&self, subscribed: Option<bool>) -> String {
+        encode_reply(&StateReply::new(self.machine.state(), subscribed))
     }
 }
 

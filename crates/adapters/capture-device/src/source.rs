@@ -6,7 +6,7 @@
 //! deadline.
 use prysm_capture_device_sys::{CAMERA_ACCESS_WAIT, CaptureError, CaptureSink};
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result, Worker};
+use prysm_ports::{Error, Escalation, FrameSource, OwnerThread, Pull, Result, Worker};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -90,15 +90,21 @@ fn run(check: Check, capture: Capture, worker: &Worker) -> Result<()> {
     match capture(&sink) {
         Ok(()) => Ok(()),
         Err(error @ CaptureError::Cleanup(_)) => {
-            let error = Error::adapter("video device release is unconfirmed", error);
+            let error = failure("video device release is unconfirmed", error);
             worker.fail(error.clone());
             Err(error)
         }
         Err(error) => {
-            worker.fail(Error::adapter("video device capture failed", error));
+            worker.fail(failure("video device capture failed", error));
             Ok(())
         }
     }
+}
+
+/// `error` under `context`, escalating as its cause says.
+fn failure(context: &str, error: CaptureError) -> Error {
+    let escalation = error.escalation();
+    Error::adapter_escalating(context, error, escalation)
 }
 
 pub(crate) struct DeviceFrames {
@@ -121,7 +127,10 @@ impl DeviceFrames {
                 let late = format!("video device was not ready within {:?}", deadlines.ready);
                 Err(match thread.close() {
                     Ok(()) => Error::other(late),
-                    Err(unreleased) => Error::adapter(late, unreleased),
+                    // Only a new process frees a device a capture still holds.
+                    Err(unreleased) => {
+                        Error::adapter_escalating(late, unreleased, Escalation::Restart)
+                    }
                 })
             }
             // The capture has returned, so this release is immediate; an

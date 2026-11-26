@@ -89,8 +89,9 @@ fn offered(handoff: &Handoff) -> Option<Offer> {
 /// asked: `next_frame` fails with the invalid field (`capture.width`,
 /// `capture.encoding`, ...) and the source stops. So does a sender that
 /// cannot produce the request and refuses it, as an invalid
-/// `capture.encoding` when the requested encoder is what failed, and an
-/// H.264 stream whose keyframe does not decode.
+/// `capture.encoding` when the requested encoder is what failed, a sender
+/// that sends what this end does not take, and an H.264 stream whose
+/// keyframe does not decode.
 ///
 /// Closing, or failing after the sender was asked, tells the connected
 /// sender that the stream stopped; a newer sender's connection tells the one

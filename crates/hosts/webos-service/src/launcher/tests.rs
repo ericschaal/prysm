@@ -69,14 +69,17 @@ exit 3"#,
 /// process it left behind) is drained before the exit is handed over.
 #[test]
 fn the_last_events_come_before_the_exit() {
-    let mut worker = sh(r#"(sleep 0.2; echo '{"type":"failed","cause":"late"}') &
-exit 1"#);
+    let mut worker = sh(
+        r#"(sleep 0.2; echo '{"type":"failed","escalation":{"step":"restart"},"message":"late"}') &
+exit 1"#,
+    );
     assert_eq!(exit(&mut worker), Exit::Code(1));
     let seen = worker.drain();
     assert!(
-        seen.contains(&Output::Event(Event::Failed {
-            cause: "late".into()
-        })),
+        seen.contains(&Output::Event(Event::Failed(prysm_webos_link::Failure {
+            escalation: prysm_webos_link::Escalation::Restart,
+            message: "late".into()
+        }))),
         "{seen:?}"
     );
 }
@@ -177,8 +180,10 @@ fn dropping_an_unreaped_worker_terminates_it() {
         marker.display()
     ));
     collect(&mut worker, |seen| !seen.is_empty());
-    let pid =
-        nix::unistd::Pid::from_raw(i32::try_from(worker.child.as_ref().unwrap().id()).unwrap());
+    let Stage::Running { child, .. } = &worker.stage else {
+        panic!("running")
+    };
+    let pid = nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap());
     drop(worker);
     eventually("the worker to end with its handle", LIMIT, || {
         nix::sys::signal::kill(pid, None).is_err().then_some(())
@@ -222,9 +227,50 @@ read line"#
     assert_eq!(exit(&mut worker), Exit::Code(0));
 }
 
+/// An exit reaped after the event reader ended is handed over at once, never
+/// held back.
+#[test]
+fn an_exit_after_the_end_of_output_is_not_held_back() {
+    let mut worker = sh("exec 1>&-; read line");
+    eventually("the end of the output", LIMIT, || {
+        events_ended(&worker).then_some(())
+    });
+    worker.send(&Command::ResetVideo {}).unwrap();
+    let exit = eventually("the worker's exit", LIMIT, || {
+        let exit = worker.try_exit().unwrap();
+        assert_eq!(worker.due(), None, "not held back");
+        exit
+    });
+    assert_eq!(exit, Exit::Code(0));
+}
+
+/// A worker let go says when its late reap returns, also when waiting for
+/// it fails (here it was reaped already): it is gone either way, and once
+/// waiting failed it is not signalled, its pid may be another process's.
+#[test]
+fn a_worker_let_go_says_when_it_is_gone_even_if_waiting_fails() {
+    let mut launcher = launcher();
+    let mut worker = launcher
+        .spawn(Path::new("/bin/sh"), &["-c".into(), "exit 0".into()])
+        .unwrap();
+    let Stage::Running { child, .. } = &worker.stage else {
+        panic!("running");
+    };
+    let pid = nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap());
+    nix::sys::wait::waitpid(pid, None).unwrap();
+    assert!(worker.try_exit().is_err(), "already reaped");
+    let refused = worker.terminate().unwrap_err();
+    assert_eq!(refused.raw_os_error(), None, "not signalled: {refused}");
+    assert!(!launcher.let_go_reaped());
+    drop(worker);
+    eventually("the late reap", LIMIT, || {
+        launcher.let_go_reaped().then_some(())
+    });
+}
+
 fn events_ended(worker: &ProcessWorker) -> bool {
-    worker
-        .reader
-        .as_ref()
-        .is_some_and(|(_, ended)| ended.load(Ordering::Acquire))
+    match &worker.stage {
+        Stage::Running { reader, .. } | Stage::Reaped { reader, .. } => reader.ended(),
+        Stage::Reported => false,
+    }
 }

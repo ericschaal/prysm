@@ -186,7 +186,7 @@ impl Feeds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::leds::Configured;
+    use crate::leds::{Configured, Device};
     use crate::null::{NullOutput, NullSettings};
     use crate::session::Session;
     use crate::stats::Stats;
@@ -222,6 +222,7 @@ mod tests {
                 registry,
                 AdapterSettings::new(NullOutput::KIND, &NullSettings::new()),
             ),
+            Device::Left(IdleMode::Off),
             Config::default(),
             feeds.clone(),
             Arc::new(Stats::default()),

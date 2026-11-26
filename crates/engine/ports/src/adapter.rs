@@ -8,8 +8,13 @@ use std::time::Duration;
 #[derive(Debug)]
 pub enum Pull {
     Frame(Frame),
-    /// No frame within the timeout; the caller checks its stop flag and asks again.
-    Idle,
+    /// No frame within the timeout, and no reason given (no signal, no
+    /// sender); the caller checks its stop flag and asks again. Not a failure.
+    Quiet,
+    /// No frame within the timeout because the source's device refuses to
+    /// share the video it shows; frames come again once it shares it. The
+    /// caller asks again, as after [`Pull::Quiet`]. Not a failure.
+    Refused,
     /// The source has finished (a file played to its end) and will produce no
     /// more frames. Not a failure: the session stops normally.
     Ended,
@@ -21,21 +26,8 @@ impl Pull {
     pub fn into_frame(self) -> Option<Frame> {
         match self {
             Self::Frame(frame) => Some(frame),
-            Self::Idle | Self::Ended => None,
+            Self::Quiet | Self::Refused | Self::Ended => None,
         }
-    }
-
-    #[must_use]
-    pub fn is_idle(&self) -> bool {
-        matches!(self, Self::Idle)
-    }
-}
-
-/// A frame, or `Idle` without one: what a push-style source's newest-frame
-/// hand-off yields.
-impl From<Option<Frame>> for Pull {
-    fn from(frame: Option<Frame>) -> Self {
-        frame.map_or(Self::Idle, Self::Frame)
     }
 }
 
@@ -153,22 +145,30 @@ impl From<DeviceBrightness> for u8 {
     }
 }
 
-/// Why the LEDs are not showing Prysm's colours although lighting runs.
-/// Prysm reports it and keeps sending: the LEDs follow again as soon as the
-/// device takes the colours.
+/// Why the lights do not show what was chosen. `off`: the device is
+/// switched off. `overridden`: the device's own override is on (WLED: live
+/// override). `not_live`: the device is not taking the colours (WLED: not in
+/// live mode, or no DDP arriving). `other_sender`: another sender's colours
+/// reach the device. `unreachable`: the device does not answer Prysm's state
+/// checks, the request that opens it for screen sync, or, with the target
+/// `off` or `effects`, the request for that mode. During screen sync Prysm
+/// keeps sending the colours; it tries an unanswered request again every few
+/// seconds. The lights follow once the device takes the colours or answers.
+/// Open: an app reads an issue it does not know in general words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum OutputIssue {
     /// The device was switched off.
     Off,
-    /// The device's own override is on (WLED: "live override").
+    /// The device's own override is on.
     Overridden,
-    /// The device is not taking the colours (realtime reception disabled,
-    /// or it left realtime mode).
+    /// The device is not taking the colours.
     NotLive,
-    /// Another sender's colours are reaching the device.
+    /// Another sender's colours reach the device.
     OtherSender,
-    /// The device does not answer state requests.
+    /// The device does not answer: its state checks, the session's open
+    /// ([`Escalation::Unanswered`](crate::Escalation)) or the idle request.
     Unreachable,
 }
 

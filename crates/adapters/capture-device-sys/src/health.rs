@@ -2,10 +2,9 @@
 //! AVFoundation, fed what each buffer (or its absence) was.
 //!
 //! - A frame ends any run of trouble.
-//! - A stall (no buffer within [`stall_timeout`]) ends any run too, so a source
-//!   that is off, and yields a bad buffer now and then, stays "waiting for
-//!   video" instead of failing. V4L2 restarts its stream after a stall, at
-//!   once: the stall already waited.
+//! - A stall (no buffer within [`stall_timeout`]) is waited out. It ends a
+//!   run of unusable buffers, so a source that is off, and yields a bad
+//!   buffer now and then, stays "waiting for video" instead of failing.
 //! - Unusable buffers in a row are dropped quietly until the run has lasted
 //!   [`GRACE`] and held that long's worth of buffers at the configured rate;
 //!   then capture fails with [`CaptureError::Unusable`], so a stream does not
@@ -15,19 +14,12 @@
 //!   ENODEV) does not fail early. The count bound keeps a device that delivers
 //!   bad buffers well below its rate, without stalling, from failing after a
 //!   few of them.
-//! - Interruptions (V4L2's possibly temporary EIO, or a failed restart)
-//!   restart the stream, after [`PAUSE`], until a run of them with no frame
-//!   and no stall between has lasted [`GRACE`]; then capture fails with the
-//!   last one, so a dead device does not restart forever. Unusable buffers
-//!   after an interruption neither end nor extend that run, and are held
-//!   to the same two bounds as a run of their own, counted from the run's
-//!   first interruption: a stream that delivers only bad buffers after an
-//!   interruption does not look alive either, and one corrupted buffer
-//!   after a late restart does not fail capture.
-//! - An interruption ends a run of unusable buffers and starts its own.
-//! - Interruptions with stalls between them (EIO, restart, stall, restart,
-//!   EIO, ...) never fail capture, on purpose: a source that is off stalls,
-//!   and capture keeps "waiting for video".
+//! - An interruption (V4L2's EIO on DQBUF or QBUF) restarts the stream once:
+//!   STREAMOFF clears the queue error that fails every DQBUF until then. A
+//!   second one before a frame (a stall between them does not count) fails
+//!   capture with it, since nothing shows that more restarts would help. An
+//!   interruption also ends a run of unusable buffers: the restarted stream
+//!   starts afresh.
 use crate::{BufferRejection, CaptureError};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -35,16 +27,16 @@ use std::time::{Duration, Instant};
 /// [`GRACE`] in whole seconds.
 const GRACE_SECONDS: u32 = 3;
 
-/// How long a run of unusable buffers or interruptions lasts before capture
-/// fails: long enough for a signal to come back.
+/// How long a run of unusable buffers lasts before capture fails: long
+/// enough for a signal to come back.
 const GRACE: Duration = Duration::from_secs(GRACE_SECONDS as u64);
 
-/// The pause before a restart after an interruption, so a device that fails
-/// at once is not restarted in a tight loop.
-pub(crate) const PAUSE: Duration = Duration::from_millis(100);
-
 /// How long capture waits for a buffer before it counts a stall: a second,
-/// plus one frame period at `rate`.
+/// plus one frame period at `rate`. A stall is only waited out, with no
+/// restart and no failure: a card without a signal went on sending (black)
+/// frames, and a driver that dropped buffers for seconds delivered again by
+/// itself, unrestarted. The timeout lets a stop be noticed and a run of
+/// unusable buffers end.
 pub(crate) fn stall_timeout(rate: NonZeroU32) -> Duration {
     Duration::from_secs(1) + Duration::from_secs(1) / rate.get()
 }
@@ -58,7 +50,7 @@ pub(crate) enum Event {
     Rejected(BufferRejection),
     /// No buffer within [`stall_timeout`].
     Stalled,
-    /// The device failed in a way that may pass; `error` if it does not.
+    /// An I/O error a stream restart may clear; `error` if it does not.
     #[cfg_attr(
         not(target_os = "linux"),
         allow(dead_code, reason = "only a V4L2 stream is interrupted")
@@ -71,109 +63,85 @@ pub(crate) enum Event {
 pub(crate) enum Verdict {
     /// Wait for the next buffer.
     Continue,
-    /// Restart the stream after `pause` ([`PAUSE`] after an interruption,
-    /// none after a stall), then wait for the next buffer.
-    Restart {
-        #[cfg_attr(
-            not(target_os = "linux"),
-            allow(dead_code, reason = "only a V4L2 stream restarts")
-        )]
-        pause: Duration,
-    },
+    /// Restart the stream after an interruption, then wait for the next
+    /// buffer.
+    Restart,
     /// Stop capturing with this error.
     Fail(CaptureError),
 }
 
-/// The run of trouble capture is in.
+/// `count` unusable buffers in a row, the first at `since`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Run {
-    Clean,
-    /// `count` unusable buffers in a row, the first at `since`.
-    Rejecting {
-        since: Instant,
-        count: u32,
-    },
-    /// Interruptions in a row, the first at `since`, with `rejected`
-    /// unusable buffers between them.
-    Interrupted {
-        since: Instant,
-        rejected: u32,
-    },
+struct Rejecting {
+    since: Instant,
+    count: u32,
 }
 
 pub(crate) struct Health {
     /// Buffers in [`GRACE`] at the configured rate.
     limit: u32,
-    run: Run,
+    /// The stream was restarted after an interruption, and has not
+    /// delivered since.
+    restarted: bool,
+    rejecting: Option<Rejecting>,
 }
 
 impl Health {
     pub(crate) fn new(rate: NonZeroU32) -> Self {
         Self {
             limit: rate.get().saturating_mul(GRACE_SECONDS),
-            run: Run::Clean,
+            restarted: false,
+            rejecting: None,
         }
     }
 
     /// The verdict on `event` at `now`. A run that starts is logged once.
     pub(crate) fn on(&mut self, event: Event, now: Instant) -> Verdict {
-        let lasted = |since: Instant| now.saturating_duration_since(since) >= GRACE;
-        let (run, verdict) = match (self.run, event) {
-            (_, Event::Frame) => (Run::Clean, Verdict::Continue),
-            (_, Event::Stalled) => (
-                Run::Clean,
-                Verdict::Restart {
-                    pause: Duration::ZERO,
-                },
-            ),
-            // An unusable buffer after an interruption is not the device
-            // recovering: the interruption run and its clock go on, under
-            // the bounds of a run of unusable buffers.
-            (Run::Interrupted { since, rejected }, Event::Rejected(reason)) => {
-                let rejected = rejected.saturating_add(1);
-                let verdict = if rejected >= self.limit && lasted(since) {
+        match event {
+            Event::Frame => {
+                self.restarted = false;
+                self.rejecting = None;
+                Verdict::Continue
+            }
+            // Only a frame shows that a restart worked.
+            Event::Stalled => {
+                self.rejecting = None;
+                Verdict::Continue
+            }
+            Event::Rejected(reason) => {
+                let run = match self.rejecting {
+                    Some(Rejecting { since, count }) => Rejecting {
+                        since,
+                        count: count.saturating_add(1),
+                    },
+                    None => {
+                        tracing::warn!(%reason, "Capture device delivered an unusable buffer");
+                        Rejecting {
+                            since: now,
+                            count: 1,
+                        }
+                    }
+                };
+                self.rejecting = Some(run);
+                if run.count >= self.limit && now.saturating_duration_since(run.since) >= GRACE {
                     Verdict::Fail(CaptureError::Unusable {
-                        rejected,
+                        rejected: run.count,
                         source: reason,
                     })
                 } else {
                     Verdict::Continue
-                };
-                (Run::Interrupted { since, rejected }, verdict)
+                }
             }
-            (run, Event::Rejected(reason)) => {
-                let (since, count) = if let Run::Rejecting { since, count } = run {
-                    (since, count.saturating_add(1))
-                } else {
-                    tracing::warn!(%reason, "Capture device delivered an unusable buffer");
-                    (now, 1)
-                };
-                let verdict = if count >= self.limit && lasted(since) {
-                    Verdict::Fail(CaptureError::Unusable {
-                        rejected: count,
-                        source: reason,
-                    })
-                } else {
-                    Verdict::Continue
-                };
-                (Run::Rejecting { since, count }, verdict)
+            Event::Interrupted(error) => {
+                self.rejecting = None;
+                if self.restarted {
+                    return Verdict::Fail(error);
+                }
+                self.restarted = true;
+                tracing::warn!(error = %prysm_ports::chain(&error), "Capture interrupted; restarting the stream");
+                Verdict::Restart
             }
-            (run, Event::Interrupted(error)) => {
-                let (since, rejected) = match run {
-                    Run::Interrupted { since, rejected } => (since, rejected),
-                    Run::Clean | Run::Rejecting { .. } => (now, 0),
-                };
-                let verdict = if lasted(since) {
-                    Verdict::Fail(error)
-                } else {
-                    tracing::warn!(error = %prysm_ports::chain(&error), "Capture interrupted; restarting the stream");
-                    Verdict::Restart { pause: PAUSE }
-                };
-                (Run::Interrupted { since, rejected }, verdict)
-            }
-        };
-        self.run = run;
-        verdict
+        }
     }
 }
 
@@ -190,10 +158,7 @@ mod tests {
     #[derive(Debug, PartialEq)]
     enum Kind {
         Continue,
-        /// After [`PAUSE`].
         Restart,
-        /// Without a pause.
-        RestartNow,
         Unusable,
         Interrupted,
     }
@@ -201,11 +166,7 @@ mod tests {
     fn kind(verdict: &Verdict) -> Kind {
         match verdict {
             Verdict::Continue => Kind::Continue,
-            Verdict::Restart { pause } if pause.is_zero() => Kind::RestartNow,
-            Verdict::Restart { pause } => {
-                assert_eq!(*pause, PAUSE);
-                Kind::Restart
-            }
+            Verdict::Restart => Kind::Restart,
             Verdict::Fail(CaptureError::Unusable { .. }) => Kind::Unusable,
             Verdict::Fail(_) => Kind::Interrupted,
         }
@@ -219,45 +180,25 @@ mod tests {
         Event::Interrupted(CaptureError::Backend(anyhow::anyhow!("EIO")))
     }
 
-    fn health(run: Run) -> Health {
-        Health { limit: LIMIT, run }
-    }
-
-    /// Every run against every event: the run after it and the verdict.
+    /// Every state against every event: the state after it and the verdict.
     #[test]
-    fn every_run_meets_every_event() {
+    fn every_state_meets_every_event() {
         let start = Instant::now();
         let now = start + GRACE * 10;
         // A run's start: just now, or longer ago than the grace.
         let young = now - GRACE / 2;
         let old = now - GRACE;
-        let interrupting = |since, rejected| Run::Interrupted { since, rejected };
-        let runs = [
-            ("clean", Run::Clean),
+        let rejecting = |since, count| Some(Rejecting { since, count });
+        let states = [
+            ("clean", (false, None)),
+            ("rejecting, young", (false, rejecting(young, LIMIT))),
+            ("rejecting, few", (false, rejecting(old, LIMIT - 2))),
+            ("rejecting, due", (false, rejecting(old, LIMIT - 1))),
+            ("restarted", (true, None)),
             (
-                "rejecting, young",
-                Run::Rejecting {
-                    since: young,
-                    count: LIMIT,
-                },
+                "restarted, rejecting, due",
+                (true, rejecting(old, LIMIT - 1)),
             ),
-            (
-                "rejecting, few",
-                Run::Rejecting {
-                    since: old,
-                    count: LIMIT - 2,
-                },
-            ),
-            (
-                "rejecting, due",
-                Run::Rejecting {
-                    since: old,
-                    count: LIMIT - 1,
-                },
-            ),
-            ("interrupted, young", interrupting(young, LIMIT - 1)),
-            ("interrupted, due", interrupting(old, LIMIT - 1)),
-            ("interrupted, due, few rejected", interrupting(old, 0)),
         ];
         type Named = (&'static str, fn() -> Event);
         let events: [Named; 4] = [
@@ -266,60 +207,57 @@ mod tests {
             ("stalled", || Event::Stalled),
             ("interrupted", interrupted),
         ];
-        use Kind::{Continue, Interrupted, Restart, RestartNow, Unusable};
-        let clean = Run::Clean;
-        let rejecting = |since, count| Run::Rejecting { since, count };
-        // Rows follow `runs`, columns `events`.
+        use Kind::{Continue, Interrupted, Restart, Unusable};
+        let clean = (false, None);
+        // Rows follow `states`, columns `events`.
         let expected = [
             [
                 (clean, Continue),
-                (rejecting(now, 1), Continue),
-                (clean, RestartNow),
-                (interrupting(now, 0), Restart),
+                ((false, rejecting(now, 1)), Continue),
+                (clean, Continue),
+                ((true, None), Restart),
             ],
             [
                 (clean, Continue),
-                (rejecting(young, LIMIT + 1), Continue),
-                (clean, RestartNow),
-                (interrupting(now, 0), Restart),
+                ((false, rejecting(young, LIMIT + 1)), Continue),
+                (clean, Continue),
+                ((true, None), Restart),
             ],
             [
                 (clean, Continue),
-                (rejecting(old, LIMIT - 1), Continue),
-                (clean, RestartNow),
-                (interrupting(now, 0), Restart),
+                ((false, rejecting(old, LIMIT - 1)), Continue),
+                (clean, Continue),
+                ((true, None), Restart),
             ],
             [
                 (clean, Continue),
-                (rejecting(old, LIMIT), Unusable),
-                (clean, RestartNow),
-                (interrupting(now, 0), Restart),
+                ((false, rejecting(old, LIMIT)), Unusable),
+                (clean, Continue),
+                ((true, None), Restart),
             ],
             [
                 (clean, Continue),
-                (interrupting(young, LIMIT), Continue),
-                (clean, RestartNow),
-                (interrupting(young, LIMIT - 1), Restart),
+                ((true, rejecting(now, 1)), Continue),
+                ((true, None), Continue),
+                ((true, None), Interrupted),
             ],
             [
                 (clean, Continue),
-                (interrupting(old, LIMIT), Unusable),
-                (clean, RestartNow),
-                (interrupting(old, LIMIT - 1), Interrupted),
-            ],
-            [
-                (clean, Continue),
-                (interrupting(old, 1), Continue),
-                (clean, RestartNow),
-                (interrupting(old, 0), Interrupted),
+                ((true, rejecting(old, LIMIT)), Unusable),
+                ((true, None), Continue),
+                ((true, None), Interrupted),
             ],
         ];
-        for ((name, run), row) in runs.into_iter().zip(expected) {
+        for ((name, (restarted, run)), row) in states.into_iter().zip(expected) {
             for ((event_name, event), (next, verdict)) in events.iter().zip(row) {
-                let mut health = health(run);
+                let mut health = Health {
+                    limit: LIMIT,
+                    restarted,
+                    rejecting: run,
+                };
                 let got = health.on(event(), now);
                 assert_eq!(
-                    (health.run, kind(&got)),
+                    ((health.restarted, health.rejecting), kind(&got)),
                     (next, verdict),
                     "{name} + {event_name}"
                 );
@@ -416,73 +354,6 @@ mod tests {
         assert_eq!(
             kind(&health.on(corrupted(), start + period * (LIMIT - 1))),
             Kind::Unusable
-        );
-    }
-
-    #[test]
-    fn interruptions_restart_until_their_time_is_up() {
-        let start = Instant::now();
-        let mut health = Health::new(RATE);
-        assert_eq!(kind(&health.on(interrupted(), start)), Kind::Restart);
-        assert_eq!(
-            kind(&health.on(interrupted(), start + GRACE - PAUSE)),
-            Kind::Restart
-        );
-        assert_eq!(
-            kind(&health.on(interrupted(), start + GRACE)),
-            Kind::Interrupted
-        );
-        assert_eq!(
-            kind(&health.on(interrupted(), start + GRACE * 2)),
-            Kind::Interrupted,
-            "a dead device keeps failing"
-        );
-        // A frame ends the run; the next starts afresh.
-        let later = start + GRACE * 10;
-        health.on(Event::Frame, later);
-        assert_eq!(kind(&health.on(interrupted(), later)), Kind::Restart);
-        assert_eq!(
-            kind(&health.on(interrupted(), later + GRACE)),
-            Kind::Interrupted
-        );
-    }
-
-    #[test]
-    fn alternating_unusable_buffers_and_interruptions_fail_within_the_grace() {
-        let start = Instant::now();
-        let mut health = Health::new(RATE);
-        let mut now = start;
-        let failed = loop {
-            assert!(now < start + GRACE * 2, "never failed");
-            health.on(corrupted(), now);
-            now += PAUSE / 2;
-            if let Verdict::Fail(error) = health.on(interrupted(), now) {
-                break error;
-            }
-            now += PAUSE / 2;
-        };
-        assert!(now >= start + GRACE && now < start + GRACE + PAUSE);
-        assert!(!matches!(failed, CaptureError::Unusable { .. }));
-    }
-
-    #[test]
-    fn unusable_buffers_after_one_interruption_fail_after_the_grace() {
-        let start = Instant::now();
-        let mut health = Health::new(RATE);
-        assert_eq!(kind(&health.on(interrupted(), start)), Kind::Restart);
-        let period = Duration::from_secs(1) / RATE.get();
-        let mut now = start;
-        let failed = loop {
-            now += period;
-            assert!(now <= start + GRACE + period, "never failed");
-            if let Verdict::Fail(error) = health.on(corrupted(), now) {
-                break error;
-            }
-        };
-        assert!(now >= start + GRACE);
-        assert!(
-            matches!(failed, CaptureError::Unusable { .. }),
-            "{failed:?}"
         );
     }
 

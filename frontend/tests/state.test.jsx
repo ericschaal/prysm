@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createApplicationRuntime } from '@prysm/application-state';
 import { ApplicationError } from '@prysm/application-client';
+import { httpApplicationClient } from '@prysm/application-client/http';
 import { fakeApplicationPort } from '../testkit/application';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -87,7 +88,12 @@ test('each runtime has its own store and the stream reconnects after loss', asyn
   fixture.client.observe = (signal) => {
     if (fail) {
       fail = false;
-      return Promise.reject(new Error('connection refused'));
+      return Promise.reject(
+        new ApplicationError({
+          kind: 'unavailable',
+          message: 'connection refused',
+        }),
+      );
     }
     return observe(signal);
   };
@@ -134,7 +140,12 @@ test('a state the page came with is current until the stream replaces it, kept w
   fixture.client.observe = (signal) => {
     if (fail) {
       fail = false;
-      return Promise.reject(new Error('connection refused'));
+      return Promise.reject(
+        new ApplicationError({
+          kind: 'unavailable',
+          message: 'connection refused',
+        }),
+      );
     }
     return observe(signal);
   };
@@ -168,6 +179,26 @@ test('forbidden streams stop retrying', async () => {
     kind: 'forbidden',
     message: 'denied',
   });
+  release();
+});
+
+test('a stream event this page can’t read stops the stream, not retried', async () => {
+  let attempts = 0;
+  const client = httpApplicationClient({
+    fetch: async () => {
+      attempts++;
+      return new Response('data: {"kind":"snapshot"}\n\n', {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    },
+  });
+  const application = createApplicationRuntime(client);
+  const release = application.connect();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const { connection } = application.store.getState();
+  assert.equal(attempts, 1);
+  assert.equal(connection.status, 'disconnected');
+  assert.equal(connection.error.kind, 'internal');
   release();
 });
 

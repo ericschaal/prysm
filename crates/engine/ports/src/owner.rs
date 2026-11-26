@@ -43,6 +43,9 @@ struct State {
     woken: bool,
     ready: bool,
     frame: Option<Frame>,
+    /// The device refuses its video: pulls without a frame are
+    /// [`Pull::Refused`], else [`Pull::Quiet`].
+    refused: bool,
     /// The watched native call in progress and when it started.
     busy: Option<(&'static str, Instant)>,
     /// The first terminal failure.
@@ -143,7 +146,8 @@ impl OwnerThread {
         }
     }
 
-    /// Wait up to `timeout` for a frame and take it; [`Pull::Idle`] without one.
+    /// Wait up to `timeout` for a frame and take it; [`Pull::Quiet`] or
+    /// [`Pull::Refused`] ([`Worker::refused`]) without one.
     ///
     /// # Errors
     /// The terminal failure (also a watched call past its watchdog), on every
@@ -160,7 +164,11 @@ impl OwnerThread {
         if state.released.is_some() {
             return Err(self.ended());
         }
-        Ok(state.frame.take().into())
+        Ok(match state.frame.take() {
+            Some(frame) => Pull::Frame(frame),
+            None if state.refused => Pull::Refused,
+            None => Pull::Quiet,
+        })
     }
 
     /// The frame published and not yet taken; for adapters' tests.
@@ -295,6 +303,12 @@ impl Worker {
         drop(self.shared.update(|state| state.frame.replace(frame)));
     }
 
+    /// Whether the device refuses its video, until said otherwise (not at
+    /// first): pulls without a frame say so.
+    pub fn refused(&self, refused: bool) {
+        self.shared.update(|state| state.refused = refused);
+    }
+
     /// Publish a terminal failure; the first one is kept.
     pub fn fail(&self, error: Error) {
         self.shared.update(|state| {
@@ -356,8 +370,36 @@ mod tests {
             assert!(frame.as_slice()[0] > last);
             last = frame.as_slice()[0];
         }
-        assert!(owner.next_frame(SHORT).unwrap().is_idle());
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Quiet));
         assert_eq!(owner.close().unwrap_err().to_string(), "buffers stuck");
+    }
+
+    /// While the device refuses its video, pulls without a frame say so; a
+    /// frame still comes first.
+    #[test]
+    fn a_refusal_is_said_until_it_is_withdrawn() {
+        let (step, steps) = std::sync::mpsc::channel::<()>();
+        let (done, withdrawn) = std::sync::mpsc::channel::<()>();
+        let mut owner = spawn(move |worker| {
+            worker.refused(true);
+            worker.ready();
+            steps.recv().unwrap();
+            worker.offer(frame(1));
+            steps.recv().unwrap();
+            worker.refused(false);
+            done.send(()).unwrap();
+            until_stopped(worker);
+            Ok(())
+        });
+        assert!(owner.wait_ready(LIMIT).unwrap());
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Refused));
+        step.send(()).unwrap();
+        let frame = owner.next_frame(LIMIT).unwrap().into_frame().unwrap();
+        assert_eq!(frame.as_slice()[0], 1);
+        step.send(()).unwrap();
+        withdrawn.recv_timeout(LIMIT).unwrap();
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Quiet));
+        owner.close().unwrap();
     }
 
     /// A wake-up ends a sleep, also one that came before it; it outlives

@@ -1,6 +1,6 @@
 //! When the output shows the session's colours: the lights' own effects, quiet sources, the colors feed.
 use crate::common::*;
-use prysm_ports::{LightingTarget, Registry, SessionState, Settings};
+use prysm_ports::{LightingTarget, Picture, Registry, SessionState, Settings};
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
@@ -56,11 +56,17 @@ async fn quiet_source_rewrites_last_colors() {
 }
 
 fn quiet(after: u32, for_ms: u64) -> Settings {
+    quiet_as(after, for_ms, false)
+}
+
+/// [`quiet`], with the quiet spell saying the video is refused if `refused`.
+fn quiet_as(after: u32, for_ms: u64, refused: bool) -> Settings {
     settings(
         FakeSourceSettings {
             name: "s".into(),
             quiet_after: Some(after),
             quiet_for_ms: for_ms,
+            refused,
             ..Default::default()
         },
         FakeOutputSettings {
@@ -77,7 +83,8 @@ async fn a_source_without_frames_never_takes_the_output() {
         let (handle, engine, _) = start(&log, quiet(0, 0), DEADLINE).await;
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let waiting = snapshot_until(&handle, |s| {
-            s.input.is_some_and(|i| !i.receiving && i.fps == 0.0)
+            s.input
+                .is_some_and(|i| i.picture == Picture::Quiet && i.fps == 0.0)
         })
         .await;
         assert!(
@@ -86,7 +93,7 @@ async fn a_source_without_frames_never_takes_the_output() {
             waiting.session
         );
 
-        // Off leaves an untouched output untouched, and the whole session
+        // Off leaves an output left off as it is, and the whole session
         // never opened it.
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert_eq!(log.events(), ["source.open:s", "source.close:s"]);
@@ -95,11 +102,18 @@ async fn a_source_without_frames_never_takes_the_output() {
     .await;
 }
 
+/// Quiet or refused, the output is released alike.
 #[tokio::test]
 async fn a_quiet_source_releases_the_output_until_frames_return() {
+    for (refused, picture) in [(false, Picture::Quiet), (true, Picture::Refused)] {
+        releases_until_frames_return(refused, picture).await;
+    }
+}
+
+async fn releases_until_frames_return(refused: bool, picture: Picture) {
     within_async(LIMIT, async {
         let log = CallLog::new();
-        let (handle, engine, _) = start(&log, quiet(3, 3_600), DEADLINE).await;
+        let (handle, engine, _) = start(&log, quiet_as(3, 3_600, refused), DEADLINE).await;
         let colors = handle.colors();
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         assert!(log.wait_for("output.write:o", 3).await);
@@ -116,7 +130,7 @@ async fn a_quiet_source_releases_the_output_until_frames_return() {
             "{}",
             snapshot.session
         );
-        assert!(snapshot.input.is_some_and(|i| !i.receiving));
+        assert_eq!(snapshot.input.map(|i| i.picture), Some(picture));
         assert!(snapshot.session.failure().is_none());
 
         // The next frame takes it again.

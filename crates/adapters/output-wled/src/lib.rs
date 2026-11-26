@@ -8,8 +8,9 @@
 //! - `write` sends colours as DDP over UDP (port 4048), clockwise from the
 //!   bottom-left corner, encoded for the gamma WLED applies (read with its
 //!   configuration; sRGB until then) and, unless `dither` is off, dithered
-//!   over the levels WLED shows at its brightness. A frame the network
-//!   refuses is dropped; `write` fails once sends have kept failing for 3 s.
+//!   over the levels WLED shows at its brightness. A frame that cannot leave
+//!   now (a full buffer, no route to the device) is dropped and the next frame
+//!   is the next try; any other send error fails `write` at once (`classify`).
 //! - `idle` powers the device off or returns it to its own effect; a failed open
 //!   turns it off before returning. [`Wled`]'s own `idle` does the same for a
 //!   device nobody holds, without live mode first. Either takes at most
@@ -36,13 +37,13 @@
 //! for the next one), and discovery's requests run on scoped threads it
 //! joins. The time limits are deadlines on calls, never retries:
 //! `http::TIMEOUT` for a resolution or a mode change,
-//! the state check's cadence, backoff and reply deadline, `ddp`'s
-//! `SEND_GRACE` before failing sends fail `write`, and `discover`'s answer
+//! the state check's cadence and reply deadline, and `discover`'s answer
 //! window and per-device request limit. The runtime rewrites the last colours
 //! while the source is briefly quiet, which keeps WLED in live mode, and after
 //! a few seconds without frames idles the output `Native` (WLED's own state)
 //! and opens it again at the next frame.
 mod address;
+mod classify;
 mod ddp;
 mod discover;
 mod dither;

@@ -14,14 +14,16 @@ enum State {
     Stopped,
     ScreenSync,
     Effects,
+    Unanswered,
     Faulted,
 }
 
 impl State {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::Stopped,
         Self::ScreenSync,
         Self::Effects,
+        Self::Unanswered,
         Self::Faulted,
     ];
 
@@ -30,6 +32,7 @@ impl State {
             Self::Stopped => "stopped",
             Self::ScreenSync => "screen_sync",
             Self::Effects => "effects",
+            Self::Unanswered => "unanswered",
             Self::Faulted => "faulted",
         }
     }
@@ -41,6 +44,7 @@ impl From<&SessionState> for State {
             SessionState::Stopped { .. } => Self::Stopped,
             SessionState::ScreenSync => Self::ScreenSync,
             SessionState::Effects { .. } => Self::Effects,
+            SessionState::Unanswered { .. } => Self::Unanswered,
             SessionState::Faulted(_) => Self::Faulted,
         }
     }
@@ -151,7 +155,7 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
     );
     text.counter(
         "prysm_frames_sent_total",
-        "Frames whose colors were written to the output.",
+        "Frames whose colors were handed to the output.",
         counters.frames_sent,
     );
     text.summary(
@@ -190,7 +194,7 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_ports::{Input, Revision, SessionPhase};
+    use prysm_ports::{Input, Picture, Revision, SessionPhase};
     use std::time::Duration;
 
     #[test]
@@ -220,7 +224,7 @@ mod tests {
             revision: Revision(42),
             input: Some(Input {
                 fps: 29.9,
-                receiving: true,
+                picture: Picture::Arriving,
                 ..Input::default()
             }),
             ..Snapshot::default()
@@ -240,6 +244,7 @@ prysm_target{{target=\"effects\"}} 0
 prysm_session_state{{state=\"stopped\"}} 0
 prysm_session_state{{state=\"screen_sync\"}} 1
 prysm_session_state{{state=\"effects\"}} 0
+prysm_session_state{{state=\"unanswered\"}} 0
 prysm_session_state{{state=\"faulted\"}} 0
 # HELP prysm_settings_revision Revision of the saved settings; starts at a random value per process.
 # TYPE prysm_settings_revision gauge
@@ -250,7 +255,7 @@ prysm_input_fps 29.9
 # HELP prysm_frames_received_total Frames taken from the capture source.
 # TYPE prysm_frames_received_total counter
 prysm_frames_received_total 1200
-# HELP prysm_frames_sent_total Frames whose colors were written to the output.
+# HELP prysm_frames_sent_total Frames whose colors were handed to the output.
 # TYPE prysm_frames_sent_total counter
 prysm_frames_sent_total 1199
 # HELP prysm_processing_seconds Time spent turning frames into colors.

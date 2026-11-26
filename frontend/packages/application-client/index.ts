@@ -12,6 +12,7 @@ import type {
   Modes,
   OutputIssue,
   Pattern,
+  Picture,
   PreviewEvent,
   Session,
   Settings as GeneratedSettings,
@@ -31,10 +32,12 @@ export type {
   Modes,
   OutputIssue,
   Pattern,
+  Picture,
   PreviewEvent,
   Session,
 };
 export { same } from './same';
+export { reconnectDelayMs, STALE_MS, streamStep } from './recovery';
 
 /**
  * The two sides an adapter fills, capture and output: the generated failure
@@ -55,6 +58,18 @@ export const failureSections: Record<FailureSection, true> = {
   capture: true,
   output: true,
 };
+export const pictures: Record<Picture, true> = {
+  arriving: true,
+  quiet: true,
+  refused: true,
+};
+
+/**
+ * Whether frames arrive, as `input` says it; a value newer than this page
+ * is `quiet` (no frames, no reason given).
+ */
+export const pictureOf = (input: Input): Picture =>
+  known(pictures, input.picture, 'quiet');
 
 /** A decoded JSON object's fields, before each is checked. */
 export type Fields = Partial<Record<string, unknown>>;
@@ -73,13 +88,10 @@ export function known<T extends string, F extends string | null | undefined>(
 }
 
 /**
- * How long a stream of the portal (state, colours) waits before it
- * reconnects after `attempt` failures in a row since it last received
- * (0 for the first): 250 ms doubling to 5 s. One policy for every stream of
- * one portal; the TV app's `STALE_MS` is derived from it.
+ * Why no picture arrives while the source's device refuses to share the
+ * video it shows (`picture` is `refused`), for people.
  */
-export const reconnectDelayMs = (attempt: number) =>
-  Math.min(5000, 250 * 2 ** attempt);
+export const REFUSED_VIDEO = 'The TV doesn’t let Prysm capture this video.';
 
 /**
  * Why the lights are not showing screen sync, for people. Prysm keeps
@@ -102,10 +114,45 @@ export function describeOutputIssue(issue: OutputIssue): string {
       return 'The lights aren’t showing screen sync.';
   }
 }
+
+/**
+ * The headline while the lights are not showing screen sync, and while they
+ * don't answer whatever was chosen: lights that don't answer are a problem;
+ * any other issue (a newer one too) is a warning.
+ */
+export function outputIssueHeadline(issue: OutputIssue): string {
+  return issue === 'unreachable'
+    ? 'Can’t reach the lights'
+    : 'Not showing screen sync';
+}
 export type { PreviewFrame } from '@prysm/contracts/application';
+
+/**
+ * What happens once lights that don't answer answer again, by the target:
+ * Prysm keeps it and tries again every few seconds. `effects` names the
+ * output's own effects. At most 52 characters with `WLED effects`.
+ */
+export function whenLightsAnswer(
+  target: LightingTarget,
+  effects: string,
+): string {
+  switch (target) {
+    case 'screen_sync':
+      return 'The lights follow again as soon as they answer.';
+    case 'off':
+      return 'The lights switch off as soon as they answer.';
+    case 'effects':
+      return `${effects} start as soon as the lights answer.`;
+    default:
+      return unreachable(target);
+  }
+}
 
 /** What the lights show while on: screen sync or the output's own effects. */
 export type LightingMode = Exclude<LightingTarget, 'off'>;
+
+/** A target reached without a session: the lights off or their own effects. */
+export type IdleTarget = Exclude<LightingTarget, 'screen_sync'>;
 
 /**
  * A target as this page reads it: `unknown` is one newer than this page,
@@ -152,11 +199,16 @@ export function failureSide(
 /**
  * What the lights are doing, decided once from the requested target and the
  * session (with the failure it carries); every view of the lights shows
- * this. The rule is ordered, so every pair lands on exactly one:
+ * this. The rule is ordered, so every state lands on exactly one:
  *
  * - `faulted`: the session stopped responding; nothing works until a
  *   restart. `message` says what did not finish.
  * - `unknown`: the target or the session state is newer than this page.
+ * - `unanswered`: the lights don't answer the request that puts them off or
+ *   in their own effects (no session). The target stays; Prysm tries again
+ *   every few seconds and applies it once they answer. `failure`: the saved
+ *   settings could not be read or do not validate. (Lights that don't
+ *   answer screen sync are `sync`: its session waits for them.)
  * - `off`: the lights were asked off (the session may still be stopping).
  *   With the lights off a stopped session's failure still stays said:
  *   settings that do not validate, or a switch off that failed.
@@ -174,6 +226,7 @@ export function failureSide(
 export type LightingSituation =
   | { kind: 'faulted'; message: string }
   | { kind: 'unknown'; failure: LightingFailure | null; message: string | null }
+  | { kind: 'unanswered'; target: IdleTarget; failure: LightingFailure | null }
   | { kind: 'off'; failure: LightingFailure | null }
   | {
       kind: 'failed';
@@ -204,6 +257,9 @@ export function lightingSituation({
       failure: sessionFailure(session),
       message: session.state === 'unknown' ? (session.message ?? null) : null,
     };
+  // Screen sync asked during a wait: its start ends the wait.
+  if (session.state === 'unanswered' && target !== 'screen_sync')
+    return { kind: 'unanswered', target, failure: session.failure ?? null };
   if (target === 'off')
     return {
       kind: 'off',
@@ -238,6 +294,7 @@ export function situationFailure(
     case 'failed':
     case 'off':
     case 'effects':
+    case 'unanswered':
     case 'unknown':
       return situation.failure;
     case 'faulted':
@@ -271,6 +328,13 @@ export function describeSituation(
         sentence:
           'Prysm is newer than this page. Reload it to see what the lights do.',
       };
+    case 'unanswered': {
+      const headline = outputIssueHeadline('unreachable');
+      return {
+        headline,
+        sentence: `${headline}. ${whenLightsAnswer(situation.target, effects)}`,
+      };
+    }
     case 'off':
       return both('Lights are off');
     case 'failed':

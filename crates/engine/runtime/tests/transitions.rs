@@ -12,7 +12,8 @@ use prysm_ports::{
     Settings,
 };
 use prysm_runtime::fakes::{
-    CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
+    CallLog, FakeIdle, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources,
+    MemoryStore,
 };
 use prysm_runtime::{Engine, EngineHandle};
 use std::time::Duration;
@@ -73,6 +74,7 @@ enum Shown {
     Stopped,
     ScreenSync,
     Effects,
+    Unanswered,
     Faulted(SessionPhase),
 }
 
@@ -82,6 +84,7 @@ impl From<&SessionState> for Shown {
             SessionState::Stopped { .. } => Self::Stopped,
             SessionState::ScreenSync => Self::ScreenSync,
             SessionState::Effects { .. } => Self::Effects,
+            SessionState::Unanswered { .. } => Self::Unanswered,
             SessionState::Faulted(phase) => Self::Faulted(*phase),
         }
     }
@@ -358,7 +361,7 @@ fn base(from: Start) -> Settings {
     match from {
         Start::Off | Start::ScreenSync | Start::Effects => {}
         Start::ScreenSyncFromEffects | Start::ScreenSyncFailed => source.fail_open = true,
-        Start::EffectsFailed | Start::OffFailed => output.fail_idle = true,
+        Start::EffectsFailed | Start::OffFailed => output.idle = FakeIdle::Fails,
         Start::Unreleased => source.fail_close = true,
     }
     Settings {

@@ -139,8 +139,8 @@ the portal. Uncompressed needs about ten times the network.
 - **Start with TV** starts Screen sync (full) or capture (slim) when the TV
   turns on. OK switches it on or off and it is saved at once. Turn it on only
   after you have tested standby, wake and a cold boot.
-- If Screen sync stops and the TV does not try again by itself, choose
-  **Try again** (full package).
+- If Prysm stops, the app says what to do: usually **Try again**, or
+  **Stop capture** and then **Start capture**.
 - **Service options** has **Set up or repair service**, **View diagnostics**
   and **Remove service setup…**.
 - [Calibrate colours](calibration.md) from the app.

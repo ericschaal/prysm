@@ -1,4 +1,5 @@
 //! The device address: `host[:port]`, parsed at validation and resolved at open.
+use crate::classify::{self, Cause};
 use prysm_ports::{Error, Hangup, Lookup, Resolver, Result};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -207,14 +208,19 @@ impl Names {
         let ip = resolver
             .resolve(wait, stop)
             .map_err(|source| {
-                Error::adapter(format!("cannot resolve WLED host {}", address.host), source)
+                let escalation = classify::escalation(Cause::Resolve(&source));
+                let context = format!("cannot resolve WLED host {}", address.host);
+                Error::adapter_escalating(context, source, escalation)
             })?
             .ip();
         if !is_unicast(ip) {
-            return Err(Error::other(format!(
-                "WLED host {} resolved to {ip}, which is not a unicast address",
-                address.host
-            )));
+            return Err(Error::other_escalating(
+                format!(
+                    "WLED host {} resolved to {ip}, which is not a unicast address",
+                    address.host
+                ),
+                classify::escalation(Cause::NotUnicast),
+            ));
         }
         Ok(ip)
     }

@@ -506,11 +506,9 @@ fn upgrade(url: &Uri, socket: Socket, offer: &Offer) -> Result<Link<MaybeTlsStre
     );
     headers.insert(CAPTURE_OFFER_HEADER, offer);
     let connector = match url.scheme_str() {
-        Some("wss") => {
-            Some(Connector::Rustls(authorities().map_err(|none| {
-                Error::adapter(format!("cannot open {url}"), none)
-            })?))
-        }
+        Some("wss") => Some(Connector::Rustls(authorities().map_err(|untrusted| {
+            Error::adapter(format!("cannot open {url}"), untrusted)
+        })?)),
         _ => None,
     };
     // A request is the longest message this end reads.
@@ -535,11 +533,23 @@ fn upgrade(url: &Uri, socket: Socket, offer: &Offer) -> Result<Link<MaybeTlsStre
                 };
                 Err(Error::adapter(format!("{url} did not open"), error))
             }
-            Err(HandshakeError::Failure(error)) => {
-                Err(Error::adapter(format!("cannot open {url}"), error))
-            }
+            Err(HandshakeError::Failure(error)) => match untrusted(&error) {
+                Some(untrusted) => Err(Error::adapter(format!("cannot open {url}"), untrusted)),
+                None => Err(Error::adapter(format!("cannot open {url}"), error)),
+            },
         };
     }
+}
+
+/// The certificate refusal in a failed handshake: rustls reports it
+/// through the stream's I/O error.
+fn untrusted(error: &tungstenite::Error) -> Option<WireError> {
+    let tungstenite::Error::Io(io) = error else {
+        return None;
+    };
+    let tls = io.get_ref()?.downcast_ref::<rustls::Error>()?;
+    matches!(tls, rustls::Error::InvalidCertificate(_))
+        .then(|| WireError::Untrusted(tls.to_string()))
 }
 
 /// TLS verification against the system's certificate authorities, loaded
@@ -548,9 +558,8 @@ fn upgrade(url: &Uri, socket: Socket, offer: &Offer) -> Result<Link<MaybeTlsStre
 /// asks the trust daemon about every keychain certificate, which takes
 /// seconds; elsewhere it parses the system bundle. `SSL_CERT_FILE` and
 /// `SSL_CERT_DIR` replace the system's set, read here.
-fn authorities() -> Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>> {
-    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>>> =
-        OnceLock::new();
+fn authorities() -> Result<Arc<rustls::ClientConfig>, WireError> {
+    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, WireError>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {
             let loaded = rustls_native_certs::load_native_certs();
@@ -563,8 +572,11 @@ fn authorities() -> Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>> {
             if added == 0 {
                 // The first load failure, if any, says why (a missing
                 // `SSL_CERT_FILE`, say); the rest were logged above.
-                let cause = loaded.errors.into_iter().next();
-                return Err(Arc::new(NoAuthorities(cause)));
+                let none = "the system has no certificate authorities";
+                return Err(WireError::Untrusted(match loaded.errors.first() {
+                    Some(cause) => format!("{none}: {cause}"),
+                    None => none.to_owned(),
+                }));
             }
             Ok(Arc::new(
                 rustls::ClientConfig::builder()
@@ -574,12 +586,6 @@ fn authorities() -> Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>> {
         })
         .clone()
 }
-
-/// No `wss://` connection can be verified: not one certificate authority
-/// loaded.
-#[derive(Debug, thiserror::Error)]
-#[error("the system has no certificate authorities")]
-struct NoAuthorities(#[source] Option<rustls_native_certs::Error>);
 
 /// Tell the receiver that this end cannot produce its request, and close
 /// the connection. Best effort, within the socket's write timeout.

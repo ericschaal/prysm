@@ -132,15 +132,15 @@ export function SetupNotice() {
 }
 
 /**
- * Says the connection is lost, once that lasts, or why the portal refuses
- * this page; the controls are disabled at once, so a short gap (a restart)
+ * Says the connection is lost, once that lasts, or why the state stream
+ * stopped; the controls are disabled at once, so a short gap (a restart)
  * shows nothing.
  */
 export function OfflineNotice() {
-  const { outOfTouch, refusal } = useChrome();
+  const { outOfTouch, stopped } = useChrome();
   return outOfTouch ? (
     <p className="notice warning" role="alert">
-      {refusal ??
+      {stopped ??
         'Lost the connection to Prysm. Reconnecting; your changes are kept.'}
     </p>
   ) : null;

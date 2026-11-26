@@ -37,10 +37,12 @@
 //! with [`Error::Load`].
 mod ffi;
 mod halgal;
+mod operation;
 mod vtcapture;
 
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub use halgal::fuzz_surface_check;
 pub use halgal::{UiCapture, UiFrame};
+pub use operation::Operation;
 pub use vtcapture::{Acquired, Error, Options, VideoFrame, VtCapture};

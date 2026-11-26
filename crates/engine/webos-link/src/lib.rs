@@ -5,8 +5,9 @@
 //! - Start: typed argv ([`FullArgs`], [`SlimArgs`]), built without a shell.
 //! - Supervisor → worker: [`Command`] lines on the worker's stdin.
 //! - Worker → supervisor: [`Event`] lines on the worker's original stdout.
-//! - End: the worker's [`exit`] code.
-//! - Shared policy: the retry [`Backoff`] of both sides.
+//! - End: the worker's exit, its code 0 for a stop asked for and 1 for
+//!   anything else (`worker::exit_code`); the supervisor gives it no
+//!   meaning.
 //!
 //! Framing ([`encode`], [`LineReader`]): one JSON object per line, at most
 //! [`MAX_LINE`] bytes including the newline, unknown fields rejected. A bad
@@ -20,8 +21,8 @@ pub mod worker;
 pub use address::{PrysmAddress, Scheme};
 pub use args::{FullArgs, SlimArgs};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
-pub use prysm_ports::LightingTarget;
 use prysm_ports::StreamEncoding;
+pub use prysm_ports::{Escalation, Fix, LightingTarget, OutputIssue};
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -47,7 +48,7 @@ pub enum Command {
     /// Full only: the lighting target the TV app chose. `sequence` counts
     /// the targets sent to this worker from 1; its status says the last one
     /// it applied ([`FullStatus::applied`]). A slim worker treats it as
-    /// protocol misuse and exits [`exit::FAILED`].
+    /// protocol misuse and exits.
     Target {
         target: LightingTarget,
         sequence: u64,
@@ -76,16 +77,34 @@ pub enum Video {
 pub enum Event {
     /// Sent on every change and at least every [`HEARTBEAT`].
     Status(WorkerStatus),
-    /// Why the worker's run ended with an error (at startup or while
-    /// running); it exits next, [`exit::FAILED`], or [`exit::FAULTED`] when
-    /// the error or the stop reason is a fault. Not a status: a worker can fail before it has
-    /// anything of its package to report. Not every failed exit is preceded
-    /// by one: a protocol misuse or lost link (a stop reason, not an error)
-    /// exits [`exit::FAILED`] without it, as does a failure before the link
+    /// Why the worker's run ends with an error (at startup or while
+    /// running); it exits next. Not a status: a worker can fail before it
+    /// has anything of its package to report. Not every failed exit is
+    /// preceded by one: a protocol misuse or lost link (a stop reason, not
+    /// an error) exits without it, as does a failure before the link
     /// exists.
-    Failed { cause: String },
-    /// A native resource is unconfirmed; the worker exits [`exit::FAULTED`] next.
-    Faulted { cause: String },
+    Failed(Failure),
+}
+
+/// A worker's failure: what is left of it, copied from
+/// [`prysm_ports::Error::escalation`] where the error is met (never decided
+/// on the wire), and its message with the causes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Failure {
+    pub escalation: Escalation,
+    pub message: String,
+}
+
+impl Failure {
+    /// `error`'s escalation and cause chain.
+    #[must_use]
+    pub fn of(error: &prysm_ports::Error) -> Self {
+        Self {
+            escalation: error.escalation(),
+            message: prysm_ports::chain(error),
+        }
+    }
 }
 
 /// What a worker is doing, in its package's terms (`"flavor": "full"` or
@@ -110,6 +129,14 @@ pub struct FullStatus {
     pub fps: Option<u16>,
     /// The engine's target, including changes made in the portal.
     pub target: LightingTarget,
+    /// The engine's device report's issue: why the lights are not showing
+    /// the session's colours while a lighting session runs, `Unreachable`
+    /// also while the session waits for lights that do not answer. With the
+    /// target `Off` or `Effects`, `Unreachable` alone, while the lights do
+    /// not answer the request that puts them in that mode; it is tried again
+    /// until they do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lights: Option<OutputIssue>,
     /// The `sequence` of the last [`Command::Target`] applied before this
     /// status; 0 before any (the worker started with the target in its
     /// arguments). A status that applied an older one than the supervisor
@@ -119,9 +146,11 @@ pub struct FullStatus {
     /// while the TV has no LAN address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portal: Option<String>,
-    /// The last session or portal failure.
+    /// A faulted session (escalated as `Restart`), else the session's
+    /// failure, else the last portal failure. It stays until a command
+    /// changes it: the worker tries nothing again by itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure: Option<WorkerFailure>,
+    pub failure: Option<Failure>,
 }
 
 /// The slim worker (`prysm-webos-slim`): capture streamed to a desktop Prysm.
@@ -148,24 +177,41 @@ pub enum SlimLink {
     /// requested), `fps` per second over about the last second, rounded; 0
     /// while none come.
     Sending { encoding: StreamEncoding, fps: u16 },
+    /// Connected, but the TV refuses to share the video it shows, so no
+    /// frames go out; it ends when the video changes. Not a failure.
+    Refused {},
     /// The receiver stopped the stream (its lighting is off), and the TV
     /// capture is released until a receiver takes a connection again. Not a
     /// failure.
     Paused {},
-    /// The receiver is unavailable (kind [`FailureKind::Receiver`]); the
-    /// worker keeps reconnecting.
-    Waiting { failure: WorkerFailure },
-    /// The encoder, version, replaced or receiver-failed failure.
-    Failed { failure: WorkerFailure },
+    /// The receiver is unavailable (its host is not lighting, is
+    /// unreachable or its name does not resolve), and why. The worker keeps
+    /// reconnecting. Not a failure.
+    Waiting { message: String },
+    /// The encoder the receiver requested could not start or failed. The
+    /// worker refuses that request (the receiver is told) until the
+    /// receiver asks for another; it never switches on its own.
+    EncoderFailed { message: String },
+    /// Prysm speaks another capture stream version than this TV app; the
+    /// older one needs updating. The worker keeps reconnecting, so an update
+    /// on either side is picked up without restarting it.
+    VersionDiffers { message: String },
+    /// Prysm's receiving source failed with this TV's stream (it refused the
+    /// request, a keyframe did not decode, or Prysm has no decoder); Prysm
+    /// shows why. The worker released the capture and keeps reconnecting, so
+    /// the next lighting start on the computer gets through.
+    ReceiverFailed { message: String },
 }
 
 impl SlimLink {
-    /// The wait or the failure, if any.
-    #[must_use]
-    pub fn failure(&self) -> Option<&WorkerFailure> {
+    /// Why it waits or does not send, in the states that say.
+    pub fn message_mut(&mut self) -> Option<&mut String> {
         match self {
-            Self::Waiting { failure } | Self::Failed { failure } => Some(failure),
-            Self::Starting {} | Self::Sending { .. } | Self::Paused {} => None,
+            Self::Waiting { message }
+            | Self::EncoderFailed { message }
+            | Self::VersionDiffers { message }
+            | Self::ReceiverFailed { message } => Some(message),
+            Self::Starting {} | Self::Sending { .. } | Self::Refused {} | Self::Paused {} => None,
         }
     }
 }
@@ -173,130 +219,6 @@ impl SlimLink {
 impl Default for SlimLink {
     fn default() -> Self {
         Self::Starting {}
-    }
-}
-
-/// A failure a worker or the supervisor reports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkerFailure {
-    pub kind: FailureKind,
-    /// What failed, with its cause chain.
-    pub message: String,
-}
-
-impl WorkerFailure {
-    #[must_use]
-    pub fn new(kind: FailureKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    /// A failure of kind [`FailureKind::Other`].
-    #[must_use]
-    pub fn other(message: impl Into<String>) -> Self {
-        Self::new(FailureKind::Other, message)
-    }
-}
-
-/// Delays between attempts after failures: [`Backoff::MIN`] doubling to
-/// [`Backoff::MAX`], back to the start after [`Backoff::HEALTHY`]. The full
-/// worker uses it to re-apply a failed session, the supervisor to restart a
-/// failed worker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Backoff {
-    first: Duration,
-    next: Duration,
-}
-
-impl Backoff {
-    pub const MIN: Duration = Duration::from_secs(1);
-    pub const MAX: Duration = Duration::from_secs(30);
-    /// Running this long without a failure resets the delay.
-    pub const HEALTHY: Duration = Duration::from_secs(60);
-
-    /// Starting at `first` instead of [`Backoff::MIN`] (tests).
-    #[must_use]
-    pub const fn starting_at(first: Duration) -> Self {
-        Self { first, next: first }
-    }
-
-    /// The delay before the next attempt; the one after it doubles, up to
-    /// [`Backoff::MAX`].
-    pub fn delay(&mut self) -> Duration {
-        let delay = self.next;
-        self.next = (delay * 2).min(Self::MAX);
-        delay
-    }
-
-    /// Start over at the first delay.
-    pub fn reset(&mut self) {
-        self.next = self.first;
-    }
-}
-
-impl Default for Backoff {
-    fn default() -> Self {
-        Self::starting_at(Self::MIN)
-    }
-}
-
-/// What a reported failure is, so the TV app can offer the matching fix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FailureKind {
-    /// Slim: the encoder the receiver requested could not start or failed.
-    /// The worker refuses that request (the receiver is told) until the
-    /// receiver asks for another; it never switches on its own.
-    Encoder,
-    /// Slim: the receiver is unavailable (its host is not lighting, is
-    /// unreachable or its name does not resolve). The worker keeps
-    /// reconnecting.
-    Receiver,
-    /// Slim: Prysm speaks another capture stream version than this TV app;
-    /// the older one needs updating. The worker keeps reconnecting, so an
-    /// update on either side is picked up without restarting it.
-    Version,
-    /// Slim: another sender (another TV) took over the stream at Prysm. The
-    /// worker released the capture and connects no more until it restarts
-    /// (capture stopped and started, the TV waking, or a new Prysm address).
-    Replaced,
-    /// Slim: Prysm's receiving source failed with this TV's stream (it
-    /// refused the request, a keyframe did not decode, or Prysm has no
-    /// decoder); Prysm shows why. The worker released the capture and keeps
-    /// reconnecting, so the next lighting start on the computer gets through.
-    ReceiverFailed,
-    /// The supervisor could not read the TV's preferences (`tv.json`): it
-    /// runs with the defaults and leaves the file as it is until the app
-    /// saves preferences. Never sent by a worker.
-    Preferences,
-    /// Anything else.
-    Other,
-}
-
-/// Worker exit codes.
-pub mod exit {
-    /// SIGTERM or stdin EOF; not a failure.
-    pub const STOPPED: u8 = 0;
-    /// Startup or runtime failure, or protocol misuse.
-    pub const FAILED: u8 = 1;
-    /// Bad argv: a packaging bug.
-    pub const USAGE: u8 = 2;
-    /// A hung or unconfirmed native resource; only a new process recovers.
-    pub const FAULTED: u8 = 3;
-
-    /// A short description of a worker exit code for diagnostics.
-    #[must_use]
-    pub fn describe(code: i32) -> String {
-        match u8::try_from(code) {
-            Ok(STOPPED) => "worker stopped".into(),
-            Ok(FAILED) => "worker failed".into(),
-            Ok(USAGE) => "worker rejected its arguments (packaging bug)".into(),
-            Ok(FAULTED) => "worker faulted".into(),
-            _ => format!("worker exited with code {code}"),
-        }
     }
 }
 

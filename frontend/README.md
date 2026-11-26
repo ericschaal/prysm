@@ -44,7 +44,9 @@ The two portal dev servers forward `/api` to a running
 Prysm ([dev.config.mjs](dev.config.mjs)): `http://127.0.0.1:8787` unless
 `PRYSM` names another one. Start a host first
 (`cargo run -p prysm-headless -- crates/hosts/headless/settings.example.json`);
-without one the page says "Invalid state stream response." The TV entry points use the Luna client of the TV supervisor;
+without one the page says "This page can’t read a 502 reply from Prysm.
+Reload the page." and stops asking, so reload it once the host runs.
+The TV entry points use the Luna client of the TV supervisor;
 their `demo.html` pages run the same UI on an
 [in-memory supervisor](testkit/luna.ts) and portal (flags `?offline`,
 `?refused`, `?unreachable`, `?old`; selects at the bottom right put the
@@ -336,12 +338,13 @@ supervisor in each of its states and play the phone's calibration part). See the
   total in the screen), and the
   [null output](packages/output-null-ui/index.tsx).
 - [TV UI](packages/tv-ui/app.tsx) (both packages): status card from the
-  supervisor's state ([rules](packages/tv-ui/model.ts)), with the capture
-  rate and a countdown to a pending restart (counted from when the state
-  arrived; its bar runs on through later states of the same wait); the full
-  package's headline says what the lights do from the portal's state, so it
-  agrees with the lights card; a primary button only for the service (set
-  up, try again after a failure, slim capture on and off), never for what
+  supervisor's state ([rules](packages/tv-ui/status/index.ts)), with the capture
+  rate; what the service asks is its one fix, worded per package from a
+  record of every fix; the full package's headline says what the lights do
+  from the portal's state, so it agrees with the lights card; while the
+  service asks (no worker, so no portal) the lighting modes go to the
+  service ([route](packages/tv-ui/modes.ts)); a primary button only for the
+  service (set up, try again after a failure, slim capture on and off), never for what
   the lights do or while a setting saves, and busy rather than disabled while
   it waits, so focus stays on it;
   lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx)),
@@ -362,10 +365,12 @@ supervisor in each of its states and play the phone's calibration part). See the
   columns and within rows, OK chooses, Back closes one dialog level and then
   asks before closing). Its [Luna client](packages/webos-platform/index.ts)
   checks replies against the generated `luna` contract, times out after 30 s
-  and resubscribes after 3 s; one lost subscription keeps the last state on
-  screen, and only the bus saying the service is missing, Remove setup, or a
-  second failure in a row shows "Prysm needs setting up". The UI holds the
-  subscriptions only while the page is visible.
+  and resubscribes after 3 s. Only Remove setup, or the bus's reply that it
+  cannot give the service ("Service does not exist: …", or "… is not
+  running." with `serviceName`) to a fresh call, counts it as missing
+  ("Prysm needs setting up"); the same reply on a live subscription, and
+  any other failure, keep the last state on screen (or "Connecting…").
+  The UI holds the subscriptions only while the page is visible.
 - [Application client](packages/application-client/index.ts),
   [HTTP transport](packages/application-client/http.ts),
   [RTK state](packages/application-state/index.ts) and

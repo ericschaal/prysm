@@ -2,7 +2,7 @@
 use crate::input::{Notice, Severity, Ui, clean};
 use crate::video::{self, HalfBlocks};
 use prysm_core::{ColorStrip, EdgeColors};
-use prysm_ports::{AdapterSettings, SessionState, Snapshot, chain};
+use prysm_ports::{AdapterSettings, Error, Picture, SessionState, Snapshot, chain};
 use prysm_runtime::Preview;
 use ratatui::{
     Frame,
@@ -216,24 +216,30 @@ fn field(name: &str, value: String) -> Line<'static> {
     ])
 }
 
-/// Lighting failure, surface failures, then notices; newest first.
+/// Lighting failure, surface failures, then notices; newest first. Each
+/// failure ends with the person's next step.
 pub(crate) fn diagnostics(view: &View<'_>) -> Vec<Line<'static>> {
     let snapshot = view.snapshot;
-    let failures = snapshot
-        .session
-        .failure()
-        .into_iter()
-        .map(|error| Notice::error(format!("Lighting: {}", chain(error))));
+    let lighting = match &snapshot.session {
+        SessionState::Faulted(phase) => Some(Error::Faulted(*phase)),
+        session => session.failure().cloned(),
+    };
+    let failures = lighting.iter().map(|error| failed("Lighting", error));
     let surfaces = snapshot
         .surface_failures
         .iter()
         .rev()
-        .map(|error| Notice::error(format!("Surface: {}", chain(error))));
+        .map(|error| failed("Surface", error));
     failures
         .chain(surfaces)
         .chain(view.ui.notices().cloned())
         .map(|notice| event_line(&notice))
         .collect()
+}
+
+fn failed(what: &str, error: &Error) -> Notice {
+    let step = error.escalation().next_step();
+    Notice::error(format!("{what}: {} ({step})", chain(error)))
 }
 
 fn event_line(notice: &Notice) -> Line<'static> {
@@ -258,21 +264,20 @@ fn panel(title: &str) -> Block<'_> {
 fn session_color(state: &SessionState) -> Color {
     match state {
         SessionState::ScreenSync => ACCENT,
-        SessionState::Effects { .. } => WARNING,
+        SessionState::Effects { .. } | SessionState::Unanswered { .. } => WARNING,
         SessionState::Faulted(_) => ERROR,
         SessionState::Stopped { .. } => MUTED,
     }
 }
 
-/// Frame rate while frames arrive, "waiting for frames" while the running
-/// source is quiet, nothing without a session.
+/// Frame rate while frames arrive, why not while the running source gives
+/// none, nothing without a session.
 pub(crate) fn input_label(snapshot: &Snapshot) -> Option<String> {
-    snapshot.input.map(|input| {
-        if input.receiving {
-            format!("{:.1} fps", input.fps)
-        } else {
-            "waiting for frames".to_owned()
-        }
+    snapshot.input.map(|input| match input.picture {
+        Picture::Arriving => format!("{:.1} fps", input.fps),
+        Picture::Quiet => "waiting for frames".to_owned(),
+        // The short form of "The TV doesn’t let Prysm capture this video."
+        Picture::Refused => "capture not allowed".to_owned(),
     })
 }
 
@@ -327,6 +332,7 @@ fn idle_text(snapshot: &Snapshot) -> &'static str {
     match &snapshot.session {
         SessionState::ScreenSync => "Waiting for the first frame",
         SessionState::Effects { .. } => "The lights show their own effects",
+        SessionState::Unanswered { .. } => "The lights do not answer; Prysm keeps trying",
         SessionState::Faulted(_) => "Session did not finish; only shutdown is accepted",
         SessionState::Stopped { failure: Some(_) } => "Lighting stopped after a failure",
         SessionState::Stopped { failure: None } => "Lighting off · press s to start",
@@ -576,8 +582,11 @@ mod tests {
         };
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         let text = draw(&mut terminal, &view);
-        assert!(text.contains("capture failed: device unplugged"), "{text}");
-        assert!(text.contains("portal could not bind"));
+        assert!(
+            text.contains("capture failed: device unplugged (try again)"),
+            "{text}"
+        );
+        assert!(text.contains("portal could not bind (try again)"));
         assert!(text.contains("Session   effects"), "{text}");
         assert!(text.find("newest event") < text.find("older event"));
         assert!(text.contains("q quit"));
@@ -645,7 +654,7 @@ mod tests {
         let mut snapshot = running();
         snapshot.input = Some(prysm_ports::Input {
             fps: 29.94,
-            receiving: true,
+            picture: Picture::Arriving,
             ..prysm_ports::Input::default()
         });
         let ui = Ui::default();
@@ -673,6 +682,21 @@ mod tests {
             &view,
         );
         assert!(text.contains("waiting for frames"), "{text}");
+
+        snapshot.input = Some(prysm_ports::Input {
+            picture: Picture::Refused,
+            ..prysm_ports::Input::default()
+        });
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(text.contains("capture not allowed"), "{text}");
 
         snapshot.input = None;
         let view = View {
@@ -716,6 +740,7 @@ mod tests {
             text.contains("Session did not finish; only shutdown is accepted"),
             "{text}"
         );
+        assert!(text.contains("(restart Prysm)"), "{text}");
     }
 
     #[test]

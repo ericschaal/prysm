@@ -62,9 +62,17 @@ class Size(TypedDict):
     fps: int
 
 
+class Picture(StrEnum):
+    """Whether frames arrive: `State.input.picture`."""
+
+    ARRIVING = 'arriving'
+    QUIET = 'quiet'
+    REFUSED = 'refused'
+
+
 class Input(TypedDict, total=False):
     fps: float
-    receiving: bool
+    picture: Picture
     sent_fps: float
     behind: str
 
@@ -75,6 +83,7 @@ class SessionState(StrEnum):
     STOPPED = 'stopped'
     SCREEN_SYNC = 'screen_sync'
     EFFECTS = 'effects'
+    UNANSWERED = 'unanswered'
     FAULTED = 'faulted'
 
 
@@ -287,7 +296,8 @@ def failure(state: State | None) -> Failure | None:
 
 
 def running(state: State) -> bool:
-    return session(state) == SessionState.SCREEN_SYNC and (state.get('input') or Input()).get('receiving', False)
+    arriving = (state.get('input') or Input()).get('picture') == Picture.ARRIVING
+    return session(state) == SessionState.SCREEN_SYNC and arriving
 
 
 def rates(samples: Sequence[Input | None]) -> Rates:

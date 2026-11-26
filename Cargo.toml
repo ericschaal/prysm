@@ -8,6 +8,7 @@ members = [
     "crates/engine/core",
     "crates/engine/processor",
     "crates/engine/version",
+    "crates/engine/logging",
     "crates/adapters/capture-device",
     "crates/adapters/capture-device-sys",
     "crates/adapters/capture-file",
@@ -52,6 +53,8 @@ prysm-ports = { path = "crates/engine/ports" }
 prysm-runtime = { path = "crates/engine/runtime" }
 prysm-protocol = { path = "crates/engine/protocol" }
 prysm-webos-link = { path = "crates/engine/webos-link" }
+# The processes' tracing subscriber
+prysm-logging = { path = "crates/engine/logging" }
 # Adapters
 prysm-capture-device = { path = "crates/adapters/capture-device" }
 prysm-capture-device-sys = { path = "crates/adapters/capture-device-sys" }
@@ -101,7 +104,10 @@ utoipa = "6"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-all = "warn"
+all = { level = "warn", priority = -1 }
+# Worker stdout is the supervisor's event stream; terminal tools write to it
+# explicitly (`writeln!(io::stdout().lock(), …)`) or with a scoped `expect`.
+print_stdout = "deny"
 
 # Desktop release builds (cargo xtask dist, the Docker image, the .deb) keep
 # their symbols, so panics and backtraces name functions.

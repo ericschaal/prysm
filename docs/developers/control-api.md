@@ -83,8 +83,8 @@ See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md
   the session and shows in `session.failure`.
 
 The session reached the target when `session.state` equals it (`stopped` for
-`off`). A failure lives in the session it explains (`stopped` or `effects`;
-`screen_sync` has none), and a failure of what a command replaced is only
+`off`). A failure lives in the session it explains (`stopped`, `effects` or
+`unanswered`; `screen_sync` has none), and a failure of what a command replaced is only
 logged. While stopped with an output failure (the lights may not be off,
 whichever target failed), `off` asked switches them off again; with the
 target `off`, a save that does nothing about the output keeps the failure,
@@ -94,7 +94,14 @@ There is no confirmation window and no rollback to the previous mode after a
 failed start. A failure leaves the target as requested. Without frames for 3 s
 the output returns to the device's own state until frames return; WLED
 problems while running (switched off, live override, another sender, no
-answer) show as `device.issue`, and Prysm does not switch WLED back.
+answer) show as `device.issue`, and Prysm does not switch WLED back. Lights
+that do not answer the output's open are `unreachable` too, not a failure:
+lighting keeps running and tries the open again every 5 s. With the target
+`off` or `effects` the same holds without a session: lights that do not answer
+the request that puts them in that mode leave `session.state` `unanswered`
+and `device.issue` `unreachable`; the target stays and the request is tried
+again every 5 s until they answer. Saved settings that could not be read or
+do not validate are said beside the wait, as its `failure`.
 `device.brightness_percent` (`40`) is WLED's own brightness while it scales
 Prysm's colours; Prysm reports it and never changes it. `device.led_count`
 (`120`) is how many LEDs WLED itself says it has; Prysm keeps sending the

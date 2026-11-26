@@ -30,16 +30,51 @@ The full wire mapping is in the
 - A source that finishes (`Pull::Ended`, a file at its end) is success:
   lighting stops without a failure and the target becomes `off`.
 - A session failure is reported once, in the session it explains
-  (`State.session.failure`, on `stopped` or `effects`; screen sync and a
-  fault carry none). A failure of what a command replaced (the old output of
+  (`State.session.failure`, on `stopped`, `effects` or `unanswered`; screen
+  sync and a fault carry none). A failure of what a command replaced (the old output of
   a restart, a session that ended as the lights' own effects were asked for)
   is logged at `warn` and is neither published nor the reply. The target
-  stays as requested, so the next settings change retries. The engine
-  does not retry on its own; on the TV, the full worker re-applies the
-  target after a session failure with a backoff
+  stays as requested, so the next settings change retries. Apart from the
+  wait for the lights below, the engine does not retry on its own, and
+  neither does the TV's full worker: it reports the failure with its
+  escalation.
+- On the TV the supervisor is the one reader of an escalation
+  ([`recovery.rs`](../../crates/hosts/webos-service/src/machine/recovery.rs)).
+  `Restart` gets one new process; the same again before that process
+  delivered a frame, with no choice of the person or the TV between, is
+  asked as `try_again`. Anything else is asked as it is, and only the
+  person's or the TV's next choice ends it
   ([TV lifecycle](webos.md#supervisor-and-worker)).
 - An output's `idle` runs on every session exit; a failure there is reported,
   not hidden.
+- A WLED colour frame whose send cannot leave now (a full buffer, no route
+  to the device) is dropped, and the next frame is the next try; any other
+  send error fails the output at once
+  ([`classify.rs`](../../crates/adapters/output-wled/src/classify.rs)).
+- One rule for the three lighting modes: lights that do not answer
+  (`Escalation::Unanswered`: off, or away from the network) the request
+  that puts them in the chosen mode (screen sync's open, the idle for `off`
+  or the lights' own effects) are no failure. The target stays, the device
+  issue is `unreachable` (without a session the session is `unanswered`;
+  the portal and the TV app say "Can’t reach the lights"), and the request is tried again every 5 s
+  ([`UNANSWERED_INTERVAL`](../../crates/engine/runtime/src/leds.rs)) until
+  the lights answer or a command asks for something else; a shutdown tries
+  once more and fails. As it is no failure, nothing else retries it.
+- An output open the lights did not answer does not end the session: it
+  tries the open again at the first frame every 5 s. It writes no frames
+  meanwhile and holds no output. A quiet spell
+  (no frames for 3 s) ends the wait with nothing tried: the issue goes,
+  and the next frame tries the open at once. The release after a quiet
+  spell that the lights do not answer is no failure either: the output is
+  closed, its device's mode unknown, and the stop's idle sets it. Every
+  other failed open or release ends the session at once ([`Leds::quiet`
+  in `leds.rs`](../../crates/engine/runtime/src/leds.rs)). Without a
+  session the engine waits between commands (`Core::idled` in
+  [`engine.rs`](../../crates/engine/runtime/src/engine.rs)); a session that
+  ended on its own is reported as it ended, its idle included.
+- A held WLED output whose state checks fail (no answer, or a reply that is
+  not WLED's state) reports the same issue and keeps sending; its checks go
+  on once a second, without backoff.
 - Surface failures (a portal listener that dies) are recorded in
   `surface_failures`; lighting continues.
 - A settings store that cannot be read is no reason not to start: the

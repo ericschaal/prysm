@@ -291,8 +291,8 @@ def exercise_worker(args, remote, state, directory, worker):
 
 def cleanup(remote, directory, supervisor, worker, manifest):
     # TERM, never KILL: the supervisor stops its worker (TERM, its own KILL 8 s
-    # later) before it exits, and a worker killed with the TV UI capture open
-    # leaves the TV's capture locked until a reboot.
+    # later) before it exits, and a killed worker was once seen to leave the
+    # TV's capture locked until a reboot (later kills did not reproduce it).
     pids = ' '.join(str(pid) for executable in (supervisor, worker) for pid in remote.pids(executable))
     if pids:
         remote.run(f'kill -TERM {pids}; timeout 20 sh -c '

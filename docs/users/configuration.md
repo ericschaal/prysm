@@ -102,6 +102,10 @@ Good to know:
   colours from every other sender. Another program that sends WLED live
   colours, such as another DDP source, stays ignored until WLED restarts or
   Screen sync shows a picture again.
+- When WLED doesn't answer, the portal and the TV app say that Prysm can't
+  reach the lights, whichever mode you chose. Your choice stays and Prysm
+  tries again every 5 seconds: as soon as WLED answers, the lights switch
+  off, start WLED effects or follow the screen.
 - When no picture arrives for about 3 seconds, WLED goes back to what it was
   showing before. Screen sync takes over again when the picture returns.
 - Closing the browser leaves Prysm running.

@@ -5,7 +5,9 @@
 import {
   describeOutputIssue,
   describeSituation,
+  pictureOf,
   plainFailure,
+  REFUSED_VIDEO,
   situationFailure,
   unreachable,
   unusableSettings,
@@ -14,6 +16,7 @@ import {
   type LightingMode,
   type LightingSituation,
   type LightingTarget,
+  type Picture,
   type TargetReading,
 } from '@prysm/application-client';
 import type { DeviceReport } from '@prysm/contracts/application';
@@ -56,6 +59,8 @@ export function moodOf(lighting: LightingSituation, configured: boolean): Mood {
       return 'effects';
     case 'starting':
       return 'starting';
+    // Lights waited for are neither lit nor busy: the info line says it.
+    case 'unanswered':
     case 'off':
       return 'off';
     default:
@@ -63,16 +68,27 @@ export function moodOf(lighting: LightingSituation, configured: boolean): Mood {
   }
 }
 
-/** A pause worth naming once it lasts: no picture yet, or a slow start. */
-export type Pause = 'waiting' | 'starting';
+/**
+ * A pause worth naming once it lasts: no picture, and why (`quiet` when the
+ * source gives none), or a slow start.
+ */
+export type Pause = Exclude<Picture, 'arriving'> | 'starting';
+
+/** The calm line while no picture arrives; neither reason is a problem. */
+const waitingLine: Record<Exclude<Picture, 'arriving'>, string> = {
+  quiet: 'Waiting for the picture.',
+  refused: REFUSED_VIDEO,
+};
 
 /** The pause the card is in now, named only once it lasts. */
 export function pauseOf(
   lighting: LightingSituation,
   lit: boolean,
 ): Pause | null {
-  if (lighting.kind === 'sync' && lighting.input && !lighting.input.receiving)
-    return 'waiting';
+  if (lighting.kind === 'sync' && lighting.input) {
+    const picture = pictureOf(lighting.input);
+    if (picture !== 'arriving') return picture;
+  }
   if (lighting.kind === 'starting' && !lit) return 'starting';
   return null;
 }
@@ -108,7 +124,8 @@ export interface LightCardFacts {
   lighting: LightingSituation;
   /**
    * What the lights say about themselves while screen sync runs: why they
-   * do not show it, their own brightness, how many LEDs they have.
+   * do not show it, their own brightness, how many LEDs they have. Lights
+   * that don't answer Off or their effects are the situation `unanswered`.
    */
   device: DeviceReport;
   /** How many LEDs Prysm sends: the configured edges' total. */
@@ -230,7 +247,10 @@ export function lightCardView(
       : '';
   // The card's one line of words, only when it says what the card does not.
   const showing =
-    lit && lighting.kind === 'sync' && !!lighting.input?.receiving;
+    lit &&
+    lighting.kind === 'sync' &&
+    !!lighting.input &&
+    pictureOf(lighting.input) === 'arriving';
   const countsDiffer = ledCountsDiffer(device.led_count, facts.sentLedCount);
   const deviceBrightness = device.brightness_percent;
   let info: Info | null = null;
@@ -277,6 +297,13 @@ export function lightCardView(
     };
   } else if (device.issue && lighting.kind === 'sync')
     info = { tone: 'warning', text: describeOutputIssue(device.issue) };
+  // A warning, as an issue while screen sync runs, with what happens once
+  // they answer.
+  else if (lighting.kind === 'unanswered')
+    info = {
+      tone: 'warning',
+      text: describeSituation(lighting, effects).sentence,
+    };
   // While screen sync shows: LED counts that differ leave some LEDs dark or
   // some colours unshown, so they come first; then the lights' own
   // brightness, as a low one is named in place of "Following the screen.",
@@ -301,8 +328,8 @@ export function lightCardView(
       mode === 'screen_sync'
         ? 'Power turns on Screen sync.'
         : `Power turns on ${effects}.`;
-  else if (note === 'waiting') calm = 'Waiting for the picture.';
   else if (note === 'starting') calm = 'Starting…';
+  else if (note) calm = waitingLine[note];
   else if (showing) calm = 'Following the screen.';
   else if (lighting.kind === 'effects') calm = `${effects} are showing.`;
 

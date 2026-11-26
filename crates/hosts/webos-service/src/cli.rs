@@ -2,9 +2,11 @@
 use crate::identity::{self, Identity};
 use crate::install::{FsInstaller, Installer};
 use crate::state::Flavor;
+use crate::tail::Tail;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use prysm_ports::chain;
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -59,9 +61,14 @@ struct RunArgs {
 /// The process entry point of both supervisor binaries.
 pub fn main(flavor: Flavor) -> ExitCode {
     let name = identity::SUPERVISOR;
+    let tail = Tail::default();
+    prysm_logging::init(name, {
+        let tail = tail.clone();
+        move || tail.writer()
+    });
     let cli = Cli::command().name(name).bin_name(name).get_matches();
     let cli = Cli::from_arg_matches(&cli).unwrap_or_else(|error| error.exit());
-    match run(flavor, cli.action.unwrap_or(Action::Run(cli.run))) {
+    match run(flavor, cli.action.unwrap_or(Action::Run(cli.run)), &tail) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("{name}: {message}");
@@ -70,7 +77,7 @@ pub fn main(flavor: Flavor) -> ExitCode {
     }
 }
 
-fn run(flavor: Flavor, action: Action) -> Result<(), String> {
+fn run(flavor: Flavor, action: Action, tail: &Tail) -> Result<(), String> {
     let (sandbox, service_name) = match &action {
         Action::Run(run) => (&run.sandbox, run.service_name.clone()),
         Action::Setup(setup) | Action::Uninstall(setup) => (&setup.sandbox, None),
@@ -97,8 +104,12 @@ fn run(flavor: Flavor, action: Action) -> Result<(), String> {
             installer
                 .activate(&identity.service)
                 .map_err(|error| chain(&error))?;
-            println!("{} is registered and running", identity.service);
-            Ok(())
+            writeln!(
+                std::io::stdout().lock(),
+                "{} is registered and running",
+                identity.service
+            )
+            .map_err(|error| format!("cannot report the setup: {error}"))
         }
         Action::Uninstall(_) => installer.uninstall().map_err(|error| chain(&error)),
         Action::Run(run) => {
@@ -125,7 +136,8 @@ fn run(flavor: Flavor, action: Action) -> Result<(), String> {
             let deadline = run
                 .run_for
                 .map(|seconds| Instant::now() + Duration::from_secs(seconds));
-            crate::luna::serve(&identity, &wake, stop, deadline).map_err(|error| chain(&error))
+            crate::luna::serve(&identity, &wake, tail, stop, deadline)
+                .map_err(|error| chain(&error))
         }
     }
 }

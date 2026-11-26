@@ -2,8 +2,9 @@
 //! adapter sections of [`Settings`](prysm_ports::Settings).
 //!
 //! `prysm_ports` stays free of OpenAPI, so its serialized types are described
-//! here by schema-only mirrors. Tests keep each mirror's serde shape identical
-//! to the ports type it describes.
+//! here by schema-only mirrors, except `OutputIssue`, which derives its own
+//! schema (`prysm-ports/schema`). Tests keep each mirror's serde shape
+//! identical to the ports type it describes.
 //!
 //! # Adapter schemas
 //!
@@ -29,7 +30,7 @@ use crate::{
 };
 use prysm_ports::{
     MAX_CALIBRATION_ID_LEN, MAX_CALIBRATION_NAME_CHARS, MAX_CALIBRATIONS, OutputFactory,
-    SourceFactory,
+    OutputIssue, SourceFactory,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -266,11 +267,11 @@ pub struct InputSchema {
     /// Frames per second over the last second, to one decimal.
     #[schema(minimum = 0, example = 29.9)]
     fps: f32,
-    /// At least one frame arrived in the last second. `false` right after
-    /// lighting starts and while the source is quiet (no signal, no sender).
-    receiving: bool,
-    /// Frames per second whose colours were written to the output over the
-    /// last second, to one decimal.
+    /// Whether frames arrived in the last second, and if not, why.
+    picture: PictureSchema,
+    /// Frames per second whose colours were handed to the output over the
+    /// last second, to one decimal. An output may drop a frame it cannot
+    /// send now; the device issue says when the lights do not answer.
     #[schema(minimum = 0, example = 29.9)]
     #[serde(default)]
     sent_fps: f32,
@@ -284,6 +285,22 @@ pub struct InputSchema {
     #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     behind: Option<BehindSchema>,
+}
+
+// Mirrors `prysm_ports::Picture`.
+/// Whether frames arrive from the source. `arriving`: at least one frame in
+/// the last second. `quiet`: none, and no reason given (no signal, no
+/// sender); also right after lighting starts. `refused`: none, because the
+/// source's device refuses to share the video it shows; it ends when the
+/// video changes. Neither `quiet` nor `refused` is a failure: lighting waits
+/// for video, and releases the lights after 3 s without it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Picture)]
+#[serde(rename_all = "snake_case")]
+pub enum PictureSchema {
+    Arriving,
+    Quiet,
+    Refused,
 }
 
 // Mirrors `prysm_ports::Behind` (`none` is not sent: the field is absent).
@@ -318,40 +335,22 @@ pub struct LatencySchema {
     output_ms: f32,
 }
 
-// Mirrors `prysm_ports::OutputIssue`.
-/// Why the lights are not showing Prysm's colours. Prysm keeps sending; they
-/// follow again once the device takes the colours.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = OutputIssue)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputIssueSchema {
-    /// The device was switched off (WLED: power off).
-    Off,
-    /// The device's own override is on (WLED: live override).
-    Overridden,
-    /// The device is not taking the colours (WLED: not in live mode, or no
-    /// DDP arriving).
-    NotLive,
-    /// Another sender's colours reach the device.
-    OtherSender,
-    /// The device does not answer state requests.
-    Unreachable,
-}
-
 // Mirrors `prysm_ports::DeviceReport`.
 /// What the lights say about themselves, from the output's own checks. Each
 /// part is absent while the output cannot tell, and all are while no session
 /// holds the output (no session, no frame yet, or released after 3 s without
-/// video; see `session.state` and `input.receiving`). Prysm reports them and
-/// changes none.
+/// video; see `session.state` and `input.picture`), but `issue`
+/// `unreachable` while the lights are waited for: lighting's open, or the
+/// request for `off` or their own effects, that they did not answer. Prysm
+/// reports them and changes none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = DeviceReport)]
 pub struct DeviceReportSchema {
-    /// Why the lights are not showing Prysm's colours; absent while they
-    /// show them.
+    /// Why the lights are not showing Prysm's colours, or that they do not
+    /// answer; absent while all is well.
     #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    issue: Option<OutputIssueSchema>,
+    issue: Option<OutputIssue>,
     /// The lights' own brightness while it scales Prysm's colours (WLED: its
     /// master brightness and brightness factor): the share of Prysm's
     /// brightness they show. Absent while it does not (WLED: "Force max
@@ -483,7 +482,8 @@ impl ToSchema for OutputSettings {}
     InputSchema,
     LatencySchema,
     BehindSchema,
-    OutputIssueSchema,
+    PictureSchema,
+    OutputIssue,
     DeviceReportSchema,
     Session,
     LightingFailure,
@@ -658,7 +658,7 @@ mod tests {
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
         DeviceBrightness, DeviceReport, FrameSource, Input, Latency, LightingTarget, Mode, Modes,
-        OutputIssue, Pattern, PrimaryControls, Processing, Result, Settings, Span, Style,
+        OutputIssue, Pattern, Picture, PrimaryControls, Processing, Result, Settings, Span, Style,
         StyleValues, ValidationError,
     };
     use prysm_testkit::assert_mirror_round_trips;
@@ -739,7 +739,7 @@ mod tests {
         }
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             fps: 29.5,
-            receiving: true,
+            picture: Picture::Arriving,
             sent_fps: 29.5,
             latency: Some(Latency {
                 capture_ms: Some(88.0),
@@ -751,6 +751,13 @@ mod tests {
             behind: Behind::Processing,
             ..Input::default()
         });
+        for picture in [Picture::Arriving, Picture::Quiet, Picture::Refused] {
+            assert_mirror_round_trips::<Input, InputSchema>(&Input {
+                picture,
+                ..Input::default()
+            });
+            assert_mirror_round_trips::<Picture, PictureSchema>(&picture);
+        }
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             latency: Some(Latency {
                 capture_ms: None,
@@ -759,15 +766,6 @@ mod tests {
             ..Input::default()
         });
         assert_mirror_round_trips::<Input, InputSchema>(&Input::default());
-        for issue in [
-            OutputIssue::Off,
-            OutputIssue::Overridden,
-            OutputIssue::NotLive,
-            OutputIssue::OtherSender,
-            OutputIssue::Unreachable,
-        ] {
-            assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
-        }
         assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport::default());
         assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport {
             issue: Some(OutputIssue::OtherSender),

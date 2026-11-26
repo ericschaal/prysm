@@ -289,9 +289,9 @@ already use the new shapes. These are the changes from 1.0.0-rc.1. The
 | Change | rc.1 | 1.0.0 |
 | --- | --- | --- |
 | `target`, also in `PUT /api/v1/target` | `off`, `processed`, `device_native` | `off`, `screen_sync`, `effects` |
-| `session.state` | `stopped`, `running`, `native`, `faulted` | `stopped`, `screen_sync`, `effects`, `faulted` |
+| `session.state` | `stopped`, `running`, `native`, `faulted` | `stopped`, `screen_sync`, `effects`, `unanswered`, `faulted` |
 | A faulted session | `{ "state": "faulted", "phase": … }` | `{ "state": "faulted", "message": … }`; no phase |
-| The lighting failure | `State.failure`, `null` when none | `session.failure`, only on `stopped` and `effects`, tagged by `kind`: `invalid { message, field? }`, `adapter { message, section? }`, `internal { message }` |
+| The lighting failure | `State.failure`, `null` when none | `session.failure`, only on `stopped`, `effects` and `unanswered`, tagged by `kind`: `invalid { message, field? }`, `adapter { message, section? }`, `internal { message }` |
 | The lights' own reports | `output_issue`, `output_brightness`, `device_led_count` | `device.issue`, `device.brightness_percent`, `device.led_count` |
 | The Prysm version | — | `version` |
 | A capture card's device, in settings, capture modes and found devices' `fields` | `path` | `device` |
@@ -320,7 +320,7 @@ A page from another site gets `403 forbidden`.
 ### TV service (Luna)
 
 The service is `io.github.ericschaal.prysm.service` (rc.1:
-`io.prysm.tv.service`). Its API version is 4 (rc.1: 1). See the
+`io.prysm.tv.service`). Its API version is 5 (rc.1: 1). See the
 [Luna API](../developers/webos.md#luna-api).
 
 - `getState` carries only the installed package's fields, tagged by
@@ -337,10 +337,14 @@ The service is `io.github.ericschaal.prysm.service` (rc.1:
 - The preference `instance` is `prysm_address`.
 - An absent value is omitted, never `null`.
 - A failed call replies `{ "returnValue": false, "errorKind": …, "errorText": … }`.
-- New `failure.kind` values: `replaced` (slim: another TV took over the
-  stream), `receiver_failed` (slim: Prysm's receiving source failed with
-  this TV's stream) and `preferences` (the TV's saved preferences could not
-  be read).
+- `failure` is gone. What the person is asked is the worker's `problem`
+  (`asked`, `message`), in the new phase `asking` (no worker), in
+  `stopping` and (full) in `running`; rc.1's `retrying` phase and its
+  countdown are gone, since the service restarts a worker at most once
+  and then asks. Slim's own waits and failures are its `link` states
+  (`waiting`, `encoder_failed`, `version_differs`,
+  `receiver_failed`, each with a `message`). Saved preferences that cannot
+  be read are `unreadable`.
 
 ### Exit codes
 

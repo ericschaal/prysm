@@ -7,7 +7,9 @@ import {
 import {
   failureOf,
   reconnectDelayMs,
+  streamStep,
   type ApplicationClient,
+  type Failure,
   type Observation,
 } from '@prysm/application-client';
 import type { ApplicationActions, ApplicationState } from './slice';
@@ -19,9 +21,9 @@ export type ApplicationDispatch<C, O> = ThunkDispatch<
 >;
 
 /**
- * Owns the state stream: connects on request, feeds every state to the slice,
- * reconnects after {@link reconnectDelayMs} and stops on release or when the
- * portal refuses this page (`forbidden`).
+ * Owns the state stream: connects on request, feeds every state to the slice
+ * and, after a failure, does its {@link streamStep}: reconnects after
+ * {@link reconnectDelayMs}, or stops. It also stops on release.
  * Closing the stream never commands lighting.
  */
 export function registerObservation<C, O>(
@@ -47,6 +49,11 @@ export function registerObservation<C, O>(
           active?.close();
         };
         api.signal.addEventListener('abort', close, { once: true });
+        // A stream that ends without a failure lost its connection.
+        let failure: Failure = {
+          kind: 'unavailable',
+          message: 'Connection to Prysm closed.',
+        };
         try {
           observation = await api.extra.observe(api.signal);
           if (api.signal.aborted) break;
@@ -61,26 +68,16 @@ export function registerObservation<C, O>(
             if (api.signal.aborted) break;
             api.dispatch(actions.snapshotReceived({ generation, snapshot }));
           }
-          if (!api.signal.aborted)
-            api.dispatch(
-              actions.observationLost({
-                generation,
-                failure: {
-                  kind: 'unavailable',
-                  message: 'Connection to Prysm closed.',
-                },
-              }),
-            );
         } catch (error) {
-          const failure = failureOf(error);
-          if (!api.signal.aborted)
-            api.dispatch(actions.observationLost({ generation, failure }));
-          if (failure.kind === 'forbidden') return;
+          failure = failureOf(error);
         } finally {
           api.signal.removeEventListener('abort', close);
           close();
         }
         if (api.signal.aborted) return;
+        api.dispatch(actions.observationLost({ generation, failure }));
+        // A kind newer than this page is not known to pass: it stops.
+        if (streamStep[failure.kind] !== 'reconnect') return;
         await api.delay(reconnectDelayMs(attempt));
         attempt++;
         api.dispatch(actions.observationRetrying(generation));

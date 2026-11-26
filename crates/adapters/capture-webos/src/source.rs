@@ -2,12 +2,14 @@
 //! (LG requires load, capture and release on one thread). It follows the
 //! [`VideoSignal`] to pick the tap kind (video, or the TV UI plane when there
 //! is no video and `include_ui` is on; never both), paces acquisition,
-//! retries recoverable interruptions and publishes the newest frame, a
-//! terminal failure and the release result. The session thread only waits
+//! recovers from faults as [`crate::classify`] says and publishes the newest
+//! frame, refusals, a terminal failure and the release result. The session thread only waits
 //! with a deadline and enforces the native-operation watchdog, so a hung
 //! driver call surfaces as an error instead of a hang.
 mod native;
+mod phase;
 
+use crate::classify::{self, Recovery, UiRecovery, VideoCause};
 use crate::{VideoSignal, WebosSettings};
 use native::Native;
 use prysm_core::Frame;
@@ -15,52 +17,68 @@ use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result};
 use std::time::Duration;
 
 /// One acquisition attempt.
+#[derive(Debug)]
 pub(crate) enum Acquired {
     Frame(Frame),
     /// No new buffer yet.
     Pending,
-    /// The driver is (re)initializing; try again after [`Limits::retry`].
+    /// The driver is (re)initializing; asked again as
+    /// [`Limits::preparation`] says.
     NotReady,
+    /// The driver refuses to capture this video (`vtCapture_init`
+    /// answered 17); its driver stays created, and the next acquisition
+    /// initializes it again.
+    Refused,
 }
 
-/// A native failure. Recoverable ones release the tap and reopen it.
+/// A native failure, with what its tap does next as [`crate::classify`]
+/// says: a video fault's [`Recovery`], or a TV UI fault's [`UiRecovery`].
 #[derive(Debug)]
-pub(crate) struct Fault {
+pub(crate) struct Fault<R = Recovery> {
     pub error: Error,
-    pub recovery: Recovery,
+    pub recovery: R,
 }
 
-/// Whether a native fault can heal in this process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Recovery {
-    /// Retrying in this process cannot succeed: a video fault ends the
-    /// source, a TV UI fault disables UI capture for the session.
-    Never,
-    /// The tap is reopened later.
-    Reopen,
-}
+/// A fault of the TV UI tap.
+pub(crate) type UiFault = Fault<UiRecovery>;
 
 impl Fault {
-    /// A failure that cannot heal in this process.
-    pub(crate) fn fatal(error: Error) -> Self {
+    /// A video fault: `source` under `context`, its error escalating as
+    /// `recovery` says.
+    pub(crate) fn video(
+        context: &str,
+        source: impl std::error::Error + Send + Sync + 'static,
+        recovery: Recovery,
+    ) -> Self {
         Self {
-            error,
-            recovery: Recovery::Never,
+            error: Error::adapter_escalating(context, source, recovery.escalation()),
+            recovery,
         }
     }
 
-    /// A failure after which the tap is reopened.
-    pub(crate) fn recoverable(error: Error) -> Self {
+    /// A video fault of a limit the driver reached, which has no native
+    /// source: `context` is its error, recovering and escalating as
+    /// `cause`'s row says.
+    pub(crate) fn limit(context: String, cause: VideoCause<'_>) -> Self {
+        let recovery = classify::video(cause);
         Self {
-            error,
-            recovery: Recovery::Reopen,
+            error: Error::other_escalating(context, recovery.escalation()),
+            recovery,
         }
     }
 }
 
-/// An open native tap. Created, used and released on the native thread.
+/// The open video tap. Created, used and released on the native thread.
 pub(crate) trait Tap {
     fn acquire(&mut self) -> Result<Acquired, Fault>;
+    /// `Ok` certifies the driver released the tap.
+    fn release(self: Box<Self>) -> Result<()>;
+}
+
+/// The open TV UI tap. It has no separate initialization, so it answers
+/// only a frame or a fault.
+pub(crate) trait UiTap {
+    fn acquire(&mut self) -> Result<Frame, UiFault>;
     /// `Ok` certifies the driver released the tap.
     fn release(self: Box<Self>) -> Result<()>;
 }
@@ -71,7 +89,7 @@ pub(crate) trait Backend: Send + 'static {
     /// The video tap (blended with menus when `include_ui` is on).
     fn open(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault>;
     /// The TV UI (graphics plane) tap, used only while there is no video.
-    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault>;
+    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn UiTap>, UiFault>;
 }
 
 /// How long closing a [`WebosFrames`] waits for the driver's certified
@@ -83,13 +101,21 @@ pub const RELEASE: Duration = Duration::from_secs(4);
 pub(crate) struct Limits {
     /// Longest a single native call may run before the source fails.
     pub watchdog: Duration,
-    /// Longest the driver may stay [`Acquired::NotReady`].
+    /// Longest without a frame, counted from the first answer without one,
+    /// at which an [`Acquired::NotReady`] fails the source; until then a
+    /// driver not ready is asked again every [`Self::not_ready_retry`].
+    /// This converges: the driver answers not ready while the TV's video
+    /// pipeline starts, which it finishes within this limit. A change of
+    /// the video context restarts that pipeline, so it initializes a driver
+    /// not ready again at once and the count starts again from its answer.
     pub preparation: Duration,
-    /// Longest the driver may stay [`Acquired::Pending`] before the tap is restarted.
+    /// Longest without a frame, counted from the first of the
+    /// [`Acquired::Pending`] answers since the driver last answered
+    /// anything else (it was initialized then), at which one is a stall.
     pub pending: Duration,
-    /// Delay before reopening after a recoverable failure or between
-    /// preparation attempts.
-    pub retry: Duration,
+    /// Delay between two initializations of a driver that answered
+    /// [`Acquired::NotReady`].
+    pub not_ready_retry: Duration,
     /// How long `close` waits for certified release ([`RELEASE`]).
     pub release: Duration,
 }
@@ -99,14 +125,16 @@ impl Limits {
         watchdog: Duration::from_secs(5),
         preparation: Duration::from_secs(10),
         pending: Duration::from_secs(2),
-        retry: Duration::from_secs(1),
+        not_ready_retry: Duration::from_secs(1),
         release: RELEASE,
     };
 }
 
-/// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Idle`]
-/// while video is unavailable or the driver is preparing, and `Err` on a terminal
-/// native failure or a native call that exceeds its watchdog.
+/// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Quiet`]
+/// while video is unavailable or the driver is preparing, [`Pull::Refused`]
+/// from the first refused initialization or withholding of the video until
+/// a frame or until video is unavailable, and `Err` on a terminal native
+/// failure or a native call that exceeds its watchdog.
 pub struct WebosFrames {
     thread: OwnerThread,
 }

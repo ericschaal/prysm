@@ -5,7 +5,10 @@
  * no worker, power or timing, but the same replies, validation messages and
  * subscription.
  */
-import type { ApplicationSnapshot } from '@prysm/application-client';
+import {
+  unusableSettings,
+  type ApplicationSnapshot,
+} from '@prysm/application-client';
 import {
   APP_ID,
   isEnabled,
@@ -14,15 +17,16 @@ import {
   type Flavor,
   type FullWorker,
   type LightingTarget,
+  type OutputIssue,
   type Power,
   type Preferences,
+  type Problem,
   type ServiceBridge,
   type StreamEncoding,
   type SlimLink,
   type SlimWorker,
   type State,
   type Video,
-  type WorkerFailure,
 } from '@prysm/webos-platform';
 
 /** Where the worker process is, as the supervisor tracks it. */
@@ -30,7 +34,10 @@ export type FakeProcess =
   | { phase: 'stopped' }
   | { phase: 'running' }
   | { phase: 'stopping' }
-  | { phase: 'retrying'; seconds: number };
+  | { phase: 'asking'; problem: Problem };
+
+/** Slim: a link state that says why it waits or does not send. */
+export type SaidLink = Extract<SlimLink, { message: string }>;
 
 /**
  * What the fake supervisor knows, as the real one does: the TV, the worker
@@ -42,7 +49,13 @@ interface CommonFacts {
   preferences: Preferences;
   power: Power;
   video: Video;
-  failure: WorkerFailure | null;
+  /** Unreadable saved preferences, until preferences are saved. */
+  unreadable: string | null;
+  /**
+   * What a stopping worker's exit will ask, or (full) what the running
+   * worker asks; while asking, the process carries it.
+   */
+  problem: Problem | null;
   log: string[];
   worker: FakeProcess;
   capturing: boolean;
@@ -51,6 +64,8 @@ interface CommonFacts {
 export interface FullFacts extends CommonFacts {
   flavor: 'full';
   target: LightingTarget;
+  /** Why the lights don't show screen sync, as the running worker reports it. */
+  lights: OutputIssue | null;
   portal: string | null;
 }
 export interface SlimFacts extends CommonFacts {
@@ -58,12 +73,17 @@ export interface SlimFacts extends CommonFacts {
   enabled: boolean;
   encoding: StreamEncoding | null;
   paused: boolean;
+  /** Connected, but the TV refuses to share the video it shows. */
+  refused: boolean;
+  /** The link's wait or failure, when neither paused, refused nor sending. */
+  uplink: SaidLink | null;
 }
 export type FakeFacts = FullFacts | SlimFacts;
 /**
  * A change to the facts. Only the package's own keys are accepted (checked
  * when applied, for the untyped tests too): a slim supervisor has no
- * `target` or `portal`, a full one no `enabled`, `encoding` or `paused`.
+ * `target`, `lights` or `portal`, a full one no `enabled`, `encoding`, `paused` or
+ * `refused`.
  */
 export type FakeChange =
   Partial<Omit<FullFacts, 'flavor'>> | Partial<Omit<SlimFacts, 'flavor'>>;
@@ -75,17 +95,24 @@ const commonKeys: Record<keyof CommonFacts, true> = {
   preferences: true,
   power: true,
   video: true,
-  failure: true,
+  unreadable: true,
+  problem: true,
   log: true,
   worker: true,
   capturing: true,
   fps: true,
 };
-const fullKeys: Record<Own<FullFacts>, true> = { target: true, portal: true };
+const fullKeys: Record<Own<FullFacts>, true> = {
+  target: true,
+  lights: true,
+  portal: true,
+};
 const slimKeys: Record<Own<SlimFacts>, true> = {
   enabled: true,
   encoding: true,
   paused: true,
+  refused: true,
+  uplink: true,
 };
 const ownKeys: Record<Flavor, object> = { full: fullKeys, slim: slimKeys };
 
@@ -106,7 +133,8 @@ function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
     preferences: { autostart: false, ...preferences },
     power: 'active',
     video: 'available',
-    failure: null,
+    unreadable: null,
+    problem: null,
     log: [],
     worker: { phase: flavor === 'full' ? 'running' : 'stopped' },
     capturing: false,
@@ -117,9 +145,18 @@ function initialFacts(flavor: Flavor, preferences?: Preferences): FakeFacts {
         ...common,
         flavor,
         target: 'off',
+        lights: null,
         portal: 'http://192.168.1.5:8787/',
       }
-    : { ...common, flavor, enabled: false, encoding: null, paused: false };
+    : {
+        ...common,
+        flavor,
+        enabled: false,
+        encoding: null,
+        paused: false,
+        refused: false,
+        uplink: null,
+      };
 }
 
 /** `{ [key]: value }`, or nothing for `null` (the service omits it). */
@@ -128,48 +165,57 @@ function present<K extends string, V>(key: K, value: V | null) {
 }
 
 function fullWorker(facts: FullFacts): FullWorker {
-  const { worker, capturing, fps, portal } = facts;
+  const { worker, capturing, fps, lights, portal, problem } = facts;
   switch (worker.phase) {
     case 'running':
       return {
         phase: 'running',
         capturing,
         ...present('fps', fps),
+        ...present('lights', lights),
         ...present('portal', portal),
+        ...present('problem', problem),
       };
     case 'stopping':
-      return { phase: 'stopping', ...present('portal', portal) };
+      return {
+        phase: 'stopping',
+        ...present('portal', portal),
+        ...present('problem', problem),
+      };
     default:
       return worker;
   }
 }
 
-/** The link the facts make: paused, sending in an encoding, or the failure's wait or failure. */
+/** The link the facts make: paused, refused, sending in an encoding, its wait or failure, else starting. */
 function slimLink(facts: SlimFacts): SlimLink {
-  const { fps, encoding, paused, failure } = facts;
+  const { fps, encoding, paused, refused, uplink } = facts;
   if (paused) return { state: 'paused' };
+  if (refused) return { state: 'refused' };
   if (encoding !== null) return { state: 'sending', encoding, fps: fps ?? 0 };
-  if (failure === null) return { state: 'starting' };
-  return failure.kind === 'receiver'
-    ? { state: 'waiting', failure }
-    : { state: 'failed', failure };
+  return uplink ?? { state: 'starting' };
 }
 
 function slimWorker(facts: SlimFacts): SlimWorker {
-  const { worker, capturing } = facts;
-  return worker.phase === 'running'
-    ? { phase: 'running', capturing, link: slimLink(facts) }
-    : worker;
+  const { worker, capturing, problem } = facts;
+  switch (worker.phase) {
+    case 'running':
+      return { phase: 'running', capturing, link: slimLink(facts) };
+    case 'stopping':
+      return { phase: 'stopping', ...present('problem', problem) };
+    default:
+      return worker;
+  }
 }
 
 /** The `getState` payload the facts make, as the supervisor publishes it. */
 function publishedState(facts: FakeFacts): State {
-  const { preferences, power, video, failure, log } = facts;
+  const { preferences, power, video, unreadable, log } = facts;
   const common = {
     preferences,
     power,
     video,
-    ...present('failure', failure),
+    ...present('unreadable', unreadable),
     log,
   };
   return facts.flavor === 'full'
@@ -191,7 +237,7 @@ export interface FakeSupervisorOptions {
   flavor: Flavor;
   preferences?: Preferences;
   state?: FakeChange;
-  /** The service is not registered: every call fails like LS2 does. */
+  /** Installed without setup: every call gets the bus's reply. */
   offline?: boolean;
   /** Reply after this many milliseconds (default: next microtask). */
   delayMs?: number;
@@ -225,16 +271,29 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
   }
   const reply = (value: object) =>
     JSON.stringify({ returnValue: true, ...value });
-  /** LS2's own error reply (no service, lost subscription): no `errorKind`. */
-  const error = (errorText: string) =>
-    JSON.stringify({ returnValue: false, errorText });
+  /**
+   * The bus's reply, as observed, for a service installed without setup,
+   * and to a subscriber when the service ends.
+   */
+  const notRunning = JSON.stringify({
+    serviceName: `${APP_ID}.service`,
+    returnValue: false,
+    errorCode: -1,
+    errorText: `${APP_ID}.service is not running.`,
+  });
   /** The service's error reply. */
   const refuse = (errorKind: ErrorKind, errorText: string) =>
     JSON.stringify({ returnValue: false, errorKind, errorText });
   const state = () => publishedState(facts);
 
-  /** Settle what follows from the intent, as the machine would. */
-  function reconcile() {
+  /**
+   * Settle what follows from the intent, as the machine would. A choice of
+   * the person (`answered`) answers what was asked; nothing else ends
+   * asking.
+   */
+  function reconcile(answered: boolean) {
+    if (answered) facts.problem = null;
+    else if (facts.worker.phase === 'asking') return;
     const awake = facts.power === 'active' || facts.power === 'screen_saver';
     const wanted =
       awake &&
@@ -245,7 +304,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       wanted &&
       isEnabled(state()) &&
       facts.video === 'available' &&
-      !facts.failure;
+      !facts.problem;
     facts.fps = facts.capturing ? 30 : null;
   }
 
@@ -278,7 +337,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       return;
     }
     if (offline) {
-      respond(error(`Unknown service name: "${APP_ID}.service"`));
+      respond(notRunning);
       return;
     }
     const failure = failures.get(method);
@@ -317,7 +376,8 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           return;
         }
         facts.preferences = { autostart: false, ...preferences };
-        reconcile();
+        facts.unreadable = null;
+        reconcile(false);
         respond(reply(state()));
         later(() => publish());
         return;
@@ -330,7 +390,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           return;
         }
         facts.target = payload.target as LightingTarget;
-        reconcile();
+        reconcile(true);
         respond(reply(state()));
         later(() => publish());
         return;
@@ -342,7 +402,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           return;
         }
         facts.enabled = payload.enabled === true;
-        reconcile();
+        reconcile(true);
         respond(reply(state()));
         later(() => publish());
         return;
@@ -351,7 +411,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         later(() => {
           offline = true;
           for (const subscriber of Array.from(subscribers))
-            subscriber.deliver(error('Service stopped'));
+            subscriber.deliver(notRunning);
           subscribers.clear();
         });
         return;
@@ -390,19 +450,28 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     /**
      * Full: what the running worker reports of its engine's state, as the
      * real one does (`hosts/webos/src/link.rs`): the session's failure, or
-     * else the last surface failure, as an `other` failure. Its target is
-     * left to the commands, so the service lags as it does.
+     * else the last surface failure, with what is asked as the engine
+     * classifies it (settings it cannot use: change them; anything else:
+     * try again). Its target is left to the commands, so the service lags
+     * as it does.
      */
     report(snapshot: ApplicationSnapshot<unknown, unknown>) {
       if (facts.flavor !== 'full' || facts.worker.phase !== 'running') return;
       const session =
         'failure' in snapshot.session ? snapshot.session.failure : undefined;
       const surfaces = snapshot.surface_failures;
-      const message =
-        session?.message ?? surfaces[surfaces.length - 1]?.message;
-      const failure: WorkerFailure | null =
-        message === undefined ? null : { kind: 'other', message };
-      if (failure?.message !== facts.failure?.message) publish({ failure });
+      const failure = session ?? surfaces[surfaces.length - 1];
+      const problem: Problem | null = failure
+        ? {
+            asked: {
+              step: 'ask',
+              fix: unusableSettings(failure) ? 'change_settings' : 'try_again',
+            },
+            message: failure.message,
+          }
+        : null;
+      if (JSON.stringify(problem) !== JSON.stringify(facts.problem))
+        publish({ problem });
     },
     subscribers: () => subscribers.size,
     failNext(
@@ -412,10 +481,10 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     ) {
       failures.set(method, { errorKind, errorText });
     },
-    /** End every subscription with an error, as a stopped service does. */
-    drop(errorText: string) {
+    /** End every subscription as the bus does when the service ends. */
+    drop() {
       for (const subscriber of Array.from(subscribers))
-        subscriber.deliver(error(errorText));
+        subscriber.deliver(notRunning);
       subscribers.clear();
     },
     setOffline(value: boolean) {

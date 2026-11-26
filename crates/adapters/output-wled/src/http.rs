@@ -69,7 +69,7 @@ pub enum RequestError {
     #[error("request failed")]
     Io(#[from] io::Error),
     #[error("malformed HTTP response: {0}")]
-    Malformed(&'static str),
+    Malformed(Malformed),
     /// The response held more than this many bytes.
     #[error("response exceeds {} KiB", .0 / 1024)]
     TooLarge(usize),
@@ -87,6 +87,22 @@ pub enum RequestError {
     /// may have reached the device.
     #[error("request not completed")]
     Stopped(#[from] Stopping),
+}
+
+/// What is wrong with a response that is not HTTP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum Malformed {
+    /// The connection closed before the response was complete.
+    #[error("connection closed mid-response")]
+    Closed,
+    #[error("header is not UTF-8")]
+    HeaderNotUtf8,
+    #[error("invalid status line")]
+    StatusLine,
+    #[error("invalid Content-Length")]
+    ContentLength,
+    #[error("invalid chunk size")]
+    ChunkSize,
 }
 
 /// A complete HTTP response.
@@ -259,7 +275,7 @@ pub fn read_response(
             return Ok(Some(response));
         }
         if count == 0 {
-            return Err(RequestError::Malformed("connection closed mid-response"));
+            return Err(RequestError::Malformed(Malformed::Closed));
         }
     }
 }
@@ -271,7 +287,7 @@ fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
         return Ok(None);
     };
     let head = std::str::from_utf8(&data[..end])
-        .map_err(|_| RequestError::Malformed("header is not UTF-8"))?;
+        .map_err(|_| RequestError::Malformed(Malformed::HeaderNotUtf8))?;
     let mut lines = head.split("\r\n");
     let status = lines
         .next()
@@ -282,7 +298,7 @@ fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
                 .filter(|version| version.starts_with("HTTP/1."))?;
             parts.next()?.parse().ok()
         })
-        .ok_or(RequestError::Malformed("invalid status line"))?;
+        .ok_or(RequestError::Malformed(Malformed::StatusLine))?;
     let header = |name: &str| {
         lines.clone().find_map(|line| {
             let (key, value) = line.split_once(':')?;
@@ -296,7 +312,7 @@ fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
     if let Some(length) = header("content-length") {
         let length: usize = length
             .parse()
-            .map_err(|_| RequestError::Malformed("invalid Content-Length"))?;
+            .map_err(|_| RequestError::Malformed(Malformed::ContentLength))?;
         return Ok((body.len() >= length).then(|| Response {
             status,
             body: body[..length].to_vec(),
@@ -317,7 +333,7 @@ fn dechunk(mut rest: &[u8]) -> Result<Option<Vec<u8>>, RequestError> {
         let size = std::str::from_utf8(&rest[..line])
             .ok()
             .and_then(|text| usize::from_str_radix(text.split(';').next()?.trim(), 16).ok())
-            .ok_or(RequestError::Malformed("invalid chunk size"))?;
+            .ok_or(RequestError::Malformed(Malformed::ChunkSize))?;
         rest = &rest[line + 2..];
         if size == 0 {
             return Ok(Some(body));

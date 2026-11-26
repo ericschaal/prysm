@@ -3,10 +3,10 @@
 use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
-    AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, FrameSink, FrameSource,
-    Hangup, IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure, OutputFactory,
-    OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory, Span, Stopping,
-    ValidationError,
+    AdapterSettings, Candidate, DeviceBrightness, DeviceReport, Error, Escalation, FrameSink,
+    FrameSource, Hangup, IdleMode, LedOutput, LightingTarget, Mode, Modes, OpenFailure,
+    OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory, Span,
+    Stopping, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -96,6 +96,8 @@ pub struct FakeSourceSettings {
     pub quiet_after: Option<u32>,
     /// How long the quiet spell lasts; 0: forever.
     pub quiet_for_ms: u64,
+    /// The quiet spell says the device refuses its video ([`Pull::Refused`]).
+    pub refused: bool,
     /// Report [`Pull::Ended`] after this many frames, like a file at its end.
     pub end_after: Option<u32>,
     pub fail_open: bool,
@@ -227,7 +229,11 @@ impl FrameSource for FakeSource {
             let length = Duration::from_millis(self.settings.quiet_for_ms);
             if self.settings.quiet_for_ms == 0 || since.elapsed() < length {
                 thread::sleep(timeout);
-                return Ok(Pull::Idle);
+                return Ok(if self.settings.refused {
+                    Pull::Refused
+                } else {
+                    Pull::Quiet
+                });
             }
             self.quiet_done = true;
         }
@@ -274,11 +280,14 @@ pub struct FakeOutputSettings {
     /// With `fail_after`: record `output.failing:<name>`, then wait for
     /// this event in the log before failing.
     pub fail_at: Option<String>,
-    pub fail_open: bool,
-    /// `idle` fails after recording the call, like an unreachable device.
-    pub fail_idle: bool,
+    /// How `open` goes.
+    pub open: FakeOpen,
+    /// How `idle` goes, held or not, after recording the call.
+    pub idle: FakeIdle,
     /// `idle` panics after recording the call.
     pub panic_idle: bool,
+    /// `write` panics, before recording anything.
+    pub panic_write: bool,
     /// Rejected by `validate`.
     pub invalid: bool,
     /// `report` says the device is overridden after this many writes.
@@ -294,13 +303,47 @@ pub struct FakeOutputSettings {
     pub idle_delay_ms: u64,
     /// `idle` in `Native` takes this much longer.
     pub native_idle_delay_ms: u64,
-    /// `open` records `output.opening:<name>` and waits for the session's
-    /// stop to cut it, then ends as this says.
-    pub open_until_stop: Option<AtStop>,
     /// The held output's `idle` in `Native` (a release after a quiet
     /// spell), after recording the call, waits for the session's stop to
     /// cut it, then fails.
     pub release_until_stop: bool,
+    /// The held output's `idle` in `Native` (a release after a quiet
+    /// spell), after recording the call, fails as lights that do not
+    /// answer ([`Escalation::Unanswered`]).
+    pub release_unanswered: bool,
+}
+
+/// How a fake output's `open` goes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FakeOpen {
+    /// It opens, recording `output.open:<name>`.
+    #[default]
+    Opens,
+    /// It fails before anything reaches the fake device, recording
+    /// `output.open_failed:<name>`.
+    Fails,
+    /// It fails before anything reaches the fake device, as lights that do
+    /// not answer ([`Escalation::Unanswered`]), recording
+    /// `output.open_unanswered:<name>`.
+    Unanswered,
+    /// It records `output.opening:<name>`, waits for the session's stop to
+    /// cut it, then ends as this says.
+    UntilStop(AtStop),
+}
+
+/// How a fake output's `idle` goes, after recording the call.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FakeIdle {
+    #[default]
+    Idles,
+    /// It fails, like a device that refuses it.
+    Fails,
+    /// It fails as lights that do not answer ([`Escalation::Unanswered`])
+    /// until the log holds this event, a gate the test opens with
+    /// [`CallLog::record`]; then it idles.
+    UnansweredUntil(String),
 }
 
 /// How a fake open that waits for the stop ends at the cut.
@@ -340,28 +383,37 @@ impl OutputFactory for FakeOutputs {
         Ok(())
     }
 
-    /// `fail_open` fails before anything reaches the fake device.
+    /// As [`FakeOutputSettings::open`] says.
     fn open(
         &self,
         settings: &FakeOutputSettings,
         stop: &Hangup,
     ) -> Result<Box<dyn LedOutput>, OpenFailure> {
-        if let Some(at_stop) = settings.open_until_stop {
-            self.0.record(format!("output.opening:{}", settings.name));
-            let _ = stop.wait(UNTIL_STOP);
-            let failed = || stopped(&self.0, "open", &settings.name);
-            match at_stop {
-                AtStop::Untouched => return Err(OpenFailure::Untouched(failed())),
-                AtStop::Touched => return Err(OpenFailure::Touched(failed())),
-                AtStop::Opened => {}
+        let name = &settings.name;
+        let untouched = |event: &str, error: Error| {
+            self.0.record(format!("output.{event}:{name}"));
+            Err(OpenFailure::Untouched(error))
+        };
+        match settings.open {
+            FakeOpen::Opens => {}
+            FakeOpen::Fails => {
+                return untouched("open_failed", Error::other("fake output cannot open"));
             }
-        }
-        if settings.fail_open {
-            self.0
-                .record(format!("output.open_failed:{}", settings.name));
-            return Err(OpenFailure::Untouched(Error::other(
-                "fake output cannot open",
-            )));
+            FakeOpen::Unanswered => {
+                let error =
+                    Error::other_escalating("fake output does not answer", Escalation::Unanswered);
+                return untouched("open_unanswered", error);
+            }
+            FakeOpen::UntilStop(at_stop) => {
+                self.0.record(format!("output.opening:{name}"));
+                let _ = stop.wait(UNTIL_STOP);
+                let failed = || stopped(&self.0, "open", name);
+                match at_stop {
+                    AtStop::Untouched => return Err(OpenFailure::Untouched(failed())),
+                    AtStop::Touched => return Err(OpenFailure::Touched(failed())),
+                    AtStop::Opened => {}
+                }
+            }
         }
         self.0.record(format!("output.open:{}", settings.name));
         Ok(Box::new(FakeOutput {
@@ -396,6 +448,7 @@ pub struct FakeOutput {
 
 impl LedOutput for FakeOutput {
     fn write(&mut self, _colors: &EdgeColors) -> Result<()> {
+        assert!(!self.settings.panic_write, "fake output panics in write");
         if self.settings.write_delay_ms > 0 {
             std::thread::sleep(Duration::from_millis(self.settings.write_delay_ms));
         }
@@ -437,6 +490,12 @@ impl LedOutput for FakeOutput {
             let _ = stop.wait(UNTIL_STOP);
             return Err(stopped(&self.log, "idle", &self.settings.name));
         }
+        if self.settings.release_unanswered && mode == IdleMode::Native {
+            self.log
+                .record(format!("output.idle:{}:{mode:?}", self.settings.name));
+            let error = "fake output's release is not answered";
+            return Err(Error::other_escalating(error, Escalation::Unanswered));
+        }
         idle(&self.log, &self.settings, mode)
     }
 }
@@ -450,10 +509,14 @@ fn idle(log: &CallLog, settings: &FakeOutputSettings, mode: IdleMode) -> Result<
         IdleMode::Off => 0,
     };
     thread::sleep(Duration::from_millis(settings.idle_delay_ms + native));
-    if settings.fail_idle {
-        return Err(Error::other("fake output cannot idle"));
+    match &settings.idle {
+        FakeIdle::Idles => Ok(()),
+        FakeIdle::Fails => Err(Error::other("fake output cannot idle")),
+        FakeIdle::UnansweredUntil(gate) if !log.events().contains(gate) => Err(
+            Error::other_escalating("fake output does not answer", Escalation::Unanswered),
+        ),
+        FakeIdle::UnansweredUntil(_) => Ok(()),
     }
-    Ok(())
 }
 
 /// Records `"sink.send"` per frame.

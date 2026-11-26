@@ -32,7 +32,8 @@ export interface LightingProps {
   lighting: LightingSituation;
   /**
    * What the lights say about themselves while screen sync runs: why they
-   * do not show it, their own brightness, how many LEDs they have.
+   * do not show it, their own brightness, how many LEDs they have. Lights
+   * that don't answer Off or their effects are the situation `unanswered`.
    */
   device: DeviceReport;
   /** How many LEDs Prysm sends: the configured edges' total. */

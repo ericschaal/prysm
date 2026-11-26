@@ -1,12 +1,16 @@
 import {
   describeOutputIssue,
   failureSide,
+  outputIssueHeadline,
+  pictureOf,
   plainFailure,
+  REFUSED_VIDEO,
   unreachable,
   unusableSettings,
   type AdapterSide,
   type LightingFailure,
   type LightingSituation,
+  type OutputIssue,
   type TargetReading,
 } from '@prysm/application-client';
 import type { DeviceReport, Input } from '@prysm/contracts/application';
@@ -23,7 +27,10 @@ export function pathOf(lighting: LightingSituation): PathState {
       return { kind: 'failed', at: lighting.at };
     case 'sync': {
       const { input } = lighting;
-      return input?.receiving
+      // Not measured yet is quiet: no picture, no reason given.
+      if (!input) return { kind: 'waiting', picture: 'quiet' };
+      const picture = pictureOf(input);
+      return picture === 'arriving'
         ? {
             kind: 'flowing',
             fps: input.fps,
@@ -33,14 +40,16 @@ export function pathOf(lighting: LightingSituation): PathState {
             },
             behind: input.behind,
           }
-        : { kind: 'waiting' };
+        : { kind: 'waiting', picture };
     }
     case 'effects':
       return { kind: 'effects' };
-    case 'off': {
-      // With the lights off the path shows a failure only where it is: on
-      // a side, or settings that do not validate (without a side, Prysm's
-      // own). Any other one the light card says.
+    // With the lights off, or waited for (no session, nothing sent), the
+    // path shows a failure only where it is: on a side, or settings that
+    // do not validate (without a side, Prysm's own). Any other one the
+    // light card says.
+    case 'off':
+    case 'unanswered': {
       const { failure } = lighting;
       if (!failure) return { kind: 'off' };
       const at = failureSide(failure);
@@ -92,6 +101,15 @@ export interface Status {
   picture?: boolean;
 }
 
+/** The lights' status while they don't show what was chosen, and why. */
+function issueStatus(issue: OutputIssue, identity: string): Status {
+  const title = outputIssueHeadline(issue);
+  const why = describeOutputIssue(issue);
+  return issue === 'unreachable'
+    ? { tone: 'problem', title, detail: `${identity}. ${why}` }
+    : { tone: 'warning', title, detail: why };
+}
+
 /**
  * The video source's or the lights' status, from the live state alone.
  * `identity` names the saved section (`WLED at wled.local · 120 LEDs`), or is
@@ -129,11 +147,11 @@ export function sectionStatus(
   // Why: the fault's own words, else the failure's message.
   const reason =
     situation.kind === 'faulted' ? situation.message : failure?.message;
-  // With the lights off nothing runs: a failure is said only on the section
-  // it names (its settings do not validate, or a switch off failed); the
-  // other one is not in use.
-  const off = situation.kind === 'off';
-  if (path.kind === 'failed' && (path.at === section || !off)) {
+  // With the lights off, or waited for, nothing runs: a failure is said only
+  // on the section it names (its settings do not validate, or a switch off
+  // failed); the other one is not in use.
+  const idle = situation.kind === 'off' || situation.kind === 'unanswered';
+  if (path.kind === 'failed' && (path.at === section || !idle)) {
     const plain = failure
       ? plainFailure(failure, target, effects)
       : 'Screen sync stopped.';
@@ -146,7 +164,7 @@ export function sectionStatus(
         detail: capture ? '' : identity,
         details: reason,
       };
-    if (off && capture)
+    if (idle && capture)
       return {
         tone: 'problem',
         title: 'Video source not working',
@@ -167,6 +185,10 @@ export function sectionStatus(
           details: reason,
         };
   }
+  // Lights that don't answer Off or their effects are said as during screen
+  // sync; the video source is not in use.
+  if (!capture && situation.kind === 'unanswered')
+    return issueStatus('unreachable', identity);
   if (target === 'off')
     return {
       tone: 'idle',
@@ -188,17 +210,7 @@ export function sectionStatus(
   }
   // Screen sync: the lights say first when they do not show it.
   if (!capture && outputIssue && path.kind !== 'off')
-    return outputIssue === 'unreachable'
-      ? {
-          tone: 'problem',
-          title: 'Can’t reach the lights',
-          detail: `${identity}. ${describeOutputIssue(outputIssue)}`,
-        }
-      : {
-          tone: 'warning',
-          title: 'Not showing screen sync',
-          detail: describeOutputIssue(outputIssue),
-        };
+    return issueStatus(outputIssue, identity);
   if (path.kind === 'flowing') {
     if (capture)
       return {
@@ -220,6 +232,10 @@ export function sectionStatus(
           : identity,
     };
   }
+  // Not a problem, however long it lasts: it ends when the video changes.
+  // The title names the symptom, the detail the reason.
+  if (path.kind === 'waiting' && path.picture === 'refused')
+    return { tone: 'idle', title: 'No picture', detail: REFUSED_VIDEO };
   if (path.kind === 'waiting' && stalled)
     return capture
       ? {

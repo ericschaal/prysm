@@ -2,8 +2,9 @@
 //! own brightness dims them, how many LEDs it drives, and the gamma it
 //! applies to them.
 //!
-//! One request at most every [`EVERY`] (5 × that after a check that got no
-//! usable answer): `GET /json/si`, except that the second check and every
+//! One request [`EVERY`] after the last one ended, whatever it answered: a
+//! check that fails blocks nothing, and the next one sees a device that
+//! answers again. `GET /json/si`, except that the second check and every
 //! [`CONFIG_EVERY`]th after it read `GET /json/cfg` instead. The caller's
 //! thread never waits for WLED: the connect, the request and the reply each
 //! go as far as they can without blocking at every poll, and the check is
@@ -28,6 +29,7 @@
 //!
 //! Without a configuration read (none yet, or WLED refuses it behind its
 //! settings PIN) no brightness is reported and the gamma is unknown.
+use crate::classify::{self, Cause};
 use crate::ddp::{Gamma, Transfer};
 use crate::http::{self, RequestError};
 use prysm_ports::{DeviceBrightness, DeviceReport, OutputIssue, chain};
@@ -38,11 +40,8 @@ use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
-/// How often WLED's state is checked while it answers.
+/// How long after a check ends the next starts, whatever it answered.
 pub const EVERY: Duration = Duration::from_secs(1);
-/// After a check without a usable answer the next waits this many times
-/// [`EVERY`].
-pub(crate) const BACKOFF: u32 = 5;
 /// How long a check may take, from the connect to the end of the reply;
 /// nothing waits for it meanwhile.
 pub(crate) const REPLY: Duration = Duration::from_secs(1);
@@ -223,12 +222,7 @@ impl Observer {
     /// it, say) keeps what an earlier read found and does not touch the
     /// state check's finding; its cause is logged at debug level.
     fn configured(&mut self, now: Instant, answer: Result<Config, RequestError>) {
-        self.next = now
-            + if answer.is_ok() {
-                self.every
-            } else {
-                self.every * BACKOFF
-            };
+        self.next = now + self.every;
         match answer {
             Ok(config) => self.config = Some(config.into()),
             Err(error) => tracing::debug!(
@@ -278,15 +272,11 @@ impl Observer {
     }
 
     /// Records a check's outcome. Any failure, a reply that is not WLED's
-    /// state included, reports [`OutputIssue::Unreachable`]; its cause is
-    /// logged at debug level.
+    /// state included, reports [`OutputIssue::Unreachable`]: the check only
+    /// reports, and no other issue says it. Its cause and what it would
+    /// escalate as ([`classify::escalation`]) are logged at debug level.
     fn finish(&mut self, now: Instant, answer: Result<(Status, IpAddr), RequestError>) {
-        self.next = now
-            + if answer.is_ok() {
-                self.every
-            } else {
-                self.every * BACKOFF
-            };
+        self.next = now + self.every;
         let status = answer.as_ref().ok().map(|(status, _)| status);
         if let Some(status) = status {
             self.bri = status.state.bri;
@@ -300,6 +290,7 @@ impl Observer {
                 tracing::debug!(
                     device = %self.device,
                     error = %chain(&error),
+                    escalation = ?classify::escalation(Cause::Request(&error)),
                     "WLED state check got no usable answer"
                 );
                 Some(OutputIssue::Unreachable)

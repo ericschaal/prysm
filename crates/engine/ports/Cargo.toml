@@ -7,7 +7,7 @@ publish.workspace = true
 description = "Blocking adapter ports, settings and snapshot types for the Prysm runtime"
 
 [features]
-# `utoipa::ToSchema` for `StreamEncoding`, for the contract exporter.
+# `utoipa::ToSchema` for `StreamEncoding` and `OutputIssue`, for the contract exporter.
 schema = ["dep:utoipa"]
 # `Hangup::waits`, so a test cuts only a call that waits.
 testkit = []

@@ -2,7 +2,7 @@
 //! mean frame spans and whether Prysm keeps up, from the totals [`Stats`]
 //! keeps.
 use crate::stats::{Stats, Totals};
-use prysm_ports::{Behind, Input, Latency};
+use prysm_ports::{Behind, Input, Latency, Picture};
 use std::time::Duration;
 use tokio::time::{Instant, Interval, MissedTickBehavior};
 
@@ -140,7 +140,13 @@ impl Meter {
         };
         Input {
             fps: rate(received),
-            receiving: received > 0,
+            picture: if received > 0 {
+                Picture::Arriving
+            } else if totals.refused {
+                Picture::Refused
+            } else {
+                Picture::Quiet
+            },
             sent_fps: rate(sent),
             latency: (flushed > 0).then(|| {
                 let mean_ms = |span: Duration| tenth(span.as_secs_f64() * 1000.0 / flushed as f64);
@@ -161,6 +167,47 @@ mod tests {
     const SECOND: Duration = Duration::from_secs(1);
     const fn ms(value: u64) -> Duration {
         Duration::from_millis(value)
+    }
+
+    fn frame(stats: &Stats) {
+        use crate::stats::FrameTimes;
+        let at = std::time::Instant::now();
+        stats.frame(FrameTimes {
+            previous_done: None,
+            received: at,
+            captured: None,
+            processed: at,
+            written: Some(at),
+        });
+    }
+
+    /// Each window says whether frames arrived and, if not, the source's
+    /// last word: a frame and a new source make that quiet again, so a
+    /// window without any pull after frames never shows an old refusal.
+    #[tokio::test]
+    async fn the_picture_is_arriving_or_the_last_word_without_a_frame() {
+        let stats = Stats::default();
+        let mut meter = Meter::new(&stats);
+        assert_eq!(meter.sample(&stats).picture, Picture::Quiet, "no pull yet");
+        stats.no_frame(true);
+        assert_eq!(meter.sample(&stats).picture, Picture::Refused);
+        assert_eq!(meter.sample(&stats).picture, Picture::Refused, "kept");
+        frame(&stats);
+        stats.no_frame(true);
+        assert_eq!(meter.sample(&stats).picture, Picture::Arriving);
+        frame(&stats);
+        assert_eq!(meter.sample(&stats).picture, Picture::Arriving);
+        assert_eq!(
+            meter.sample(&stats).picture,
+            Picture::Quiet,
+            "reset by a frame"
+        );
+        stats.no_frame(true);
+        stats.no_frame(false);
+        assert_eq!(meter.sample(&stats).picture, Picture::Quiet);
+        stats.no_frame(true);
+        stats.source_opened();
+        assert_eq!(meter.sample(&stats).picture, Picture::Quiet, "a new source");
     }
 
     #[test]

@@ -330,7 +330,7 @@ It encodes changing synthetic NV12 pictures with exactly that encoder,
 decodes each with OpenH264 and checks that every 16x16 block shows its own
 picture, not one up to two pictures before or after (the first picture, and
 the first after a session restart half way, must be keyframes of the current
-picture), and prints `check-encoder: ok encoder=… bytes=… mbit_s=…
+picture), and prints to stderr `check-encoder: ok encoder=… bytes=… mbit_s=…
 encode_ms_mean=… encode_ms_max=… cpu_percent=…`, then how long releasing the
 encoder took. Exit 0 means every check passed; `check-encoder: FAILED: …`
 gives the cause chain. `--prysm http://HOST:8787` (or an `https://`

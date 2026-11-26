@@ -15,6 +15,8 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# The errno table's test runs on every platform.
+libc = "0.2"
 tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -39,4 +41,5 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+print_stdout = "deny"
 undocumented_unsafe_blocks = "deny"

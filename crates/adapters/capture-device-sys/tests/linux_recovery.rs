@@ -1,7 +1,8 @@
 #![cfg(target_os = "linux")]
 
 //! A manual test: CI and `cargo xtask check` do not run it. It is the only
-//! end-to-end check of stall recovery on a real device node.
+//! end-to-end check, on a real device node, that a paused producer is waited
+//! for and that a stop ends the wait.
 //!
 //! Use a dedicated v4l2loopback device with no other readers or writers:
 //! `sudo modprobe v4l2loopback video_nr=42 exclusive_caps=1`
@@ -65,7 +66,7 @@ impl CaptureSink for Latest {
 
 #[test]
 #[ignore = "requires a dedicated v4l2loopback device in PRYSM_TEST_VIDEO_DEVICE"]
-fn stalled_producer_recovers_and_capture_stops() -> Result<()> {
+fn a_paused_producer_is_waited_for_and_a_stop_ends_the_wait() -> Result<()> {
     let path = std::env::var("PRYSM_TEST_VIDEO_DEVICE")
         .context("Set PRYSM_TEST_VIDEO_DEVICE to a dedicated v4l2loopback device")?;
     let mut producer = Device::with_path(&path)?;
@@ -114,7 +115,8 @@ fn stalled_producer_recovers_and_capture_stops() -> Result<()> {
             producer.write_all(&pixels)?;
         }
 
-        // The producer pauses through two one-second capture timeouts.
+        // The producer pauses through two one-second capture timeouts, which
+        // capture waits out.
         thread::sleep(Duration::from_millis(2200));
         ensure!(
             !capturing.is_finished(),
@@ -126,7 +128,7 @@ fn stalled_producer_recovers_and_capture_stops() -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(2);
     while !capturing.is_finished() {
         if Instant::now() >= deadline {
-            bail!("Stopping did not end the stalled capture");
+            bail!("Stopping did not end the wait");
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -134,7 +136,10 @@ fn stalled_producer_recovers_and_capture_stops() -> Result<()> {
         Ok(result) => result.context("capture failed or did not release the device")?,
         Err(_) => bail!("capture panicked"),
     }
-    // Reconfiguration must succeed immediately after capture returns.
+    // Reconfiguration must succeed immediately after capture returns. The
+    // producer closes first: the device takes a format only with no other
+    // opener.
+    drop(producer);
     Device::with_path(&path)?.set_format(&format)?;
     Ok(())
 }

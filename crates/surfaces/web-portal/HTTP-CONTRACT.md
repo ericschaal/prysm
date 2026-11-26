@@ -105,6 +105,7 @@ the target is reached when `session.state` equals it (`off` is reached by
 | `{ "state": "stopped", "failure"?: LightingFailure }` | No session; Prysm does not drive the lights. After an output failure they may not be off. |
 | `{ "state": "screen_sync" }` | A session runs. It never carries a failure: it runs on valid settings and has reached its target. |
 | `{ "state": "effects", "failure"?: LightingFailure }` | The lights show their own effects; no session. |
+| `{ "state": "unanswered", "failure"?: LightingFailure }` | No session: the lights do not answer the request that puts them in the target's mode (`off` or `effects`), which is tried again every 5 s until they answer. The target stays and is not reached meanwhile. |
 | `{ "state": "faulted", "message" }` | A session did not stop in time, or did not confirm its source's release; only a restart recovers. `message` says what did not finish, in words (not covered by the contract); the step itself is only logged. |
 
 A `failure` is present only while it explains the present: why the target is
@@ -122,19 +123,28 @@ On input, `processing`, each of its fields, a calibration's `correction` and eac
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
 Setting the target to `screen_sync` opens the capture (a failure is the
 reply); the output is opened at the first frame, so an output that cannot
-open ends the session and appears only in `session.failure`. While no frames arrive, `input.receiving` is `false`
-(waiting for video) and after a few seconds the output is returned to its own
+open ends the session and appears only in `session.failure`, except lights
+that do not answer: the session runs on, `device.issue` is `unreachable`, and
+the open is tried again at a frame every 5 s until they answer; a quiet spell
+ends that wait and the issue with it. While no frames arrive, `input.picture` is `quiet` or
+`refused` (waiting for video) and after a few seconds the output is returned to its own
 state until frames return.
 
 `device` is what the lights say about themselves,
 `{ "issue"?: …, "brightness_percent"?: …, "led_count"?: … }`, each part absent
 while the output cannot tell. It is `{}` while no session holds the output:
 no session, a session before its first frame, or one that returned the output
-after 3 s without video. Read `session.state` and `input.receiving` for which;
-`{}` alone does not mean lighting stopped. `issue` (absent
+after 3 s without video. Read `session.state` and `input.picture` for which;
+`{}` alone does not mean lighting stopped.
+Lights that do not answer with the target `off` or `effects` are the
+exception: `session.state` is `unanswered` and `device` is
+`{ "issue": "unreachable" }`; the issue clears once they answer. `issue` (absent
 when all is well) says why the lights are not showing its colours: `off`
 (switched off on the device), `overridden` (WLED's live override), `not_live`
-(the device is not taking realtime colours), `other_sender` or `unreachable`.
+(the device is not taking realtime colours), `other_sender` or `unreachable`
+(no answer to its state checks, to the session's open while it waits for
+the lights, or to the request for `off` or the device's effects; then `device`
+holds only this).
 It is not a failure: lighting keeps sending, nothing is switched back, and the
 field clears once the device shows the colours again. `brightness_percent`
 (0-100) is the device's own brightness while it scales the colours, and
@@ -142,11 +152,12 @@ field clears once the device shows the colours again. `brightness_percent`
 Prysm keeps sending `settings.output.leds` either way and changes none of them.
 
 `input`, while a session runs, is measured about once a second: `fps`
-(frames from the source per second), `receiving`, `sent_fps` (frames whose
-colours were written to the output per second) and `latency`. `latency` is
-`{ "capture_ms"?: …, "output_ms": … }`, each the mean per frame over the
-window: `output_ms` from Prysm receiving a frame from its source to the output
-write for its colours returning; `capture_ms` from the source capturing the
+(frames from the source per second), `picture`, `sent_fps` (frames whose
+colours were handed to the output per second; an output may drop a frame it
+cannot send now, and `device.issue` says when the lights do not answer) and
+`latency`. `latency` is `{ "capture_ms"?: …, "output_ms": … }`, each the
+mean per frame over the window: `output_ms` from Prysm receiving a frame from
+its source to the output write for its colours returning; `capture_ms` from the source capturing the
 frame to Prysm receiving it, present only when every frame in the window
 carried a capture time (video devices on macOS and on Linux with monotonic
 V4L2 timestamps). Both are measured by Prysm (not from the screen, and not
@@ -157,6 +168,11 @@ keeping up with its source: `processing` (turning frames into colours) or
 idle time between frames (busy at least 85% of each second) for 3 seconds in
 a row, and cleared after 3 seconds with slack; a source that just sends fewer
 frames leaves idle time and never sets it. Absent while Prysm keeps up.
+`picture` is `arriving` (at least one frame in the window), `quiet` (none,
+and no reason given: no signal, no sender; also right after the session
+starts) or `refused` (none, because the source's device refuses to share the
+video it shows; it ends when the video changes). Neither `quiet` nor `refused` is a failure: screen sync keeps
+running, and the output is returned alike.
 `/metrics` has
 the received-to-flushed spans as the `prysm_frame_flush_seconds` summary.
 
@@ -384,11 +400,11 @@ metrics and no histograms.
 | --- | --- | --- |
 | `prysm_build_info{version}` | gauge | Always 1; `version` is the product version, as `State.version` |
 | `prysm_target{target}` | gauge | 1 for the current target (`off`, `screen_sync`, `effects`), 0 for the others |
-| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `screen_sync`, `effects`, `faulted`), 0 for the others |
+| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `screen_sync`, `effects`, `unanswered`, `faulted`), 0 for the others |
 | `prysm_settings_revision` | gauge | `State.revision` (random start per process) |
 | `prysm_input_fps` | gauge | `State.input.fps`; 0 while no session runs |
 | `prysm_frames_received_total` | counter | Frames taken from the capture source (frames from a remote TV included) |
-| `prysm_frames_sent_total` | counter | Frames whose colors were written to the output |
+| `prysm_frames_sent_total` | counter | Frames whose colors were handed to the output (an output may drop a frame it cannot send now) |
 | `prysm_processing_seconds_sum`, `_count` | summary | Time turning frames into colors, and how many frames |
 | `prysm_frame_flush_seconds_sum`, `_count` | summary | Per frame, from Prysm receiving it from the source to its output write returning, and how many frames |
 | `prysm_output_write_seconds_sum`, `_count` | summary | Time in output writes, and how many: frames and keep-alive rewrites, failed ones included |

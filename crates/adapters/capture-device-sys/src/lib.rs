@@ -2,6 +2,7 @@
 pub use prysm_core::Frame;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use prysm_core::{FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
+use prysm_ports::{Escalation, Fix};
 mod device;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod formats;
@@ -25,6 +26,20 @@ pub enum CaptureError {
         #[source]
         source: Option<std::io::Error>,
     },
+    /// Another program holds the device or its buffers.
+    #[error("capture device is in use by another program: {details}")]
+    Busy {
+        details: String,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Linux: the process may not open the device node.
+    #[error("no permission to open {device} (add the user to group video)")]
+    Denied {
+        device: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("unsupported capture format: {details}")]
     UnsupportedFormat {
         details: String,
@@ -47,6 +62,30 @@ pub enum CaptureError {
     Cleanup(#[source] anyhow::Error),
     #[error(transparent)]
     Backend(#[from] anyhow::Error),
+}
+
+impl CaptureError {
+    /// What is left for the person once this failure ends capture.
+    #[must_use]
+    pub fn escalation(&self) -> Escalation {
+        match self {
+            Self::DeviceNotFound { .. } => Escalation::Ask(Fix::ChangeSettings),
+            Self::Denied { .. } | Self::NoCameraAccess(CameraAccess::Denied) => {
+                Escalation::Ask(Fix::SetUp)
+            }
+            // The device may still hold buffers or the fd: only a new
+            // process frees them.
+            Self::Cleanup(_) => Escalation::Restart,
+            Self::Disconnected { .. }
+            | Self::Busy { .. }
+            | Self::UnsupportedFormat { .. }
+            | Self::NoCameraAccess(
+                CameraAccess::Restricted | CameraAccess::NotAsked | CameraAccess::Unanswered,
+            )
+            | Self::Unusable { .. }
+            | Self::Backend(_) => Escalation::FAIL_FAST,
+        }
+    }
 }
 
 fn missing_device(device: Option<&str>) -> String {
@@ -125,17 +164,6 @@ fn unspecified_matrix(height: u32) -> prysm_core::YuvStandardMatrix {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
-fn check_format_rejection(error: std::io::Error) -> Result<std::io::Error> {
-    if error.kind() == std::io::ErrorKind::InvalidInput {
-        Ok(error)
-    } else {
-        Err(anyhow::Error::new(error)
-            .context("failed to set capture format")
-            .into())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +186,82 @@ mod tests {
     }
 
     #[test]
+    fn each_capture_failure_escalates_as_its_cause_says() {
+        let io = || Some(std::io::Error::from_raw_os_error(2));
+        let rejection = BufferRejection::Payload(prysm_core::PayloadError::Corrupted);
+        for (error, escalation) in [
+            (
+                CaptureError::DeviceNotFound {
+                    device: None,
+                    source: io(),
+                },
+                Escalation::Ask(Fix::ChangeSettings),
+            ),
+            (
+                CaptureError::Disconnected {
+                    details: "unplugged".into(),
+                    source: io(),
+                },
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::Busy {
+                    details: "failed to set capture format".into(),
+                    source: std::io::Error::from_raw_os_error(16),
+                },
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::Denied {
+                    device: "/dev/video0".into(),
+                    source: std::io::Error::from_raw_os_error(13),
+                },
+                Escalation::Ask(Fix::SetUp),
+            ),
+            (
+                CaptureError::UnsupportedFormat {
+                    details: "no YUYV".into(),
+                    source: io(),
+                },
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::NoCameraAccess(CameraAccess::Denied),
+                Escalation::Ask(Fix::SetUp),
+            ),
+            (
+                CaptureError::NoCameraAccess(CameraAccess::Restricted),
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::NoCameraAccess(CameraAccess::NotAsked),
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::NoCameraAccess(CameraAccess::Unanswered),
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::Unusable {
+                    rejected: 90,
+                    source: rejection,
+                },
+                Escalation::FAIL_FAST,
+            ),
+            (
+                CaptureError::Cleanup(anyhow::anyhow!("REQBUFS(0) failed")),
+                Escalation::Restart,
+            ),
+            (
+                CaptureError::Backend(anyhow::anyhow!("STREAMON failed")),
+                Escalation::FAIL_FAST,
+            ),
+        ] {
+            assert_eq!(error.escalation(), escalation, "{error}");
+        }
+    }
+
+    #[test]
     fn an_unnamed_matrix_is_bt709_from_720_lines() {
         use prysm_core::YuvStandardMatrix::{Bt601, Bt709};
         for (height, matrix) in [(0, Bt601), (480, Bt601), (576, Bt601), (719, Bt601)] {
@@ -165,29 +269,6 @@ mod tests {
         }
         for height in [720, 1080, 2160] {
             assert_eq!(unspecified_matrix(height), Bt709, "{height}");
-        }
-    }
-
-    #[test]
-    fn format_negotiation_only_falls_back_for_invalid_input() {
-        use std::io::{Error, ErrorKind};
-        assert_eq!(
-            check_format_rejection(Error::from(ErrorKind::InvalidInput))
-                .unwrap()
-                .kind(),
-            ErrorKind::InvalidInput,
-        );
-        for kind in [
-            ErrorKind::ResourceBusy,
-            ErrorKind::PermissionDenied,
-            ErrorKind::Other,
-        ] {
-            let error = check_format_rejection(Error::from(kind)).unwrap_err();
-            let CaptureError::Backend(error) = error else {
-                panic!("expected backend error for {kind:?}")
-            };
-            assert_eq!(error.downcast_ref::<Error>().unwrap().kind(), kind);
-            assert!(error.to_string().contains("failed to set capture format"));
         }
     }
 
@@ -252,6 +333,8 @@ mod tests {
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod capture_time;
+#[cfg(any(target_os = "linux", test))]
+mod classify;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod health;
 #[cfg(target_os = "linux")]

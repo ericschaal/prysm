@@ -22,8 +22,6 @@ tokio = { workspace = true, features = ["time"] }
 [dev-dependencies]
 prysm-webos-link = { workspace = true, features = ["testkit"] }
 prysm-testkit.workspace = true
-# A capture failure no source in the process recovers from, for the restart test.
-prysm-capture-webos-sys = { path = "../../adapters/capture-webos-sys" }
 prysm-runtime = { workspace = true, features = ["testkit"] }
 serde_json.workspace = true
 tempfile.workspace = true

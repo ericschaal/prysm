@@ -6,7 +6,7 @@ use crate::install::InstallError;
 use crate::launcher::Output;
 use crate::machine::Exit;
 use crate::preferences::{MemoryStore, StoreError};
-use prysm_webos_link::{Command, Event, FullStatus, WorkerStatus};
+use prysm_webos_link::{Command, Event, FullStatus, Video, WorkerStatus};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
@@ -23,6 +23,10 @@ pub(crate) struct World {
     pub wait_fails: bool,
     /// How many worker handles were let go.
     pub dropped: u32,
+    /// Reaped, its exit held back for its last lines until then.
+    pub held: Option<Instant>,
+    /// A worker let go no longer exists, until the launcher is next asked.
+    pub let_go_reaped: bool,
 }
 
 #[derive(Clone, Default)]
@@ -41,6 +45,9 @@ impl Launcher for FakeLauncher {
             .log
             .push(format!("spawn {} {}", program.display(), args.join(" ")));
         Ok(FakeWorker(self.0.clone()))
+    }
+    fn let_go_reaped(&mut self) -> bool {
+        std::mem::take(&mut self.0.borrow_mut().let_go_reaped)
     }
 }
 
@@ -71,7 +78,7 @@ impl Worker for FakeWorker {
         Ok(world.exit.take())
     }
     fn due(&self) -> Option<Instant> {
-        None
+        self.0.borrow().held
     }
 }
 
@@ -394,7 +401,7 @@ fn a_failed_save_changes_nothing() {
         "{refused}"
     );
     let state = call("getState", "{}");
-    assert_eq!(state["failure"]["kind"], "preferences", "{state}");
+    assert!(state["unreadable"].is_string(), "{state}");
     assert_eq!(
         state["preferences"],
         serde_json::json!({ "autostart": false })
@@ -416,13 +423,13 @@ fn a_missing_preferences_file_is_no_failure() {
         FakeInstaller::default(),
         Instant::now(),
     );
-    let state = service.machine().state(Instant::now());
-    assert_eq!(state.failure, None);
+    let state = service.machine().state();
+    assert_eq!(state.unreadable, None);
     assert_eq!(state.preferences, Preferences::default());
 }
 
-/// An unreadable `tv.json` is reported as the `preferences` failure, the
-/// defaults are used, and the file stays as it is until preferences are
+/// An unreadable `tv.json` is reported as `unreadable`, the defaults are
+/// used, and the file stays as it is until preferences are
 /// saved.
 #[test]
 fn unreadable_preferences_are_reported_and_kept_until_saved() {
@@ -447,12 +454,8 @@ fn unreadable_preferences_are_reported_and_kept_until_saved() {
             serde_json::from_str(&reply.payload).unwrap()
         };
         let state = call("getState", r#"{"subscribe":true}"#);
-        assert_eq!(state["failure"]["kind"], "preferences", "{content}");
         assert!(
-            state["failure"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("invalid"),
+            state["unreadable"].as_str().unwrap().contains("invalid"),
             "{state}"
         );
         assert_eq!(
@@ -525,6 +528,7 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
             capturing: false,
             fps: None,
             target: LightingTarget::Off,
+            lights: None,
             applied: 0,
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
@@ -547,32 +551,57 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
     h.world.borrow_mut().exit = Some(Exit::Code(1));
     assert!(h.tick(300));
     let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "asking");
     assert_eq!(
-        published["worker"],
-        serde_json::json!({ "phase": "retrying", "seconds": 1 })
+        published["worker"]["problem"]["asked"],
+        serde_json::json!({ "step": "ask", "fix": "try_again" })
     );
-    assert_eq!(published["failure"]["kind"], "other");
     assert!(
-        published["failure"]["message"]
+        published["worker"]["problem"]["message"]
             .as_str()
             .unwrap()
             .contains("malformed")
     );
-    assert!(h.tick(1_299));
-    assert!(h.log().is_empty());
-    assert!(h.tick(1_300));
-    assert_eq!(h.log().len(), 2, "respawned after one second");
+    assert!(h.tick(60_000));
+    assert!(h.log().is_empty(), "the person is asked: nothing respawns");
+}
+
+/// A worker that dies without a word (its event stream ends cleanly) is
+/// restarted at once, with nothing shown; dying again before a frame asks.
+#[test]
+fn a_worker_that_dies_is_restarted_once() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    h.world.borrow_mut().exit = Some(Exit::Signal(9));
+    assert!(h.tick(100));
+    let log = h.log();
+    assert!(log[0].starts_with("spawn "), "{log:?}");
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "running");
+    assert_eq!(published["worker"].get("problem"), None);
+    h.world.borrow_mut().exit = Some(Exit::Signal(9));
+    assert!(h.tick(200));
+    assert!(h.log().is_empty(), "no second restart");
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "asking");
+    assert!(
+        published["worker"]["problem"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("again after a restart: worker killed by signal 9")
+    );
 }
 
 #[test]
-fn a_spawn_failure_retries_without_a_worker() {
+fn a_spawn_failure_asks_without_a_worker() {
     let mut h = Harness::new(config(), None);
     h.world.borrow_mut().refuse_spawn = true;
     h.power("Active", 0);
     let published = h.bus.published.last().unwrap();
-    assert_eq!(published["worker"]["phase"], "retrying");
+    assert_eq!(published["worker"]["phase"], "asking");
     assert!(
-        published["failure"]["message"]
+        published["worker"]["problem"]["message"]
             .as_str()
             .unwrap()
             .contains("no such file")
@@ -610,6 +639,42 @@ fn silent_subscriptions_are_renewed() {
     );
     assert!(h.tick(10_200));
     assert_eq!(h.bus.resubscribed.last(), Some(&Watch::Power));
+}
+
+fn video_renewals(h: &Harness) -> usize {
+    let renewals = h.bus.resubscribed.iter();
+    renewals.filter(|watch| **watch == Watch::Video).count()
+}
+
+#[test]
+fn a_live_video_subscription_reading_unknown_is_not_renewed() {
+    let mut h = Harness::new(config(), None);
+    let incomplete = ACTIVE_VIDEO.replace(r#""frameRate":60"#, r#""frameRate":null"#);
+    let now = h.at(100);
+    h.service.video(&mut h.bus, &incomplete, now);
+    assert!(h.tick(5_100));
+    assert!(h.tick(60_000));
+    assert_eq!(video_renewals(&h), 0, "its next reply says more");
+}
+
+#[test]
+fn a_lost_video_subscription_reads_unknown_and_is_renewed_until_live() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    let now = h.at(100);
+    h.service.video(&mut h.bus, ACTIVE_VIDEO, now);
+    let lost = ACTIVE_VIDEO.replace(r#""subscribed":true"#, r#""subscribed":false"#);
+    let now = h.at(200);
+    h.service.video(&mut h.bus, &lost, now);
+    assert_eq!(h.bus.published.last().unwrap()["video"], "unknown");
+    assert!(h.tick(5_199));
+    assert_eq!(video_renewals(&h), 0);
+    assert!(h.tick(5_200));
+    assert_eq!(video_renewals(&h), 1);
+    let now = h.at(5_300);
+    h.service.video(&mut h.bus, ACTIVE_VIDEO, now);
+    assert!(h.tick(60_000));
+    assert_eq!(video_renewals(&h), 1, "a live subscription is left alone");
 }
 
 #[test]
@@ -668,6 +733,62 @@ fn a_worker_that_cannot_be_reaped_is_let_go_after_its_kill() {
     assert_eq!(h.world.borrow().dropped, 0);
     assert!(!h.tick(16_001), "the shutdown finishes");
     assert_eq!(h.world.borrow().dropped, 1);
+}
+
+/// A worker that cannot be waited for is let go after its kill and the
+/// person asked to restart the TV, until its late reap returns: then a new
+/// worker starts.
+#[test]
+fn a_worker_let_go_is_asked_about_until_its_late_reap() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    h.world.borrow_mut().wait_fails = true;
+    h.world
+        .borrow_mut()
+        .outputs
+        .push_back(Output::Broken("malformed".into()));
+    assert!(h.tick(1));
+    assert!(h.tick(8_001));
+    assert!(h.tick(16_001));
+    assert_eq!(h.log(), ["terminate", "kill"]);
+    assert_eq!(h.world.borrow().dropped, 1);
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(
+        published["worker"]["problem"]["asked"],
+        serde_json::json!({ "step": "ask", "fix": "restart_tv" })
+    );
+    h.world.borrow_mut().wait_fails = false;
+    h.world.borrow_mut().let_go_reaped = true;
+    assert!(h.tick(16_002));
+    assert!(h.log()[0].starts_with("spawn "));
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "running", "{published}");
+}
+
+/// A worker reaped just before it would be let go, its last lines still
+/// being read, is not let go: its exit comes when the reading ends.
+#[test]
+fn a_reaped_worker_is_not_let_go_while_its_last_lines_are_read() {
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    let now = h.at(1);
+    h.service.shutdown(&mut h.bus, now);
+    assert!(h.tick(8_001));
+    assert_eq!(h.log(), ["terminate", "kill"]);
+    h.world.borrow_mut().held = Some(h.at(16_500));
+    assert!(h.tick(16_001));
+    assert_eq!(h.world.borrow().dropped, 0, "not let go");
+    assert_eq!(h.service.next_due(), Some(h.at(16_500)));
+    let mut world = h.world.borrow_mut();
+    world.held = None;
+    world.exit = Some(Exit::Signal(9));
+    drop(world);
+    assert!(!h.tick(16_500), "the shutdown finishes");
+    assert_eq!(h.world.borrow().dropped, 1);
+    let published = h.bus.published.last().unwrap();
+    assert_eq!(published["worker"]["phase"], "stopped", "{published}");
 }
 
 #[test]
@@ -776,7 +897,6 @@ fn each_package_refuses_the_other_packages_lighting_method() {
 #[test]
 fn replies_keep_their_bytes() {
     use crate::state::{FullWorker, Package, SlimWorker};
-    use prysm_webos_link::{FailureKind, WorkerFailure};
     let full = State {
         package: Package::Full {
             target: LightingTarget::Off,
@@ -785,7 +905,7 @@ fn replies_keep_their_bytes() {
         preferences: Preferences::default(),
         power: Power::Active,
         video: Video::Available,
-        failure: Some(WorkerFailure::new(FailureKind::Other, "x")),
+        unreadable: Some("x".into()),
         log: vec!["a".into()],
     };
     let slim = State {
@@ -793,14 +913,14 @@ fn replies_keep_their_bytes() {
             enabled: true,
             worker: SlimWorker::Stopped,
         },
-        failure: None,
+        unreadable: None,
         log: Vec::new(),
         ..full.clone()
     };
     for (reply, expected) in [
         (
             encode_reply(&StateReply::new(full, Some(true))),
-            r#"{"failure":{"kind":"other","message":"x"},"flavor":"full","log":["a"],"power":"active","preferences":{"autostart":false},"returnValue":true,"subscribed":true,"target":"off","video":"available","worker":{"phase":"stopped"}}"#,
+            r#"{"flavor":"full","log":["a"],"power":"active","preferences":{"autostart":false},"returnValue":true,"subscribed":true,"target":"off","unreadable":"x","video":"available","worker":{"phase":"stopped"}}"#,
         ),
         (
             encode_reply(&StateReply::new(slim, None)),

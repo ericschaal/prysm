@@ -42,14 +42,13 @@ pub fn settings(request: &RemoteSettings) -> WebosSettings {
 /// closed and opened again when a request changes them, and closed while the
 /// receiver has stopped the stream (its lighting is off), while its request
 /// is refused (the encoder failed) or while Prysm speaks another version,
-/// until a receiver takes a connection again, or for good once another
-/// sender replaced this one. It keeps running while a receiver that did not say so is away, so a
-/// dropped connection does not restart the TV capture. With nothing open,
-/// `next_frame` waits out its timeout and reports idle, which keeps the
-/// uplink reconnecting and reading the receiver's messages. Once the worker
-/// is asked to stop (`stop` has a reason) nothing is opened any more, so a
-/// stop costs at most one release: of the capture being replaced, or of the
-/// open one.
+/// until a receiver takes a connection again. It keeps running while a
+/// receiver that did not say so is away, so a dropped connection does not
+/// restart the TV capture. With nothing open, `next_frame` waits out its
+/// timeout and reports quiet, which keeps the uplink reconnecting and
+/// reading the receiver's messages. Once the worker is asked to stop (`stop`
+/// has a reason) nothing is opened any more, so a stop costs at most one
+/// release: of the capture being replaced, or of the open one.
 pub struct RequestedCapture<O> {
     flow: Arc<Flow>,
     stop: StopHandle,
@@ -88,11 +87,16 @@ where
             }
         }
         match &mut self.current {
-            Some((_, source)) => source.next_frame(timeout),
+            Some((_, source)) => {
+                let pull = source.next_frame(timeout);
+                self.flow.refused(matches!(pull, Ok(Pull::Refused)));
+                pull
+            }
             // Waits like any idle pull, so a stop cannot make it spin.
             None => {
+                self.flow.refused(false);
                 std::thread::sleep(timeout);
-                Ok(Pull::Idle)
+                Ok(Pull::Quiet)
             }
         }
     }

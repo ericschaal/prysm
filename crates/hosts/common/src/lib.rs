@@ -588,11 +588,17 @@ struct Seen {
 impl Seen {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<String> {
         let mut lines = Vec::new();
-        let state = format!(
+        let mut state = format!(
             "target {}, session {}",
             snapshot.target.as_str(),
             snapshot.session
         );
+        if let SessionState::Faulted(phase) = snapshot.session {
+            state = format!(
+                "{state} ({})",
+                Error::Faulted(phase).escalation().next_step()
+            );
+        }
         if self.state.as_ref() != Some(&state) {
             lines.push(state.clone());
             self.state = Some(state);
@@ -609,7 +615,10 @@ impl Seen {
             }
             self.output_issue = snapshot.device.issue;
         }
-        let failure = snapshot.session.failure().map(|failure| chain(failure));
+        let failure = snapshot
+            .session
+            .failure()
+            .map(|failure| format!("{} ({})", chain(failure), failure.escalation().next_step()));
         if failure != self.failure {
             if let Some(failure) = &failure {
                 lines.push(format!("lighting failed: {failure}"));
@@ -618,8 +627,9 @@ impl Seen {
         }
         for failure in snapshot.surface_failures.iter().skip(self.surface_failures) {
             lines.push(format!(
-                "surface failed, lighting continues: {}",
-                chain(failure)
+                "surface failed, lighting continues: {} ({})",
+                chain(failure),
+                failure.escalation().next_step()
             ));
         }
         self.surface_failures = snapshot.surface_failures.len();
@@ -647,8 +657,8 @@ mod tests {
             seen.update(&snapshot),
             [
                 "target screen_sync, session stopped",
-                "lighting failed: no frames",
-                "surface failed, lighting continues: no terminal",
+                "lighting failed: no frames (try again)",
+                "surface failed, lighting continues: no terminal (try again)",
             ]
         );
         assert!(seen.update(&snapshot).is_empty());
@@ -666,7 +676,7 @@ mod tests {
         snapshot.session = SessionState::Faulted(prysm_ports::SessionPhase::IdlingOutput);
         assert_eq!(
             seen.update(&snapshot),
-            ["target screen_sync, session faulted while idling the output"]
+            ["target screen_sync, session faulted while idling the output (restart Prysm)"]
         );
     }
 

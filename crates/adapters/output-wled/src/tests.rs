@@ -2,7 +2,7 @@
 use crate::address::{DeviceAddress, Host};
 use crate::ddp::{Gamma, Transfer};
 use crate::http::{self, RequestError, TIMEOUT};
-use crate::observe::{BACKOFF, EVERY, Observer, REPLY};
+use crate::observe::{EVERY, Observer, REPLY};
 use crate::output::NotTurnedOff;
 use crate::{IDLE_LIMIT, LedCounts, MAX_LEDS, OPEN_LIMIT, Wled, WledSettings};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
@@ -10,6 +10,7 @@ use prysm_ports::{
     AdapterSettings, DeviceBrightness, Error, Hangup, IdleMode, LedOutput, OpenFailure,
     OutputFactory, OutputIssue, Registry,
 };
+use prysm_ports::{Escalation, Fix};
 use prysm_testkit::eventually;
 use serde_json::{Value, json};
 use std::error::Error as _;
@@ -411,21 +412,32 @@ fn unreachable_device_fails_open_with_its_cause() {
     let cause = request_error(&error);
     assert!(matches!(cause, RequestError::Connect(_)), "{cause:?}");
     assert!(cause.source().is_some(), "io::Error retained");
+    assert_eq!(error.escalation(), Escalation::Unanswered);
 }
 
 #[test]
 fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
+    let (fail, settings) = (Escalation::FAIL_FAST, Escalation::Ask(Fix::ChangeSettings));
     let failures = [
-        Reply::Raw("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".into()),
-        Reply::Json(r#"{"success":false}"#),
-        Reply::Json(r#"{"error":9}"#),
-        Reply::Json(r#"{"on":true}"#),
-        Reply::Json("not JSON"),
-        Reply::Raw(String::new()),
-        Reply::Raw("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{}".into()),
-        Reply::Raw(format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(4097))),
+        (
+            Reply::Raw("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".into()),
+            fail,
+        ),
+        (Reply::Json(r#"{"success":false}"#), fail),
+        (Reply::Json(r#"{"error":9}"#), fail),
+        (Reply::Json(r#"{"on":true}"#), fail),
+        (Reply::Json("not JSON"), settings),
+        (Reply::Raw(String::new()), Escalation::Unanswered),
+        (
+            Reply::Raw("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{}".into()),
+            Escalation::Unanswered,
+        ),
+        (
+            Reply::Raw(format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(4097))),
+            settings,
+        ),
     ];
-    for failure in failures {
+    for (failure, escalation) in failures {
         let device = Device::new(vec![failure, Reply::Json(OK)]);
         let failure = device
             .wled
@@ -440,6 +452,7 @@ fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
         let cause = request_error(&error);
         assert!(!matches!(cause, RequestError::Connect(_)), "{cause:?}");
         assert!(!error.to_string().contains("also failed"), "{error}");
+        assert_eq!(error.escalation(), escalation, "{cause:?}");
         device.expect(&[live(), off()]);
     }
 }
@@ -453,6 +466,7 @@ fn failed_compensation_is_reported_alongside_the_original_cause() {
     let both: &NotTurnedOff = source(&error).downcast_ref().expect("both causes");
     assert!(matches!(both.live, RequestError::Json(_)), "{both:?}");
     assert!(matches!(both.off, RequestError::Json(_)), "{both:?}");
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
     assert_eq!(
         prysm_ports::chain(&error),
         format!(
@@ -488,6 +502,7 @@ fn idle_failure_keeps_its_cause() {
     let error = output.idle(IdleMode::Off, &Hangup::default()).unwrap_err();
     assert!(error.to_string().contains("off mode"), "{error}");
     assert!(matches!(request_error(&error), RequestError::Status(404)));
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
     device.expect(&[live(), off()]);
 }
 
@@ -734,6 +749,26 @@ fn unresolvable_host_fails_open_naming_the_host() {
         ),
         "{source:?}"
     );
+    assert_eq!(error.escalation(), Escalation::Unanswered);
+}
+
+#[test]
+fn a_host_resolving_to_no_unicast_address_asks_for_other_settings() {
+    let settings = WledSettings {
+        address: "prysm-test.invalid".into(),
+        leds: one_each(),
+        dither: true,
+    };
+    let wled = Wled::default().with_lookup(|_, port| Ok(SocketAddr::from(([224, 0, 0, 1], port))));
+    let failure = wled.open(&settings, &Hangup::default()).err().unwrap();
+    let OpenFailure::Untouched(error) = failure else {
+        panic!("nothing reached it");
+    };
+    assert!(
+        error.to_string().contains("not a unicast address"),
+        "{error}"
+    );
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
 }
 
 /// A name whose lookup hangs fails each open at the deadline, and the
@@ -1038,52 +1073,54 @@ fn a_dripping_state_reply_is_abandoned_at_the_deadline() {
     assert!(!observer.checking());
 }
 
-/// After a usable state the next check is [`EVERY`] later; after none,
-/// [`BACKOFF`] times that.
+/// Each check is [`EVERY`] after the last one ended, whether it got a
+/// usable state or none.
 #[test]
-fn state_checks_wait_every_and_back_off_after_no_answer() {
-    let every = EVERY;
+fn state_checks_keep_one_pace_whatever_they_answered() {
     let just = Duration::from_millis(1);
-    let device = Device::new(vec![healthy(), Reply::Raw(String::new()), healthy()]);
+    let device = Device::new(vec![
+        healthy(),
+        Reply::Raw(String::new()),
+        Reply::Raw(String::new()),
+        healthy(),
+    ]);
     let t0 = Instant::now();
     let mut observer =
-        Observer::new(device.http(), &device.address("127.0.0.1"), every, t0).state_only();
-    let mut answered = t0;
-    // The first check is `every` after the observer starts.
-    for (wait, found) in [
-        (every, None),
-        (every, Some(OutputIssue::Unreachable)),
-        (every * BACKOFF, None),
-    ] {
-        let due = answered + wait;
+        Observer::new(device.http(), &device.address("127.0.0.1"), EVERY, t0).state_only();
+    // The first check is `EVERY` after the observer starts.
+    for (n, found) in (1..).zip([
+        None,
+        Some(OutputIssue::Unreachable),
+        Some(OutputIssue::Unreachable),
+        None,
+    ]) {
+        let due = t0 + EVERY * n;
         observer.poll(due - just);
         assert!(!observer.checking(), "a check before it was due");
         assert_eq!(check_at(&mut observer, due), found);
         device.check_request();
-        answered = due;
     }
 }
 
-/// A configuration read that WLED refuses backs the next check off too.
+/// A configuration read that WLED refuses keeps the pace too.
 #[test]
-fn a_refused_configuration_read_backs_off() {
-    let every = EVERY;
+fn a_refused_configuration_read_keeps_the_pace() {
     let device = Device::new(vec![at(255), refused(), at(255)]);
     let t0 = Instant::now();
-    let mut observer = Observer::new(device.http(), &device.address("127.0.0.1"), every, t0);
-    let first = t0 + every;
+    let mut observer = Observer::new(device.http(), &device.address("127.0.0.1"), EVERY, t0);
+    let first = t0 + EVERY;
     assert_eq!(check_at(&mut observer, first), None);
     device.check_request();
-    let second = first + every;
+    let second = first + EVERY;
     assert_eq!(
         check_at(&mut observer, second),
         None,
         "a refusal is no issue"
     );
     device.get_request("/json/cfg");
-    let third = second + every * BACKOFF;
+    let third = second + EVERY;
     observer.poll(third - Duration::from_millis(1));
-    assert!(!observer.checking(), "backed off");
+    assert!(!observer.checking(), "a check before it was due");
     assert_eq!(check_at(&mut observer, third), None);
     device.check_request();
 }
@@ -1111,6 +1148,31 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
             "{issue:?}"
         );
     }
+}
+
+/// A send error with no row in `classify::send` fails the first `write`,
+/// with its cause: no datagram can be sent to DDP port 0.
+#[test]
+fn a_send_error_with_no_row_fails_write_at_once() {
+    let device = Device::new(vec![Reply::Json(OK)]);
+    let mut output = Wled::local(0)
+        .open(&device.settings(one_each(), true), &Hangup::default())
+        .map_err(OpenFailure::into_error)
+        .unwrap();
+    device.expect(&[live()]);
+    let error = output.write(&EdgeColors::default()).unwrap_err();
+    assert!(
+        prysm_ports::chain(&error).starts_with("cannot send colours to WLED at 127.0.0.1:"),
+        "{}",
+        prysm_ports::chain(&error)
+    );
+    assert!(
+        source(&error)
+            .downcast_ref::<ddp_rs::error::DDPError>()
+            .is_some(),
+        "{error:?}"
+    );
+    assert_eq!(error.escalation(), Escalation::FAIL_FAST);
 }
 
 #[test]
@@ -1493,8 +1555,9 @@ fn an_open_output_encodes_for_wled_gamma() {
 /// The bound of a call the cut ends.
 const AT_ONCE: Duration = Duration::from_secs(1);
 
-/// Whether `error` says a cut ended it.
+/// Whether `error` says a cut ended it; such an error fails fast.
 fn stopped(error: &Error) -> bool {
+    assert_eq!(error.escalation(), Escalation::FAIL_FAST);
     error.cause::<prysm_ports::Stopping>().is_some()
 }
 

@@ -27,7 +27,7 @@ neither has a listener of its own:
   `/api/v1/capture/stream` and hands the connection over as a plain blocking
   socket. `open` takes those connections on one receive thread, which also
   decodes H.264. `next_frame(timeout)` returns the newest complete frame
-  (older untaken frames are replaced, never queued) or `Pull::Idle` on
+  (older untaken frames are replaced, never queued) or `Pull::Quiet` on
   timeout, and fails when the sender's offer excludes the request, the
   sender refuses it, its H.264 stream does not decode or no H.264 decoder
   starts here (see below), once the connection is closed (as *stopped*,
@@ -124,7 +124,8 @@ the same number may send what this end does not know:
   for it (a request field added later is optional, its absence meaning the
   old behaviour). Features are negotiated this way, not by the version;
 - anything else malformed (text that is not JSON, a message missing a
-  field, a frame to the sender, a bad frame header) ends the connection.
+  field, a frame to the sender, a bad frame header) ends the connection;
+  the receiver's source fails with it.
 
 **The offer** travels in the upgrade request's `prysm-capture-offer` header
 ([`CAPTURE_OFFER_HEADER`](../../engine/ports/src/handoff.rs)): compact JSON,
@@ -144,8 +145,8 @@ remote source *before* deciding to answer `101` or `503`, so every attempt,
 refused or not, delivers it for `modes` and `open`, and hands each
 connection over with its own request's offer, against which the request is
 checked. A connection whose sender's offer excludes the request is
-closed without a request (the sender fails with `NoRequest`), and the source
-fails as for an encoding refusal, with the field the offer excludes
+closed with code 4002 instead of a request (the sender fails with `Closed`),
+and the source fails as for an encoding refusal, with the field the offer excludes
 (`capture.width`, `capture.height`, `capture.fps`, or `capture.encoding` for
 an encoding not offered) and the reason `the sender cannot stream 640x360 at
 60 fps with menus as raw: at 640x360 this source delivers a frame rate of 1
@@ -185,8 +186,8 @@ sender reads them as `WireError::Closed(Some(Close::…))`:
 | Code | `Close` | When | The slim TV |
 | --- | --- | --- | --- |
 | 4000 | `Stopped` | The source closed (lighting stopped, or the capture settings changed); also, before the request, a newer sender that connected while the source closed | Releases capture and encoder, shows *paused*, reconnects every second. Before the request it is a failed connect: the TV shows *waiting* (or keeps *paused*) and retries every second |
-| 4001 | `Replaced` | A newer sender's connection replaced this one | Releases capture and encoder, shows a failure of kind `replaced`, connects no more until the worker restarts (capture stopped and started, the TV waking, or a new Prysm address) |
-| 4002 | `Failed` | The source failed after its request: the sender refused it, its H.264 keyframe does not decode, or no decoder starts. The source's failure says why | Releases capture and encoder, shows a failure of kind `receiver_failed`, reconnects every second |
+| 4001 | `Replaced` | A newer sender's connection replaced this one | The worker fails, releasing capture and encoder, and the TV asks the person to try again |
+| 4002 | `Failed` | The source failed with this sender: before its request, the sender's offer excludes it; after, the sender refused it, sent what the receiver does not take, its H.264 keyframe does not decode, or no decoder starts. The source's failure says why | Releases capture and encoder, shows a failure of kind `receiver_failed`, reconnects every second |
 
 Any other close, or none (a crash, the network), is a dropped connection:
 the slim TV keeps capturing and reconnects every second. So a sender that
@@ -247,8 +248,9 @@ every connection).
   drops a text message over 4 KiB before parsing it (the receiver after
   reading it whole).
 - **Malformed input** (a bad header or length, a message that is not JSON
-  or lacks a field) drops that connection without panicking, its cause
-  logged at debug level; the receiver waits for the sender to connect again.
+  or lacks a field) fails the source without panicking, and the sender is
+  closed with code 4002: both ends agreed the version, so the same sender
+  would send it again.
 - **One sender at a time.** A new connection replaces the current one, which
   is closed as *replaced*, so a TV that restarts without closing its old
   socket is accepted at once. A slim TV that is replaced stops sending, so a

@@ -6,12 +6,12 @@ use prysm_capture_remote::{RemoteSender, RemoteSettings, SendError};
 use prysm_capture_webos::{Readiness, VideoSignal, WebosSettings};
 use prysm_core::Frame;
 use prysm_ports::StreamEncoding;
-use prysm_ports::{Error, FrameSource, Pull, Result};
+use prysm_ports::{Error, Escalation, Fix, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
+use prysm_webos_link::SlimLink;
 use prysm_webos_link::worker::{Link, Peer, Stop, StopHandle};
-use prysm_webos_link::{Command, Event, LightingTarget, SlimStatus, Video, WorkerStatus};
-use prysm_webos_link::{FailureKind, SlimLink};
+use prysm_webos_link::{Command, Event, Failure, LightingTarget, SlimStatus, Video, WorkerStatus};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -128,7 +128,7 @@ fn status(event: &Event) -> Option<&SlimStatus> {
     match event {
         Event::Status(WorkerStatus::Slim(status)) => Some(status),
         Event::Status(WorkerStatus::Full(status)) => panic!("a full status: {status:?}"),
-        Event::Failed { .. } | Event::Faulted { .. } => None,
+        Event::Failed(_) => None,
     }
 }
 
@@ -145,28 +145,25 @@ fn paused(event: &Event) -> bool {
     status(event).is_some_and(|status| status.link == SlimLink::Paused {} && !status.capturing)
 }
 
-/// The link's wait or failure message, if it is of `kind`.
-fn failure(event: &Event, kind: FailureKind) -> Option<&str> {
-    link(event)
-        .and_then(SlimLink::failure)
-        .filter(|failure| failure.kind == kind)
-        .map(|failure| failure.message.as_str())
-}
-
 fn waiting(event: &Event) -> Option<&str> {
-    failure(event, FailureKind::Receiver).filter(|_| capturing(event) == Some(false))
+    match link(event)? {
+        SlimLink::Waiting { message } if capturing(event) == Some(false) => Some(message),
+        _ => None,
+    }
 }
 
 fn version_differs(event: &Event) -> Option<&str> {
-    failure(event, FailureKind::Version)
+    match link(event)? {
+        SlimLink::VersionDiffers { message } => Some(message),
+        _ => None,
+    }
 }
 
 fn encoder_failure(event: &Event) -> Option<&str> {
-    failure(event, FailureKind::Encoder)
-}
-
-fn replaced(event: &Event) -> Option<&str> {
-    failure(event, FailureKind::Replaced)
+    match link(event)? {
+        SlimLink::EncoderFailed { message } => Some(message),
+        _ => None,
+    }
 }
 
 fn encoding(event: &Event) -> Option<StreamEncoding> {
@@ -279,6 +276,41 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
     result.unwrap();
 }
 
+/// While the capture says the TV refuses its video the connected link is
+/// refused, and frames that come again make it sending; a capture that is
+/// just quiet stays sending.
+#[tokio::test]
+async fn a_refused_video_is_reported_until_frames_are_sent_again() {
+    for refused in [false, true] {
+        let (mut peer, _feed, task) = start_fake(FakeSourceSettings {
+            quiet_after: Some(0),
+            quiet_for_ms: 600,
+            refused,
+            ..FakeSourceSettings::default()
+        });
+        peer.wait_for("a status without frames", |e| {
+            status(e).is_some_and(|status| {
+                !status.capturing
+                    && match status.link {
+                        SlimLink::Refused {} => refused,
+                        SlimLink::Sending { fps, .. } => !refused && fps == 0,
+                        _ => false,
+                    }
+            })
+        })
+        .await;
+        peer.wait_for("frames again", |e| {
+            status(e).is_some_and(|status| {
+                status.capturing && matches!(status.link, SlimLink::Sending { .. })
+            })
+        })
+        .await;
+        peer.close();
+        let (result, _) = task.await.unwrap();
+        result.unwrap();
+    }
+}
+
 /// A sender that connects to Prysm through a portal stand-in.
 fn connect(portal: &Portal) -> impl FnMut() -> Result<RemoteSender> + Send + 'static {
     let (url, address) = (portal.url(), portal.addr);
@@ -383,11 +415,14 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
     result.unwrap();
 }
 
-/// A Prysm of another capture stream version refuses the upgrade: the
-/// worker keeps running and reports a `version` failure naming both
-/// versions.
-#[tokio::test]
-async fn a_prysm_of_another_version_is_reported_as_such() {
+/// A Prysm of version 9, which refuses the upgrade with `426`.
+const NEWER: &[u8] = b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9\r\ncontent-length: 0\r\n\r\n";
+
+/// A server that answers every upgrade with `reply`, its capture stream URL
+/// and address, and how many attempts it answered.
+fn answering(
+    reply: &'static [u8],
+) -> (tungstenite::http::Uri, std::net::SocketAddr, Arc<AtomicU32>) {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -398,15 +433,22 @@ async fn a_prysm_of_another_version_is_reported_as_such() {
             counted.fetch_add(1, Ordering::SeqCst);
             let mut head = [0; 1024];
             if stream.read(&mut head).is_ok() {
-                let _ = stream.write_all(
-                    b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9\r\ncontent-length: 0\r\n\r\n",
-                );
+                let _ = stream.write_all(reply);
             }
         }
     });
-    let url: tungstenite::http::Uri = format!("ws://{address}/api/v1/capture/stream")
+    let url = format!("ws://{address}/api/v1/capture/stream")
         .parse()
         .unwrap();
+    (url, address, attempts)
+}
+
+/// A Prysm of another capture stream version refuses the upgrade: the
+/// worker keeps running and reports a `version` failure naming both
+/// versions.
+#[tokio::test]
+async fn a_prysm_of_another_version_is_reported_as_such() {
+    let (url, address, attempts) = answering(NEWER);
     let log = CallLog::new();
     let (mut peer, _feed, task) = start(
         &Opened::fake(&log, FakeSourceSettings::default()),
@@ -460,7 +502,8 @@ async fn reports_frame_flow_and_forwards_video_commands() {
         feed.current(),
         Readiness {
             video: Video::Unavailable,
-            generation: 1
+            generation: 1,
+            sequence: 2
         },
         "set, then one reset"
     );
@@ -575,9 +618,10 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
     result.unwrap();
 }
 
-/// Another TV takes over the stream: this worker releases the capture,
-/// reports `replaced` and connects no more, so the two never take the
-/// stream from each other in turn.
+/// Another TV takes over the stream: this worker fails, releasing the
+/// capture, and the TV asks the person to try again (`worker::main` sends
+/// the failure as `Event::Failed`), so the two never take the stream from
+/// each other in turn.
 #[tokio::test]
 async fn a_replaced_sender_gives_up() {
     let portal = Portal::start();
@@ -591,51 +635,46 @@ async fn a_replaced_sender_gives_up() {
     let other = tokio::task::spawn_blocking(move || other().unwrap())
         .await
         .unwrap();
-    let event = peer
-        .wait_for("a replaced status", |e| replaced(e).is_some())
-        .await;
+    let (result, _) = task.await.unwrap();
+    let failure = Failure::of(&result.unwrap_err());
+    assert_eq!(failure.escalation, Escalation::FAIL_FAST);
     assert!(
-        replaced(&event)
-            .unwrap()
+        failure
+            .message
             .ends_with("another sender replaced this one at Prysm"),
-        "{event:?}"
+        "{failure:?}"
     );
-    // That it never connects again is `link::tests::attempts_follow_the_state`.
     assert!(released(&opened).await, "the capture is released");
-    assert_eq!(opened.shapes().len(), 1, "and not opened again");
-    assert!(!task.is_finished(), "the worker keeps running");
 
     drop(other);
     tokio::task::spawn_blocking(move || Box::new(receiver).close().unwrap())
         .await
         .unwrap();
-    peer.close();
+}
+
+/// No portal at the address (`404`): the worker fails at the first attempt
+/// and the TV asks the person to change the address.
+#[tokio::test]
+async fn a_wrong_address_fails_at_once() {
+    let (url, address, attempts) =
+        answering(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n");
+    let (_peer, _feed, task) = start(&Opened::nv12(), move || {
+        RemoteSender::connect(&url, address, &prysm_capture_remote::testkit::offer())
+    });
     let (result, _) = task.await.unwrap();
-    result.unwrap();
+    let failure = Failure::of(&result.unwrap_err());
+    assert_eq!(failure.escalation, Escalation::Ask(Fix::ChangeSettings));
+    assert!(failure.message.contains("HTTP 404"), "{failure:?}");
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
 }
 
 /// A desktop updated while its lighting was off: the TV stopped by the old
 /// Prysm shows the version failure, not a pause.
 #[tokio::test]
 async fn a_version_mismatch_replaces_a_stopped_stream() {
-    use std::io::{Read, Write};
     let portal = Portal::start();
     let receiver = portal.source(RAW);
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let newer = listener.local_addr().unwrap();
-    std::thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            let mut head = [0; 1024];
-            if stream.read(&mut head).is_ok() {
-                let _ = stream.write_all(
-                    b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9\r\ncontent-length: 0\r\n\r\n",
-                );
-            }
-        }
-    });
-    let newer_url: tungstenite::http::Uri = format!("ws://{newer}/api/v1/capture/stream")
-        .parse()
-        .unwrap();
+    let (newer_url, newer, _) = answering(NEWER);
     let mut old = connect(&portal);
     let attempts = AtomicU32::new(0);
     let (mut peer, _feed, task) = start(&Opened::nv12(), move || {
@@ -808,7 +847,7 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
                     Box::new(receiver).close().unwrap();
                     return error;
                 }
-                Ok(pull) => assert!(pull.is_idle(), "a frame was sent"),
+                Ok(pull) => assert!(matches!(pull, Pull::Quiet), "a frame was sent"),
             }
         }
     })
@@ -929,7 +968,7 @@ struct StopsWhileClosing(StopHandle);
 
 impl FrameSource for StopsWhileClosing {
     fn next_frame(&mut self, _timeout: Duration) -> Result<Pull> {
-        Ok(Pull::Idle)
+        Ok(Pull::Quiet)
     }
 
     fn close(self: Box<Self>) -> Result<()> {
@@ -962,15 +1001,24 @@ fn a_stop_while_a_replaced_capture_closes_opens_nothing() {
         }
     });
     uplink.tick().unwrap();
-    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(matches!(
+        source.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
     assert_eq!(*opened.lock().unwrap(), [settings(&RAW)]);
     // The receiver drops, then asks for another shape.
     uplink.send(&crate::check::picture(16, 16, 1)).unwrap();
     uplink.tick().unwrap();
     assert_eq!(flow.wanted(), Some(SOFTWARE));
-    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(matches!(
+        source.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
     assert!(stop.reason().is_some());
-    assert!(source.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(matches!(
+        source.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
     assert_eq!(*opened.lock().unwrap(), [settings(&RAW)], "nothing opened");
     Box::new(source).close().unwrap();
 }

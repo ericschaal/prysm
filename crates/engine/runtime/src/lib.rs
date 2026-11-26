@@ -5,7 +5,7 @@
 //! - [`Counters`]: totals the sessions keep for an opt-in `/metrics`.
 //! - [`Forwarder`]: the session loop for capture-only hosts.
 //! - [`Prysm`]: the builder hosts list their adapters and surfaces on.
-//! - `logging` (feature `logging`): the hosts' `tracing` subscriber.
+//! - `logging` (feature `logging`): where the hosts' `tracing` lines go.
 mod builder;
 mod engine;
 mod feeds;
@@ -29,6 +29,7 @@ pub use builder::{Builder, COMMAND_LIMIT, Prysm, STOP_DEADLINE};
 pub use engine::{CALIBRATION_TIMEOUT, Engine, EngineHandle, TRIAL_TIMEOUT};
 pub use feeds::{ColorsWatch, Preview, PreviewWatch, Watch};
 pub use forwarder::Forwarder;
+pub use leds::UNANSWERED_INTERVAL;
 pub use null::{NullOutput, NullSettings};
 pub use sample::{SampleError, sample_rgb};
 pub use stats::{Counters, Timing};
