@@ -37,9 +37,10 @@ type Edits = Partial<Saved>;
 
 /**
  * The subscription as the screen shows it. `missing` (set up the service) is
- * reached only when the bus says the service is not there, after Remove
- * setup, or when the subscription fails twice in a row: one lost
- * subscription (`lost`, opened again after 3 s) keeps the last state.
+ * reached only after Remove setup, or when the bus cannot give the service
+ * to a fresh call (`absent` while not `live`). Any other failure keeps what
+ * is shown: the last state (`lost`, opened again after 3 s), or `connecting`
+ * before any.
  */
 export type Link =
   | { status: 'connecting' }
@@ -97,16 +98,20 @@ export function serviceReducer(
     case 'event': {
       const { event } = action;
       const { link } = current;
-      if (!event.online) {
-        const kept =
-          link.status === 'live' && event.error.kind !== 'unavailable';
+      // The bus answers a live subscription `absent` when the service ends,
+      // and a fresh call starts a set-up service again: the next try
+      // decides. A fresh call answered `absent` could not start it.
+      if (!event.online)
         return {
-          ...(kept
-            ? { ...current, link: { ...link, status: 'lost' } }
-            : missing(current)),
+          ...(event.error.kind === 'absent' && link.status !== 'live'
+            ? missing(current)
+            : {
+                ...current,
+                link:
+                  link.status === 'live' ? { ...link, status: 'lost' } : link,
+              }),
           problem: event.error.message,
         };
-      }
       const { state } = event;
       const saved = completePreferences(state.preferences);
       return {

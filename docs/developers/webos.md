@@ -392,5 +392,17 @@ first.
 
 Arrows move focus between two columns and within rows, OK chooses, Back closes
 one dialog level and then asks before closing. Closing the app leaves the
-service running. Source: [TV UI](../../frontend/packages/tv-ui/app.tsx);
+service running. The bus has two replies, both observed on a TV with
+`errorCode` -1 and no `errorKind`, saying it cannot give the service:
+`Service does not exist: <name>.` (never registered) and
+`<name> is not running.` with `serviceName` (installed or updated without
+setup, and sent to a subscriber when the service ends). On a live
+subscription such a reply only ends it: the app keeps the last state and
+subscribes again 3 s later, and since the service is dynamic a fresh call
+starts it again after setup. A fresh call answered so means the bus cannot
+start it: the app counts the service as missing (**Prysm needs setting
+up**; a `set_up` ask says the same), as after Remove setup. Any other
+failure (a timeout, another error) keeps the last state shown, or
+**Connecting…** before any.
+Source: [TV UI](../../frontend/packages/tv-ui/app.tsx);
 local demo: [frontend](frontend.md#webos-tv-app).

@@ -167,17 +167,34 @@ export const SETUP_SCRIPT = `/media/developer/apps/usr/palm/services/${APP_ID}.s
 export const HOMEBREW_EXEC = 'luna://org.webosbrew.hbchannel.service/exec';
 /** A call or the first subscription reply that takes longer has failed. */
 export const CALL_TIMEOUT_MS = 30_000;
-/** Delay before a lost subscription is opened again. */
+/**
+ * Delay before a lost subscription is opened again. The service is dynamic
+ * (`Type=dynamic`): after setup, a fresh call starts it again (observed
+ * after killing it), so a subscription it ended opens on the next try.
+ * Without setup the bus cannot start it and answers so to every call
+ * (`absent`), and the app says it needs setting up.
+ */
 export const RESUBSCRIBE_MS = 3_000;
 
 /**
- * - `unavailable`: no bridge (not on a TV) or the service is not registered.
+ * The bus's own replies (`errorCode` -1, no `errorKind`) when it cannot give
+ * a caller the service, as observed on a webOS TV: `Service does not exist:
+ * <name>.` for a name never registered, and `<name> is not running.` with
+ * `serviceName` for one installed without setup, also sent to a subscriber
+ * when the service ends.
+ */
+const NOT_REGISTERED_REPLY = 'Service does not exist';
+const NOT_RUNNING_REPLY = ' is not running.';
+
+/**
+ * - `unavailable`: no bridge (not on a TV), or the bridge failed.
+ * - `absent`: the bus cannot give the service (not registered or running).
  * - `timeout`: no reply within {@link CALL_TIMEOUT_MS}.
  * - `refused`: the service answered `returnValue: false` (its `errorText`).
  * - `invalid_reply`: the reply is not what the contract says.
  */
 export type LunaFailureKind =
-  'unavailable' | 'timeout' | 'refused' | 'invalid_reply';
+  'unavailable' | 'absent' | 'timeout' | 'refused' | 'invalid_reply';
 
 /**
  * Why the service refused a call (its `errorKind`), as this app reads it:
@@ -456,6 +473,14 @@ export function decodeState(value: unknown): State | null {
 
 type Reply = Record<string, unknown>;
 
+/** The bus cannot give the service; Prysm's own replies carry `errorKind`. */
+const absent = ({ errorKind, errorText, serviceName }: Reply) =>
+  errorKind === undefined &&
+  typeof errorText === 'string' &&
+  (errorText.startsWith(NOT_REGISTERED_REPLY) ||
+    (typeof serviceName === 'string' &&
+      errorText === `${serviceName}${NOT_RUNNING_REPLY}`));
+
 function decode(text: string): Reply {
   let value: unknown;
   try {
@@ -477,16 +502,11 @@ function decode(text: string): Reply {
       typeof reply.errorText === 'string' && reply.errorText
         ? reply.errorText
         : 'The TV service couldn’t complete this action.';
-    // LS2 itself answers this way when the service is not registered.
-    const missing =
-      /not found|unknown service|no such service|service does not exist/i.test(
-        text,
-      );
     const errorKind =
       typeof reply.errorKind === 'string'
         ? known(errorKinds, reply.errorKind, 'unknown')
         : 'unknown';
-    throw new LunaError(missing ? 'unavailable' : 'refused', text, errorKind);
+    throw new LunaError(absent(reply) ? 'absent' : 'refused', text, errorKind);
   }
   return reply;
 }
@@ -671,11 +691,9 @@ export function lunaTvService(
             const detail = [reply?.errorText, reply?.stderrString].find(
               (value) => typeof value === 'string' && value,
             ) as string | undefined;
-            const missing = /not found|unknown service|no such service/i.test(
-              detail ?? '',
-            );
+            const missing = isObject(reply) && absent(reply);
             throw new LunaError(
-              missing ? 'unavailable' : 'refused',
+              missing ? 'absent' : 'refused',
               missing
                 ? 'Setup needs the Homebrew Channel with root access.'
                 : (detail ?? 'Setup failed.'),

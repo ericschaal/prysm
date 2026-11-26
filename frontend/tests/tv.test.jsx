@@ -521,6 +521,23 @@ test('commands carry the contract payloads and fail with typed errors', async ()
   const enabling = service.setEnabled(false);
   bridge.channels[4].reply({ returnValue: true, unexpected: true });
   await assert.rejects(enabling, { kind: 'invalid_reply' });
+  // Only the bus's own replies say it cannot give the service.
+  const serviceName = `${APP_ID}.service`;
+  const unknown = { errorText: `Service does not exist: ${serviceName}.` };
+  const stopped = { serviceName, errorText: `${serviceName} is not running.` };
+  for (const [fields, kind] of [
+    [unknown, 'absent'],
+    [stopped, 'absent'],
+    [{ ...unknown, errorKind: 'internal' }, 'refused'],
+    [{ ...stopped, errorKind: 'internal' }, 'refused'],
+    [{ errorText: stopped.errorText }, 'refused'],
+  ]) {
+    const calling = service.setEnabled(true);
+    bridge.channels
+      .at(-1)
+      .reply({ returnValue: false, errorCode: -1, ...fields });
+    await assert.rejects(calling, { kind, message: fields.errorText });
+  }
   const thrown = lunaTvService(() => ({
     onservicecallback: null,
     cancel() {},
@@ -563,13 +580,23 @@ test('setup runs setup.sh through the Homebrew Channel and reports its stderr', 
     kind: 'refused',
     message: 'setup: cannot write manifests',
   });
-  const missing = service.setup();
+  const unfound = service.setup();
   bridge.channels[2].reply({
     returnValue: false,
-    errorText: 'Unknown service name: org.webosbrew.hbchannel.service',
+    stderrString: 'setup.sh: ls-control: not found',
+  });
+  await assert.rejects(unfound, {
+    kind: 'refused',
+    message: 'setup.sh: ls-control: not found',
+  });
+  const missing = service.setup();
+  bridge.channels[3].reply({
+    returnValue: false,
+    errorCode: -1,
+    errorText: 'Service does not exist: org.webosbrew.hbchannel.service.',
   });
   await assert.rejects(missing, {
-    kind: 'unavailable',
+    kind: 'absent',
     message: /Homebrew Channel/,
   });
 });
@@ -1270,34 +1297,39 @@ test('the service link: each event in each link state', () => {
   });
   const events = {
     online: { type: 'event', event: { online: true, state: full } },
-    unavailable: offline('unavailable'),
+    absent: offline('absent'),
     refused: offline('refused'),
+    timeout: offline('timeout'),
     removed: { type: 'removed' },
   };
   // The link and the notice after each event.
   const table = {
     connecting: {
       online: ['live', 'Kept.'],
-      unavailable: ['missing', ''],
-      refused: ['missing', ''],
+      absent: ['missing', ''],
+      refused: ['connecting', 'Kept.'],
+      timeout: ['connecting', 'Kept.'],
       removed: ['missing', ''],
     },
     live: {
       online: ['live', 'Kept.'],
-      unavailable: ['missing', ''],
+      absent: ['lost', 'Kept.'],
       refused: ['lost', 'Kept.'],
+      timeout: ['lost', 'Kept.'],
       removed: ['missing', ''],
     },
     lost: {
       online: ['live', 'Kept.'],
-      unavailable: ['missing', ''],
-      refused: ['missing', ''],
+      absent: ['missing', ''],
+      refused: ['lost', 'Kept.'],
+      timeout: ['lost', 'Kept.'],
       removed: ['missing', ''],
     },
     missing: {
       online: ['live', 'Service connected.'],
-      unavailable: ['missing', 'Kept.'],
+      absent: ['missing', 'Kept.'],
       refused: ['missing', 'Kept.'],
+      timeout: ['missing', 'Kept.'],
       removed: ['missing', 'Kept.'],
     },
   };
@@ -1319,6 +1351,19 @@ test('the service link: each event in each link state', () => {
       if (event.type === 'event' && !event.event.online)
         assert.equal(next.problem, kind, 'its words go to Diagnostics');
     }
+  // Timeouts in a row: before any state it stays connecting, after one the
+  // state stays.
+  const timedOut = (state) =>
+    serviceReducer(serviceReducer(state, events.timeout), events.timeout);
+  assert.equal(timedOut(initialService).link.status, 'connecting');
+  assert.deepEqual(timedOut(states.live).link, { status: 'lost', state: full });
+  // `absent` on a live subscription ends it; on the next try, setup is due.
+  const ended = serviceReducer(states.live, events.absent);
+  assert.deepEqual(ended.link, { status: 'lost', state: full });
+  assert.deepEqual(serviceReducer(ended, events.absent).link, {
+    status: 'missing',
+    state: full,
+  });
   // The rest leave the link as it is.
   const saved = { autostart: true, prysm_address: null };
   for (const state of Object.values(states))
@@ -2563,7 +2608,7 @@ test('a page shown without a visibility event subscribes when it is focused', as
   assert.equal(tv.supervisor.subscribers(), 1);
 });
 
-test('one lost subscription keeps the last state; a second in a row offers setup', async (t) => {
+test('lost subscriptions keep the last state until one opens again', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const tv = await mountTv(t, {
     supervisor: {
@@ -2575,7 +2620,7 @@ test('one lost subscription keeps the last state; a second in a row offers setup
   });
   tv.el('autostart').focus();
   const portals = tv.application.calls.filter((c) => c === 'observe').length;
-  await act(async () => tv.supervisor.drop('Service stopped'));
+  await act(async () => tv.supervisor.drop());
   await settle();
   // Nothing changes on screen, and OK there can never start a setup.
   assert.equal(tv.text('status-title'), 'Capture off');
@@ -2590,34 +2635,41 @@ test('one lost subscription keeps the last state; a second in a row offers setup
   await settle();
   assert.equal(tv.text('status-title'), 'Capture off');
   assert.equal(tv.text('notice'), '', 'nothing was lost to report');
-  // Lost again, and the next subscription fails too: now it says so.
-  await act(async () => tv.supervisor.drop('Service stopped'));
+  // Lost again, and the next subscription fails too: the state stays.
+  await act(async () => tv.supervisor.drop());
   await settle();
-  tv.supervisor.failNext('getState', 'Service is restarting');
-  await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
-  await settle();
-  assert.equal(tv.text('status-title'), 'Prysm needs setting up');
-  assert.equal(tv.text('notice'), '');
-  assert.equal(tv.text('autostart-value'), 'On', 'the settings stay shown');
-  assert(tv.el('autostart').disabled, 'nothing to change without the service');
+  // Prysm's refusal, whatever its words, is not the bus's.
+  tv.supervisor.failNext(
+    'getState',
+    `Service does not exist: ${APP_ID}.service.`,
+  );
   await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
   await settle();
   assert.equal(tv.text('status-title'), 'Capture off');
-  assert.equal(tv.text('notice'), 'Service connected.');
+  assert.equal(tv.text('autostart-value'), 'On', 'the settings stay shown');
+  await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
+  await settle();
+  assert.equal(tv.text('status-title'), 'Capture off');
+  assert.equal(tv.text('notice'), '', 'nothing was lost to report');
+  assert.equal(tv.supervisor.subscribers(), 1);
 });
 
-test('a lost subscription then a missing service says so at once', async (t) => {
+test('a lost subscription then a service not set up offers setup', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const tv = await mountTv(t, {
     supervisor: { preferences: { prysm_address: 'http://192.168.1.20:8787' } },
   });
+  const shown = tv.text('status-title');
   tv.supervisor.setOffline(true);
-  await act(async () => tv.supervisor.drop('Unknown service name'));
+  await act(async () => tv.supervisor.drop());
+  await settle();
+  assert.equal(tv.text('status-title'), shown, 'the state is kept');
+  await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
   await settle();
   assert.equal(
     tv.text('status-title'),
     'Prysm needs setting up',
-    'the bus says the service is not there',
+    'the bus could not start the service',
   );
 });
 

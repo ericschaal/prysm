@@ -237,7 +237,7 @@ export interface FakeSupervisorOptions {
   flavor: Flavor;
   preferences?: Preferences;
   state?: FakeChange;
-  /** The service is not registered: every call fails like LS2 does. */
+  /** Installed without setup: every call gets the bus's reply. */
   offline?: boolean;
   /** Reply after this many milliseconds (default: next microtask). */
   delayMs?: number;
@@ -271,9 +271,16 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
   }
   const reply = (value: object) =>
     JSON.stringify({ returnValue: true, ...value });
-  /** LS2's own error reply (no service, lost subscription): no `errorKind`. */
-  const error = (errorText: string) =>
-    JSON.stringify({ returnValue: false, errorText });
+  /**
+   * The bus's reply, as observed, for a service installed without setup,
+   * and to a subscriber when the service ends.
+   */
+  const notRunning = JSON.stringify({
+    serviceName: `${APP_ID}.service`,
+    returnValue: false,
+    errorCode: -1,
+    errorText: `${APP_ID}.service is not running.`,
+  });
   /** The service's error reply. */
   const refuse = (errorKind: ErrorKind, errorText: string) =>
     JSON.stringify({ returnValue: false, errorKind, errorText });
@@ -330,7 +337,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       return;
     }
     if (offline) {
-      respond(error(`Unknown service name: "${APP_ID}.service"`));
+      respond(notRunning);
       return;
     }
     const failure = failures.get(method);
@@ -404,7 +411,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         later(() => {
           offline = true;
           for (const subscriber of Array.from(subscribers))
-            subscriber.deliver(error('Service stopped'));
+            subscriber.deliver(notRunning);
           subscribers.clear();
         });
         return;
@@ -474,10 +481,10 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     ) {
       failures.set(method, { errorKind, errorText });
     },
-    /** End every subscription with an error, as a stopped service does. */
-    drop(errorText: string) {
+    /** End every subscription as the bus does when the service ends. */
+    drop() {
       for (const subscriber of Array.from(subscribers))
-        subscriber.deliver(error(errorText));
+        subscriber.deliver(notRunning);
       subscribers.clear();
     },
     setOffline(value: boolean) {

@@ -365,10 +365,12 @@ supervisor in each of its states and play the phone's calibration part). See the
   columns and within rows, OK chooses, Back closes one dialog level and then
   asks before closing). Its [Luna client](packages/webos-platform/index.ts)
   checks replies against the generated `luna` contract, times out after 30 s
-  and resubscribes after 3 s; one lost subscription keeps the last state on
-  screen, and only the bus saying the service is missing, Remove setup, or a
-  second failure in a row shows "Prysm needs setting up". The UI holds the
-  subscriptions only while the page is visible.
+  and resubscribes after 3 s. Only Remove setup, or the bus's reply that it
+  cannot give the service ("Service does not exist: …", or "… is not
+  running." with `serviceName`) to a fresh call, counts it as missing
+  ("Prysm needs setting up"); the same reply on a live subscription, and
+  any other failure, keep the last state on screen (or "Connecting…").
+  The UI holds the subscriptions only while the page is visible.
 - [Application client](packages/application-client/index.ts),
   [HTTP transport](packages/application-client/http.ts),
   [RTK state](packages/application-state/index.ts) and
