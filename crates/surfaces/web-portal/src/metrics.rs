@@ -14,14 +14,16 @@ enum State {
     Stopped,
     ScreenSync,
     Effects,
+    Unanswered,
     Faulted,
 }
 
 impl State {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::Stopped,
         Self::ScreenSync,
         Self::Effects,
+        Self::Unanswered,
         Self::Faulted,
     ];
 
@@ -30,6 +32,7 @@ impl State {
             Self::Stopped => "stopped",
             Self::ScreenSync => "screen_sync",
             Self::Effects => "effects",
+            Self::Unanswered => "unanswered",
             Self::Faulted => "faulted",
         }
     }
@@ -41,6 +44,7 @@ impl From<&SessionState> for State {
             SessionState::Stopped { .. } => Self::Stopped,
             SessionState::ScreenSync => Self::ScreenSync,
             SessionState::Effects { .. } => Self::Effects,
+            SessionState::Unanswered { .. } => Self::Unanswered,
             SessionState::Faulted(_) => Self::Faulted,
         }
     }
@@ -240,6 +244,7 @@ prysm_target{{target=\"effects\"}} 0
 prysm_session_state{{state=\"stopped\"}} 0
 prysm_session_state{{state=\"screen_sync\"}} 1
 prysm_session_state{{state=\"effects\"}} 0
+prysm_session_state{{state=\"unanswered\"}} 0
 prysm_session_state{{state=\"faulted\"}} 0
 # HELP prysm_settings_revision Revision of the saved settings; starts at a random value per process.
 # TYPE prysm_settings_revision gauge

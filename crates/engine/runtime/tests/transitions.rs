@@ -74,6 +74,7 @@ enum Shown {
     Stopped,
     ScreenSync,
     Effects,
+    Unanswered,
     Faulted(SessionPhase),
 }
 
@@ -83,6 +84,7 @@ impl From<&SessionState> for Shown {
             SessionState::Stopped { .. } => Self::Stopped,
             SessionState::ScreenSync => Self::ScreenSync,
             SessionState::Effects { .. } => Self::Effects,
+            SessionState::Unanswered { .. } => Self::Unanswered,
             SessionState::Faulted(phase) => Self::Faulted(*phase),
         }
     }

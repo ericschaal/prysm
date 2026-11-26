@@ -83,6 +83,7 @@ class SessionState(StrEnum):
     STOPPED = 'stopped'
     SCREEN_SYNC = 'screen_sync'
     EFFECTS = 'effects'
+    UNANSWERED = 'unanswered'
     FAULTED = 'faulted'
 
 

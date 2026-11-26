@@ -105,6 +105,7 @@ the target is reached when `session.state` equals it (`off` is reached by
 | `{ "state": "stopped", "failure"?: LightingFailure }` | No session; Prysm does not drive the lights. After an output failure they may not be off. |
 | `{ "state": "screen_sync" }` | A session runs. It never carries a failure: it runs on valid settings and has reached its target. |
 | `{ "state": "effects", "failure"?: LightingFailure }` | The lights show their own effects; no session. |
+| `{ "state": "unanswered", "failure"?: LightingFailure }` | No session: the lights do not answer the request that puts them in the target's mode (`off` or `effects`), which is tried again every 5 s until they answer. The target stays and is not reached meanwhile. |
 | `{ "state": "faulted", "message" }` | A session did not stop in time, or did not confirm its source's release; only a restart recovers. `message` says what did not finish, in words (not covered by the contract); the step itself is only logged. |
 
 A `failure` is present only while it explains the present: why the target is
@@ -136,10 +137,8 @@ no session, a session before its first frame, or one that returned the output
 after 3 s without video. Read `session.state` and `input.picture` for which;
 `{}` alone does not mean lighting stopped.
 Lights that do not answer with the target `off` or `effects` are the
-exception: `session.state` is `stopped` without a failure, `device` is
-`{ "issue": "unreachable" }`, and the request that puts the lights in that
-mode is tried again every 5 s; the target stays, and the issue clears once
-they answer. `issue` (absent
+exception: `session.state` is `unanswered` and `device` is
+`{ "issue": "unreachable" }`; the issue clears once they answer. `issue` (absent
 when all is well) says why the lights are not showing its colours: `off`
 (switched off on the device), `overridden` (WLED's live override), `not_live`
 (the device is not taking realtime colours), `other_sender` or `unreachable`
@@ -401,7 +400,7 @@ metrics and no histograms.
 | --- | --- | --- |
 | `prysm_build_info{version}` | gauge | Always 1; `version` is the product version, as `State.version` |
 | `prysm_target{target}` | gauge | 1 for the current target (`off`, `screen_sync`, `effects`), 0 for the others |
-| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `screen_sync`, `effects`, `faulted`), 0 for the others |
+| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `screen_sync`, `effects`, `unanswered`, `faulted`), 0 for the others |
 | `prysm_settings_revision` | gauge | `State.revision` (random start per process) |
 | `prysm_input_fps` | gauge | `State.input.fps`; 0 while no session runs |
 | `prysm_frames_received_total` | counter | Frames taken from the capture source (frames from a remote TV included) |

@@ -386,6 +386,7 @@ const sessions: Record<Session['state'], true> = {
   stopped: true,
   screen_sync: true,
   effects: true,
+  unanswered: true,
   faulted: true,
 };
 /**
@@ -475,6 +476,9 @@ export function decodeState(
       break;
     case 'effects':
       decoded = { state: 'effects', ...carried };
+      break;
+    case 'unanswered':
+      decoded = { state: 'unanswered', ...carried };
       break;
     case 'screen_sync':
       decoded = { state: 'screen_sync' };

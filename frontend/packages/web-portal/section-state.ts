@@ -44,10 +44,12 @@ export function pathOf(lighting: LightingSituation): PathState {
     }
     case 'effects':
       return { kind: 'effects' };
-    case 'off': {
-      // With the lights off the path shows a failure only where it is: on
-      // a side, or settings that do not validate (without a side, Prysm's
-      // own). Any other one the light card says.
+    // With the lights off, or waited for (no session, nothing sent), the
+    // path shows a failure only where it is: on a side, or settings that
+    // do not validate (without a side, Prysm's own). Any other one the
+    // light card says.
+    case 'off':
+    case 'unanswered': {
       const { failure } = lighting;
       if (!failure) return { kind: 'off' };
       const at = failureSide(failure);
@@ -55,11 +57,9 @@ export function pathOf(lighting: LightingSituation): PathState {
         ? { kind: 'failed', at }
         : { kind: 'off' };
     }
-    // The path shows a start as off until the session runs, lights waited
-    // for as off (no session, nothing sent), and a state newer than this
-    // page as nothing it can name.
+    // The path shows a start as off until the session runs, and a state
+    // newer than this page as nothing it can name.
     case 'starting':
-    case 'unanswered':
     case 'unknown':
       return { kind: 'off' };
     default:
@@ -147,11 +147,11 @@ export function sectionStatus(
   // Why: the fault's own words, else the failure's message.
   const reason =
     situation.kind === 'faulted' ? situation.message : failure?.message;
-  // With the lights off nothing runs: a failure is said only on the section
-  // it names (its settings do not validate, or a switch off failed); the
-  // other one is not in use.
-  const off = situation.kind === 'off';
-  if (path.kind === 'failed' && (path.at === section || !off)) {
+  // With the lights off, or waited for, nothing runs: a failure is said only
+  // on the section it names (its settings do not validate, or a switch off
+  // failed); the other one is not in use.
+  const idle = situation.kind === 'off' || situation.kind === 'unanswered';
+  if (path.kind === 'failed' && (path.at === section || !idle)) {
     const plain = failure
       ? plainFailure(failure, target, effects)
       : 'Screen sync stopped.';
@@ -164,7 +164,7 @@ export function sectionStatus(
         detail: capture ? '' : identity,
         details: reason,
       };
-    if (off && capture)
+    if (idle && capture)
       return {
         tone: 'problem',
         title: 'Video source not working',

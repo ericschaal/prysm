@@ -3,7 +3,6 @@ import type {
   Candidate,
   CaptureSettings,
   ColorsEvent,
-  DeviceReport,
   Failure,
   FailureSection,
   Input,
@@ -198,18 +197,18 @@ export function failureSide(
 }
 
 /**
- * What the lights are doing, decided once from the requested target, the
- * session (with the failure it carries) and what the lights say about
- * themselves; every view of the lights shows this. The rule is ordered, so
- * every state lands on exactly one:
+ * What the lights are doing, decided once from the requested target and the
+ * session (with the failure it carries); every view of the lights shows
+ * this. The rule is ordered, so every state lands on exactly one:
  *
  * - `faulted`: the session stopped responding; nothing works until a
  *   restart. `message` says what did not finish.
  * - `unknown`: the target or the session state is newer than this page.
  * - `unanswered`: the lights don't answer the request that puts them off or
- *   in their own effects (no session). The target stays; Prysm
- *   tries again every few seconds and applies it once they answer. (Lights
- *   that don't answer screen sync are `sync`: its session waits for them.)
+ *   in their own effects (no session). The target stays; Prysm tries again
+ *   every few seconds and applies it once they answer. `failure`: the saved
+ *   settings could not be read or do not validate. (Lights that don't
+ *   answer screen sync are `sync`: its session waits for them.)
  * - `off`: the lights were asked off (the session may still be stopping).
  *   With the lights off a stopped session's failure still stays said:
  *   settings that do not validate, or a switch off that failed.
@@ -227,7 +226,7 @@ export function failureSide(
 export type LightingSituation =
   | { kind: 'faulted'; message: string }
   | { kind: 'unknown'; failure: LightingFailure | null; message: string | null }
-  | { kind: 'unanswered'; target: IdleTarget }
+  | { kind: 'unanswered'; target: IdleTarget; failure: LightingFailure | null }
   | { kind: 'off'; failure: LightingFailure | null }
   | {
       kind: 'failed';
@@ -245,13 +244,10 @@ export function lightingSituation({
   target,
   session,
   input,
-  device,
 }: {
   target: TargetReading;
   session: SessionReading;
   input?: Input;
-  /** What the lights say about themselves; absent, nothing. */
-  device?: DeviceReport;
 }): LightingSituation {
   if (session.state === 'faulted')
     return { kind: 'faulted', message: session.message };
@@ -261,12 +257,9 @@ export function lightingSituation({
       failure: sessionFailure(session),
       message: session.state === 'unknown' ? (session.message ?? null) : null,
     };
-  if (
-    target !== 'screen_sync' &&
-    session.state === 'stopped' &&
-    device?.issue === 'unreachable'
-  )
-    return { kind: 'unanswered', target };
+  // Screen sync asked during a wait: its start ends the wait.
+  if (session.state === 'unanswered' && target !== 'screen_sync')
+    return { kind: 'unanswered', target, failure: session.failure ?? null };
   if (target === 'off')
     return {
       kind: 'off',
@@ -301,10 +294,10 @@ export function situationFailure(
     case 'failed':
     case 'off':
     case 'effects':
+    case 'unanswered':
     case 'unknown':
       return situation.failure;
     case 'faulted':
-    case 'unanswered':
     case 'sync':
     case 'starting':
       return null;

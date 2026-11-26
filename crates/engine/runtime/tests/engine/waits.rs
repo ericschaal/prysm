@@ -28,10 +28,10 @@ fn silent() -> prysm_ports::Settings {
     idling(FakeIdle::UnansweredUntil(ANSWER.into()))
 }
 
-/// The target taken, no failure and the lights unreachable.
+/// The target taken and the lights waited for, without a failure.
 fn waiting(snapshot: &Snapshot, target: LightingTarget) -> bool {
     snapshot.target == target
-        && matches!(snapshot.session, SessionState::Stopped { failure: None })
+        && matches!(snapshot.session, SessionState::Unanswered { failure: None })
         && snapshot.device.issue == Some(OutputIssue::Unreachable)
 }
 

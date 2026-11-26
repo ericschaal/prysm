@@ -221,6 +221,7 @@ const sessionLabels = {
   stopped: 'Stopped',
   screen_sync: 'Screen sync',
   effects: 'Showing the lights’ own effects',
+  unanswered: 'Waiting for the lights to answer',
   faulted: 'Stopped by a fault; restart Prysm',
   unknown: 'Unknown: Prysm is newer than this page',
 } as const satisfies Record<

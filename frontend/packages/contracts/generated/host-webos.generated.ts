@@ -494,6 +494,14 @@ export interface components {
             /** @enum {string} */
             state: "effects";
         } | {
+            /**
+             * @description That the saved settings could not be read or do not validate;
+             *     absent while neither.
+             */
+            failure?: components["schemas"]["LightingFailure"];
+            /** @enum {string} */
+            state: "unanswered";
+        } | {
             /** @description What did not finish, for people. */
             message: string;
             /** @enum {string} */
@@ -553,10 +561,8 @@ export interface components {
              *     session, or one that has no frame yet or released the output after 3 s
              *     without video; `session.state` and `input.picture` say which. While
              *     the lights are waited for, `issue` is `unreachable` alone: a session
-             *     waits for lights that did not answer its open, or, with the target
-             *     `off` or `effects`, the session is `stopped` without a failure and the
-             *     request that puts the lights in that mode is tried again every 5 s
-             *     until they answer. The target stays meanwhile.
+             *     waits for lights that did not answer its open, or the session is
+             *     `unanswered`.
              */
             device: components["schemas"]["DeviceReport"];
             /**

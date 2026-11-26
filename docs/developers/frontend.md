@@ -85,18 +85,21 @@ and the field can be fixed there; every other field stays as saved, and a
 section with nothing to fill is passed on as it is.
 
 What the lights are doing is decided once, by
-`lightingSituation` (`application-client`) from the target, the session
-(with the failure it carries) and `device.issue`, in this order: faulted,
-unknown (a target or session state newer than the page), unanswered (the
-target `off` or `effects`, the session `stopped` without a failure and the
-issue `unreachable`: the lights don't answer the request for that mode),
+`lightingSituation` (`application-client`) from the target and the session
+(with the failure it carries), in this order: faulted, unknown (a target or
+session state newer than the page), unanswered (the target `off` or
+`effects` and the session `unanswered`: the lights don't answer the request
+for that mode; a failure beside it says the saved settings could not be
+read or do not validate),
 off, reached (`session.state` equals the target: screen sync or effects),
 failed (the session carries a failure), starting. Every state lands on
 exactly one. Unanswered is said as during screen sync, "Can’t reach the
 lights", with what happens once they answer (`whenLightsAnswer`: "The
 lights switch off as soon as they answer." or "WLED effects start as soon
 as the lights answer."); the light card stays neither lit nor busy, and the
-TV's status card says it as its `lightsIssue` situation, with the target. Screen sync never carries a
+TV's status card says it as its `lightsIssue` situation, with the target.
+Settings beside the wait are said on the card's line and on the section
+they name, the wait staying the status. Screen sync never carries a
 failure. An `effects` session carries one after a start of screen sync
 that failed from the effects (the situation is then failed, headed "Screen
 sync couldn’t start", and the cards add that the effects are still on,

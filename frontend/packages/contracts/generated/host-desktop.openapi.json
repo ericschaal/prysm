@@ -1334,6 +1334,25 @@
             "type": "object"
           },
           {
+            "description": "No session: the lights do not answer the request that puts them in\nthe target's mode (`off` or their own effects). The target stays,\nand the request is tried again every 5 s until they answer.",
+            "properties": {
+              "failure": {
+                "$ref": "#/components/schemas/LightingFailure",
+                "description": "That the saved settings could not be read or do not validate;\nabsent while neither."
+              },
+              "state": {
+                "enum": [
+                  "unanswered"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
             "description": "A session did not stop in time, or did not confirm its source's\nrelease; only a restart recovers.",
             "properties": {
               "message": {
@@ -1446,7 +1465,7 @@
           },
           "device": {
             "$ref": "#/components/schemas/DeviceReport",
-            "description": "What the lights say about themselves, from the output's own checks\n(about once a second). Empty while no session holds the output: no\nsession, or one that has no frame yet or released the output after 3 s\nwithout video; `session.state` and `input.picture` say which. While\nthe lights are waited for, `issue` is `unreachable` alone: a session\nwaits for lights that did not answer its open, or, with the target\n`off` or `effects`, the session is `stopped` without a failure and the\nrequest that puts the lights in that mode is tried again every 5 s\nuntil they answer. The target stays meanwhile."
+            "description": "What the lights say about themselves, from the output's own checks\n(about once a second). Empty while no session holds the output: no\nsession, or one that has no frame yet or released the output after 3 s\nwithout video; `session.state` and `input.picture` say which. While\nthe lights are waited for, `issue` is `unreachable` alone: a session\nwaits for lights that did not answer its open, or the session is\n`unanswered`."
           },
           "input": {
             "$ref": "#/components/schemas/Input",

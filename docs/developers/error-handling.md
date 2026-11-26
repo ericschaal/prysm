@@ -30,8 +30,8 @@ The full wire mapping is in the
 - A source that finishes (`Pull::Ended`, a file at its end) is success:
   lighting stops without a failure and the target becomes `off`.
 - A session failure is reported once, in the session it explains
-  (`State.session.failure`, on `stopped` or `effects`; screen sync and a
-  fault carry none). A failure of what a command replaced (the old output of
+  (`State.session.failure`, on `stopped`, `effects` or `unanswered`; screen
+  sync and a fault carry none). A failure of what a command replaced (the old output of
   a restart, a session that ended as the lights' own effects were asked for)
   is logged at `warn` and is neither published nor the reply. The target
   stays as requested, so the next settings change retries. Apart from the
@@ -55,8 +55,8 @@ The full wire mapping is in the
   (`Escalation::Unanswered`: off, or away from the network) the request
   that puts them in the chosen mode (screen sync's open, the idle for `off`
   or the lights' own effects) are no failure. The target stays, the device
-  issue is `unreachable` (the portal and the TV app say "Can’t reach the
-  lights"), and the request is tried again every 5 s
+  issue is `unreachable` (without a session the session is `unanswered`;
+  the portal and the TV app say "Can’t reach the lights"), and the request is tried again every 5 s
   ([`UNANSWERED_INTERVAL`](../../crates/engine/runtime/src/leds.rs)) until
   the lights answer or a command asks for something else; a shutdown tries
   once more and fails. As it is no failure, nothing else retries it.

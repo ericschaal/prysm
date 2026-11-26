@@ -40,6 +40,10 @@ pub enum SessionState {
     ScreenSync,
     /// The output was put in its own effects, without a session.
     Effects { failure: Option<Error> },
+    /// No session: the lights do not answer the request that puts them in
+    /// the target's mode (`Off` or their own effects), which is tried again
+    /// until they answer. The target is not reached meanwhile.
+    Unanswered { failure: Option<Error> },
     /// A session did not stop in time, or its source's release is
     /// unconfirmed. Only shutdown is accepted.
     Faulted(SessionPhase),
@@ -56,7 +60,9 @@ impl SessionState {
     #[must_use]
     pub fn failure(&self) -> Option<&Error> {
         match self {
-            Self::Stopped { failure } | Self::Effects { failure } => failure.as_ref(),
+            Self::Stopped { failure }
+            | Self::Effects { failure }
+            | Self::Unanswered { failure } => failure.as_ref(),
             Self::ScreenSync | Self::Faulted(_) => None,
         }
     }
@@ -73,14 +79,15 @@ impl SessionState {
     }
 }
 
-/// `stopped`, `screen_sync`, `effects` or `faulted while <phase>`; the
-/// failure is not part of it.
+/// `stopped`, `screen_sync`, `effects`, `unanswered` or `faulted while
+/// <phase>`; the failure is not part of it.
 impl fmt::Display for SessionState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Stopped { .. } => f.write_str("stopped"),
             Self::ScreenSync => f.write_str("screen_sync"),
             Self::Effects { .. } => f.write_str("effects"),
+            Self::Unanswered { .. } => f.write_str("unanswered"),
             Self::Faulted(phase) => write!(f, "faulted while {phase}"),
         }
     }
@@ -126,10 +133,8 @@ pub struct Snapshot {
     /// What the output's device says about itself, from the output's own
     /// checks; republished with `input`. Empty while no session holds the
     /// output, but for [`OutputIssue::Unreachable`] while the lights are
-    /// waited for: a session's open they did not answer, or, without a
-    /// session (`session` is `Stopped` without a failure), the request that
-    /// puts them `Off` or in their own effects. The target stays, and the
-    /// request is tried again until they answer.
+    /// waited for: a session's open they did not answer, or
+    /// [`SessionState::Unanswered`].
     pub device: DeviceReport,
     /// The calibration pattern shown, while the target is `ScreenSync`. Not
     /// persisted; while set, processing runs without smoothing (and without
@@ -264,6 +269,15 @@ mod tests {
         }
     }
 
+    /// A wait for the lights reaches no target, also the one it waits for.
+    #[test]
+    fn lights_that_do_not_answer_reach_no_target() {
+        let waiting = SessionState::Unanswered { failure: None };
+        for target in LightingTarget::ALL {
+            assert!(!waiting.reached(target), "{target:?}");
+        }
+    }
+
     #[test]
     fn session_states_display_their_phase() {
         assert_eq!(SessionState::default().to_string(), "stopped");
@@ -274,6 +288,10 @@ mod tests {
             }
             .to_string(),
             "effects"
+        );
+        assert_eq!(
+            SessionState::Unanswered { failure: None }.to_string(),
+            "unanswered"
         );
         assert_eq!(
             SessionState::Faulted(SessionPhase::ClosingSource).to_string(),

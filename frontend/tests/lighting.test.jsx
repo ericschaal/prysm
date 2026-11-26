@@ -45,16 +45,31 @@ test('every target and session has one lighting situation', () => {
     ['screen_sync', false],
     ['effects', false],
     ['effects', true],
+    ['unanswered', false],
+    ['unanswered', true],
     ['faulted', false],
     ['unknown', false],
     ['unknown', true],
   ];
   const expected = {
-    off: ['off', 'off', 'off', 'off', 'off', 'faulted', 'unknown', 'unknown'],
+    off: [
+      'off',
+      'off',
+      'off',
+      'off',
+      'off',
+      'unanswered',
+      'unanswered',
+      'faulted',
+      'unknown',
+      'unknown',
+    ],
     screen_sync: [
       'starting',
       'failed',
       'sync',
+      'starting',
+      'failed',
       'starting',
       'failed',
       'faulted',
@@ -67,11 +82,15 @@ test('every target and session has one lighting situation', () => {
       'starting',
       'effects',
       'effects',
+      'unanswered',
+      'unanswered',
       'faulted',
       'unknown',
       'unknown',
     ],
     unknown: [
+      'unknown',
+      'unknown',
       'unknown',
       'unknown',
       'unknown',
@@ -173,46 +192,40 @@ test('every target and session has one lighting situation', () => {
   assert.equal(at({ kind: 'invalid', field: 'output.leds' }), 'output');
   assert.equal(at({ kind: 'invalid', field: 'processing.style' }), null);
   // Lights that don't answer Off or their effects: the target stays, and
-  // the wait is said. Screen sync's own session waits for them (`sync`).
-  const unreachable = { issue: 'unreachable' };
-  const reading = (target, state, change = {}) =>
-    lightingSituation({
-      target,
-      session: session(state),
-      device: unreachable,
-      ...change,
-    }).kind;
-  for (const target of ['off', 'effects'])
+  // the wait is said, with saved settings Prysm can't use beside it.
+  // Screen sync asked meanwhile starts; its own session waits for them.
+  for (const target of ['off', 'effects']) {
     assert.deepEqual(
-      lightingSituation({
-        target,
-        session: session('stopped'),
-        device: unreachable,
-      }),
-      { kind: 'unanswered', target },
+      lightingSituation({ target, session: { state: 'unanswered' } }),
+      { kind: 'unanswered', target, failure: null },
       target,
     );
-  assert.equal(reading('screen_sync', 'screen_sync'), 'sync');
-  assert.equal(reading('screen_sync', 'stopped'), 'starting');
-  // A session still stopping is not the wait; saved settings that don't
-  // validate are published beside it, and the wait is still said.
-  assert.equal(reading('off', 'screen_sync'), 'off');
-  for (const target of ['off', 'effects'])
-    assert.equal(
-      reading(target, 'stopped', {
-        session: { state: 'stopped', failure: invalid },
-      }),
-      'unanswered',
+    const beside = lightingSituation({
+      target,
+      session: { state: 'unanswered', failure: invalid },
+    });
+    assert.deepEqual(
+      beside,
+      { kind: 'unanswered', target, failure: invalid },
+      target,
     );
-  // Any other issue is screen sync's alone.
+    assert.equal(situationFailure(beside), invalid, target);
+  }
   assert.equal(
-    reading('off', 'stopped', { device: { issue: 'other_sender' } }),
-    'off',
+    lightingSituation({
+      target: 'screen_sync',
+      session: { state: 'unanswered' },
+    }).kind,
+    'starting',
   );
+  // The lights' own report is not the wait: the session says it.
   assert.equal(
-    situationFailure({ kind: 'unanswered', target: 'off' }),
-    null,
-    'a wait is no failure',
+    lightingSituation({
+      target: 'off',
+      session: session('stopped'),
+      device: { issue: 'unreachable' },
+    }).kind,
+    'off',
   );
 });
 
@@ -274,7 +287,10 @@ test('each situation has one headline and one sentence', () => {
     ['effects', 'WLED effects start as soon as the lights answer.'],
   ])
     assert.deepEqual(
-      describeSituation({ kind: 'unanswered', target }, 'WLED effects'),
+      describeSituation(
+        { kind: 'unanswered', target, failure: null },
+        'WLED effects',
+      ),
       {
         headline: 'Can’t reach the lights',
         sentence: `Can’t reach the lights. ${sentence}`,
@@ -542,7 +558,7 @@ test('the light card view: mood, word, line and mode from the situation', () => 
       'Can’t reach the lights. WLED effects start as soon as the lights answer.',
     ],
   ]) {
-    const unanswered = { kind: 'unanswered', target };
+    const unanswered = { kind: 'unanswered', target, failure: null };
     assert.equal(moodOf(unanswered, true), 'off', target);
     assert.equal(pauseOf(unanswered, false), null, target);
     const view = lightCardView(
@@ -563,6 +579,27 @@ test('the light card view: mood, word, line and mode from the situation', () => 
     );
     assert.equal(view.ownEffects, false, target);
   }
+  // Saved settings Prysm can't use, beside the wait: the wait is the
+  // status, and the settings are the line.
+  const beside = lightCardView(
+    facts(
+      { kind: 'unanswered', target: 'off', failure: invalid },
+      { target: 'off', device: { issue: 'unreachable' } },
+    ),
+    memory(),
+  );
+  assert.deepEqual(
+    [beside.status, beside.info],
+    [
+      'Can’t reach the lights',
+      {
+        tone: 'problem',
+        text: 'Prysm can’t use these settings.',
+        details: invalid.message,
+        retry: false,
+      },
+    ],
+  );
 });
 
 const capture = { kind: 'device', device: '/dev/video0' };
@@ -964,13 +1001,14 @@ test('the light card shows a failure with the lights off, without Try again', as
 test('lights that don’t answer Off or their effects are said on the lights page as during screen sync', () => {
   const identity = 'WLED at 192.0.2.1';
   const device = { issue: 'unreachable' };
-  for (const target of ['off', 'effects']) {
-    const situation = lightingSituation({
-      target,
-      session: { state: 'stopped' },
-      device,
-    });
-    const live = {
+  const unreachableStatus = {
+    tone: 'problem',
+    title: 'Can’t reach the lights',
+    detail: `${identity}. The lights don’t answer. Check that they are powered and on the network.`,
+  };
+  const liveOf = (target, session) => {
+    const situation = lightingSituation({ target, session });
+    return {
       online: true,
       target,
       path: pathOf(situation),
@@ -978,19 +1016,41 @@ test('lights that don’t answer Off or their effects are said on the lights pag
       situation,
       device,
     };
+  };
+  const unusable = {
+    kind: 'invalid',
+    field: 'capture.device',
+    message: 'a video device is required',
+  };
+  for (const target of ['off', 'effects']) {
+    const live = liveOf(target, { state: 'unanswered' });
     assert.deepEqual(live.path, { kind: 'off' }, target);
     assert.deepEqual(
       sectionStatus('output', live, identity, false),
-      {
-        tone: 'problem',
-        title: 'Can’t reach the lights',
-        detail: `${identity}. The lights don’t answer. Check that they are powered and on the network.`,
-      },
+      unreachableStatus,
       target,
     );
     assert.equal(
       sectionStatus('capture', live, identity, false).title,
       'Not in use',
+      target,
+    );
+    // Saved settings Prysm can't use, beside the wait, on their own side.
+    const beside = liveOf(target, { state: 'unanswered', failure: unusable });
+    assert.deepEqual(beside.path, { kind: 'failed', at: 'capture' }, target);
+    assert.deepEqual(
+      sectionStatus('output', beside, identity, false),
+      unreachableStatus,
+      target,
+    );
+    assert.deepEqual(
+      sectionStatus('capture', beside, identity, false),
+      {
+        tone: 'problem',
+        title: 'Can’t use these settings',
+        detail: '',
+        details: unusable.message,
+      },
       target,
     );
   }
@@ -1007,7 +1067,7 @@ test('the light card says lights that don’t answer, and what Prysm does once t
       await act(async () =>
         fixture.publish({
           target,
-          session: { state: 'stopped' },
+          session: { state: 'unanswered' },
           device: { issue: 'unreachable' },
         }),
       );

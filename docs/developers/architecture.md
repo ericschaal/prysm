@@ -148,7 +148,7 @@ nobody holds (released, or `effects` without a session) is put in
 another idle mode without being opened (`OutputFactory::idle`): WLED is
 switched off, or to its effects, without entering live mode first. Lights
 that do not answer that request get the same rule without a session: the
-target stays, the session is `stopped` without a failure, `device.issue` is
+target stays, the session is `unanswered`, `device.issue` is
 `unreachable`, and the engine tries the request again every 5 s until they
 answer. While a
 session runs the engine measures, once a second, the frame rate, whether

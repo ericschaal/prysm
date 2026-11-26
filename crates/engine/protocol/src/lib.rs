@@ -42,10 +42,8 @@ pub struct State {
     /// session, or one that has no frame yet or released the output after 3 s
     /// without video; `session.state` and `input.picture` say which. While
     /// the lights are waited for, `issue` is `unreachable` alone: a session
-    /// waits for lights that did not answer its open, or, with the target
-    /// `off` or `effects`, the session is `stopped` without a failure and the
-    /// request that puts the lights in that mode is tried again every 5 s
-    /// until they answer. The target stays meanwhile.
+    /// waits for lights that did not answer its open, or the session is
+    /// `unanswered`.
     #[cfg_attr(feature = "schema", schema(value_type = schema::DeviceReportSchema))]
     pub device: DeviceReport,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
@@ -109,6 +107,16 @@ pub enum Session {
         #[cfg_attr(feature = "schema", schema(nullable = false))]
         failure: Option<LightingFailure>,
     },
+    /// No session: the lights do not answer the request that puts them in
+    /// the target's mode (`off` or their own effects). The target stays,
+    /// and the request is tried again every 5 s until they answer.
+    Unanswered {
+        /// That the saved settings could not be read or do not validate;
+        /// absent while neither.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        failure: Option<LightingFailure>,
+    },
     /// A session did not stop in time, or did not confirm its source's
     /// release; only a restart recovers.
     Faulted {
@@ -124,6 +132,7 @@ impl From<&SessionState> for Session {
             SessionState::Stopped { .. } => Self::Stopped { failure: failure() },
             SessionState::ScreenSync => Self::ScreenSync,
             SessionState::Effects { .. } => Self::Effects { failure: failure() },
+            SessionState::Unanswered { .. } => Self::Unanswered { failure: failure() },
             SessionState::Faulted(phase) => Self::Faulted {
                 message: faulted_message(*phase).to_owned(),
             },
@@ -475,6 +484,15 @@ mod tests {
             (
                 SessionState::Effects { failure: invalid() },
                 json!({ "state": "effects", "failure": {
+                    "kind": "invalid", "message": "too many", "field": "output.leds" } }),
+            ),
+            (
+                SessionState::Unanswered { failure: None },
+                json!({ "state": "unanswered" }),
+            ),
+            (
+                SessionState::Unanswered { failure: invalid() },
+                json!({ "state": "unanswered", "failure": {
                     "kind": "invalid", "message": "too many", "field": "output.leds" } }),
             ),
             (

@@ -816,7 +816,7 @@ test('status card covers the supervisor states for both packages', () => {
     assert.deepEqual(said(), expected, target);
     assert.equal(tvStatus(waited, draft()).action, 'none', target);
     assert.deepEqual(
-      said(facts({ kind: 'unanswered', target }, 'unreachable')),
+      said(facts({ kind: 'unanswered', target, failure: null }, 'unreachable')),
       expected,
       target,
     );
@@ -3013,7 +3013,7 @@ test('full: lights that don’t answer Off or their effects are said on both car
     await act(async () =>
       tv.application.publish({
         target,
-        session: { state: 'stopped' },
+        session: { state: 'unanswered' },
         device: { issue: 'unreachable' },
       }),
     );

@@ -264,7 +264,7 @@ fn panel(title: &str) -> Block<'_> {
 fn session_color(state: &SessionState) -> Color {
     match state {
         SessionState::ScreenSync => ACCENT,
-        SessionState::Effects { .. } => WARNING,
+        SessionState::Effects { .. } | SessionState::Unanswered { .. } => WARNING,
         SessionState::Faulted(_) => ERROR,
         SessionState::Stopped { .. } => MUTED,
     }
@@ -332,6 +332,7 @@ fn idle_text(snapshot: &Snapshot) -> &'static str {
     match &snapshot.session {
         SessionState::ScreenSync => "Waiting for the first frame",
         SessionState::Effects { .. } => "The lights show their own effects",
+        SessionState::Unanswered { .. } => "The lights do not answer; Prysm keeps trying",
         SessionState::Faulted(_) => "Session did not finish; only shutdown is accepted",
         SessionState::Stopped { failure: Some(_) } => "Lighting stopped after a failure",
         SessionState::Stopped { failure: None } => "Lighting off · press s to start",

@@ -271,7 +271,8 @@ fn configured() -> Settings {
 }
 
 /// Idle, screen sync (with an output issue, a surface failure, or
-/// calibrating), effects, each state with a failure, and faulted.
+/// calibrating), effects, each state with a failure, faulted, and lights
+/// that do not answer.
 fn states() -> Vec<State> {
     let snapshots = [
         Snapshot::default(),
@@ -358,6 +359,22 @@ fn states() -> Vec<State> {
         Snapshot {
             target: LightingTarget::Off,
             session: SessionState::Faulted(SessionPhase::IdlingOutput),
+            ..Snapshot::default()
+        },
+        // Lights that do not answer the request for their own effects,
+        // beside saved settings that do not validate.
+        Snapshot {
+            target: LightingTarget::Effects,
+            session: SessionState::Unanswered {
+                failure: Some(Error::from(ValidationError::new(
+                    "capture.device",
+                    "a video device is required",
+                ))),
+            },
+            device: DeviceReport {
+                issue: Some(OutputIssue::Unreachable),
+                ..DeviceReport::default()
+            },
             ..Snapshot::default()
         },
     ];

@@ -844,6 +844,33 @@
       "surface_failures": [],
       "target": "off",
       "version": "1.0.0"
+    },
+    {
+      "device": {
+        "issue": "unreachable"
+      },
+      "revision": 0,
+      "session": {
+        "failure": {
+          "field": "capture.device",
+          "kind": "invalid",
+          "message": "a video device is required"
+        },
+        "state": "unanswered"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "style": {
+            "kind": "natural"
+          }
+        }
+      },
+      "surface_failures": [],
+      "target": "effects",
+      "version": "1.0.0"
     }
   ],
   "Style": [

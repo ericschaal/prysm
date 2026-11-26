@@ -50,12 +50,12 @@ pub(super) enum Lighting {
 impl Lighting {
     /// The published state, carrying `failure` where it can: screen sync
     /// runs on valid settings and has reached its target, and a fault says
-    /// only its phase, so neither carries one. A wait for the lights is
-    /// `Stopped`: no session, and the target not reached.
+    /// only its phase, so neither carries one.
     fn state(&self, failure: Option<Error>) -> SessionState {
         match self {
-            Self::Stopped | Self::Unanswered { .. } => SessionState::Stopped { failure },
+            Self::Stopped => SessionState::Stopped { failure },
             Self::Effects => SessionState::Effects { failure },
+            Self::Unanswered { .. } => SessionState::Unanswered { failure },
             Self::ScreenSync(_) => SessionState::ScreenSync,
             Self::Faulted(phase) => SessionState::Faulted(*phase),
         }
