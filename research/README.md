@@ -23,6 +23,7 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 
 | Investigation | Finding / status |
 | --- | --- |
+| [Capture architectures and AirPlay](webos-capture/2026-11-24-capture-architecture/README.md) | Static second pass: pipeline permission versus mute, operation-specific statuses, standard V4L2 plus LG controls, vendor buffer ownership and a permission-respecting replacement plan; no new hardware test |
 | [Lifecycle investigation](webos-capture/2026-11-01-lifecycle/README.md) | Historical native ownership, constructor failure and cleanup analysis |
 | [Cleanup diagnosis](webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md) | Isolated HAL unload/resource growth; native release hangs still justify process isolation |
 | [Readiness](webos-capture/2026-11-01-readiness/README.md) | Readiness-driven recovery and dated validation evidence |
