@@ -154,37 +154,16 @@ anything, so whatever is saved loads.
 
 ## Unreadable files
 
-A file that `load` refuses (no `format`, a newer or older format, cut-off or
-invalid JSON, a wrong type or unknown field, over 1 MiB, a permission or I/O
-error) is never replaced unseen: the engine then starts unconfigured and
-shows the cause as the failure, and the file stays as it was. The next
-`save`, which only a user's save from the portal makes, first gives it a
-second name, `settings.json.unreadable-XXXXXX` (six random characters, a
-name of its own, so no earlier one is overwritten): a hard link, so the file
-never leaves its path before the new one replaces it. Then the new file is
-renamed over the path as usual, owner-only rather than with the unreadable
-file's permissions, and the kept name is logged. If that rename fails, the
-second name is removed and the unreadable file is still where it was, so the
-failure shown still matches the disk. When the hard link fails for any
-reason but the file being gone (no hard links on the filesystem; on Linux
-`fs.protected_hardlinks`, for a file Prysm neither owns nor may write, such
-as one a `sudo` run left owned by root), the second name is a copy with the
-file's permissions, which needs the file readable. When the copy fails too,
-the file is renamed aside instead: then the path holds no file until the new
-one is renamed over it, and a crash in between leaves it so (the next start
-is unconfigured, with no failure shown, the old file kept beside). If that
-rename fails, the file is moved back; if moving it back fails too, the save
-fails saying so, with the name the file is now only under, and the path
-holds no file. If all three fail, the save fails
-naming each cause and nothing changes. If the file is gone by then, nothing
-is set aside. None of these is fatal, since a save keeps the file and a restart
-would fix none of them; only a panicking store stops start-up.
+When Prysm cannot load an existing file, it reports the cause and leaves the
+file at its path. An explicit save backs it up beside the original as
+`settings.json.unreadable-XXXXXX`. Prysm tries a hard link first, then a
+copy with the original permissions. If the backup fails, the save reports
+the settings path. Fix the permissions or move the file, then save again.
 
-The tests drive these fallbacks through a hook that refuses the hard link.
-The real Linux case was checked once in Docker: as a non-root user, with a
-root-owned `0600` settings file in a directory the user may write, a save
-kept the file as `settings.json.unreadable-…` and wrote the new one; making
-another user's file needs root, so no test does it.
+Once the backup is in place, Prysm atomically replaces the original with an
+owner-only file and logs the backup path. If replacement fails, the original
+remains at its path and Prysm attempts to remove the unused backup. If the
+original has already been removed, Prysm creates the new file.
 
 `save` replaces only a regular file (or a link to one): a directory, socket
 or device at the path is refused (`it is not a regular file`) and left alone.

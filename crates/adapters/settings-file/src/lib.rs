@@ -133,13 +133,11 @@ fn decode(bytes: &[u8]) -> std::result::Result<Settings, Refused> {
     })
 }
 
-/// What a file the last `load` could not read is renamed to at the next
-/// `save`: its own name, this, and six random characters, in its directory.
+/// Suffix before the six random characters in an unreadable file's backup name.
 pub const UNREADABLE: &str = ".unreadable-";
 
 /// A [`SettingsStore`] backed by one JSON file, replaced atomically on save.
-/// A file that the last `load` could not read is never replaced: the next
-/// `save` first moves it beside the new one (see [`UNREADABLE`]).
+/// After a failed load, saving requires a backup of the original file (see [`UNREADABLE`]).
 #[derive(Debug, Clone)]
 pub struct SettingsFile {
     path: PathBuf,
@@ -220,19 +218,8 @@ impl SettingsFile {
         })
     }
 
-    /// Keep the file at the path under a name of its own beside it; `None`
-    /// when nothing is there any more. In order of preference:
-    ///
-    /// - a hard link: the file stays at its path until the save's rename
-    ///   replaces it there;
-    /// - where a hard link fails (no hard links on the filesystem; on Linux
-    ///   `fs.protected_hardlinks` for a file this user neither owns nor may
-    ///   write), a copy with its permissions, which needs the file readable;
-    ///   the file stays at its path likewise;
-    /// - where both fail, a rename: until the save's rename the path holds
-    ///   nothing, and a crash in between leaves it so (the next start is
-    ///   then unconfigured, with no failure shown), the file kept beside.
-    fn set_aside(&self) -> std::result::Result<Option<Aside>, NotSetAside> {
+    /// Returns the retained backup path, or `None` if the original has disappeared.
+    fn backup(&self) -> Result<Option<PathBuf>> {
         let mut prefix = self
             .path
             .file_name()
@@ -241,63 +228,33 @@ impl SettingsFile {
         prefix.push(UNREADABLE);
         let mut builder = tempfile::Builder::new();
         builder.prefix(&prefix);
-        let directory = self.directory();
-        // A name nothing has: a hard link or a new file never replaces one.
-        let link = match builder.make_in(directory, |aside| (self.link)(&self.path, aside)) {
-            Ok(aside) => return Ok(Some(Aside::Linked(aside.into_temp_path()))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(link) => link,
-        };
-        let copy = match copy_aside(&self.path, &builder) {
-            Ok(aside) => return Ok(Some(Aside::Linked(aside))),
-            Err(copy) => copy,
-        };
-        // A new file of its own, so the rename replaces nothing else.
-        let moved = builder
-            .tempfile_in(directory)
+        let backup = builder
+            .make_in(self.directory(), |path| (self.link)(&self.path, path))
             .map(tempfile::NamedTempFile::into_temp_path)
-            .and_then(|placeholder| {
-                fs::rename(&self.path, &placeholder)?;
-                placeholder.keep().map_err(|error| error.error)
+            .or_else(|link| {
+                copy_aside(&self.path, &builder).map_err(|copy| NotSetAside { link, copy })
             });
-        match moved {
-            Ok(aside) => Ok(Some(Aside::Moved(aside))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(rename) => Err(NotSetAside { link, copy, rename }),
+        match backup {
+            Ok(path) => path
+                .keep()
+                .map(Some)
+                .map_err(|e| self.failed("keep a backup of", e.error)),
+            Err(failure) => match self.path.symlink_metadata() {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                _ => Err(self.failed("back up unreadable", failure)),
+            },
         }
     }
 }
 
-/// Where the file a load could not read is kept.
-enum Aside {
-    /// A second name: the file is still at its path. Removed when dropped,
-    /// unless kept.
-    Linked(tempfile::TempPath),
-    /// Its only name: the path holds nothing until the save's rename.
-    Moved(PathBuf),
-}
-
-/// A save whose rename failed after the file a load could not read was
-/// moved aside, and that could not be moved back: the path now holds no
-/// file, and the old one is only at `aside`.
+/// Both ways of preserving an unreadable settings file failed.
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "{replace}; the file it could not read is now only at {}: moving it back failed: {back}",
-    aside.display()
+    "hard link failed ({link}) and copy failed ({copy}). Check the file permissions or move the file, then save again."
 )]
-pub struct LeftAside {
-    replace: io::Error,
-    aside: PathBuf,
-    back: io::Error,
-}
-
-/// Why the file a load could not read could not be kept: each way's cause.
-#[derive(Debug, thiserror::Error)]
-#[error("a hard link failed: {link}; a copy failed: {copy}; a rename failed: {rename}")]
 pub struct NotSetAside {
     link: io::Error,
     copy: io::Error,
-    rename: io::Error,
 }
 
 impl SettingsStore for SettingsFile {
@@ -367,50 +324,26 @@ impl SettingsStore for SettingsFile {
             .write(&bytes)
             .map_err(|error| self.failed("write a temporary file for", error))?;
 
-        let aside = if self.unread {
-            self.set_aside()
-                .map_err(|error| self.failed("set aside the unreadable", error))?
+        let backup = if self.unread { self.backup()? } else { None };
+        let published = if self.unread && backup.is_none() {
+            temporary.create(&self.path)
         } else {
-            None
+            (self.replace)(temporary, &self.path)
         };
-        // The rename is the commit point. A failure leaves the unreadable
-        // file at its path: its second name is removed, or a file moved
-        // aside goes back.
-        if let Err(replace) = (self.replace)(temporary, &self.path) {
-            if let Some(Aside::Moved(aside)) = aside
-                && let Err(back) = fs::rename(&aside, &self.path)
+        if let Err(error) = published {
+            if let Some(path) = backup
+                && let Err(cleanup) = fs::remove_file(&path)
             {
-                return Err(self.failed(
-                    "replace",
-                    LeftAside {
-                        replace,
-                        aside,
-                        back,
-                    },
-                ));
+                tracing::warn!(
+                    "could not remove unused settings backup {}: {cleanup}",
+                    path.display()
+                );
             }
-            return Err(self.failed("replace", replace));
+            return Err(self.failed("replace", error));
         }
         self.unread = false;
-        match aside {
-            None => {}
-            Some(Aside::Moved(aside)) => tracing::warn!(
-                "kept the settings file it could not read as {}",
-                aside.display()
-            ),
-            // Saved: a name that cannot be kept is logged, not a failure.
-            Some(Aside::Linked(aside)) => match aside.keep() {
-                Ok(aside) => tracing::warn!(
-                    "kept the settings file it could not read as {}",
-                    aside.display()
-                ),
-                Err(error) => tracing::warn!(
-                    "saved settings file {}, but could not keep the file it could not \
-                     read beside it: {}",
-                    self.path.display(),
-                    error.error
-                ),
-            },
+        if let Some(path) = backup {
+            tracing::warn!("kept the unreadable settings file as {}", path.display());
         }
         if let Err(error) = (self.sync_directory)(self.directory()) {
             tracing::warn!(

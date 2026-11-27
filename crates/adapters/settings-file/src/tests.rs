@@ -625,89 +625,43 @@ fn without_a_hard_link_the_unreadable_file_is_kept_as_a_copy() {
     assert_eq!(store.load().unwrap(), Some(sample()));
 }
 
-/// A file this user may neither link (Linux's `fs.protected_hardlinks`)
-/// nor read is moved aside, and moved back if the save's rename fails.
 #[cfg(unix)]
 #[test]
-fn without_a_hard_link_or_a_copy_the_unreadable_file_is_moved_aside() {
-    use std::os::unix::fs::PermissionsExt;
+fn failed_backup_leaves_the_original_in_place_and_save_can_be_retried() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("settings.json");
-    fs::write(&path, "{ not json").unwrap();
+    let original = b"{ invalid json";
+    fs::write(&path, original).unwrap();
+    let inode = fs::metadata(&path).unwrap().ino();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
     if fs::read(&path).is_ok() {
-        // Running as root: permissions do not apply, nothing to test.
         assert!(
             std::env::var_os("CI").is_none(),
-            "CI runs tests as a user that permissions apply to"
+            "CI must enforce permissions"
         );
-        eprintln!("skipped: permissions do not apply to this user");
         return;
     }
-    let size = |path: &Path| fs::symlink_metadata(path).unwrap().len();
-
-    let mut failing = SettingsFile::new(&path)
-        .with_link(no_link)
-        .with_replace(|_, _| Err(std::io::Error::other("disk full")));
-    assert!(failing.load().is_err());
-    assert!(failing.save(&sample()).is_err());
-    assert_eq!(entries(directory.path()), ["settings.json"]);
-    assert_eq!(size(&path), 10);
 
     let mut store = SettingsFile::new(&path).with_link(no_link);
     assert!(store.load().is_err());
-    store.save(&sample()).unwrap();
-    let names: Vec<_> = entries(directory.path())
-        .into_iter()
-        .filter(|name| name.starts_with("settings.json.unreadable-"))
-        .collect();
-    assert_eq!(names.len(), 1, "{names:?}");
-    assert_eq!(size(&directory.path().join(&names[0])), 10);
-    assert_eq!(store.load().unwrap(), Some(sample()));
-}
-
-/// A file moved aside that cannot be moved back after a failed rename: the
-/// save says where it now is, typed.
-#[cfg(unix)]
-#[test]
-fn a_file_moved_aside_that_cannot_go_back_is_named_in_the_failure() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("settings.json");
-    fs::write(&path, "{ not json").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
-    if fs::read(&path).is_ok() {
-        // Running as root: permissions do not apply, nothing to test.
-        assert!(
-            std::env::var_os("CI").is_none(),
-            "CI runs tests as a user that permissions apply to"
-        );
-        eprintln!("skipped: permissions do not apply to this user");
-        return;
-    }
-    // The rename fails, and leaves something at the path the file cannot
-    // be moved back over.
-    let mut store = SettingsFile::new(&path)
-        .with_link(no_link)
-        .with_replace(|_, path| {
-            fs::create_dir(path)?;
-            fs::write(path.join("in the way"), "")?;
-            Err(std::io::Error::other("disk full"))
-        });
-    assert!(store.load().is_err());
     let error = store.save(&sample()).unwrap_err();
-    let left = error.cause::<super::LeftAside>().expect("typed");
-    let message = left.to_string();
+    assert!(error.cause::<super::NotSetAside>().is_some());
+    let message = chain(&error);
+    assert!(message.contains(&path.display().to_string()), "{message}");
     assert!(
-        message.starts_with("disk full; the file it could not read is now only at "),
+        message.contains("permissions or move the file"),
         "{message}"
     );
-    let aside: Vec<_> = entries(directory.path())
-        .into_iter()
-        .filter(|name| name.starts_with("settings.json.unreadable-"))
-        .collect();
-    assert_eq!(aside.len(), 1, "{aside:?}");
-    assert!(message.contains(&aside[0]), "{message}");
+    assert_eq!(entries(directory.path()), ["settings.json"]);
+    assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+    store.save(&sample()).unwrap();
+    let backups = set_aside(directory.path());
+    assert_eq!(backups.len(), 1);
+    assert_eq!(backups[0].1, original);
+    assert_eq!(store.load().unwrap(), Some(sample()));
 }

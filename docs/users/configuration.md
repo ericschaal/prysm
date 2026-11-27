@@ -278,8 +278,10 @@ A file Prysm cannot use (no format number, a newer format, a typo that
 breaks the JSON, a wrong value type, a file it may not read) does not stop
 it: Prysm starts without settings, the light card shows why, and the file
 is left untouched. Fix the file and restart Prysm, or set Prysm up again in
-the portal: the first save keeps the old file beside the new one, as
-`settings.json.unreadable-` and six random characters, and the log names it.
+the portal. The first save keeps the old file beside the new one as
+`settings.json.unreadable-` and six random characters. If the backup fails,
+Save shows the file path and leaves the original in place. Fix its permissions
+or move it to a safe location, then save again.
 
 **Upgrading from 1.0.0-rc.1 or 0.2.0:** see [Upgrade to 1.0.0](upgrading.md).
 A 1.0.0-rc.1 file has no format number, so Prysm starts without settings

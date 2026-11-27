@@ -12,7 +12,7 @@ offers the fix. **Your setup** marks the step that failed.
 | Cannot save settings | Prysm's user must be able to write the settings directory. In Docker, mount a directory at `/data`, writable by user 10001. |
 | "These settings were changed elsewhere" | Someone saved in another browser, or Prysm restarted. The form shows the current settings; make your change again. |
 | Saved, but lights fail | The settings are saved; the light card shows why the start failed. Fix the device or address and turn Screen sync on again. |
-| Prysm starts without settings, and the light card names the settings file | The file is damaged, from another Prysm version, or not readable by Prysm's user. Run `prysm-headless --check-settings PATH` to see the error, fix the file and restart; or set Prysm up again in the portal, which keeps the old file beside the new one (`settings.json.unreadable-…`). |
+| Prysm starts without settings, and the light card names the settings file | The file is damaged, from another Prysm version, or not readable by Prysm's user. Run `prysm-headless --check-settings PATH` to see the error, fix the file and restart; or set Prysm up again in the portal, which backs up the old file beside the new one (`settings.json.unreadable-…`). If Save cannot make that backup, fix the permissions or move the file shown in the error, then save again. |
 
 Logs:
 
