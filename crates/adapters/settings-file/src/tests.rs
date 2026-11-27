@@ -155,6 +155,16 @@ fn a_duplicate_section_reports_the_second_key() {
     );
 }
 
+#[test]
+fn a_repeated_format_cannot_override_an_earlier_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, r#"{"format":2,"format":1}"#).unwrap();
+    let error = SettingsFile::new(path).load().unwrap_err();
+    let json = error.cause::<serde_json::Error>().unwrap();
+    assert!(json.to_string().contains("duplicate field `format`"));
+}
+
 /// A section is an object: an array is not read as its defaults, by position.
 #[test]
 fn a_section_written_as_an_array_is_refused() {

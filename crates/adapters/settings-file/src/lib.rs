@@ -2,15 +2,12 @@
 pub mod atomic;
 
 use atomic::Staged;
-use prysm_ports::{Error, Result, Settings, SettingsStore};
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{DeserializeSeed, IgnoredAny, IntoDeserializer, MapAccess, Visitor, value},
-};
+use prysm_ports::{AdapterSettings, Error, Processing, Result, Settings, SettingsStore};
+use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use std::{
     ffi::OsStr,
-    fmt, fs, io,
+    fs, io,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -99,56 +96,16 @@ struct Saved<'a> {
     settings: &'a Settings,
 }
 
-/// Reads settings after the format check, preserving source positions for field errors.
-fn settings(bytes: &[u8]) -> serde_json::Result<Settings> {
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let settings = deserializer.deserialize_map(SettingsObject)?;
-    deserializer.end()?;
-    Ok(settings)
+#[derive(Deserialize, Serialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+struct FileSettings {
+    format: u32,
+    capture: Option<AdapterSettings>,
+    output: Option<AdapterSettings>,
+    #[serde(default)]
+    processing: Processing,
 }
-
-struct SettingsObject;
-
-impl<'de> Visitor<'de> for SettingsObject {
-    type Value = Settings;
-
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a settings object")
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, map: A) -> std::result::Result<Settings, A::Error> {
-        <Settings as Deserialize>::deserialize(value::MapAccessDeserializer::new(WithoutFormat(
-            map,
-        )))
-    }
-}
-
-/// A file object's entries but `format`.
-struct WithoutFormat<A>(A);
-
-impl<'de, A: MapAccess<'de>> MapAccess<'de> for WithoutFormat<A> {
-    type Error = A::Error;
-
-    fn next_key_seed<K: DeserializeSeed<'de>>(
-        &mut self,
-        seed: K,
-    ) -> std::result::Result<Option<K::Value>, A::Error> {
-        while let Some(key) = self.0.next_key::<String>()? {
-            if key != FORMAT_FIELD {
-                return seed.deserialize(key.into_deserializer()).map(Some);
-            }
-            self.0.next_value::<IgnoredAny>()?;
-        }
-        Ok(None)
-    }
-
-    fn next_value_seed<V: DeserializeSeed<'de>>(
-        &mut self,
-        seed: V,
-    ) -> std::result::Result<V::Value, A::Error> {
-        self.0.next_value_seed(seed)
-    }
-}
+prysm_ports::map_only!(FileSettings, "a settings object");
 
 /// Why bytes are not settings this Prysm reads.
 enum Refused {
@@ -168,7 +125,12 @@ fn decode(bytes: &[u8]) -> std::result::Result<Settings, Refused> {
     }
     let file: Value = serde_json::from_slice(bytes).map_err(Refused::Json)?;
     check_format(&file).map_err(Refused::Format)?;
-    settings(bytes).map_err(Refused::Json)
+    let file: FileSettings = serde_json::from_slice(bytes).map_err(Refused::Json)?;
+    Ok(Settings {
+        capture: file.capture,
+        output: file.output,
+        processing: file.processing,
+    })
 }
 
 /// What a file the last `load` could not read is renamed to at the next
@@ -286,8 +248,8 @@ impl SettingsFile {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(link) => link,
         };
-        let copy = match builder.make_in(directory, |aside| copy_new(&self.path, aside)) {
-            Ok(aside) => return Ok(Some(Aside::Linked(aside.into_temp_path()))),
+        let copy = match copy_aside(&self.path, &builder) {
+            Ok(aside) => return Ok(Some(Aside::Linked(aside))),
             Err(copy) => copy,
         };
         // A new file of its own, so the rename replaces nothing else.
@@ -461,23 +423,14 @@ impl SettingsStore for SettingsFile {
     }
 }
 
-/// Copy `from` to the new file `to`, which must not exist; nothing is left
-/// at `to` when it fails.
-fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
-    let mut target = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(to)?;
-    let copied = fs::File::open(from)
-        .and_then(|mut source| {
-            io::copy(&mut source, &mut target)?;
-            target.set_permissions(source.metadata()?.permissions())
-        })
-        .and_then(|()| target.sync_all());
-    if copied.is_err() {
-        let _ = fs::remove_file(to);
-    }
-    copied
+fn copy_aside(path: &Path, builder: &tempfile::Builder<'_, '_>) -> io::Result<tempfile::TempPath> {
+    let mut source = fs::File::open(path)?;
+    let mut copy = builder.tempfile_in(atomic::directory(path))?;
+    io::copy(&mut source, copy.as_file_mut())?;
+    copy.as_file()
+        .set_permissions(source.metadata()?.permissions())?;
+    copy.as_file().sync_all()?;
+    Ok(copy.into_temp_path())
 }
 
 #[cfg(test)]

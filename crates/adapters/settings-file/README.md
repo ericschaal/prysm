@@ -37,7 +37,7 @@ save. `load` reads it first, before the fields, and refuses with a typed
 Prysm 1.0; add `"format": 1` once its fields match), a value that is not a
 whole number (`null`, `"1"`, `2.0`), any whole number above `FORMAT` however
 large (written by a newer Prysm; both numbers are named), and a lower one.
-There is no migration: a Prysm reads its own format only.
+A repeated `format` field is refused. There is no migration: a Prysm reads its own format only.
 
 `FORMAT` is raised only when Prysm can no longer read files with the previous
 number: a field renamed or removed, or its meaning changed. Additions keep
