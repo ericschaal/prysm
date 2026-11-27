@@ -32,8 +32,8 @@ fn boot_reconciles_all_power_display_and_memory_combinations() {
                         .then_some(IntentAction::StartSync)
                 );
                 assert_eq!(
-                    intent.sync_takeover(),
-                    (expected == Selection::Mode(Mode::ScreenSync)).then_some(false)
+                    intent.sync_open_intent(),
+                    (expected == Selection::Mode(Mode::ScreenSync)).then_some(OpenIntent::Resume)
                 );
             }
         }

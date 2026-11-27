@@ -185,7 +185,9 @@ mod tests {
     use crate::session_lifecycle::OutputRelease;
     use crate::stats::Stats;
     use prysm_core::{Config, PixelFormat};
-    use prysm_ports::{AdapterSettings, Error, FrameSource, OutputFactory, Pull, Registry, Result};
+    use prysm_ports::{
+        AdapterSettings, Error, FrameSource, OpenIntent, OutputFactory, Pull, Registry, Result,
+    };
     use std::time::Duration;
 
     /// A uniform grey frame every millisecond; counts frames it handed out.
@@ -210,7 +212,7 @@ mod tests {
         adapter.claim().unwrap()
     }
 
-    async fn start(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
+    async fn open_capture(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
         let frames = Arc::new(AtomicUsize::new(0));
         let mut registry = Registry::default();
         registry.add_output(NullOutput);
@@ -232,7 +234,12 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(session.next().await, Notice::CaptureOpened));
-        session.open_output(false, ready_claim());
+        (session, frames)
+    }
+
+    async fn start(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
+        let (mut session, frames) = open_capture(feeds).await;
+        session.open_output(OpenIntent::Resume, ready_claim());
         assert!(matches!(session.next().await, Notice::OutputOpened));
         (session, frames)
     }
@@ -319,6 +326,15 @@ mod tests {
         end.capture.unwrap();
         end.output.unwrap();
         session.join().await;
+    }
+
+    #[tokio::test]
+    async fn stop_before_output_authorization_releases_capture_without_streaming() {
+        let (session, frames) = open_capture(&Feeds::default()).await;
+        tokio::time::timeout(Duration::from_secs(5), stop(session))
+            .await
+            .expect("stopping must wake the worker waiting for output authorization");
+        assert_eq!(frames.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

@@ -7,7 +7,7 @@ mod snapshot;
 use crate::intent::LightingIntent;
 use crate::meter::Meter;
 use crate::session::{Notice, Session};
-use crate::session_lifecycle::{OutputRelease, SessionLifecycle};
+use crate::session_lifecycle::SessionLifecycle;
 use adapter::{Adapter, Effect, Observed};
 use prysm_ports::{
     ConfiguredOutput, ConfiguredSource, Error, Registry, Result, Section, SessionPhase, Settings,
@@ -25,7 +25,6 @@ pub(super) struct Lighting {
     meter: Option<Meter>,
     command: Option<Effect<Result<()>>>,
     stopping_at: Option<Instant>,
-    idle_mode: Option<OutputRelease>,
     failure: Option<Error>,
     settings_error: Option<Error>,
 }
@@ -86,7 +85,6 @@ impl Lighting {
             meter: None,
             command: None,
             stopping_at: None,
-            idle_mode: None,
             failure: None,
         }
     }

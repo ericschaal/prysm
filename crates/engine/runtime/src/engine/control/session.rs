@@ -23,7 +23,7 @@ impl Core {
 
     /// Returns true when the attempt ended and its mode exit still needs dispatch.
     pub(super) fn drive_sync(&mut self) -> bool {
-        if self.lighting.intent.sync_takeover().is_none() {
+        if self.lighting.intent.sync_open_intent().is_none() {
             return false;
         }
         let capture = self.lighting.capture.available();
@@ -85,12 +85,12 @@ impl Core {
     pub(super) async fn session_notice(&mut self, notice: Notice) {
         match notice {
             Notice::CaptureOpened if self.lighting.lifecycle.capture_opened() => {
-                if let Some(takeover) = self.lighting.intent.sync_takeover()
+                if let Some(intent) = self.lighting.intent.sync_open_intent()
                     && self.lighting.output.available() == Availability::Ready
                     && let Some(session) = &mut self.lighting.active
                     && let Some(claim) = self.lighting.output.claim()
                 {
-                    session.open_output(takeover, claim);
+                    session.open_output(intent, claim);
                 } else {
                     self.stop_session(OutputRelease::Automatic, false);
                 }
@@ -149,9 +149,8 @@ impl Core {
                     self.stop_session(OutputRelease::Off, true);
                 }
                 if let Some(mode) = self.lighting.lifecycle.take_idle()
-                    && let Some(session) = &self.lighting.active
+                    && let Some(session) = &mut self.lighting.active
                 {
-                    self.lighting.idle_mode = Some(mode);
                     session.idle(mode, self.lighting.intent.physical_power());
                 }
             }
@@ -196,8 +195,7 @@ impl Core {
             self.session_fault(Error::Faulted(FaultPhase::IdlingOutput));
             return;
         }
-        let mode = self.lighting.idle_mode.take();
-        if output_is_current && mode == Some(OutputRelease::Off) {
+        if output_is_current && end.mode == OutputRelease::Off {
             self.lighting
                 .intent
                 .observe_power(end.output.is_ok().then_some(Power::Off));

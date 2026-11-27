@@ -12,9 +12,9 @@ use prysm_ports::{
     OutputOpen, Power, Pull, Release, Result, Section, SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc as notifications;
+use tokio::sync::{mpsc as notifications, oneshot};
 
 const REFRESH: Duration = Duration::from_millis(500);
 const VIDEO_GRACE: Duration = Duration::from_secs(3);
@@ -31,18 +31,8 @@ pub(crate) enum Notice {
 
 pub(crate) struct SessionEnd {
     pub(crate) capture: Result<()>,
+    pub(crate) mode: OutputRelease,
     pub(crate) output: Result<()>,
-}
-
-enum Command {
-    OpenOutput {
-        takeover: bool,
-    },
-    Stop,
-    Idle {
-        mode: OutputRelease,
-        known_power: Option<Power>,
-    },
 }
 
 #[derive(Default)]
@@ -66,10 +56,10 @@ pub(crate) enum Lease {
 pub(crate) struct Session {
     pub(crate) claims: SessionClaims,
     control: Arc<Control>,
-    commands: mpsc::Sender<Command>,
+    open_output: Option<oneshot::Sender<OpenIntent>>,
+    idle: Option<oneshot::Sender<(OutputRelease, Option<Power>)>>,
     notices: notifications::UnboundedReceiver<Notice>,
     worker: Worker<SessionEnd>,
-    finishing: bool,
     output_is_current: bool,
 }
 
@@ -95,11 +85,12 @@ impl Session {
         open: impl FnOnce(&Start, &Flags) -> Result<Box<dyn FrameSource>> + Send + 'static,
     ) -> Result<Self, (Error, Claim)> {
         let control = Arc::new(Control::default());
-        let (commands, receive) = mpsc::channel();
+        let (authorize, receive) = oneshot::channel();
+        let (idle, release) = oneshot::channel();
         let (send, notices) = notifications::unbounded_channel();
         let worker = match Worker::spawn("prysm-session", "session thread", start, {
             let control = control.clone();
-            move |start, flags| run(start, open, control, receive, send, flags)
+            move |start, flags| run(start, open, control, receive, release, send, flags)
         }) {
             Ok(worker) => worker,
             Err((error, _)) => return Err((error, claim)),
@@ -110,36 +101,37 @@ impl Session {
                 output: Lease::Unclaimed,
             },
             control,
-            commands,
+            open_output: Some(authorize),
+            idle: Some(idle),
             notices,
             worker,
-            finishing: false,
             output_is_current: true,
         })
     }
 
     pub(crate) async fn next(&mut self) -> Notice {
-        if !self.finishing {
-            if let Some(notice) = self.notices.recv().await {
-                return notice;
-            }
-            self.finishing = true;
+        match self.notices.recv().await {
+            Some(notice) => notice,
+            None => Notice::Finished(self.worker.finished().await),
         }
-        Notice::Finished(self.worker.finished().await)
     }
 
-    pub(crate) fn open_output(&mut self, takeover: bool, claim: Claim) {
+    pub(crate) fn open_output(&mut self, intent: OpenIntent, claim: Claim) {
         self.claims.output = Lease::Claimed(claim);
-        let _ = self.commands.send(Command::OpenOutput { takeover });
+        if let Some(send) = self.open_output.take() {
+            let _ = send.send(intent);
+        }
     }
 
-    pub(crate) fn request_stop(&self) {
+    pub(crate) fn request_stop(&mut self) {
         self.worker.request_stop();
-        let _ = self.commands.send(Command::Stop);
+        self.open_output = None;
     }
 
-    pub(crate) fn idle(&self, mode: OutputRelease, known_power: Option<Power>) {
-        let _ = self.commands.send(Command::Idle { mode, known_power });
+    pub(crate) fn idle(&mut self, mode: OutputRelease, known_power: Option<Power>) {
+        if let Some(send) = self.idle.take() {
+            let _ = send.send((mode, known_power));
+        }
     }
 
     pub(crate) fn retire_output_observations(&mut self) {
@@ -176,7 +168,8 @@ fn run(
     start: Start,
     open: impl FnOnce(&Start, &Flags) -> Result<Box<dyn FrameSource>>,
     control: Arc<Control>,
-    commands: mpsc::Receiver<Command>,
+    open_output: oneshot::Receiver<OpenIntent>,
+    idle: oneshot::Receiver<(OutputRelease, Option<Power>)>,
     notices: notifications::UnboundedSender<Notice>,
     flags: &Flags,
 ) -> SessionEnd {
@@ -190,17 +183,12 @@ fn run(
         if flags.stopping().is_cut() || notices.send(Notice::CaptureOpened).is_err() {
             return Ok(Exit::Stopped);
         }
-        let Ok(Command::OpenOutput { takeover }) = commands.recv() else {
+        let Ok(intent) = open_output.blocking_recv() else {
             return Ok(Exit::Stopped);
         };
         if flags.stopping().is_cut() {
             return Ok(Exit::Stopped);
         }
-        let intent = if takeover {
-            OpenIntent::Explicit
-        } else {
-            OpenIntent::Resume
-        };
         match start.output.open(intent, flags.stopping()) {
             Ok(OutputOpen::Streaming(held)) => {
                 attempted_output = true;
@@ -262,12 +250,8 @@ fn run(
     let _ = notices.send(Notice::IdleReady {
         capture_released: capture.is_ok(),
     });
-    let (mode, known_power) = commands
-        .iter()
-        .find_map(|command| match command {
-            Command::Idle { mode, known_power } => Some((mode, known_power)),
-            Command::Stop | Command::OpenOutput { .. } => None,
-        })
+    let (mode, known_power) = idle
+        .blocking_recv()
         .unwrap_or((OutputRelease::Preserve, None));
     let output = guarded("idling the output", || {
         if let Some(fault) = unconfirmed_output {
@@ -291,7 +275,11 @@ fn run(
         }
     })
     .map_err(|error| error.in_section(Section::Output));
-    SessionEnd { capture, output }
+    SessionEnd {
+        capture,
+        mode,
+        output,
+    }
 }
 
 fn release_output(

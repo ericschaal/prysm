@@ -2,7 +2,7 @@
 //! Exiting a mode cancels its effects, retires their replies and finishes cleanup
 //! before `exited` permits the next mode to enter.
 use crate::session_lifecycle::SessionPhase;
-use prysm_ports::{Availability, Error, OutputDisplay, OutputObservationState, Power};
+use prysm_ports::{Availability, Error, OpenIntent, OutputDisplay, OutputObservationState, Power};
 
 pub use prysm_ports::LightingMode as Mode;
 
@@ -19,7 +19,7 @@ pub enum Selection {
 enum Request {
     Off { send: bool },
     External,
-    Sync { takeover: bool },
+    Sync(OpenIntent),
     Effects { already_delegated: bool },
 }
 
@@ -28,7 +28,7 @@ impl Request {
         match self {
             Self::Off { .. } => Selection::Off,
             Self::External => Selection::External,
-            Self::Sync { .. } => Selection::Mode(Mode::ScreenSync),
+            Self::Sync(_) => Selection::Mode(Mode::ScreenSync),
             Self::Effects { .. } => Selection::Mode(Mode::Effects),
         }
     }
@@ -127,7 +127,7 @@ impl LightingIntent {
         if self.power_busy(session) || self.scope == Scope::Faulted {
             return;
         }
-        let waiting = matches!(self.request, Request::Sync { .. } | Request::Effects { .. })
+        let waiting = matches!(self.request, Request::Sync(_) | Request::Effects { .. })
             && (matches!(self.scope, Scope::EffectsWaiting | Scope::Idle)
                 || (self.scope == Scope::Sync && session != SessionPhase::Running));
         self.replace(Request::Off {
@@ -162,7 +162,7 @@ impl LightingIntent {
         if !supported && self.remembered == Mode::Effects {
             self.remembered = Mode::ScreenSync;
             if self.selection() == Selection::Mode(Mode::Effects) {
-                self.replace(Request::Sync { takeover: false });
+                self.replace(Request::Sync(OpenIntent::Resume));
             }
         }
     }
@@ -199,7 +199,7 @@ impl LightingIntent {
             (Power::On, _, Mode::Effects) => Request::Effects {
                 already_delegated: true,
             },
-            (Power::On, _, Mode::ScreenSync) => Request::Sync { takeover: false },
+            (Power::On, _, Mode::ScreenSync) => Request::Sync(OpenIntent::Resume),
         };
     }
 
@@ -215,16 +215,16 @@ impl LightingIntent {
         let handing_off = self.scope == Scope::Sync
             && session == SessionPhase::Running
             && self.physical == Some(Power::On);
-        self.select_mode(mode, true, handing_off);
+        self.select_mode(mode, OpenIntent::Explicit, handing_off);
     }
 
     /// Continue an already authorized session after its host worker crashed.
     /// Only a fresh user selection grants permission to clear a device override.
     pub fn resume_screen_sync(&mut self) {
-        self.select_mode(Mode::ScreenSync, false, false);
+        self.select_mode(Mode::ScreenSync, OpenIntent::Resume, false);
     }
 
-    fn select_mode(&mut self, mode: Mode, takeover: bool, handing_off: bool) {
+    fn select_mode(&mut self, mode: Mode, intent: OpenIntent, handing_off: bool) {
         if mode == Mode::Effects && !self.supports_effects {
             return;
         }
@@ -234,7 +234,7 @@ impl LightingIntent {
         }
         self.remembered = mode;
         self.replace(match mode {
-            Mode::ScreenSync => Request::Sync { takeover },
+            Mode::ScreenSync => Request::Sync(intent),
             Mode::Effects => Request::Effects {
                 already_delegated: handing_off,
             },
@@ -293,7 +293,7 @@ impl LightingIntent {
     /// cannot replay its permission to clear an override.
     pub fn sync_started(&mut self) {
         if self.scope == Scope::Sync && !self.exit_required {
-            self.request = Request::Sync { takeover: false };
+            self.request = Request::Sync(OpenIntent::Resume);
             self.physical = Some(Power::On);
         }
     }
@@ -337,7 +337,7 @@ impl LightingIntent {
                 self.request = Request::Off { send: false };
                 Some(SendOff)
             }
-            Request::Sync { .. } if self.scope == Scope::Idle => {
+            Request::Sync(_) if self.scope == Scope::Idle => {
                 self.scope = Scope::Sync;
                 Some(StartSync)
             }
@@ -379,10 +379,10 @@ impl LightingIntent {
         self.scope == Scope::Exiting
     }
 
-    pub fn sync_takeover(&self) -> Option<bool> {
+    pub fn sync_open_intent(&self) -> Option<OpenIntent> {
         match self.request {
-            Request::Sync { takeover } if self.scope == Scope::Sync && !self.exit_required => {
-                Some(takeover)
+            Request::Sync(intent) if self.scope == Scope::Sync && !self.exit_required => {
+                Some(intent)
             }
             _ => None,
         }
