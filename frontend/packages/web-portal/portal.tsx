@@ -2,6 +2,7 @@ import {
   lightingSituation,
   plainFailure,
   situationFailure,
+  terminalStreamFailure,
 } from '@prysm/application-client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -16,8 +17,6 @@ import {
 import { useConnection } from '@prysm/application-react';
 import { readSection, type AdapterSection } from './adapters';
 import { useDeveloper } from './developer';
-import { CaptureModesContext } from './capture-modes';
-import { DiscoveryContext } from './discovery-context';
 import { useLingering } from './lingering';
 import { OfflineNotice, Page } from './page';
 import {
@@ -26,10 +25,7 @@ import {
   CalibrateRoute,
   EditorRoute,
   HomeRoute,
-  StyleRoute,
-  DetailRoute,
-  CalibrationRoute,
-  CalibrationsRoute,
+  ProcessingRoute,
   SettingsRoute,
   WaitingPage,
   type WaitingFrame,
@@ -38,7 +34,6 @@ import {
   ChromeContext,
   HostContext,
   PortalContext,
-  usePortal,
   useHost,
   type Chrome,
   type Host,
@@ -55,11 +50,7 @@ import './tokens.css';
 import './portal.css';
 import './flows.css';
 
-/**
- * How long the connection may be missing before the page says so: the page
- * comes with the state, and a restart reconnects within a few hundred
- * milliseconds (more from a TV). Saying it at once would flash a warning.
- */
+/** Delay before the portal displays a connection warning. */
 export const connectionGraceMs = 1000;
 
 /**
@@ -73,7 +64,6 @@ function PortalFrame() {
   const host = useHost();
   const { application } = host;
   const connection = useConnection(application);
-  const { dispatch } = application.store;
   // The last state (and every draft) stays shown while reconnecting. Every
   // page meets the saved sections as their kinds' types have them.
   const sent = connection.snapshot;
@@ -113,17 +103,15 @@ function PortalFrame() {
 
   // Disabled at once while offline, but said only once it lasts.
   const outOfTouch = useLingering(!online, connectionGraceMs, 0);
-  // A refusal is for good: the stream is not opened again.
-  const refusal =
-    connection.error?.kind === 'forbidden' ? connection.error.message : null;
+  const stopped = terminalStreamFailure(connection.error)?.message ?? null;
   let connectionLabel = 'Offline';
   if (online) connectionLabel = 'Connected';
   else if (connection.status === 'connecting') connectionLabel = 'Connecting…';
-  else if (snapshot && !refusal) connectionLabel = 'Reconnecting…';
+  else if (snapshot && !stopped) connectionLabel = 'Reconnecting…';
   const chrome: Chrome = {
     connectionLabel,
     outOfTouch,
-    refusal,
+    stopped,
     developer: useDeveloper(),
     updated: useReplaced(online, host.replaced),
   };
@@ -158,7 +146,6 @@ function PortalFrame() {
     snapshot,
     online,
     commands,
-    dispatch,
     lighting,
     path,
     problemAt: (section) => {
@@ -167,9 +154,6 @@ function PortalFrame() {
         ? plainFailure(failure, snapshot.target, 'Device effects')
         : null;
     },
-    saveProcessing: (expected, processing) =>
-      dispatch(commands.configureProcessing(expected, processing)),
-    tryProcessing: (processing) => dispatch(commands.tryProcessing(processing)),
     setupNotice,
     noticeRef,
     openSetup: () => {
@@ -187,45 +171,20 @@ function PortalFrame() {
         <ScrollRestoration />
         {/* Setup takes over whatever the hash says, except Calibrate. */}
         {setup === 'open' && !calibrating ? (
-          <SetupPage
-            close={(notice) => {
-              setSetup('closed');
-              setSetupNotice(notice);
-            }}
-          />
+          <Page className="portal-flow" title="Prysm setup" name="Setup">
+            <OfflineNotice />
+            <SetupWizard
+              close={(notice) => {
+                setSetup('closed');
+                setSetupNotice(notice);
+              }}
+            />
+          </Page>
         ) : (
           <Outlet key={location.pathname} />
         )}
       </PortalContext>
     </ChromeContext>
-  );
-}
-
-/** The guided setup, in place of every page; `close` says how it ended. */
-function SetupPage({ close }: { close: (notice: string) => void }) {
-  const { host, snapshot, online, dispatch, commands } = usePortal();
-  const { settings, revision } = snapshot;
-  return (
-    <Page className="portal-flow" title="Prysm setup" name="Setup">
-      <OfflineNotice />
-      <DiscoveryContext value={host.discovery ?? null}>
-        <CaptureModesContext value={host.captureModes}>
-          <SetupWizard
-            captures={host.captures}
-            outputs={host.outputs}
-            capture={settings.capture ?? null}
-            output={settings.output ?? null}
-            revision={revision}
-            disabled={!online}
-            save={(expected, capture, value) =>
-              dispatch(commands.configureSetup(expected, capture, value))
-            }
-            start={() => dispatch(commands.setTarget('screen_sync'))}
-            close={close}
-          />
-        </CaptureModesContext>
-      </DiscoveryContext>
-    </Page>
   );
 }
 
@@ -239,10 +198,12 @@ const portalRoutes: RouteObject[] = [
       { path: pages.settings, element: <SettingsRoute /> },
       { path: pages.video, element: <EditorRoute section="capture" /> },
       { path: pages.lights, element: <EditorRoute section="output" /> },
-      { path: pages.calibrations, element: <CalibrationsRoute /> },
-      { path: pages.calibration, element: <CalibrationRoute /> },
-      { path: pages.style, element: <StyleRoute /> },
-      { path: pages.detail, element: <DetailRoute /> },
+      ...(['calibrations', 'calibration', 'style', 'detail'] as const).map(
+        (page) => ({
+          path: pages[page],
+          element: <ProcessingRoute key={page} page={page} />,
+        }),
+      ),
       { path: pages.appearance, element: <AppearanceRoute /> },
       { path: pages.about, element: <AboutRoute /> },
       { path: pages.calibrate, element: <CalibrateRoute /> },

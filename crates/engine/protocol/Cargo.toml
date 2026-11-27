@@ -8,13 +8,14 @@ description = "JSON wire values and OpenAPI roots for Prysm surfaces"
 
 [features]
 # OpenAPI document and the adapter-schema hook used by the contract exporter.
-schema = ["dep:utoipa"]
+schema = ["dep:thiserror", "dep:utoipa", "prysm-ports/schema"]
 
 [dependencies]
 prysm-ports.workspace = true
 prysm-version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]

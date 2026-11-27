@@ -3,7 +3,6 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use http_body_util::{BodyExt, Full, StreamBody, combinators::UnsyncBoxBody};
 use hyper::{StatusCode, body::Frame, header};
-use prysm_ports::Error;
 use prysm_protocol::Failure;
 use prysm_runtime::Shutdown;
 use serde::Serialize;
@@ -80,12 +79,9 @@ pub(crate) fn event_stream(
 pub(crate) fn json(status: StatusCode, value: &impl Serialize) -> Response {
     match serde_json::to_vec(value) {
         Ok(body) => bytes(status, "application/json", body),
-        Err(_) => failure(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Failure::Internal {
-                message: "response encoding failed".into(),
-            },
-        ),
+        Err(_) => failure(Failure::Internal {
+            message: "response encoding failed".into(),
+        }),
     }
 }
 
@@ -95,25 +91,25 @@ pub(crate) fn empty(status: StatusCode) -> Response {
     response
 }
 
-pub(crate) fn failure(status: StatusCode, body: Failure) -> Response {
+pub(crate) fn failure(body: Failure) -> Response {
+    let status = match &body {
+        Failure::Invalid { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        Failure::StaleRevision { .. } | Failure::NeedsScreenSync { .. } => StatusCode::CONFLICT,
+        Failure::Faulted { .. } | Failure::Unavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
+        Failure::Adapter { .. } => StatusCode::BAD_GATEWAY,
+        Failure::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+        Failure::Forbidden { .. } => StatusCode::FORBIDDEN,
+        Failure::NotFound { .. } => StatusCode::NOT_FOUND,
+        Failure::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
+        Failure::BadRequest { .. } => StatusCode::BAD_REQUEST,
+        Failure::RequestTimeout { .. } => StatusCode::REQUEST_TIMEOUT,
+        Failure::PayloadTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        Failure::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        Failure::UpgradeRequired { .. } => StatusCode::UPGRADE_REQUIRED,
+        Failure::Busy { .. } => StatusCode::TOO_MANY_REQUESTS,
+    };
     match serde_json::to_vec(&body) {
         Ok(encoded) => bytes(status, "application/json", encoded),
         Err(_) => empty(status),
     }
-}
-
-/// A runtime command failure: the kind, a message (for an adapter failure its
-/// whole cause chain, see [`Failure`]) and, where relevant, the field, the
-/// current revision or the section.
-pub(crate) fn error(error: &Error) -> Response {
-    let status = match error {
-        Error::Invalid(_) | Error::Decode { .. } | Error::UnusableSettings(_) => {
-            StatusCode::UNPROCESSABLE_ENTITY
-        }
-        Error::StaleRevision { .. } | Error::NeedsScreenSync => StatusCode::CONFLICT,
-        Error::Faulted(_) | Error::Closed => StatusCode::SERVICE_UNAVAILABLE,
-        Error::Adapter { .. } => StatusCode::BAD_GATEWAY,
-        Error::Panicked(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    json(status, &Failure::from(error))
 }

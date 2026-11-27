@@ -182,10 +182,9 @@ fn a_second_signal_during_shutdown_exits_at_once() {
 #[test]
 fn example_settings_load_and_validate() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/settings.example.json");
-    let (adapters, _) = prysm_host::desktop_adapters(DeviceSource);
-    adapters(Prysm::builder(SettingsFile::new(path)))
-        .check()
-        .unwrap();
+    let (prysm, _) =
+        prysm_host::desktop_adapters(Prysm::builder(SettingsFile::new(path)), DeviceSource);
+    prysm.check().unwrap();
     let settings = SettingsFile::new(path).load().unwrap().unwrap();
     assert_eq!(settings.capture.unwrap().kind, "device");
     assert_eq!(settings.output.unwrap().kind, "wled");
@@ -200,8 +199,9 @@ fn contract_adapter_fixtures_decode_with_the_registered_adapters() {
     for fixture in host_adapter_settings("host-desktop") {
         let settings: Settings = serde_json::from_value(fixture.clone()).unwrap();
         SettingsFile::new(&path).save(&settings).unwrap();
-        let (adapters, _) = prysm_host::desktop_adapters(DeviceSource);
-        adapters(Prysm::builder(SettingsFile::new(&path)))
+        let (prysm, _) =
+            prysm_host::desktop_adapters(Prysm::builder(SettingsFile::new(&path)), DeviceSource);
+        prysm
             .check()
             .unwrap_or_else(|error| panic!("{fixture}: {error}"));
     }

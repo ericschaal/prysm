@@ -17,7 +17,6 @@ fn sample() -> Settings {
         )),
         processing: Processing {
             brightness_percent: 80,
-            // A built-in style is chosen; the custom values are kept.
             style: Style::Calm,
             custom_style: Some(StyleValues {
                 smoothing_seconds: 0.3,
@@ -51,6 +50,24 @@ fn missing_file_loads_as_none_without_creating_it() {
 }
 
 #[test]
+fn remembered_mode_survives_restart_independently_of_settings() {
+    use prysm_ports::LightingMode::{Effects, ScreenSync};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let mut store = SettingsFile::new(&path);
+    assert_eq!(store.load_mode().unwrap(), None);
+    store.save(&sample()).unwrap();
+    for mode in [Effects, ScreenSync] {
+        store.save_mode(mode).unwrap();
+        assert_eq!(SettingsFile::new(&path).load_mode().unwrap(), Some(mode));
+    }
+    fs::write(path.with_added_extension("mode"), b"invalid").unwrap();
+    assert!(store.load_mode().is_err());
+    assert_eq!(store.load().unwrap(), Some(sample()));
+}
+
+#[test]
 fn save_then_load_round_trips_as_pretty_json() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("settings.json");
@@ -71,7 +88,6 @@ fn save_then_load_round_trips_as_pretty_json() {
     assert!(text.contains("\"brightness_ramp_seconds\": 0.5,"), "{text}");
     assert!(text.contains("\"color_focus_percent\": 60,"), "{text}");
     assert!(text.contains("\"dark_floor_percent\": 10\n"), "{text}");
-    // Saving the loaded value again is byte-for-byte stable.
     let loaded = store.load().unwrap().unwrap();
     store.save(&loaded).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), text);
@@ -103,7 +119,6 @@ fn unknown_field_is_rejected_with_its_name_and_the_path() {
             "brightnes_percent",
             "line 1",
         ),
-        // Beside the format, at the top: the format is not a gap for other fields.
         (
             "{ \"format\": 1,\n  \"outptu\": { \"kind\": \"null\" } }",
             "outptu",
@@ -121,6 +136,33 @@ fn unknown_field_is_rejected_with_its_name_and_the_path() {
         assert!(message.contains(line), "{message}");
         assert!(error.cause::<serde_json::Error>().is_some());
     }
+}
+
+#[test]
+fn a_duplicate_section_reports_the_second_key() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(
+        &path,
+        "{\n\"format\":1,\n\"processing\":{},\n\"processing\":{}}",
+    )
+    .unwrap();
+    let error = SettingsFile::new(path).load().unwrap_err();
+    let json = error.cause::<serde_json::Error>().unwrap();
+    assert_eq!(
+        json.to_string(),
+        "duplicate field `processing` at line 4 column 12"
+    );
+}
+
+#[test]
+fn a_repeated_format_cannot_override_an_earlier_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, r#"{"format":2,"format":1}"#).unwrap();
+    let error = SettingsFile::new(path).load().unwrap_err();
+    let json = error.cause::<serde_json::Error>().unwrap();
+    assert!(json.to_string().contains("duplicate field `format`"));
 }
 
 /// A section is an object: an array is not read as its defaults, by position.
@@ -162,7 +204,6 @@ fn format_error(text: &str) -> (FormatError, String) {
 
 #[test]
 fn a_newer_format_is_refused_for_its_number_before_its_fields() {
-    // A newer Prysm's file may well have fields this one does not know.
     let (error, message) = format_error(r#"{ "added": true, "format": 2 }"#);
     assert_eq!(error, FormatError::Newer { found: 2.into() });
     assert!(
@@ -263,7 +304,6 @@ fn corrupt_json_error_names_the_path_and_keeps_the_serde_source() {
 #[test]
 fn unreadable_path_reports_io_source() {
     let directory = tempfile::tempdir().unwrap();
-    // A directory exists at the path, so reading it fails with something other than NotFound.
     let error = SettingsFile::new(directory.path()).load().unwrap_err();
     assert!(
         error.to_string().starts_with("cannot read settings file"),
@@ -293,8 +333,6 @@ fn save_into_missing_directory_errors_clearly() {
 #[test]
 fn failed_replace_leaves_target_and_directory_untouched() {
     let directory = tempfile::tempdir().unwrap();
-    // A non-empty directory at the target path: the temporary file is fully
-    // written but the rename fails.
     let path = directory.path().join("settings.json");
     fs::create_dir(&path).unwrap();
     fs::write(path.join("keep"), "x").unwrap();
@@ -320,7 +358,6 @@ fn failed_save_never_truncates_the_existing_file() {
     store.save(&sample()).unwrap();
     let before = fs::read(&path).unwrap();
 
-    // A read-only directory refuses the temporary file.
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o500)).unwrap();
     if tempfile::tempfile_in(directory.path()).is_ok() {
         // Running as root: permissions do not apply, nothing to test. CI's
@@ -448,7 +485,6 @@ fn a_save_after_a_failed_load_keeps_the_unreadable_file_beside_it() {
         assert!(name.starts_with("settings.json.unreadable-"), "{name}");
         assert_eq!(bytes, text);
 
-        // Once replaced, saves replace as usual.
         store.save(&Settings::default()).unwrap();
         assert_eq!(set_aside(directory.path()).len(), 1);
     }
@@ -589,90 +625,43 @@ fn without_a_hard_link_the_unreadable_file_is_kept_as_a_copy() {
     assert_eq!(store.load().unwrap(), Some(sample()));
 }
 
-/// A file this user may neither link (Linux's `fs.protected_hardlinks`)
-/// nor read is moved aside, and moved back if the save's rename fails.
 #[cfg(unix)]
 #[test]
-fn without_a_hard_link_or_a_copy_the_unreadable_file_is_moved_aside() {
-    use std::os::unix::fs::PermissionsExt;
+fn failed_backup_leaves_the_original_in_place_and_save_can_be_retried() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("settings.json");
-    fs::write(&path, "{ not json").unwrap();
+    let original = b"{ invalid json";
+    fs::write(&path, original).unwrap();
+    let inode = fs::metadata(&path).unwrap().ino();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
     if fs::read(&path).is_ok() {
-        // Running as root: permissions do not apply, nothing to test.
         assert!(
             std::env::var_os("CI").is_none(),
-            "CI runs tests as a user that permissions apply to"
+            "CI must enforce permissions"
         );
-        eprintln!("skipped: permissions do not apply to this user");
         return;
     }
-    let size = |path: &Path| fs::symlink_metadata(path).unwrap().len();
-
-    // The save's rename fails: the file is back at its path.
-    let mut failing = SettingsFile::new(&path)
-        .with_link(no_link)
-        .with_replace(|_, _| Err(std::io::Error::other("disk full")));
-    assert!(failing.load().is_err());
-    assert!(failing.save(&sample()).is_err());
-    assert_eq!(entries(directory.path()), ["settings.json"]);
-    assert_eq!(size(&path), 10);
 
     let mut store = SettingsFile::new(&path).with_link(no_link);
     assert!(store.load().is_err());
-    store.save(&sample()).unwrap();
-    let names: Vec<_> = entries(directory.path())
-        .into_iter()
-        .filter(|name| name.starts_with("settings.json.unreadable-"))
-        .collect();
-    assert_eq!(names.len(), 1, "{names:?}");
-    assert_eq!(size(&directory.path().join(&names[0])), 10);
-    assert_eq!(store.load().unwrap(), Some(sample()));
-}
-
-/// A file moved aside that cannot be moved back after a failed rename: the
-/// save says where it now is, typed.
-#[cfg(unix)]
-#[test]
-fn a_file_moved_aside_that_cannot_go_back_is_named_in_the_failure() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("settings.json");
-    fs::write(&path, "{ not json").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
-    if fs::read(&path).is_ok() {
-        // Running as root: permissions do not apply, nothing to test.
-        assert!(
-            std::env::var_os("CI").is_none(),
-            "CI runs tests as a user that permissions apply to"
-        );
-        eprintln!("skipped: permissions do not apply to this user");
-        return;
-    }
-    // The rename fails, and leaves something at the path the file cannot
-    // be moved back over.
-    let mut store = SettingsFile::new(&path)
-        .with_link(no_link)
-        .with_replace(|_, path| {
-            fs::create_dir(path)?;
-            fs::write(path.join("in the way"), "")?;
-            Err(std::io::Error::other("disk full"))
-        });
-    assert!(store.load().is_err());
     let error = store.save(&sample()).unwrap_err();
-    let left = error.cause::<super::LeftAside>().expect("typed");
-    let message = left.to_string();
+    assert!(error.cause::<super::NotSetAside>().is_some());
+    let message = chain(&error);
+    assert!(message.contains(&path.display().to_string()), "{message}");
     assert!(
-        message.starts_with("disk full; the file it could not read is now only at "),
+        message.contains("permissions or move the file"),
         "{message}"
     );
-    let aside: Vec<_> = entries(directory.path())
-        .into_iter()
-        .filter(|name| name.starts_with("settings.json.unreadable-"))
-        .collect();
-    assert_eq!(aside.len(), 1, "{aside:?}");
-    assert!(message.contains(&aside[0]), "{message}");
+    assert_eq!(entries(directory.path()), ["settings.json"]);
+    assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+    store.save(&sample()).unwrap();
+    let backups = set_aside(directory.path());
+    assert_eq!(backups.len(), 1);
+    assert_eq!(backups[0].1, original);
+    assert_eq!(store.load().unwrap(), Some(sample()));
 }

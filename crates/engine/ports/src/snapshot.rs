@@ -2,9 +2,59 @@ use crate::{CalibrationPattern, DeviceBrightness, Error, OutputIssue, Revision, 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// What the user wants the LEDs to do.
+/// The selected mode restored by the Power button.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
+pub enum LightingMode {
+    ScreenSync,
+    #[default]
+    Effects,
+}
+
+/// Intent and observed power have separate lifetimes. An external live stream
+/// leaves both mode buttons unselected until the user requests a mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct LightingControl {
+    pub remembered: LightingMode,
+    pub external: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[cfg_attr(feature = "schema", schema(nullable = false))]
+    pub power: Option<crate::Power>,
+    pub busy: bool,
+    /// A requested mode is waiting for a prerequisite that can recover.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[cfg_attr(feature = "schema", schema(nullable = false))]
+    pub waiting: Option<WaitingFor>,
+}
+
+/// The required adapter holding up the current request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub enum WaitingFor {
+    Capture,
+    Output,
+}
+
+/// What the user wants the LEDs to do.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+    strum::VariantNames,
+)]
+#[strum(serialize_all = "snake_case", const_into_str)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum LightingTarget {
     #[default]
     Off,
@@ -20,11 +70,7 @@ impl LightingTarget {
     /// The serialized name, such as `screen_sync`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::ScreenSync => "screen_sync",
-            Self::Effects => "effects",
-        }
+        self.into_str()
     }
 }
 
@@ -32,14 +78,17 @@ impl LightingTarget {
 /// explains the present: why the target is not reached, why the lights may
 /// not be off, or that the saved settings do not validate. Screen sync runs
 /// on valid settings and has reached its target, so it carries none.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, strum::AsRefStr, strum::VariantNames)]
+#[strum(serialize_all = "snake_case")]
 pub enum SessionState {
-    /// No session; the output (if any was touched) is idle.
+    /// No running session. A selected mode may be waiting for prerequisites.
     Stopped { failure: Option<Error> },
     /// A session runs.
     ScreenSync,
-    /// The output was put in its own effects, without a session.
+    /// Display is delegated to the output's own effects.
     Effects { failure: Option<Error> },
+    /// The requested mode is waiting for the output to answer.
+    Unanswered { failure: Option<Error> },
     /// A session did not stop in time, or its source's release is
     /// unconfirmed. Only shutdown is accepted.
     Faulted(SessionPhase),
@@ -56,7 +105,9 @@ impl SessionState {
     #[must_use]
     pub fn failure(&self) -> Option<&Error> {
         match self {
-            Self::Stopped { failure } | Self::Effects { failure } => failure.as_ref(),
+            Self::Stopped { failure }
+            | Self::Effects { failure }
+            | Self::Unanswered { failure } => failure.as_ref(),
             Self::ScreenSync | Self::Faulted(_) => None,
         }
     }
@@ -73,15 +124,13 @@ impl SessionState {
     }
 }
 
-/// `stopped`, `screen_sync`, `effects` or `faulted while <phase>`; the
-/// failure is not part of it.
+/// `stopped`, `screen_sync`, `effects`, `unanswered` or `faulted while
+/// <phase>`; the failure is not part of it.
 impl fmt::Display for SessionState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Stopped { .. } => f.write_str("stopped"),
-            Self::ScreenSync => f.write_str("screen_sync"),
-            Self::Effects { .. } => f.write_str("effects"),
             Self::Faulted(phase) => write!(f, "faulted while {phase}"),
+            state => f.write_str(state.as_ref()),
         }
     }
 }
@@ -117,6 +166,7 @@ impl fmt::Display for SessionPhase {
 /// The runtime's observable state. Observers always see the latest value.
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
+    pub control: LightingControl,
     pub target: LightingTarget,
     pub session: SessionState,
     pub settings: Settings,
@@ -125,7 +175,9 @@ pub struct Snapshot {
     pub input: Option<Input>,
     /// What the output's device says about itself, from the output's own
     /// checks; republished with `input`. Empty while no session holds the
-    /// output.
+    /// output, but for [`OutputIssue::Unreachable`] while the lights are
+    /// waited for: a session's open they did not answer, or
+    /// [`SessionState::Unanswered`].
     pub device: DeviceReport,
     /// The calibration pattern shown, while the target is `ScreenSync`. Not
     /// persisted; while set, processing runs without smoothing (and without
@@ -136,12 +188,15 @@ pub struct Snapshot {
 }
 
 /// What a held output's device last said about itself
-/// ([`LedOutput::report`](crate::LedOutput::report)). Each part is `None`
-/// while the output cannot tell; Prysm reports them and changes none.
+/// ([`LedOutput::report`](crate::LedOutput::report)), or, while the lights
+/// are waited for (the session's open, or the request for `Off` or their own
+/// effects, that they did not answer), only that issue. Each part
+/// is `None` while the output cannot tell; Prysm reports them and changes
+/// none.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceReport {
-    /// Why the LEDs are not showing the session's colours; `None` while they
-    /// show them.
+    /// Why the LEDs are not showing the session's colours, or that they do
+    /// not answer the request for the target; `None` while all is well.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<OutputIssue>,
     /// The device's own brightness while it scales the session's colours
@@ -166,15 +221,11 @@ pub struct DeviceReport {
 pub struct Input {
     /// Frames per second over the last window, to one decimal.
     pub fps: f32,
-    /// At least one frame arrived in the last window. `false` right after a
-    /// session starts and while a source is quiet (no signal, no sender):
-    /// lighting is waiting for video. The session takes the output only at a
-    /// frame, and releases it to the device's own state (`IdleMode::Native`)
-    /// after a few seconds without one, so a waiting session does not hold
-    /// the LEDs.
-    pub receiving: bool,
-    /// Frames per second whose colours were written to the output over the
-    /// last window, to one decimal.
+    /// Whether frames arrived in the last window, and if not, why.
+    pub picture: Picture,
+    /// Frames per second whose colours were handed to the output over the
+    /// last window, to one decimal. An output may drop a frame it cannot
+    /// send now; the device issue says when the lights do not answer.
     #[serde(default)]
     pub sent_fps: f32,
     /// The mean time per frame along the path, in two parts, over the last
@@ -184,6 +235,35 @@ pub struct Input {
     /// Which step keeps Prysm from keeping up with its source, if one does.
     #[serde(default, skip_serializing_if = "Behind::is_none")]
     pub behind: Behind,
+}
+
+/// Whether frames arrive from the source. `arriving`: at least one frame in
+/// the last second. `quiet`: none, and no reason given (no signal, no
+/// sender); also right after lighting starts. `refused`: none, because the
+/// source's device refuses to share the video it shows; it ends when the
+/// video changes. Neither `quiet` nor `refused` is a failure: lighting waits
+/// for video, and releases the lights after 3 s without it.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Picture {
+    /// At least one frame arrived in the window.
+    Arriving,
+    /// No frame, and no reason given (no signal, no sender); also right
+    /// after a session starts. Lighting waits for video.
+    #[default]
+    Quiet,
+    /// No frame: the source's device refuses to share the video it shows;
+    /// frames come again once it shares it. Lighting waits for video, as
+    /// while quiet.
+    Refused,
+}
+
+impl Picture {
+    #[must_use]
+    pub fn is_arriving(self) -> bool {
+        self == Self::Arriving
+    }
 }
 
 /// What makes Prysm fall behind its source: the frame loop has had no slack
@@ -210,17 +290,23 @@ impl Behind {
     }
 }
 
-/// Mean milliseconds per frame along the path, measured by Prysm, in two
-/// parts: from the source capturing it to Prysm receiving it, and from Prysm
-/// receiving it to the output write for its colours returning.
+/// Mean milliseconds per frame along the path, measured by Prysm (not from
+/// the screen, and not including the lights' own delay), in two parts.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Latency {
-    /// Capture to received; present only when every frame flushed in the
-    /// window carried a capture time (video devices on macOS, and on Linux
-    /// with monotonic stamps).
+    /// From the source capturing the frame to Prysm receiving it; present
+    /// only when every frame flushed in the window carried a capture time
+    /// (video devices on macOS, and on Linux with monotonic stamps).
+    #[cfg_attr(
+        feature = "schema",
+        schema(minimum = 0, example = 88.0, nullable = false)
+    )]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_ms: Option<f32>,
-    /// Received to written.
+    /// From Prysm receiving the frame to the output write for its colours
+    /// returning.
+    #[cfg_attr(feature = "schema", schema(minimum = 0, example = 2.4))]
     pub output_ms: f32,
 }
 
@@ -235,6 +321,15 @@ mod tests {
         }
     }
 
+    /// A wait for the lights reaches no target, also the one it waits for.
+    #[test]
+    fn lights_that_do_not_answer_reach_no_target() {
+        let waiting = SessionState::Unanswered { failure: None };
+        for target in LightingTarget::ALL {
+            assert!(!waiting.reached(target), "{target:?}");
+        }
+    }
+
     #[test]
     fn session_states_display_their_phase() {
         assert_eq!(SessionState::default().to_string(), "stopped");
@@ -245,6 +340,10 @@ mod tests {
             }
             .to_string(),
             "effects"
+        );
+        assert_eq!(
+            SessionState::Unanswered { failure: None }.to_string(),
+            "unanswered"
         );
         assert_eq!(
             SessionState::Faulted(SessionPhase::ClosingSource).to_string(),

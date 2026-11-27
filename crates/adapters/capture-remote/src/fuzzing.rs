@@ -6,8 +6,8 @@
 use crate::offer::Offer;
 use crate::request::RemoteSettings;
 use crate::wire::{
-    self, Encoding, FromReceiver, FromSender, KEYFRAME, MAX_HEIGHT, MAX_PAYLOAD_BYTES,
-    MAX_REASON_BYTES, MAX_WIDTH, Refusal, RefusalCause, ToReceiver, ToSender, at,
+    self, Encoding, FLAG_BYTE, FromReceiver, FromSender, KEYFRAME, MAX_HEIGHT, MAX_PAYLOAD_BYTES,
+    MAX_REASON_BYTES, MAX_WIDTH, Refusal, RefusalCause, ToSender,
 };
 use prysm_ports::StreamEncoding;
 
@@ -47,11 +47,11 @@ pub fn frame(data: &[u8]) {
         .expect("an accepted header encodes");
     let mut expected = [0; wire::HEADER_LEN];
     expected.copy_from_slice(&message[..wire::HEADER_LEN]);
-    expected[at::FLAGS] = if header.keyframe { KEYFRAME } else { 0 };
+    expected[FLAG_BYTE] = if header.keyframe { KEYFRAME } else { 0 };
     assert_eq!(encoded, expected, "{header:?}");
     assert_eq!(
         header.keyframe,
-        encoding == Encoding::H264 && message[at::FLAGS] & KEYFRAME != 0
+        encoding == Encoding::H264 && message[FLAG_BYTE] & KEYFRAME != 0
     );
 }
 
@@ -62,17 +62,16 @@ pub fn from_receiver(text: &str) {
     let Ok(message) = wire::decode_from_receiver(text) else {
         return;
     };
+    let text = serde_json::to_string(&message).unwrap();
     let sent = match &message {
         FromReceiver::Request(request) => {
-            if let Ok(settings) = RemoteSettings::try_from(request.clone()) {
-                assert_eq!(settings.validate(), Ok(()));
-                assert!(settings.width <= MAX_WIDTH && settings.height <= MAX_HEIGHT);
-                assert_eq!(
-                    RemoteSettings::try_from(wire::RequestMessage::from(settings)),
-                    Ok(settings)
-                );
-            }
-            ToSender::Request(request.clone())
+            assert_eq!(wire::decode_from_receiver(&text), Ok(message.clone()));
+            let Ok(settings) = RemoteSettings::try_from(request.clone()) else {
+                return;
+            };
+            assert_eq!(settings.validate(), Ok(()));
+            assert!(settings.width <= MAX_WIDTH && settings.height <= MAX_HEIGHT);
+            ToSender::Request(settings)
         }
         FromReceiver::Keyframe => ToSender::Keyframe,
         FromReceiver::Unknown => return,
@@ -101,7 +100,7 @@ pub fn from_sender(text: &str) {
         return;
     };
     assert!(refusal.reason.len() <= MAX_REASON_BYTES);
-    let sent = wire::encode_to_receiver(&ToReceiver::Refused(refusal.clone()));
+    let sent = wire::encode_refusal(refusal.clone());
     assert_eq!(wire::decode_from_sender(&sent), Ok(message));
 }
 

@@ -26,8 +26,8 @@ checks that every 16x16 block shows its own picture, not one up to two before
 or after, restarts the session half way (as on a keyframe request), and
 prints timings and sizes. With --prysm, then streams the same pictures to that
 Prysm for --frames more frames, at the default bitrate; its remote capture must
-request this encoding, size and rate. A sending TV worker is replaced and stops
-until it restarts. Exit 0 when every check passed.";
+request this encoding, size and rate. A sending TV worker is replaced: it fails,
+and the TV asks to try again. Exit 0 when every check passed.";
 
 #[derive(Debug, Clone, Parser)]
 #[command(after_help = AFTER_HELP)]
@@ -90,7 +90,7 @@ pub fn main(options: Options) -> ExitCode {
     match run(options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            println!("check-encoder: FAILED: {error}");
+            eprintln!("check-encoder: FAILED: {error}");
             ExitCode::FAILURE
         }
     }
@@ -211,7 +211,7 @@ fn run(options: Options) -> Result<(), String> {
         fps,
         bitrate,
     };
-    println!(
+    eprintln!(
         "check-encoder: encoder={} {width}x{height} fps={fps} bitrate={bitrate} frames={frames}",
         backend.name()
     );
@@ -261,7 +261,7 @@ fn run(options: Options) -> Result<(), String> {
             .map_err(|error| format!("frame {index}: {error} (keyframe: {})", picture.keyframe))?;
         worst = worst.max(error);
         if index < 3 || picture.keyframe {
-            println!(
+            eprintln!(
                 "check-encoder: frame={index} keyframe={} bytes={} encode_us={} error={error:.2}",
                 picture.keyframe,
                 picture.data.len(),
@@ -277,7 +277,7 @@ fn run(options: Options) -> Result<(), String> {
         || "n/a".to_owned(),
         |(before, after)| format!("{:.1}", (after - before) as f64 / seconds),
     );
-    println!(
+    eprintln!(
         "check-encoder: ok encoder={} frames={frames} encoded={encoded} skipped={skipped} \
          keyframes={keyframes} bytes={bytes} mbit_s={:.2} encode_ms_mean={:.2} \
          encode_ms_max={:.2} worst_error={worst:.2} cpu_percent={cpu} wall_ms={}",
@@ -289,7 +289,7 @@ fn run(options: Options) -> Result<(), String> {
     );
     let started = Instant::now();
     drop(encoder);
-    println!(
+    eprintln!(
         "check-encoder: released in {} ms",
         started.elapsed().as_millis()
     );
@@ -342,7 +342,7 @@ fn stream(
             .map_err(|error| format!("frame {index}: {}", chain(&error)))?;
         std::thread::sleep(interval.saturating_sub(tick.elapsed()));
     }
-    println!("check-encoder: streamed {frames} frames to {prysm}");
+    eprintln!("check-encoder: streamed {frames} frames to {prysm}");
     Ok(())
 }
 
@@ -378,7 +378,6 @@ mod tests {
 
     #[test]
     fn only_the_own_picture_passes_the_comparison() {
-        // Partial blocks at the right and bottom edges, and wraparound below 2.
         let (width, height) = (40, 24);
         let pixels = |index| picture(width, height, index).as_slice().to_vec();
         for index in [0, 1, 5, 9] {
@@ -388,7 +387,6 @@ mod tests {
             let error = compare(&pixels(wrong), width, height, 10).unwrap_err();
             assert!(error.contains("shows picture"), "{wrong}: {error}");
         }
-        // Torn: the bottom block row and its chroma come from picture 11.
         let (mut torn, next) = (pixels(10), pixels(11));
         let w = width as usize;
         let luma = w * height as usize;
@@ -396,7 +394,6 @@ mod tests {
         torn[luma + w * 8..].copy_from_slice(&next[luma + w * 8..]);
         let error = compare(&torn, width, height, 10).unwrap_err();
         assert!(error.contains("(0, 16)"), "{error}");
-        // Every level off by more than the tolerance, nearest still its own.
         let shifted: Vec<u8> = pixels(10).iter().map(|&value| value + 9).collect();
         let error = compare(&shifted, width, height, 10).unwrap_err();
         assert!(error.contains("away from its colour"), "{error}");

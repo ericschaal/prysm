@@ -59,7 +59,6 @@ const settled = () => act(async () => sleep(0));
 
 test('a preset is its target where a mode takes it, else the smallest 16:9 mode that covers it at its rate', () => {
   const span = (min, max, step = 1) => ({ min, max, step });
-  // Ranges that take the targets: the targets, all three.
   assert.deepEqual(offered([anyMode(1920, 1080, 60)]), [
     'balanced 640×360@30',
     'smooth 640×360@60',
@@ -118,11 +117,30 @@ test('a preset is its target where a mode takes it, else the smallest 16:9 mode 
     'efficient 320×240@30',
   ]);
   assert.deepEqual(offered([]), []);
-  // The TV's video chip streams up to 30 fps: no Smooth.
   assert.deepEqual(offered([anyMode(1920, 1080, 30)]), [
     'balanced 640×360@30',
     'efficient 320×180@30',
   ]);
+});
+
+test('equal-area alternatives keep source order and a later exact match wins', () => {
+  const target = picturePresets.balanced;
+  const first = fixedMode(800, 600, 30);
+  const second = fixedMode(960, 500, 30);
+  assert.deepEqual(resolve([first, second], target), {
+    width: 800,
+    height: 600,
+    fps: 30,
+  });
+  assert.deepEqual(resolve([second, first], target), {
+    width: 960,
+    height: 500,
+    fps: 30,
+  });
+  assert.equal(
+    resolve([first, second, fixedMode(640, 360, 30)], target),
+    target,
+  );
 });
 
 test('a device’s own modes decide the presets and what they set; a deliverable saved choice is left alone', async () => {
@@ -218,7 +236,6 @@ test('a saved size and rate the device cannot deliver moves to Balanced, and the
       'This device doesn’t offer 640 × 360 at 60 fps. Balanced is chosen.',
     );
     assert.equal($('.picture-choice > .field-note').dataset.said, 'true');
-    // An unsaved change, saved the usual way.
     await submit(form('Video source'));
     assert.deepEqual(portal.fixture.snapshot().settings.capture, {
       kind: 'device',
@@ -263,7 +280,6 @@ test('the devices present are rows to tick; a saved one not found is in the type
     await settled();
     // Looked for as the editor opened, nothing pressed.
     assert.deepEqual(devices(), [
-      // Named devices without their paths; the missing one typed, last.
       ['USB Video', undefined, false],
       [device, 'Not plugged in', true],
     ]);
@@ -492,7 +508,6 @@ test('a lookup that fails says so, asks nothing by itself, and Try again asks on
     await settled();
     assert.equal(line(), 'Prysm didn’t say what this source can do. Try again');
     assert.equal(radio('Balanced').disabled, true);
-    // Neither time, nor coming back to the page, asks again.
     const asked = modes.calls.length;
     t.mock.timers.enable({ apis: ['setTimeout'] });
     await act(async () => t.mock.timers.tick(60_000));
@@ -708,7 +723,6 @@ test('a capture-only TV that has not connected locks the rows on the saved choic
     assert.deepEqual(encodings(), ['h264_hardware', 'h264_software']);
     assert(field('capture.encoding').closest('[hidden]'), 'under Advanced');
 
-    // Another encoding: its own presets, from the answer already given.
     const asked = modes.calls.length;
     await edit(field('capture.encoding'), 'h264_software');
     assert.deepEqual(
@@ -803,7 +817,6 @@ test('a saved device that is not found keeps the name this browser last saw for 
     await settled();
     return portal;
   };
-  // Seen once, plugged in.
   let portal = await visit([card], known(anyMode(1920, 1080, 60)));
   await portal.unmount();
   // Unplugged on the next visit: typed, with its name and why beneath, in
@@ -1060,7 +1073,6 @@ test('Look again sits on the devices heading, outside the group name', async () 
       $('legend', group),
       'Look again sits in the legend',
     );
-    // Nothing to say under the rows: no line.
     assert.equal($('.device-rows > .help').textContent, '');
   } finally {
     await portal.unmount();

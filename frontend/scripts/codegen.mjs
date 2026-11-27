@@ -1,6 +1,12 @@
+import { variantTags } from './variant-tags.mjs';
+import { acceptanceBindings } from './acceptance-bindings.mjs';
 import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applicationReading } from './application-reading.mjs';
+import { lunaReading } from './luna-reading.mjs';
+import Ajv2020 from 'ajv/dist/2020.js';
+import standaloneCode from 'ajv/dist/standalone/index.js';
 import openapiTS, { astToString } from 'openapi-typescript';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,6 +44,43 @@ export async function updateGeneratedFiles(directory, files, check) {
   }
 }
 
+async function renderTypes(document) {
+  const types = await openapiTS(document, {
+    rootTypes: true,
+    rootTypesNoSchemaPrefix: true,
+    rootTypesKeepCasing: true,
+    defaultNonNullable: false,
+  });
+  return banner + astToString(types);
+}
+
+/** Compile runtime checks and their TypeScript predicates from the same schema. */
+async function renderReader(name, document, guards) {
+  const ajv = new Ajv2020({
+    strict: false,
+    strictNumbers: true,
+    validateFormats: false,
+    messages: false,
+    inlineRefs: false,
+    code: { source: true, lines: true, esm: true },
+  });
+  ajv.addSchema(document, name);
+  const references = {};
+  const declarations = [];
+  for (const [guard, schema] of Object.entries(guards)) {
+    references[guard] = `${name}#/components/schemas/${schema}`;
+    const type = `import('./${name}-reading.generated').${schema}`;
+    declarations.push(
+      `export function ${guard}(value: unknown): value is ${type};`,
+    );
+  }
+  return {
+    [`${name}-reading.generated.ts`]: await renderTypes(document),
+    [`${name}.validate.js`]: banner + standaloneCode(ajv, references),
+    [`${name}.validate.d.ts`]: banner + declarations.join('\n') + '\n',
+  };
+}
+
 /** Mechanically translate named documents; no adapter names or type mappings. */
 export async function renderDocuments(documents) {
   const files = {
@@ -50,19 +93,18 @@ export async function renderDocuments(documents) {
     if (!/^[a-z][a-z0-9-]*$/.test(name))
       throw new Error(`Invalid contract module name: ${name}`);
     files[`${name}.openapi.json`] = JSON.stringify(document, null, 2) + '\n';
-    files[`${name}.generated.ts`] =
-      banner +
-      astToString(
-        await openapiTS(document, {
-          rootTypes: true,
-          rootTypesNoSchemaPrefix: true,
-          rootTypesKeepCasing: true,
-          // Settings are request bodies: a field serde defaults may be omitted.
-          defaultNonNullable: false,
-        }),
-      );
+    files[`${name}.generated.ts`] = await renderTypes(document);
   }
   return files;
+}
+
+function boundedFields({ properties }) {
+  const bounds = {};
+  for (const [name, { minimum, maximum }] of Object.entries(properties)) {
+    if (minimum !== undefined && maximum !== undefined)
+      bounds[name] = { min: minimum, max: maximum };
+  }
+  return bounds;
 }
 
 /**
@@ -93,7 +135,74 @@ async function generate(input, check) {
     await readFile(input, 'utf8'),
   );
   const files = await renderDocuments(documents);
-  files['constants.generated.ts'] = renderConstants(constants);
+  Object.assign(
+    files,
+    await renderReader(
+      'application',
+      applicationReading(documents.application),
+      {
+        isApplicationStateReading: 'State',
+        isLightingFailureReading: 'LightingFailureReading',
+        isFailure: 'Failure',
+        isFutureFailure: 'FutureFailure',
+        isSettingsReplaced: 'SettingsReplaced',
+        isCandidate: 'Candidate',
+        isModes: 'Modes',
+        isFutureModes: 'FutureModes',
+        isPreviewEvent: 'PreviewEvent',
+        isColorsEvent: 'ColorsEvent',
+      },
+    ),
+    await renderReader('luna', lunaReading(documents.luna), {
+      isLunaStateReading: 'State',
+      isLunaStateReply: 'StateReply',
+      isLunaDoneReply: 'DoneReply',
+      isLunaErrorReply: 'ErrorReply',
+    }),
+  );
+  const app = documents.application.components.schemas;
+  const luna = documents.luna.components.schemas;
+  const sessions = variantTags(app.Session, 'state');
+  files['constants.generated.ts'] = renderConstants({
+    ...constants,
+    processingBounds: boundedFields(app.Processing),
+    styleBounds: boundedFields(app.StyleValues),
+    calibrationLimits: {
+      count: app.Processing.properties.calibrations.maxItems,
+      name: app.Calibration.properties.name.maxLength,
+    },
+    sessions,
+    previewEventTypes: variantTags(app.PreviewEvent, 'type'),
+    colorsEventTypes: variantTags(app.ColorsEvent, 'type'),
+    lightingTargets: app.LightingTarget.enum,
+    failureSections: app.FailureSection.enum,
+    pictures: app.Picture.enum,
+    slimLinkStates: variantTags(luna.SlimLink, 'state'),
+    errorKinds: luna.ErrorKind.enum,
+    powers: luna.Power.enum,
+    videos: luna.Video.enum,
+    fixes: luna.Fix.enum,
+  });
+  const wireEnums = {
+    Target: app.LightingTarget.enum,
+    Picture: app.Picture.enum,
+    SessionState: sessions,
+    Encoding: luna.StreamEncoding.enum,
+    Power: luna.Power.enum,
+    Video: luna.Video.enum,
+    Flavour: variantTags(luna.Package, 'flavor'),
+  };
+  const bindingsPath = resolve(
+    root,
+    '../scripts/acceptance/prysm_acceptance/wire_generated.py',
+  );
+  const definitions = acceptanceBindings(app, wireEnums);
+  if (check) {
+    if (definitions !== (await readFile(bindingsPath, 'utf8')))
+      throw new Error(
+        'Generated Python contracts differ. Run cargo xtask codegen.',
+      );
+  } else await writeFile(bindingsPath, definitions);
   files['fixtures.json'] = JSON.stringify(fixtures, null, 2) + '\n';
   await updateGeneratedFiles(
     resolve(root, 'packages/contracts/generated'),

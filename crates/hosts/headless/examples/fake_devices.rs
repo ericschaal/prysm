@@ -12,7 +12,7 @@
 //! `POST /api/v1/capture/modes` answers them; any other device is unknown, as
 //! an unplugged device is. Opening one fails: the tests do not capture.
 use prysm_capture_device::DeviceSettings;
-use prysm_host::{Program, assets};
+use prysm_host::Program;
 use prysm_ports::{
     Candidate, Error, FrameSource, Mode, Modes, Result, SourceFactory, ValidationError,
 };
@@ -63,7 +63,9 @@ impl SourceFactory for FakeDevices {
         self.0
             .iter()
             .find(|device| device.device == settings.device)
-            .map_or(Modes::Unknown, |device| Modes::Known(device.modes.clone()))
+            .map_or(Modes::Unknown, |device| Modes::Known {
+                modes: device.modes.clone(),
+            })
     }
 }
 
@@ -78,13 +80,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let (adapters, tv_stream) = prysm_host::desktop_adapters(devices);
-    prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
-        prysm
-            .surface(host.status())
-            .surface(host.start())
-            .surface(host.portal(assets::HEADLESS)?.capture_stream(tv_stream))
-            .run(host.signals())
-            .await
+    prysm_host::main(PROGRAM, devices, |host, prysm| async move {
+        prysm.run(host.signals()).await
     })
 }

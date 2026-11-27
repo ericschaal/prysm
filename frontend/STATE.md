@@ -1,36 +1,21 @@
 # Frontend state and explicit wiring
 
 Each frontend host creates an `ApplicationRuntime` with one injected
-`ApplicationClient` and one Redux Toolkit store. The Rust engine is
-authoritative; the store holds the connection and the latest state it sent.
-RTK Query is not used.
+`ApplicationClient`. The runtime publishes immutable connection snapshots for
+React through `useSyncExternalStore`. Rust owns the lighting state.
 
 | File | Responsibility |
 | --- | --- |
 | [Client port](packages/application-client/index.ts) | Generated wire types, `observe`/`setTarget`/`replaceSettings`/`tryProcessing`, `ApplicationError` |
-| [HTTP client](packages/application-client/http.ts) | Fetch transport and SSE decoding for the [portal API](../crates/surfaces/web-portal/HTTP-CONTRACT.md); `httpPreviewClient` for the preview stream |
-| [Slice](packages/application-state/slice.ts) | Connection status, latest state |
-| [Commands](packages/application-state/commands.ts) | Typed thunks; section replacement against the observed revision |
-| [Observation listener](packages/application-state/observation.ts) | Stream lifetime and reconnect |
-| [Runtime assembly](packages/application-state/index.ts) | Store, injected client, listener, observation leases |
+| [HTTP client](packages/application-client/http.ts) | Fetch transport and SSE decoding for the [portal API](../crates/surfaces/web-portal/HTTP-CONTRACT.md); `httpPortalClient` for the preview stream |
+| [Runtime](packages/application-state/index.ts) | Connection snapshots, observation leases, reconnect, and revision-checked commands |
 | [Connection hook](packages/application-react/index.tsx) | React binding (`useSyncExternalStore`) of the portal and the TV app; `WebPortal` and the TV's `usePortal` each hold an observation lease |
-
-```mermaid
-flowchart LR
-    UI -->|dispatch command thunk| Store[RTK store]
-    Store -->|thunk extra| Client[ApplicationClient]
-    Client -->|whole states| Listener[Observation listener]
-    Listener -->|snapshotReceived| Slice
-    Slice -->|selectors| UI
-```
 
 ## Commands
 
 ```ts
-await application.store.dispatch(application.commands.setTarget('screen_sync'));
-const revision = await application.store.dispatch(
-  application.commands.configureOutput(snapshot.revision, wled),
-);
+await application.commands.setTarget('screen_sync');
+const revision = await application.commands.configureOutput(snapshot.revision, wled);
 ```
 
 A command resolves when the engine has finished it and rejects with the
@@ -54,16 +39,14 @@ A host may pass a state the page came with
 `connected` with it, so the first render shows it, and it stays until the
 stream's first state replaces it. So the portal starts connected before the
 stream opens, and the state shown may be a moment old until then; commands
-are guarded by revision as always. The first lease dispatches
-`observationRequested`; the listener opens the stream and dispatches
-`snapshotReceived` for the initial and every later state.
-Each state is complete, so there are no cursors or resynchronization. On loss
-the listener reconnects with backoff (250 ms up to 5 s); `forbidden` (the portal
-refuses this page's origin) and the final lease release stop it. Every connection has a generation, so a stream
-acquired after release is closed without touching newer state. Releasing
+are guarded by revision as always. The first lease opens observation. Each state replaces the snapshot. On loss
+the runtime retains the last state and reconnects after a delay (250 ms up to
+5 s) for an unavailable portal. Other failures stop the stream. The final
+release aborts observation and clears the snapshot. A stream acquired after
+release is closed immediately. Releasing
 observation never commands lighting.
 
-## Outside Redux
+## Local UI state
 
 Form drafts, field errors, focus, clients, abort signals and preview frames
 stay out of the store (Home's preview and the video source's status hold their own `PreviewClient` streams); each form shows the result of its own commands. The HTTP

@@ -23,8 +23,14 @@ export function fakeApplicationPort<C, O>(initial: {
   output?: O;
   revision?: number;
 }) {
+  const initialControl = {
+    remembered: 'effects' as const,
+    busy: false,
+    external: false,
+  };
   let snapshot: ApplicationSnapshot<C, O> = {
     version: '1.0.0',
+    control: initialControl,
     target: 'off',
     session: { state: 'stopped' },
     device: {},
@@ -51,6 +57,15 @@ export function fakeApplicationPort<C, O>(initial: {
   let trialFailure: Failure | null = null;
   const trials = { inFlight: 0, mostInFlight: 0 };
   function publish(change: Partial<ApplicationSnapshot<C, O>>) {
+    if (change.target === 'screen_sync' || change.target === 'effects')
+      snapshot = {
+        ...snapshot,
+        control: {
+          ...(snapshot.control ?? initialControl),
+          remembered: change.target,
+          external: false,
+        },
+      };
     snapshot = { ...snapshot, ...change };
     for (const changed of subscribers) changed(snapshot);
     for (const watcher of watchers) watcher(snapshot);
@@ -137,13 +152,11 @@ export function fakeApplicationPort<C, O>(initial: {
       if (target !== 'off' && !output) missing = 'output';
       else if (target === 'screen_sync' && !capture) missing = 'capture';
       if (missing) {
-        // As the engine: the reply, and the session's failure.
         const failure = {
           kind: 'invalid',
           field: missing,
           message: 'not configured',
         } as const;
-        // A start of screen sync from the effects leaves them on.
         const fromEffects =
           target === 'screen_sync' && snapshot.session.state === 'effects';
         publish({
@@ -157,6 +170,14 @@ export function fakeApplicationPort<C, O>(initial: {
       if (target !== 'screen_sync') clearCalibration();
       publish({
         target,
+        control: {
+          remembered:
+            target === 'off'
+              ? (snapshot.control ?? initialControl).remembered
+              : target,
+          external: false,
+          busy: false,
+        },
         session: { state: target === 'off' ? 'stopped' : target },
       });
     },
@@ -166,7 +187,6 @@ export function fakeApplicationPort<C, O>(initial: {
           ? `calibration:${calibration.pattern}${calibration.uncorrected ? ':uncorrected' : ''}`
           : 'calibration:end',
       );
-      // As a TV on Wi-Fi: the answer takes a while.
       while (patternGate) await patternGate;
       failIfScripted();
       if (!calibration) {

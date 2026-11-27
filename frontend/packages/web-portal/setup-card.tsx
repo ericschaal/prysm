@@ -1,17 +1,19 @@
 import { useId, type ReactNode } from 'react';
-import type {
-  DiscoveryClient,
-  FailureSection,
+import {
+  REFUSED_VIDEO,
+  type FailureSection,
+  type Input,
+  type Picture,
 } from '@prysm/application-client';
-import type { Behind } from '@prysm/contracts/application';
 import {
   ledCount,
   unbroken,
   type AdapterFact,
   type LedEdges,
   type Transport,
+  type SetupPart,
 } from './adapters';
-import { useDeviceName, type SetupPart } from './device-name';
+import { useDeviceName } from './device-name';
 import { LedDrawing } from './led-drawing';
 import { LightsIcon, PrysmIcon, VideoIcon } from './path-icons';
 import { PreviewDrawing, type PreviewSource } from './preview';
@@ -25,21 +27,20 @@ import { RowLink } from './rows';
  */
 export type PathState =
   | { kind: 'off' }
+  | { kind: 'flowing'; input: Input }
   | {
-      kind: 'flowing';
-      /** Frames arriving per second (each is sent on before the next). */
-      fps: number;
-      /**
-       * Mean ms per frame on each link: capture to received (only when the
-       * source stamps capture times), received to colours sent.
-       */
-      latency?: { captureMs?: number; outputMs: number };
-      /** The step that keeps Prysm from keeping up, while one does. */
-      behind?: Behind;
+      kind: 'waiting';
+      /** Why no picture: none given, or the TV refuses to share it. */
+      picture: Exclude<Picture, 'arriving'>;
     }
-  | { kind: 'waiting' }
   | { kind: 'effects' }
   | { kind: 'failed'; at: FailureSection | null };
+
+/** The Video source fact while no picture arrives, by why. */
+const waitingFact: Record<Exclude<Picture, 'arriving'>, string> = {
+  quiet: 'Waiting for picture',
+  refused: REFUSED_VIDEO,
+};
 
 /** One stop on the path: its role (for screen readers), name and one fact. */
 function Stop({
@@ -56,15 +57,9 @@ function Stop({
   icon: ReactNode;
   name: string;
   fact?: string;
-  /** A measured figure after the fact; the fact gives way to it, never the reverse. */
   figure?: { text: string; about: string };
-  /**
-   * The figure takes the fact's place on the line while it shows; the fact
-   * stays in the stop's tooltip and screen-reader text.
-   */
   instead?: boolean;
   failed: boolean;
-  /** Working, but this stop keeps Prysm from keeping up (shown in orange). */
   behind?: boolean;
 }) {
   const tooltip = instead ? fact : undefined;
@@ -124,10 +119,8 @@ function frameRate(fps: number) {
   return `${Math.abs(fps - whole) < 0.05 ? whole : fps.toFixed(1)} fps`;
 }
 
-/** Whether a link's light runs, stands still or shows a break. */
 type LinkState = 'still' | 'flowing' | 'failed';
 
-/** A link between two stops: a hairline, its light, and what it carries. */
 function Link({
   state,
   transport,
@@ -136,11 +129,8 @@ function Link({
   behind = false,
 }: {
   state: LinkState;
-  /** Working, but this link keeps Prysm from keeping up (shown in orange). */
   behind?: boolean;
-  /** Above the hairline: how the link carries its data. */
   transport?: Transport;
-  /** Below it: the live numbers, while frames flow. */
   numbers?: string;
   /** What the numbers measure, for a tooltip and screen readers. */
   about?: string;
@@ -188,19 +178,6 @@ const transportNames: Record<Transport, [name: string, about: string]> = {
   ddp: ['DDP', 'DDP over UDP'],
 };
 
-/** A section's name, found by discovery when it can be. */
-function Named({
-  part,
-  discovery,
-  children,
-}: {
-  part: SetupPart;
-  discovery: DiscoveryClient | null;
-  children: (name: string) => ReactNode;
-}) {
-  return children(useDeviceName(discovery, part));
-}
-
 /** The facts as one quiet line: `640 × 480 · 30 fps`. */
 const factLine = (facts: AdapterFact[], skip: string[] = []) =>
   facts
@@ -208,7 +185,6 @@ const factLine = (facts: AdapterFact[], skip: string[] = []) =>
     .map((fact) => fact.value)
     .join(' · ') || undefined;
 
-/** The drawing in words. */
 const ledCaption = (edges: LedEdges) =>
   `Seen from the front: ${edges.top} LEDs along the top, ${edges.right} on the right, ${edges.bottom} along the bottom and ${edges.left} on the left, ${ledCount(edges)} in all.`;
 
@@ -223,9 +199,6 @@ const ledCaption = (edges: LedEdges) =>
 export function SetupCard({
   capture,
   output,
-  edges,
-  transports,
-  discovery,
   path,
   calibration,
   preview,
@@ -233,10 +206,6 @@ export function SetupCard({
 }: {
   capture: SetupPart;
   output: SetupPart;
-  edges?: LedEdges;
-  /** How each link carries its data, when the adapter names it. */
-  transports: { capture?: Transport; output?: Transport };
-  discovery: DiscoveryClient | null;
   path: PathState;
   /** The active calibration's name, or `null` for no correction. */
   calibration: string | null;
@@ -245,8 +214,10 @@ export function SetupCard({
   openSettings: () => void;
 }) {
   const headingId = useId();
+  const { edges } = output;
+  const captureName = useDeviceName(capture);
+  const outputName = useDeviceName(output);
   const failedAt = path.kind === 'failed' ? path.at : undefined;
-  // Which links are lit, still or broken.
   let into: LinkState = 'still';
   let out: LinkState = 'still';
   if (path.kind === 'flowing') into = out = 'flowing';
@@ -255,29 +226,33 @@ export function SetupCard({
     into = failedAt === 'output' ? 'still' : 'failed';
     out = failedAt === 'capture' ? 'still' : 'failed';
   }
-  // The rate once, on the video stop; each link only its own delay.
-  const flowing = path.kind === 'flowing' ? path : null;
+  const flowing = path.kind === 'flowing' ? path.input : null;
   // The rate counts the frames Prysm takes and sends: it is Prysm's figure.
   // What keeps Prysm from keeping up, if anything: working, so orange, not
   // red. A failure shows no flowing path, so red always wins.
   const behind = flowing?.behind;
+  const unnamed =
+    behind !== undefined && behind !== 'processing' && behind !== 'output';
+  let rateDescription =
+    'frames per second Prysm processes and sends, over the last second';
+  if (behind === 'processing') {
+    rateDescription =
+      'Prysm can’t keep up: processing each frame takes longer than the time between frames, so some are skipped. Frames per second Prysm processes and sends, over the last second';
+  } else if (unnamed) {
+    rateDescription =
+      'Prysm can’t keep up. Frames per second Prysm processes and sends, over the last second';
+  }
   const processed = flowing
-    ? {
-        text: frameRate(flowing.fps),
-        about:
-          behind === 'processing'
-            ? 'Prysm can’t keep up: processing each frame takes longer than the time between frames, so some are skipped. Frames per second Prysm processes and sends, over the last second'
-            : 'frames per second Prysm processes and sends, over the last second',
-      }
+    ? { text: frameRate(flowing.fps), about: rateDescription }
     : undefined;
   const total = edges ? ledCount(edges) : undefined;
   // How far behind the picture the lights are: the two links added, only
   // when the source says when it captured (otherwise the start is unknown).
   const parts = flowing?.latency;
   const lagMs =
-    parts?.captureMs === undefined
+    parts?.capture_ms === undefined
       ? undefined
-      : parts.captureMs + parts.outputMs;
+      : parts.capture_ms + parts.output_ms;
   const lag =
     lagMs === undefined
       ? undefined
@@ -295,28 +270,23 @@ export function SetupCard({
         Your setup
       </h2>
       <ol className="path">
-        <Named part={capture} discovery={discovery}>
-          {(name) => (
-            <Stop
-              title="Video source"
-              icon={<VideoIcon />}
-              name={name}
-              // Waiting replaces the fact line; it never adds one.
-              fact={
-                path.kind === 'waiting'
-                  ? 'Waiting for picture'
-                  : factLine(capture.facts, ['Rate', 'Menus'])
-              }
-              failed={failedAt === 'capture'}
-            />
-          )}
-        </Named>
+        <Stop
+          title="Video source"
+          icon={<VideoIcon />}
+          name={captureName}
+          fact={
+            path.kind === 'waiting'
+              ? waitingFact[path.picture]
+              : factLine(capture.facts, ['Rate', 'Menus'])
+          }
+          failed={failedAt === 'capture'}
+        />
         <Link
           state={into}
-          transport={transports.capture}
-          numbers={delay(flowing?.latency?.captureMs)}
+          transport={capture.transport}
+          numbers={delay(flowing?.latency?.capture_ms)}
           about={
-            flowing?.latency?.captureMs === undefined
+            flowing?.latency?.capture_ms === undefined
               ? undefined
               : 'adds the time from the camera capturing a frame to Prysm receiving it, mean over the last second'
           }
@@ -325,17 +295,15 @@ export function SetupCard({
           title="Processing"
           icon={<PrysmIcon />}
           name="Prysm"
-          // Only a positive fact: the active calibration. Nothing when none.
-          // The calibration by its name: the fps figure beside it must not cut it.
           fact={calibration ?? undefined}
           figure={processed}
           failed={path.kind === 'failed' && failedAt === null}
-          behind={behind === 'processing'}
+          behind={behind === 'processing' || unnamed}
         />
         <Link
           state={out}
-          transport={transports.output}
-          numbers={delay(flowing?.latency?.outputMs)}
+          transport={output.transport}
+          numbers={delay(flowing?.latency?.output_ms)}
           about={
             flowing?.latency
               ? `${
@@ -347,21 +315,15 @@ export function SetupCard({
           }
           behind={behind === 'output'}
         />
-        <Named part={output} discovery={discovery}>
-          {(name) => (
-            <Stop
-              title="Lights"
-              icon={<LightsIcon />}
-              name={name}
-              fact={
-                total === undefined ? factLine(output.facts) : `${total} LEDs`
-              }
-              figure={lag}
-              instead
-              failed={failedAt === 'output'}
-            />
-          )}
-        </Named>
+        <Stop
+          title="Lights"
+          icon={<LightsIcon />}
+          name={outputName}
+          fact={total === undefined ? factLine(output.facts) : `${total} LEDs`}
+          figure={lag}
+          instead
+          failed={failedAt === 'output'}
+        />
       </ol>
       {edges && preview ? (
         <PreviewDrawing

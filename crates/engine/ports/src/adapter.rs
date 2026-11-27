@@ -1,4 +1,6 @@
-use crate::{DeviceReport, Hangup, Result, Settings, ValidationError};
+use crate::{
+    DeviceReport, Hangup, OutputObservationState, OutputRelease, Result, Settings, ValidationError,
+};
 use prysm_core::{EdgeColors, Frame};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -8,8 +10,13 @@ use std::time::Duration;
 #[derive(Debug)]
 pub enum Pull {
     Frame(Frame),
-    /// No frame within the timeout; the caller checks its stop flag and asks again.
-    Idle,
+    /// No frame within the timeout, and no reason given (no signal, no
+    /// sender); the caller checks its stop flag and asks again. Not a failure.
+    Quiet,
+    /// No frame within the timeout because the source's device refuses to
+    /// share the video it shows; frames come again once it shares it. The
+    /// caller asks again, as after [`Pull::Quiet`]. Not a failure.
+    Refused,
     /// The source has finished (a file played to its end) and will produce no
     /// more frames. Not a failure: the session stops normally.
     Ended,
@@ -21,21 +28,8 @@ impl Pull {
     pub fn into_frame(self) -> Option<Frame> {
         match self {
             Self::Frame(frame) => Some(frame),
-            Self::Idle | Self::Ended => None,
+            Self::Quiet | Self::Refused | Self::Ended => None,
         }
-    }
-
-    #[must_use]
-    pub fn is_idle(&self) -> bool {
-        matches!(self, Self::Idle)
-    }
-}
-
-/// A frame, or `Idle` without one: what a push-style source's newest-frame
-/// hand-off yields.
-impl From<Option<Frame>> for Pull {
-    fn from(frame: Option<Frame>) -> Self {
-        frame.map_or(Self::Idle, Self::Frame)
     }
 }
 
@@ -46,7 +40,7 @@ pub struct SourceStop {
     /// A pull in flight that returns a frame, after its timeout (the rest
     /// of a frame that began); the frame is then written before the loop
     /// sees the stop (an open it needs ends at once: see
-    /// [`OutputFactory::open`](crate::OutputFactory::open)).
+    /// [`OutputFactory::open_for_sync`](crate::OutputFactory::open_for_sync)).
     pub frame: Duration,
     /// A pull in flight that ends the source (its end or a failure), after
     /// its timeout; nothing is opened after it.
@@ -83,13 +77,18 @@ impl<T: FrameSource + ?Sized> FrameSource for Box<T> {
 /// An LED driver.
 pub trait LedOutput: Send {
     fn write(&mut self, colors: &EdgeColors) -> Result<()>;
-    /// Called once after the last `write`; also the failure-compensation
-    /// path. Ends at once when `stop` is cut, failing with a
-    /// [`Stopping`](crate::Stopping) cause; the device is then in no known
-    /// mode. A session cuts it when it is asked to stop while it releases
-    /// the output after a quiet spell; its own idle at the end gets one it
-    /// never cuts.
-    fn idle(self: Box<Self>, mode: IdleMode, stop: &Hangup) -> Result<()>;
+    /// Consume the handle. With a handoff the device keeps its own display.
+    /// Remote command failure leaves physical state unconfirmed. Return
+    /// [`crate::Error::Faulted`] when local release cannot be certified.
+    fn release(self: Box<Self>, _release: OutputRelease, _stop: &Hangup) -> Result<()> {
+        Ok(())
+    }
+
+    /// Most recent device facts, updated by the adapter's active report.
+    fn stream_observation(&self) -> OutputObservationState {
+        OutputObservationState::Unsupported
+    }
+
     /// What the device says about itself, as far as it last said (see
     /// [`DeviceReport`]); empty while the output cannot tell. Called on the
     /// session thread after every `write`, so it returns within
@@ -125,7 +124,6 @@ impl DeviceBrightness {
         let level = u64::from(level).min(full);
         let percent = ((level * 100 + full / 2) / full).max(u64::from(level > 0));
         Self {
-            // Never above 100: `level` is at most `full`.
             percent: u8::try_from(percent).unwrap_or(100),
         }
     }
@@ -153,22 +151,30 @@ impl From<DeviceBrightness> for u8 {
     }
 }
 
-/// Why the LEDs are not showing Prysm's colours although lighting runs.
-/// Prysm reports it and keeps sending: the LEDs follow again as soon as the
-/// device takes the colours.
+/// Why the lights do not show what was chosen. `off`: the device is
+/// switched off. `overridden`: the device's own override is on (WLED: live
+/// override). `not_live`: the device is not taking the colours (WLED: not in
+/// live mode, or no DDP arriving). `other_sender`: another sender's colours
+/// reach the device. `unreachable`: the device does not answer Prysm's state
+/// checks, the request that opens it for screen sync, or, with the target
+/// `off` or `effects`, the request for that mode. During screen sync Prysm
+/// keeps sending the colours; it tries an unanswered request again every few
+/// seconds. The lights follow once the device takes the colours or answers.
+/// Open: an app reads an issue it does not know in general words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum OutputIssue {
     /// The device was switched off.
     Off,
-    /// The device's own override is on (WLED: "live override").
+    /// The device's own override is on.
     Overridden,
-    /// The device is not taking the colours (realtime reception disabled,
-    /// or it left realtime mode).
+    /// The device is not taking the colours.
     NotLive,
-    /// Another sender's colours are reaching the device.
+    /// Another sender's colours reach the device.
     OtherSender,
-    /// The device does not answer state requests.
+    /// The device does not answer: its state checks, the session's open
+    /// ([`Escalation::Unanswered`](crate::Escalation)) or the idle request.
     Unreachable,
 }
 
@@ -216,6 +222,15 @@ impl<T: FrameSink + ?Sized> FrameSink for Box<T> {
 
 /// Persisted settings. Blocking; the engine calls it off the async runtime.
 pub trait SettingsStore: Send {
+    /// Optional persisted mode, independent of device power and settings revision.
+    fn load_mode(&mut self) -> Result<Option<crate::LightingMode>> {
+        Ok(None)
+    }
+    /// Stores without persistence may keep this choice for the process lifetime only.
+    fn save_mode(&mut self, _mode: crate::LightingMode) -> Result<()> {
+        Ok(())
+    }
+
     /// `Ok(None)`: nothing saved yet. `Err`: the store holds something it
     /// cannot read as settings, or cannot read at all; the engine then
     /// starts unconfigured and reports this as its failure. What could not

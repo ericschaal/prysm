@@ -1,71 +1,31 @@
-import {
-  use,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
-import { useChrome } from './portal-context';
-import {
-  SaveContext,
-  savedForMs,
-  type SavePhase,
-  type SaveState,
-} from './save-state';
+import { useEffect, useState } from 'react';
+import { savedForMs, type SaveState } from './live-processing';
+import { useChrome, usePortal } from './portal-context';
 
-const phaseTexts: Record<SavePhase, string> = {
+const phaseTexts = {
   'all-saved': 'All changes saved',
   saved: 'Saved',
   saving: 'Saving…',
   failed: 'Not saved',
 };
 
-/** The page's saves, from every part that reports one. */
-export function SaveStatusProvider({ children }: { children: ReactNode }) {
-  const [states, setStates] = useState<Record<string, SaveState>>({});
-  const statesRef = useRef(states);
+/** The active editor's save status. Leaving its page clears the notice. */
+export function SaveStatus({ state }: { state: SaveState }) {
+  const { online } = usePortal();
+  const { stopped } = useChrome();
+  const [previous, setPrevious] = useState(state);
   const [justSaved, setJustSaved] = useState(false);
-  const report = useCallback((source: string, state: SaveState) => {
-    const before = statesRef.current[source] ?? 'idle';
-    if (before === state) return;
-    // A save that ended without failing: say so for a moment.
-    if (before === 'saving' && state === 'idle') setJustSaved(true);
-    statesRef.current = { ...statesRef.current, [source]: state };
-    setStates(statesRef.current);
-  }, []);
-  const forget = useCallback((source: string) => {
-    if (!(source in statesRef.current)) return;
-    const rest = { ...statesRef.current };
-    delete rest[source];
-    statesRef.current = rest;
-    setStates(rest);
-  }, []);
+  if (previous !== state) {
+    setPrevious(state);
+    if (previous === 'saving' && state === 'idle') setJustSaved(true);
+  }
   useEffect(() => {
     if (!justSaved) return;
     const timer = setTimeout(() => setJustSaved(false), savedForMs);
     return () => clearTimeout(timer);
   }, [justSaved]);
-  const all = Object.values(states);
-  let phase: SavePhase = justSaved ? 'saved' : 'all-saved';
-  if (all.includes('failed')) phase = 'failed';
-  else if (all.includes('saving')) phase = 'saving';
-  const value = useMemo(
-    () => ({ report, forget, phase }),
-    [report, forget, phase],
-  );
-  return <SaveContext value={value}>{children}</SaveContext>;
-}
-
-/**
- * One line, always in the same place, saying whether the page's changes are
- * saved. Its slot is reserved, so nothing moves as it changes.
- */
-export function SaveStatus({ online }: { online: boolean }) {
-  const phase = use(SaveContext)?.phase ?? 'all-saved';
-  const { refusal } = useChrome();
-  // Offline nothing can be saved; what was changed is kept for later.
+  let phase: keyof typeof phaseTexts = state === 'idle' ? 'all-saved' : state;
+  if (state === 'idle' && justSaved) phase = 'saved';
   return (
     <p
       className="save-status"
@@ -73,7 +33,7 @@ export function SaveStatus({ online }: { online: boolean }) {
       role="status"
     >
       <span className="save-status-mark" aria-hidden="true" />
-      {online ? phaseTexts[phase] : (refusal ?? 'Not connected. Reconnecting…')}
+      {online ? phaseTexts[phase] : (stopped ?? 'Not connected. Reconnecting…')}
     </p>
   );
 }

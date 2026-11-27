@@ -357,7 +357,7 @@ jobs:
           cargo clippy --locked --all-targets
           --target armv7-unknown-linux-gnueabi
           -p prysm-webos-link -p prysm-webos-service -p prysm-webos
-          -p prysm-capture-webos -p prysm-capture-webos-sys -p prysm-webos-luna-sys
+          -p prysm-capture-webos -p prysm-capture-webos-sys -p prysm-webos-library-sys -p prysm-webos-luna-sys
           -p prysm-capture-remote -p prysm-h264
           -- -D warnings
       # Library tests only: integration tests start the armv7 binaries
@@ -368,7 +368,7 @@ jobs:
         run: >-
           cargo test --locked --lib
           --target armv7-unknown-linux-gnueabi
-          -p prysm-capture-webos-sys -p prysm-webos-luna-sys
+          -p prysm-capture-webos-sys -p prysm-webos-library-sys -p prysm-webos-luna-sys
           -p prysm-webos-link -p prysm-webos-service
           -- --skip launcher::tests::a_missing_program_fails_to_spawn
 
@@ -476,7 +476,7 @@ jobs:
           cargo test --locked -Zbuild-std --target x86_64-unknown-linux-gnu
           --lib --tests
           -p prysm-core -p prysm-ports -p prysm-runtime
-          -p prysm-capture-webos-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
+          -p prysm-capture-webos-sys -p prysm-webos-library-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
           -p prysm-capture-webos -p prysm-capture-device -p prysm-capture-remote
           -p prysm-capture-file
           -- --skip real_ffmpeg_plays_once_paced_and_reports_bad_files

@@ -54,7 +54,6 @@ export function wordsOf(screen: Screen): { title: string; lead: string } {
       };
     case 'checks': {
       const fixes = screen.fixes ?? [];
-      // A mixed scene can be off anywhere; a secondary in its two primaries.
       if (fixes.includes('white'))
         return {
           title: 'Do both colours on the wall match the screen?',

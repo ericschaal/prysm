@@ -2,7 +2,8 @@
 uninstall, Prysm's files, the worker's load (`tv.Tv`), and Prysm as it may already be there
 (`installed.Existing`)."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 import json
 import re
 import time
@@ -94,7 +95,7 @@ class WebosTv:
     def reach(self, mac: str, towards: Callable[[], str]) -> str | None:
         """Why the TV cannot be reached over SSH; None when it answers. Only when it does not and `mac` is set,
         one wake-on-LAN packet is sent first, from `towards()` (this computer's address towards the TV), and SSH
-        is tried every 5 s for `WAKE_SECONDS`. The runner never puts the TV to sleep."""
+        is tried every 5 s for `WAKE_SECONDS`."""
         if self.reachable():
             return None
         if not mac:
@@ -113,6 +114,47 @@ class WebosTv:
             if self.reachable():
                 return None
         return f'the TV ({self.target}) does not answer over SSH {WAKE_SECONDS} s after a wake-on-LAN packet'
+
+    @contextmanager
+    def reboot(self) -> Generator[dict[str, float]]:
+        """Yield during the SSH outage, then confirm a new OS boot before any Prysm query."""
+        before = self.sample_worker()['uptime']
+        evidence = {'uptime_before': before}
+        started = time.monotonic()
+        result = self._run(commands.tv_reboot(self.target), check=False)
+        if result.returncode not in (0, 255):
+            raise Failed('TV reboot command failed', result.stderr)
+        while self.reachable():
+            if time.monotonic() - started > 60:
+                raise Failed('SSH stayed up after the reboot request', evidence)
+            time.sleep(1)
+        try:
+            yield evidence
+        finally:
+            while not self.reachable():
+                if time.monotonic() - started > 180:
+                    raise Failed('SSH did not return after reboot', evidence)
+                time.sleep(2)
+            after = self.sample_worker()['uptime']
+            elapsed = time.monotonic() - started
+            evidence.update(uptime_after=after, elapsed=elapsed)
+            if before + elapsed - after < 5 or after > elapsed + 20:
+                raise Failed('TV uptime does not confirm a reboot', evidence)
+            deadline = time.monotonic() + 90
+            while not any(path == commands.SUPERVISOR for _, path in self.processes()):
+                if time.monotonic() >= deadline:
+                    raise Failed('supervisor did not start automatically after reboot', evidence)
+                time.sleep(2)
+
+    @contextmanager
+    def standby(self, wake: Command) -> Generator[None]:
+        try:
+            self.call(commands.tv_standby(self.target))
+            yield
+        finally:
+            self._run(wake)
+            if tv.wait_state(self.get_state, lambda s: s['power'] == tv.Power.ACTIVE, WAKE_SECONDS) is None:
+                raise Failed('TV did not return to active power after wake-on-LAN')
 
     # ---- the service ---------------------------------------------------------
 
@@ -217,6 +259,11 @@ class WebosTv:
         directories; only a package it accepted is staged, whatever its name.
         Raises `installed.Kept`, nothing installed, while a Prysm process still runs: the install service
         would end it abruptly."""
+        self.install_files(ipk)
+        return self.start_service()
+
+    def install_files(self, ipk: str) -> None:
+        """Replace the installed files with the old worker stopped. Setup starts the new service."""
         self._run(commands.verify_ipk(ipk))
         self._run(commands.tv_stage(self.target, ipk))
         try:
@@ -226,6 +273,8 @@ class WebosTv:
             self._run(commands.tv_unstage(self.target), check=False)
         if not result.ok:
             raise Failed('appInstallService did not report installed', (result.stdout + result.stderr)[-2000:])
+
+    def start_service(self) -> LunaReply:
         self._run(commands.tv_setup(self.target))
         state = tv.wait_state(self.get_state, lambda s: True, 30)
         if state is None:
@@ -257,8 +306,8 @@ class WebosTv:
         running) is waited for the same way.
 
         Raises `installed.Kept` while a Prysm process still runs: the install service would end it
-        abruptly, and a worker killed with the TV UI capture open leaves the TV's capture locked until a
-        reboot."""
+        abruptly, and a killed worker was once seen to leave the TV's capture locked until a reboot (later
+        kills did not reproduce it)."""
         stopping = self._run(commands.tv_uninstall(self.target), check=False)
         left = self.running()
         if left:

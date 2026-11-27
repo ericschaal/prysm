@@ -152,7 +152,10 @@ fn supervises_a_real_child_process() {
         })
     });
     let log = bus.0.last().unwrap()["log"].clone();
-    assert!(log[0].as_str().unwrap().contains("--target off"), "{log}");
+    assert!(
+        log[0].as_str().unwrap().contains("--listen 0.0.0.0:8787"),
+        "{log}"
+    );
 
     service.power(&mut bus, r#"{"state":"Active Standby"}"#, Instant::now());
     until(&mut service, &mut bus, &woken, |bus, _| {
@@ -160,7 +163,6 @@ fn supervises_a_real_child_process() {
             .last()
             .is_some_and(|state| state["worker"]["phase"] == "stopped")
     });
-    // The next worker starts with the remembered target.
     service.power(&mut bus, r#"{"state":"Active"}"#, Instant::now());
     until(&mut service, &mut bus, &woken, |bus, _| {
         bus.0.last().is_some_and(|state| {
@@ -168,7 +170,9 @@ fn supervises_a_real_child_process() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|line| line.as_str().unwrap().contains("--target screen_sync"))
+                .filter(|line| line.as_str().unwrap().starts_with("args: "))
+                .count()
+                == 2
         })
     });
     service.shutdown(&mut bus, Instant::now());

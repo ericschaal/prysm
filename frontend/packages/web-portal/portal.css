@@ -22,7 +22,6 @@
 body {
   margin: 0;
   min-height: 100vh;
-  /* The hero's glow may spill past the column, never past the page. */
   overflow-x: clip;
   background: var(--bg);
   transition: background-color var(--duration-slow) var(--ease-out);
@@ -73,7 +72,10 @@ small {
 [hidden] {
   display: none !important;
 }
-.visually-hidden {
+.visually-hidden,
+.connection.online,
+.led-count label,
+.led-count .field-note {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -100,7 +102,6 @@ small {
   .portal {
     width: min(100% - var(--space-8), var(--measure));
   }
-  /* Home sets its two cards side by side, not far wider than Settings. */
   .portal.wide {
     width: min(100% - var(--space-8), 960px);
   }
@@ -145,15 +146,6 @@ small {
   gap: var(--space-2);
   margin-right: calc(-1 * var(--space-2));
 }
-/* Connected is the normal case: said to screen readers, not shown. */
-.connection.online {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
 .connection.offline {
   display: inline-flex;
   align-items: center;
@@ -169,7 +161,6 @@ small {
   background: currentColor;
   animation: breathe 2.4s var(--ease-in-out) infinite;
 }
-/* Settings, named: an icon and its word. */
 .header-link {
   gap: var(--space-2);
   padding-inline: var(--space-3) var(--space-4);
@@ -179,13 +170,20 @@ small {
   font-size: var(--text-small);
   font-weight: 500;
 }
-.header-link svg {
+.header-link svg,
+.mode-icon,
+.path-icon svg,
+.back svg,
+.chevron,
+.row-check {
   width: var(--icon);
   height: var(--icon);
   fill: none;
+  stroke-linecap: round;
+}
+.header-link svg {
   stroke: currentColor;
   stroke-width: 1.6;
-  stroke-linecap: round;
 }
 @media (hover: hover) {
   .header-link:hover:enabled {
@@ -283,10 +281,7 @@ button[aria-busy='true'] {
 .notice:focus-visible {
   outline: 2px solid var(--accent-ink);
 }
-.notice.warning {
-  background: var(--alert-soft);
-  color: var(--alert);
-}
+.notice.warning,
 .notice.error {
   background: var(--alert-soft);
   color: var(--alert);
@@ -298,7 +293,6 @@ button[aria-busy='true'] {
 .notice p:last-child {
   margin-bottom: 0;
 }
-/* Prysm was updated: what happened, and the reload beside it. */
 .notice.updated {
   display: flex;
   flex-wrap: wrap;
@@ -333,7 +327,6 @@ legend {
   color: var(--muted);
   line-height: var(--leading);
 }
-/* Help that disagrees with what is typed, such as the lights' own LED count. */
 .help[data-tone='warning'] {
   color: var(--alert);
 }
@@ -418,7 +411,6 @@ legend {
 .field-note[data-state='error'] > .field-error {
   animation: fade-in var(--duration) var(--ease-out) both;
 }
-/* A text button inside a sentence, such as “Try again”. */
 button.link {
   display: inline;
   min-height: 0;
@@ -432,7 +424,6 @@ button.link {
   text-underline-offset: 2px;
 }
 
-/* A form's one status line, kept above its buttons. */
 .form-status,
 .problem-line {
   min-height: calc(var(--text-small) * var(--leading));
@@ -440,13 +431,11 @@ button.link {
   font-size: var(--text-small);
   line-height: var(--leading);
 }
-/* Two lines kept, so a longer message never pushes the buttons down. */
 .form-status {
   display: flex;
   align-items: flex-end;
   min-height: calc(2 * var(--text-small) * var(--leading));
 }
-/* What to check, under a problem, in the usual colour. */
 .form-status-hint {
   display: block;
   color: var(--muted);
@@ -457,9 +446,7 @@ button.link {
 .form-status[data-tone='ok'] {
   color: var(--ok);
 }
-.form-status[data-tone='warning'] {
-  color: var(--alert);
-}
+.form-status[data-tone='warning'],
 .form-status[data-tone='error'],
 .problem-line {
   color: var(--alert);
@@ -471,7 +458,6 @@ button.link {
   }
 }
 
-/* Toggle: a checkbox drawn as a switch, the label first. */
 .field.check {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -530,13 +516,6 @@ button.link {
   }
 }
 
-/*
- * Slider rhythm, one rule on every page and Home: a slider is a group of
- * label and value, track, and its help line (reserved even when empty).
- * Inside a group the parts sit close (the track about 16 px from each);
- * groups stand 32 px apart, so they never run together. A slider without
- * help counts its empty line in that gap.
- */
 .field.range {
   margin-bottom: var(--space-6);
 }
@@ -554,7 +533,6 @@ button.link {
   justify-content: space-between;
   gap: var(--space-3);
 }
-/* A slider named by its ends: what each end does, its value between them. */
 .range-ends {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -649,12 +627,6 @@ button.link {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   column-gap: var(--space-5);
 }
-/*
- * Blocks of a form follow each other at one distance: a field's control is
- * followed by its kept note line and margin, which make --space-block, so
- * any other block is followed by --space-block too. One that keeps a note
- * line of its own, as a field does, is followed by a field's margin.
- */
 fieldset {
   min-width: 0;
   margin: 0 0 var(--space-block);
@@ -664,7 +636,6 @@ fieldset {
 fieldset:where(:has(> .field-note:last-child:not([data-said='false']))) {
   margin-bottom: var(--space-3);
 }
-/* A group of sliders keeps the sliders' own rhythm, which ends it. */
 fieldset:where(:has(.range)) {
   margin-bottom: 0;
 }
@@ -672,12 +643,10 @@ legend {
   margin-bottom: var(--space-2);
   padding: 0;
 }
-/* A group's note line sits under it as a field's does under its control. */
 fieldset > .field-note {
   margin-top: var(--space-2);
 }
 
-/* Form actions: the buttons at the end. */
 .actions {
   display: flex;
   justify-content: flex-end;
@@ -695,7 +664,6 @@ fieldset > .field-note {
   line-height: var(--leading);
   text-transform: uppercase;
 }
-/* A group of rows is named in full ink: it outranks the rows’ own quiet lines. */
 .group > .overline {
   padding-top: var(--space-4);
   color: var(--fg);
@@ -704,21 +672,15 @@ fieldset > .field-note {
   display: grid;
   gap: var(--space-5);
 }
-/* Without the LED drawing the setup card is short: no empty stretch. */
 .setup-card:not(:has(.led-map)) {
   align-self: start;
 }
 @media (min-width: 900px) {
-  /* Two cards of one width: the controls, and the setup they drive. */
   .home-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-5);
   }
 }
-/*
- * Before the first state: still blocks where the cards will be, about
- * their size, in the cards' own shape. Nothing moves in them: they wait.
- */
 .skeleton {
   display: grid;
   place-items: center;
@@ -744,7 +706,6 @@ fieldset > .field-note {
   text-align: center;
 }
 
-/* The light card: a night stage; its light drifts while the lights are on. */
 @property --light-a {
   syntax: '<color>';
   inherits: true;
@@ -781,12 +742,9 @@ fieldset > .field-note {
   --light-c: var(--live-c);
   --light-d: var(--live-d);
   display: grid;
-  /* Switching modes cross-fades the colours; turning on starts in them. */
-  transition:
-    --light-a var(--duration-mix) var(--ease-in-out),
-    --light-b var(--duration-mix) var(--ease-in-out),
-    --light-c var(--duration-mix) var(--ease-in-out),
-    --light-d var(--duration-mix) var(--ease-in-out);
+  transition-property: --light-a, --light-b, --light-c, --light-d;
+  transition-duration: var(--duration-mix);
+  transition-timing-function: var(--ease-in-out);
 }
 .light-frame[data-palette='effects'] {
   --light-a: var(--effects-1);
@@ -794,11 +752,6 @@ fieldset > .field-note {
   --light-c: var(--effects-3);
   --light-d: var(--effects-4);
 }
-/*
- * A failed or faulted session: a calm warning lamp, not an alarm. The same
- * aurora in deep red and rose, low and still drifting slowly; no ignition.
- * The colours cross-fade from whatever was showing.
- */
 .light-frame[data-palette='error'] {
   --light-a: var(--error-1);
   --light-b: var(--error-2);
@@ -812,11 +765,8 @@ fieldset > .field-note {
  * faint colourless moonlight.
  */
 .light-frame[data-palette='sync'] {
-  transition:
-    --light-a var(--duration-led) var(--ease-out),
-    --light-b var(--duration-led) var(--ease-out),
-    --light-c var(--duration-led) var(--ease-out),
-    --light-d var(--duration-led) var(--ease-out);
+  transition-duration: var(--duration-led);
+  transition-timing-function: var(--ease-out);
 }
 /*
  * Live, the colours change up to 10 times a second: the frame takes each
@@ -846,7 +796,6 @@ fieldset > .field-note {
       transparent 70%
     ),
     var(--surface);
-  /* All its colour stays inside: outside, the same neutral lift as the setup card. */
   box-shadow:
     0 0 0 1px var(--line) inset,
     var(--shadow);
@@ -858,11 +807,6 @@ fieldset > .field-note {
   }
 }
 
-/*
- * Four soft lights, each drifting on its own slow path (transform only). The
- * drift never stops; turning on grows the whole light out of the power
- * button in one long ease-out, and turning off draws it back in.
- */
 .aurora {
   position: absolute;
   inset: 0;
@@ -874,7 +818,6 @@ fieldset > .field-note {
 .aurora-light {
   position: absolute;
   inset: 0;
-  /* The power button's centre: the light is born there. */
   transform-origin: calc(100% - var(--pad) - 38px) calc(var(--pad) + 56px);
   transform: scale(0.2);
   opacity: 0;
@@ -888,40 +831,40 @@ fieldset > .field-note {
   border-radius: 50%;
   background: radial-gradient(closest-side, var(--field), transparent);
   will-change: transform;
-  animation: drift-a 23s var(--ease-in-out) infinite alternate;
+  animation: drift 23s var(--ease-in-out) infinite alternate;
 }
 .aurora span:nth-child(1) {
+  --drift-to: translate3d(22%, 16%, 0) rotate(40deg) scale(1.15);
   --field: var(--light-a);
   top: -38%;
   left: -30%;
   width: 95%;
 }
 .aurora span:nth-child(2) {
+  --drift-to: translate3d(-26%, 22%, 0) scale(0.85);
   --field: var(--light-b);
   top: -30%;
   right: -32%;
   width: 90%;
-  animation-name: drift-b;
   animation-duration: 29s;
 }
 .aurora span:nth-child(3) {
+  --drift-to: translate3d(14%, -18%, 0) scale(1.2);
   --field: var(--light-c);
   top: 8%;
   left: 10%;
   width: 85%;
-  animation-name: drift-c;
   animation-duration: 37s;
 }
 .aurora span:nth-child(4) {
+  --drift-to: translate3d(-40%, 30%, 0) scale(1.3);
   --field: var(--light-d);
   top: -42%;
   left: 28%;
   width: 55%;
   opacity: 0.7;
-  animation-name: drift-d;
   animation-duration: 19s;
 }
-/* A darker rim under the overline, and a calmer floor under the controls. */
 .aurora::after {
   content: '';
   position: absolute;
@@ -935,7 +878,6 @@ fieldset > .field-note {
     color-mix(in srgb, var(--surface) 80%, transparent)
   );
 }
-/* Failed or faulted: the warning lamp, low. */
 .light-card[data-mood='problem'] .aurora-light {
   transform: none;
   opacity: 0.55;
@@ -943,7 +885,6 @@ fieldset > .field-note {
     transform var(--duration-light-on) var(--ease-light),
     opacity var(--duration-mix) var(--ease-in-out);
 }
-/* Starting: a small glow gathers at the button while Prysm gets ready. */
 .light-card[data-mood='starting']:not([data-lit='true']) .aurora-light {
   transform: scale(0.28);
   opacity: 0.22;
@@ -951,10 +892,6 @@ fieldset > .field-note {
     transform var(--duration-light-on) var(--ease-light),
     opacity var(--duration-light-on) var(--ease-light);
 }
-/*
- * Lit: the light grows to rest. Opacity rises a little slower than the
- * size, so the light is never brighter near the button than it rests.
- */
 .light-card[data-lit='true'] .aurora-light {
   transform: none;
   opacity: 0.9;
@@ -965,14 +902,6 @@ fieldset > .field-note {
 .light-card[data-lit='true'][data-mode='effects'] .aurora-light {
   opacity: 0.62;
 }
-/*
- * The ignition, on top of the growth and in its direction: a brief lift of
- * the light (at most about 13% above rest, at about 40% of the way) and a
- * feathered wavefront in the mode's own colours that leaves the button and
- * crosses the card once. Opacity and transform only; it plays once per
- * turn-on, alternating names a/b so each turn-on restarts it.
- */
-/* The effects rest dimmer, so their ignition is gentler in proportion. */
 .light-card[data-mode='effects'] {
   --ignite-strength: 0.5;
 }
@@ -1155,24 +1084,9 @@ fieldset > .field-note {
   }
 }
 
-@keyframes drift-a {
+@keyframes drift {
   to {
-    transform: translate3d(22%, 16%, 0) rotate(40deg) scale(1.15);
-  }
-}
-@keyframes drift-b {
-  to {
-    transform: translate3d(-26%, 22%, 0) scale(0.85);
-  }
-}
-@keyframes drift-c {
-  to {
-    transform: translate3d(14%, -18%, 0) scale(1.2);
-  }
-}
-@keyframes drift-d {
-  to {
-    transform: translate3d(-40%, 30%, 0) scale(1.3);
+    transform: var(--drift-to);
   }
 }
 
@@ -1184,42 +1098,31 @@ fieldset > .field-note {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  /* The overline sits above both, with air; the button centres on the word's capitals. */
   margin-top: var(--space-2);
 }
 .light-card .overline {
   color: var(--muted);
   transition: color var(--duration-light-off) var(--ease-in-out);
 }
-/* Over the brightest light, full strength keeps it readable (measured ≥ 4.5:1). */
 .light-card[data-lit='true'] .overline {
   color: var(--fg);
   transition: color var(--duration-light-on) var(--ease-light);
 }
-/* Off, On, Stopped and Unknown share one cell and cross-fade: no snap, no shift. */
 .light-word {
   display: grid;
-  /* Every word on one baseline, whatever its size. */
   align-items: baseline;
   min-width: 0;
-  /* Optical: without its descender room the word's capitals sit centred. */
   padding-bottom: 0.06em;
   font-size: var(--text-hero);
   font-weight: var(--weight-strong);
-  /* Tight, yet the two f's crossbars stay apart in "Off" (no collision). */
   letter-spacing: -0.025em;
   line-height: 1;
   font-kerning: normal;
 }
-/*
- * Each word sits on the same baseline and left edge and only its opacity
- * changes. Colours are opaque: overlapping glyphs (the ff) show no seam.
- */
 .light-word span {
   grid-area: 1 / 1;
   color: var(--muted);
   opacity: 0;
-  /* The old word leaves quickly; the new one comes after: never two at once. */
   transition: opacity var(--duration-fast) var(--ease-in-out);
 }
 .light-word span[data-shown='true'] {
@@ -1231,23 +1134,15 @@ fieldset > .field-note {
   text-shadow: 0 0 36px color-mix(in srgb, var(--fg) 28%, transparent);
 }
 .light-word [data-word='Stopped'] {
-  /* A longer word, said calmly: smaller than On and Off, same baseline. */
   font-size: var(--text-hero);
   letter-spacing: -0.03em;
-  /* Near-white, faintly rose: it must stand apart from the red lamp. */
   color: var(--fg);
 }
-/* "On" arrives with the light, at the light's pace. */
 .light-card[data-lit='true'] .light-word [data-word='On'] {
   transition: opacity var(--duration-light-on) var(--ease-light)
     var(--duration-fast);
 }
 
-/*
- * The card's line of words: a problem or a warning with its fix, else (off)
- * what the power button will do. Its space is kept in every state, sized for
- * a problem line and its row of actions, so nothing below moves.
- */
 .light-info {
   display: grid;
   min-height: calc(
@@ -1263,7 +1158,6 @@ fieldset > .field-note {
   align-content: start;
   justify-items: start;
   gap: var(--space-3);
-  /* Room for focus rings. */
   margin: 0 calc(-1 * var(--space-1));
   padding: 0 var(--space-1) var(--space-1);
   opacity: 0;
@@ -1284,13 +1178,11 @@ fieldset > .field-note {
 }
 .light-info[data-tone='problem'] p,
 .light-card[data-lit='true'] .light-info[data-tone='note'] p {
-  /* Over the light, full strength (measured ≥ 4.5:1). */
   color: var(--fg);
 }
 .light-info[data-tone='warning'] p {
   color: var(--alert);
 }
-/* Lit, a paler amber keeps the warning readable over the light. */
 .light-card[data-lit='true'] .light-info[data-tone='warning'] p {
   color: var(--fg);
 }
@@ -1311,7 +1203,6 @@ fieldset > .field-note {
   position: absolute;
   inset: calc(-1 * var(--space-1)) 0;
 }
-/* A button's edge starts inside its 1 px border. */
 .light-info button::after {
   inset: -5px -1px;
 }
@@ -1322,7 +1213,6 @@ fieldset > .field-note {
   }
 }
 
-/* The power button: a dark ring when off, a lit lamp when on. */
 .power-wrap {
   position: relative;
   flex: none;
@@ -1344,14 +1234,12 @@ fieldset > .field-note {
     color var(--duration-light-off) var(--ease-in-out),
     transform var(--duration-fast) var(--ease-out);
 }
-/* A click in flight keeps the button as it is; only "cannot" greys it. */
 .power:disabled {
   opacity: 1;
 }
 .power[data-unavailable='true']:disabled {
   opacity: 0.4;
 }
-/* The lamp: drawn under the icon and faded in with the light (opacity only). */
 .power::before {
   content: '';
   position: absolute;
@@ -1397,7 +1285,6 @@ fieldset > .field-note {
 }
 .light-card[data-lit='true'] .power::before {
   opacity: 1;
-  /* The lamp lights first and softly; the room's light follows. */
   transition: opacity var(--duration-slow) var(--ease-out);
 }
 @media (hover: hover) {
@@ -1413,7 +1300,6 @@ fieldset > .field-note {
   color: var(--alert);
   box-shadow: none;
 }
-/* Switching: a thin ring turning around the button. */
 .power::after {
   content: '';
   position: absolute;
@@ -1422,15 +1308,12 @@ fieldset > .field-note {
   border-top-color: var(--accent-ink);
   border-radius: 50%;
   opacity: 0;
-  /* Turning while it fades out too, so it never freezes mid-turn. */
   animation: spin 0.9s linear infinite;
   transition: opacity var(--duration-slow) var(--ease-in-out);
 }
-/* Shown only for a slow operation, and held: it fades, never flickers. */
 .power[data-ring='true']::after {
   opacity: 1;
 }
-/* Try again and Details on one row; open, the details take the full width. */
 .light-info-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1441,7 +1324,6 @@ fieldset > .field-note {
   flex-basis: 100%;
   order: 1;
 }
-/* The technical message behind a failure, for whoever wants it. */
 .light-details {
   color: var(--muted);
   font-size: var(--text-small);
@@ -1464,7 +1346,6 @@ fieldset > .field-note {
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
 }
-/* What is missing, with the one fix. */
 .light-setup {
   display: grid;
   justify-items: start;
@@ -1474,13 +1355,6 @@ fieldset > .field-note {
   color: var(--muted);
 }
 
-/*
- * The mode: two option cards side by side, each an icon, its name and one
- * line on what it does. Selected speaks the segments' chosen look:
- * a light fill with dark ink; lit, the fill takes the light's own colours.
- * Off, the chosen card is only outlined: what Power will turn on, nothing
- * that runs. The other card is quiet but plainly a button.
- */
 .modes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1514,12 +1388,8 @@ fieldset > .field-note {
 }
 .mode-icon {
   grid-row: 1;
-  width: var(--icon);
-  height: var(--icon);
-  fill: none;
   stroke: currentColor;
   stroke-width: 1.6;
-  stroke-linecap: round;
   stroke-linejoin: round;
 }
 .mode-name {
@@ -1528,7 +1398,6 @@ fieldset > .field-note {
   font-weight: var(--weight-strong);
   white-space: nowrap;
 }
-/* One short line, written to fit: never cut with an ellipsis. */
 .mode-line {
   grid-column: 1 / -1;
   color: var(--muted);
@@ -1545,20 +1414,12 @@ fieldset > .field-note {
 .mode:active:enabled {
   transform: scale(0.98);
 }
-/* Off, the chosen card is outlined: the mode Power will turn on. */
-.modes[data-mode='screen_sync'] [data-target='screen_sync'],
-.modes[data-mode='effects'] [data-target='effects'] {
+.modes .mode[aria-checked='true'] {
   border-color: color-mix(in srgb, var(--fg) 72%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 72%, transparent) inset;
   color: var(--fg);
 }
-/* Lit, it is filled in the light's colours. */
-.light-card[data-lit='true']
-  .modes[data-mode='screen_sync']
-  [data-target='screen_sync'],
-.light-card[data-lit='true']
-  .modes[data-mode='effects']
-  [data-target='effects'] {
+.light-card[data-lit='true'] .modes .mode[aria-checked='true'] {
   border-color: transparent;
   box-shadow: none;
   background: linear-gradient(
@@ -1572,25 +1433,12 @@ fieldset > .field-note {
 .light-card[data-lit='true'] .modes [aria-checked='true'] .mode-line {
   color: color-mix(in srgb, var(--bg) 72%, transparent);
 }
-@media (prefers-reduced-motion: reduce) {
-  .mode {
-    transition: none;
-  }
-}
-/* A phone's half card: a little tighter, so name and line fit whole. */
 @media (max-width: 480px) {
   .mode {
     column-gap: var(--space-1);
     padding: var(--space-2) var(--space-3);
   }
-  .mode-icon {
-    width: var(--icon);
-    height: var(--icon);
-  }
   .mode-name {
-    font-size: var(--text-small);
-  }
-  .mode-line {
     font-size: var(--text-small);
   }
 }
@@ -1622,12 +1470,9 @@ fieldset > .field-note {
   opacity: 0.32;
 }
 
-/* Brightness: the track fills with the light's own colours while lit. */
-/* Home's one slider: the controls under it set the gap after it. */
 .light-card .field.range.brightness {
   margin-bottom: 0;
 }
-/* Every control's name on the card: Brightness, Style, Calibration. */
 .light-card .brightness label,
 .light-card .control-head {
   font-weight: var(--weight-strong);
@@ -1638,7 +1483,6 @@ fieldset > .field-note {
   font-weight: var(--weight-strong);
   text-align: right;
 }
-/* The fill takes the light's colours as the light comes on (one tint, eased). */
 @property --tint {
   syntax: '<percentage>';
   inherits: true;
@@ -1674,17 +1518,10 @@ fieldset > .field-note {
   transition: --tint var(--duration-light-off) var(--ease-in-out);
 }
 .light-card[data-lit='true'] .range input {
-  /* Some of the text colour stays, so the fill shows in the moonlight too. */
   --tint: 70%;
   transition: --tint var(--duration-light-on) var(--ease-in-out);
 }
 
-/*
- * Under Brightness, Style and Calibration follow its pattern: a header (the
- * name, and one quiet action on the right), then the control, each header
- * 24 px under the control before it (the slider's thumb ends where its
- * field does).
- */
 .light-card .card-control {
   display: grid;
   /* A track with more than fits scrolls; it never widens the card. */
@@ -1692,7 +1529,6 @@ fieldset > .field-note {
   gap: var(--space-3);
   margin-top: var(--space-5);
 }
-/* The action: quiet beside the name, its tap area taller than its text. */
 .light-card .control-head button.link {
   margin-block: calc(-1 * var(--space-2));
   padding-block: var(--space-2);
@@ -1709,16 +1545,7 @@ fieldset > .field-note {
   }
 }
 
-/*
- * Style and Calibration: one row of segments on a quiet track, one tap
- * each, the chosen one a light pill with dark ink. Equal while they fit;
- * where they don't, each keeps its whole label (a name up to 16
- * characters, then an ellipsis) and the row scrolls sideways on its one
- * line, without a scrollbar. Small text and no padding, so the five
- * styles fit the narrowest phone (320 px); names get room of their own.
- */
 .segments {
-  /* The chosen look: glass over the track, the label staying as it is. */
   --chosen-glass: color-mix(in srgb, var(--fg) 22%, transparent);
   --chosen-rim: 0 0 0 1px color-mix(in srgb, var(--fg) 36%, transparent) inset;
   border: 1px solid var(--line-strong);
@@ -1742,7 +1569,6 @@ fieldset > .field-note {
 .segments-scroll::-webkit-scrollbar {
   display: none;
 }
-/* Lit, the glass is tinted in the light's colours. */
 .light-card[data-lit='true'] .segments {
   --chosen-glass:
     linear-gradient(
@@ -1753,11 +1579,6 @@ fieldset > .field-note {
     ),
     color-mix(in srgb, var(--fg) 22%, transparent);
 }
-/*
- * The chosen look: one pill under the labels that slides to the chosen
- * segment, so a change is seen as a move. Drawn once it is measured (no
- * slide in from the edge); until then the chosen segment wears the look.
- */
 .segments-scroll[data-pill]::before {
   content: '';
   position: absolute;
@@ -1793,10 +1614,8 @@ fieldset > .field-note {
   );
 }
 .segment {
-  /* Over the pill. */
   position: relative;
   min-width: 0;
-  /* With the track's padding and border, the whole row is one hit tall. */
   min-height: calc(var(--hit) - 6px);
   padding: 0;
   border-color: transparent;
@@ -1816,7 +1635,6 @@ fieldset > .field-note {
   outline-offset: 0;
 }
 @media (hover: hover) {
-  /* Borderless: the track is their edge. */
   .segment:hover:enabled {
     border-color: transparent;
     background: color-mix(in srgb, var(--fg) 8%, transparent);
@@ -1831,7 +1649,6 @@ fieldset > .field-note {
   color: var(--fg);
   font-weight: var(--weight-strong);
 }
-/* Once placed, the row glides to bring a new choice into view. */
 @media (prefers-reduced-motion: no-preference) {
   .segments-scroll[data-pill] {
     scroll-behavior: smooth;
@@ -1842,11 +1659,9 @@ fieldset > .field-note {
   background: transparent;
   box-shadow: none;
 }
-/* The pill dims with its disabled segments. */
 .segments-scroll:has(.segment:disabled)::before {
   opacity: 0.4;
 }
-/* Home's problem line sits in the card's bottom padding: it takes no room. */
 .light-card .quick-picture {
   position: relative;
 }
@@ -1856,7 +1671,6 @@ fieldset > .field-note {
   inset-inline: 0;
   margin-top: var(--space-2);
 }
-/* On Home a failed save shows once, under Calibration, with its retry. */
 .light-card .brightness .field-note {
   display: none;
 }
@@ -1867,11 +1681,6 @@ fieldset > .field-note {
   font-weight: 500;
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-@media (hover: hover) {
-  .device-link:hover {
-    color: var(--fg);
-  }
 }
 .device-link::after {
   content: '↗';
@@ -1906,8 +1715,8 @@ fieldset > .field-note {
   inherits: true;
   initial-value: rgb(61 61 61);
 }
-/* Your setup: where the picture comes from, where the colours go. */
 .setup-card {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   padding: var(--space-5);
@@ -1919,18 +1728,8 @@ fieldset > .field-note {
 }
 @media (min-width: 900px) {
   .setup-card {
-    /* A little less at the sides: room for a device name on one line. */
     padding: var(--space-6) var(--space-5);
   }
-}
-/*
- * The signal path: Video, Prysm, Lights, joined by hairlines. A column when
- * the card is narrow, a row when wide. Icons and hairlines sit in one fixed
- * row; every label is placed beside or above its hairline, never in a row of
- * its own, so no state change moves anything.
- */
-.setup-card {
-  container-type: inline-size;
 }
 .path {
   display: grid;
@@ -1957,12 +1756,8 @@ fieldset > .field-note {
     box-shadow var(--duration-slow) var(--ease-out);
 }
 .path-icon svg {
-  width: var(--icon);
-  height: var(--icon);
-  fill: none;
   stroke: currentColor;
   stroke-width: 1.5;
-  stroke-linecap: round;
   stroke-linejoin: round;
 }
 .path-icon .ray {
@@ -2009,11 +1804,9 @@ fieldset > .field-note {
     justify-content: flex-start;
   }
 }
-/* A link: the hairline between two icons, and what it carries beside it. */
 .path-link {
   position: relative;
   grid-column: 1 / -1;
-  /* Room for its name and its numbers beside it, a line each. */
   height: calc(var(--hit) - var(--space-1));
 }
 .path-line {
@@ -2026,19 +1819,22 @@ fieldset > .field-note {
   background: var(--line-strong);
   transition: background-color var(--duration-slow) var(--ease-out);
 }
-/* The light travelling the hairline while frames flow (transform only). */
 .path-pulse {
   position: absolute;
   inset: 0 0 auto;
   height: 45%;
-  background: linear-gradient(transparent, var(--accent), transparent);
+  background: linear-gradient(
+    var(--pulse-angle, 180deg),
+    transparent,
+    var(--pulse-color, var(--accent)),
+    transparent
+  );
   opacity: 0;
   transform: translateY(-100%);
   transition: opacity var(--duration-slow) var(--ease-out);
 }
 .path-label {
   position: absolute;
-  top: 50%;
   left: calc(calc(var(--hit) - var(--space-1)) + var(--space-4));
   color: var(--muted);
   font-size: var(--text-small);
@@ -2046,18 +1842,13 @@ fieldset > .field-note {
   font-variant-numeric: tabular-nums;
   line-height: 1;
   white-space: nowrap;
-  transform: translateY(-50%);
   transition: color var(--duration-slow) var(--ease-out);
 }
-/* Column: beside the hairline, the protocol at the top, the numbers below. */
 .path-protocol {
   top: 3px;
-  transform: none;
 }
 .path-numbers {
-  top: auto;
   bottom: 3px;
-  transform: none;
 }
 .path-link[data-state='flowing'] .path-line {
   background: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -2066,13 +1857,9 @@ fieldset > .field-note {
   opacity: 1;
   animation: travel-down 1.6s linear infinite;
 }
-.path-link[data-state='flowing'] .path-label {
-  color: var(--muted);
-}
 .path-link[data-state='failed'] .path-line {
   background: color-mix(in srgb, var(--alert) 55%, transparent);
 }
-/* Lit stops: what the light passes through. */
 .setup-card[data-path='flowing'] .path-icon {
   color: var(--accent-ink);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent) inset;
@@ -2086,10 +1873,6 @@ fieldset > .field-note {
   color: var(--alert);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--alert) 55%, transparent) inset;
 }
-/*
- * Working, but behind: the step that keeps Prysm from keeping up, in orange.
- * Never red (that is a failure, and a failure shows no flowing path).
- */
 .path-stop[data-behind='true'] .path-icon {
   color: var(--alert);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--alert) 60%, transparent) inset;
@@ -2101,7 +1884,7 @@ fieldset > .field-note {
   background: color-mix(in srgb, var(--alert) 70%, transparent);
 }
 .path-link[data-behind='true'] .path-pulse {
-  background: linear-gradient(transparent, var(--alert), transparent);
+  --pulse-color: var(--alert);
 }
 .path-link[data-behind='true'] .path-numbers {
   color: var(--alert);
@@ -2116,15 +1899,9 @@ fieldset > .field-note {
     transform: translateX(240%);
   }
 }
-/*
- * Wide: one row, left to right. Row one holds the icons and hairlines at a
- * fixed height; row two the names and facts. Narrow link columns leave the
- * names room to sit on one line.
- */
 @container (min-width: 400px) {
   .path {
     --link: 16px;
-    /* Each stop's column, and how far its hairline reaches to the icons. */
     --stop: calc((100cqw - 2 * var(--link)) / 3);
     --reach: calc((var(--stop) - 40px) / 2 - 8px);
     grid-template-columns:
@@ -2170,16 +1947,12 @@ fieldset > .field-note {
     inset: 0 auto 0 0;
     width: 45%;
     height: auto;
-    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    --pulse-angle: 90deg;
     transform: translateX(-100%);
   }
   .path-link[data-state='flowing'] .path-pulse {
     animation-name: travel-across;
   }
-  .path-link[data-behind='true'] .path-pulse {
-    background: linear-gradient(90deg, transparent, var(--alert), transparent);
-  }
-  /* Row: the protocol above the hairline, the numbers below; one each side. */
   .path-label {
     top: auto;
     bottom: calc(50% + 6px);
@@ -2191,15 +1964,10 @@ fieldset > .field-note {
     bottom: auto;
   }
 }
-/*
- * The drawing is for room to spare: on a phone the path says enough, unless
- * the drawing holds the live preview; then it takes the card's full width.
- */
 @container (max-width: 399px) {
   .setup-card .led-map:not([data-preview]) {
     display: none;
   }
-  /* Stretched across the card's padding (a set width would only shift). */
   .setup-card .led-map-tv {
     width: auto;
     max-width: none;
@@ -2207,12 +1975,6 @@ fieldset > .field-note {
   }
 }
 
-/*
- * The TV seen from the front, on its stand, with the LED band around it as
- * the light: the designed colours when screen sync is idle, the LEDs' own
- * while they stream, the warm effects palette for the lights' own effects,
- * a dim neutral band when off or stopped.
- */
 .led-map {
   display: grid;
   flex: 1;
@@ -2270,14 +2032,6 @@ fieldset > .field-note {
 .led-map-edge.empty line.halo {
   opacity: 0;
 }
-/*
- * The live preview in the screen (night colours, as the screen is): paused,
- * a play button in its middle; playing, the picture fills the screen to its
- * rounded corners and the button, now pause, sits in the bottom-right
- * corner, a smaller disc in the same hit area. Its state is a line under
- * the drawing: one line's height is kept, so playing and pausing move
- * nothing; a long state (black bars, too many viewers) wraps.
- */
 .led-map-picture {
   position: absolute;
   display: grid;
@@ -2324,7 +2078,6 @@ fieldset > .field-note {
   right: 0;
   bottom: 0;
   padding: var(--space-2);
-  /* A dark disc with a light rim, so it reads on a black bar too. */
   --disc: rgb(0 0 0 / 0.55);
   background: radial-gradient(
       closest-side,
@@ -2343,7 +2096,6 @@ fieldset > .field-note {
   height: var(--space-3);
 }
 .led-map-note {
-  /* Two lines, the longest it says: the drawing stays where it is. */
   min-height: calc(2 * var(--text-small) * var(--leading));
   margin-top: var(--space-3);
   color: var(--muted);
@@ -2354,19 +2106,12 @@ fieldset > .field-note {
 .led-map-note[data-view='connecting'] {
   animation: breathe 2.4s var(--ease-in-out) infinite;
 }
-/* The band's colours follow the light card. */
-/*
- * Screen sync: the band is a readout, so it shows only real colours: it
- * stays neutral until the first ones arrive, and again on idle or a lost
- * stream.
- */
 .home-grid:has(.light-frame[data-lit='true'][data-palette='effects']) .led-map {
   --band-top: var(--effects-4);
   --band-right: var(--effects-2);
   --band-bottom: var(--effects-3);
   --band-left: var(--effects-1);
 }
-/* Live, each lit edge runs through its LEDs' colours (live-colors.ts). */
 .home-grid[data-live='colors']:has(
     .light-frame[data-lit='true'][data-palette='sync']
   )
@@ -2401,7 +2146,6 @@ fieldset > .field-note {
   border-bottom: 0;
 }
 
-/* A page's opening words, under its heading. */
 .page-intro {
   max-width: 56ch;
   color: var(--muted);
@@ -2428,15 +2172,10 @@ fieldset > .field-note {
   font-size: var(--text-small);
 }
 .back svg {
-  width: var(--icon);
-  height: var(--icon);
-  fill: none;
   stroke: currentColor;
   stroke-width: 2;
-  stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* The page's one save status, under the title. Its line is always there. */
 .save-status {
   display: flex;
   align-items: center;
@@ -2471,16 +2210,11 @@ fieldset > .field-note {
 
 .chevron {
   flex: none;
-  width: var(--icon);
-  height: var(--icon);
-  fill: none;
   stroke: var(--muted);
   stroke-width: 2;
-  stroke-linecap: round;
   stroke-linejoin: round;
   transition: transform var(--duration) var(--ease-out);
 }
-/* A row that opens below: its chevron points down, and up while open. */
 .row-toggle .chevron {
   transform: rotate(90deg);
 }
@@ -2488,16 +2222,10 @@ fieldset > .field-note {
   transform: rotate(-90deg);
 }
 
-/* The video source or lights editor, under Settings. */
 .section-editor {
   container-type: inline-size;
   padding-top: 0;
 }
-/*
- * Whether the section works, first on its page: a 16:9 tile (the live
- * picture, or the section's mark) beside a title and one line. The tile
- * keeps the card's height, so it changes in place.
- */
 .section-status {
   margin: var(--space-4) 0 var(--space-block);
   border-radius: var(--radius-2);
@@ -2512,10 +2240,9 @@ fieldset > .field-note {
   gap: var(--space-4);
   padding: var(--space-3);
 }
-.section-status[data-tone='problem'] {
-  background: var(--alert-soft);
-}
+.section-status[data-tone='problem'],
 .section-status[data-tone='warning'] {
+  --status-color: var(--alert);
   background: var(--alert-soft);
 }
 .section-status-tile {
@@ -2525,9 +2252,8 @@ fieldset > .field-note {
   aspect-ratio: 16 / 9;
   border-radius: var(--radius-1);
   background: var(--bg);
-  color: var(--muted);
+  color: var(--status-color, var(--muted));
 }
-/* The lights have no picture: their mark, as on Home's path. */
 .section-status[data-section='output'] .section-status-main {
   grid-template-columns: 40px minmax(0, 1fr);
 }
@@ -2536,7 +2262,6 @@ fieldset > .field-note {
   border-radius: 50%;
   background: none;
   box-shadow: 0 0 0 1px var(--line-strong) inset;
-  color: var(--muted);
 }
 .section-status-tile > * {
   grid-area: 1 / 1;
@@ -2556,24 +2281,17 @@ fieldset > .field-note {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.section-status[data-tone='ok'] .section-status-tile {
-  color: var(--ok);
+.section-status[data-tone='ok'] {
+  --status-color: var(--ok);
 }
 .section-status[data-tone='busy'] .section-status-tile svg {
   animation: breathe 1.6s var(--ease-in-out) infinite;
-}
-.section-status[data-tone='problem'] .section-status-tile {
-  color: var(--alert);
-}
-.section-status[data-tone='warning'] .section-status-tile {
-  color: var(--alert);
 }
 .section-status-text {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
-/* The title with a dot in the status colour, as the save line has. */
 .section-status-title {
   display: flex;
   align-items: center;
@@ -2587,23 +2305,14 @@ fieldset > .field-note {
   width: var(--space-2);
   height: var(--space-2);
   border-radius: 50%;
-  background: var(--muted);
-}
-.section-status[data-tone='ok'] .section-status-title::before {
-  background: var(--ok);
+  background: var(--status-color, var(--muted));
 }
 .section-status[data-tone='busy'] .section-status-title::before {
   background: var(--alert);
   animation: breathe 1.2s var(--ease-in-out) infinite;
 }
-.section-status[data-tone='warning'] .section-status-title::before {
-  background: var(--alert);
-}
 .section-status[data-tone='problem'] .section-status-title {
   color: var(--alert);
-}
-.section-status[data-tone='problem'] .section-status-title::before {
-  background: var(--alert);
 }
 .section-status-detail,
 .section-status-more {
@@ -2618,7 +2327,6 @@ fieldset > .field-note {
   gap: var(--space-2);
   padding: 0 var(--space-3) var(--space-3);
 }
-/* The save bar stays in reach at the bottom while there is something to save. */
 .section-editor .page-actions {
   position: sticky;
   bottom: 0;
@@ -2627,9 +2335,6 @@ fieldset > .field-note {
   padding-top: var(--space-4);
   padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
   background: var(--bg);
-}
-.section-editor .page-actions[hidden] {
-  display: none;
 }
 .section-editor .page-actions > .form-status {
   flex-basis: 100%;
@@ -2641,7 +2346,6 @@ fieldset > .field-note {
 .section-editor .page-actions > .form-status button.link {
   min-height: var(--hit);
 }
-/* Options most setups never change: one row, closed. */
 .advanced > .row-toggle {
   min-height: calc(var(--hit) + var(--space-2));
   border-top: 1px solid var(--line);
@@ -2650,11 +2354,6 @@ fieldset > .field-note {
 .advanced > div {
   padding-top: var(--space-4);
 }
-/*
- * The size-and-rate choice says what it has to say under its rows, above
- * Advanced. With nothing to say the line takes no room, and the Advanced
- * toggle is one more row of the list: one line between them, not two.
- */
 .picture-choice:has(+ .advanced) {
   margin-bottom: var(--space-2);
 }
@@ -2686,7 +2385,6 @@ fieldset > .field-note {
 .row {
   border-bottom: 1px solid var(--line);
 }
-/* Label, its value on the line beneath, a chevron: the whole row is the link. */
 .row-link,
 .row-choice label {
   display: flex;
@@ -2708,8 +2406,6 @@ fieldset > .field-note {
   .row-link:hover:enabled {
     background: none;
   }
-}
-@media (hover: hover) {
   .row-link:hover:enabled .row-label,
   .row-choice label:hover:has(input:enabled) .row-label {
     color: var(--accent-ink);
@@ -2737,10 +2433,6 @@ fieldset > .field-note {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/*
- * A live problem joins the value's line after the device's name, in the
- * error colour; the name gives way first, so the problem reads whole.
- */
 .row-value[data-problem='true'] {
   display: flex;
   min-width: 0;
@@ -2759,25 +2451,15 @@ fieldset > .field-note {
   color: var(--alert);
   text-overflow: ellipsis;
 }
-.row-fact {
+.row-fact,
+.row-switch {
   display: flex;
   align-items: center;
   min-height: calc(var(--hit) + var(--space-5));
   padding: var(--space-3) 0;
 }
 .row-fact .row-value {
-  color: var(--muted);
   font-variant-numeric: tabular-nums;
-}
-/*
- * A switch row: the on/off control in the chevron's place. The switch is
- * taller than a label line, so less padding keeps the row a link row's height.
- */
-.row-switch {
-  display: flex;
-  align-items: center;
-  min-height: calc(var(--hit) + var(--space-5));
-  padding: var(--space-3) 0;
 }
 .row-switch > *,
 .row-switch .field {
@@ -2787,10 +2469,6 @@ fieldset > .field-note {
 .row-switch .field.check {
   row-gap: 2px;
 }
-/*
- * The switch spans the label and its line, so it sits centred on the row
- * as a chevron does, not on the label alone.
- */
 .row-switch .field.check input {
   grid-row: 1 / span 2;
 }
@@ -2801,7 +2479,6 @@ fieldset > .field-note {
 .row-switch .field.check label {
   font-weight: 500;
 }
-/* A choice row: a radio drawn as a tick in the chevron's place. */
 .row-choice input[type='radio'] {
   position: absolute;
   opacity: 0;
@@ -2809,14 +2486,9 @@ fieldset > .field-note {
 }
 .row-check {
   flex: none;
-  width: var(--icon);
-  height: var(--icon);
-  fill: none;
   stroke-width: 2;
-  stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* Every option shows its ring; the chosen one is filled and ticked. */
 .row-ring {
   stroke: var(--line-strong);
   transition:
@@ -2855,23 +2527,13 @@ fieldset > .field-note {
     stroke: HighlightText;
   }
 }
-/* Locked, as a disabled field is, until it is known what can be chosen. */
 .row-choice label:has(input[type='radio']:disabled) {
   opacity: 0.5;
   cursor: default;
 }
-/*
- * Not faded during the first lookup, which is usually short: the rows that
- * follow look the same, so nothing flashes.
- */
 .device-rows[aria-busy='true'] label:has(input[type='radio']:disabled) {
   opacity: 1;
 }
-/*
- * The last of the found devices is one to type: its field in the label's
- * place, its line beneath as under any field, the ring level with the
- * field. Faded with the row while locked, not twice.
- */
 .row-typed label {
   align-items: flex-start;
 }
@@ -2885,14 +2547,9 @@ fieldset > .field-note {
 .row-typed .field input:disabled {
   opacity: 1;
 }
-/* A choice's line is read whole: it wraps instead of being cut. */
 .row-choice .row-text > .row-value {
   white-space: normal;
 }
-/*
- * What a choice sets, quiet, on its label’s line: every row keeps two lines
- * at most and one height, so ticking one never moves the list.
- */
 .row-heading {
   display: flex;
   flex-wrap: wrap;
@@ -2902,11 +2559,6 @@ fieldset > .field-note {
 .row-heading .row-value {
   font-variant-numeric: tabular-nums;
 }
-/*
- * A page's end: its actions under a divider, from the left, the main one
- * first and a destructive one last and quiet. What happened sits beside
- * them (below on a phone), in a line kept for it, so nothing moves.
- */
 .page-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2916,7 +2568,6 @@ fieldset > .field-note {
   padding-top: var(--space-5);
   border-top: 1px solid var(--line);
 }
-/* After a row's line, the bar's divider is that line: one, not two. */
 :is(.advanced, .rows) + .page-actions {
   margin-top: -1px;
 }
@@ -2955,7 +2606,6 @@ fieldset > .field-note {
 .calibration-page {
   container-type: inline-size;
 }
-/* What a disclosure row opens starts a group's gap below it. */
 .disclosure-body > * {
   margin-top: var(--space-5);
 }
@@ -2964,11 +2614,6 @@ fieldset > .field-note {
 }
 
 /* ── Found devices ────────────────────────────────────────────────────── */
-/*
- * The devices' heading carries Look again at its end, and the LEDs' heading
- * the side they are seen from, so neither takes a line of its own; on a
- * narrow screen it wraps under the heading.
- */
 .device-rows > legend,
 .leds > legend {
   display: flex;
@@ -2986,31 +2631,17 @@ fieldset > .field-note {
   font-size: var(--text-small);
   font-weight: var(--weight-regular);
 }
-/*
- * A found device's row keeps room for a line beneath its name, said or
- * not: the row that stands in for the first one while looking says the
- * lookup there, and the device that takes its place keeps its height.
- * Every found row is that tall, so the rows stay alike.
- */
 .device-rows .row-choice:not(.row-typed) label {
   min-height: calc(
     var(--space-3) * 2 + var(--text-body) * var(--leading) + 2px +
       var(--text-small) * var(--leading)
   );
 }
-/* What the lookup has to say, under the rows; nothing, no line. */
 .device-rows > .help:not(:empty) {
   margin-top: var(--space-2);
 }
 
 /* ── LED layout (WLED editor) ─────────────────────────────────────────── */
-/*
- * The Lights editor's drawing, in HTML so the count fields keep a finger's
- * size at any width. Everything round the screen is placed in `--u`, one
- * unit of the approved drawing, in which a field (32 units tall) is a tap
- * target; only the screen follows the width, up to the drawing's own
- * proportions, and keeps the height its side fields need.
- */
 .led-layout {
   --u: calc(var(--hit) / 32);
   max-width: calc(392 * var(--u));
@@ -3019,15 +2650,10 @@ fieldset > .field-note {
 }
 .led-tv {
   position: relative;
-  /* The screen's ratio; on a narrow page its height holds instead. */
-  height: max(
-    calc(88 * var(--u)),
-    calc((100cqi - 92 * var(--u)) * 170 / 300)
-  );
+  height: max(calc(88 * var(--u)), calc((100cqi - 92 * var(--u)) * 170 / 300));
   margin: calc(38 * var(--u) + var(--space-3)) calc(46 * var(--u))
     calc(54 * var(--u) + var(--space-3));
 }
-/* The stand: one base line under the TV. */
 .led-tv::after {
   content: '';
   position: absolute;
@@ -3038,7 +2664,6 @@ fieldset > .field-note {
   border-radius: var(--radius-pill);
   background: var(--line-strong);
 }
-/* The screen, in night colours as the screen is, with the total in it. */
 .led-tv > .led-map-screen {
   position: absolute;
   inset: 0;
@@ -3066,12 +2691,6 @@ fieldset > .field-note {
 .screen-label[data-invalid='true'] strong {
   color: var(--alert);
 }
-/*
- * Each edge: its strip in two parts with the count field centred between
- * them, on a line 22 units above or below the screen (the field just clear
- * of it) or 18 beside it (the field over its rim); the strips stop 10 short
- * of the screen's corners.
- */
 .led-edge {
   position: absolute;
   display: grid;
@@ -3119,7 +2738,6 @@ fieldset > .field-note {
   width: calc(4 * var(--u));
   background-size: 100% calc(8 * var(--u));
 }
-/* An edge with no LEDs: a dim dotted line. */
 .led-edge.empty > .led-strip {
   border-radius: 0;
   background-color: transparent;
@@ -3129,7 +2747,6 @@ fieldset > .field-note {
     transparent
   );
 }
-/* The first lit strip starts further from LED 1, for its mark. */
 .led-edge[data-way='up'] > .led-strip:last-child {
   margin-bottom: calc(4 * var(--u));
 }
@@ -3146,15 +2763,6 @@ fieldset > .field-note {
  * The count field: a pill with no spinner (typed, or stepped with the arrow
  * keys). Its label and note are read out; the place says which edge it is.
  */
-.led-count label,
-.led-count .field-note {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
 .led-count.field {
   width: calc(56 * var(--u));
   margin: 0;
@@ -3171,7 +2779,6 @@ fieldset > .field-note {
   margin: 0;
   appearance: none;
 }
-/* LED 1: a badge in its corner, as in the line under the drawing. */
 .led-start,
 .led-badge {
   display: grid;
@@ -3209,7 +2816,6 @@ fieldset > .field-note {
 .led-start[data-way='left'] {
   --turn: 270deg;
 }
-/* Its one mark: drawn pointing up, turned to the strip's way, moved along. */
 .led-start svg {
   position: absolute;
   top: 50%;
@@ -3224,7 +2830,6 @@ fieldset > .field-note {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* The wiring in words under the drawing, LED 1 badged as on it. */
 .led-way {
   display: flex;
   align-items: center;

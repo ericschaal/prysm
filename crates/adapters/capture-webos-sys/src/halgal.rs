@@ -10,14 +10,13 @@
 //! `Send`. The library is loaded once and never unloaded: unloading it leaks
 //! file descriptors.
 use crate::vtcapture::{Error, Plane};
-use prysm_webos_luna_sys::{Loaded, load_once};
+use crate::{Operation, operation::status};
 use std::ffi::c_int;
 use std::fs::File;
 use std::marker::PhantomData;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::Mutex;
 
 /// One HAL GAL surface (`HAL_GAL_SURFACE`).
 #[repr(C)]
@@ -74,53 +73,12 @@ pub(crate) type HalInit = unsafe extern "C" fn() -> c_int;
 pub(crate) type HalCreate = unsafe extern "C" fn(u32, u32, u32, *mut Surface) -> c_int;
 pub(crate) type HalSurfaceCall = unsafe extern "C" fn(*mut Surface) -> c_int;
 
-/// The four HAL GAL entry points. Lives for the whole process.
-pub(crate) struct HalApi {
-    pub init: HalInit,
-    pub create: HalCreate,
-    pub destroy: HalSurfaceCall,
-    pub capture: HalSurfaceCall,
-}
-
-/// Load `libhalgal` on first use and keep it for the life of the process.
-fn hal() -> Result<&'static HalApi, Error> {
-    static HAL: Mutex<Loaded<HalApi>> = Mutex::new(Loaded::Nothing);
-    let names = ["libhalgal.so.1", "libhalgal.so"];
-    // Never unloaded, not even when a symbol is missing: unloading libhalgal
-    // leaks file descriptors. A retry reuses the loaded library.
-    let api = load_once(&HAL, &names, |library| {
-        let symbol = |source| prysm_webos_luna_sys::Error::Load {
-            library: names.join(" or "),
-            source,
-        };
-        // SAFETY: the signatures match halgal.h. The library is never
-        // unloaded, so the function pointers stay valid for the life of the
-        // process.
-        unsafe {
-            Ok(HalApi {
-                init: *library.get::<HalInit>(b"HAL_GAL_Init\0").map_err(symbol)?,
-                create: *library
-                    .get::<HalCreate>(b"HAL_GAL_CreateSurface\0")
-                    .map_err(symbol)?,
-                destroy: *library
-                    .get::<HalSurfaceCall>(b"HAL_GAL_DestroySurface\0")
-                    .map_err(symbol)?,
-                capture: *library
-                    .get::<HalSurfaceCall>(b"HAL_GAL_CaptureFrameBuffer\0")
-                    .map_err(symbol)?,
-            })
-        }
-    })?;
-    Ok(api)
-}
-
-fn status(code: c_int, operation: &'static str) -> Result<(), Error> {
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(Error::Status { operation, code })
-    }
-}
+native_api!(HalApi, ["libhalgal.so.1", "libhalgal.so"], {
+    init: HalInit = Operation::HalInit.as_str(),
+    create: HalCreate = Operation::HalCreateSurface.as_str(),
+    destroy: HalSurfaceCall = Operation::HalDestroySurface.as_str(),
+    capture: HalSurfaceCall = Operation::HalCaptureFrameBuffer.as_str(),
+});
 
 /// The graphics plane as captured: premultiplied BGRA rows, `pitch` bytes
 /// apart, borrowed from the uncached `/dev/gfx` mapping until the next call.
@@ -162,17 +120,28 @@ struct Mapping {
     _device: File,
 }
 
+/// How far the surface got; cleanup undoes exactly that.
+enum Stage {
+    /// HAL created the surface; [`UiCapture::open_with`] has not mapped it
+    /// yet. Never returned from it.
+    Created,
+    /// Created and mapped: what [`UiCapture::open_with`] returns.
+    Mapped {
+        /// What [`UiCapture::capture`] reports: HAL may rewrite the surface
+        /// struct on every call, the mapping keeps the geometry checked at
+        /// open.
+        geometry: Geometry,
+        mapping: Mapping,
+    },
+    /// Unmapped and destroyed.
+    Released,
+}
+
 /// One open graphics-plane capture surface; see the module documentation.
 pub struct UiCapture {
     api: &'static HalApi,
-    /// Boxed: HAL keeps no pointer to it, but a stable address costs nothing.
     surface: Box<Surface>,
-    created: bool,
-    /// What [`UiCapture::capture`] reports: HAL may rewrite the surface
-    /// struct on every call, the mapping keeps the geometry checked at open.
-    geometry: Option<Geometry>,
-    mapping: Option<Mapping>,
-    released: bool,
+    stage: Stage,
     /// Not `Send`: HAL GAL binds the tap to the thread that opened it.
     _thread: PhantomData<*const ()>,
 }
@@ -188,51 +157,42 @@ impl UiCapture {
     /// `/dev/gfx` cannot be opened or mapped, a nonzero HAL status or an
     /// unexpected surface. Nothing stays allocated on error.
     pub fn open(width: u16, height: u16) -> Result<Self, Error> {
-        Self::open_with(hal()?, Path::new(DEVICE), width, height)
+        Self::open_with(HalApi::load()?, Path::new(DEVICE), width, height)
     }
 
-    pub(crate) fn open_with(
+    fn open_with(
         api: &'static HalApi,
         device: &Path,
         width: u16,
         height: u16,
     ) -> Result<Self, Error> {
         // SAFETY: a typed symbol without arguments.
-        status(unsafe { (api.init)() }, "HAL_GAL_Init")?;
+        status(unsafe { (api.init)() }, Operation::HalInit)?;
+        let mut surface = Box::new(Surface::empty());
+        // SAFETY: the surface is a live, exclusively owned out parameter.
+        let code =
+            unsafe { (api.create)(u32::from(width), u32::from(height), 0, &raw mut *surface) };
+        status(code, Operation::HalCreateSurface)?;
+        // From here on dropping `this` destroys the surface.
         let mut this = Self {
             api,
-            surface: Box::new(Surface::empty()),
-            created: false,
-            geometry: None,
-            mapping: None,
-            released: false,
+            surface,
+            stage: Stage::Created,
             _thread: PhantomData,
         };
-        // SAFETY: the surface is a live, exclusively owned out parameter.
-        let code = unsafe {
-            (api.create)(
-                u32::from(width),
-                u32::from(height),
-                0,
-                &raw mut *this.surface,
-            )
-        };
-        status(code, "HAL_GAL_CreateSurface")?;
-        // From here on dropping `this` destroys the surface.
-        this.created = true;
-        let length = this.check(width, height)?;
-        this.mapping = Some(map(device, this.surface.offset, length)?);
-        this.geometry = Some(Geometry {
+        let length = Self::check(&this.surface, width, height)?;
+        let mapping = map(device, this.surface.offset, length)?;
+        let geometry = Geometry {
             width,
             height,
             pitch: usize::from(this.surface.pitch),
-        });
+        };
+        this.stage = Stage::Mapped { geometry, mapping };
         Ok(this)
     }
 
     /// The surface HAL created is the one asked for; returns its mapped length.
-    fn check(&self, width: u16, height: u16) -> Result<usize, Error> {
-        let surface = &self.surface;
+    fn check(surface: &Surface, width: u16, height: u16) -> Result<usize, Error> {
         if (surface.width, surface.height) != (width, height) || width == 0 || height == 0 {
             return Err(Error::Invalid("HAL surface size"));
         }
@@ -261,12 +221,14 @@ impl UiCapture {
     /// # Errors
     /// A nonzero `HAL_GAL_CaptureFrameBuffer` status.
     pub fn capture(&mut self) -> Result<UiFrame<'_>, Error> {
-        let (Some(geometry), Some(mapping)) = (self.geometry, &self.mapping) else {
+        // A value outside `open_with` is always mapped: `Created` exists only
+        // inside it and `Released` only once `release` has taken the value.
+        let Stage::Mapped { geometry, mapping } = &self.stage else {
             return Err(Error::Invalid("unmapped HAL surface"));
         };
         // SAFETY: the created surface is live until release.
         let code = unsafe { (self.api.capture)(&raw mut *self.surface) };
-        status(code, "HAL_GAL_CaptureFrameBuffer")?;
+        status(code, Operation::HalCaptureFrameBuffer)?;
         // SAFETY: the mapping is `length` readable bytes until it is unmapped,
         // which needs `&mut self`, so not while the frame borrows it. HAL may
         // still be writing it (the capture is a blit, and nothing says it has
@@ -289,38 +251,39 @@ impl UiCapture {
         self.cleanup()
     }
 
+    /// Undo the stage reached, once: a second call finds `Released`.
     fn cleanup(&mut self) -> Result<(), Error> {
-        self.released = true;
         let mut first = None;
-        if let Some(mapping) = self.mapping.take() {
-            // SAFETY: exactly the region `map` returned; no borrow of it can
-            // outlive `&mut self`.
-            let code = unsafe { libc::munmap(mapping.address.as_ptr().cast(), mapping.length) };
-            if code != 0 {
-                first = Some(Error::Device {
-                    path: DEVICE,
-                    source: std::io::Error::last_os_error(),
-                });
+        match std::mem::replace(&mut self.stage, Stage::Released) {
+            Stage::Released => return Ok(()),
+            Stage::Created => {}
+            Stage::Mapped { mapping, .. } => {
+                // SAFETY: exactly the region `map` returned; no borrow of it
+                // can outlive `&mut self`.
+                let code = unsafe { libc::munmap(mapping.address.as_ptr().cast(), mapping.length) };
+                if code != 0 {
+                    first = Some(Error::Device {
+                        path: DEVICE,
+                        source: std::io::Error::last_os_error(),
+                    });
+                }
+                drop(mapping);
             }
-            drop(mapping);
         }
-        if std::mem::take(&mut self.created) {
-            // SAFETY: the surface was created by this HAL and not yet destroyed.
-            let code = unsafe { (self.api.destroy)(&raw mut *self.surface) };
-            if let Err(error) = status(code, "HAL_GAL_DestroySurface") {
-                first.get_or_insert(error);
-            }
+        // SAFETY: the surface was created by this HAL and not yet destroyed:
+        // the stage was `Created` or `Mapped` and is now `Released`.
+        let code = unsafe { (self.api.destroy)(&raw mut *self.surface) };
+        if let Err(error) = status(code, Operation::HalDestroySurface) {
+            first.get_or_insert(error);
         }
         first.map_or(Ok(()), Err)
     }
 }
 
 impl Drop for UiCapture {
-    /// Release without reporting when [`UiCapture::release`] was not called.
+    /// Release without reporting; nothing when [`UiCapture::release`] ran.
     fn drop(&mut self) {
-        if !self.released {
-            let _ = self.cleanup();
-        }
+        let _ = self.cleanup();
     }
 }
 
@@ -378,22 +341,6 @@ fn map(device: &Path, offset: u32, length: usize) -> Result<Mapping, Error> {
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub fn fuzz_surface_check(data: &[u8]) {
-    unsafe extern "C" fn init() -> c_int {
-        0
-    }
-    unsafe extern "C" fn create(_: u32, _: u32, _: u32, _: *mut Surface) -> c_int {
-        0
-    }
-    unsafe extern "C" fn call(_: *mut Surface) -> c_int {
-        0
-    }
-    // Never called: the capture below has no surface or mapping to release.
-    static NO_HAL: HalApi = HalApi {
-        init,
-        create,
-        destroy: call,
-        capture: call,
-    };
     let Some(bytes) = data.first_chunk::<16>() else {
         return;
     };
@@ -405,16 +352,7 @@ pub fn fuzz_surface_check(data: &[u8]) {
     surface.width = field(8);
     surface.height = field(10);
     surface.property = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
-    let capture = UiCapture {
-        api: &NO_HAL,
-        surface: Box::new(surface),
-        created: false,
-        geometry: None,
-        mapping: None,
-        released: true,
-        _thread: PhantomData,
-    };
-    let s = &capture.surface;
+    let s = &surface;
     let (pitch, rows, row) = (u64::from(s.pitch), u64::from(height), u64::from(width) * 4);
     let length = match s.property {
         0 => pitch * rows,
@@ -427,7 +365,7 @@ pub fn fuzz_surface_check(data: &[u8]) {
         && pitch >= row
         && length >= pitch * (rows - 1) + row
         && length <= 64 * 1024 * 1024;
-    match capture.check(width, height) {
+    match UiCapture::check(s, width, height) {
         Ok(got) => {
             assert!(valid, "accepted {width}x{height} from {data:?}");
             assert_eq!(got as u64, length, "{data:?}");
@@ -602,7 +540,6 @@ mod tests {
             return; // On a TV this would open real hardware; not a host test.
         }
         let error = UiCapture::open(320, 180).err().unwrap();
-        assert!(matches!(error, Error::Load { .. }), "{error}");
-        assert!(!error.is_fatal());
+        assert!(matches!(error, Error::Load(_)), "{error}");
     }
 }

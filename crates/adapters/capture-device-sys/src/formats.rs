@@ -19,8 +19,7 @@ pub(crate) mod v4l2;
 /// frames per second and still be that rate.
 const TOLERANCE_PER_MILLE: u32 = 2;
 
-/// The highest rate listed; no capture device goes beyond it, and it bounds
-/// the work of listing a continuous range.
+/// Maximum frame rate included when listing capture modes.
 const MAX_FPS: u32 = 1000;
 
 /// Whole-number frame rates a device delivers, 1 to [`MAX_FPS`].

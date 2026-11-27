@@ -19,12 +19,17 @@
 //! change of video availability releases one before the other opens. A UI
 //! tap that cannot work in this process (no library, symbol or `/dev/gfx`)
 //! is logged once as unsupported, and the source idles without video, as
-//! with `include_ui` off; other UI failures are retried with a bounded
-//! backoff that a frame resets, then end the same way. A transparent plane
-//! is delivered as black.
+//! with `include_ui` off; after any other UI failure it idles the same way
+//! until the video or its context changes. A transparent plane is
+//! delivered as black.
+//!
+//! Every failure's recovery is in one table (`classify`): retried only
+//! with a reason that converges, otherwise a wait for a change of the video
+//! signal or a failure that carries its [`prysm_ports::Escalation`].
 //!
 //! All `unsafe` FFI is in `prysm-capture-webos-sys`.
 mod backend;
+mod classify;
 mod settings;
 mod source;
 mod ui;
@@ -32,7 +37,7 @@ mod video;
 
 pub use settings::{MODE, WebosSettings};
 pub use source::{RELEASE, WebosFrames};
-pub use video::{Readiness, Video, VideoSignal};
+pub use video::{Readiness, RepeatedStall, Video, VideoSignal};
 
 /// What a webOS source's stop waits for: its pulls return within their
 /// timeout (frames come from its native thread), then `close` waits for the
@@ -43,18 +48,10 @@ pub const STOP: prysm_ports::SourceStop = prysm_ports::SourceStop {
     close: RELEASE,
 };
 
-use prysm_ports::{FrameSource, Modes, Result, SourceFactory, ValidationError};
-
-/// Whether `failure` (a source's) means no TV capture can succeed again in
-/// this process: driver creation failed, or a capture client name stays
-/// registered with Luna. A host restarts its process for it instead of
-/// opening a new source.
-#[must_use]
-pub fn needs_new_process(failure: &prysm_ports::Error) -> bool {
-    failure
-        .cause::<prysm_capture_webos_sys::Error>()
-        .is_some_and(prysm_capture_webos_sys::Error::needs_new_process)
-}
+use prysm_ports::{
+    Error, FrameSource, Hangup, Modes, Readiness as Availability, Result, SourceFactory,
+    ValidationError,
+};
 
 /// Opens the TV's video capture.
 #[derive(Debug, Clone, Default)]
@@ -65,7 +62,8 @@ pub struct WebosCapture {
 impl WebosCapture {
     /// Sources opened by this factory follow `video`. Without a feed
     /// ([`Default`]), video is [`Video::Unknown`] and capture is attempted,
-    /// bounded by the preparation limit.
+    /// bounded by the preparation limit; video the TV withholds is then
+    /// waited for until the source closes, as no signal changes.
     #[must_use]
     pub fn new(video: VideoSignal) -> Self {
         Self { video }
@@ -99,6 +97,18 @@ impl SourceFactory for WebosCapture {
 
     fn open(&self, settings: &WebosSettings) -> Result<Box<dyn FrameSource>> {
         Ok(Box::new(self.start(settings)?))
+    }
+
+    fn check(&self, settings: &WebosSettings, _: &Hangup) -> Availability<Error> {
+        self.video.capture_readiness(settings)
+    }
+
+    fn failure(&self, error: Error) -> Availability<Error> {
+        self.video.failure(error)
+    }
+
+    fn watch(&self, settings: &WebosSettings, stop: &Hangup) -> Option<Availability<Error>> {
+        self.video.watch_stall(settings, stop)
     }
 
     /// [`MODE`], whatever the settings; `validate` enforces it.

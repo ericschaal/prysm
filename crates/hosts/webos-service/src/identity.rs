@@ -28,6 +28,8 @@ pub struct Identity {
     pub worker: PathBuf,
     /// Private (root, 0700) state: `tv.json` and, for full, `settings.json`.
     pub state_dir: PathBuf,
+    /// Last intent for this boot, shared by supervisor instances.
+    pub resume_path: PathBuf,
     pub layout: Layout,
 }
 
@@ -52,6 +54,7 @@ impl Identity {
             app_id: APP_ID.into(),
             worker: dir.join(WORKER),
             state_dir: PathBuf::from("/var/lib").join(APP_ID),
+            resume_path: format!("/run/{APP_ID}-resume.json").into(),
             layout: Layout {
                 id: APP_ID.into(),
                 manifests: "/var/luna-service2/manifests.d".into(),
@@ -77,6 +80,7 @@ impl Identity {
             flavor,
             worker: binaries.join(worker),
             state_dir: root.join("state"),
+            resume_path: root.join("resume.json"),
             layout: Layout {
                 id: app.clone(),
                 manifests: root.join("manifests.d"),
@@ -141,7 +145,6 @@ mod tests {
             full.layout.hook,
             Path::new("/var/lib/webosbrew/init.d/io.github.ericschaal.prysm")
         );
-        // Everything but the build-time flavor is shared.
         assert_eq!(
             Identity {
                 flavor: Flavor::Full,
@@ -149,6 +152,7 @@ mod tests {
             },
             full
         );
+        assert_eq!(full.resume_path.parent(), Some(Path::new("/run")));
         assert_eq!(full.preferences(), slim.preferences());
         assert!(matches!(full.config().spec, Spec::Full { .. }));
         assert_eq!(slim.config().spec, Spec::Slim);
@@ -161,6 +165,7 @@ mod tests {
         assert_eq!(id.app_id, "io.github.ericschaal.prysm.probe");
         assert_eq!(id.service, "io.github.ericschaal.prysm.probe.service");
         assert!(id.preferences().starts_with("/tmp/p"));
+        assert!(id.resume_path.starts_with("/tmp/p"));
         assert!(id.layout.manifests.starts_with("/tmp/p"));
         assert!(id.layout.hook.starts_with("/tmp/p"));
         assert_eq!(id.worker, Path::new("/opt/b/prysm-webos-slim"));

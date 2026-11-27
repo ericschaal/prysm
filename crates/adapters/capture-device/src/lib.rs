@@ -19,7 +19,8 @@ pub const STOP: prysm_ports::SourceStop = prysm_ports::SourceStop {
 };
 
 use prysm_ports::{
-    Candidate, FrameSource, Mode, Modes, Result, SourceFactory, ValidationError, capture_size,
+    Candidate, Error, FrameSource, Hangup, Mode, Modes, Readiness, Result, SourceFactory,
+    ValidationError, capture_size,
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -41,6 +42,20 @@ impl SourceFactory for DeviceSource {
     /// answers), then blocks until the device is capturing, or fails within a
     /// bounded wait that covers both.
     fn open(&self, settings: &DeviceSettings) -> Result<Box<dyn FrameSource>> {
+        self.open_for_sync(settings, &Hangup::default())
+    }
+
+    fn open_for_sync(
+        &self,
+        settings: &DeviceSettings,
+        stop: &Hangup,
+    ) -> Result<Box<dyn FrameSource>> {
+        if stop.is_cut() {
+            return Err(Error::adapter(
+                "capture open cancelled",
+                prysm_ports::Stopping,
+            ));
+        }
         let check: source::Check = Box::new({
             let (factory, settings) = (*self, settings.clone());
             move || {
@@ -54,11 +69,59 @@ impl SourceFactory for DeviceSource {
         let capture: source::Capture = Box::new(move |sink| {
             prysm_capture_device_sys::capture(Some(&device), width, height, fps, sink)
         });
-        Ok(Box::new(source::DeviceFrames::start(
+        Ok(Box::new(source::DeviceFrames::start_with_stop(
             check,
             capture,
             source::Deadlines::DEVICE,
+            stop,
         )?))
+    }
+
+    fn check(&self, settings: &DeviceSettings, _stop: &Hangup) -> Readiness<Error> {
+        match prysm_capture_device_sys::check_device(&settings.device) {
+            Ok(()) => {
+                match self
+                    .modes(settings)
+                    .check(settings.width, settings.height, settings.fps)
+                {
+                    Ok(()) => Readiness::Ready,
+                    Err(error) => Readiness::Blocked(error.into()),
+                }
+            }
+            Err(error) => self.failure(source::failure("cannot use the video device", error)),
+        }
+    }
+
+    fn failure(&self, error: Error) -> Readiness<Error> {
+        use prysm_capture_device_sys::CaptureError;
+        if matches!(
+            error.cause::<CaptureError>(),
+            Some(CaptureError::DeviceNotFound { .. } | CaptureError::Disconnected { .. })
+        ) {
+            return Readiness::Waiting(error);
+        }
+        Readiness::Blocked(error)
+    }
+
+    fn watch(&self, settings: &DeviceSettings, stop: &Hangup) -> Option<Readiness<Error>> {
+        while !stop.is_cut() {
+            match prysm_capture_device_sys::watch_device(&settings.device, stop) {
+                Ok(false) => return None,
+                Ok(true) => {
+                    let ready = self.check(settings, stop);
+                    if !matches!(ready, Readiness::Waiting(_)) {
+                        return (!stop.is_cut()).then_some(ready);
+                    }
+                }
+                Err(error) => {
+                    return Some(Readiness::Blocked(Error::adapter(
+                        "cannot watch for video device",
+                        error,
+                    )));
+                }
+            }
+        }
+        None
     }
 
     /// The video devices present (V4L2 nodes that capture, `AVFoundation`
@@ -79,8 +142,11 @@ impl SourceFactory for DeviceSource {
     /// The `device`'s formats, within what [`DeviceSettings::validate`]
     /// accepts; unknown when the device cannot be opened or asked.
     fn modes(&self, settings: &DeviceSettings) -> Modes {
-        prysm_capture_device_sys::list_formats(&settings.device)
-            .map_or(Modes::Unknown, |listed| Modes::Known(bounded(&listed)))
+        prysm_capture_device_sys::list_formats(&settings.device).map_or(Modes::Unknown, |listed| {
+            Modes::Known {
+                modes: bounded(&listed),
+            }
+        })
     }
 }
 

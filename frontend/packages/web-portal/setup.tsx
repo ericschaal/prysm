@@ -1,17 +1,9 @@
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { failureOf, plainFailure, same } from '@prysm/application-client';
 import {
   adapterFor,
   createSection,
   refusal,
-  kindsOf,
   type AdapterSection,
   type AdapterUis,
 } from './adapters';
@@ -23,12 +15,13 @@ import {
   useFieldErrors,
   useFieldScope,
 } from './form';
+import { usePortal } from './portal-context';
 import { SectionFields } from './section-step';
 import { stepCopy } from './step-copy';
 
+const sides = ['capture', 'output'] as const;
 const steps = [
-  stepCopy.capture,
-  stepCopy.output,
+  ...sides.map((side) => stepCopy[side]),
   {
     title: 'Review and start',
     intro:
@@ -48,29 +41,19 @@ function stepOf(field: string | undefined) {
   }
 }
 
-function initial<S extends AdapterSection>(
-  adapters: AdapterUis<S>,
-  saved: S | null,
-) {
-  return saved ?? createSection(adapters, kindsOf(adapters)[0] ?? '');
-}
-
-function normalized<S extends AdapterSection>(
-  adapters: AdapterUis<S>,
-  value: S,
-) {
+function normalized(adapters: AdapterUis, value: AdapterSection) {
   return adapterFor(adapters, value.kind)?.normalize?.(value) ?? value;
 }
 
-function Summary<S extends AdapterSection>({
+function Summary({
   title,
   adapters,
   value,
   edit,
 }: {
   title: string;
-  adapters: AdapterUis<S>;
-  value: S;
+  adapters: AdapterUis;
+  value: AdapterSection;
   edit: () => void;
 }) {
   const adapter = adapterFor(adapters, value.kind);
@@ -96,50 +79,29 @@ function Summary<S extends AdapterSection>({
   );
 }
 
-export interface SetupWizardProps<
-  C extends AdapterSection,
-  O extends AdapterSection,
-> {
-  captures: AdapterUis<C>;
-  outputs: AdapterUis<O>;
-  /** The observed sections; `null` while unconfigured. */
-  capture: C | null;
-  output: O | null;
-  revision: number;
-  disabled: boolean;
-  /** Save both sections at once against `expected`. */
-  save: (expected: number, capture: C, output: O) => Promise<unknown>;
-  /** Start screen sync. */
-  start: () => Promise<unknown>;
-  /** Leave setup; `notice` says how it ended. */
-  close: (notice: string) => void;
-}
-
 /**
  * Guided setup: video source, lights, review. It edits local drafts with the
  * hosts' own editors and saves capture and output together, once, at the end.
  */
-export function SetupWizard<
-  C extends AdapterSection,
-  O extends AdapterSection,
->({
-  captures,
-  outputs,
-  capture: savedCapture,
-  output: savedOutput,
-  revision,
-  disabled,
-  save,
-  start,
-  close,
-}: SetupWizardProps<C, O>) {
-  /** What the drafts started from; saving over a change elsewhere reloads. */
-  const [base, setBase] = useState({
-    capture: savedCapture,
-    output: savedOutput,
+export function SetupWizard({ close }: { close: (notice: string) => void }) {
+  const {
+    host: { captures, outputs },
+    snapshot: { settings, revision },
+    online,
+    commands,
+  } = usePortal();
+  const adapters = { capture: captures, output: outputs };
+  const saved = {
+    capture: settings.capture ?? null,
+    output: settings.output ?? null,
+  };
+  const fresh = () => ({
+    capture: saved.capture ?? createSection(captures),
+    output: saved.output ?? createSection(outputs),
   });
-  const [capture, setCapture] = useState(() => initial(captures, savedCapture));
-  const [output, setOutput] = useState(() => initial(outputs, savedOutput));
+  /** Save both sections only if neither has changed elsewhere. */
+  const [base, setBase] = useState(saved);
+  const [draft, setDraft] = useState(fresh);
   /** Changes when the drafts are replaced, to remount their inputs. */
   const [generation, setGeneration] = useState(0);
   const [step, setStep] = useState(0);
@@ -162,7 +124,7 @@ export function SetupWizard<
     else focusField(formRef.current, focus.field);
   }, [focus]);
   const headingId = useId();
-  const locked = disabled || busy;
+  const locked = !online || busy;
   const scope = useFieldScope(locked, errors, attempted);
   const current = steps[step] ?? steps[0];
 
@@ -174,9 +136,8 @@ export function SetupWizard<
     setFocus({ heading: true });
   }
   function reload() {
-    setBase({ capture: savedCapture, output: savedOutput });
-    setCapture(initial(captures, savedCapture));
-    setOutput(initial(outputs, savedOutput));
+    setBase(saved);
+    setDraft(fresh());
     setGeneration((count) => count + 1);
     errors.clearServer();
     goTo(2);
@@ -184,7 +145,7 @@ export function SetupWizard<
   }
   async function finish(lighting: boolean) {
     if (locked) return;
-    if (!same(savedCapture, base.capture) || !same(savedOutput, base.output)) {
+    if (!same(saved, base)) {
       reload();
       return;
     }
@@ -192,10 +153,10 @@ export function SetupWizard<
     setFailure('');
     setNotice('');
     try {
-      await save(
+      await commands.configureSetup(
         revision,
-        normalized(captures, capture),
-        normalized(outputs, output),
+        normalized(captures, draft.capture),
+        normalized(outputs, draft.output),
       );
     } catch (error) {
       setBusy(false);
@@ -206,10 +167,9 @@ export function SetupWizard<
       }
       const field = reason.kind === 'invalid' ? reason.field : undefined;
       if (field) {
-        const side = field.startsWith('capture')
-          ? adapterFor(captures, capture.kind)
-          : adapterFor(outputs, output.kind);
-        errors.setServer({ [field]: refusal(side, field) });
+        const side = field.startsWith('capture') ? 'capture' : 'output';
+        const adapter = adapterFor(adapters[side], draft[side].kind);
+        errors.setServer({ [field]: refusal(adapter, field) });
       }
       setStep(stepOf(field));
       setFailure(saveProblem(reason));
@@ -218,7 +178,7 @@ export function SetupWizard<
     }
     if (!lighting) return close('Setup saved.');
     try {
-      await start();
+      await commands.setTarget('screen_sync');
       close('Setup saved. Screen sync is starting.');
     } catch (error) {
       close(
@@ -242,53 +202,7 @@ export function SetupWizard<
     }
     goTo(step + 1);
   }
-  function change<S>(set: (value: S) => void) {
-    return (value: S) => {
-      set(value);
-      setFailure('');
-    };
-  }
-
-  let body: ReactNode;
-  if (step === 0)
-    body = (
-      <SectionFields
-        key={generation}
-        section="capture"
-        adapters={captures}
-        value={capture}
-        base={base.capture}
-        onChange={change(setCapture)}
-      />
-    );
-  else if (step === 1)
-    body = (
-      <SectionFields
-        key={generation}
-        section="output"
-        adapters={outputs}
-        value={output}
-        base={base.output}
-        onChange={change(setOutput)}
-      />
-    );
-  else
-    body = (
-      <div className="setup-review">
-        <Summary
-          title="Video source"
-          adapters={captures}
-          value={capture}
-          edit={() => goTo(0)}
-        />
-        <Summary
-          title="Lights"
-          adapters={outputs}
-          value={output}
-          edit={() => goTo(1)}
-        />
-      </div>
-    );
+  const side = sides[step];
   let tone: 'error' | 'warning' | undefined;
   if (failure) tone = 'error';
   else if (notice) tone = 'warning';
@@ -335,10 +249,36 @@ export function SetupWizard<
       <p key={`intro-${step}`} className="intro">
         {current.intro}
         {step === 0
-          ? ` ${adapterFor(captures, capture.kind)?.setup ?? ''}`
+          ? ` ${adapterFor(captures, draft.capture.kind)?.setup ?? ''}`
           : null}
       </p>
-      <FieldScopeProvider value={scope}>{body}</FieldScopeProvider>
+      <FieldScopeProvider value={scope}>
+        {side ? (
+          <SectionFields
+            key={generation}
+            section={side}
+            adapters={adapters[side]}
+            value={draft[side]}
+            base={base[side]}
+            onChange={(value) => {
+              setDraft((current) => ({ ...current, [side]: value }));
+              setFailure('');
+            }}
+          />
+        ) : (
+          <div className="setup-review">
+            {sides.map((section, index) => (
+              <Summary
+                key={section}
+                title={section === 'capture' ? 'Video source' : 'Lights'}
+                adapters={adapters[section]}
+                value={draft[section]}
+                edit={() => goTo(index)}
+              />
+            ))}
+          </div>
+        )}
+      </FieldScopeProvider>
       <p
         className="form-status"
         data-tone={tone}

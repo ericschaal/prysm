@@ -1,7 +1,7 @@
 //! Key presses become actions; the command bar and notices are local UI state.
 use crate::command::Command;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use prysm_ports::LightingTarget;
+use prysm_ports::{LightingTarget, Snapshot};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -51,9 +51,16 @@ impl Notice {
 pub(crate) struct Ui {
     draft: Option<String>,
     notices: VecDeque<Notice>,
+    on: bool,
+    mode_selection: bool,
 }
 
 impl Ui {
+    pub fn update_lighting(&mut self, snapshot: &Snapshot, supports_effects: bool) {
+        self.on = snapshot.target != LightingTarget::Off || snapshot.control.external;
+        self.mode_selection = self.on && supports_effects;
+    }
+
     pub fn key(&mut self, key: KeyEvent) -> Option<Action> {
         if key.kind == KeyEventKind::Release {
             return None;
@@ -66,6 +73,9 @@ impl Ui {
             return None;
         }
         let Some(draft) = &mut self.draft else {
+            if key.kind == KeyEventKind::Repeat && key.code == KeyCode::Char('p') {
+                return None;
+            }
             return self.shortcut(key.code);
         };
         match key.code {
@@ -78,13 +88,7 @@ impl Ui {
             }
             KeyCode::Enter => {
                 let line = self.draft.take().unwrap_or_default();
-                return match parse(&line) {
-                    Ok(action) => action,
-                    Err(error) => {
-                        self.notify(Notice::error(error));
-                        None
-                    }
-                };
+                return self.command(&line);
             }
             _ => {}
         }
@@ -92,19 +96,18 @@ impl Ui {
     }
 
     fn shortcut(&mut self, code: KeyCode) -> Option<Action> {
-        let target = |target| Some(Action::Run(Command::SetTarget(target)));
-        match code {
-            KeyCode::Char('s') => target(LightingTarget::ScreenSync),
-            KeyCode::Char('e') => target(LightingTarget::Effects),
-            KeyCode::Char('o') => target(LightingTarget::Off),
-            KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
+        let command = match code {
+            KeyCode::Char('p') => "power",
+            KeyCode::Char('s') => "screen_sync",
+            KeyCode::Char('e') => "effects",
+            KeyCode::Char('q') | KeyCode::Esc => "quit",
             KeyCode::Char(':') => {
                 self.draft = Some(String::new());
-                None
+                return None;
             }
-            // Scroll-generated arrows and anything else are ignored.
-            _ => None,
-        }
+            _ => return None,
+        };
+        self.command(command)
     }
 
     pub fn notify(&mut self, notice: Notice) {
@@ -124,7 +127,8 @@ impl Ui {
     pub fn footer(&self, width: usize) -> String {
         let text = match &self.draft {
             Some(draft) => format!(" Enter run · Esc cancel  :{draft}▏"),
-            None => HELP.to_owned(),
+            None if self.mode_selection => MODE_HELP.to_owned(),
+            None => POWER_HELP.to_owned(),
         };
         let skip = match &self.draft {
             Some(_) => text.chars().count().saturating_sub(width),
@@ -134,26 +138,35 @@ impl Ui {
     }
 }
 
-pub(crate) const HELP: &str =
-    " s screen sync · e effects · o off · : on|off|effects|load <path> · q quit";
+const POWER_HELP: &str = " p Power · : load <path> · q quit";
+const MODE_HELP: &str = " p Power · s Screen sync · e Effects · : load <path> · q quit";
 
-fn parse(line: &str) -> Result<Option<Action>, String> {
-    let line = line.trim();
-    let run = |target| Ok(Some(Action::Run(Command::SetTarget(target))));
-    match line {
-        "" => Ok(None),
-        "on" | "screen_sync" => run(LightingTarget::ScreenSync),
-        "effects" => run(LightingTarget::Effects),
-        "off" => run(LightingTarget::Off),
-        "q" | "quit" => Ok(Some(Action::Quit)),
-        _ => match line.strip_prefix("load ").map(str::trim) {
-            Some(path) if !path.is_empty() => {
-                Ok(Some(Action::Run(Command::Load(PathBuf::from(path)))))
+impl Ui {
+    fn command(&mut self, line: &str) -> Option<Action> {
+        let line = line.trim();
+        let target = |target| Some(Action::Run(Command::SetTarget(target)));
+        match line {
+            "power" => Some(Action::Run(Command::Power)),
+            "on" if !self.on => Some(Action::Run(Command::Power)),
+            "off" if self.on => target(LightingTarget::Off),
+            "screen_sync" if self.mode_selection => target(LightingTarget::ScreenSync),
+            "effects" if self.mode_selection => target(LightingTarget::Effects),
+            "" | "on" | "off" | "screen_sync" | "effects" => None,
+            "q" | "quit" => Some(Action::Quit),
+            _ => {
+                if let Some(path) = line
+                    .strip_prefix("load ")
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                {
+                    return Some(Action::Run(Command::Load(PathBuf::from(path))));
+                }
+                self.notify(Notice::error(format!(
+                    "Unknown command `{line}`; use power or load <path>"
+                )));
+                None
             }
-            _ => Err(format!(
-                "Unknown command `{line}`; use on, screen_sync, effects, off or load <path>"
-            )),
-        },
+        }
     }
 }
 
@@ -182,14 +195,30 @@ mod tests {
     #[test]
     fn shortcuts_set_targets_and_quit() {
         let mut ui = Ui::default();
+        assert_eq!(press(&mut ui, "seop"), [Action::Run(Command::Power)]);
+        assert_eq!(ui.footer(200), POWER_HELP);
+        let on = Snapshot {
+            target: LightingTarget::ScreenSync,
+            ..Snapshot::default()
+        };
+
+        ui.update_lighting(&on, false);
+        assert_eq!(press(&mut ui, "se"), []);
+        assert_eq!(ui.footer(200), POWER_HELP);
+
+        ui.update_lighting(&on, true);
         assert_eq!(
-            press(&mut ui, "seox"),
+            press(&mut ui, "seop"),
             [
                 set(LightingTarget::ScreenSync),
                 set(LightingTarget::Effects),
-                set(LightingTarget::Off)
+                Action::Run(Command::Power)
             ]
         );
+        assert_eq!(ui.footer(200), MODE_HELP);
+        let mut repeat = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
+        repeat.kind = KeyEventKind::Repeat;
+        assert_eq!(ui.key(repeat), None);
         assert_eq!(ui.key(KeyCode::Up.into()), None);
         assert_eq!(press(&mut ui, "q"), [Action::Quit]);
         assert_eq!(ui.key(KeyCode::Esc.into()), Some(Action::Quit));
@@ -203,7 +232,6 @@ mod tests {
     #[test]
     fn command_bar_edits_and_only_enter_submits() {
         let mut ui = Ui::default();
-        // Shortcuts are plain text while typing.
         assert!(press(&mut ui, ":load /tmp/café x.jsonq").is_empty());
         ui.key(KeyCode::Backspace.into());
         assert!(ui.footer(100).ends_with(":load /tmp/café x.json▏"));
@@ -214,11 +242,19 @@ mod tests {
         press(&mut ui, ":off");
         ui.key(KeyCode::Esc.into());
         assert_eq!(ui.key(KeyCode::Enter.into()), None);
-        assert_eq!(ui.footer(200), HELP);
+        assert_eq!(ui.footer(200), POWER_HELP);
+        press(&mut ui, ":effects");
+        assert_eq!(ui.key(KeyCode::Enter.into()), None);
+        ui.update_lighting(
+            &Snapshot {
+                target: LightingTarget::ScreenSync,
+                ..Snapshot::default()
+            },
+            true,
+        );
         for (command, target) in [
             (":effects", LightingTarget::Effects),
             (":screen_sync", LightingTarget::ScreenSync),
-            (":on", LightingTarget::ScreenSync),
             (":off", LightingTarget::Off),
         ] {
             press(&mut ui, command);
@@ -227,6 +263,17 @@ mod tests {
                 Some(set(target)),
                 "{command}"
             );
+        }
+    }
+
+    #[test]
+    fn power_is_the_only_action_that_can_start_from_off() {
+        let mut ui = Ui::default();
+        for command in ["power", "on"] {
+            assert_eq!(ui.command(command), Some(Action::Run(Command::Power)));
+        }
+        for command in ["screen_sync", "effects", "off"] {
+            assert_eq!(ui.command(command), None);
         }
     }
 

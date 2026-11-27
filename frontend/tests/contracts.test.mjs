@@ -117,26 +117,54 @@ test('webOS capture settings keep the ranges the adapter validates', () => {
 
 test('the Luna document covers both flavors with one State', () => {
   const states = fixtures['luna/State'];
-  // Each package in each worker phase.
+  // Each package in each worker phase: full asking with every fix,
+  // running also with lights that don't answer and with what it asks,
+  // stopping also to ask; slim running in each link state but starting and
+  // sending.
   assert.deepEqual(
     states.map((state) => `${state.flavor} ${state.worker.phase}`).sort(),
     [
-      'full retrying',
-      'full running',
+      ...Array(5).fill('full asking'),
+      ...Array(3).fill('full running'),
       'full stopped',
       'full stopping',
-      'slim retrying',
-      'slim running',
+      'full stopping',
+      'slim asking',
+      ...Array(7).fill('slim running'),
       'slim stopped',
       'slim stopping',
     ],
+  );
+  assert.deepEqual(
+    [
+      ...new Set(
+        states.flatMap(({ worker }) =>
+          worker.problem
+            ? [worker.problem.asked.fix ?? worker.problem.asked.step]
+            : [],
+        ),
+      ),
+    ].sort(),
+    [
+      'change_settings',
+      'restart_tv',
+      'set_up',
+      'try_again',
+      'unanswered',
+      'unsupported',
+    ],
+    'every kind of what is asked',
   );
   const [full] = states;
   const slim = states.find((state) => state.flavor === 'slim');
   const state = validate('luna/State');
   assert.equal(state({ ...full, flavor: 'other' }), false);
   assert.equal(state({ ...full, power: 'on' }), false);
-  assert.equal(state({ ...full, failure: null }), false, 'omitted, not null');
+  assert.equal(
+    state({ ...full, unreadable: null }),
+    false,
+    'omitted, not null',
+  );
   // A package's own fields are required, and the other flavor's do not fit.
   const { target, ...withoutTarget } = full;
   assert.equal(target, 'screen_sync');
@@ -147,7 +175,18 @@ test('the Luna document covers both flavors with one State', () => {
     state({ ...full, worker: { phase: 'running', capturing: 'yes' } }),
     false,
   );
-  assert.equal(state({ ...full, worker: { phase: 'retrying' } }), false);
+  assert.equal(state({ ...full, worker: { phase: 'asking' } }), false);
+  assert.equal(
+    state({
+      ...full,
+      worker: {
+        phase: 'asking',
+        problem: { asked: { step: 'ask' }, message: 'x' },
+      },
+    }),
+    false,
+    '`ask` says its fix',
+  );
   const preferences = validate('luna/Preferences');
   assert(preferences({}));
   assert.equal(preferences({ mode: 'slim' }), false);
@@ -165,6 +204,7 @@ test('the Luna document covers both flavors with one State', () => {
   assert.equal(validate('luna/SetEnabledRequest')({}), false);
   // Requests are closed: a target this version does not know is refused.
   assert(validate('luna/SetTargetRequest')({ target: 'effects' }));
+  assert(validate('luna/SetTargetRequest')({ target: 'remembered' }));
   assert.equal(validate('luna/SetTargetRequest')({ target: 'ambient' }), false);
   assert.equal(validate('luna/UninstallRequest')({ force: true }), false);
 });

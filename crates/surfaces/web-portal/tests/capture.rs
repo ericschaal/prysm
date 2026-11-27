@@ -130,14 +130,12 @@ async fn a_sender_streams_through_the_portal_once_lighting_runs() {
         let remote = AdapterSettings::new("remote", &RAW);
         let modes = || host.engine.capture_modes(remote.clone());
         assert_eq!(modes().await.unwrap(), Modes::Unknown);
-        // Lighting is off: nobody receives; the sender is told and retries.
         let error = host.connect().await.unwrap_err();
         assert_eq!(
             error.cause::<WireError>(),
             Some(&WireError::Unavailable(503)),
             "{error}"
         );
-        // Its refused attempt carried its offer.
         assert_eq!(
             modes().await.unwrap(),
             prysm_capture_remote::testkit::offer().modes(StreamEncoding::Raw)
@@ -153,7 +151,6 @@ async fn a_sender_streams_through_the_portal_once_lighting_runs() {
         assert_eq!(sender.request(), RAW);
         let first = deliver(sender, &host.engine, 3).await;
 
-        // A second sender replaces the first, whose stream ends.
         let second = host.connect().await.unwrap();
         deliver(second, &host.engine, 3).await;
         let ended = tokio::task::spawn_blocking(move || {
@@ -174,7 +171,6 @@ async fn browsers_from_other_sites_cannot_open_it_and_without_a_source_it_is_abs
             .set_target(LightingTarget::ScreenSync)
             .await
             .unwrap();
-        // A page on another site: browsers always send its origin.
         let mut request = host.url().into_client_request().unwrap();
         request
             .headers_mut()
@@ -191,7 +187,6 @@ async fn browsers_from_other_sites_cannot_open_it_and_without_a_source_it_is_abs
             panic!("{refused:?}");
         };
         assert_eq!(response.status(), 403);
-        // A sender of another version: refused, naming the version here.
         let mut request = host.url().into_client_request().unwrap();
         request.headers_mut().insert(
             "sec-websocket-protocol",
@@ -215,14 +210,12 @@ async fn browsers_from_other_sites_cannot_open_it_and_without_a_source_it_is_abs
             response.headers()["sec-websocket-protocol"],
             prysm_ports::CAPTURE_PROTOCOL
         );
-        // A plain GET is not an upgrade.
         let plain = reqwest::get(format!("http://{address}/api/v1/capture/stream"))
             .await
             .unwrap();
         assert_eq!(plain.status(), 400);
         host.shutdown().await;
 
-        // A portal without the capture stream: the path does not exist.
         let host = start(false).await;
         let error = host.connect().await.unwrap_err();
         assert_eq!(

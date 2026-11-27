@@ -104,7 +104,9 @@ def _parser() -> argparse.ArgumentParser:
     building = argparse.ArgumentParser(add_help=False)
     building.add_argument('--prepare', action='store_true', help='build the artifacts first (cargo xtask dist)')
     free = argparse.ArgumentParser(add_help=False)
-    free.add_argument('--tv-is-free', action='store_true', help='the owner said the TV may be used now')
+    free.add_argument(
+        '--tv-is-free', action='store_true', help='the TV may be used for acceptance, including standby and reboot'
+    )
     host = stages.add_parser(Stage.HOST, parents=[common, building], help='the host cells (pytest)')
     host.add_argument('platform', choices=[platform.value for platform in Platform], help='where Prysm runs')
     host.add_argument('--delivery', choices=[delivery.value for delivery in Delivery], default=Delivery.BINARY)

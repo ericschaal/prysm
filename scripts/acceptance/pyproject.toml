@@ -120,6 +120,7 @@ layers = [
   "checks",
   "config | transport",
   "options | commands | web",
+  "wire_generated",
 ]
 
 [[tool.importlinter.contracts]]

@@ -1,7 +1,6 @@
 //! Nearest-pixel sampling of a captured frame into RGB, for the surfaces' previews.
-use prysm_core::nv12::Nv12View;
-use prysm_core::yuyv::YuyvView;
-use prysm_core::{Frame, PixelFormat, Viewport};
+use super::PixelView;
+use prysm_core::{Frame, Viewport};
 use std::fmt;
 
 /// Why a frame cannot be sampled.
@@ -43,19 +42,21 @@ pub fn sample_rgb(
     if frame.width() == 0 || frame.height() == 0 {
         return Err(SampleError::Empty);
     }
-    let (nv12, yuyv) = (Nv12View::new(frame), YuyvView::new(frame));
+    let view = PixelView::new(frame);
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
-    // An area reaching past `u32::MAX` saturates there: outside, so black.
     for y in 0..height {
+        let row_end = pixels.len() + width as usize;
         let sy = area.y.saturating_add(scale(y, area.height, height));
-        for x in 0..width {
-            let sx = area.x.saturating_add(scale(x, area.width, width));
-            pixels.push(match (nv12, yuyv) {
-                (Some(nv12), _) => nv12.pixel(sx, sy).into(),
-                (_, Some(yuyv)) => yuyv.pixel(sx, sy).into(),
-                _ => pixel(frame, sx, sy),
+        if sy < frame.height() {
+            let xs = (0..width)
+                .map(|x| area.x.saturating_add(scale(x, area.width, width)))
+                .take_while(|&sx| sx < frame.width());
+            view.for_each_rgb(sy, xs.map(|sx| sx as usize), |color| {
+                pixels.push([color.r, color.g, color.b]);
             });
         }
+        // Positions past the frame form a black suffix, or a whole black row.
+        pixels.resize(row_end, [0; 3]);
     }
     Ok(pixels)
 }
@@ -66,32 +67,10 @@ fn scale(i: u32, span: u32, of: u32) -> u32 {
     u32::try_from(u64::from(i) * u64::from(span) / u64::from(of)).unwrap_or(u32::MAX)
 }
 
-fn pixel(frame: &Frame, x: u32, y: u32) -> [u8; 3] {
-    if x >= frame.width() || y >= frame.height() {
-        return [0; 3];
-    }
-    let data = frame.as_slice();
-    match frame.format() {
-        PixelFormat::RGB24 | PixelFormat::BGR24 => {
-            let offset = (y as usize * frame.width() as usize + x as usize) * 3;
-            let Some(&[a, b, c]) = data.get(offset..offset + 3) else {
-                return [0; 3];
-            };
-            if frame.format() == PixelFormat::RGB24 {
-                [a, b, c]
-            } else {
-                [c, b, a]
-            }
-        }
-        // Sampled through their views by the caller.
-        PixelFormat::YUYV { .. } | PixelFormat::NV12 { .. } => [0; 3],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_core::{YuvRange, YuvStandardMatrix};
+    use prysm_core::{PixelFormat, YuvRange, YuvStandardMatrix, yuyv::YuyvView};
 
     /// A `width` x `height` RGB24 frame whose pixel (x, y) is `[x, y, 7]`.
     fn coordinates(width: u32, height: u32) -> Frame {
@@ -147,7 +126,6 @@ mod tests {
                     .collect();
                 let frame = Frame::new(data, 6, 4, format).unwrap();
                 let converted = prysm_core::nv12::nv12_to_rgb(&frame).unwrap();
-                // Odd x and y, and a pair straddling two chroma blocks.
                 let area = Viewport {
                     x: 1,
                     y: 1,
@@ -173,7 +151,6 @@ mod tests {
             sample_rgb(&frame, full(&frame), 2, 2).unwrap(),
             [[0; 3], [255; 3], [255; 3], [0; 3]]
         );
-        // Outside the frame is black, as for the other formats.
         let outside = Viewport {
             x: 2,
             y: 0,
@@ -190,7 +167,6 @@ mod tests {
             sample_rgb(&frame, full(&frame), 2, 2).unwrap(),
             [[0, 0, 7], [2, 0, 7], [0, 1, 7], [2, 1, 7]]
         );
-        // Enlarging repeats pixels.
         let frame = coordinates(1, 1);
         assert_eq!(
             sample_rgb(&frame, full(&frame), 3, 1).unwrap(),
@@ -239,7 +215,6 @@ mod tests {
             sample_rgb(&frame, right, 2, 1).unwrap(),
             [[2, 0, 7], [0; 3]]
         );
-        // An area ending past the coordinate range does not overflow.
         let far = Viewport {
             x: u32::MAX,
             y: u32::MAX,

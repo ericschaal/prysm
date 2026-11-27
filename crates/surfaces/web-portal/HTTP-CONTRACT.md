@@ -105,6 +105,7 @@ the target is reached when `session.state` equals it (`off` is reached by
 | `{ "state": "stopped", "failure"?: LightingFailure }` | No session; Prysm does not drive the lights. After an output failure they may not be off. |
 | `{ "state": "screen_sync" }` | A session runs. It never carries a failure: it runs on valid settings and has reached its target. |
 | `{ "state": "effects", "failure"?: LightingFailure }` | The lights show their own effects; no session. |
+| `{ "state": "unanswered", "failure"?: LightingFailure }` | The requested mode is waiting for the output to become available. Power remains cancellable. |
 | `{ "state": "faulted", "message" }` | A session did not stop in time, or did not confirm its source's release; only a restart recovers. `message` says what did not finish, in words (not covered by the contract); the step itself is only logged. |
 
 A `failure` is present only while it explains the present: why the target is
@@ -120,33 +121,30 @@ settings as a whole are at fault), `adapter { message, section? }` or
 A calibration's `correction` is `{ warmth, tint, midtones, red, green, blue }`, each primary `{ hue, strength }`, every control -100 to 100 and 0 when omitted ([settings file](../../adapters/settings-file/README.md)).
 On input, `processing`, each of its fields, a calibration's `correction` and each of its controls may be omitted and take their defaults; a `custom_style` lists all seven values. Settings sections and the objects in them (the style, a custom style, a calibration, its correction and each primary) are JSON objects, never arrays: an array inside `settings` is `422 invalid` with its `field`, such as `processing.custom_style`. The generated schema describes the response shape.
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
-Setting the target to `screen_sync` opens the capture (a failure is the
-reply); the output is opened at the first frame, so an output that cannot
-open ends the session and appears only in `session.failure`. While no frames arrive, `input.receiving` is `false`
-(waiting for video) and after a few seconds the output is returned to its own
-state until frames return.
+A `screen_sync` request waits for both adapters. The runtime opens capture
+before powering the output. Read `control.waiting` for the current wait and
+`session.failure` for a reported failure. Power cancels a pending request.
+See [lighting transitions](../../../docs/developers/control-api.md#lighting-transitions).
 
 `device` is what the lights say about themselves,
 `{ "issue"?: …, "brightness_percent"?: …, "led_count"?: … }`, each part absent
-while the output cannot tell. It is `{}` while no session holds the output:
-no session, a session before its first frame, or one that returned the output
-after 3 s without video. Read `session.state` and `input.receiving` for which;
-`{}` alone does not mean lighting stopped. `issue` (absent
-when all is well) says why the lights are not showing its colours: `off`
-(switched off on the device), `overridden` (WLED's live override), `not_live`
-(the device is not taking realtime colours), `other_sender` or `unreachable`.
-It is not a failure: lighting keeps sending, nothing is switched back, and the
-field clears once the device shows the colours again. `brightness_percent`
+while the output cannot tell. Read `session.state`, `control.waiting` and
+`input.picture` to distinguish a pending mode from an active stream. When a
+requested mode is waiting for an unreachable output the issue is
+`unreachable`. While streaming, device reports can also identify power off,
+lack of live data, or another sender. A detected explicit WLED live override
+hands the display to Effects. `brightness_percent`
 (0-100) is the device's own brightness while it scales the colours, and
 `led_count` how many LEDs the device itself says it has (WLED's LED count);
 Prysm keeps sending `settings.output.leds` either way and changes none of them.
 
 `input`, while a session runs, is measured about once a second: `fps`
-(frames from the source per second), `receiving`, `sent_fps` (frames whose
-colours were written to the output per second) and `latency`. `latency` is
-`{ "capture_ms"?: …, "output_ms": … }`, each the mean per frame over the
-window: `output_ms` from Prysm receiving a frame from its source to the output
-write for its colours returning; `capture_ms` from the source capturing the
+(frames from the source per second), `picture`, `sent_fps` (frames whose
+colours were handed to the output per second; an output may drop a frame it
+cannot send now, and `device.issue` says when the lights do not answer) and
+`latency`. `latency` is `{ "capture_ms"?: …, "output_ms": … }`, each the
+mean per frame over the window: `output_ms` from Prysm receiving a frame from
+its source to the output write for its colours returning; `capture_ms` from the source capturing the
 frame to Prysm receiving it, present only when every frame in the window
 carried a capture time (video devices on macOS and on Linux with monotonic
 V4L2 timestamps). Both are measured by Prysm (not from the screen, and not
@@ -157,6 +155,11 @@ keeping up with its source: `processing` (turning frames into colours) or
 idle time between frames (busy at least 85% of each second) for 3 seconds in
 a row, and cleared after 3 seconds with slack; a source that just sends fewer
 frames leaves idle time and never sets it. Absent while Prysm keeps up.
+`picture` is `arriving` (at least one frame in the window), `quiet` (none,
+and no reason given: no signal, no sender; also right after the session
+starts) or `refused` (none, because the source's device refuses to share the
+video it shows; it ends when the video changes). Neither `quiet` nor `refused` is a failure: screen sync keeps
+running, and the output is returned alike.
 `/metrics` has
 the received-to-flushed spans as the `prysm_frame_flush_seconds` summary.
 
@@ -384,17 +387,17 @@ metrics and no histograms.
 | --- | --- | --- |
 | `prysm_build_info{version}` | gauge | Always 1; `version` is the product version, as `State.version` |
 | `prysm_target{target}` | gauge | 1 for the current target (`off`, `screen_sync`, `effects`), 0 for the others |
-| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `screen_sync`, `effects`, `faulted`), 0 for the others |
+| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `screen_sync`, `effects`, `unanswered`, `faulted`), 0 for the others |
 | `prysm_settings_revision` | gauge | `State.revision` (random start per process) |
 | `prysm_input_fps` | gauge | `State.input.fps`; 0 while no session runs |
 | `prysm_frames_received_total` | counter | Frames taken from the capture source (frames from a remote TV included) |
-| `prysm_frames_sent_total` | counter | Frames whose colors were written to the output |
+| `prysm_frames_sent_total` | counter | Frames whose colors were handed to the output (an output may drop a frame it cannot send now) |
 | `prysm_processing_seconds_sum`, `_count` | summary | Time turning frames into colors, and how many frames |
 | `prysm_frame_flush_seconds_sum`, `_count` | summary | Per frame, from Prysm receiving it from the source to its output write returning, and how many frames |
 | `prysm_output_write_seconds_sum`, `_count` | summary | Time in output writes, and how many: frames and keep-alive rewrites, failed ones included |
 | `prysm_output_write_failures_total` | counter | Output writes that failed; each ends lighting with a failure |
 | `prysm_source_opens_total` | counter | Capture sources opened by starting lighting (also each restart after a capture or output change) |
-| `prysm_output_opens_total` | counter | Outputs opened to show colors: at a session's first frame and at the first frame after a release |
+| `prysm_output_opens_total` | counter | Outputs opened to show colors: after capture opens and when frames resume after idle release |
 
 Frames dropped inside a source (a newer frame replacing an untaken one) are
 not counted: adapters keep no metrics. Received minus sent is what the session

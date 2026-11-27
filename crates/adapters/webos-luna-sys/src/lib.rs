@@ -13,10 +13,6 @@
 //! crate builds anywhere. Off a webOS TV [`run`] refuses with
 //! [`Error::Unsupported`] before touching any library.
 //!
-//! - [`load_once`]: load a vendor library and its entry points once per
-//!   process, never to unload them; LS2 and GLib here, VTCapture and HAL GAL
-//!   in `prysm-capture-webos-sys`.
-//!
 //! Safety contract kept by this crate, never by its callers: callback state
 //! lives in one shared allocation registered with LS2 and freed only after
 //! `LSUnregister`; callbacks run only on the thread inside [`run`]; a panic in
@@ -24,12 +20,13 @@
 //! instead of unwinding into C or freeing memory LS2 may still use. No
 //! library is ever unloaded.
 mod check;
-mod library;
 mod service;
 
 pub use check::check_registration;
-pub use library::{Loaded, load_once};
-pub use service::{Bus, Config, Handler, Next, Refusal, Request, Response, Wake, Waker, run};
+use prysm_webos_library_sys::VendorLibrary;
+pub use service::{
+    Bus, Config, Handler, MAX_PAYLOAD, Next, Refusal, Request, Response, Wake, Waker, run,
+};
 
 #[allow(
     dead_code,
@@ -108,42 +105,34 @@ const GLIB_LIBRARY: &str = "/usr/lib/libglib-2.0.so.0";
 
 /// LS2's entry points, loaded on first use for the life of the process.
 fn luna() -> Result<&'static generated::luna::Luna, Error> {
-    static LUNA: std::sync::Mutex<Loaded<generated::luna::Luna>> =
-        std::sync::Mutex::new(Loaded::Nothing);
-    load_once(&LUNA, &[LUNA_LIBRARY], |_| {
-        // SAFETY: signatures generated from the matching TV SDK. The table
-        // opens a second handle to the library `load_once` keeps loaded, so a
-        // missing symbol closes only that handle, never the library.
-        unsafe { generated::luna::Luna::new(LUNA_LIBRARY) }.map_err(|source| Error::Load {
-            library: LUNA_LIBRARY.into(),
-            source,
-        })
+    // SAFETY: the SDK's LS2 library is safe to load in the service process.
+    static LUNA: VendorLibrary<generated::luna::Luna> =
+        unsafe { VendorLibrary::new(&[LUNA_LIBRARY]) };
+    LUNA.load(|_| {
+        // SAFETY: the pinned LS2 library matches the generated SDK signatures.
+        unsafe { generated::luna::Luna::new(LUNA_LIBRARY) }
     })
+    .map_err(Error::from)
 }
 
 /// GLib's entry points, loaded on first use for the life of the process.
 fn glib() -> Result<&'static generated::glib::Glib, Error> {
-    static GLIB: std::sync::Mutex<Loaded<generated::glib::Glib>> =
-        std::sync::Mutex::new(Loaded::Nothing);
-    load_once(&GLIB, &[GLIB_LIBRARY], |_| {
-        // SAFETY: as for `luna`.
-        unsafe { generated::glib::Glib::new(GLIB_LIBRARY) }.map_err(|source| Error::Load {
-            library: GLIB_LIBRARY.into(),
-            source,
-        })
+    // SAFETY: the SDK's GLib library is safe to load in the service process.
+    static GLIB: VendorLibrary<generated::glib::Glib> =
+        unsafe { VendorLibrary::new(&[GLIB_LIBRARY]) };
+    GLIB.load(|_| {
+        // SAFETY: the pinned GLib library matches the generated SDK signatures.
+        unsafe { generated::glib::Glib::new(GLIB_LIBRARY) }
     })
+    .map_err(Error::from)
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
     Unsupported(&'static str),
-    #[error("cannot load {library}")]
-    Load {
-        library: String,
-        #[source]
-        source: libloading::Error,
-    },
+    #[error(transparent)]
+    Load(#[from] prysm_webos_library_sys::LoadError),
     /// LS2 refused to register `name`: the caller's role does not allow it.
     #[error("Luna denied the registration of {name}: {message}")]
     Denied { name: String, message: String },

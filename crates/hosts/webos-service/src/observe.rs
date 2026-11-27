@@ -21,19 +21,22 @@ pub fn power(payload: &Value) -> Option<Power> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoReading {
     pub video: Video,
-    /// Source, port and context of available video; a change resets capture.
+    /// Source, port, context and app of available video; a change resets
+    /// capture. The app counts because media apps can share the rest.
     pub context: Option<Value>,
-    /// A good subscription reply: stop retrying the subscription.
-    pub settled: bool,
+    /// A successful reply on a live subscription: stop renewing it. Without
+    /// one, no reading is kept: `video` is [`Video::Unknown`].
+    pub live: bool,
 }
 
 #[must_use]
 pub fn video(payload: &Value) -> VideoReading {
+    let live = payload["returnValue"] == true && payload["subscribed"] == true;
     // No app or port filter: MAIN may carry any input or a built-in video app.
     let main = payload["video"]
         .as_array()
         .and_then(|sinks| sinks.iter().find(|sink| sink["sink"] == "MAIN"))
-        .filter(|_| payload["returnValue"] == true);
+        .filter(|_| live);
     let available = main.and_then(|main| {
         if !main["connected"].as_bool()? {
             return Some(false);
@@ -54,13 +57,14 @@ pub fn video(payload: &Value) -> VideoReading {
         serde_json::json!([
             main["connectedSource"],
             main["connectedSourcePort"],
-            main["context"]
+            main["context"],
+            main["appId"]
         ])
     });
     VideoReading {
         video,
         context,
-        settled: video != Video::Unknown && payload["subscribed"] == true,
+        live,
     }
 }
 
@@ -89,7 +93,8 @@ mod tests {
 
     fn main_sink(fields: Value) -> Value {
         let mut sink = json!({"sink": "MAIN", "connected": true, "width": 1920, "height": 1080,
-            "frameRate": 60.0, "connectedSource": "HDMI", "connectedSourcePort": 2, "context": "pipeline1"});
+            "frameRate": 60.0, "connectedSource": "HDMI", "connectedSourcePort": 2, "context": "pipeline1",
+            "appId": "com.webos.app.hdmi2"});
         for (key, value) in fields.as_object().unwrap() {
             sink[key] = value.clone();
         }
@@ -100,12 +105,17 @@ mod tests {
     fn video_reads_the_main_sink() {
         let reading = video(&main_sink(json!({})));
         assert_eq!(reading.video, Video::Available);
-        assert!(reading.settled);
-        assert_eq!(reading.context, Some(json!(["HDMI", 2, "pipeline1"])));
-        assert_ne!(
-            video(&main_sink(json!({"connectedSourcePort": 3}))).context,
-            reading.context
+        assert!(reading.live);
+        assert_eq!(
+            reading.context,
+            Some(json!(["HDMI", 2, "pipeline1", "com.webos.app.hdmi2"]))
         );
+        for change in [
+            json!({"connectedSourcePort": 3}),
+            json!({"appId": "airplay"}),
+        ] {
+            assert_ne!(video(&main_sink(change)).context, reading.context);
+        }
 
         let gone = video(&main_sink(json!({"connected": false})));
         assert_eq!((gone.video, gone.context), (Video::Unavailable, None));
@@ -113,17 +123,22 @@ mod tests {
             video(&main_sink(json!({"width": 0}))).video,
             Video::Unavailable
         );
-        assert_eq!(
-            video(&main_sink(json!({"frameRate": null}))).video,
-            Video::Unknown
+        let incomplete = video(&main_sink(json!({"frameRate": null})));
+        assert_eq!(incomplete.video, Video::Unknown);
+        assert!(
+            incomplete.live,
+            "the next reply on a live subscription says more"
         );
 
         let failed = video(&json!({"returnValue": false}));
         assert_eq!(failed.video, Video::Unknown);
-        assert!(!failed.settled);
+        assert!(!failed.live);
         let unsubscribed =
             video(&json!({"returnValue": true, "video": main_sink(json!({}))["video"]}));
-        assert_eq!(unsubscribed.video, Video::Available);
-        assert!(!unsubscribed.settled, "keep retrying until subscribed");
+        assert_eq!(
+            (unsubscribed.video, unsubscribed.context),
+            (Video::Unknown, None)
+        );
+        assert!(!unsubscribed.live, "no later reply would update it");
     }
 }

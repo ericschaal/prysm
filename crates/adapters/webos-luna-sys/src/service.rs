@@ -364,7 +364,6 @@ impl Service {
             }
         })?;
         for index in 0..state.calls.len() {
-            // A failed call is retried when the handler recalls it.
             if let Err(error) = state.call(index) {
                 log(&format!(
                     "cannot call {:?}: {error}",
@@ -501,26 +500,14 @@ impl Callbacks {
             state: self,
             raw: NonNull::new(raw).ok_or(Error::Glib("missing Luna message"))?,
         };
-        let internal = |text: String| (Refusal::Internal, text);
         let handled = (|| {
-            let method = message
-                .method()
-                .map_err(|error| internal(error.to_string()))?;
-            let sender = message.sender().map_err(internal)?;
-            let payload = message.payload()?;
+            let request = message.request()?;
             let mut bus = Bus::default();
             let mut handler = self
                 .handler
                 .try_borrow_mut()
-                .map_err(|_| internal("the service is busy".to_owned()))?;
-            let response = handler.request(
-                &mut bus,
-                Request {
-                    method: &method,
-                    sender: &sender,
-                    payload: &payload,
-                },
-            );
+                .map_err(|_| (Refusal::Internal, "the service is busy".to_owned()))?;
+            let response = handler.request(&mut bus, request);
             Ok::<_, (Refusal, String)>((response, bus))
         })();
         let refuse = |refusal, text: &str| message.respond(&(self.refuse)(refusal, text));
@@ -551,7 +538,6 @@ impl Callbacks {
             state: self,
             raw: NonNull::new(raw).ok_or(Error::Glib("missing Luna message"))?,
         };
-        // An unreadable reply still counts as a (bad) reply.
         let payload = message.payload().unwrap_or_default();
         let mut bus = Bus::default();
         let Ok(mut handler) = self.handler.try_borrow_mut() else {
@@ -561,7 +547,7 @@ impl Callbacks {
             ));
             return Ok(());
         };
-        handler.reply(&mut bus, index, &payload);
+        handler.reply(&mut bus, index, payload);
         drop(handler);
         self.apply(bus);
         self.soon();
@@ -660,39 +646,51 @@ struct Message<'callback> {
 }
 
 impl Message<'_> {
-    fn method(&self) -> Result<String, Error> {
-        // SAFETY: LS2's live message for this callback.
-        let text = unsafe { self.state.luna.LSMessageGetMethod(self.raw.as_ptr()) };
-        // SAFETY: LS2 owns the string for the callback's duration.
-        unsafe { native_text(text) }
-    }
-
-    fn sender(&self) -> Result<String, String> {
-        // SAFETY: identity fields come from LS2, never from the payload.
-        let app = unsafe { self.state.luna.LSMessageGetApplicationID(self.raw.as_ptr()) };
-        // SAFETY: LS2 owns this buffer for the callback's duration.
-        let app = unsafe { native_text(app) }.map_err(|error| error.to_string())?;
-        if !app.is_empty() {
-            return Ok(app.split(' ').next().unwrap_or_default().to_owned());
-        }
-        // SAFETY: same live message; anonymous callers may return null.
-        let service = unsafe {
-            self.state
-                .luna
-                .LSMessageGetSenderServiceName(self.raw.as_ptr())
+    fn request(&self) -> Result<Request<'_>, (Refusal, String)> {
+        let luna = self.state.luna;
+        let raw = self.raw.as_ptr();
+        // SAFETY: LS2 owns these names through the callback. The authenticated
+        // app or service identity comes from the message, never from its payload.
+        let (method, sender) = unsafe {
+            let method = self.name(luna.LSMessageGetMethod(raw))?;
+            let app = self.name(luna.LSMessageGetApplicationID(raw))?;
+            let sender = if app.is_empty() {
+                self.name(luna.LSMessageGetSenderServiceName(raw))?
+            } else {
+                app.split_once(' ').map_or(app, |(id, _)| id)
+            };
+            (method, sender)
         };
-        // SAFETY: as above.
-        unsafe { native_text(service) }.map_err(|error| error.to_string())
+        Ok(Request {
+            method,
+            sender,
+            payload: self.payload()?,
+        })
     }
 
-    fn payload(&self) -> Result<String, (Refusal, String)> {
+    /// # Safety
+    /// A non-null pointer must name a NUL-terminated string that LS2 keeps
+    /// immutable for this message's callback.
+    unsafe fn name(&self, pointer: *const c_char) -> Result<&str, (Refusal, String)> {
+        if pointer.is_null() {
+            return Ok("");
+        }
+        // SAFETY: guaranteed by the caller, with the borrow tied to this message.
+        unsafe { CStr::from_ptr(pointer) }.to_str().map_err(|_| {
+            (
+                Refusal::Internal,
+                Error::Glib("Luna returned non-UTF-8 text").to_string(),
+            )
+        })
+    }
+
+    fn payload(&self) -> Result<&str, (Refusal, String)> {
         // SAFETY: LS2's live message for this callback.
         let text = unsafe { self.state.luna.LSMessageGetPayload(self.raw.as_ptr()) };
         if text.is_null() {
             return Err((Refusal::Internal, "missing payload".into()));
         }
-        // SAFETY: LS2 owns this NUL-terminated buffer through the callback; only
-        // an owned copy leaves this method.
+        // SAFETY: LS2 keeps this NUL-terminated payload immutable through the callback.
         let text = unsafe { CStr::from_ptr(text) };
         if text.to_bytes().len() > MAX_PAYLOAD {
             return Err((
@@ -701,7 +699,6 @@ impl Message<'_> {
             ));
         }
         text.to_str()
-            .map(str::to_owned)
             .map_err(|_| (Refusal::Internal, "payload is not UTF-8".to_owned()))
     }
 
@@ -736,20 +733,6 @@ impl Message<'_> {
         })?;
         Ok(subscribed)
     }
-}
-
-/// # Safety
-/// A non-null `pointer` must be a live, NUL-terminated string owned by LS2
-/// for the current callback.
-unsafe fn native_text(pointer: *const c_char) -> Result<String, Error> {
-    if pointer.is_null() {
-        return Ok(String::new());
-    }
-    // SAFETY: guaranteed by the caller; an owned copy is returned.
-    unsafe { CStr::from_ptr(pointer) }
-        .to_str()
-        .map(str::to_owned)
-        .map_err(|_| Error::Glib("Luna returned non-UTF-8 text"))
 }
 
 impl Drop for Service {

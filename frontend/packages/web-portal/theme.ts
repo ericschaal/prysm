@@ -1,7 +1,6 @@
 /** The portal's colour theme: the system's, or a fixed one. */
 export type Theme = 'system' | 'light' | 'dark';
 
-/** Each theme in words, for its row and for the Settings row's value. */
 export const themeChoices: readonly {
   value: Theme;
   label: string;

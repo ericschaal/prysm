@@ -1,43 +1,30 @@
 use crate::address::{Host, Names};
-use crate::ddp::WledRenderer;
+use crate::classify::{self, Cause};
+use crate::ddp::{WledRenderer, route_address};
 use crate::dither::Encoding;
-use crate::http::{self, Deadline};
+use crate::http::{self, Deadline, StateRequest};
+use crate::lifecycle::{self, WledObservation};
 use crate::observe::{self, Observer};
 use crate::{LedCounts, WledSettings};
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    Candidate, DeviceReport, Error, Hangup, IdleMode, LedOutput, OpenFailure, OutputFactory,
-    Result, ValidationError, chain, system_lookup,
+    Candidate, DeviceReport, Error, Hangup, IdleMode, LedOutput, OpenFailure, OpenIntent,
+    OutputDisplay, OutputFactory, OutputObservationState, OutputOpen, OutputRelease, Power,
+    Readiness, Result, ValidationError, system_lookup,
 };
-use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 /// WLED's DDP port (UDP).
 const DDP_PORT: u16 = 4048;
 
-/// The longest any idle takes, one deadline for all of it: a held output's
-/// mode change, or for a device nobody holds ([`Wled::idle`]) its name
-/// resolution and mode change.
+/// The deadline for a device observation, explicit Off, or ordinary release.
 pub const IDLE_LIMIT: Duration = http::TIMEOUT;
 
-/// The longest an open takes, one deadline for all of it: name resolution
-/// and live mode by [`http::TIMEOUT`] after it starts, then, if live mode
-/// failed, switching the device off again within [`IDLE_LIMIT`].
+/// Resolution and observation, then a command within the remaining time.
 pub const OPEN_LIMIT: Duration = http::TIMEOUT.saturating_add(IDLE_LIMIT);
 
-/// The most a session's stop waits for WLED. An open or an idle in flight
-/// when the stop comes ends at once: the session cuts the `Hangup` it gave
-/// the call (`prysm_ports::Hangup`), which ends its name resolution,
-/// connect, request and reply. So a stop waits for its source's pull in
-/// flight and close (`prysm_ports::SourceStop`), then for one idle, its own
-/// (up to [`IDLE_LIMIT`]); that is the longest unless the source closes in
-/// less than one idle. Two idles, without a pull or a close, are this
-/// limit: a session that ended on its own and was idling `Off` (its own
-/// idle, which nothing cuts) when the stop asked for its effects, then the
-/// stop's own idle; the thread reads the stop's mode after closing the
-/// source. `prysm_host::stops_in_time` says whether a host's stop deadline
-/// covers every case; each host asserts it.
+/// The session can finish a release or an Off command within this bound.
 pub const STOP_WAIT: Duration = IDLE_LIMIT.saturating_add(IDLE_LIMIT);
 
 /// Opens WLED outputs. Enable DDP reception in WLED's Sync Interfaces settings.
@@ -88,8 +75,40 @@ impl Wled {
         };
         Ok(Device {
             http: SocketAddr::new(ip, address.port),
+            ddp: SocketAddr::new(ip, self.ddp_port),
             host: address.to_string(),
             label,
+        })
+    }
+    fn renderer(device: &Device) -> Result<WledRenderer, OpenFailure> {
+        let ddp = device.ddp;
+        WledRenderer::new(ddp).map_err(|source| {
+            OpenFailure::Untouched(Error::adapter_escalating(
+                format!("cannot open DDP socket to {ddp}"),
+                source,
+                classify::escalation(Cause::Socket),
+            ))
+        })
+    }
+
+    fn streaming(
+        &self,
+        settings: &WledSettings,
+        device: Device,
+        renderer: WledRenderer,
+    ) -> Box<dyn LedOutput> {
+        Box::new(WledOutput {
+            observer: Observer::new(
+                device.http,
+                device.ddp,
+                &device.host,
+                self.check_every,
+                Instant::now(),
+            ),
+            device,
+            renderer,
+            leds: settings.leds,
+            encoding: Encoding::new(settings.dither),
         })
     }
 }
@@ -108,140 +127,111 @@ impl OutputFactory for Wled {
         crate::discover::Browse::default().candidates()
     }
 
-    /// Resolves the host, then takes the device over for live colours. On
-    /// failure the device is turned off again unless it could not be reached
-    /// at all, or `stop` was cut. All within [`OPEN_LIMIT`]: taking over by
-    /// its first [`http::TIMEOUT`], turning off again by its end; a cut of
-    /// `stop` ends it at once (a [`Stopping`](prysm_ports::Stopping) cause).
-    /// A failure is [`OpenFailure::Untouched`] when nothing reached WLED:
-    /// invalid settings, a name that does not resolve, the DDP socket, or a
-    /// live request that could not connect.
-    fn open(
+    fn supports_effects(&self) -> bool {
+        true
+    }
+
+    fn observe(
         &self,
         settings: &WledSettings,
         stop: &Hangup,
-    ) -> Result<Box<dyn LedOutput>, OpenFailure> {
-        let deadline = Deadline::after(OPEN_LIMIT);
-        let take_over = deadline.earlier(IDLE_LIMIT);
-        let device = self
-            .device(settings, take_over.remaining(), stop)
-            .map_err(OpenFailure::Untouched)?;
-        let ddp = SocketAddr::new(device.http.ip(), self.ddp_port);
-        let renderer = WledRenderer::new(ddp).map_err(|source| {
-            OpenFailure::Untouched(Error::adapter(
-                format!("cannot open DDP socket to {ddp}"),
-                source,
-            ))
-        })?;
-        if let Err(live) = device.enter(Mode::Live, take_over, stop) {
-            let context = device.context(Mode::Live);
-            if !live.reached {
-                return Err(OpenFailure::Untouched(Error::adapter(context, live.error)));
-            }
-            let live = live.error;
-            // Whoever cut it puts the device in a mode next.
-            if matches!(live, http::RequestError::Stopped(_)) {
-                return Err(OpenFailure::Touched(Error::adapter(context, live)));
-            }
-            return Err(OpenFailure::Touched(
-                match device.enter(Mode::Off, deadline, stop) {
-                    Ok(()) => Error::adapter(context, live),
-                    Err(off) => Error::adapter(
-                        context,
-                        NotTurnedOff {
-                            live,
-                            off: off.error,
-                        },
-                    ),
-                },
-            ));
-        }
-        Ok(Box::new(WledOutput {
-            observer: Observer::new(device.http, &device.host, self.check_every, Instant::now()),
-            device,
-            renderer,
-            leds: settings.leds,
-            encoding: Encoding::new(settings.dither),
-        }))
-    }
-
-    /// Resolves the host and sets the mode, without live mode first: the
-    /// device never shows Prysm's colours meanwhile. Within [`IDLE_LIMIT`].
-    fn idle(&self, settings: &WledSettings, mode: IdleMode) -> Result<()> {
+    ) -> (Readiness<Error>, OutputObservationState) {
         let deadline = Deadline::after(IDLE_LIMIT);
-        let never = Hangup::default();
-        let device = self.device(settings, deadline.remaining(), &never)?;
-        let mode = Mode::from(mode);
-        device
-            .enter(mode, deadline, &never)
-            .map_err(|failed| Error::adapter(device.context(mode), failed.error))
-    }
-}
-
-/// Live mode failed, and turning the device off again failed too. Both
-/// causes are kept; neither is the other's source, so each is rendered in
-/// its own clause.
-#[derive(Debug, thiserror::Error)]
-#[error("{}; turning it off also failed: {}", chain(.live), chain(.off))]
-pub(crate) struct NotTurnedOff {
-    pub(crate) live: http::RequestError,
-    pub(crate) off: http::RequestError,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Mode {
-    Live,
-    Off,
-    Native,
-}
-
-impl Mode {
-    /// The one request that enters this mode. WLED stays in the realtime
-    /// mode `live: true` put it in until it is told `live: false`, also once
-    /// the colours stop, so leaving it is part of every other mode.
-    fn state(self) -> Value {
-        match self {
-            Self::Live => json!({"on": true, "lor": 0, "live": true, "tt": 0}),
-            Self::Off => json!({"live": false, "on": false, "lor": 2, "tt": 0}),
-            Self::Native => json!({"live": false, "on": true, "lor": 2, "tt": 0}),
+        let observed = self
+            .device(settings, deadline.remaining(), stop)
+            .and_then(|device| device.observe(deadline, stop));
+        match observed {
+            Ok(state) => (
+                Readiness::Ready,
+                OutputObservationState::Observed(state.output()),
+            ),
+            Err(error) => (self.failure(error), OutputObservationState::Pending),
         }
     }
-}
 
-impl From<IdleMode> for Mode {
-    fn from(mode: IdleMode) -> Self {
-        match mode {
-            IdleMode::Off => Self::Off,
-            IdleMode::Native => Self::Native,
-        }
+    fn failure(&self, error: Error) -> Readiness<Error> {
+        lifecycle::readiness_failure(error)
     }
-}
 
-/// A mode change that failed: why, and whether its request may have reached
-/// the device (anything but a request that could not connect).
-struct NotEntered {
-    error: http::RequestError,
-    reached: bool,
-}
+    fn watch(
+        &self,
+        settings: &WledSettings,
+        stop: &Hangup,
+    ) -> Option<(Readiness<Error>, OutputObservationState)> {
+        while !stop.wait(observe::EVERY) {
+            let (readiness, observation) = self.observe(settings, stop);
+            if !matches!(readiness, Readiness::Waiting(_)) {
+                return (!stop.is_cut()).then_some((readiness, observation));
+            }
+        }
+        None
+    }
 
-impl NotEntered {
-    /// `error`, which `reached` the device or not, or
-    /// [`RequestError::Stopped`](http::RequestError::Stopped) once `stop`
-    /// is cut, whatever the socket said.
-    fn new(error: http::RequestError, reached: bool, stop: &Hangup) -> Self {
-        let error = if stop.is_cut() {
-            prysm_ports::Stopping.into()
-        } else {
-            error
+    fn open_for_sync(
+        &self,
+        settings: &WledSettings,
+        intent: OpenIntent,
+        stop: &Hangup,
+    ) -> Result<OutputOpen, OpenFailure> {
+        let deadline = Deadline::after(OPEN_LIMIT);
+        let readiness = deadline.earlier(IDLE_LIMIT);
+        let device = self
+            .device(settings, readiness.remaining(), stop)
+            .map_err(OpenFailure::Untouched)?;
+        let command = match intent {
+            OpenIntent::Explicit => StateRequest::TAKE_OVER,
+            OpenIntent::Resume => {
+                let observed = device
+                    .observe(readiness, stop)
+                    .map_err(OpenFailure::Untouched)?
+                    .output();
+                if observed.display == OutputDisplay::Override {
+                    return Ok(OutputOpen::Handoff(observed));
+                }
+                StateRequest::POWER_ON
+            }
         };
-        Self { error, reached }
+        let renderer = Self::renderer(&device)?;
+        device.apply("live", command, deadline, stop)?;
+        Ok(OutputOpen::Streaming(
+            self.streaming(settings, device, renderer),
+        ))
     }
+
+    fn set_power(&self, settings: &WledSettings, power: Power, stop: &Hangup) -> Result<()> {
+        let timeout = match power {
+            Power::Off => IDLE_LIMIT,
+            Power::On => OPEN_LIMIT,
+        };
+        let deadline = Deadline::after(timeout);
+        let device = self.device(settings, deadline.remaining(), stop)?;
+        let (command, mode) = match power {
+            Power::Off => (StateRequest::POWER_OFF, "off"),
+            Power::On => {
+                let status = device.observe(deadline.earlier(IDLE_LIMIT), stop)?;
+                if status.power == Power::On {
+                    return Ok(());
+                }
+                (StateRequest::POWER_ON, "native")
+            }
+        };
+        device
+            .apply(mode, command, deadline, stop)
+            .map_err(OpenFailure::into_error)
+    }
+}
+
+/// `error` of a request under `context`, escalating by its row.
+fn request_failed(context: String, error: http::RequestError) -> Error {
+    let escalation = classify::escalation(Cause::Request(&error));
+    Error::adapter_escalating(context, error, escalation)
 }
 
 /// A WLED device's JSON API, resolved.
 struct Device {
     /// The resolved IP; the HTTP port from the address.
     http: SocketAddr,
+    ddp: SocketAddr,
     /// `Host` header: the configured `host[:port]`.
     host: String,
     /// The device in messages: the configured address, plus the IP for a name.
@@ -249,22 +239,39 @@ struct Device {
 }
 
 impl Device {
-    /// Switch to `mode` with one request by `deadline`, or until `stop` is
-    /// cut.
-    fn enter(&self, mode: Mode, deadline: Deadline, stop: &Hangup) -> Result<(), NotEntered> {
-        http::post_state(self.http, &self.host, &mode.state(), deadline, stop).map_err(|error| {
-            let reached = !matches!(error, http::RequestError::Connect(_));
-            NotEntered::new(error, reached, stop)
+    /// Classify whether the command could have reached WLED before a cut.
+    fn apply(
+        &self,
+        mode: &str,
+        state: StateRequest,
+        deadline: Deadline,
+        stop: &Hangup,
+    ) -> Result<(), OpenFailure> {
+        http::post_state(self.http, &self.host, state, deadline, stop).map_err(|error| {
+            let untouched = matches!(error, http::RequestError::Connect(_));
+            let cause = if stop.is_cut() {
+                prysm_ports::Stopping.into()
+            } else {
+                error
+            };
+            let error = request_failed(
+                format!("WLED at {} did not switch to {mode} mode", self.label),
+                cause,
+            );
+            if untouched {
+                OpenFailure::Untouched(error)
+            } else {
+                OpenFailure::Touched(error)
+            }
         })
     }
 
-    fn context(&self, mode: Mode) -> String {
-        let mode = match mode {
-            Mode::Live => "live",
-            Mode::Off => "off",
-            Mode::Native => "native",
-        };
-        format!("WLED at {} did not switch to {mode} mode", self.label)
+    fn observe(&self, deadline: Deadline, stop: &Hangup) -> Result<WledObservation> {
+        http::get_body(self.http, &self.host, "/json/si", deadline, stop)
+            .and_then(|state| Ok(WledObservation::parse(&state)?))
+            .map_err(|error| {
+                request_failed(format!("cannot read WLED state at {}", self.label), error)
+            })
     }
 }
 
@@ -283,22 +290,49 @@ impl LedOutput for WledOutput {
         self.encoding
             .follow(self.observer.transfer(), self.observer.level());
         self.renderer
-            .render_edges(colors, self.leds, &self.encoding, Instant::now())
+            .render_edges(colors, self.leds, &self.encoding)
             .map_err(|source| {
-                Error::adapter(
+                Error::adapter_escalating(
                     format!("cannot send colours to WLED at {}", self.device.label),
                     source,
+                    classify::escalation(Cause::Send),
                 )
             })
     }
 
-    /// Within [`IDLE_LIMIT`], or until `stop` is cut.
-    fn idle(mut self: Box<Self>, mode: IdleMode, stop: &Hangup) -> Result<()> {
+    fn release(mut self: Box<Self>, release: OutputRelease, stop: &Hangup) -> Result<()> {
         self.observer.cancel();
-        let mode = Mode::from(mode);
-        self.device
-            .enter(mode, Deadline::after(IDLE_LIMIT), stop)
-            .map_err(|failed| Error::adapter(self.device.context(mode), failed.error))
+        let own_sender = self.observer.known_sender();
+        let WledOutput {
+            device, renderer, ..
+        } = *self;
+        drop(renderer);
+        let (command, mode) = match release {
+            OutputRelease::Ordinary(IdleMode::Off) => (StateRequest::POWER_OFF, "off"),
+            OutputRelease::Ordinary(IdleMode::Native) | OutputRelease::Handoff => {
+                (StateRequest::END_LIVE, "native")
+            }
+            OutputRelease::Local => return Ok(()),
+        };
+        let deadline = Deadline::after(IDLE_LIMIT);
+        let status = device.observe(deadline.earlier(IDLE_LIMIT / 2), stop);
+        let own_sender = own_sender.filter(|sender| route_address(device.ddp) == Some(*sender));
+        if !status
+            .is_ok_and(|state| state.during_stream(own_sender) == lifecycle::StreamDisplay::Ours)
+        {
+            return Ok(());
+        }
+        device
+            .apply(mode, command, deadline, stop)
+            .map_err(OpenFailure::into_error)
+    }
+
+    fn stream_observation(&self) -> OutputObservationState {
+        self.observer
+            .observation()
+            .map_or(OutputObservationState::Pending, |state| {
+                OutputObservationState::Observed(state.output())
+            })
     }
 
     fn report(&mut self) -> DeviceReport {

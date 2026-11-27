@@ -60,7 +60,6 @@ mod tests {
     #[test]
     fn v4l2_uses_only_monotonic_stamps() {
         let now = Instant::now();
-        // Stamped at 99.990000 s, read at 100.005000 s: 15 ms ago.
         let at = |flags| v4l2(flags, (99, 990_000), (100, 5_000_000), now);
         let captured = at(V4L2_TIMESTAMP_MONOTONIC).unwrap();
         let age = now - captured;
@@ -70,7 +69,6 @@ mod tests {
         assert!(at(V4L2_TIMESTAMP_MONOTONIC | 0x0001).is_some());
         assert_eq!(at(0), None);
         assert_eq!(at(0x4000), None);
-        // A stamp after the clock read, or ages ago, is nonsense.
         assert_eq!(
             v4l2(
                 V4L2_TIMESTAMP_MONOTONIC,

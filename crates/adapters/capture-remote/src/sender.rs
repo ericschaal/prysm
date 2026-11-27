@@ -5,12 +5,11 @@ use crate::offer::Offer;
 use crate::receive;
 use crate::request::RemoteSettings;
 use crate::wire::{
-    self, Encoding, FromReceiver, HEADER_LEN, Header, MAX_TEXT_BYTES, Refusal, RefusalCause,
-    ToReceiver, WireError,
+    self, Encoding, FromReceiver, Header, MAX_TEXT_BYTES, Refusal, RefusalCause, WireError,
 };
 use bytes::{Bytes, BytesMut};
 use prysm_core::Frame;
-use prysm_h264::{Encoder, EncoderSettings, H264Error};
+use prysm_h264::Encoder;
 use prysm_ports::{
     CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, Error, FrameSink, Hangup, Registration, Result,
     Stopping, chain,
@@ -121,59 +120,64 @@ pub struct RemoteSender {
     /// Reads never wait (the socket is non-blocking once connected);
     /// writes wait out a full send buffer within the write timeout.
     link: Link<MaybeTlsStream<Socket>>,
-    /// A second handle on the link's socket, TLS or not, to switch it
-    /// between non-blocking and blocking.
-    socket: TcpStream,
     /// The [`Hangup`]'s handle on the socket, dropped with the sender.
     registration: Registration,
     /// The capture stream's URL, for messages.
     url: Uri,
+    outgoing: Outgoing,
+}
+
+/// Builds a complete frame message for the negotiated request. The encoder
+/// opens on the first H.264 frame. Once the WebSocket releases the previous
+/// message, its allocation can be reclaimed for the next one.
+struct Outgoing {
     request: RemoteSettings,
-    stream: Stream,
-    message: Outgoing,
+    encoder: Option<Encoder>,
+    bytes: BytesMut,
 }
-
-/// How frames go out, as the request says.
-enum Stream {
-    Raw,
-    /// The encoder opens at the first frame.
-    H264 {
-        settings: EncoderSettings,
-        encoder: Option<Encoder>,
-    },
-}
-
-/// What encoding one frame gave.
-enum Encoded {
-    /// Rate control skipped it; references are unaffected.
-    Skipped,
-    Appended {
-        keyframe: bool,
-    },
-}
-
-/// The frame message being built: header space, then the payload. One
-/// allocation serves every frame: each finished message is split off, and
-/// its space is reclaimed by the next `start` once the WebSocket has copied
-/// and dropped it.
-#[derive(Default)]
-struct Outgoing(BytesMut);
 
 impl Outgoing {
-    /// Start a message: header space only; the payload is appended after it.
-    fn start(&mut self) -> &mut BytesMut {
-        self.0.clear();
-        self.0.resize(HEADER_LEN, 0);
-        &mut self.0
+    fn new(request: RemoteSettings) -> Self {
+        Self {
+            request,
+            encoder: None,
+            bytes: BytesMut::new(),
+        }
     }
 
-    /// Fill in `header` for the payload appended and split the message off,
-    /// leaving the buffer empty.
-    fn finish(&mut self, header: &Header, encoding: Encoding) -> Result<Bytes, WireError> {
-        let payload_len = self.0.len() - HEADER_LEN;
-        let bytes = header.encode(encoding, payload_len)?;
-        self.0[..HEADER_LEN].copy_from_slice(&bytes);
-        Ok(self.0.split().freeze())
+    /// None when rate control skipped a picture.
+    fn frame(&mut self, frame: &Frame) -> Result<Option<Bytes>> {
+        let (payload, keyframe) = if let Some(settings) = self.request.encoder() {
+            let failed = |error| Error::adapter("cannot encode frame", error);
+            let encoder = match &mut self.encoder {
+                Some(encoder) => encoder,
+                slot => slot.insert(Encoder::new(settings).map_err(failed)?),
+            };
+            let Some(picture) = encoder.encode(frame).map_err(failed)? else {
+                return Ok(None);
+            };
+            (picture.data, picture.keyframe)
+        } else {
+            (frame.as_slice(), false)
+        };
+        let header = Header {
+            width: frame.width(),
+            height: frame.height(),
+            format: frame.format(),
+            keyframe,
+        }
+        .encode(self.request.encoding.into(), payload.len())
+        .map_err(|error| Error::adapter("cannot send frame", error))?;
+        self.bytes.reserve(header.len() + payload.len());
+        self.bytes.extend_from_slice(&header);
+        self.bytes.extend_from_slice(payload);
+        Ok(Some(self.bytes.split().freeze()))
+    }
+
+    fn restart(&mut self) {
+        if let Some(encoder) = &mut self.encoder {
+            encoder.restart();
+        }
     }
 }
 
@@ -181,7 +185,7 @@ impl std::fmt::Debug for RemoteSender {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RemoteSender")
             .field("url", &self.url)
-            .field("request", &self.request)
+            .field("request", &self.request())
             .finish_non_exhaustive()
     }
 }
@@ -253,7 +257,6 @@ impl RemoteSender {
             .connect(address, deadline)
             .map_err(|error| Error::adapter(format!("cannot connect to {url}"), error))?;
         stream.set_nodelay(true).map_err(failed)?;
-        let handle = stream.try_clone().map_err(failed)?;
         let socket = Socket {
             stream,
             deadline: Some(deadline),
@@ -274,32 +277,24 @@ impl RemoteSender {
         // From here the link's reads never wait (the receiver's messages are
         // read before each frame), and a send waits out a full send buffer
         // for at most the write timeout.
-        inner(&mut link).deadline = None;
-        handle
+        let socket = inner(&mut link);
+        socket.deadline = None;
+        socket
+            .stream
             .set_nonblocking(true)
             .map_err(|error| Error::adapter(format!("cannot configure {url}"), error))?;
-        let stream = match request.encoder() {
-            None => Stream::Raw,
-            Some(settings) => Stream::H264 {
-                settings,
-                encoder: None,
-            },
-        };
         Ok(Self {
             link,
-            socket: handle,
             registration,
             url: url.clone(),
-            request,
-            stream,
-            message: Outgoing::default(),
+            outgoing: Outgoing::new(request),
         })
     }
 
     /// What the receiver asked for; frames should match its size.
     #[must_use]
     pub fn request(&self) -> RemoteSettings {
-        self.request
+        self.outgoing.request
     }
 
     /// Read the receiver's pending messages, then send one frame, encoded
@@ -311,34 +306,14 @@ impl RemoteSender {
     /// else [`SendError::Connection`].
     pub fn deliver(&mut self, frame: &Frame) -> Result<(), SendError> {
         self.read_pending()?;
-        let payload = self.message.start();
-        let keyframe = match &mut self.stream {
-            Stream::Raw => {
-                payload.extend_from_slice(frame.as_slice());
-                false
-            }
-            Stream::H264 { settings, encoder } => {
-                match append_picture(payload, encoder, *settings, frame) {
-                    Ok(Encoded::Appended { keyframe }) => keyframe,
-                    Ok(Encoded::Skipped) => return Ok(()),
-                    Err(error) => {
-                        return Err(self.refused(Error::adapter("cannot encode frame", error)));
-                    }
-                }
-            }
-        };
-        let header = Header {
-            width: frame.width(),
-            height: frame.height(),
-            format: frame.format(),
-            keyframe,
-        };
-        let message = match self.message.finish(&header, self.request.encoding.into()) {
-            Ok(message) => message,
-            Err(error) => return Err(self.refused(Error::adapter("cannot send frame", error))),
-        };
-        self.send_message(Message::Binary(message))
-            .map_err(|error| self.failed_send(error))?;
+        if let Some(message) = self
+            .outgoing
+            .frame(frame)
+            .map_err(|error| self.refused(error))?
+        {
+            self.send_message(Message::Binary(message))
+                .map_err(|error| self.failed_send(error))?;
+        }
         Ok(())
     }
 
@@ -366,17 +341,16 @@ impl RemoteSender {
     /// Refuse the request for `error`, naming the encoding of an H.264
     /// stream (its encoder produced the frame) and the request otherwise.
     fn refused(&mut self, error: Error) -> SendError {
-        let cause = match self.stream {
-            Stream::H264 { .. } => RefusalCause::Encoding,
-            Stream::Raw => RefusalCause::Request,
+        let cause = match Encoding::from(self.request().encoding) {
+            Encoding::H264 => RefusalCause::Encoding,
+            Encoding::Raw => RefusalCause::Request,
         };
         self.refuse_with(&chain(&error), cause);
         SendError::Refused(error)
     }
 
-    /// Read the receiver's messages that arrived, without waiting. A
-    /// keyframe request starts a new encoder session; a second request is
-    /// out of turn.
+    /// Drain pending receiver messages. Repeated keyframe requests are valid.
+    /// A second stream request is a protocol error.
     fn read_pending(&mut self) -> Result<()> {
         while let Some(message) = self.link.receive().map_err(|error| self.failed(error))? {
             let command = match message {
@@ -385,15 +359,7 @@ impl RemoteSender {
             }
             .map_err(|error| self.failed(error.into()))?;
             match command {
-                FromReceiver::Keyframe => {
-                    if let Stream::H264 {
-                        encoder: Some(encoder),
-                        ..
-                    } = &mut self.stream
-                    {
-                        encoder.restart();
-                    }
-                }
+                FromReceiver::Keyframe => self.outgoing.restart(),
                 FromReceiver::Unknown => {}
                 FromReceiver::Request(_) => return Err(self.failed(WireError::Unexpected.into())),
             }
@@ -418,8 +384,10 @@ impl RemoteSender {
     /// Switch the socket to blocking, its waits ending [`WRITE_TIMEOUT`]
     /// from now, or back to non-blocking.
     fn set_blocking(&mut self, blocking: bool) -> Result<(), LinkError> {
-        inner(&mut self.link).deadline = blocking.then(|| Instant::now() + WRITE_TIMEOUT);
-        self.socket
+        let socket = inner(&mut self.link);
+        socket.deadline = blocking.then(|| Instant::now() + WRITE_TIMEOUT);
+        socket
+            .stream
             .set_nonblocking(!blocking)
             .map_err(|error| LinkError::Socket(error.into()))
     }
@@ -461,27 +429,6 @@ impl FrameSink for RemoteSender {
     }
 }
 
-/// Encode `frame` with the H.264 encoder (opening it first if needed) and
-/// append the picture to `payload`.
-fn append_picture(
-    payload: &mut BytesMut,
-    encoder: &mut Option<Encoder>,
-    settings: EncoderSettings,
-    frame: &Frame,
-) -> Result<Encoded, H264Error> {
-    let encoder = match encoder {
-        Some(encoder) => encoder,
-        slot => slot.insert(Encoder::new(settings)?),
-    };
-    let Some(picture) = encoder.encode(frame)? else {
-        return Ok(Encoded::Skipped);
-    };
-    payload.extend_from_slice(picture.data);
-    Ok(Encoded::Appended {
-        keyframe: picture.keyframe,
-    })
-}
-
 /// The link's own socket, under TLS or not.
 fn inner(link: &mut Link<MaybeTlsStream<Socket>>) -> &mut Socket {
     match link.socket_mut() {
@@ -506,11 +453,9 @@ fn upgrade(url: &Uri, socket: Socket, offer: &Offer) -> Result<Link<MaybeTlsStre
     );
     headers.insert(CAPTURE_OFFER_HEADER, offer);
     let connector = match url.scheme_str() {
-        Some("wss") => {
-            Some(Connector::Rustls(authorities().map_err(|none| {
-                Error::adapter(format!("cannot open {url}"), none)
-            })?))
-        }
+        Some("wss") => Some(Connector::Rustls(authorities().map_err(|untrusted| {
+            Error::adapter(format!("cannot open {url}"), untrusted)
+        })?)),
         _ => None,
     };
     // A request is the longest message this end reads.
@@ -519,7 +464,6 @@ fn upgrade(url: &Uri, socket: Socket, offer: &Offer) -> Result<Link<MaybeTlsStre
     loop {
         return match handshake {
             Ok((socket, _)) => Ok(Link::new(socket)),
-            // A wait reached the deadline; the next call fails with it.
             Err(HandshakeError::Interrupted(waiting)) => {
                 handshake = waiting.handshake();
                 continue;
@@ -535,11 +479,23 @@ fn upgrade(url: &Uri, socket: Socket, offer: &Offer) -> Result<Link<MaybeTlsStre
                 };
                 Err(Error::adapter(format!("{url} did not open"), error))
             }
-            Err(HandshakeError::Failure(error)) => {
-                Err(Error::adapter(format!("cannot open {url}"), error))
-            }
+            Err(HandshakeError::Failure(error)) => match untrusted(&error) {
+                Some(untrusted) => Err(Error::adapter(format!("cannot open {url}"), untrusted)),
+                None => Err(Error::adapter(format!("cannot open {url}"), error)),
+            },
         };
     }
+}
+
+/// The certificate refusal in a failed handshake: rustls reports it
+/// through the stream's I/O error.
+fn untrusted(error: &tungstenite::Error) -> Option<WireError> {
+    let tungstenite::Error::Io(io) = error else {
+        return None;
+    };
+    let tls = io.get_ref()?.downcast_ref::<rustls::Error>()?;
+    matches!(tls, rustls::Error::InvalidCertificate(_))
+        .then(|| WireError::Untrusted(tls.to_string()))
 }
 
 /// TLS verification against the system's certificate authorities, loaded
@@ -548,9 +504,8 @@ fn upgrade(url: &Uri, socket: Socket, offer: &Offer) -> Result<Link<MaybeTlsStre
 /// asks the trust daemon about every keychain certificate, which takes
 /// seconds; elsewhere it parses the system bundle. `SSL_CERT_FILE` and
 /// `SSL_CERT_DIR` replace the system's set, read here.
-fn authorities() -> Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>> {
-    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>>> =
-        OnceLock::new();
+fn authorities() -> Result<Arc<rustls::ClientConfig>, WireError> {
+    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, WireError>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {
             let loaded = rustls_native_certs::load_native_certs();
@@ -563,8 +518,11 @@ fn authorities() -> Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>> {
             if added == 0 {
                 // The first load failure, if any, says why (a missing
                 // `SSL_CERT_FILE`, say); the rest were logged above.
-                let cause = loaded.errors.into_iter().next();
-                return Err(Arc::new(NoAuthorities(cause)));
+                let none = "the system has no certificate authorities";
+                return Err(WireError::Untrusted(match loaded.errors.first() {
+                    Some(cause) => format!("{none}: {cause}"),
+                    None => none.to_owned(),
+                }));
             }
             Ok(Arc::new(
                 rustls::ClientConfig::builder()
@@ -575,17 +533,11 @@ fn authorities() -> Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>> {
         .clone()
 }
 
-/// No `wss://` connection can be verified: not one certificate authority
-/// loaded.
-#[derive(Debug, thiserror::Error)]
-#[error("the system has no certificate authorities")]
-struct NoAuthorities(#[source] Option<rustls_native_certs::Error>);
-
 /// Tell the receiver that this end cannot produce its request, and close
 /// the connection. Best effort, within the socket's write timeout.
 fn refuse<S: Read + Write>(link: &mut Link<S>, cause: RefusalCause, reason: &str) {
-    let refusal = ToReceiver::Refused(Refusal::new(cause, reason));
-    let _ = link.send(Message::Text(wire::encode_to_receiver(&refusal).into()));
+    let refusal = Refusal::new(cause, reason);
+    let _ = link.send(Message::Text(wire::encode_refusal(refusal).into()));
     let _ = link.close(None);
 }
 
@@ -723,7 +675,6 @@ mod tests {
                 Box::new(socket)
             };
             let _ = holds.send(());
-            // Until the test ends.
             let _ = release.recv();
         });
         (address, held, done)
@@ -813,9 +764,6 @@ mod tests {
             connecting.join().unwrap().unwrap_err()
         });
         assert!(stopped(&error), "{}", chain(&error));
-        // Only the connect's wait: no upgrade was ever written. Linux
-        // always drops the SYN; macOS sometimes completes the connect (seen
-        // in CI), and the cut then ends the upgrade's read instead.
         if cfg!(target_os = "linux") {
             assert_eq!(hangup.waits(), 1, "the connect never completed");
         }
@@ -840,7 +788,6 @@ mod tests {
                 }
             }
         });
-        // The first blocking write: the buffer is full.
         blocked(&hangup, connected);
         hangup.cut();
         let error = prysm_testkit::within(WRITE_TIMEOUT * 3 / 4, move || sending.join().unwrap());
@@ -877,21 +824,17 @@ mod tests {
     #[test]
     fn one_allocation_serves_every_frame() {
         let mut link = Link::new(WebSocket::from_raw_socket(Sink, Role::Client, None));
-        let mut message = Outgoing::default();
-        let header = Header {
-            width: 320,
-            height: 180,
-            format: PixelFormat::RGB24,
-            keyframe: false,
-        };
+        let mut outgoing = Outgoing::new(RemoteSettings {
+            encoding: prysm_ports::StreamEncoding::Raw,
+            ..RemoteSettings::default()
+        });
         let mut first = None;
-        for frame in 0..5_u8 {
-            let payload = message.start();
-            payload.extend_from_slice(&vec![frame; 320 * 180 * 3]);
-            let at = payload.as_ptr();
-            assert_eq!(*first.get_or_insert(at), at, "frame {frame} allocated anew");
-            let bytes = message.finish(&header, Encoding::Raw).unwrap();
-            assert_eq!(bytes.len(), HEADER_LEN + 320 * 180 * 3);
+        for value in 0..5_u8 {
+            let frame = Frame::fill(value, 320, 180, PixelFormat::RGB24).unwrap();
+            let bytes = outgoing.frame(&frame).unwrap().unwrap();
+            let at = bytes.as_ptr();
+            assert_eq!(*first.get_or_insert(at), at, "frame {value} allocated anew");
+            assert_eq!(bytes.len(), wire::HEADER_LEN + frame.len());
             link.send(Message::Binary(bytes)).unwrap();
         }
     }

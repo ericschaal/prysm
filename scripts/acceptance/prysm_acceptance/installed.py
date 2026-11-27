@@ -79,8 +79,8 @@ class Existing(Protocol):
 
 class Kept(Failed):
     """Prysm still runs after its uninstall was asked to stop it, so it was left installed as it is: removing
-    or replacing a running Prysm ends it abruptly (on the TV, a worker killed with its capture open can leave
-    the TV's capture locked until a reboot)."""
+    or replacing a running Prysm ends it abruptly (on the TV, a killed worker was once seen to leave the TV's
+    capture locked until a reboot; later kills did not reproduce it)."""
 
 
 def refusal(existing: Existing, found: list[str]) -> str | None:

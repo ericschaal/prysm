@@ -91,8 +91,6 @@ async fn a_trial_lights_without_saving_and_a_save_ends_it() {
         assert_eq!(during.settings, before.settings);
         assert_eq!(store.saved(), Some(settings()));
 
-        // Saving the very settings already saved still ends the trial: the
-        // lights follow the saved brightness again.
         let revision = handle
             .replace_settings(before.revision, settings())
             .await
@@ -136,7 +134,6 @@ async fn a_trial_nobody_saves_expires() {
     tokio::time::resume();
     wait_for_green(&handle, "dimmed", |g| g < full * 0.5).await;
 
-    // Trying again, even unchanged, restarts the timeout.
     tokio::time::pause();
     handle.try_processing(brightness(20)).await.unwrap();
     tokio::time::advance(TRIAL_TIMEOUT - second).await;

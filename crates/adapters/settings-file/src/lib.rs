@@ -2,15 +2,12 @@
 pub mod atomic;
 
 use atomic::Staged;
-use prysm_ports::{Error, Result, Settings, SettingsStore};
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{DeserializeSeed, IgnoredAny, IntoDeserializer, MapAccess, Visitor, value},
-};
+use prysm_ports::{AdapterSettings, Error, Processing, Result, Settings, SettingsStore};
+use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use std::{
     ffi::OsStr,
-    fmt, fs, io,
+    fs, io,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -30,44 +27,27 @@ const FORMAT_FIELD: &str = "format";
 const MAX_BYTES: u64 = 1024 * 1024;
 
 /// A settings file whose `format` this Prysm does not read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormatError {
     /// No `format` field: written by hand or by a Prysm before 1.0.
+    #[error(
+        "it has no `{FORMAT_FIELD}` field: add `\"{FORMAT_FIELD}\": {FORMAT}` \
+         once its fields match this Prysm's settings"
+    )]
     Missing,
     /// `format` is not a whole number of zero or more (`null`, `"1"`, `2.0`,
     /// `-1`); `found` is its JSON.
+    #[error(
+        "its `{FORMAT_FIELD}` is {found}, not a format number; this Prysm reads format {FORMAT}"
+    )]
     NotANumber { found: String },
     /// Written by a newer Prysm: a whole number above [`FORMAT`], of any size.
+    #[error("it is format {found}, written by a newer Prysm; this Prysm reads format {FORMAT}")]
     Newer { found: Number },
     /// A format this Prysm does not read: 0, or one it replaced.
+    #[error("it is format {found}; this Prysm reads format {FORMAT}")]
     Older { found: Number },
 }
-
-impl fmt::Display for FormatError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Missing => write!(
-                f,
-                "it has no `{FORMAT_FIELD}` field: add `\"{FORMAT_FIELD}\": {FORMAT}` \
-                 once its fields match this Prysm's settings"
-            ),
-            Self::NotANumber { found } => write!(
-                f,
-                "its `{FORMAT_FIELD}` is {found}, not a format number; \
-                 this Prysm reads format {FORMAT}"
-            ),
-            Self::Newer { found } => write!(
-                f,
-                "it is format {found}, written by a newer Prysm; this Prysm reads format {FORMAT}"
-            ),
-            Self::Older { found } => {
-                write!(f, "it is format {found}; this Prysm reads format {FORMAT}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for FormatError {}
 
 /// Checks the `format` of a file's object before its settings are read, so
 /// that a newer file is refused for its format rather than for a field it
@@ -76,9 +56,7 @@ fn check_format(file: &Value) -> std::result::Result<(), FormatError> {
     let Some(object) = file.as_object() else {
         return Ok(());
     };
-    let Some(format) = object.get(FORMAT_FIELD) else {
-        return Err(FormatError::Missing);
-    };
+    let format = object.get(FORMAT_FIELD).ok_or(FormatError::Missing)?;
     let not_a_number = || FormatError::NotANumber {
         found: format.to_string(),
     };
@@ -118,58 +96,16 @@ struct Saved<'a> {
     settings: &'a Settings,
 }
 
-/// The settings of a file whose header was checked. Serde's `flatten` would
-/// let unknown fields through, so the file's object is read as the settings
-/// with its `format` skipped; errors keep their line.
-fn settings(bytes: &[u8]) -> serde_json::Result<Settings> {
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let settings = deserializer.deserialize_map(SettingsObject)?;
-    deserializer.end()?;
-    Ok(settings)
+#[derive(Deserialize, Serialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+struct FileSettings {
+    format: u32,
+    capture: Option<AdapterSettings>,
+    output: Option<AdapterSettings>,
+    #[serde(default)]
+    processing: Processing,
 }
-
-struct SettingsObject;
-
-impl<'de> Visitor<'de> for SettingsObject {
-    type Value = Settings;
-
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a settings object")
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, map: A) -> std::result::Result<Settings, A::Error> {
-        <Settings as Deserialize>::deserialize(value::MapAccessDeserializer::new(WithoutFormat(
-            map,
-        )))
-    }
-}
-
-/// A file object's entries but `format`.
-struct WithoutFormat<A>(A);
-
-impl<'de, A: MapAccess<'de>> MapAccess<'de> for WithoutFormat<A> {
-    type Error = A::Error;
-
-    fn next_key_seed<K: DeserializeSeed<'de>>(
-        &mut self,
-        seed: K,
-    ) -> std::result::Result<Option<K::Value>, A::Error> {
-        while let Some(key) = self.0.next_key::<String>()? {
-            if key != FORMAT_FIELD {
-                return seed.deserialize(key.into_deserializer()).map(Some);
-            }
-            self.0.next_value::<IgnoredAny>()?;
-        }
-        Ok(None)
-    }
-
-    fn next_value_seed<V: DeserializeSeed<'de>>(
-        &mut self,
-        seed: V,
-    ) -> std::result::Result<V::Value, A::Error> {
-        self.0.next_value_seed(seed)
-    }
-}
+prysm_ports::map_only!(FileSettings, "a settings object");
 
 /// Why bytes are not settings this Prysm reads.
 enum Refused {
@@ -189,16 +125,19 @@ fn decode(bytes: &[u8]) -> std::result::Result<Settings, Refused> {
     }
     let file: Value = serde_json::from_slice(bytes).map_err(Refused::Json)?;
     check_format(&file).map_err(Refused::Format)?;
-    settings(bytes).map_err(Refused::Json)
+    let file: FileSettings = serde_json::from_slice(bytes).map_err(Refused::Json)?;
+    Ok(Settings {
+        capture: file.capture,
+        output: file.output,
+        processing: file.processing,
+    })
 }
 
-/// What a file the last `load` could not read is renamed to at the next
-/// `save`: its own name, this, and six random characters, in its directory.
+/// Suffix before the six random characters in an unreadable file's backup name.
 pub const UNREADABLE: &str = ".unreadable-";
 
 /// A [`SettingsStore`] backed by one JSON file, replaced atomically on save.
-/// A file that the last `load` could not read is never replaced: the next
-/// `save` first moves it beside the new one (see [`UNREADABLE`]).
+/// After a failed load, saving requires a backup of the original file (see [`UNREADABLE`]).
 #[derive(Debug, Clone)]
 pub struct SettingsFile {
     path: PathBuf,
@@ -279,19 +218,8 @@ impl SettingsFile {
         })
     }
 
-    /// Keep the file at the path under a name of its own beside it; `None`
-    /// when nothing is there any more. In order of preference:
-    ///
-    /// - a hard link: the file stays at its path until the save's rename
-    ///   replaces it there;
-    /// - where a hard link fails (no hard links on the filesystem; on Linux
-    ///   `fs.protected_hardlinks` for a file this user neither owns nor may
-    ///   write), a copy with its permissions, which needs the file readable;
-    ///   the file stays at its path likewise;
-    /// - where both fail, a rename: until the save's rename the path holds
-    ///   nothing, and a crash in between leaves it so (the next start is
-    ///   then unconfigured, with no failure shown), the file kept beside.
-    fn set_aside(&self) -> std::result::Result<Option<Aside>, NotSetAside> {
+    /// Returns the retained backup path, or `None` if the original has disappeared.
+    fn backup(&self) -> Result<Option<PathBuf>> {
         let mut prefix = self
             .path
             .file_name()
@@ -300,66 +228,56 @@ impl SettingsFile {
         prefix.push(UNREADABLE);
         let mut builder = tempfile::Builder::new();
         builder.prefix(&prefix);
-        let directory = self.directory();
-        // A name nothing has: a hard link or a new file never replaces one.
-        let link = match builder.make_in(directory, |aside| (self.link)(&self.path, aside)) {
-            Ok(aside) => return Ok(Some(Aside::Linked(aside.into_temp_path()))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(link) => link,
-        };
-        let copy = match builder.make_in(directory, |aside| copy_new(&self.path, aside)) {
-            Ok(aside) => return Ok(Some(Aside::Linked(aside.into_temp_path()))),
-            Err(copy) => copy,
-        };
-        // A new file of its own, so the rename replaces nothing else.
-        let moved = builder
-            .tempfile_in(directory)
+        let backup = builder
+            .make_in(self.directory(), |path| (self.link)(&self.path, path))
             .map(tempfile::NamedTempFile::into_temp_path)
-            .and_then(|placeholder| {
-                fs::rename(&self.path, &placeholder)?;
-                placeholder.keep().map_err(|error| error.error)
+            .or_else(|link| {
+                copy_aside(&self.path, &builder).map_err(|copy| NotSetAside { link, copy })
             });
-        match moved {
-            Ok(aside) => Ok(Some(Aside::Moved(aside))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(rename) => Err(NotSetAside { link, copy, rename }),
+        match backup {
+            Ok(path) => path
+                .keep()
+                .map(Some)
+                .map_err(|e| self.failed("keep a backup of", e.error)),
+            Err(failure) => match self.path.symlink_metadata() {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                _ => Err(self.failed("back up unreadable", failure)),
+            },
         }
     }
 }
 
-/// Where the file a load could not read is kept.
-enum Aside {
-    /// A second name: the file is still at its path. Removed when dropped,
-    /// unless kept.
-    Linked(tempfile::TempPath),
-    /// Its only name: the path holds nothing until the save's rename.
-    Moved(PathBuf),
-}
-
-/// A save whose rename failed after the file a load could not read was
-/// moved aside, and that could not be moved back: the path now holds no
-/// file, and the old one is only at `aside`.
+/// Both ways of preserving an unreadable settings file failed.
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "{replace}; the file it could not read is now only at {}: moving it back failed: {back}",
-    aside.display()
+    "hard link failed ({link}) and copy failed ({copy}). Check the file permissions or move the file, then save again."
 )]
-pub struct LeftAside {
-    replace: io::Error,
-    aside: PathBuf,
-    back: io::Error,
-}
-
-/// Why the file a load could not read could not be kept: each way's cause.
-#[derive(Debug, thiserror::Error)]
-#[error("a hard link failed: {link}; a copy failed: {copy}; a rename failed: {rename}")]
 pub struct NotSetAside {
     link: io::Error,
     copy: io::Error,
-    rename: io::Error,
 }
 
 impl SettingsStore for SettingsFile {
+    fn load_mode(&mut self) -> Result<Option<prysm_ports::LightingMode>> {
+        let path = self.path.with_added_extension("mode");
+        let file = match fs::File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(Error::adapter(format!("open {}", path.display()), error)),
+        };
+        serde_json::from_reader(io::BufReader::new(file))
+            .map(Some)
+            .map_err(|error| Error::adapter(format!("read {}", path.display()), error))
+    }
+
+    fn save_mode(&mut self, mode: prysm_ports::LightingMode) -> Result<()> {
+        let path = self.path.with_added_extension("mode");
+        let bytes = serde_json::to_vec(&mode)
+            .map_err(|error| Error::adapter("encode remembered mode", error))?;
+        atomic::write(&path, &bytes, None, true)
+            .map_err(|error| Error::adapter(format!("save {}", path.display()), error))
+    }
+
     fn load(&mut self) -> Result<Option<Settings>> {
         let loaded = self.read();
         self.unread = loaded.is_err();
@@ -406,50 +324,26 @@ impl SettingsStore for SettingsFile {
             .write(&bytes)
             .map_err(|error| self.failed("write a temporary file for", error))?;
 
-        let aside = if self.unread {
-            self.set_aside()
-                .map_err(|error| self.failed("set aside the unreadable", error))?
+        let backup = if self.unread { self.backup()? } else { None };
+        let published = if self.unread && backup.is_none() {
+            temporary.create(&self.path)
         } else {
-            None
+            (self.replace)(temporary, &self.path)
         };
-        // The rename is the commit point. A failure leaves the unreadable
-        // file at its path: its second name is removed, or a file moved
-        // aside goes back.
-        if let Err(replace) = (self.replace)(temporary, &self.path) {
-            if let Some(Aside::Moved(aside)) = aside
-                && let Err(back) = fs::rename(&aside, &self.path)
+        if let Err(error) = published {
+            if let Some(path) = backup
+                && let Err(cleanup) = fs::remove_file(&path)
             {
-                return Err(self.failed(
-                    "replace",
-                    LeftAside {
-                        replace,
-                        aside,
-                        back,
-                    },
-                ));
+                tracing::warn!(
+                    "could not remove unused settings backup {}: {cleanup}",
+                    path.display()
+                );
             }
-            return Err(self.failed("replace", replace));
+            return Err(self.failed("replace", error));
         }
         self.unread = false;
-        match aside {
-            None => {}
-            Some(Aside::Moved(aside)) => tracing::warn!(
-                "kept the settings file it could not read as {}",
-                aside.display()
-            ),
-            // Saved: a name that cannot be kept is logged, not a failure.
-            Some(Aside::Linked(aside)) => match aside.keep() {
-                Ok(aside) => tracing::warn!(
-                    "kept the settings file it could not read as {}",
-                    aside.display()
-                ),
-                Err(error) => tracing::warn!(
-                    "saved settings file {}, but could not keep the file it could not \
-                     read beside it: {}",
-                    self.path.display(),
-                    error.error
-                ),
-            },
+        if let Some(path) = backup {
+            tracing::warn!("kept the unreadable settings file as {}", path.display());
         }
         if let Err(error) = (self.sync_directory)(self.directory()) {
             tracing::warn!(
@@ -462,23 +356,14 @@ impl SettingsStore for SettingsFile {
     }
 }
 
-/// Copy `from` to the new file `to`, which must not exist; nothing is left
-/// at `to` when it fails.
-fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
-    let mut target = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(to)?;
-    let copied = fs::File::open(from)
-        .and_then(|mut source| {
-            io::copy(&mut source, &mut target)?;
-            target.set_permissions(source.metadata()?.permissions())
-        })
-        .and_then(|()| target.sync_all());
-    if copied.is_err() {
-        let _ = fs::remove_file(to);
-    }
-    copied
+fn copy_aside(path: &Path, builder: &tempfile::Builder<'_, '_>) -> io::Result<tempfile::TempPath> {
+    let mut source = fs::File::open(path)?;
+    let mut copy = builder.tempfile_in(atomic::directory(path))?;
+    io::copy(&mut source, copy.as_file_mut())?;
+    copy.as_file()
+        .set_permissions(source.metadata()?.permissions())?;
+    copy.as_file().sync_all()?;
+    Ok(copy.into_temp_path())
 }
 
 #[cfg(test)]

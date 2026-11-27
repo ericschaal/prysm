@@ -342,21 +342,18 @@ mod tests {
         for style in Style::BUILT_IN {
             let processing = Processing {
                 style,
-                // Kept, but not applied while a built-in style is chosen.
                 custom_style: Some(MINE),
                 ..Processing::default()
             };
             processing.validate().unwrap();
             let config = processing.config();
             assert_eq!(Some(knobs(config)), style.built_in(), "{style:?}");
-            // What stays outside styles is untouched.
             assert_eq!(
                 config.brightness_percent,
                 Config::default().brightness_percent
             );
             assert_eq!(config.sample_density, Config::default().sample_density);
         }
-        // Natural is the default; it is not the processor's own default.
         let natural = Processing::default().config();
         assert_eq!(Some(knobs(natural)), Style::Natural.built_in());
         assert_eq!(natural.cut_response_percent, CutResponsePercent(100));
@@ -380,7 +377,6 @@ mod tests {
         let error = missing.validate().unwrap_err();
         assert_eq!(error.field, "processing.custom_style");
         assert_eq!(error.reason, "must be set when the style is custom");
-        // Applied as the default style until corrected.
         assert_eq!(knobs(missing.config()), StyleValues::DEFAULT);
     }
 
@@ -415,7 +411,6 @@ mod tests {
 
     #[test]
     fn the_style_is_stored_by_name_and_custom_values_are_kept() {
-        // Omitted: Natural, with no values of its own written.
         let omitted: Processing =
             serde_json::from_value(serde_json::json!({ "brightness_percent": 80 })).unwrap();
         assert_eq!(omitted.style, Style::Natural);
@@ -454,7 +449,6 @@ mod tests {
                 .to_string();
             assert!(error.contains(refusal), "{error}");
         }
-        // A custom style says every value; partial values are refused.
         assert!(
             serde_json::from_value::<Processing>(serde_json::json!({
                 "style": { "kind": "custom" },
@@ -462,7 +456,6 @@ mod tests {
             }))
             .is_err()
         );
-        // The knobs are no longer flat processing fields.
         for removed in [
             "smoothing_seconds",
             "cut_response_percent",
@@ -516,18 +509,20 @@ mod tests {
         }))
         .unwrap();
         processing.validate().unwrap();
-        let expected = ColorCorrection::new(40, 0, 0)
-            .and_then(|c| {
-                c.with_primaries([
-                    PrimaryAdjustment {
-                        hue: -5,
-                        strength: 0,
-                    },
-                    PrimaryAdjustment::default(),
-                    PrimaryAdjustment::default(),
-                ])
-            })
-            .unwrap();
+        let expected = ColorCorrection::new(
+            40,
+            0,
+            0,
+            [
+                PrimaryAdjustment {
+                    hue: -5,
+                    strength: 0,
+                },
+                PrimaryAdjustment::default(),
+                PrimaryAdjustment::default(),
+            ],
+        )
+        .unwrap();
         assert_eq!(processing.config().correction, expected);
         assert_eq!(
             Processing {
@@ -548,7 +543,6 @@ mod tests {
         );
         assert_eq!(missing.config().correction, ColorCorrection::default());
 
-        // Every control is written, so the file shows what can be edited.
         let written = serde_json::to_value(&processing).unwrap();
         assert_eq!(
             written["calibrations"][1]["correction"]["blue"]["strength"],
@@ -558,7 +552,6 @@ mod tests {
             serde_json::from_value::<Processing>(written).unwrap(),
             processing
         );
-        // No calibrations write nothing.
         let empty = serde_json::to_value(Processing::default()).unwrap();
         assert!(empty.get("calibrations").is_none() && empty.get("active_calibration").is_none());
     }

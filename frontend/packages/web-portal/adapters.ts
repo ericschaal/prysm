@@ -1,11 +1,14 @@
-import { isObject, type Fields } from '@prysm/application-client';
+import {
+  isObject,
+  type AdapterSide,
+  type Fields,
+} from '@prysm/application-client';
+import type { CaptureSettings } from '@prysm/contracts/application';
 import { refusedValue } from './form';
 import type { ComponentType } from 'react';
 
 /** An adapter settings section: `{ kind, ...fields }`. */
-export interface AdapterSection {
-  kind: string;
-}
+export type AdapterSection = CaptureSettings;
 
 /**
  * A controlled editor for one adapter section. It renders fields from
@@ -77,30 +80,31 @@ export interface Picture {
   fps?: number;
 }
 
+export const savedPicture = (value: Picture, defaults: Required<Picture>) => ({
+  width: value.width ?? defaults.width,
+  height: value.height ?? defaults.height,
+  fps: value.fps ?? defaults.fps,
+});
+
 /** A capture's size and rate as Home's facts: `Picture`, then `Rate`. */
 export function pictureFacts(
-  { width, height, fps }: Picture,
+  value: Picture,
   defaults: Required<Picture>,
 ): AdapterFact[] {
+  const { width, height, fps } = savedPicture(value, defaults);
   return [
-    {
-      label: 'Picture',
-      value: pictureSize(width ?? defaults.width, height ?? defaults.height),
-    },
-    { label: 'Rate', value: `${fps ?? defaults.fps} fps` },
+    { label: 'Picture', value: pictureSize(width, height) },
+    { label: 'Rate', value: `${fps} fps` },
   ];
 }
 
 /** A capture's size and rate for summaries: `640 × 360 at 30 fps`. */
 export function describeSavedPicture(
-  { width, height, fps }: Picture,
+  value: Picture,
   defaults: Required<Picture>,
 ) {
-  return describePicture(
-    width ?? defaults.width,
-    height ?? defaults.height,
-    fps ?? defaults.fps,
-  );
+  const { width, height, fps } = savedPicture(value, defaults);
+  return describePicture(width, height, fps);
 }
 
 /** The fields of a section type `S` that its sections may leave out. */
@@ -118,11 +122,10 @@ export interface AdapterUi<S extends AdapterSection> {
   developer?: boolean;
   /** A new section of this kind, before the user fills it in. */
   create: () => S;
-  /**
-   * The fields a section of this kind may leave out; `readSection` fills
-   * the others `create` sets.
-   */
-  optional: Record<OptionalField<S>, true>;
+  /** Defaults for fields implied by a newly created section but left out of it. */
+  readDefaults?: Partial<S>;
+  /** The optional fields and the types of their defaults. */
+  optional: Required<Pick<S, OptionalField<S>>>;
   Editor: ComponentType<EditorProps<S>>;
   /** Tidy what the user typed just before saving, e.g. trim an address. */
   normalize?: (value: S) => S;
@@ -165,21 +168,37 @@ export function refusal(
  * The kinds a host registers for one section, keyed by kind and in display
  * order. The mapping is exhaustive over the host's generated union.
  */
-export type AdapterUis<S extends AdapterSection> = {
+export type AdapterUis<S extends AdapterSection = AdapterSection> = {
   [K in S['kind']]: AdapterUi<Extract<S, { kind: K }>>;
 };
 
-export function adapterFor<S extends AdapterSection>(
-  adapters: AdapterUis<S>,
-  kind: string,
-): AdapterUi<S> | undefined {
-  // Only the host's own kinds: a saved `constructor` names none.
-  if (!Object.prototype.hasOwnProperty.call(adapters, kind)) return undefined;
-  // Indexing a mapped type by a runtime kind loses the per-kind narrowing.
-  return (adapters as unknown as Record<string, AdapterUi<S> | undefined>)[
-    kind
-  ];
+export function adapterFor<A extends Record<string, unknown>, K extends string>(
+  adapters: A,
+  kind: K,
+): A[K] | undefined {
+  return Object.prototype.hasOwnProperty.call(adapters, kind)
+    ? adapters[kind]
+    : undefined;
 }
+
+export function setupPart(
+  section: AdapterSide,
+  adapters: AdapterUis,
+  saved: AdapterSection,
+) {
+  const panel = adapterFor(adapters, saved.kind);
+  return {
+    section,
+    saved,
+    label: panel?.label ?? saved.kind,
+    facts: panel?.facts?.(saved) ?? [],
+    edges: panel?.edges?.(saved),
+    transport: panel?.transport?.(saved),
+    lighting: panel?.lighting?.(saved),
+  };
+}
+
+export type SetupPart = ReturnType<typeof setupPart>;
 
 /** A picture size and rate for summaries: `640 × 360 at 30 fps`. */
 export function describePicture(width: number, height: number, fps: number) {
@@ -189,56 +208,73 @@ export function describePicture(width: number, height: number, fps: number) {
 /** A new section of `kind`, as its panel creates it. */
 export function createSection<S extends AdapterSection>(
   adapters: AdapterUis<S>,
-  kind: string,
+  kind: S['kind'] = kindsOf(adapters)[0] ?? '',
 ): S {
   const adapter = adapterFor(adapters, kind);
   if (!adapter) throw new Error(`No panel for kind ${kind}`);
   return adapter.create();
 }
 
-/**
- * A saved section with every required field: one `create` sets that is
- * missing, or of another JSON type, is `create`'s, so no editor or summary
- * of its kind meets it missing; what is inside a field is not looked at.
- * Optional and unknown fields stay as saved, for Prysm to judge. A section
- * with nothing to fill is returned as it is, as is one of a kind without a
- * panel.
- */
+/** Project values for an editor while the observed settings retain the original. */
 export function readSection<S extends AdapterSection>(
   adapters: AdapterUis<S>,
   saved: S,
-): S {
+): AdapterSection {
   const adapter = adapterFor(adapters, saved.kind);
   if (!adapter) return saved;
-  // Read as JSON objects: a section's type has no index signature.
-  const fresh = adapter.create() as unknown as Fields;
-  const raw = saved as unknown as Fields;
-  const filled = Object.entries(fresh).filter(
-    ([key, like]) =>
-      !(key in adapter.optional) &&
-      (typeof raw[key] !== typeof like ||
-        isObject(raw[key]) !== isObject(like)),
-  );
-  return filled.length ? { ...saved, ...Object.fromEntries(filled) } : saved;
+  return {
+    ...editorFields(
+      saved,
+      { ...adapter.create(), ...adapter.readDefaults, ...adapter.optional },
+      adapter.optional,
+    ),
+    kind: saved.kind,
+  };
 }
 
-export function kindsOf<S extends AdapterSection>(adapters: AdapterUis<S>) {
-  return Object.keys(adapters) as S['kind'][];
+/** Keep values of the right shape, including those outside the adapter's limits. */
+function editorFields(
+  saved: Fields,
+  defaults: Fields,
+  optional: Fields,
+): Fields {
+  const fields = { ...saved };
+  for (const [key, fallback] of Object.entries(defaults)) {
+    const value = saved[key];
+    if (isObject(fallback)) {
+      // Nested settings such as WLED's LED counts default each omitted field.
+      fields[key] = editorFields(
+        isObject(value) ? value : {},
+        fallback,
+        fallback,
+      );
+    } else if (
+      typeof value !== typeof fallback ||
+      (typeof value === 'number' && !Number.isFinite(value))
+    ) {
+      if (Object.prototype.hasOwnProperty.call(optional, key))
+        delete fields[key];
+      else fields[key] = fallback;
+    }
+  }
+  return fields;
+}
+
+/** Registered kind names in display order. */
+export function kindsOf<K extends string>(adapters: Record<K, unknown>): K[] {
+  return Object.keys(adapters) as K[];
 }
 
 /**
  * The kinds to offer: all of them with developer options on, else those not
  * meant for development, plus any in `keep` (what is saved or being edited).
  */
-export function offeredKinds<S extends AdapterSection>(
-  adapters: AdapterUis<S>,
+export function offeredKinds<K extends string>(
+  adapters: Readonly<Record<K, { developer?: boolean }>>,
   developer: boolean,
   keep: readonly string[],
 ) {
   return kindsOf(adapters).filter(
-    (kind) =>
-      developer ||
-      !adapterFor(adapters, kind)?.developer ||
-      keep.includes(kind),
+    (kind) => developer || !adapters[kind]?.developer || keep.includes(kind),
   );
 }

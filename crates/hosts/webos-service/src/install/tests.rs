@@ -169,7 +169,6 @@ fn unrelated_files_are_never_replaced_or_removed() {
 
     fs::remove_file(s.path(&our_hook())).unwrap();
     nix::unistd::mkfifo(&s.path(&our_hook()), nix::sys::stat::Mode::S_IRUSR).unwrap();
-    // A FIFO is refused without blocking.
     assert_fails(s.installer.install(), |e| {
         matches!(e, InstallError::Hook { .. })
     });
@@ -209,12 +208,10 @@ fn our_manifest_of_another_version_is_replaced_atomically() {
         .collect();
     assert_eq!(names.len(), 2, "no temporary file left: {names:?}");
 
-    // The same version is left alone.
     fs::remove_file(&link).unwrap();
     s.installer.install().unwrap();
     assert_eq!(fs::metadata(&path).unwrap().ino(), metadata.ino());
 
-    // Uninstall removes ours of any version.
     let worker = s.path(&manifest("worker"));
     let mut old: Value = serde_json::from_slice(&fs::read(&worker).unwrap()).unwrap();
     old["version"] = "2.0.0".into();
@@ -323,6 +320,34 @@ fn rescan_failures_and_hangs_are_errors() {
         matches!(e, InstallError::Timeout { .. })
     });
     assert!(started.elapsed() < Duration::from_secs(3));
+}
+
+#[test]
+fn exit_wait_ignores_a_stopped_child() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "kill -STOP $$"])
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let (report, reported) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = report.send(await_exit(pid));
+    });
+
+    let before_kill = reported.recv_timeout(Duration::from_millis(200));
+    let killed = child.kill();
+    let after_kill = reported.recv_timeout(Duration::from_secs(3));
+    let status = child.wait().unwrap();
+
+    killed.unwrap();
+    assert!(
+        matches!(before_kill, Err(mpsc::RecvTimeoutError::Timeout)),
+        "{before_kill:?}"
+    );
+    assert!(matches!(after_kill, Ok(Ok(()))), "{after_kill:?}");
+    assert_eq!(status.signal(), Some(nix::libc::SIGKILL));
 }
 
 #[test]

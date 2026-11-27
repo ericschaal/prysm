@@ -16,7 +16,6 @@ test('Settings lists its groups in order, and says whether it is saved', async (
   ]);
   const status = page.getByText('All changes saved');
   await expect(status).toBeVisible();
-  // Brightness and the calibration choice are on Home only.
   await expect(page.getByRole('slider', { name: 'Brightness' })).toHaveCount(0);
 
   const bars = page
@@ -29,7 +28,6 @@ test('Settings lists its groups in order, and says whether it is saved', async (
   const state = await prysm.state();
   expect(state.settings.processing.remove_black_bars).toBe(!before);
 
-  // A row is the link: its label, then its value.
   await page.getByRole('button', { name: /^Lights/ }).click();
   await expect(page).toHaveURL(/#\/settings\/lights$/);
   await expect(page.getByRole('form', { name: 'Your lights' })).toBeVisible();
@@ -51,13 +49,11 @@ test('the video source page shows whether it works, before and after a save', as
   await expect(now).toContainText(
     'Screen sync is off, so this source isn’t in use.',
   );
-  // The sender has announced what the TV streams: the presets are open.
   const efficient = editor.getByRole('radio', { name: 'Efficient' });
   await expect(efficient).toBeEnabled();
   await editor.getByText('Efficient', { exact: true }).click();
   const save = editor.getByRole('button', { name: 'Use this video source' });
   await save.click();
-  // Saved: the bar says so where the user is, then goes; nothing to confirm.
   await expect(editor.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
   await expect(editor.getByText(/^Saved\. Screen sync is off/)).toBeVisible();
   await expect(editor.getByText(/^Saved\./)).toHaveCount(0);
@@ -68,7 +64,6 @@ test('the video source page shows whether it works, before and after a save', as
     fps: 30,
   });
 
-  // Screen sync on (from Home, or here another device): the status follows.
   const response = await page.request.put('/api/v1/target', {
     data: { target: 'screen_sync' },
   });

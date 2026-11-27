@@ -74,18 +74,12 @@ Home has two cards.
 
 <img src="../images/portal-home.webp" alt="Prysm web portal Home: the light card shows On, Screen sync, 80% brightness and the Movie night calibration; the setup card shows TV, Prysm and WLED with 96 LEDs around the TV." width="768">
 
-- **The light card**: whether the lights are **Off**, **On** or **Stopped**,
-  the power button, the two modes **Screen sync** (the lights follow the
-  screen) and **WLED effects** (WLED plays its own patterns), brightness, the
-  style (tap **Natural**, **Calm**, **Vivid** or **Game** to switch at once;
-  **Adjust** opens the Style page) and your calibrations (**Calibrate
-  colours** makes a new one). A line under **Off** / **On** says what is happening,
-  for example what Power turns on, or that the lights follow the screen.
-  While the lights are off the chosen mode is only outlined; choosing one
-  while off turns the lights on in that mode. With WLED effects, brightness, style
-  and calibrations do not apply (WLED controls its own effects), so they are dimmed
-  until the lights follow the screen again. Problems show here in plain words, with the
-  action that fixes them. **Open WLED** opens WLED's own page.
+- **The light card** shows Power and the current request. Press Power to resume
+  the last selected mode. While On, select **Screen sync** to follow the
+  picture or **WLED effects** to let WLED control the display. Outputs that
+  support only Screen sync have a single Power button. In Screen sync you
+  can adjust brightness, style and calibration. **Open WLED** opens WLED's
+  own controls when its effects are selected.
 - **Your setup**: the path from the video source through Prysm to the lights,
   with what each step is and whether pictures are flowing, and your LEDs
   around the TV. A step that failed is marked. **Change setup** opens
@@ -94,14 +88,19 @@ Home has two cards.
 
 Good to know:
 
-- Prysm starts with the lights off after every restart. Turn Screen sync on
-  again, or start Prysm with `--start` (see your install guide).
-- Stopping Prysm turns the lights off.
-- When Prysm turns the lights off, stops, switches to **WLED effects**, or
-  has had no picture for about 3 seconds, it tells WLED to ignore live
-  colours from every other sender. Another program that sends WLED live
-  colours, such as another DDP source, stays ignored until WLED restarts or
-  Screen sync shows a picture again.
+- At startup Prysm reads the lights if they can report their state. Lights
+  that are off stay off. With lights on and an existing stream, Prysm shows
+  **Live stream detected** and waits for your choice. An explicit WLED
+  override selects WLED effects. Otherwise Prysm resumes the remembered mode.
+  If the lights cannot report their state, press Power to start.
+- Screen sync waits for both the source and the output. Power shows **On**
+  while waiting. Press it to cancel. A failure that requires your help shows
+  **Off**; fix the cause and press Power to try again.
+- Selecting Screen sync clears a WLED live override. Setting an override in
+  WLED while Prysm streams hands the display back to WLED and selects WLED
+  effects. Selecting Effects in Prysm also releases the stream.
+- Off sends one power-off command. If WLED cannot confirm it, Prysm reports
+  the error. The next Power press resumes the remembered mode.
 - When no picture arrives for about 3 seconds, WLED goes back to what it was
   showing before. Screen sync takes over again when the picture returns.
 - Closing the browser leaves Prysm running.
@@ -279,8 +278,10 @@ A file Prysm cannot use (no format number, a newer format, a typo that
 breaks the JSON, a wrong value type, a file it may not read) does not stop
 it: Prysm starts without settings, the light card shows why, and the file
 is left untouched. Fix the file and restart Prysm, or set Prysm up again in
-the portal: the first save keeps the old file beside the new one, as
-`settings.json.unreadable-` and six random characters, and the log names it.
+the portal. The first save keeps the old file beside the new one as
+`settings.json.unreadable-` and six random characters. If the backup fails,
+Save shows the file path and leaves the original in place. Fix its permissions
+or move it to a safe location, then save again.
 
 **Upgrading from 1.0.0-rc.1 or 0.2.0:** see [Upgrade to 1.0.0](upgrading.md).
 A 1.0.0-rc.1 file has no format number, so Prysm starts without settings

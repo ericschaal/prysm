@@ -31,8 +31,8 @@ Prepare = Callable[[Ctx, prysm_api.Prysm], str]
 TV_SCREENS: list[tuple[str, str]] = [
     (
         'home',
-        'Home: the title, the lights card (Off/On, Screen sync, WLED effects, brightness) and the settings '
-        'section read correctly from across the room',
+        'Home: the title, lights card and settings read clearly from across the room. With lights off, '
+        'Power is the only lighting action. With WLED on, Power, Screen sync and WLED effects are available.',
     ),
     ('portal-qr', 'Full: the portal address and QR code show; scanning it opens the portal on a phone'),
     ('waiting-video', 'With no video (Home screen of the TV or no input) the app says it is waiting for video'),
@@ -138,16 +138,38 @@ def calibration_patterns(ctx: Ctx) -> tuple[str, object]:
 
 
 def cold_boot(ctx: Ctx) -> tuple[str, object]:
-    answer, note = ctx.ask(
-        'Cold boot: with Start with TV on, unplug the TV for 30 s, plug it in and turn it on. '
-        'Do the lights start by themselves (answer once the picture is back)?'
+    ready, note = ctx.ask(
+        'On the full TV package, enable Start with TV. Start Screen sync, then turn the lights off with Prysm Power. '
+        'In the WLED app, confirm the lights are off. Are these conditions ready?'
     )
-    evidence: dict[str, object] = {'answer': answer, 'note': note}
+    if ready != Answer.YES:
+        raise Skipped('full package or physical Off precondition not confirmed', note)
+
+    off, note = ctx.ask(
+        'Unplug the TV for 30 s, plug it in and turn it on. Once the picture is back and Prysm has started, '
+        'does it show Lights off with only Power available, while the physical lights stay off?'
+    )
+    evidence: dict[str, object] = {'off_after_boot': off, 'off_note': note}
+    if off == Answer.SKIP:
+        raise Skipped('cold boot skipped', evidence)
+    if off == Answer.NO:
+        raise Failed('fresh launch did not preserve physical Off', evidence)
+
+    resumed, note = ctx.ask(
+        'Press Prysm Power once without choosing a mode. Does the remembered Screen sync start and follow the picture?'
+    )
+    evidence.update(resumed=resumed, resume_note=note)
+    if resumed == Answer.SKIP:
+        raise Skipped('Power resume skipped', evidence)
+    if resumed == Answer.NO:
+        raise Failed('Power did not resume Screen sync', evidence)
     found = _tv(ctx)
-    if answer == Answer.YES and found:
+    if found:
         state = tv.wait_state(found.get_state, tv.capturing, 120, every=5)
         evidence['getState'] = state
-    return note or answer, evidence
+        if state is None:
+            raise Failed('the TV did not confirm resumed capture', evidence)
+    return 'Off reconciled and Power resumed Screen sync', evidence
 
 
 def steps(config: Config) -> list[Step[EyesData]]:
@@ -228,7 +250,7 @@ def steps(config: Config) -> list[Step[EyesData]]:
         Step(
             'eyes.cold-boot',
             'Cold boot by unplugging',
-            'a person unplugs and restarts the TV; then getState is read until capturing (120 s)',
+            'full TV with WLED off: a person restarts the TV, verifies Off, presses Power, and confirms Screen sync',
             Mode.GUIDED,
             cold_boot,
             commands=lambda: [commands.tv_get_state(config.tv.ssh)] if config.tv.ssh else [],

@@ -2,8 +2,9 @@
 //! own brightness dims them, how many LEDs it drives, and the gamma it
 //! applies to them.
 //!
-//! One request at most every [`EVERY`] (5 × that after a check that got no
-//! usable answer): `GET /json/si`, except that the second check and every
+//! One request [`EVERY`] after the last one ended, whatever it answered: a
+//! check that fails blocks nothing, and the next one sees a device that
+//! answers again. `GET /json/si`, except that the second check and every
 //! [`CONFIG_EVERY`]th after it read `GET /json/cfg` instead. The caller's
 //! thread never waits for WLED: the connect, the request and the reply each
 //! go as far as they can without blocking at every poll, and the check is
@@ -28,9 +29,11 @@
 //!
 //! Without a configuration read (none yet, or WLED refuses it behind its
 //! settings PIN) no brightness is reported and the gamma is unknown.
-use crate::ddp::{Gamma, Transfer};
+use crate::classify::{self, Cause};
+use crate::ddp::{Gamma, Transfer, route_address};
 use crate::http::{self, RequestError};
-use prysm_ports::{DeviceBrightness, DeviceReport, OutputIssue, chain};
+use crate::lifecycle::WledObservation;
+use prysm_ports::{DeviceBrightness, DeviceReport, OutputIssue, Power, chain};
 use serde::Deserialize;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{self, ErrorKind, Write};
@@ -38,16 +41,11 @@ use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
-/// How often WLED's state is checked while it answers.
+/// How long after a check ends the next starts, whatever it answered.
 pub const EVERY: Duration = Duration::from_secs(1);
-/// After a check without a usable answer the next waits this many times
-/// [`EVERY`].
-pub(crate) const BACKOFF: u32 = 5;
 /// How long a check may take, from the connect to the end of the reply;
 /// nothing waits for it meanwhile.
 pub(crate) const REPLY: Duration = Duration::from_secs(1);
-/// `/json/si` grows with segments and usermods; WLED's own WebSocket limit.
-const MAX_REPLY: usize = 64 * 1024;
 /// Every this many checks one reads the configuration instead of the state
 /// (the second check, then about every 30 s): what scales realtime colours
 /// changes only when someone saves WLED's settings, so a change is reported
@@ -65,6 +63,7 @@ enum Ask {
 
 pub struct Observer {
     device: SocketAddr,
+    ddp: SocketAddr,
     host: String,
     every: Duration,
     next: Instant,
@@ -73,11 +72,10 @@ pub struct Observer {
     /// `None`: only state checks.
     config_every: Option<u32>,
     pending: Option<Pending>,
-    /// The realtime source address WLED names for Prysm's colours: our own
-    /// address, or behind NAT (Docker's bridge network) the first one WLED
-    /// named while it showed DDP.
-    ours: Option<IpAddr>,
     issue: Option<OutputIssue>,
+    observation: Option<WledObservation>,
+    /// The local address only when HTTP and DDP agree on the route.
+    known_sender: Option<IpAddr>,
     /// `bri` from the latest state that answered, kept through checks that
     /// got no answer: colours are encoded for it meanwhile.
     bri: Option<u8>,
@@ -103,17 +101,25 @@ struct Pending {
 
 impl Observer {
     /// The first check is `every` after `now`, once colours have reached WLED.
-    pub fn new(device: SocketAddr, host: &str, every: Duration, now: Instant) -> Self {
+    pub fn new(
+        device: SocketAddr,
+        ddp: SocketAddr,
+        host: &str,
+        every: Duration,
+        now: Instant,
+    ) -> Self {
         Self {
             device,
+            ddp,
             host: host.to_owned(),
             every,
             next: now + every,
             checks: 0,
             config_every: Some(CONFIG_EVERY),
             pending: None,
-            ours: None,
             issue: None,
+            observation: None,
+            known_sender: None,
             bri: None,
             leds: None,
             config: None,
@@ -153,9 +159,16 @@ impl Observer {
         let config = self.config?;
         let bri = if config.force_max { u8::MAX } else { self.bri? };
         let bri = config.brightness_gamma.correct(bri);
-        // The factor scales it, capped at full.
         let level = u32::from(bri) * u32::from(config.scale) / 100;
         Some(u8::try_from(level).unwrap_or(u8::MAX))
+    }
+
+    pub(crate) const fn observation(&self) -> Option<WledObservation> {
+        self.observation
+    }
+
+    pub(crate) const fn known_sender(&self) -> Option<IpAddr> {
+        self.known_sender
     }
 
     /// How many LEDs WLED drives, from the latest state; `None` until one
@@ -223,12 +236,7 @@ impl Observer {
     /// it, say) keeps what an earlier read found and does not touch the
     /// state check's finding; its cause is logged at debug level.
     fn configured(&mut self, now: Instant, answer: Result<Config, RequestError>) {
-        self.next = now
-            + if answer.is_ok() {
-                self.every
-            } else {
-                self.every * BACKOFF
-            };
+        self.next = now + self.every;
         match answer {
             Ok(config) => self.config = Some(config.into()),
             Err(error) => tracing::debug!(
@@ -278,15 +286,11 @@ impl Observer {
     }
 
     /// Records a check's outcome. Any failure, a reply that is not WLED's
-    /// state included, reports [`OutputIssue::Unreachable`]; its cause is
-    /// logged at debug level.
+    /// state included, reports [`OutputIssue::Unreachable`]: the check only
+    /// reports, and no other issue says it. Its cause and what it would
+    /// escalate as ([`classify::escalation`]) are logged at debug level.
     fn finish(&mut self, now: Instant, answer: Result<(Status, IpAddr), RequestError>) {
-        self.next = now
-            + if answer.is_ok() {
-                self.every
-            } else {
-                self.every * BACKOFF
-            };
+        self.next = now + self.every;
         let status = answer.as_ref().ok().map(|(status, _)| status);
         if let Some(status) = status {
             self.bri = status.state.bri;
@@ -295,34 +299,25 @@ impl Observer {
             .and_then(|status| status.info.leds)
             .map(|leds| leds.count);
         self.issue = match answer {
-            Ok((status, local)) => self.judge(&status, local),
+            Ok((status, local)) => {
+                self.known_sender =
+                    route_address(self.ddp).filter(|ddp| *ddp == local.to_canonical());
+                let observed = status.observation();
+                self.observation = Some(observed);
+                observed.issue(self.known_sender)
+            }
             Err(error) => {
+                self.observation = None;
+                self.known_sender = None;
                 tracing::debug!(
                     device = %self.device,
                     error = %chain(&error),
+                    escalation = ?classify::escalation(Cause::Request(&error)),
                     "WLED state check got no usable answer"
                 );
                 Some(OutputIssue::Unreachable)
             }
         };
-    }
-
-    fn judge(&mut self, status: &Status, local: IpAddr) -> Option<OutputIssue> {
-        if !status.state.on {
-            return Some(OutputIssue::Off);
-        }
-        if status.state.lor != 0 {
-            return Some(OutputIssue::Overridden);
-        }
-        // `lm` is empty while live only through Prysm's JSON `live`: no DDP arrived.
-        if !status.info.live || status.info.lm.as_deref() == Some("") {
-            return Some(OutputIssue::NotLive);
-        }
-        let lip = status.info.lip?;
-        if lip == local || self.ours.is_none() {
-            self.ours = Some(lip);
-        }
-        (self.ours != Some(lip)).then_some(OutputIssue::OtherSender)
     }
 }
 
@@ -366,17 +361,36 @@ impl Pending {
                 Err(error) => return Err(error.into()),
             }
         }
-        http::read_response(&mut self.stream, &mut self.reply, MAX_REPLY)?
-            .map(|response| response.success().map(|body| (body, local)))
-            .transpose()
+        let body = http::read_response(&mut self.stream, &mut self.reply)?;
+        Ok(body.map(|body| (body, local)))
     }
 }
 
 /// The parts of WLED's `/json/si` that say whose colours it shows.
 #[derive(Deserialize)]
-struct Status {
+pub(crate) struct Status {
     state: State,
     info: Info,
+}
+
+impl Status {
+    pub(crate) fn observation(&self) -> WledObservation {
+        let power = if self.state.on { Power::On } else { Power::Off };
+        let ddp = self.info.live
+            && self
+                .info
+                .lm
+                .as_deref()
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("DDP"));
+        let realtime = self.info.live && self.info.lm.as_deref() != Some("");
+        WledObservation {
+            power,
+            overridden: self.state.lor != 0,
+            ddp,
+            realtime,
+            sender: self.info.lip,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -409,7 +423,7 @@ struct Info {
 /// still counts.
 fn sender<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<IpAddr>, D::Error> {
     let lip = Option::<String>::deserialize(deserializer)?;
-    Ok(lip.and_then(|address| address.parse().ok()))
+    Ok(lip.and_then(|address| address.parse::<IpAddr>().ok().map(|ip| ip.to_canonical())))
 }
 
 #[derive(Deserialize, Clone, Copy)]

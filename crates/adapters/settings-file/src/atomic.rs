@@ -14,10 +14,10 @@ pub fn directory(path: &Path) -> &Path {
     }
 }
 
-/// Write `bytes` with `permissions` to `path` through a [`Staged`] file,
-/// then sync the directory. With `replace`, whatever is at `path` is
-/// replaced (a symbolic link there too, not the file it names); without, an
-/// existing `path` is an error and stays as it is.
+/// Write `bytes` through a [`Staged`] file, then sync the directory. `None`
+/// keeps the temporary file's private permissions. With `replace`, `path` is
+/// replaced (a symbolic link there too, not the file it names). Without it,
+/// an existing `path` is an error and stays as it is.
 ///
 /// # Errors
 /// Any step failed. A failure before the rename leaves `path` as it was and
@@ -26,11 +26,13 @@ pub fn directory(path: &Path) -> &Path {
 pub fn write(
     path: &Path,
     bytes: &[u8],
-    permissions: fs::Permissions,
+    permissions: impl Into<Option<fs::Permissions>>,
     replace: bool,
 ) -> io::Result<()> {
     let mut staged = Staged::new(path)?;
-    staged.set_permissions(permissions)?;
+    if let Some(permissions) = permissions.into() {
+        staged.set_permissions(permissions)?;
+    }
     staged.write(bytes)?;
     if replace {
         staged.replace(path)?;

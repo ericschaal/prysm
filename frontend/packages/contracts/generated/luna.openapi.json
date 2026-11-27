@@ -1,6 +1,46 @@
 {
   "components": {
     "schemas": {
+      "Asked": {
+        "description": "What the person is asked: what nothing on the TV recovers, as\n`{ \"step\": … }`, with the person's next step for `ask`. Open: an app\nreads a step it does not know as `ask` with `try_again`.",
+        "oneOf": [
+          {
+            "description": "The lights do not answer, and Prysm stopped trying.",
+            "properties": {
+              "step": {
+                "enum": [
+                  "unanswered"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "step"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person must act, by this step.",
+            "properties": {
+              "fix": {
+                "$ref": "#/components/schemas/Fix",
+                "description": "The person must act, by this step."
+              },
+              "step": {
+                "enum": [
+                  "ask"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "fix",
+              "step"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "DoneReply": {
         "description": "The `uninstall` reply.",
         "properties": {
@@ -55,16 +95,14 @@
         ],
         "type": "object"
       },
-      "FailureKind": {
-        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the encoder the receiver requested could not start or failed;\nthe receiver is told, and another encoding chosen in its portal may work.\n`receiver` (slim): the receiver is unavailable (not lighting, unreachable,\nor its name does not resolve); the worker keeps reconnecting. `version`\n(slim): Prysm speaks another capture stream version; the older one needs\nupdating, and the worker keeps reconnecting. `replaced` (slim): another\nTV took over the stream at Prysm; this one stopped sending until the\nworker restarts (capture stopped and started, the TV waking, or a new\nPrysm address). `receiver_failed` (slim): Prysm's receiving source failed\nwith this TV's stream (a refusal, a keyframe that does not decode, no\ndecoder), and Prysm shows why; the worker released the capture and keeps\nreconnecting. `preferences`: the TV's saved preferences could not be\nread; the service runs with the defaults and keeps the file until the app\nsaves preferences. `other`: anything else. Open: an app reads a kind it\ndoes not know as `other`.",
+      "Fix": {
+        "description": "The person's next step. `try_again`: start again. `change_settings`:\nchange the settings (in the portal); a save that validates replaces them.\n`set_up`: set up the service again: it lacks a permission it needs.\n`unsupported`: nothing makes this work on this TV. `restart_tv`: restart\nthe TV: a worker that did not end may still hold the capture. Open: an\napp reads a fix it does not know as `try_again`.",
         "enum": [
-          "encoder",
-          "receiver",
-          "version",
-          "replaced",
-          "receiver_failed",
-          "preferences",
-          "other"
+          "try_again",
+          "change_settings",
+          "set_up",
+          "unsupported",
+          "restart_tv"
         ],
         "type": "string"
       },
@@ -88,14 +126,19 @@
           {
             "properties": {
               "capturing": {
-                "description": "Lighting runs and frames arrive (false while it waits for video).",
+                "description": "Screen sync runs and frames arrive (false while it waits for\nvideo).",
                 "type": "boolean"
               },
               "fps": {
-                "description": "Frames per second over about the last second, rounded, while\nlighting runs; 0 while it waits for frames.",
+                "description": "Frames per second over about the last second, rounded, while\nscreen sync runs; 0 while it waits for frames.",
                 "format": "int32",
+                "maximum": 65535,
                 "minimum": 0,
                 "type": "integer"
+              },
+              "lights": {
+                "$ref": "#/components/schemas/OutputIssue",
+                "description": "Why the lights do not show what was chosen, as the worker last\nreported it: with screen sync any issue, `unreachable` also while\nit waits for lights that do not answer; with off or effects\n`unreachable` alone, while the lights do not answer the request\nthat puts them in that mode (tried again until they do)."
               },
               "phase": {
                 "enum": [
@@ -106,6 +149,10 @@
               "portal": {
                 "description": "The portal's LAN address once the worker reported it.",
                 "type": "string"
+              },
+              "problem": {
+                "$ref": "#/components/schemas/Problem",
+                "description": "What the worker asks of the person: it keeps running, since its\nportal is where settings change."
               }
             },
             "required": [
@@ -126,6 +173,10 @@
               "portal": {
                 "description": "The portal's LAN address the worker last reported.",
                 "type": "string"
+              },
+              "problem": {
+                "$ref": "#/components/schemas/Problem",
+                "description": "What the person is asked once it exited; absent when a new\nworker follows (a restart), or none is wanted."
               }
             },
             "required": [
@@ -134,23 +185,20 @@
             "type": "object"
           },
           {
-            "description": "Waiting before the next start after a failure.",
+            "description": "No worker, and no portal: the person is asked. Choosing a target\n(`setTarget`) answers it and starts the worker again.",
             "properties": {
               "phase": {
                 "enum": [
-                  "retrying"
+                  "asking"
                 ],
                 "type": "string"
               },
-              "seconds": {
-                "description": "Whole seconds until the next start, rounded up, when this state\nwas sent (at least 1). The app counts down from when it received\nit; no clock is shared.",
-                "format": "int32",
-                "minimum": 0,
-                "type": "integer"
+              "problem": {
+                "$ref": "#/components/schemas/Problem"
               }
             },
             "required": [
-              "seconds",
+              "problem",
               "phase"
             ],
             "type": "object"
@@ -174,6 +222,17 @@
           "off",
           "screen_sync",
           "effects"
+        ],
+        "type": "string"
+      },
+      "OutputIssue": {
+        "description": "Why the lights do not show what was chosen. `off`: the device is\nswitched off. `overridden`: the device's own override is on (WLED: live\noverride). `not_live`: the device is not taking the colours (WLED: not in\nlive mode, or no DDP arriving). `other_sender`: another sender's colours\nreach the device. `unreachable`: the device does not answer Prysm's state\nchecks, the request that opens it for screen sync, or, with the target\n`off` or `effects`, the request for that mode. During screen sync Prysm\nkeeps sending the colours; it tries an unanswered request again every few\nseconds. The lights follow once the device takes the colours or answers.\nOpen: an app reads an issue it does not know in general words.",
+        "enum": [
+          "off",
+          "overridden",
+          "not_live",
+          "other_sender",
+          "unreachable"
         ],
         "type": "string"
       },
@@ -251,10 +310,26 @@
           "prysm_address": {
             "description": "Slim only: the headless Prysm's address, such as\n`http://192.168.1.20:8787` or `https://prysm.example.com` (through a\nreverse proxy). The TV streams its picture there, and the TV app\nlinks to its portal. Only the syntax is checked when saved; the TV\nresolves a host name at every connection attempt, and one that does\nnot resolve is reported as the receiver wait.",
             "example": "http://192.168.1.20:8787",
-            "maxLength": 256,
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "Problem": {
+        "description": "A failure the person is asked about.",
+        "properties": {
+          "asked": {
+            "$ref": "#/components/schemas/Asked"
+          },
+          "message": {
+            "description": "What failed, with its causes.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asked",
+          "message"
+        ],
         "type": "object"
       },
       "SetEnabledRequest": {
@@ -271,13 +346,22 @@
         ],
         "type": "object"
       },
+      "SetTargetChoice": {
+        "description": "Lighting intent accepted by the full TV service.",
+        "enum": [
+          "off",
+          "screen_sync",
+          "effects",
+          "remembered"
+        ],
+        "type": "string"
+      },
       "SetTargetRequest": {
         "additionalProperties": false,
         "description": "`setTarget` request (full package).",
         "properties": {
           "target": {
-            "$ref": "#/components/schemas/LightingTarget",
-            "description": "What the lights do: off, screen sync, or their own effects."
+            "$ref": "#/components/schemas/SetTargetChoice"
           }
         },
         "required": [
@@ -286,7 +370,7 @@
         "type": "object"
       },
       "SlimLink": {
-        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding` (the one the receiver requested, set in the desktop\nportal), `fps` per second (0 while none come). `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (`failure.kind` `receiver`).\n`failed`: the encoder, version, replaced or receiver-failed failure. The\nstate's own `failure` is the one to show.",
+        "description": "Where the slim worker's stream to the receiver stands, as `{ \"state\": … }`.\n`starting`: no connection attempt yet. `sending`: connected, frames go\nout in `encoding` (the one the receiver requested, set in the desktop\nportal), `fps` per second (0 while none come). `refused`: connected, but\nthe TV refuses to share the video it shows, so no frames go out; it ends\nwhen the video changes, not a failure. `paused`: the\nreceiver stopped the stream because its lighting is off; the TV capture\nis released until a receiver takes a connection again, not a failure.\n`waiting`: the receiver is unavailable (not lighting, unreachable, or its\nname does not resolve); the worker keeps reconnecting, not a failure.\n`encoder_failed`: the encoder the receiver requested could not start or\nfailed; the receiver is told, and another encoding chosen in its portal\nmay work. `version_differs`: Prysm speaks another capture stream version;\nthe older one needs updating, and the worker keeps reconnecting.\n`receiver_failed`: Prysm's receiving source failed with this TV's stream\n(a refusal, a keyframe that does not decode, no decoder), and Prysm shows\nwhy; the worker released the capture and keeps reconnecting. `message`\nsays why, with the causes.",
         "oneOf": [
           {
             "properties": {
@@ -310,6 +394,7 @@
               "fps": {
                 "description": "Frames sent per second over about the last second, rounded.",
                 "format": "int32",
+                "maximum": 65535,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -331,6 +416,20 @@
             "properties": {
               "state": {
                 "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
                   "paused"
                 ],
                 "type": "string"
@@ -343,8 +442,8 @@
           },
           {
             "properties": {
-              "failure": {
-                "$ref": "#/components/schemas/WorkerFailure"
+              "message": {
+                "type": "string"
               },
               "state": {
                 "enum": [
@@ -354,25 +453,79 @@
               }
             },
             "required": [
-              "failure",
+              "message",
               "state"
             ],
             "type": "object"
           },
           {
             "properties": {
-              "failure": {
-                "$ref": "#/components/schemas/WorkerFailure"
+              "message": {
+                "type": "string"
               },
               "state": {
                 "enum": [
-                  "failed"
+                  "capture_waiting"
                 ],
                 "type": "string"
               }
             },
             "required": [
-              "failure",
+              "message",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "encoder_failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "version_differs"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "receiver_failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
               "state"
             ],
             "type": "object"
@@ -404,7 +557,7 @@
               },
               "link": {
                 "$ref": "#/components/schemas/SlimLink",
-                "description": "Where the uplink to the receiver stands, as the worker last\nreported it."
+                "description": "Where the uplink to the receiver stands, as the worker last\nreported it; it says the worker's own waits and failures."
               },
               "phase": {
                 "enum": [
@@ -427,6 +580,10 @@
                   "stopping"
                 ],
                 "type": "string"
+              },
+              "problem": {
+                "$ref": "#/components/schemas/Problem",
+                "description": "What the person is asked once it exited; absent when a new\nworker follows (a restart), or none is wanted."
               }
             },
             "required": [
@@ -435,23 +592,20 @@
             "type": "object"
           },
           {
-            "description": "Waiting before the next start after a failure.",
+            "description": "No worker: the person is asked. Starting capture (`setEnabled`\ntrue, also after stopping it) answers it and starts the worker\nagain.",
             "properties": {
               "phase": {
                 "enum": [
-                  "retrying"
+                  "asking"
                 ],
                 "type": "string"
               },
-              "seconds": {
-                "description": "Whole seconds until the next start, rounded up, when this state\nwas sent (at least 1). The app counts down from when it received\nit; no clock is shared.",
-                "format": "int32",
-                "minimum": 0,
-                "type": "integer"
+              "problem": {
+                "$ref": "#/components/schemas/Problem"
               }
             },
             "required": [
-              "seconds",
+              "problem",
               "phase"
             ],
             "type": "object"
@@ -465,12 +619,8 @@
           },
           {
             "properties": {
-              "failure": {
-                "$ref": "#/components/schemas/WorkerFailure",
-                "description": "The current failure (or, slim, the receiver wait): what it is and\nits message with the causes."
-              },
               "log": {
-                "description": "The latest worker stderr lines, oldest first (at most 20).",
+                "description": "The latest log lines of the supervisor and the worker, oldest first\n(at most 20).",
                 "items": {
                   "type": "string"
                 },
@@ -481,6 +631,10 @@
               },
               "preferences": {
                 "$ref": "#/components/schemas/Preferences"
+              },
+              "unreadable": {
+                "description": "Why the saved preferences could not be read: the service runs with\nthe defaults and keeps the file as it is until the app saves\npreferences. Nothing stopped for it.",
+                "type": "string"
               },
               "video": {
                 "$ref": "#/components/schemas/Video"
@@ -538,31 +692,13 @@
         "type": "object"
       },
       "Video": {
-        "description": "The TV's main video output.",
+        "description": "The TV's main video output. Open: an app reads a value it does not know\nas `unknown`.",
         "enum": [
           "unknown",
           "unavailable",
           "available"
         ],
         "type": "string"
-      },
-      "WorkerFailure": {
-        "additionalProperties": false,
-        "description": "A failure: what it is and its message with the causes.",
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/FailureKind"
-          },
-          "message": {
-            "description": "What failed, with its cause chain (cut to 1 KiB).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "kind",
-          "message"
-        ],
-        "type": "object"
       }
     }
   },
@@ -573,7 +709,7 @@
       "name": "Apache-2.0"
     },
     "title": "Prysm TV service (luna://io.github.ericschaal.prysm.service)",
-    "version": "4"
+    "version": "5"
   },
   "openapi": "3.1.0",
   "paths": {}

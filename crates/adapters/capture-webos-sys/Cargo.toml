@@ -9,7 +9,9 @@ description = "LG webOS VTCapture and HAL GAL FFI behind safe, single-threaded c
 [dependencies]
 libloading.workspace = true
 libc = "0.2"
+strum.workspace = true
 thiserror.workspace = true
+prysm-webos-library-sys.workspace = true
 # The one Luna binding: the registration precheck.
 prysm-webos-luna-sys.workspace = true
 
@@ -23,10 +25,10 @@ fuzzing = []
 [build-dependencies]
 cc = "1"
 
-# One of the four crates allowed to use `unsafe` (with capture-device-sys, webos-luna-sys and h264-rvenc-sys). Every block carries a SAFETY note.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+print_stdout = "deny"
 undocumented_unsafe_blocks = "deny"

@@ -1,5 +1,5 @@
 import type { LedCounts } from '@prysm/contracts/host-desktop';
-import type { Corner, Edge, LedEdges, Wire } from '@prysm/web-portal';
+import { clockwiseWires, type LedEdges } from '@prysm/web-portal';
 
 /**
  * The total LED count Prysm accepts: at most `MAX_LEDS` in `output-wled`,
@@ -8,6 +8,8 @@ import type { Corner, Edge, LedEdges, Wire } from '@prysm/web-portal';
 export const ledTotalLimits = { min: 1, max: 16384 } as const;
 /** Per edge, from the generated `LedCounts` schema: one edge may hold all. */
 export const ledEdgeLimits = { min: 0, max: 16384, step: 1 } as const;
+export const ledTotalProblem = `Use ${ledTotalLimits.min} to ${ledTotalLimits.max} LEDs in total.`;
+export const ditherDefault = true;
 
 /**
  * The physical LED order, as output-wled's `render_edges` writes it:
@@ -16,44 +18,25 @@ export const ledEdgeLimits = { min: 0, max: 16384, step: 1 } as const;
  * LEDs is skipped.
  */
 export const wiring = [
-  { edge: 'left', from: 'bottom-left', to: 'top-left', direction: 'upward' },
-  { edge: 'top', from: 'top-left', to: 'top-right', direction: 'rightward' },
-  {
-    edge: 'right',
-    from: 'top-right',
-    to: 'bottom-right',
-    direction: 'downward',
-  },
-  {
-    edge: 'bottom',
-    from: 'bottom-right',
-    to: 'bottom-left',
-    direction: 'leftward',
-  },
-] as const satisfies readonly (Wire & { direction: string })[];
+  clockwiseWires.left,
+  clockwiseWires.top,
+  clockwiseWires.right,
+  clockwiseWires.bottom,
+] as const;
 
-export interface LedRun {
-  edge: Edge;
-  count: number;
-  /** 1-based number of the run's first and last LED; absent when empty. */
-  first?: number;
-  last?: number;
-  from: Corner;
-  direction: string;
-}
-
-export function ledRuns(leds: LedCounts): LedRun[] {
+/** Where LED 1 is and the order of every edge, for screen readers. */
+export function orderCaption(leds: LedEdges) {
+  const start = wiring.find(({ edge }) => leds[edge] > 0);
+  if (!start) return 'No LEDs yet.';
   let next = 1;
-  return wiring.map(({ edge, from, direction }) => {
-    const count = leds[edge] ?? 0;
-    const run: LedRun = { edge, count, from, direction };
-    if (count > 0) {
-      run.first = next;
-      run.last = next + count - 1;
-      next += count;
-    }
-    return run;
+  const runs = wiring.map(({ edge, direction }) => {
+    const count = leds[edge];
+    if (!(count > 0)) return `${edge}: none`;
+    const range = `${next}–${next + count - 1}`;
+    next += count;
+    return `${edge} ${direction}: LEDs ${range}`;
   });
+  return `LED 1 is at the ${start.from} corner. Order: ${runs.join('; ')}.`;
 }
 
 /** Every edge's count, an omitted edge as none. */

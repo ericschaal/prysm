@@ -36,14 +36,14 @@ pub(crate) struct Receiver {
     pool: FramePool,
 }
 
-/// Why the receive thread leaves a connection. What it tells the sender
-/// ([`Self::ending`]) and where it goes next ([`Self::next`]) follow from
-/// this alone.
+/// Why the receive thread leaves a connection.
 #[derive(Debug)]
 enum Leave {
     /// The connection closed or failed, or a write to it failed.
     SenderGone(LinkError),
-    /// The sender sent what this end does not take.
+    /// The sender sent what this end does not take. Both ends agreed the
+    /// version at the upgrade, so the same sender would send it again: the
+    /// source fails.
     Malformed(WireError),
     /// A newer sender connected; it replaces this one.
     Replaced(Accepted),
@@ -60,21 +60,6 @@ enum Leave {
     OfferExcluded(Error),
 }
 
-/// How the receive thread ends a connection it leaves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ending {
-    /// Close the socket: the sender is gone, or misbehaved.
-    Drop,
-    /// Send a close (with a code if given), then close the socket. The
-    /// sender was asked for nothing, so it sends nothing to read off.
-    Close(Option<Close>),
-    /// Send a close with this code, then read and discard what the sender
-    /// still sends until it answers, for at most [`CLOSE_LINGER`]: closing
-    /// a socket with unread frames resets the connection, which can lose
-    /// the close.
-    CloseAndDrain(Close),
-}
-
 /// Where the receive thread goes after leaving a connection.
 #[derive(Debug)]
 enum Next {
@@ -87,34 +72,31 @@ enum Next {
 }
 
 impl Leave {
-    /// What the sender is told.
-    fn ending(&self) -> Ending {
-        match self {
-            Self::SenderGone(_) | Self::Malformed(_) => Ending::Drop,
-            Self::Replaced(_) => Ending::CloseAndDrain(Close::Replaced),
-            Self::Stopped => Ending::CloseAndDrain(Close::Stopped),
-            Self::Failed(_) => Ending::CloseAndDrain(Close::Failed),
-            Self::StoppedUnasked => Ending::Close(Some(Close::Stopped)),
-            // The sender, still waiting for a request, fails with
-            // `NoRequest`; it checks the request against its offer itself.
-            Self::OfferExcluded(_) => Ending::Close(None),
+    /// Finish the wire exchange before handing the receive loop its next action.
+    fn finish(self, link: &mut Link<TcpStream>) -> Next {
+        let (close, asked, next) = match self {
+            Self::SenderGone(cause) => return sender_gone(&cause),
+            Self::Malformed(cause) => {
+                let error = Error::adapter("the sender sent what Prysm does not take", cause);
+                tracing::warn!(error = %chain(&error), "remote stream failed");
+                (Close::Failed, true, Next::Stop(Some(error)))
+            }
+            Self::Replaced(newer) => (Close::Replaced, true, Next::Switch(newer)),
+            Self::Stopped => (Close::Stopped, true, Next::Stop(None)),
+            Self::StoppedUnasked => (Close::Stopped, false, Next::Stop(None)),
+            Self::Failed(error) => (Close::Failed, true, Next::Stop(Some(error))),
+            Self::OfferExcluded(error) => (Close::Failed, false, Next::Stop(Some(error))),
+        };
+        // An asked sender may still have frames in flight. Drain them so
+        // dropping the socket doesn't reset it before the close is received.
+        if link.close(Some(close)) && asked {
+            link.drain(CLOSE_LINGER);
         }
-    }
-
-    /// Where the thread goes; a dropped connection's cause is logged at
-    /// debug level, for diagnosing a sender, which is expected to reconnect.
-    fn next(self) -> Next {
-        match self {
-            Self::SenderGone(cause) => dropped(&cause),
-            Self::Malformed(cause) => dropped(&cause),
-            Self::Replaced(newer) => Next::Switch(newer),
-            Self::Stopped | Self::StoppedUnasked => Next::Stop(None),
-            Self::Failed(error) | Self::OfferExcluded(error) => Next::Stop(Some(error)),
-        }
+        next
     }
 }
 
-fn dropped(cause: &(dyn std::error::Error + 'static)) -> Next {
+fn sender_gone(cause: &LinkError) -> Next {
     tracing::debug!(cause = %chain(cause), "dropped the remote sender's connection");
     Next::Wait
 }
@@ -168,7 +150,9 @@ impl Receiver {
     }
 
     /// The newest connection handed over, waiting for one (each offer wakes
-    /// this thread); `None` once stopped.
+    /// this thread); `None` once stopped. Without end: a sender comes at a
+    /// time nothing announces (the TV is switched on, or its capture
+    /// started).
     fn wait_for_sender(&self) -> Option<Accepted> {
         loop {
             if self.worker.stopped() {
@@ -190,15 +174,10 @@ impl Receiver {
             offer,
         } = connection;
         let offer = offer.as_deref().and_then(Offer::parse);
-        let leave = match link_on(socket, buffered) {
-            Ok(mut link) => {
-                let leave = self.greet(&mut link, offer.as_ref());
-                end(&mut link, leave.ending());
-                leave
-            }
-            Err(error) => Leave::SenderGone(LinkError::Socket(error.into())),
-        };
-        leave.next()
+        match link_on(socket, buffered) {
+            Ok(mut link) => self.greet(&mut link, offer.as_ref()).finish(&mut link),
+            Err(error) => sender_gone(&LinkError::Socket(error.into())),
+        }
     }
 
     /// Ask the sender for the request, unless the source stopped or the
@@ -212,15 +191,14 @@ impl Receiver {
         if let Some(Err(excluded)) = offer.map(|offer| offer.check(&self.request)) {
             return Leave::OfferExcluded(self.excluded(&excluded, offer));
         }
-        if let Err(error) = send(link, &ToSender::Request(self.request.into())) {
+        if let Err(error) = send(link, &ToSender::Request(self.request)) {
             return Leave::SenderGone(error);
         }
         self.receive(link, offer)
     }
 
-    /// Receive frames until there is a reason to leave. Malformed input
-    /// drops the connection; a refusal or a broken H.264 stream fails the
-    /// source.
+    /// Receive frames until there is a reason to leave. Malformed input, a
+    /// refusal or a broken H.264 stream fails the source.
     fn receive(&mut self, link: &mut Link<TcpStream>, offer: Option<&Offer>) -> Leave {
         let encoding = self.request.encoding.into();
         let mut h264 = H264::Fresh;
@@ -264,6 +242,9 @@ impl Receiver {
                 Encoding::H264 => match h264.decode(&header, payload, pixels) {
                     Decoded::Picture => {}
                     Decoded::Skipped => continue,
+                    // A keyframe request converges: a keyframe resets the
+                    // decoder's references, and one that does not decode
+                    // fails the source (`Broken`).
                     Decoded::Unstarted => {
                         if let Err(error) = send(link, &ToSender::Keyframe) {
                             return Leave::SenderGone(error);
@@ -392,23 +373,6 @@ fn send(link: &mut Link<TcpStream>, message: &ToSender) -> Result<(), LinkError>
     link.send(Message::Text(wire::encode_to_sender(message).into()))
 }
 
-/// End a connection as `ending` says; the socket closes when the link drops.
-/// A close that did not go out is not waited on: that sender is not
-/// reading.
-fn end(link: &mut Link<TcpStream>, ending: Ending) {
-    match ending {
-        Ending::Drop => {}
-        Ending::Close(close) => {
-            link.close(close);
-        }
-        Ending::CloseAndDrain(close) => {
-            if link.close(Some(close)) {
-                link.drain(CLOSE_LINGER);
-            }
-        }
-    }
-}
-
 /// Decoding state of one H.264 connection.
 #[derive(Debug)]
 enum H264 {
@@ -469,85 +433,6 @@ mod tests {
     use super::*;
     use prysm_core::Frame;
     use prysm_h264::{Backend, Encoder, EncoderSettings, FORMAT};
-    use std::net::TcpListener;
-
-    fn accepted() -> Accepted {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (socket, _) = listener.accept().unwrap();
-        Accepted {
-            socket,
-            buffered: Vec::new(),
-            offer: None,
-        }
-    }
-
-    fn failure() -> Error {
-        Error::other("failed")
-    }
-
-    /// Where the thread went, without the connection or error it carries.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Went {
-        Wait,
-        Switch,
-        Stop,
-        Fail,
-    }
-
-    fn went(next: &Next) -> Went {
-        match next {
-            Next::Wait => Went::Wait,
-            Next::Switch(_) => Went::Switch,
-            Next::Stop(None) => Went::Stop,
-            Next::Stop(Some(_)) => Went::Fail,
-        }
-    }
-
-    /// Every reason to leave: what the sender is told, and where the thread
-    /// goes.
-    #[test]
-    fn every_leave_has_one_ending_and_one_next() {
-        let cases = [
-            (
-                Leave::SenderGone(LinkError::Wire(WireError::Closed(None))),
-                Ending::Drop,
-                Went::Wait,
-            ),
-            (Leave::Malformed(WireError::Empty), Ending::Drop, Went::Wait),
-            (
-                Leave::Replaced(accepted()),
-                Ending::CloseAndDrain(Close::Replaced),
-                Went::Switch,
-            ),
-            (
-                Leave::Stopped,
-                Ending::CloseAndDrain(Close::Stopped),
-                Went::Stop,
-            ),
-            (
-                Leave::StoppedUnasked,
-                Ending::Close(Some(Close::Stopped)),
-                Went::Stop,
-            ),
-            (
-                Leave::Failed(failure()),
-                Ending::CloseAndDrain(Close::Failed),
-                Went::Fail,
-            ),
-            (
-                Leave::OfferExcluded(failure()),
-                Ending::Close(None),
-                Went::Fail,
-            ),
-        ];
-        for (leave, ending, next) in cases {
-            let case = format!("{leave:?}");
-            assert_eq!(leave.ending(), ending, "{case}");
-            assert_eq!(went(&leave.next()), next, "{case}");
-        }
-    }
-
     /// A keyframe, then a picture of its session, of a real encoder.
     fn session(width: u32, height: u32) -> (Vec<u8>, Vec<u8>) {
         let mut encoder = Encoder::new(EncoderSettings::new(Backend::Software, 30)).unwrap();
@@ -624,7 +509,6 @@ mod tests {
     fn every_h264_state_and_picture() {
         let (width, height) = (64, 32);
         let (keyframe, picture) = session(width, height);
-        // An IDR and a non-IDR slice that do not decode.
         let broken_keyframe = b"\x00\x00\x01\x65\x00".to_vec();
         let broken_picture = b"\x00\x00\x01\x41\x00".to_vec();
         let mut nv12 = vec![0; (width * height * 3 / 2) as usize];
@@ -640,7 +524,6 @@ mod tests {
             Event::Picture => (false, &picture),
             Event::BrokenPicture => (false, &broken_picture),
         };
-        // Each state, reached from a fresh one through real pictures.
         let reach = |from, nv12: &mut [u8]| {
             let mut h264 = H264::Fresh;
             match from {

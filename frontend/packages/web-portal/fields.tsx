@@ -334,7 +334,6 @@ export function RangeField({
     max > min
       ? ((Math.min(Math.max(number, min), max) - min) / (max - min)) * 100
       : 0;
-  // A signed control fills from its 0, any other from its minimum.
   const origin = min < 0 && max > 0 ? at(0) : 0;
   const fill = {
     '--fill-from': `${Math.min(origin, at(value))}%`,

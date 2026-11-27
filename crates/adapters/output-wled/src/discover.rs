@@ -266,7 +266,6 @@ mod tests {
             b"\x05_wled\x04_tcp\x05local\x00\x00\x0c\x00\x01"
         );
         assert_eq!(packet[12..].len(), QUESTION.len());
-        // A question is not mistaken for an answer.
         assert_eq!(instance(&packet), None);
     }
 
@@ -284,12 +283,10 @@ mod tests {
         other[14] = b'x'; // `_wled` -> `_xled` in the name the answer points at
         assert_eq!(instance(&other), None);
         let whole = response("wled-living");
-        // The answer ends before the 21-byte A record.
         let answered = whole.len() - 21;
         for cut in 0..whole.len() {
             assert_eq!(instance(&whole[..cut]).is_some(), cut >= answered, "{cut}");
         }
-        // A pointer to itself.
         let mut looped = vec![0, 0, 0x84, 0, 0, 0, 0, 1, 0, 0, 0, 0];
         looped.extend_from_slice(&[0xC0, 12, 0, 12, 0, 1, 0, 0, 0, 0, 0, 0]);
         assert_eq!(instance(&looped), None);
@@ -313,7 +310,7 @@ mod tests {
     }
 
     /// An HTTP listener that answers one request with `reply`; the request head.
-    fn device(reply: &'static str) -> (u16, mpsc::Receiver<String>) {
+    fn device(reply: String) -> (u16, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (heads, requested) = mpsc::channel();
@@ -347,8 +344,11 @@ mod tests {
     #[test]
     fn found_devices_are_named_from_their_info() {
         let (group, asked) = responder(&["wled-living", "wled-living"]);
-        let (port, requested) =
-            device(r#"{"ver":"0.15.0","name":"Living room","leds":{"count":120,"fps":42}}"#);
+        let info = serde_json::json!({
+            "name": "Living room", "leds": {"count": 120, "fps": 42},
+            "usermod": "x".repeat(24 * 1024),
+        });
+        let (port, requested) = device(info.to_string());
         let started = Instant::now();
         let found = browse(group, port).candidates();
         assert!(started.elapsed() < Duration::from_secs(2), "bounded");
@@ -356,7 +356,6 @@ mod tests {
         let head = requested.recv().unwrap();
         assert!(head.starts_with("GET /json/info HTTP/1.1\r\n"), "{head}");
         let address = format!("127.0.0.1:{port}");
-        // The repeated answer is one device.
         assert_eq!(
             found,
             [
@@ -370,7 +369,6 @@ mod tests {
     #[test]
     fn a_device_without_info_keeps_its_instance_name() {
         let (group, _asked) = responder(&["wled-desk"]);
-        // Nothing listens on the HTTP port: the connection is refused.
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -389,7 +387,6 @@ mod tests {
 
     #[test]
     fn nobody_answering_finds_nothing_within_the_window() {
-        // A bound socket that never answers.
         let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
         let started = Instant::now();
         let found = browse(silent.local_addr().unwrap(), 80).candidates();

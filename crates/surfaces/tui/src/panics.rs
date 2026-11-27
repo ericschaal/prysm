@@ -158,7 +158,6 @@ mod tests {
             stdout.contains("1 passed"),
             "the child test did not run: {stdout}"
         );
-        // Not held once released: the previous hook printed it.
         assert!(stderr.contains("after release"), "{stderr}");
         assert!(!stderr.contains("while held"), "{stderr}");
     }
@@ -176,7 +175,6 @@ mod tests {
             .unwrap()
             .join();
         assert!(panicked.is_err());
-        // Holding again keeps what is held.
         hold();
         let held = release();
         assert_eq!(held.messages.len(), 1, "{held:?}");

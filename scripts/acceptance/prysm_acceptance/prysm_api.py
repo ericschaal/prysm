@@ -7,7 +7,6 @@ shape fails the check that reads it, as before.
 
 from collections.abc import Callable, Sequence
 import copy
-from enum import StrEnum
 import json
 import re
 import statistics
@@ -18,15 +17,7 @@ from prysm_acceptance import web
 from prysm_acceptance.commands import Command
 from prysm_acceptance.transport import Transport
 from prysm_acceptance.web import JsonObject
-
-
-class Target(StrEnum):
-    """What Prysm's lights do: `PUT /api/v1/target`."""
-
-    OFF = 'off'
-    SCREEN_SYNC = 'screen_sync'
-    EFFECTS = 'effects'
-
+from prysm_acceptance.wire_generated import CaptureMode, LightingControl, Picture, SessionState, Span, Target
 
 # Settings stay opaque JSON: the checks read and change a few fields (`section`)
 # and send the rest back as they found it, so Prysm may add or change any other.
@@ -35,18 +26,6 @@ Settings: TypeAlias = JsonObject
 # The settings file's `format` (crates/adapters/settings-file/README.md): a file
 # Prysm reads starts with it; the portal's settings never carry it.
 SETTINGS_FORMAT = 1
-
-
-class Span(TypedDict):
-    min: int
-    max: int
-    step: int
-
-
-class CaptureMode(TypedDict):
-    width: Span
-    height: Span
-    fps: Span
 
 
 class ModesAnswer(TypedDict):
@@ -64,18 +43,9 @@ class Size(TypedDict):
 
 class Input(TypedDict, total=False):
     fps: float
-    receiving: bool
+    picture: Picture
     sent_fps: float
     behind: str
-
-
-class SessionState(StrEnum):
-    """What the runtime is doing: `State.session.state`."""
-
-    STOPPED = 'stopped'
-    SCREEN_SYNC = 'screen_sync'
-    EFFECTS = 'effects'
-    FAULTED = 'faulted'
 
 
 class Failure(TypedDict, total=False):
@@ -112,6 +82,7 @@ class State(TypedDict, total=False):
     session: Session
     input: Input | None
     device: Device
+    control: LightingControl
 
 
 class Candidate(TypedDict):
@@ -184,6 +155,13 @@ class Prysm:
             {'expected': state['revision'], 'settings': settings},
             timeout=self.timeout,
         )
+
+    def frames_received(self) -> int:
+        metrics = web.request('GET', self._url('/metrics'), timeout=self.timeout).body.decode()
+        count = re.search(r'^prysm_frames_received_total (\d+)$', metrics, re.MULTILINE)
+        if count is None:
+            raise ValueError('receiver did not report prysm_frames_received_total')
+        return int(count[1])
 
     def version(self) -> str | None:
         """The running version, `prysm_build_info{version}` in `GET /metrics` (served with `--metrics`)."""
@@ -287,7 +265,8 @@ def failure(state: State | None) -> Failure | None:
 
 
 def running(state: State) -> bool:
-    return session(state) == SessionState.SCREEN_SYNC and (state.get('input') or Input()).get('receiving', False)
+    arriving = (state.get('input') or Input()).get('picture') == Picture.ARRIVING
+    return session(state) == SessionState.SCREEN_SYNC and arriving
 
 
 def rates(samples: Sequence[Input | None]) -> Rates:

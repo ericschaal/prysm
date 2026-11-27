@@ -309,7 +309,6 @@ mod tests {
         for i in 0..15 {
             normalize_access_unit(&fixture(i), 640, 360, i == 0, &mut output).unwrap();
             decoder.decode(&output, 640, 360, &mut picture).unwrap();
-            // Grey ramp: luma 32 + 8i, chroma neutral.
             let luma = u8::try_from(32 + i * 8).unwrap();
             let (y, uv) = picture.split_at(640 * 360);
             assert!(y.iter().all(|v| v.abs_diff(luma) <= 2), "frame {i}");
@@ -340,7 +339,6 @@ mod tests {
         }
         let twice = [ORIGINAL, ORIGINAL].concat();
         assert!(normalize_access_unit(&twice, 640, 360, true, &mut output).is_err());
-        // A P picture cannot start a session.
         assert!(normalize_access_unit(&fixture(1), 640, 360, true, &mut output).is_err());
         for height in [354, 358, 360] {
             normalize_access_unit(ORIGINAL, 640, height, true, &mut output).unwrap();

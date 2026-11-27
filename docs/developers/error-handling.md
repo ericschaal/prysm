@@ -29,17 +29,23 @@ The full wire mapping is in the
   registry adds the section (`fps` becomes `capture.fps`).
 - A source that finishes (`Pull::Ended`, a file at its end) is success:
   lighting stops without a failure and the target becomes `off`.
-- A session failure is reported once, in the session it explains
-  (`State.session.failure`, on `stopped` or `effects`; screen sync and a
-  fault carry none). A failure of what a command replaced (the old output of
-  a restart, a session that ended as the lights' own effects were asked for)
-  is logged at `warn` and is neither published nor the reply. The target
-  stays as requested, so the next settings change retries. The engine
-  does not retry on its own; on the TV, the full worker re-applies the
-  target after a session failure with a backoff
-  ([TV lifecycle](webos.md#supervisor-and-worker)).
-- An output's `idle` runs on every session exit; a failure there is reported,
-  not hidden.
+- Report the typed failure with its chain. Each adapter owns readiness.
+  A recoverable condition with a watcher keeps the requested mode waiting.
+  A blocker on a required adapter stops automatic starts. A settings change
+  or explicit recheck can clear it. A diagnostic on a usable handle can
+  coexist with an active session.
+- Screen sync needs a ready input and output. Open capture before output.
+  Losing either ends the session and attempts to turn the lights off. The
+  session owner orders cleanup once and awaits local release before reopening.
+  An unconfirmed local release faults the session. A remote power-off timeout
+  leaves physical power unknown.
+- A stable session that crashes can restart immediately after cleanup.
+  A replacement that crashes during initialization stops. On TV the
+  supervisor owns worker restart. The worker reports successful initialization
+  independently of heartbeats and frame delivery ([TV lifecycle](webos.md)).
+- An explicit WLED override detected while streaming selects Effects and
+  releases both handles. Off attempts one device command. A late observation
+  cannot replay a superseded power command.
 - Surface failures (a portal listener that dies) are recorded in
   `surface_failures`; lighting continues.
 - A settings store that cannot be read is no reason not to start: the

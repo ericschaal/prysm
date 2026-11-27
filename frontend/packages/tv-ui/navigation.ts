@@ -10,6 +10,7 @@
  */
 import {
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -17,6 +18,7 @@ import {
   type MouseEvent,
   type RefObject,
 } from 'react';
+import type { DialogId } from './dialogs';
 
 /** Key codes, numeric for older TV remotes. */
 export const keys = {
@@ -109,16 +111,13 @@ function restingStop(scope: ParentNode | null | undefined) {
   );
 }
 
-export function useRemoteNavigation<D extends string>({
+export function useRemoteNavigation({
   root,
-  parents,
   onExitRequest,
   settled,
 }: {
   /** The page outside dialogs. */
   root: RefObject<HTMLElement | null>;
-  /** Back from these dialogs returns to their parent dialog. */
-  parents: Partial<Record<D, D>>;
   /** Back outside any dialog. */
   onExitRequest: () => void;
   /**
@@ -127,47 +126,41 @@ export function useRemoteNavigation<D extends string>({
    */
   settled: boolean;
 }) {
-  const [dialog, setDialog] = useState<D | null>(null);
+  const [path, setPath] = useState<
+    { dialog: DialogId; opener: HTMLElement | null }[]
+  >([]);
+  const dialog = path[path.length - 1]?.dialog ?? null;
   const modal = useRef<HTMLDivElement>(null);
-  const returnFocus = useRef<HTMLElement | null>(null);
   const lastInColumn = useRef<Record<string, HTMLElement>>({});
-  const opened = useRef<D | null>(null);
-  /** The control of each dialog that opened another, to return to by id. */
-  const openers = useRef<Partial<Record<D, string>>>({});
 
-  function openDialog(next: D) {
+  function openDialog(dialog: DialogId) {
     const opener = activeElement();
-    if (dialog) openers.current[dialog] = opener?.id;
-    else {
-      returnFocus.current = opener;
-      openers.current = {};
-    }
-    setDialog(next);
+    setPath((path) => [...path, { dialog, opener }]);
   }
-  function closeDialog() {
-    setDialog((current) => (current ? (parents[current] ?? null) : null));
-  }
-  const dismiss = () => setDialog(null);
+  const closeDialog = () => setPath((path) => path.slice(0, -1));
+  const dismiss = () => setPath([]);
 
-  // When a dialog opens, focus the control that opened the dialog just left,
-  // else the chosen option, else the first control; when the last one closes,
-  // the opener on the page.
+  // A shorter path returns to the control that opened its first removed dialog.
+  // Dialog content remounts, so find that control by id; the page keeps its node.
+  const previous = useRef(path);
   useLayoutEffect(() => {
-    if (opened.current === dialog) return;
-    opened.current = dialog;
+    const left = previous.current[path.length];
+    previous.current = path;
     if (dialog) {
       const controls = focusables(modal.current);
-      const opener = openers.current[dialog];
       (
-        controls.find((element) => opener && element.id === opener) ??
+        controls.find(
+          (element) => left?.opener?.id && element.id === left.opener.id,
+        ) ??
         controls.find(
           (element) => element.getAttribute('aria-pressed') === 'true',
         ) ??
         controls[0]
       )?.focus();
-    } else if (usable(returnFocus.current)) returnFocus.current.focus();
-    else firstStop(root.current)?.focus();
-  });
+    } else if (left) {
+      (usable(left.opener) ? left.opener : firstStop(root.current))?.focus();
+    }
+  }, [path, dialog, root]);
   // A status update can disable the focused control; never leave focus on the
   // page. Until the user moves, focus goes to the primary button, or without
   // one to the resting stop (the chosen lighting mode), once it can.
@@ -191,8 +184,7 @@ export function useRemoteNavigation<D extends string>({
     }
   });
 
-  const handlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
-  function onKey(event: KeyboardEvent) {
+  const onKey = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     automatic.current = null;
     if (isBack(event)) {
@@ -202,70 +194,38 @@ export function useRemoteNavigation<D extends string>({
       return;
     }
     const active = activeElement();
-    if (dialog) {
+    if (dialog && (event.keyCode === keys.tab || event.key === 'Tab')) {
+      event.preventDefault();
       const controls = focusables(modal.current);
       const index = active ? controls.indexOf(active) : -1;
-      if (event.keyCode === keys.tab || event.key === 'Tab') {
-        event.preventDefault();
-        const step = event.shiftKey ? controls.length - 1 : 1;
-        controls[(index + step) % controls.length]?.focus();
-        return;
-      }
-      const to = direction(event);
-      if (!to) return;
-      if (active?.tagName === 'INPUT' && (to === 'left' || to === 'right'))
-        return;
-      event.preventDefault();
-      const row = active?.closest('[data-row]');
-      if (row && (to === 'left' || to === 'right')) {
-        const items = focusables(row);
-        items[items.indexOf(active!) + (to === 'right' ? 1 : -1)]?.focus();
-        return;
-      }
-      if (to === 'up' || to === 'down') {
-        // Skip the rest of a row group when leaving it vertically.
-        const step = to === 'down' ? 1 : -1;
-        let next = index + step;
-        while (row && controls[next] && row.contains(controls[next]!))
-          next += step;
-        const target = controls[next];
-        // No control that way: a scrolling text (`data-scroll`) moves instead,
-        // so all of it can be read with the arrows alone.
-        const text = modal.current?.querySelector('[data-scroll]');
-        if (!target && text) {
-          text.scrollTop += (step * text.clientHeight * 2) / 3;
-          return;
-        }
-        const targetRow = target?.closest('[data-row]');
-        (targetRow && targetRow !== row ? rowStop(targetRow) : target)?.focus();
-      }
+      const step = event.shiftKey ? controls.length - 1 : 1;
+      controls[(index + step) % controls.length]?.focus();
       return;
     }
     const to = direction(event);
-    if (!to || !root.current) return;
-    if (active?.tagName === 'INPUT' && (to === 'left' || to === 'right'))
-      return;
+    if (!to || (!dialog && !root.current)) return;
+    const horizontal = to === 'left' || to === 'right';
+    if (horizontal && active?.tagName === 'INPUT') return;
     event.preventDefault();
     const column = active?.closest('[data-column]');
-    if (!column) {
-      firstStop(root.current)?.focus();
+    const scope = dialog ? modal.current : column;
+    if (!scope) {
+      if (!dialog) firstStop(root.current)?.focus();
       return;
     }
-    const row = active!.closest('[data-row]');
-    if (to === 'left' || to === 'right') {
-      if (row) {
+    const row = active?.closest('[data-row]');
+    const step = to === 'right' || to === 'down' ? 1 : -1;
+    if (horizontal) {
+      if (active && row) {
         const items = focusables(row);
-        const next = items[items.indexOf(active!) + (to === 'right' ? 1 : -1)];
-        if (next) {
-          next.focus();
-          return;
-        }
+        const next = items[items.indexOf(active) + step];
+        if (next) return next.focus();
       }
+      if (dialog || !root.current || !column) return;
       const columns = Array.from(
         root.current.querySelectorAll('[data-column]'),
       );
-      const other =
-        columns[columns.indexOf(column) + (to === 'right' ? 1 : -1)];
+      const other = columns[columns.indexOf(column) + step];
       if (!other) return;
       const remembered =
         lastInColumn.current[other.getAttribute('data-column') ?? ''];
@@ -275,31 +235,29 @@ export function useRemoteNavigation<D extends string>({
       )?.focus();
       return;
     }
-    // Up/Down: the next stop in this column, a row group being one stop.
-    const stops: HTMLElement[] = [];
-    const rows = new Set<Element>();
-    for (const element of focusables(column)) {
-      const group = element.closest('[data-row]');
-      if (!group) stops.push(element);
-      else if (!rows.has(group)) {
-        rows.add(group);
-        const stop = rowStop(group);
-        if (stop) stops.push(stop);
-      }
+    // Up/Down leaves the whole row and enters the next at its chosen control.
+    const controls = focusables(scope);
+    let index = active ? controls.indexOf(active) : -1;
+    // A page row still counts as a stop if its focused button was just disabled.
+    if (!dialog && row && index < 0)
+      index = controls.findIndex((element) => row.contains(element));
+    let next = index + step;
+    let target = controls[next];
+    while (target && row?.contains(target)) {
+      next += step;
+      target = controls[next];
     }
-    const here = row
-      ? stops.findIndex((stop) => row.contains(stop))
-      : stops.indexOf(active!);
-    stops[here + (to === 'down' ? 1 : -1)]?.focus();
-  }
-  // The latest render's handler, for the one document listener.
-  useLayoutEffect(() => {
-    handlerRef.current = onKey;
+    if (target) {
+      const group = target.closest('[data-row]');
+      (group ? rowStop(group) : target)?.focus();
+    } else if (dialog) {
+      const text = scope.querySelector('[data-scroll]');
+      if (text) text.scrollTop += (step * text.clientHeight * 2) / 3;
+    }
   });
   useEffect(() => {
-    const listener = (event: KeyboardEvent) => handlerRef.current(event);
-    document.addEventListener('keydown', listener);
-    return () => document.removeEventListener('keydown', listener);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, []);
 
   return {

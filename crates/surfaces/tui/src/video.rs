@@ -1,25 +1,11 @@
 //! The captured frame as Unicode half blocks: two square-ish pixels per cell.
 use prysm_core::{Frame, Viewport};
-use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
-
-/// A small RGB image sampled from a frame for one display area.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Image {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<[u8; 3]>,
-}
-
-impl Image {
-    fn get(&self, x: u32, y: u32) -> [u8; 3] {
-        self.pixels[(y * self.width + x) as usize]
-    }
-}
+use ratatui::{buffer::Buffer, layout::Rect};
 
 /// Sample `frame` to `width` x `height` pixels, center-cropping it to fill the
 /// target without stretching. Reads only the sampled pixels; never converts the
 /// whole frame.
-pub(crate) fn sample(frame: &Frame, width: u32, height: u32) -> Result<Image, &'static str> {
+fn sample(frame: &Frame, width: u32, height: u32) -> Result<Vec<[u8; 3]>, &'static str> {
     if width == 0 || height == 0 {
         return Err("preview area is empty");
     }
@@ -27,12 +13,7 @@ pub(crate) fn sample(frame: &Frame, width: u32, height: u32) -> Result<Image, &'
         Viewport::full_frame(frame.width(), frame.height()),
         (width, height),
     );
-    let pixels = prysm_runtime::sample_rgb(frame, crop, width, height)?;
-    Ok(Image {
-        width,
-        height,
-        pixels,
-    })
+    prysm_runtime::sample_rgb(frame, crop, width, height).map_err(Into::into)
 }
 
 /// The largest centered part of `crop` with the aspect ratio of `target`.
@@ -56,35 +37,27 @@ fn scale_to(value: u32, numerator: u32, denominator: u32) -> u32 {
     u32::try_from(scaled).unwrap_or(u32::MAX).max(1)
 }
 
-/// Renders an image sampled at the area's width and twice its height.
-pub(crate) struct HalfBlocks<'a>(pub &'a Image);
-
-impl Widget for HalfBlocks<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        let image = self.0;
-        let columns = u32::from(area.width).min(image.width);
-        let rows = u32::from(area.height).min(image.height / 2);
-        for row in 0..rows {
-            for column in 0..columns {
-                let [tr, tg, tb] = image.get(column, row * 2);
-                let [br, bg, bb] = image.get(column, row * 2 + 1);
-                // Both bounded by the area's u16 extent.
-                let (Ok(dx), Ok(dy)) = (u16::try_from(column), u16::try_from(row)) else {
-                    continue;
-                };
-                buffer[(area.x + dx, area.y + dy)]
-                    .set_symbol("▀")
-                    .set_fg(Color::Rgb(tr, tg, tb))
-                    .set_bg(Color::Rgb(br, bg, bb));
-            }
+/// Paint two sampled pixel rows per terminal row, using the foreground and background.
+pub(crate) fn draw(frame: &Frame, area: Rect, buffer: &mut Buffer) -> Result<(), &'static str> {
+    let pixels = sample(frame, u32::from(area.width), 2 * u32::from(area.height))?;
+    let width = usize::from(area.width);
+    for (y, pair) in (area.y..area.bottom()).zip(pixels.chunks_exact(2 * width)) {
+        let (top, bottom) = pair.split_at(width);
+        for (x, (&fg, &bg)) in (area.x..area.right()).zip(top.iter().zip(bottom)) {
+            buffer[(x, y)]
+                .set_symbol("▀")
+                .set_fg(fg.into())
+                .set_bg(bg.into());
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use prysm_core::{PixelFormat, YuvRange, YuvStandardMatrix};
+    use ratatui::style::Color;
 
     fn rgb(pixels: &[[u8; 3]]) -> Vec<u8> {
         pixels.iter().flatten().copied().collect()
@@ -98,9 +71,7 @@ mod tests {
             .collect();
         let frame = Frame::new(row.repeat(2), 4, 2, PixelFormat::RGB24).unwrap();
         let image = sample(&frame, 2, 2).unwrap();
-        assert_eq!((image.width, image.height), (2, 2));
-        assert_eq!(image.get(0, 0)[0], 20);
-        assert_eq!(image.get(1, 1)[0], 30);
+        assert_eq!(image, [[20, 0, 0], [30, 0, 0], [20, 0, 0], [30, 0, 0]]);
     }
 
     #[test]
@@ -111,7 +82,7 @@ mod tests {
         ] {
             let frame = Frame::new(pixels, 2, 1, format).unwrap();
             let image = sample(&frame, 2, 1).unwrap();
-            assert_eq!(rgb(&image.pixels), [1, 2, 3, 40, 50, 60]);
+            assert_eq!(rgb(&image), [1, 2, 3, 40, 50, 60]);
         }
     }
 
@@ -131,7 +102,7 @@ mod tests {
                 let expected: Vec<u8> = (0..4)
                     .flat_map(|x| <[u8; 3]>::from(view.pixel(x, 0)))
                     .collect();
-                assert_eq!(rgb(&sampled.pixels), expected);
+                assert_eq!(rgb(&sampled), expected);
             }
         }
     }
@@ -166,7 +137,7 @@ mod tests {
             }
         );
         let large = sample(&Frame::dummy(1920, 1080).unwrap(), 300, 120).unwrap();
-        assert_eq!(large.pixels.len(), 300 * 120);
+        assert_eq!(large.len(), 300 * 120);
     }
 
     #[test]
@@ -178,15 +149,10 @@ mod tests {
 
     #[test]
     fn half_blocks_pair_vertical_pixels_per_cell() {
-        let image = Image {
-            width: 1,
-            height: 2,
-            pixels: vec![[255, 0, 0], [0, 0, 255]],
-        };
-        let area = Rect::new(0, 0, 3, 3);
-        let mut buffer = Buffer::empty(area);
-        HalfBlocks(&image).render(area, &mut buffer);
-        let cell = &buffer[(0, 0)];
+        let frame = Frame::new(vec![255, 0, 0, 0, 0, 255], 1, 2, PixelFormat::RGB24).unwrap();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 3, 3));
+        draw(&frame, Rect::new(1, 1, 1, 1), &mut buffer).unwrap();
+        let cell = &buffer[(1, 1)];
         assert_eq!(cell.symbol(), "▀");
         assert_eq!(cell.fg, Color::Rgb(255, 0, 0));
         assert_eq!(cell.bg, Color::Rgb(0, 0, 255));

@@ -2,9 +2,9 @@ import { useEffect, useState, type RefObject } from 'react';
 import type {
   PreviewClient,
   PreviewFrame,
-  PreviewStream,
+  PreviewEvent,
 } from '@prysm/application-client';
-import { failureOf, same } from '@prysm/application-client';
+import { consumeStream, failureOf, same } from '@prysm/application-client';
 import { sampledArea } from './preview-canvas';
 
 /** The JPEG as an image the canvas can draw; `null` if the browser cannot. */
@@ -56,7 +56,6 @@ export function usePreviewStream(
   useEffect(() => {
     if (!active) return;
     const abort = new AbortController();
-    let stream: PreviewStream | undefined;
     let latest: PreviewFrame | null = null;
     let painting = false;
     const show = (next: PreviewView) => {
@@ -83,31 +82,33 @@ export function usePreviewStream(
       }
       painting = false;
     }
-    void (async () => {
+    function receive(event: PreviewEvent) {
+      if (event.type === 'idle') {
+        latest = null;
+        show({ kind: 'idle' });
+      } else if (event.type === 'unavailable') {
+        latest = null;
+        show({ kind: 'unavailable', message: event.message });
+      } else {
+        const { viewport, source_width, source_height } = event;
+        show({
+          kind: 'frame',
+          source: size(source_width, source_height),
+          sampled: sampledArea(event)
+            ? size(viewport.width, viewport.height)
+            : null,
+        });
+        latest = event;
+        void paint();
+      }
+    }
+    async function watch() {
       try {
-        stream = await client.preview(abort.signal);
-        if (abort.signal.aborted) return stream.close();
-        for await (const event of stream.events) {
-          if (abort.signal.aborted) return;
-          if (event.type === 'idle') {
-            latest = null;
-            show({ kind: 'idle' });
-          } else if (event.type === 'unavailable') {
-            latest = null;
-            show({ kind: 'unavailable', message: event.message });
-          } else {
-            const { viewport, source_width, source_height } = event;
-            show({
-              kind: 'frame',
-              source: size(source_width, source_height),
-              sampled: sampledArea(event)
-                ? size(viewport.width, viewport.height)
-                : null,
-            });
-            latest = event;
-            void paint();
-          }
-        }
+        await consumeStream(
+          client.preview(abort.signal),
+          abort.signal,
+          receive,
+        );
         show({ kind: 'lost', message: '' });
       } catch (error) {
         const failure = failureOf(error);
@@ -117,10 +118,10 @@ export function usePreviewStream(
             : { kind: 'lost', message: failure.message },
         );
       }
-    })();
+    }
+    void watch();
     return () => {
       abort.abort();
-      stream?.close();
       // The next stream starts from scratch.
       setView({ kind: 'connecting' });
     };

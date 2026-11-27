@@ -17,6 +17,7 @@ use prysm_core::{
     YuvStandardMatrix,
 };
 use prysm_processor::{PrysmProcessor, Stage};
+use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
@@ -205,7 +206,11 @@ fn milliseconds(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
 }
 
-fn print_row(label: &str, cells: impl Iterator<Item = Option<(Duration, Duration)>>) {
+fn print_row(
+    out: &mut impl Write,
+    label: &str,
+    cells: impl Iterator<Item = Option<(Duration, Duration)>>,
+) -> io::Result<()> {
     let mut line = format!("  {label:<14}");
     for cell in cells {
         line += &match cell {
@@ -217,10 +222,10 @@ fn print_row(label: &str, cells: impl Iterator<Item = Option<(Duration, Duration
             _ => format!("{:>9} {:>5}  ", "-", ""),
         };
     }
-    println!("{line}");
+    writeln!(out, "{line}")
 }
 
-fn report(case: &Case, base: &Config, options: &Options) {
+fn report(out: &mut impl Write, case: &Case, base: &Config, options: &Options) -> io::Result<()> {
     let timings: Vec<Timing> = FOCUS
         .iter()
         .map(|&focus| {
@@ -231,30 +236,36 @@ fn report(case: &Case, base: &Config, options: &Options) {
             measure(case, &config, options)
         })
         .collect();
-    println!("{}", case.label);
+    writeln!(out, "{}", case.label)?;
     let header: String = FOCUS
         .iter()
         .map(|focus| format!("{:>17}", format!("focus {focus} %")))
         .collect();
-    println!("  {:<14}{header}", "ms/frame, %");
+    writeln!(out, "  {:<14}{header}", "ms/frame, %")?;
     for (slot, (_, name)) in STAGES.iter().enumerate() {
         print_row(
+            out,
             name,
             timings.iter().map(|t| Some((t.stages[slot], t.total))),
-        );
+        )?;
     }
     print_row(
+        out,
         "other",
         timings.iter().map(|t| {
             let staged: Duration = t.stages.iter().sum();
             Some((t.total.saturating_sub(staged), t.total))
         }),
-    );
-    print_row("total", timings.iter().map(|t| Some((t.total, t.total))));
-    println!();
+    )?;
+    print_row(
+        out,
+        "total",
+        timings.iter().map(|t| Some((t.total, t.total))),
+    )?;
+    writeln!(out)
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     let options = match options() {
         Ok(options) => options,
         Err(message) => {
@@ -266,25 +277,32 @@ fn main() {
     let threads = options
         .threads
         .map_or_else(|| "automatic".to_owned(), |threads| threads.to_string());
-    println!(
+    let out = &mut io::stdout().lock();
+    writeln!(
+        out,
         "prysm-processor bench: sampler threads {threads}, {cores} cores, {} frames per column after {WARM_UP_FRAMES} warm-up",
         options.frames
-    );
+    )?;
     // Every stage on, with the output stage away from neutral so it runs;
     // otherwise the hosts' defaults (edge depth 10 %, smoothing 0.1 s).
     let base = Config {
         saturation_boost_percent: SaturationBoostPercent(20),
         dark_floor_percent: DarkFloorPercent(2),
-        correction: ColorCorrection::new(10, -5, 5).expect("a valid correction"),
+        correction: ColorCorrection::new(10, -5, 5, Default::default())
+            .expect("a valid correction"),
         brightness_percent: BrightnessPercent(90),
         sample_density: options.density,
         ..Config::default()
     };
-    println!(
+    writeln!(
+        out,
         "Settings: black bars on, density {}, edge depth {} %, smoothing {} s, boost 20 %, floor 2 %, calibration on, brightness 90 %",
         base.sample_density.0, base.spatial_reach_percent.0, base.smoothing_seconds.0
-    );
-    println!("'-': the stage did not run. 'other': the call outside the stages.\n");
+    )?;
+    writeln!(
+        out,
+        "'-': the stage did not run. 'other': the call outside the stages.\n"
+    )?;
 
     let cases = [
         Case::new("NV12 limited BT.709 640x360, changing", true, |seed| {
@@ -304,9 +322,8 @@ fn main() {
         }),
     ];
     for case in &cases {
-        report(case, &base, &options);
+        report(out, case, &base, &options)?;
     }
-    // Colour focus costs most at the deepest edge, where its near field is largest.
     let deep = Config {
         spatial_reach_percent: SpatialReachPercent(100),
         ..base
@@ -314,5 +331,5 @@ fn main() {
     let deep_case = Case::new("NV12 640x360, changing, edge depth 100 %", true, |seed| {
         nv12_frame(640, 360, seed)
     });
-    report(&deep_case, &deep, &options);
+    report(out, &deep_case, &deep, &options)
 }

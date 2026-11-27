@@ -22,7 +22,7 @@
 //! ```
 //!
 //! The libraries are loaded once per process (with
-//! `prysm_webos_luna_sys::load_once`), on the thread of the first tap; later
+//! `prysm_webos_library_sys::VendorLibrary`), on the thread of the first tap; later
 //! taps may be opened on other threads. Each call is a single native
 //! operation; watchdogs, retries, pacing, tap selection and pixel conversion
 //! belong to the caller (`prysm-capture-webos`). After a failed driver call a
@@ -35,12 +35,39 @@
 //! Requires root and the TV's `libvtcapture.so`, `libluna-service2.so`,
 //! `libhalgal.so.1` and `/dev/gfx`. On any other system both `open`s fail
 //! with [`Error::Load`].
+// Each table owns its non-null entry points and the one cache for its library.
+// The declarations name symbols from the pinned VTCapture or HAL GAL ABI.
+macro_rules! native_api {
+    ($name:ident, $names:expr, { $($field:ident: $ty:ty = $symbol:expr),* $(,)? }) => {
+        struct $name { $($field: $ty,)* }
+
+        impl $name {
+            fn load() -> Result<&'static Self, $crate::Error> {
+                use prysm_webos_library_sys::VendorLibrary;
+                // SAFETY: these names identify the capture adapter's native TV library.
+                static LIBRARY: VendorLibrary<$name> = unsafe { VendorLibrary::new(&$names) };
+                Ok(LIBRARY.load(|library| {
+                    Ok(Self {
+                        $($field: {
+                            // SAFETY: the symbol has the pinned vendor ABI and its library stays loaded.
+                            let entry = unsafe { library.get::<Option<$ty>>($symbol.as_bytes()) }?;
+                            entry.ok_or(libloading::Error::DlSymUnknown)?
+                        },)*
+                    })
+                })?)
+            }
+        }
+    };
+}
+
 mod ffi;
 mod halgal;
+mod operation;
 mod vtcapture;
 
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub use halgal::fuzz_surface_check;
 pub use halgal::{UiCapture, UiFrame};
+pub use operation::Operation;
 pub use vtcapture::{Acquired, Error, Options, VideoFrame, VtCapture};

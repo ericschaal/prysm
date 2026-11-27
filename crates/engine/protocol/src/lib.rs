@@ -26,8 +26,8 @@ pub struct State {
     /// The Prysm product version, such as `1.0.0` or `1.0.0-rc.1`.
     #[cfg_attr(feature = "schema", schema(example = "1.0.0"))]
     pub version: String,
-    #[cfg_attr(feature = "schema", schema(value_type = schema::LightingTargetSchema))]
     pub target: LightingTarget,
+    pub control: prysm_ports::LightingControl,
     pub session: Session,
     /// Frames arriving from the source, measured about once a second; absent
     /// while no session runs.
@@ -37,10 +37,9 @@ pub struct State {
         schema(value_type = Option<schema::InputSchema>, nullable = false)
     )]
     pub input: Option<Input>,
-    /// What the lights say about themselves, from the output's own checks
-    /// (about once a second). Empty while no session holds the output: no
-    /// session, or one that has no frame yet or released the output after 3 s
-    /// without video; `session.state` and `input.receiving` say which.
+    /// The output's latest report. While the requested mode waits for the
+    /// output, `issue` is `unreachable`. Read `control.waiting` for the
+    /// current prerequisite and `input` for frame delivery.
     #[cfg_attr(feature = "schema", schema(value_type = schema::DeviceReportSchema))]
     pub device: DeviceReport,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
@@ -54,7 +53,7 @@ pub struct State {
     #[cfg_attr(feature = "schema", schema(value_type = schema::SettingsSchema))]
     pub settings: Settings,
     /// Pass back as `expected` when replacing settings.
-    #[cfg_attr(feature = "schema", schema(value_type = u64))]
+    #[cfg_attr(feature = "schema", schema(value_type = u64, maximum = 9_007_199_254_740_991_u64))]
     pub revision: Revision,
     /// Surfaces that stopped. Lighting continues without them.
     pub surface_failures: Vec<Failure>,
@@ -65,6 +64,7 @@ impl From<&Snapshot> for State {
         Self {
             version: prysm_version::VERSION.to_owned(),
             target: snapshot.target,
+            control: snapshot.control,
             session: (&snapshot.session).into(),
             input: snapshot.input,
             device: snapshot.device,
@@ -104,6 +104,16 @@ pub enum Session {
         #[cfg_attr(feature = "schema", schema(nullable = false))]
         failure: Option<LightingFailure>,
     },
+    /// No session: the lights do not answer the request that puts them in
+    /// the target's mode (`off` or their own effects). The target stays,
+    /// and the request is tried again every 5 s until they answer.
+    Unanswered {
+        /// That the saved settings could not be read or do not validate;
+        /// absent while neither.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schema(nullable = false))]
+        failure: Option<LightingFailure>,
+    },
     /// A session did not stop in time, or did not confirm its source's
     /// release; only a restart recovers.
     Faulted {
@@ -119,6 +129,7 @@ impl From<&SessionState> for Session {
             SessionState::Stopped { .. } => Self::Stopped { failure: failure() },
             SessionState::ScreenSync => Self::ScreenSync,
             SessionState::Effects { .. } => Self::Effects { failure: failure() },
+            SessionState::Unanswered { .. } => Self::Unanswered { failure: failure() },
             SessionState::Faulted(phase) => Self::Faulted {
                 message: faulted_message(*phase).to_owned(),
             },
@@ -172,9 +183,6 @@ impl From<&Error> for LightingFailure {
         match Failure::from(error) {
             Failure::Invalid { message, field } => Self::Invalid { message, field },
             Failure::Adapter { message, section } => Self::Adapter { message, section },
-            // The engine keeps no other error in a session: a stale
-            // revision and a pattern without screen sync are replies, and a
-            // fault is its own state.
             other => Self::Internal {
                 message: other.message().to_owned(),
             },
@@ -201,7 +209,7 @@ pub enum Failure {
     StaleRevision {
         message: String,
         /// The revision to retry against.
-        #[cfg_attr(feature = "schema", schema(value_type = u64))]
+        #[cfg_attr(feature = "schema", schema(value_type = u64, maximum = 9_007_199_254_740_991_u64))]
         current: Revision,
     },
     /// A device or adapter failed. Its message carries the cause chain.
@@ -298,6 +306,12 @@ pub enum FailureSection {
     Output,
 }
 
+impl From<Error> for Failure {
+    fn from(error: Error) -> Self {
+        Self::from(&error)
+    }
+}
+
 impl From<&Error> for Failure {
     fn from(error: &Error) -> Self {
         let message = error.to_string();
@@ -340,7 +354,6 @@ impl From<&Error> for Failure {
 #[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct TargetRequest {
-    #[cfg_attr(feature = "schema", schema(value_type = schema::LightingTargetSchema))]
     pub target: LightingTarget,
 }
 prysm_ports::map_only!(TargetRequest, "a target request as an object");
@@ -350,7 +363,7 @@ prysm_ports::map_only!(TargetRequest, "a target request as an object");
 #[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct SettingsRequest {
-    #[cfg_attr(feature = "schema", schema(value_type = u64))]
+    #[cfg_attr(feature = "schema", schema(value_type = u64, maximum = 9_007_199_254_740_991_u64))]
     pub expected: Revision,
     #[cfg_attr(feature = "schema", schema(value_type = schema::SettingsSchema))]
     pub settings: Settings,
@@ -362,7 +375,7 @@ prysm_ports::map_only!(SettingsRequest, "a settings request as an object");
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct SettingsReplaced {
-    #[cfg_attr(feature = "schema", schema(value_type = u64))]
+    #[cfg_attr(feature = "schema", schema(value_type = u64, maximum = 9_007_199_254_740_991_u64))]
     pub revision: Revision,
 }
 
@@ -416,7 +429,7 @@ mod tests {
             session: SessionState::ScreenSync,
             input: Some(Input {
                 fps: 29.9,
-                receiving: true,
+                picture: prysm_ports::Picture::Arriving,
                 ..Input::default()
             }),
             device: DeviceReport {
@@ -441,7 +454,7 @@ mod tests {
         let back = serde_json::from_value::<State>(value.clone()).unwrap();
         assert_eq!(back.calibration, running.calibration);
         assert_eq!(back.device, running.device);
-        assert_eq!(value["input"]["receiving"], true);
+        assert_eq!(value["input"]["picture"], "arriving");
         assert_eq!(
             value["device"],
             json!({ "issue": "other_sender", "brightness_percent": 40, "led_count": 120 })
@@ -470,6 +483,15 @@ mod tests {
             (
                 SessionState::Effects { failure: invalid() },
                 json!({ "state": "effects", "failure": {
+                    "kind": "invalid", "message": "too many", "field": "output.leds" } }),
+            ),
+            (
+                SessionState::Unanswered { failure: None },
+                json!({ "state": "unanswered" }),
+            ),
+            (
+                SessionState::Unanswered { failure: invalid() },
+                json!({ "state": "unanswered", "failure": {
                     "kind": "invalid", "message": "too many", "field": "output.leds" } }),
             ),
             (
@@ -631,7 +653,6 @@ mod tests {
                 .get("section")
                 .is_none()
         );
-        // Set once, where it happens: an outer tag does not overwrite it.
         let first = Error::other("x")
             .in_section(Section::Capture)
             .in_section(Section::Output);

@@ -12,19 +12,28 @@ const BINARY: &str = env!("CARGO_BIN_EXE_prysm-webos");
 const EXIT: Duration = Duration::from_secs(10);
 
 #[test]
-fn bad_arguments_exit_with_usage() {
+fn bad_arguments_fail() {
     for args in [&[][..], &["--settings", "x"][..], &["full"][..]] {
         let output = Command::new(BINARY).args(args).output().unwrap();
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
         assert!(output.stdout.is_empty(), "no events before the link exists");
         assert!(String::from_utf8_lossy(&output.stderr).contains("Usage:"));
     }
 }
 
+/// Taken over before parsing, fd 1 is stderr by the time clap prints help.
+#[test]
+fn help_goes_to_stderr() {
+    let output = Command::new(BINARY).arg("--help").output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Usage:"));
+}
+
 fn spawn(settings: &std::path::Path) -> std::process::Child {
     Command::new(BINARY)
         .args(["--settings", settings.to_str().unwrap()])
-        .args(["--listen", "127.0.0.1:0", "--target", "off"])
+        .args(["--listen", "127.0.0.1:0"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

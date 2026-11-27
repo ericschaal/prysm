@@ -169,8 +169,9 @@ impl Hangup {
     }
 
     /// Call `wake` when the cut comes while the [`Registration`] lives;
-    /// `None` once cut, without calling it.
-    pub(crate) fn on_cut(&self, wake: impl FnOnce() + Send + 'static) -> Option<Registration> {
+    /// `None` once cut, without calling it. The callback runs under the
+    /// cut lock and must wake promptly without re-entering this hangup.
+    pub fn on_cut(&self, wake: impl FnOnce() + Send + 'static) -> Option<Registration> {
         let mut lines = self.lines();
         (!lines.cut).then(|| lines.register(self, Line::Wake(Box::new(wake))))
     }
@@ -256,7 +257,6 @@ mod tests {
             let hangup = hangup.clone();
             thread::spawn(move || hangup.wait(Duration::from_secs(60)))
         };
-        // Cut before the wait began, or while it waits: either way it ends.
         hangup.cut();
         assert!(waiting.join().unwrap());
         assert!(hangup.wait(Duration::from_secs(60)));

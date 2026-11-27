@@ -215,7 +215,6 @@ async fn listing_null_allows_only_the_null_origin() {
             .await
             .unwrap();
         assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
-        // The TV app clears a calibration pattern with DELETE.
         let delete = portal
             .request(Method::DELETE, "/api/v1/calibration")
             .header(header::ORIGIN, "null")

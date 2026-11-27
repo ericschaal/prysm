@@ -1,0 +1,20 @@
+[package]
+name = "prysm-webos-library-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Process-lifetime loading of native webOS libraries"
+
+[dependencies]
+libloading.workspace = true
+once_cell.workspace = true
+thiserror.workspace = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+print_stdout = "deny"
+undocumented_unsafe_blocks = "deny"

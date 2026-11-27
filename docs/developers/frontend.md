@@ -32,9 +32,14 @@ settings use the `null` output.
 ## API generation
 
 Rust owns every value the frontend exchanges with Prysm. The exporter writes
-OpenAPI documents and serialisation fixtures; codegen turns them into
-TypeScript under `packages/contracts/generated`, which is checked in. Never
-edit generated files.
+OpenAPI documents and serialization fixtures. The generator uses
+openapi-typescript for types and Ajv for standalone runtime validators.
+The same export supplies enum values to the frontend and Python wire types to the acceptance runner.
+Both use the same schema. Application and Luna readers describe their
+version-compatibility rules in `frontend/scripts/*-reading.mjs`.
+Validate external JSON before passing it to typed code. The portal and TV
+bundles run the generated checks without compiling code in the browser.
+Regenerate `packages/contracts/generated` after changing a contract.
 
 ```sh
 cargo xtask codegen          # after a Rust contract change
@@ -56,38 +61,54 @@ has one reading.
 
 | Where | Field | Newer value read as |
 | --- | --- | --- |
-| State stream (`decodeState` in `application-client/http.ts`) | `target` | `unknown`: no mode is selected; a known one can still be chosen |
+| State stream (`readState` in `application-client/http.ts`) | `target` | `unknown`: no mode is selected; a known one can still be chosen |
 | | `session.state` | `unknown`, keeping a `failure` or `message` it carries (a malformed failure is dropped) |
 | | `session.failure.kind` | said by its side: an `adapter` failure of its `section`, or else of its `field`'s section (`capture`, `output`); without one, `internal` |
 | | `session.failure.section` | absent, unless `capture` or `output` |
+| | `input.behind` | Prysm cannot keep up, with no step named |
+| | `settings.processing.style.kind` | shown as unknown, with its value retained when saving other settings |
+| HTTP replies | `Failure.kind` | the message and a recognized side when available, otherwise a general refusal or failure |
+| | `Modes.status` | `unknown` |
 | Preview and colors streams | event `type` | skipped |
 | Light card, TV lights card | `device.issue` | "The lights aren’t showing screen sync." |
 | TV service (`decodeState` in `webos-platform`) | `power`, `video` | `unknown` |
-| | `failure.kind` | `other` |
+| | `problem.asked` step or fix | `try_again` |
 | | full `target` | `unknown` |
 | | worker `phase` | `unknown`: "Updating…", with no start or stop |
+| | full worker `lights` | kept; the status card says "Not showing screen sync" |
 | | slim link `state` | starting |
 | | slim `encoding` | kept, shown as sent |
 | TV calibration screen | `calibration.pattern` | the waiting pattern |
 
 No value is read as off or stopped
 ([decision](decisions/2026-11-22-open-response-enums.md)). Anything else
-malformed ends the stream or the reply (`Invalid state event.`,
-`invalid_reply`), except the saved `capture` and `output` sections: the
-settings file keeps them as free maps, so one that does not validate still
-arrives (with a failure of kind `invalid`). The portal reads each with
-`readSection` (`web-portal/adapters.ts`) before any page sees it: a
-required field (one `create` sets that the kind's `optional` does not name)
-that is missing or of another JSON type is `create`'s, so its editor draws
-and the field can be fixed there; every other field stays as saved, and a
-section with nothing to fill is passed on as it is.
+malformed ends the stream or the reply ("This page can’t read a state
+event from Prysm. Reload the page.", `invalid_reply`), except the saved
+`capture` and `output` sections: the settings file keeps them as free
+maps, so one that does not validate still arrives (with a failure of
+kind `invalid`). The portal reads each with
+`readSection` (`web-portal/adapters.ts`) before it reaches an editor or
+summary. An absent or mistyped required field uses the panel's initial value.
+A mistyped optional field, including one LED edge count, is left out so its
+default can be shown. Correctly typed fields and unrecognized fields stay as
+saved. The runtime keeps the original sections for saves to other settings.
 
 What the lights are doing is decided once, by
 `lightingSituation` (`application-client`) from the target and the session
 (with the failure it carries), in this order: faulted, unknown (a target or
-session state newer than the page), off, reached (`session.state` equals the
-target: screen sync or effects), failed (the session carries a failure),
-starting. Every pair lands on exactly one. Screen sync never carries a
+session state newer than the page), unanswered (the target `off` or
+`effects` and the session `unanswered`: the lights don't answer the request
+for that mode; a failure beside it says the saved settings could not be
+read or do not validate),
+off, reached (`session.state` equals the target: screen sync or effects),
+failed (the session carries a failure), starting. Every state lands on
+exactly one. Unanswered is said as during screen sync, "Can’t reach the
+lights", with what happens once they answer (`whenLightsAnswer`: "The
+lights switch off as soon as they answer." or "WLED effects start as soon
+as the lights answer."); the light card stays neither lit nor busy, and the
+TV's status card says it as its `lightsIssue` situation, with the target.
+Settings beside the wait are said on the card's line and on the section
+they name, the wait staying the status. Screen sync never carries a
 failure. An `effects` session carries one after a start of screen sync
 that failed from the effects (the situation is then failed, headed "Screen
 sync couldn’t start", and the cards add that the effects are still on,
@@ -118,18 +139,20 @@ the lights off. A faulted session's `message` (what did not finish) is under
 Details, on the light card and the section pages. All of them read that
 one situation, and `describeSituation` gives its words.
 
-The full TV package's status follows the portal's situation once it is
-known: the worker reports its session's failure to the supervisor, and the
-situation says what it means (off is off, effects showing are on). A
-faulted or failed session comes before the TV's power and video, since it
-needs the user and waking the TV would not end it; lights that are fine let
-power and video speak first. Try
-again is offered only for a failed mode (`screen_sync` or `effects`) and
-sends `setTarget off`, then that target again. Before the portal answers,
-or while the supervisor retries a worker, the supervisor's failure is the
-headline (before the portal answers, only for a mode: lights that are off
-are said as off). A worker phase newer than the app shows "Updating…" unless a
-failure is reported.
+What the TV service asks (the worker's `problem`) is the one fix on the
+status card, in both packages: each package words it from a `Record` keyed
+by every fix (`status/*-copy.ts`), and its button follows from it (Try
+again, Set up service, or none where trying again cannot help). The full
+package's headline is what the portal says the lights do or what failed
+(off is off, effects showing are on), else what the target was. What is
+asked, or a faulted or failed session, comes before the TV's power and
+video, since it needs the user and waking the TV would not end it; lights
+that are fine let power and video speak first. While the supervisor asks,
+no worker runs and no portal answers: the lighting modes and Try again go
+to Luna's `setTarget`, which answers it and starts the worker again
+(`modeRoute` in `tv-ui/modes.ts`). A restart in progress says "Restarting
+Prysm…"; a stop that will ask says what it asks. A worker phase newer than
+the app shows "Updating…".
 
 ## Saving from a page
 

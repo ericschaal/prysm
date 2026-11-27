@@ -75,6 +75,7 @@
             "description": "How many LEDs a found output device says it has, when it says.",
             "example": 120,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           }
@@ -160,7 +161,7 @@
           },
           "midtones": {
             "description": "Positive lightens midtones, negative darkens them.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
@@ -170,14 +171,14 @@
           },
           "tint": {
             "description": "Positive adds magenta, negative adds green.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
           },
           "warmth": {
             "description": "Positive warms, negative cools.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
@@ -194,7 +195,7 @@
         "type": "object"
       },
       "DeviceReport": {
-        "description": "What the lights say about themselves, from the output's own checks. Each\npart is absent while the output cannot tell, and all are while no session\nholds the output (no session, no frame yet, or released after 3 s without\nvideo; see `session.state` and `input.receiving`). Prysm reports them and\nchanges none.",
+        "description": "What the lights say about themselves, from the output's own checks. Each\npart is absent while the output cannot tell, and all are while no session\nholds the output (no session, no frame yet, or released after 3 s without\nvideo; see `session.state` and `input.picture`), but `issue`\n`unreachable` while the lights are waited for: lighting's open, or the\nrequest for `off` or their own effects, that they did not answer. Prysm\nreports them and changes none.",
         "properties": {
           "brightness_percent": {
             "description": "The lights' own brightness while it scales Prysm's colours (WLED: its\nmaster brightness and brightness factor): the share of Prysm's\nbrightness they show. Absent while it does not (WLED: \"Force max\nbrightness\" on).",
@@ -206,12 +207,13 @@
           },
           "issue": {
             "$ref": "#/components/schemas/OutputIssue",
-            "description": "Why the lights are not showing Prysm's colours; absent while they\nshow them."
+            "description": "Why the lights are not showing Prysm's colours, or that they do not\nanswer; absent while all is well."
           },
           "led_count": {
             "description": "How many LEDs the lights say they have (WLED: its LED count). Prysm\nsends the configured `settings.output.leds` either way: a different\ncount leaves LEDs dark or colours unshown.",
             "example": 120,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           }
@@ -250,6 +252,7 @@
               "current": {
                 "description": "The revision to retry against.",
                 "format": "int64",
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -563,12 +566,12 @@
             "$ref": "#/components/schemas/Latency",
             "description": "The mean time per frame along the path, in two parts, over the last\nsecond. Absent when no frame reached the output."
           },
-          "receiving": {
-            "description": "At least one frame arrived in the last second. `false` right after\nlighting starts and while the source is quiet (no signal, no sender).",
-            "type": "boolean"
+          "picture": {
+            "$ref": "#/components/schemas/Picture",
+            "description": "Whether frames arrived in the last second, and if not, why."
           },
           "sent_fps": {
-            "description": "Frames per second whose colours were written to the output over the\nlast second, to one decimal.",
+            "description": "Frames per second whose colours were handed to the output over the\nlast second, to one decimal. An output may drop a frame it cannot\nsend now; the device issue says when the lights do not answer.",
             "example": 29.9,
             "format": "float",
             "minimum": 0,
@@ -577,7 +580,7 @@
         },
         "required": [
           "fps",
-          "receiving"
+          "picture"
         ],
         "type": "object"
       },
@@ -698,6 +701,33 @@
         },
         "type": "object"
       },
+      "LightingControl": {
+        "description": "Intent and observed power have separate lifetimes. An external live stream\nleaves both mode buttons unselected until the user requests a mode.",
+        "properties": {
+          "busy": {
+            "type": "boolean"
+          },
+          "external": {
+            "type": "boolean"
+          },
+          "power": {
+            "$ref": "#/components/schemas/Power"
+          },
+          "remembered": {
+            "$ref": "#/components/schemas/LightingMode"
+          },
+          "waiting": {
+            "$ref": "#/components/schemas/WaitingFor",
+            "description": "A requested mode is waiting for a prerequisite that can recover."
+          }
+        },
+        "required": [
+          "remembered",
+          "external",
+          "busy"
+        ],
+        "type": "object"
+      },
       "LightingFailure": {
         "description": "Why the lighting is as it is: the failure a session state carries. An\nadapter failure carries its cause chain (`context: cause: cause`), since\nthe cause is what names the problem (a device's error, a remote sender's\nreason).",
         "oneOf": [
@@ -767,6 +797,14 @@
             "type": "object"
           }
         ]
+      },
+      "LightingMode": {
+        "description": "The selected mode restored by the Power button.",
+        "enum": [
+          "screen_sync",
+          "effects"
+        ],
+        "type": "string"
       },
       "LightingTarget": {
         "description": "What the user wants the LEDs to do.",
@@ -839,7 +877,7 @@
         ]
       },
       "OutputIssue": {
-        "description": "Why the lights are not showing Prysm's colours. Prysm keeps sending; they\nfollow again once the device takes the colours.",
+        "description": "Why the lights do not show what was chosen. `off`: the device is\nswitched off. `overridden`: the device's own override is on (WLED: live\noverride). `not_live`: the device is not taking the colours (WLED: not in\nlive mode, or no DDP arriving). `other_sender`: another sender's colours\nreach the device. `unreachable`: the device does not answer Prysm's state\nchecks, the request that opens it for screen sync, or, with the target\n`off` or `effects`, the request for that mode. During screen sync Prysm\nkeeps sending the colours; it tries an unanswered request again every few\nseconds. The lights follow once the device takes the colours or answers.\nOpen: an app reads an issue it does not know in general words.",
         "enum": [
           "off",
           "overridden",
@@ -873,6 +911,23 @@
           "garden",
           "dusk",
           "review_grid"
+        ],
+        "type": "string"
+      },
+      "Picture": {
+        "description": "Whether frames arrive from the source. `arriving`: at least one frame in\nthe last second. `quiet`: none, and no reason given (no signal, no\nsender); also right after lighting starts. `refused`: none, because the\nsource's device refuses to share the video it shows; it ends when the\nvideo changes. Neither `quiet` nor `refused` is a failure: lighting waits\nfor video, and releases the lights after 3 s without it.",
+        "enum": [
+          "arriving",
+          "quiet",
+          "refused"
+        ],
+        "type": "string"
+      },
+      "Power": {
+        "description": "Physical power as reported by an output. An unknown value is represented by\nthe absence of an observation.",
+        "enum": [
+          "off",
+          "on"
         ],
         "type": "string"
       },
@@ -943,6 +998,7 @@
         "properties": {
           "height": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
@@ -953,17 +1009,20 @@
           "sequence": {
             "description": "Increases with every new frame, across sessions; equal means unchanged.",
             "format": "int64",
+            "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           },
           "source_height": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "source_width": {
             "description": "The captured frame's size in pixels; `viewport` is in these pixels.",
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
@@ -974,6 +1033,7 @@
           "width": {
             "description": "The JPEG's size in pixels: the source scaled to at most 480 on its\nlonger side, keeping its aspect ratio.",
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           }
@@ -994,21 +1054,25 @@
         "properties": {
           "height": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "width": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "x": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "y": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           }
@@ -1027,14 +1091,14 @@
         "properties": {
           "hue": {
             "description": "Positive turns toward the next primary in red, green, blue order,\nnegative toward the previous one.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
           },
           "strength": {
             "description": "Negative makes the colour softer, positive stronger.",
-            "format": "int32",
+            "format": "int16",
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
@@ -1058,7 +1122,7 @@
             "type": "string"
           },
           "brightness_percent": {
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
@@ -1080,7 +1144,7 @@
           },
           "sample_density": {
             "description": "Samples per 1000 px of edge, measured on the picture scaled down to\n640x360: the same value gives the same samples at any capture size.\nAt most one sample per sampling-grid cell along an edge (128 along the\nlonger side): density 200 reaches it for 16:9 pictures of 640x360 or\nmore, a higher one for squarer or smaller pictures.",
-            "format": "int32",
+            "format": "uint16",
             "maximum": 512,
             "minimum": 1,
             "type": "integer"
@@ -1154,6 +1218,25 @@
             "type": "object"
           },
           {
+            "description": "No session: the lights do not answer the request that puts them in\nthe target's mode (`off` or their own effects). The target stays,\nand the request is tried again every 5 s until they answer.",
+            "properties": {
+              "failure": {
+                "$ref": "#/components/schemas/LightingFailure",
+                "description": "That the saved settings could not be read or do not validate;\nabsent while neither."
+              },
+              "state": {
+                "enum": [
+                  "unanswered"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
             "description": "A session did not stop in time, or did not confirm its source's\nrelease; only a restart recovers.",
             "properties": {
               "message": {
@@ -1199,6 +1282,7 @@
         "properties": {
           "revision": {
             "format": "int64",
+            "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           }
@@ -1214,6 +1298,7 @@
         "properties": {
           "expected": {
             "format": "int64",
+            "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           },
@@ -1234,18 +1319,21 @@
           "max": {
             "example": 1920,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "min": {
             "example": 2,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "step": {
             "example": 2,
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 1,
             "type": "integer"
           }
@@ -1264,9 +1352,12 @@
             "$ref": "#/components/schemas/CalibrationPattern",
             "description": "The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;\nabsent while not calibrating. Never saved."
           },
+          "control": {
+            "$ref": "#/components/schemas/LightingControl"
+          },
           "device": {
             "$ref": "#/components/schemas/DeviceReport",
-            "description": "What the lights say about themselves, from the output's own checks\n(about once a second). Empty while no session holds the output: no\nsession, or one that has no frame yet or released the output after 3 s\nwithout video; `session.state` and `input.receiving` say which."
+            "description": "The output's latest report. While the requested mode waits for the\noutput, `issue` is `unreachable`. Read `control.waiting` for the\ncurrent prerequisite and `input` for frame delivery."
           },
           "input": {
             "$ref": "#/components/schemas/Input",
@@ -1275,6 +1366,7 @@
           "revision": {
             "description": "Pass back as `expected` when replacing settings.",
             "format": "int64",
+            "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           },
@@ -1303,6 +1395,7 @@
         "required": [
           "version",
           "target",
+          "control",
           "session",
           "device",
           "settings",
@@ -1335,28 +1428,28 @@
           },
           "color_focus_percent": {
             "description": "How much each light keeps the colour next to it, taking less from the\nrest of the picture; 0 is the plain average.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
           },
           "cut_response_percent": {
             "description": "How much of a scene cut the lights take at once; 0 eases a cut in\nlike any other change.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
           },
           "dark_floor_percent": {
             "description": "The least luminance the lights keep, as a neutral white glow, in\npercent of full light; 0 lets them go fully dark.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 20,
             "minimum": 0,
             "type": "integer"
           },
           "saturation_boost_percent": {
             "description": "Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
@@ -1370,7 +1463,7 @@
           },
           "spatial_reach_percent": {
             "description": "Edge depth: how far into the picture each light looks, in percent of\nthe picture's height.",
-            "format": "int32",
+            "format": "uint8",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
@@ -1399,6 +1492,14 @@
           "target"
         ],
         "type": "object"
+      },
+      "WaitingFor": {
+        "description": "The required adapter holding up the current request.",
+        "enum": [
+          "capture",
+          "output"
+        ],
+        "type": "string"
       },
       "WebosSettings": {
         "additionalProperties": false,

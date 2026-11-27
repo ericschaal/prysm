@@ -1,4 +1,3 @@
-// Compiled for both ARM and host; referenced only by Rust tests.
 #include "vtCaptureApi_c.h"
 #include <stdexcept>
 

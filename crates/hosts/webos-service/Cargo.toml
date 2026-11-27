@@ -20,11 +20,12 @@ path = "src/bin/prysm-webos-slim-service.rs"
 [features]
 # `utoipa::ToSchema` for the Luna API values and the `luna` document, for the
 # contract exporter.
-schema = ["dep:utoipa", "prysm-ports/schema"]
+schema = ["dep:utoipa", "prysm-webos-link/schema"]
 # `preferences::MemoryStore`, for the integration tests.
 testkit = []
 
 [dependencies]
+prysm-logging.workspace = true
 prysm-ports.workspace = true
 # `atomic::write`: the one atomic file replacement.
 prysm-settings-file.workspace = true
@@ -35,7 +36,9 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 signal-hook.workspace = true
+strum.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 nix = { workspace = true, features = ["event", "fs", "process", "signal", "user"] }
 utoipa = { workspace = true, optional = true }
 

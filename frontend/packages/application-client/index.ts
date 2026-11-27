@@ -1,3 +1,5 @@
+import type { EventStream, SnapshotStream } from './stream';
+import { failureSections, pictures } from '@prysm/contracts/constants';
 import type {
   CalibrationPattern,
   Candidate,
@@ -5,18 +7,20 @@ import type {
   ColorsEvent,
   Failure,
   FailureSection,
-  Input,
   LightingFailure,
   LightingTarget,
   Mode,
   Modes,
-  OutputIssue,
   Pattern,
+  Picture,
   PreviewEvent,
   Session,
-  Settings as GeneratedSettings,
-  State,
 } from '@prysm/contracts/application';
+import type {
+  LightingFailureReading,
+  Settings as SettingsReading,
+  State as ApplicationStateReading,
+} from '@prysm/contracts/application-reading';
 
 export type {
   CalibrationPattern,
@@ -29,12 +33,26 @@ export type {
   LightingTarget,
   Mode,
   Modes,
-  OutputIssue,
   Pattern,
+  Picture,
   PreviewEvent,
   Session,
 };
+export { consumeStream, type EventStream } from './stream';
 export { same } from './same';
+export {
+  reconnectDelayMs,
+  STALE_MS,
+  streamStep,
+  terminalStreamFailure,
+} from './recovery';
+
+export type Input = NonNullable<ApplicationStateReading['input']>;
+export type DeviceReport = ApplicationStateReading['device'];
+export type OutputIssue = NonNullable<DeviceReport['issue']>;
+export type CalibrationReading = NonNullable<
+  ApplicationStateReading['calibration']
+>;
 
 /**
  * The two sides an adapter fills, capture and output: the generated failure
@@ -42,44 +60,38 @@ export { same } from './same';
  */
 export type AdapterSide = FailureSection;
 
-/**
- * Keyed by every value of a generated union, so the compiler keeps them in
- * step; read with {@link known}.
- */
-export const lightingTargets: Record<LightingTarget, true> = {
-  off: true,
-  screen_sync: true,
-  effects: true,
-};
-export const failureSections: Record<FailureSection, true> = {
-  capture: true,
-  output: true,
-};
+export {
+  failureSections,
+  lightingTargets,
+  pictures,
+} from '@prysm/contracts/constants';
 
-/** A decoded JSON object's fields, before each is checked. */
+/**
+ * Whether frames arrive, as `input` says it; a value newer than this page
+ * is `quiet` (no frames, no reason given).
+ */
+export const pictureOf = (input: Input): Picture =>
+  known(pictures, input.picture, 'quiet');
+
 export type Fields = Partial<Record<string, unknown>>;
 
-/** Whether `value` is a JSON object: not `null`, not an array. */
 export const isObject = (value: unknown): value is Fields =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
 /** `raw` if it is one of `values`, else `fallback`: a value newer than this page. */
 export function known<T extends string, F extends string | null | undefined>(
-  values: Record<T, true>,
+  values: readonly T[],
   raw: string,
   fallback: F,
 ): T | F {
-  return Object.keys(values).indexOf(raw) >= 0 ? (raw as T) : fallback;
+  return values.find((value) => value === raw) ?? fallback;
 }
 
 /**
- * How long a stream of the portal (state, colours) waits before it
- * reconnects after `attempt` failures in a row since it last received
- * (0 for the first): 250 ms doubling to 5 s. One policy for every stream of
- * one portal; the TV app's `STALE_MS` is derived from it.
+ * Why no picture arrives while the source's device refuses to share the
+ * video it shows (`picture` is `refused`), for people.
  */
-export const reconnectDelayMs = (attempt: number) =>
-  Math.min(5000, 250 * 2 ** attempt);
+export const REFUSED_VIDEO = 'The TV doesn’t let Prysm capture this video.';
 
 /**
  * Why the lights are not showing screen sync, for people. Prysm keeps
@@ -102,10 +114,45 @@ export function describeOutputIssue(issue: OutputIssue): string {
       return 'The lights aren’t showing screen sync.';
   }
 }
+
+/**
+ * The headline while the lights are not showing screen sync, and while they
+ * don't answer whatever was chosen: lights that don't answer are a problem;
+ * any other issue (a newer one too) is a warning.
+ */
+export function outputIssueHeadline(issue: string): string {
+  return issue === 'unreachable'
+    ? 'Can’t reach the lights'
+    : 'Not showing screen sync';
+}
 export type { PreviewFrame } from '@prysm/contracts/application';
+
+/**
+ * What happens once lights that don't answer answer again, by the target:
+ * Prysm keeps it and tries again every few seconds. `effects` names the
+ * output's own effects. At most 52 characters with `WLED effects`.
+ */
+export function whenLightsAnswer(
+  target: LightingTarget,
+  effects: string,
+): string {
+  switch (target) {
+    case 'screen_sync':
+      return 'The lights follow again as soon as they answer.';
+    case 'off':
+      return 'Power off could not be confirmed.';
+    case 'effects':
+      return `${effects} start as soon as the lights answer.`;
+    default:
+      return unreachable(target);
+  }
+}
 
 /** What the lights show while on: screen sync or the output's own effects. */
 export type LightingMode = Exclude<LightingTarget, 'off'>;
+
+/** A target reached without a session: the lights off or their own effects. */
+export type IdleTarget = Exclude<LightingTarget, 'screen_sync'>;
 
 /**
  * A target as this page reads it: `unknown` is one newer than this page,
@@ -128,7 +175,6 @@ export function unreachable(value: never): never {
   throw new Error(`Unexpected value: ${JSON.stringify(value)}`);
 }
 
-/** The failure `session` carries, if any. */
 function sessionFailure(session: SessionReading): LightingFailure | null {
   return 'failure' in session ? (session.failure ?? null) : null;
 }
@@ -138,25 +184,28 @@ function sessionFailure(session: SessionReading): LightingFailure | null {
  * else the section of the setting it names.
  */
 export function failureSide(
-  failure: Failure | LightingFailure,
+  failure: Failure | LightingFailureReading,
 ): FailureSection | null {
-  // Only the sides this page knows: any other value reads as absent.
-  const side = (raw: string | undefined) =>
-    raw === undefined ? null : known(failureSections, raw, null);
+  const { section, field }: LightingFailureReading = failure;
   return (
-    side('section' in failure ? failure.section : undefined) ??
-    side('field' in failure ? failure.field?.split('.')[0] : undefined)
+    known(failureSections, section ?? '', null) ??
+    known(failureSections, field?.split('.')[0] ?? '', null)
   );
 }
 
 /**
  * What the lights are doing, decided once from the requested target and the
  * session (with the failure it carries); every view of the lights shows
- * this. The rule is ordered, so every pair lands on exactly one:
+ * this. The rule is ordered, so every state lands on exactly one:
  *
  * - `faulted`: the session stopped responding; nothing works until a
  *   restart. `message` says what did not finish.
  * - `unknown`: the target or the session state is newer than this page.
+ * - `unanswered`: the lights don't answer the request that puts them off or
+ *   in their own effects (no session). The target stays; Prysm tries again
+ *   every few seconds and applies it once they answer. `failure`: the saved
+ *   settings could not be read or do not validate. (Lights that don't
+ *   answer screen sync are `sync`: its session waits for them.)
  * - `off`: the lights were asked off (the session may still be stopping).
  *   With the lights off a stopped session's failure still stays said:
  *   settings that do not validate, or a switch off that failed.
@@ -174,6 +223,7 @@ export function failureSide(
 export type LightingSituation =
   | { kind: 'faulted'; message: string }
   | { kind: 'unknown'; failure: LightingFailure | null; message: string | null }
+  | { kind: 'unanswered'; target: IdleTarget; failure: LightingFailure | null }
   | { kind: 'off'; failure: LightingFailure | null }
   | {
       kind: 'failed';
@@ -204,6 +254,9 @@ export function lightingSituation({
       failure: sessionFailure(session),
       message: session.state === 'unknown' ? (session.message ?? null) : null,
     };
+  // Screen sync asked during a wait: its start ends the wait.
+  if (session.state === 'unanswered' && target !== 'screen_sync')
+    return { kind: 'unanswered', target, failure: session.failure ?? null };
   if (target === 'off')
     return {
       kind: 'off',
@@ -223,7 +276,6 @@ export function lightingSituation({
       failure,
       at,
       fromEffects,
-      // Settings Prysm can't use never reached the lights.
       effectsOn: fromEffects && (at !== 'output' || unusableSettings(failure)),
     };
   }
@@ -234,19 +286,7 @@ export function lightingSituation({
 export function situationFailure(
   situation: LightingSituation,
 ): LightingFailure | null {
-  switch (situation.kind) {
-    case 'failed':
-    case 'off':
-    case 'effects':
-    case 'unknown':
-      return situation.failure;
-    case 'faulted':
-    case 'sync':
-    case 'starting':
-      return null;
-    default:
-      return unreachable(situation);
-  }
+  return 'failure' in situation ? situation.failure : null;
 }
 
 /**
@@ -271,6 +311,13 @@ export function describeSituation(
         sentence:
           'Prysm is newer than this page. Reload it to see what the lights do.',
       };
+    case 'unanswered': {
+      const headline = outputIssueHeadline('unreachable');
+      return {
+        headline,
+        sentence: `${headline}. ${whenLightsAnswer(situation.target, effects)}`,
+      };
+    }
     case 'off':
       return both('Lights are off');
     case 'failed':
@@ -300,12 +347,7 @@ export function describeSituation(
   }
 }
 
-/**
- * Settings Prysm can't use, whatever the lights were asked to do: they do
- * not validate, or the video source says it can't deliver them. A setting is
- * the fix, so that is all there is to say, even when the field names a side.
- */
-export function unusableSettings(failure: Failure | LightingFailure) {
+export function unusableSettings(failure: { kind: string }) {
   return failure.kind === 'invalid';
 }
 
@@ -323,13 +365,11 @@ export function plainFailure(
   const section = failureSide(failure);
   if (section === 'capture') return 'The video source isn’t working.';
   if (section === 'output') return 'The lights aren’t responding.';
-  // What a target newer than this page tried is not known.
   if (target === 'unknown') return 'Something went wrong.';
   switch (failure.kind) {
     case 'unavailable':
       return 'A device isn’t available right now.';
     case 'busy':
-      // With the lights off there is nothing to try again.
       return target === 'off'
         ? 'Prysm is busy.'
         : 'Prysm is busy. Try again in a moment.';
@@ -344,7 +384,7 @@ export function plainFailure(
 }
 
 /** Generated settings with the host's capture and output section types. */
-export type Settings<C, O> = Omit<GeneratedSettings, 'capture' | 'output'> & {
+export type Settings<C, O> = Omit<SettingsReading, 'capture' | 'output'> & {
   capture?: C;
   output?: O;
 };
@@ -353,7 +393,7 @@ export type Settings<C, O> = Omit<GeneratedSettings, 'capture' | 'output'> & {
  * reads it: a target or session state newer than this page is `unknown`.
  */
 export type ApplicationSnapshot<C, O> = Omit<
-  State,
+  ApplicationStateReading,
   'settings' | 'target' | 'session'
 > & {
   settings: Settings<C, O>;
@@ -362,11 +402,7 @@ export type ApplicationSnapshot<C, O> = Omit<
 };
 
 /** A live state stream: the current state, then each later state. */
-export interface Observation<C, O> {
-  initial: ApplicationSnapshot<C, O>;
-  updates: AsyncIterable<ApplicationSnapshot<C, O>>;
-  close(): void;
-}
+export type Observation<C, O> = SnapshotStream<ApplicationSnapshot<C, O>>;
 
 /**
  * Commands resolve once the runtime has finished them; failures reject with an
@@ -390,10 +426,7 @@ export interface ApplicationClient<C, O> {
 }
 
 /** An open preview stream: events until closed or the portal goes away. */
-export interface PreviewStream {
-  events: AsyncIterable<PreviewEvent>;
-  close(): void;
-}
+export type PreviewStream = EventStream<PreviewEvent>;
 
 /**
  * The live preview. Each open stream counts as a viewer, and the session
@@ -405,10 +438,7 @@ export interface PreviewClient {
 }
 
 /** An open colors stream: events until closed or the portal goes away. */
-export interface ColorsStream {
-  events: AsyncIterable<ColorsEvent>;
-  close(): void;
-}
+export type ColorsStream = EventStream<ColorsEvent>;
 
 /**
  * The colours the lights show, a few per edge, without the picture: light

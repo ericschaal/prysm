@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 const BINARY: &str = env!("CARGO_BIN_EXE_prysm-webos-slim");
 
 #[test]
-fn bad_arguments_exit_with_usage() {
+fn bad_arguments_fail() {
     let bare = ["--prysm", "127.0.0.1:8787"].map(str::to_owned);
     let unknown = ["--prysm", "http://127.0.0.1:8787", "--bogus"].map(str::to_owned);
     for argv in [
@@ -22,7 +22,7 @@ fn bad_arguments_exit_with_usage() {
         vec!["slim".to_owned()],
     ] {
         let output = Command::new(BINARY).args(&argv).output().unwrap();
-        assert_eq!(output.status.code(), Some(2), "{argv:?}");
+        assert_eq!(output.status.code(), Some(1), "{argv:?}");
         assert!(output.stdout.is_empty());
     }
 }
@@ -74,9 +74,8 @@ fn an_unreachable_receiver_is_a_reported_wait() {
     let status = events(&mut child, |event| {
         event["type"] == "status" && event["link"]["state"] == "waiting"
     });
-    assert_eq!(status["link"]["failure"]["kind"], "receiver", "{status}");
     assert!(
-        status["link"]["failure"]["message"]
+        status["link"]["message"]
             .as_str()
             .unwrap()
             .starts_with("waiting for the receiver"),
@@ -101,9 +100,11 @@ fn capture_off_the_tv_fails_with_its_cause() {
     let stdin = child.stdin.take();
     let failed = events(&mut child, |event| event["type"] == "failed");
     assert!(
-        failed["cause"].as_str().unwrap().contains("webOS"),
+        failed["message"].as_str().unwrap().contains("webOS"),
         "{failed}"
     );
+    // The worker copies the error's escalation: off the TV, the person's.
+    assert_eq!(failed["escalation"]["step"], "ask", "{failed}");
     assert_eq!(
         wait_child(&mut child, EXIT)
             .expect("the worker exits")
@@ -115,7 +116,8 @@ fn capture_off_the_tv_fails_with_its_cause() {
 }
 
 /// The on-TV encoder check runs the software encoder anywhere; off the TV the
-/// hardware one fails with its cause.
+/// hardware one fails with its cause. Like everything the worker prints, its
+/// report is on stderr.
 #[test]
 fn check_encoder_reports_the_encoder_it_used() {
     let output = Command::new(BINARY)
@@ -130,7 +132,8 @@ fn check_encoder_reports_the_encoder_it_used() {
         ])
         .output()
         .unwrap();
-    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.stdout.is_empty(), "stdout is the supervisor's");
+    let text = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
         text.contains("check-encoder: ok encoder=software H.264"),
@@ -141,7 +144,8 @@ fn check_encoder_reports_the_encoder_it_used() {
         .args(["check-encoder", "--frames", "2"])
         .output()
         .unwrap();
-    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.stdout.is_empty(), "stdout is the supervisor's");
+    let text = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{text}");
     assert!(
         text.contains("FAILED") && text.contains("hardware"),
@@ -151,5 +155,5 @@ fn check_encoder_reports_the_encoder_it_used() {
         .args(["check-encoder", "--width", "3"])
         .output()
         .unwrap();
-    assert_eq!(usage.status.code(), Some(2));
+    assert_eq!(usage.status.code(), Some(1));
 }

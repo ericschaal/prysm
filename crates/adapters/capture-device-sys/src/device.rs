@@ -73,6 +73,35 @@ pub fn list_formats(device: &str) -> Option<Vec<prysm_ports::Mode>> {
     })
 }
 
+/// Check whether the selected capture device can be asked about its formats
+/// without starting capture or requesting access.
+pub fn check_device(device: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return crate::macos::check_device(device);
+    #[cfg(target_os = "linux")]
+    return crate::linux::check_device(device);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = device;
+        Err(CaptureError::Backend(anyhow::anyhow!(
+            "video device capture is unsupported on this platform"
+        )))
+    }
+}
+
+/// Block for the selected device to appear or the owning attempt to stop.
+pub fn watch_device(device: &str, stop: &prysm_ports::Hangup) -> std::io::Result<bool> {
+    #[cfg(target_os = "macos")]
+    return Ok(crate::macos::watch_device(device, stop));
+    #[cfg(target_os = "linux")]
+    return crate::linux::watch_device(device, stop);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (device, stop);
+        Ok(false)
+    }
+}
+
 /// Capture `device` (the platform default when `None`) on the calling thread
 /// until `sink` asks to stop or capture fails, then release the device.
 ///
@@ -85,8 +114,8 @@ pub fn list_formats(device: &str) -> Option<Vec<prysm_ports::Mode>> {
 /// BGR frame), without a stall, for 3 s and that long's worth of frames is
 /// [`CaptureError::Unusable`], with the last buffer's
 /// [`crate::BufferRejection`]; a single unusable buffer is dropped. On Linux
-/// a stream that fails in a way that may pass (EIO, or a restart that fails)
-/// is restarted for up to 3 s.
+/// an I/O error restarts the stream once; a second one before a frame, or a
+/// restart that fails, ends capture. A stall is waited out.
 pub fn capture(
     device: Option<&str>,
     width: u32,

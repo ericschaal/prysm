@@ -31,14 +31,16 @@
   `prysm-headless` (or `prysm-tui`) with the `remote` capture and the `null`
   output, turn lighting on and give the TV the desktop's portal address. The
   portal shows the received rate and the preview; a TV of another stream
-  version reports the failure kind `version` (the TV app says "Update Prysm
-  and TV app"; the reason in its diagnostics names both versions) and
+  version reports its link as `version_differs` (the TV app says "Update
+  Prysm or TV app"; the reason in its diagnostics names both versions) and
   retries every second.
 
 ## Logs
 
 Log lines are `tracing` events, including those of the shared capture and
-processing crates, filtered by `RUST_LOG` (default `warn,prysm=info`):
+processing crates, one per line as `<process>: <level> <target>: <message>
+<field>=<value>...`, filtered by `RUST_LOG` (default `warn,prysm=info`)
+([prysm-logging](../../crates/engine/logging/src/lib.rs)):
 
 ```sh
 RUST_LOG=debug cargo run -p prysm-headless -- settings.json
@@ -46,9 +48,15 @@ RUST_LOG=debug cargo run -p prysm-headless -- settings.json
 
 While `prysm-tui` shows its preview on the terminal stderr writes to, logs go
 only to `--log-file PATH`; a panic's message is printed once the terminal is
-restored. The TV
-workers log to stderr, which the supervisor keeps (the last 20 lines show in
-the TV app's **View diagnostics**).
+restored. On the TV, the last 20 lines of the supervisor and its worker,
+oldest first, show in the TV app's **View diagnostics** (the state's `log`;
+[how](webos.md#supervisor-and-worker)). The TV starts the supervisor with
+stderr on `/dev/null`, so that is the only place its lines show under Luna
+activation. The boot hook's `setup` runs without the service and writes to
+`/tmp/io.github.ericschaal.prysm-setup.log`; a failed setup from the app
+shows its stderr as the failure. Each new line is published to `getState`
+subscribers, so nothing the supervisor logs at `info` or above repeats on
+its own: its subscription renewals are `debug`.
 
 For rates and timing over time, enable [metrics](monitoring.md).
 
@@ -87,7 +95,7 @@ ones:
 ```sh
 RUSTFLAGS=-Zsanitizer=address cargo +nightly-2026-11-01 test -Zbuild-std \
   --target x86_64-unknown-linux-gnu --lib --tests \
-  -p prysm-capture-webos-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
+  -p prysm-capture-webos-sys -p prysm-webos-library-sys -p prysm-webos-luna-sys -p prysm-capture-device-sys
 ```
 
 `-Zsanitizer=thread` for ThreadSanitizer. Code built by `cc` (the C++

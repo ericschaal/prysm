@@ -1,10 +1,10 @@
 //! The TV capture, shaped by the receiver's request.
 use crate::link::Flow;
 use prysm_capture_remote::{Offer, RemoteSettings};
-use prysm_capture_webos::WebosSettings;
+use prysm_capture_webos::{RepeatedStall, VideoSignal, WebosSettings};
 use prysm_h264::Backend;
 use prysm_ports::StreamEncoding;
-use prysm_ports::{FrameSource, Mode, Pull, Result};
+use prysm_ports::{FrameSource, Mode, Pull, Readiness, Result};
 use prysm_webos_link::worker::StopHandle;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,17 +42,17 @@ pub fn settings(request: &RemoteSettings) -> WebosSettings {
 /// closed and opened again when a request changes them, and closed while the
 /// receiver has stopped the stream (its lighting is off), while its request
 /// is refused (the encoder failed) or while Prysm speaks another version,
-/// until a receiver takes a connection again, or for good once another
-/// sender replaced this one. It keeps running while a receiver that did not say so is away, so a
-/// dropped connection does not restart the TV capture. With nothing open,
-/// `next_frame` waits out its timeout and reports idle, which keeps the
-/// uplink reconnecting and reading the receiver's messages. Once the worker
-/// is asked to stop (`stop` has a reason) nothing is opened any more, so a
-/// stop costs at most one release: of the capture being replaced, or of the
-/// open one.
+/// until a receiver takes a connection again. It keeps running while a
+/// receiver that did not say so is away, so a dropped connection does not
+/// restart the TV capture. With nothing open, `next_frame` waits out its
+/// timeout and reports quiet, which keeps the uplink reconnecting and
+/// reading the receiver's messages. Once the worker is asked to stop (`stop`
+/// has a reason) nothing is opened any more, so a stop costs at most one
+/// release: of the capture being replaced, or of the open one.
 pub struct RequestedCapture<O> {
     flow: Arc<Flow>,
     stop: StopHandle,
+    video: VideoSignal,
     open: O,
     current: Option<(WebosSettings, Box<dyn FrameSource>)>,
 }
@@ -61,10 +61,11 @@ impl<O> RequestedCapture<O>
 where
     O: FnMut(WebosSettings) -> Result<Box<dyn FrameSource>> + Send,
 {
-    pub fn new(flow: Arc<Flow>, stop: StopHandle, open: O) -> Self {
+    pub fn new(flow: Arc<Flow>, stop: StopHandle, video: VideoSignal, open: O) -> Self {
         Self {
             flow,
             stop,
+            video,
             open,
             current: None,
         }
@@ -84,15 +85,35 @@ where
             // Read after the close, which a stop can arrive during.
             let stopping = self.stop.reason().is_some();
             if let Some(wanted) = wanted.filter(|_| !stopping) {
-                self.current = Some((wanted, (self.open)(wanted)?));
+                match self.video.capture_readiness(&wanted) {
+                    Readiness::Ready => self.current = Some((wanted, (self.open)(wanted)?)),
+                    Readiness::Waiting(_) => {}
+                    Readiness::Blocked(error) => return Err(error),
+                }
             }
         }
         match &mut self.current {
-            Some((_, source)) => source.next_frame(timeout),
+            Some((_, source)) => {
+                let pull = source.next_frame(timeout);
+                self.flow.refused(matches!(pull, Ok(Pull::Refused)));
+                if let Err(error) = &pull
+                    && error.cause::<RepeatedStall>().is_some()
+                {
+                    let (settings, source) =
+                        self.current.take().expect("the open source just answered");
+                    source.close()?;
+                    return match self.video.capture_readiness(&settings) {
+                        Readiness::Ready | Readiness::Waiting(_) => Ok(Pull::Quiet),
+                        Readiness::Blocked(_) => pull,
+                    };
+                }
+                pull
+            }
             // Waits like any idle pull, so a stop cannot make it spin.
             None => {
+                self.flow.refused(false);
                 std::thread::sleep(timeout);
-                Ok(Pull::Idle)
+                Ok(Pull::Quiet)
             }
         }
     }

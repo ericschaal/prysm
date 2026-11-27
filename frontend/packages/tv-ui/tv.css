@@ -1,40 +1,3 @@
-/*
- * Prysm on the TV: a calm 10-foot screen for the living room, driven by the
- * remote. One focal point: what the lights do, in plain words, and the one
- * action. Everything else is quiet.
- *
- * 1rem = 1.5625vw: 30 px at 1920 × 1080, 20 px at 1280 × 720, so the layout
- * is the same at every TV resolution. Content stays inside a 5% overscan
- * margin (LG asks for at least 20 px). Four type sizes: display, title, body
- * (30 px at 1080p) and small (27 px), the sizes of LG's own TV apps
- * (Sandstone body and small body); LG's floor is 20 px. Every control is at
- * least --hit tall (78 px; LG recommends 75 px at 1080p).
- *
- * webOS TV rules followed here: one focused control at a time, always
- * visible and told apart at a glance (light fill, dark text, ring, lift);
- * disabled controls dimmed, never only recoloured; controls that look like
- * controls before they have focus (every control has a fill at rest, and
- * nothing else does); no pure white fields (the QR codes sit on the light --fg).
- *
- * Rhythm: spacing only from the --space scale, radii only from the --radius
- * scale; both columns start with a small label on the same line.
- *
- * Chromium 53 (webOS 4): flexbox without gap, custom properties (never in
- * media queries or keyframes), transforms, transitions, keyframes, gradients.
- * No grid, :focus-visible, :is(), clamp(), inset, aspect-ratio or rgb(… / a).
- *
- * Motion: only opacity and transform. Focus moves in 120 ms; screens and
- * dialogs arrive in 260 ms; the lights coming on fade the glow in over
- * 520 ms. The one repeating animation is the small live dot. Nothing is
- * drawn or animated over a calibration pattern; reduced motion stops all.
- *
- * Nothing moves between states: the headline, its one line of detail, the
- * quiet line under it and the lights' message each keep their space.
- *
- * Colour roles share their names and dark values with the web portal
- * (packages/web-portal/tokens.css). Glow appears only where light is the
- * message: behind the status while screen sync runs.
- */
 
 /* ---- Tokens ---- */
 :root {
@@ -49,14 +12,11 @@
   --accent: 91, 71, 213;
   --ok: 79, 209, 181;
   --alert: 255, 143, 122;
-  /* Light art: the glow behind the status while screen sync runs. */
   --glow-1: 123, 102, 255;
   --glow-2: 214, 91, 192;
   --glow-3: 62, 195, 235;
-  /* Disabled: dimmed as a whole, never only recoloured. */
   --disabled-opacity: 0.42;
 
-  /* Type: the portal’s five names on this rem (30 px at 1080p); small is LG’s small body. */
   --font:
     'LG Smart UI', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
     Roboto, sans-serif;
@@ -71,7 +31,6 @@
   --leading-tight: 1.2;
   --leading: 1.4;
 
-  /* Spacing: the portal’s eight steps. */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -79,17 +38,14 @@
   --space-5: 1.5rem;
   --space-6: 2rem;
   --space-7: 3rem;
-  --space-8: 4rem;
   /* LG’s overscan margin, not a step of the scale. */
   --safe-x: 5vw;
   --safe-y: 5vh;
 
-  /* Size: the portal’s radii, touch target and measure. */
   --radius-1: 0.5rem;
   --radius-2: 1rem;
   --hit: 2.75rem;
   --measure: 40rem;
-  /* The left column’s controls (primary, modes) share one width. */
   --control-width: 28rem;
 
   --duration-fast: 120ms;
@@ -115,8 +71,8 @@ body {
 [hidden] {
   display: none !important;
 }
-/* Read out, not shown. */
-.visually-hidden {
+.visually-hidden,
+.setting[role='switch'] .setting-value {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -152,7 +108,6 @@ button {
   cursor: pointer;
   transition: transform var(--duration-fast) var(--ease-out);
 }
-/* Focus is the remote's cursor: a light fill, an accent ring and a lift. */
 button:focus,
 .mode[aria-pressed='true']:focus {
   outline: none;
@@ -161,32 +116,29 @@ button:focus,
   box-shadow: 0 0 0 0.1rem rgb(var(--accent));
   transform: scale(1.03);
 }
-/*
- * Rows and the primary lift from their left edge, so the column keeps one
- * straight edge while focus moves; the segments and centred answers lift
- * from their centre.
- */
 .primary,
 .setting,
 .choice {
   -webkit-transform-origin: 0 50%;
   transform-origin: 0 50%;
 }
-/* Unavailable: dimmed as a whole, so it reads as off from the sofa. */
 button:disabled {
   cursor: default;
   opacity: var(--disabled-opacity);
 }
 
 /* ---- Layout ---- */
-/* The light on the wall: it blooms behind the status while screen sync runs. */
-.tv::before {
-  content: '';
+.tv::before,
+.modal,
+.calibration {
   position: fixed;
   top: 0;
   right: 0;
   bottom: 0;
   left: 0;
+}
+.tv::before {
+  content: '';
   background:
     radial-gradient(
       ellipse at 18% 34%,
@@ -205,13 +157,11 @@ button:disabled {
     );
   opacity: 0;
   pointer-events: none;
-  /* Opacity only: a scaled full-screen layer shows its edges while it fades. */
   transition: opacity var(--duration-bloom) var(--ease-out);
 }
 .tv.ready::before {
   opacity: 1;
 }
-/* Above the glow. */
 #app {
   position: relative;
   display: flex;
@@ -276,11 +226,16 @@ button:disabled {
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
-.status-dot {
+.status-head {
   position: relative;
-  flex-shrink: 0;
-  width: 0.55rem;
-  height: 0.55rem;
+}
+.status-dot {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-top: -0.3rem;
   margin-right: var(--space-2);
   border-radius: 50%;
   background: rgba(var(--fg), 0.6);
@@ -291,7 +246,6 @@ button:disabled {
 .attention .status-dot {
   background: rgb(var(--alert));
 }
-/* Live: a ring leaves the dot every few seconds while frames flow. */
 .ready .status-dot::after {
   content: '';
   position: absolute;
@@ -303,7 +257,6 @@ button:disabled {
   background: rgb(var(--ok));
   animation: live 2.8s ease-out infinite;
 }
-/* One line each: the copy is written to fit; the ellipsis is only a guard. */
 .overview h1,
 .description,
 .meta {
@@ -312,7 +265,6 @@ button:disabled {
   text-overflow: ellipsis;
 }
 .overview h1 {
-  margin-top: var(--space-3);
   font-size: var(--text-hero);
   font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
@@ -325,25 +277,12 @@ button:disabled {
   font-size: var(--text-body);
   line-height: var(--leading);
 }
-/* The quiet line: a countdown or the frame rate, else empty but kept. */
 .meta {
   margin-top: var(--space-2);
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
   font-variant-numeric: tabular-nums;
   line-height: var(--leading);
-}
-/* The time left until the restart, before its words. */
-.retry-bar {
-  display: inline-block;
-  width: 6rem;
-  height: 0.12rem;
-  margin-right: var(--space-3);
-  border-radius: 0.06rem;
-  background: rgb(var(--alert));
-  vertical-align: middle;
-  transform-origin: 0 50%;
-  animation: countdown linear forwards;
 }
 /*
  * ---- Controls ----
@@ -353,7 +292,6 @@ button:disabled {
  * track). Anything with a fill can be pressed; information sits on the
  * background without one.
  */
-/* Full without a task: the button's box, empty, so the lights never move. */
 .primary,
 .primary-slot {
   width: var(--control-width);
@@ -366,10 +304,6 @@ button:disabled {
   font-weight: var(--weight-strong);
   text-align: center;
 }
-/*
- * Its words still matter while it waits ("Please wait…"): grey, not faded.
- * Waiting it stays focusable (busy), so focus does not jump away and back.
- */
 .primary:disabled,
 .primary[aria-busy='true']:not(:focus) {
   background: rgba(var(--fg), 0.08);
@@ -386,22 +320,12 @@ button:disabled {
 .danger {
   color: rgb(var(--alert));
 }
-/* Focus wins over every resting colour: dark text on the light fill. */
-.tonal:focus {
-  color: rgb(var(--bg));
-}
 .danger:focus {
   background: rgb(var(--alert));
-  color: rgb(var(--bg));
   box-shadow: 0 0 0 0.1rem rgb(var(--alert));
 }
 
 /* ---- Your lights: the main control, a segmented track ---- */
-/*
- * Right under the status: the status line, its quiet line, then the
- * service's one button (in the full package often only its reserved place)
- * and the lights, each step the same --space-6 apart.
- */
 .lighting {
   margin-top: var(--space-5);
 }
@@ -421,7 +345,6 @@ button:disabled {
   position: relative;
   flex: 1;
   min-width: 0;
-  min-height: var(--hit);
   padding: var(--space-1) var(--space-3);
   border-radius: calc(var(--radius-1) - var(--space-1));
   color: rgba(var(--fg), 0.72);
@@ -433,11 +356,6 @@ button:disabled {
 .mode + .mode {
   margin-left: var(--space-1);
 }
-/*
- * The three states never share a look: chosen is an accent tint with bold
- * words and a dot; focused is the light fill (with the dot, now accent, when
- * it is also the chosen one); unavailable is dimmed.
- */
 .mode[aria-pressed='true'] {
   background: rgba(var(--accent), 0.5);
   color: rgb(var(--fg));
@@ -459,7 +377,6 @@ button:disabled {
 .mode[aria-pressed='true']:focus::before {
   background: rgb(var(--accent));
 }
-/* Only what the chosen mode does not say; two lines kept, at most two used. */
 .lighting-status {
   position: relative;
   width: var(--control-width);
@@ -470,7 +387,6 @@ button:disabled {
   font-size: var(--text-small);
   line-height: var(--leading);
 }
-/* A problem: calm, a small amber mark beside plain words. */
 .lighting.attention .lighting-status {
   padding-left: var(--space-4);
 }
@@ -485,10 +401,6 @@ button:disabled {
   background: rgb(var(--alert));
 }
 
-/*
- * First run, no lights yet: the portal's QR code, large, in the modes'
- * place. Information, so no fill of its own; the code sits on its paper.
- */
 .setup-lights {
   display: flex;
   align-items: center;
@@ -501,10 +413,8 @@ button:disabled {
   margin-right: var(--space-5);
   border-radius: var(--radius-1);
 }
-.setup-qr rect {
-  fill: rgb(var(--fg));
-}
-.setup-text {
+.setup-text,
+.portal-text {
   min-width: 0;
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
@@ -516,13 +426,16 @@ button:disabled {
   color: rgb(var(--fg));
   font-size: var(--text-body);
 }
-.setup-text code {
+.setup-text code,
+.portal-text code {
   display: block;
-  margin: var(--space-2) 0;
   color: rgb(var(--fg));
+  line-height: var(--leading-tight);
+}
+.setup-text code {
+  margin: var(--space-2) 0;
   font-size: var(--text-title);
   font-weight: var(--weight-strong);
-  line-height: var(--leading-tight);
 }
 
 /* ---- Secondary column: the portal (information) and the settings (a list) ---- */
@@ -530,7 +443,6 @@ button:disabled {
   display: flex;
   align-items: flex-start;
 }
-/* No address yet: its place is kept, with nothing in it to read or scan. */
 .portal-address.empty {
   visibility: hidden;
 }
@@ -541,24 +453,14 @@ button:disabled {
   margin-right: var(--space-4);
   border-radius: calc(var(--radius-1) - var(--space-1));
 }
-/* Paper, not a white field: the quiet zone takes the paper colour too. */
+.setup-qr rect,
 .portal-qr rect,
 .qr rect {
   fill: rgb(var(--fg));
 }
-.portal-text {
-  min-width: 0;
-  color: rgba(var(--fg), 0.6);
-  font-size: var(--text-small);
-  line-height: var(--leading);
-  word-wrap: break-word;
-}
 .portal-text code {
-  display: block;
   margin: var(--space-2) 0 var(--space-1);
-  color: rgb(var(--fg));
   font-size: var(--text-body);
-  line-height: var(--leading-tight);
 }
 .settings:first-child {
   margin-top: 0;
@@ -569,22 +471,19 @@ button:disabled {
 .setting-list {
   margin-top: var(--space-3);
 }
-/*
- * A row at rest: one height, label on the left, its value quieter on the
- * right, then what OK does: a chevron opens something, a switch flips.
- */
 .setting {
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: var(--hit);
   padding: 0 var(--space-5);
   background: rgba(var(--fg), 0.08);
 }
-.setting + .setting {
+.setting + .setting,
+.choice + .choice {
   margin-top: var(--space-2);
 }
-.setting:focus {
+.setting:focus,
+.choice:focus {
   transform: scale(1.02);
 }
 .setting-label {
@@ -605,19 +504,14 @@ button:disabled {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.setting:focus .setting-value {
+.setting:focus .setting-value,
+.choice:focus .choice-detail {
   color: rgba(var(--bg), 0.7);
 }
 /* A switch says On or Off by itself; the words are kept for screen readers. */
 .setting[role='switch'] .setting-value {
-  position: absolute;
-  width: 1px;
-  height: 1px;
   margin: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
 }
-/* Drawn, not a glyph: the TV's font may not have one. */
 .chevron {
   flex-shrink: 0;
   width: 0.45rem;
@@ -651,6 +545,12 @@ button:disabled {
   background: rgba(var(--fg), 0.6);
   transition: transform var(--duration-fast) var(--ease-out);
 }
+.setting:focus .switch {
+  background: rgba(var(--bg), 0.25);
+}
+.setting:focus .switch::after {
+  background: rgba(var(--bg), 0.7);
+}
 .setting[aria-checked='true'] .switch {
   background: rgb(var(--accent));
   box-shadow: none;
@@ -658,18 +558,6 @@ button:disabled {
 .setting[aria-checked='true'] .switch::after {
   background: rgb(var(--fg));
   transform: translateX(0.9rem);
-}
-.setting:focus .switch {
-  background: rgba(var(--bg), 0.25);
-}
-.setting:focus .switch::after {
-  background: rgba(var(--bg), 0.7);
-}
-.setting[aria-checked='true']:focus .switch {
-  background: rgb(var(--accent));
-}
-.setting[aria-checked='true']:focus .switch::after {
-  background: rgb(var(--fg));
 }
 .setting:disabled .chevron,
 .setting:disabled .switch {
@@ -686,7 +574,6 @@ button:disabled {
 .notice.error {
   color: rgb(var(--alert));
 }
-/* Two lines of room are always kept for a message, so nothing above moves when one comes. */
 .key-help {
   display: flex;
   align-items: center;
@@ -706,7 +593,6 @@ button:disabled {
   color: rgba(var(--fg), 0.72);
   font-weight: var(--weight-strong);
 }
-/* The latest message sits in the key-help line, right aligned. */
 #notice {
   flex: 1;
   min-width: 0;
@@ -722,11 +608,6 @@ button:disabled {
   align-items: flex-start;
 }
 .modal {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -741,7 +622,6 @@ button:disabled {
   overflow-y: auto;
   padding: var(--space-6);
   border-radius: var(--radius-2);
-  /* Opaque: one surface step laid over the background, never the page through it. */
   background:
     linear-gradient(rgba(var(--fg), 0.08), rgba(var(--fg), 0.08)),
     rgb(var(--bg));
@@ -764,18 +644,10 @@ button:disabled {
 #dialog-body:empty {
   display: none;
 }
-/* A list choice: a row with a line of detail. */
 .choice {
-  display: block;
   width: 100%;
   padding: var(--space-3) var(--space-5);
   background: rgba(var(--fg), 0.12);
-}
-.choice + .choice {
-  margin-top: var(--space-2);
-}
-.choice:focus {
-  transform: scale(1.02);
 }
 .choice-name,
 .choice-detail {
@@ -786,10 +658,6 @@ button:disabled {
   color: rgba(var(--fg), 0.6);
   font-size: var(--text-small);
 }
-.choice:focus .choice-detail {
-  color: rgba(var(--bg), 0.7);
-}
-/* The answers along the bottom, centred; the dialog's way out is one of them. */
 .dialog-actions {
   display: flex;
   justify-content: center;
@@ -851,7 +719,6 @@ button:disabled {
   overflow-y: auto;
 }
 
-/* Pressed: the control sinks under OK. */
 button:active {
   transform: scale(0.97);
 }
@@ -859,11 +726,6 @@ button:active {
 /* ---- Calibration ---- */
 /* The pattern is the whole screen, alone: no overlay, no motion, no cursor. */
 .calibration {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
   background: #000;
 }
 .calibration.showing {
@@ -877,7 +739,6 @@ button:active {
   height: 100%;
   object-fit: fill;
 }
-/* While the phone has not chosen a pattern: the QR code over the gray one. */
 .calibration-waiting {
   position: absolute;
   top: 0;
@@ -975,14 +836,6 @@ button:active {
     transform: scale(2.6);
   }
 }
-@keyframes countdown {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;
@@ -990,7 +843,6 @@ button:active {
   }
 }
 
-/* A narrow desktop window (the demo), never a TV. */
 @media (max-width: 1000px) {
   :root {
     font-size: 20px;

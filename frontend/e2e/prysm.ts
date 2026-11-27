@@ -18,7 +18,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
-import { httpCaptureModesClient } from '@prysm/application-client/http';
+import { httpPortalClient } from '@prysm/application-client/http';
 import type {
   Mode,
   RemoteReceiverSettings,
@@ -286,7 +286,7 @@ export const test = base.extend<{
           return (await response.json()) as State;
         },
         offered: async (encoding) => {
-          const client = httpCaptureModesClient({ baseUrl: url });
+          const client = httpPortalClient({ baseUrl: url });
           const status = async () =>
             (await client.modes({ kind: 'remote', encoding })).status;
           await expect.poll(status, { timeout: BOUND_MS }).toBe('known');

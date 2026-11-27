@@ -221,6 +221,9 @@ class SshDeb(OnTarget):
         self.started = False
         self.exit_code: int | str | None = None
         self.device_node: str | None = None
+        self._upload = commands.deb_deliver(self.target, self.run, str(deb))
+        self._install = commands.deb_install(self.target, self.run)
+        self._installed = commands.deb_installed(self.target)
 
     def _run(self, command: commands.Command, check: bool = True) -> Result:
         return self.transport.run(command, check=check)
@@ -256,11 +259,7 @@ class SshDeb(OnTarget):
                 ),
             ],
             start=[
-                *shown(
-                    commands.deb_deliver(target, self.run, str(self.deb)),
-                    commands.deb_install(target, self.run),
-                    commands.deb_installed(target),
-                ),
+                *shown(self._upload, self._install, self._installed),
                 "(dpkg's version must be the control file's; apt-get's output goes to apt.log)",
                 *shown(
                     commands.deb_dropin(target, self.listen),
@@ -320,12 +319,12 @@ class SshDeb(OnTarget):
 
     def deliver(self) -> str:
         self.delivered = True  # from here on `close` purges and removes the run directory, also after a failure
-        self.since = int(self._run(commands.deb_deliver(self.target, self.run, str(self.deb))).stdout.split()[-1])
-        apt = self._run(commands.deb_install(self.target, self.run), check=False)
+        self.since = int(self._run(self._upload).stdout.split()[-1])
+        apt = self._run(self._install, check=False)
         self.apt_path.write_text(apt.stdout + apt.stderr)
         if not apt.ok:
             raise RuntimeError(f'apt-get install exited {apt.returncode} on {self.target}; see {self.apt_path}')
-        status = self._run(commands.deb_installed(self.target)).stdout.partition('\n')[0].strip()
+        status = self._run(self._installed).stdout.partition('\n')[0].strip()
         if status != f'installed {self.version}':
             raise RuntimeError(f'dpkg reports {status!r} on {self.target}; the package is {self.version}')
         return f'installed {self.deb.name} ({self.version}) on {self.target} with apt-get'

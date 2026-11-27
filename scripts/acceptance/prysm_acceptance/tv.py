@@ -2,84 +2,68 @@
 worker's load and soak computed from its readings."""
 
 from collections.abc import Callable, Sequence
-from enum import StrEnum
 from itertools import pairwise
 import time
 from typing import Literal, NotRequired, Protocol, TypedDict, TypeVar
 
 from prysm_acceptance import prysm_api
 from prysm_acceptance.commands import Command
+from prysm_acceptance.wire_generated import Encoding as Encoding  # noqa: PLC0414 -- public runner API
+from prysm_acceptance.wire_generated import Power, Video
 
 CLOCK_TICKS = 100  # USER_HZ on the TV's ARM kernel (assumed; see the report)
-
-
-class Encoding(StrEnum):
-    """How the slim package streams the picture."""
-
-    H264_HARDWARE = 'h264_hardware'
-    H264_SOFTWARE = 'h264_software'
-    RAW = 'raw'
-
-
-class Power(StrEnum):
-    """The TV's power as its state reports it."""
-
-    UNKNOWN = 'unknown'
-    ACTIVE = 'active'
-    SCREEN_SAVER = 'screen_saver'
-    ASLEEP = 'asleep'
-
-
-class Video(StrEnum):
-    """Video on the TV's main output as its state reports it: available only while the power is active."""
-
-    UNKNOWN = 'unknown'
-    UNAVAILABLE = 'unavailable'
-    AVAILABLE = 'available'
 
 
 class StoppedWorker(TypedDict):
     phase: Literal['stopped']
 
 
-class SlimLink(TypedDict):
-    """Slim: where the stream to Prysm stands (`state`); `encoding` and `fps` while sending."""
+class Problem(TypedDict):
+    """What the service asks of the person (`asked`, by its `step`), and what failed."""
 
-    state: Literal['starting', 'sending', 'paused', 'waiting', 'failed']
+    asked: dict[str, str]
+    message: str
+
+
+class SlimLink(TypedDict):
+    """Slim: where the stream to Prysm stands (`state`); `encoding` and `fps` while sending, `message` while
+    it waits or failed."""
+
+    state: str
     encoding: NotRequired[str]
     fps: NotRequired[int]
-    failure: NotRequired['TvFailure']
+    message: NotRequired[str]
 
 
 class RunningWorker(TypedDict):
     """A running worker and its report. Both packages: frames flow (`capturing`). Full only: `fps` and `portal`.
-    Slim only: `link`, with the encoding and rate while sending (`paused`: the receiver paused the stream)."""
+    Slim only: `link`, with the encoding and rate while sending (`paused`: the receiver paused the stream).
+    Full only: `problem`, what it asks of the person while it runs."""
 
     phase: Literal['running']
     capturing: bool
     fps: NotRequired[int]
     portal: NotRequired[str]
     link: NotRequired[SlimLink]
+    problem: NotRequired[Problem]
 
 
 class StoppingWorker(TypedDict):
-    """A worker being stopped; the full one's portal may still answer."""
+    """A worker being stopped; the full one's portal may still answer. `problem`: what is asked once it exited."""
 
     phase: Literal['stopping']
     portal: NotRequired[str]
+    problem: NotRequired[Problem]
 
 
-class RetryingWorker(TypedDict):
-    phase: Literal['retrying']
-    seconds: int
+class AskingWorker(TypedDict):
+    """No worker: the person is asked."""
+
+    phase: Literal['asking']
+    problem: Problem
 
 
-Worker = StoppedWorker | RunningWorker | StoppingWorker | RetryingWorker
-
-
-class TvFailure(TypedDict, total=False):
-    kind: str
-    message: str
+Worker = StoppedWorker | RunningWorker | StoppingWorker | AskingWorker
 
 
 class State(TypedDict, total=False):
@@ -89,7 +73,6 @@ class State(TypedDict, total=False):
     power: Power
     video: Video
     worker: Worker
-    failure: TvFailure
     log: list[str]
 
 
@@ -99,6 +82,14 @@ def running(state: State) -> RunningWorker | None:
     if worker is None or worker['phase'] != 'running':
         return None
     return worker
+
+
+def problem(state: State) -> Problem | None:
+    """What the service asks of the person, in whichever phase says it."""
+    worker = state.get('worker')
+    if worker is None or worker['phase'] == 'stopped':
+        return None
+    return worker.get('problem')
 
 
 def capturing(state: State) -> bool:
@@ -184,6 +175,8 @@ class Tv(Protocol):
     def get_state(self) -> State | None:
         """The TV's state, or `None` when Prysm's service does not answer."""
         ...
+
+    def wait_portal(self, seconds: float = 40) -> prysm_api.Prysm: ...
 
     def foreground(self) -> str:
         """The app in front; empty when the TV names none."""

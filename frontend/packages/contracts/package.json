@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./validate/*": "./generated/*.validate.js",
     "./*": "./generated/*.generated.ts"
   }
 }

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
-    artifacts: BTreeMap<String, Entry>,
+    pub artifacts: BTreeMap<String, Entry>,
 }
 
 /// One artifact.
@@ -39,23 +39,6 @@ impl Manifest {
             Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
         };
         serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
-    }
-
-    /// Records `file`, replacing an earlier entry for it and keeping the rest.
-    pub fn insert(&mut self, file: String, entry: Entry) {
-        self.artifacts.insert(file, entry);
-    }
-
-    /// The entries, by file name.
-    pub fn artifacts(&self) -> impl Iterator<Item = (&str, &Entry)> {
-        self.artifacts
-            .iter()
-            .map(|(file, entry)| (file.as_str(), entry))
-    }
-
-    /// Keeps only the entries whose file `keep` accepts.
-    pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
-        self.artifacts.retain(|file, _| keep(file));
     }
 
     /// Pretty-printed JSON with a final newline.
@@ -120,30 +103,14 @@ mod tests {
     }
 
     #[test]
-    fn inserting_replaces_one_entry_and_keeps_the_others() {
-        let mut manifest = Manifest::default();
-        manifest.insert("b".into(), entry("old"));
-        manifest.insert("a".into(), entry("kept"));
-        manifest.insert("b".into(), entry("new"));
-        assert_eq!(manifest.artifacts.len(), 2);
-        assert_eq!(manifest.artifacts["a"].commit, "kept");
-        assert_eq!(manifest.artifacts["b"].commit, "new");
-    }
-
-    #[test]
-    fn retaining_drops_the_other_entries() {
-        let mut manifest = Manifest::default();
-        manifest.insert("gone".into(), entry("a"));
-        manifest.insert("kept".into(), entry("b"));
-        manifest.retain(|file| file == "kept");
-        assert_eq!(manifest.artifacts.keys().collect::<Vec<_>>(), ["kept"]);
-    }
-
-    #[test]
     fn json_is_sorted_by_file_and_round_trips() {
         let mut manifest = Manifest::default();
-        manifest.insert("prysm-headless-linux-arm64".into(), entry("c1"));
-        manifest.insert("prysm-headless-linux-amd64".into(), entry("c2"));
+        manifest
+            .artifacts
+            .insert("prysm-headless-linux-arm64".into(), entry("c1"));
+        manifest
+            .artifacts
+            .insert("prysm-headless-linux-amd64".into(), entry("c2"));
         let json = manifest.to_json();
         assert!(json.ends_with("}\n"));
         assert!(json.find("linux-amd64") < json.find("linux-arm64"));

@@ -8,10 +8,6 @@ import {
   type Theme,
 } from './theme';
 
-/**
- * System, Light or Dark: one row each, in the rows pattern, the chosen one
- * ticked. Applied at once and kept in this browser.
- */
 export function ThemeChoice() {
   const [theme, setTheme] = useState(currentTheme);
   const nameId = useId();

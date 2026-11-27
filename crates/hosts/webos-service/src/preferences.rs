@@ -33,7 +33,7 @@ pub struct Preferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schema(value_type = Option<String>, nullable = false, max_length = 256, example = "http://192.168.1.20:8787")
+        schema(value_type = Option<String>, nullable = false, example = "http://192.168.1.20:8787")
     )]
     pub prysm_address: Option<PrysmAddress>,
 }
@@ -165,55 +165,20 @@ impl PreferencesStore for MemoryStore {
     }
 }
 
-/// The kernel's id of the current boot.
-pub const BOOT_ID: &str = "/proc/sys/kernel/random/boot_id";
-
-/// `resume.json`: the intent and the boot it belongs to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Resume {
-    boot: String,
-    intent: LightingTarget,
-}
-
-/// A JSON file in a private directory, replaced atomically (0600), and
-/// `resume.json` next to it for the intent of the current boot.
+/// Persistent preferences and the supervisor's boot-local resume file.
 #[derive(Debug, Clone)]
 pub struct FileStore {
     path: PathBuf,
-    boot_id: PathBuf,
+    resume_path: PathBuf,
 }
 
 impl FileStore {
     #[must_use]
-    pub fn new(path: impl Into<PathBuf>) -> Self {
+    pub fn new(path: impl Into<PathBuf>, resume_path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
-            boot_id: BOOT_ID.into(),
+            resume_path: resume_path.into(),
         }
-    }
-
-    /// Read the boot id from `path` instead of [`BOOT_ID`].
-    #[cfg(test)]
-    #[must_use]
-    pub fn with_boot_id(mut self, path: impl Into<PathBuf>) -> Self {
-        self.boot_id = path.into();
-        self
-    }
-
-    fn directory(&self) -> &Path {
-        self.path.parent().unwrap_or(Path::new("."))
-    }
-
-    fn resume_path(&self) -> PathBuf {
-        self.directory().join("resume.json")
-    }
-
-    /// `None` where the kernel has no boot id (not Linux): nothing resumes.
-    fn boot(&self) -> Option<String> {
-        let bytes = fs::read(&self.boot_id).ok()?;
-        let boot = String::from_utf8(bytes).ok()?.trim().to_owned();
-        (!boot.is_empty() && boot.len() <= 64).then_some(boot)
     }
 }
 
@@ -230,15 +195,13 @@ fn replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
 impl PreferencesStore for FileStore {
     fn load(&mut self) -> Result<Option<PreferencesFile>, StoreError> {
         let path = &self.path;
-        let Some(bytes) = read_private(path, MAX_BYTES).map_err(|source| StoreError::Read {
-            path: path.clone(),
-            source,
-        })?
-        else {
-            return Ok(None);
-        };
-        serde_json::from_slice(&bytes)
-            .map(Some)
+        read_private(path, MAX_BYTES)
+            .map_err(|source| StoreError::Read {
+                path: path.clone(),
+                source,
+            })?
+            .map(|bytes| serde_json::from_slice(&bytes))
+            .transpose()
             .map_err(|source| StoreError::Invalid {
                 path: path.clone(),
                 source,
@@ -255,23 +218,16 @@ impl PreferencesStore for FileStore {
     }
 
     fn resume(&mut self) -> Option<LightingTarget> {
-        let boot = self.boot()?;
-        let bytes = read_private(&self.resume_path(), 1024).ok()??;
-        let resume: Resume = serde_json::from_slice(&bytes).ok()?;
-        (resume.boot == boot).then_some(resume.intent)
+        let bytes = read_private(&self.resume_path, 1024).ok()??;
+        serde_json::from_slice(&bytes).ok()
     }
 
     fn remember(&mut self, intent: LightingTarget) -> Result<(), StoreError> {
-        let Some(boot) = self.boot() else {
-            return Ok(());
-        };
-        let path = self.resume_path();
-        let bytes =
-            serde_json::to_vec(&Resume { boot, intent }).map_err(|error| StoreError::Save {
-                path: path.clone(),
-                source: error.into(),
-            })?;
-        replace(&path, &bytes)
+        let bytes = serde_json::to_vec(&intent).map_err(|error| StoreError::Save {
+            path: self.resume_path.clone(),
+            source: error.into(),
+        })?;
+        replace(&self.resume_path, &bytes)
     }
 }
 
@@ -323,30 +279,16 @@ mod tests {
     }
 
     #[test]
-    fn the_intent_resumes_within_one_boot_only() {
+    fn the_resume_file_is_private() {
         let dir = tempfile::tempdir().unwrap();
-        let boot = dir.path().join("boot_id");
-        fs::write(&boot, "boot-1\n").unwrap();
-        let mut store = FileStore::new(dir.path().join("tv.json")).with_boot_id(&boot);
-        assert_eq!(store.resume(), None);
+        let path = dir.path().join("resume.json");
+        let mut store = FileStore::new(dir.path().join("tv.json"), &path);
         store.remember(LightingTarget::Effects).unwrap();
         assert_eq!(store.resume(), Some(LightingTarget::Effects));
         assert_eq!(
-            fs::metadata(dir.path().join("resume.json"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
             0o600
         );
-        // A reboot: autostart decides again.
-        fs::write(&boot, "boot-2\n").unwrap();
-        assert_eq!(store.resume(), None);
-        // Without a boot id nothing is kept.
-        let mut store =
-            FileStore::new(dir.path().join("tv.json")).with_boot_id(dir.path().join("missing"));
-        store.remember(LightingTarget::ScreenSync).unwrap();
-        assert_eq!(store.resume(), None);
     }
 
     #[test]
@@ -387,7 +329,6 @@ mod tests {
     #[test]
     fn unknown_fields_are_rejected_in_a_request() {
         assert!(serde_json::from_str::<Preferences>(r#"{"mode":"slim"}"#).is_err());
-        // Picture settings are the receiver's (slim) or the portal's (full).
         assert!(serde_json::from_str::<Preferences>(r#"{"capture":{"fps":30}}"#).is_err());
         let parsed: Preferences = serde_json::from_str(r#"{"autostart":true}"#).unwrap();
         assert!(parsed.autostart);
@@ -404,7 +345,6 @@ mod tests {
             "prysm_address": "http://192.168.1.20:8787",
             "newer": { "x": 1 },
         }));
-        // Full reads `autostart` and keeps the address it ignores.
         assert_eq!(
             file.preferences(Flavor::Full).unwrap(),
             Preferences {
@@ -421,7 +361,6 @@ mod tests {
                 "newer": { "x": 1 },
             })
         );
-        // Slim reads and replaces both.
         assert_eq!(
             file.preferences(Flavor::Slim).unwrap().prysm_address,
             Some(address)
@@ -431,11 +370,9 @@ mod tests {
             serde_json::to_value(&file).unwrap(),
             serde_json::json!({ "autostart": false, "newer": { "x": 1 } })
         );
-        // An address full ignores is never checked there; slim refuses it.
         let file = read(serde_json::json!({ "prysm_address": "http://x/path" }));
         file.preferences(Flavor::Full).unwrap();
         assert!(file.preferences(Flavor::Slim).is_err());
-        // A known field of the wrong type is unreadable in both.
         assert!(serde_json::from_str::<PreferencesFile>(r#"{"autostart":1}"#).is_err());
     }
 
@@ -443,7 +380,7 @@ mod tests {
     fn file_store_round_trips_privately_and_refuses_odd_files() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tv.json");
-        let mut store = FileStore::new(&path);
+        let mut store = FileStore::new(&path, dir.path().join("resume.json"));
         assert_eq!(store.load().unwrap(), None);
         let mut file = PreferencesFile::default();
         file.replace(

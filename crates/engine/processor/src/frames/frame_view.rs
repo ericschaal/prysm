@@ -69,7 +69,8 @@ impl FrameView {
         let mut sum = [0.0f64; 3];
         let mut count = 0u64;
         for y in (y0..y1).step_by(step as usize) {
-            pixels.for_each_rgb(y, x0 as usize..x1 as usize, step as usize, |color| {
+            let xs = (x0 as usize..x1 as usize).step_by(step as usize);
+            pixels.for_each_rgb(y, xs, |color| {
                 let linear = LinearColor::from_srgb(color);
                 sum[0] += f64::from(linear.r);
                 sum[1] += f64::from(linear.g);
@@ -214,7 +215,6 @@ pub mod tests {
             height: 4,
         };
         let avg = view.average_linear(0, 0, 4, 2);
-        // Both rows count equally, including black pixels.
         assert!(
             (avg.r - 0.5).abs() < 1e-6,
             "expected 50% white, got {}",
@@ -342,7 +342,6 @@ pub mod tests {
                 }
             }
         }
-        // The comparison saw real differences: the frames are not trivial.
         assert!(worst > 0.0, "worst error {worst}");
     }
 }

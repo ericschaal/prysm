@@ -49,10 +49,9 @@ fn without_a_terminal_lighting_and_portal_keep_running_until_sigterm() {
 #[test]
 fn example_settings_load_and_validate() {
     let check = |path: &str| {
-        let (adapters, _) = prysm_host::desktop_adapters(DeviceSource);
-        adapters(Prysm::builder(SettingsFile::new(path)))
-            .check()
-            .unwrap();
+        let (prysm, _) =
+            prysm_host::desktop_adapters(Prysm::builder(SettingsFile::new(path)), DeviceSource);
+        prysm.check().unwrap();
         SettingsFile::new(path).load().unwrap().unwrap()
     };
     let settings = check(concat!(

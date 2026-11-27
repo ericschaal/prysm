@@ -75,14 +75,29 @@ pub struct Handoff(Arc<Mutex<Slot>>);
 
 #[derive(Debug, Default)]
 struct Slot {
-    receiving: bool,
     /// Which [`Receiving`] is current: each [`Handoff::receive`] starts a
-    /// new one, so an end it replaced neither takes nor ends its offers.
+    /// new one, so an end it replaced neither takes nor ends its offers. It
+    /// outlives receivers, so an end never matches a later one.
     generation: u64,
+    /// The current end's state, while it is held.
+    receiver: Option<Receiver>,
+    announced: Option<String>,
+}
+
+impl Slot {
+    /// The receiver of the end of `generation`, if that end is current.
+    fn receiver(&mut self, generation: u64) -> Option<&mut Receiver> {
+        self.receiver
+            .as_mut()
+            .filter(|_| self.generation == generation)
+    }
+}
+
+#[derive(Debug, Default)]
+struct Receiver {
     waiting: Option<Accepted>,
     /// Woken by each offer: the current end's thread ([`Receiving::wake`]).
     wakeup: Option<Wakeup>,
-    announced: Option<String>,
 }
 
 impl Handoff {
@@ -119,7 +134,7 @@ impl Handoff {
         if let Some(offer) = &offer {
             slot.announced = Some(offer.clone());
         }
-        if slot.receiving {
+        if slot.receiver.is_some() {
             Answer::Upgrade { offer }
         } else {
             Answer::Unavailable
@@ -132,11 +147,11 @@ impl Handoff {
     /// No source receives: the connection comes back for the surface to close.
     pub fn offer(&self, connection: Accepted) -> Result<(), Accepted> {
         let mut slot = self.lock();
-        if !slot.receiving {
+        let Some(receiver) = &mut slot.receiver else {
             return Err(connection);
-        }
-        slot.waiting = Some(connection);
-        if let Some(wakeup) = &slot.wakeup {
+        };
+        receiver.waiting = Some(connection);
+        if let Some(wakeup) = &receiver.wakeup {
             wakeup.wake();
         }
         Ok(())
@@ -151,7 +166,7 @@ impl Handoff {
     /// Whether a source receives now.
     #[must_use]
     pub fn is_receiving(&self) -> bool {
-        self.lock().receiving
+        self.lock().receiver.is_some()
     }
 
     /// Accept offers until the returned end is dropped. One source receives
@@ -160,9 +175,7 @@ impl Handoff {
     #[must_use]
     pub fn receive(&self) -> Receiving {
         let mut slot = self.lock();
-        slot.receiving = true;
-        slot.waiting = None;
-        slot.wakeup = None;
+        slot.receiver = Some(Receiver::default());
         slot.generation = slot.generation.wrapping_add(1);
         Receiving {
             handoff: self.clone(),
@@ -188,21 +201,18 @@ impl Receiving {
     /// [`Handoff::receive`] replaced this end.
     #[must_use]
     pub fn take(&self) -> Option<Accepted> {
-        let mut slot = self.handoff.lock();
-        if slot.generation == self.generation {
-            slot.waiting.take()
-        } else {
-            None
-        }
+        self.handoff
+            .lock()
+            .receiver(self.generation)
+            .and_then(|receiver| receiver.waiting.take())
     }
 
     /// Wake `wakeup` at every offer to this end, so its thread waits for one
     /// without polling; nothing once a later [`Handoff::receive`] replaced
     /// this end.
     pub fn wake(&self, wakeup: Wakeup) {
-        let mut slot = self.handoff.lock();
-        if slot.generation == self.generation {
-            slot.wakeup = Some(wakeup);
+        if let Some(receiver) = self.handoff.lock().receiver(self.generation) {
+            receiver.wakeup = Some(wakeup);
         }
     }
 }
@@ -211,9 +221,7 @@ impl Drop for Receiving {
     fn drop(&mut self) {
         let mut slot = self.handoff.lock();
         if slot.generation == self.generation {
-            slot.receiving = false;
-            slot.waiting = None;
-            slot.wakeup = None;
+            slot.receiver = None;
         }
     }
 }
@@ -394,11 +402,9 @@ mod tests {
         let (second, _) = connection(2);
         handoff.offer(first).unwrap();
         handoff.offer(second).unwrap();
-        // The replaced connection was closed: its peer reads end of stream.
         assert_eq!(first_peer.read(&mut [0; 1]).unwrap(), 0);
         assert_eq!(receiving.take().unwrap().buffered, [2]);
 
-        // One not taken when the source stops is closed too.
         let (third, mut third_peer) = connection(3);
         handoff.offer(third).unwrap();
         drop(receiving);

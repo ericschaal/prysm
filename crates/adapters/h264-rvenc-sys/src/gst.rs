@@ -58,7 +58,6 @@ pub struct Pipeline {
     width: u32,
     height: u32,
     stride: usize,
-    // Stable DMA-BUF identities prevent the corruption seen with per-frame allocation/free.
     buffers: Vec<Dma>,
     slot: usize,
     session: Session,
@@ -105,8 +104,7 @@ impl Pipeline {
             .write(true)
             .open(HEAP)
             .map_err(io("cannot open the DMA heap /dev/dma_heap/dvr"))?;
-        // rvenc emits complete Annex B pictures; h264parse adds a next-input wait on the TV.
-        // Static AVC caps prevent forcing byte-stream caps; the caller validates actual output.
+        // The caller validates the encoded output.
         let graph = gst::parse::launch(&format!(
             "appsrc name=input is-live=true do-timestamp=true format=time block=false \
              caps=\"video/x-raw(memory:DMABuf),format=NV12,width={width},height={height},\

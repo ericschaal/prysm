@@ -4,12 +4,10 @@ use crate::ffi::{
     VtRelease, prysm_vt_buffer, prysm_vt_client, prysm_vt_create, prysm_vt_init, prysm_vt_plane,
     prysm_vt_preprocess, prysm_vt_release,
 };
-use libloading::Library;
-use prysm_webos_luna_sys::{Loaded, load_once};
+use crate::{Operation, operation::status};
 use std::ffi::{CStr, c_char, c_void};
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
-use std::sync::Mutex;
 
 /// What to capture. LG negotiates exactly these values in `vtCapture_preprocess`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,21 +27,21 @@ pub struct Options {
 pub enum Acquired<'a> {
     /// The driver's current buffer, borrowed until it is copied.
     Frame(VideoFrame<'a>),
-    /// The producer has no buffer yet (status 2). Poll again.
+    /// The producer has no current buffer yet (status 2). Poll again.
     Pending,
-    /// LG finalized the session (status 1) or it is still initializing; the
-    /// next call re-initializes. Callers wait about a second between attempts.
+    /// The capture device is not available yet, or LG finalized the session
+    /// ([`NOT_READY`]); the next call re-initializes. Callers wait about a
+    /// second between attempts.
     NotReady,
+    /// The library refuses to capture the video the TV shows ([`REFUSED`]).
+    /// The driver stays created and the next call initializes again.
+    Refused,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("cannot load {library}")]
-    Load {
-        library: String,
-        #[source]
-        source: libloading::Error,
-    },
+    #[error(transparent)]
+    Load(#[from] prysm_webos_library_sys::LoadError),
     /// The process's role does not allow the capture client names.
     #[error("the capture registration is not allowed")]
     Permission(#[source] prysm_webos_luna_sys::Error),
@@ -59,8 +57,10 @@ pub enum Error {
     /// the process must restart before capture is retried.
     #[error("vtCapture_create failed: {0}")]
     Create(Box<Error>),
-    #[error("{operation} failed with status {code}")]
-    Status { operation: &'static str, code: i32 },
+    /// A native call answered `code`, with what that is suspected to mean
+    /// where something is known.
+    #[error("{operation}{} failed with status {code}", operation.hint(*code))]
+    Status { operation: Operation, code: i32 },
     #[error("vtcapture exception: {0}")]
     Exception(String),
     #[error("invalid native capture: {0}")]
@@ -77,28 +77,6 @@ pub enum Error {
     },
 }
 
-impl Error {
-    /// The tap is not reopened: driver creation failed, or the registration
-    /// check failed in any way. The source that met it ends; whether a new
-    /// source is tried is its host's decision (see [`Self::needs_new_process`]).
-    #[must_use]
-    pub fn is_fatal(&self) -> bool {
-        matches!(
-            self,
-            Self::Create(_) | Self::Permission(_) | Self::Registered(_) | Self::Luna(_)
-        )
-    }
-
-    /// No capture can succeed again in this process: driver creation failed
-    /// (it can leave live threads and stale globals), or a client name stays
-    /// registered (every later check fails). A new process has new names and
-    /// a fresh driver.
-    #[must_use]
-    pub fn needs_new_process(&self) -> bool {
-        matches!(self, Self::Create(_) | Self::Registered(_))
-    }
-}
-
 /// A library that does not load is [`Error::Load`], a denied name
 /// [`Error::Permission`], a name left registered [`Error::Registered`], and
 /// any other Luna failure [`Error::Luna`].
@@ -106,7 +84,7 @@ impl From<prysm_webos_luna_sys::Error> for Error {
     fn from(error: prysm_webos_luna_sys::Error) -> Self {
         use prysm_webos_luna_sys::Error as Luna;
         match error {
-            Luna::Load { library, source } => Self::Load { library, source },
+            Luna::Load(error) => Self::Load(error),
             denied @ Luna::Denied { .. } => Self::Permission(denied),
             unremoved @ Luna::Unremoved { .. } => Self::Registered(unremoved),
             other => Self::Luna(other),
@@ -118,65 +96,18 @@ impl From<prysm_webos_luna_sys::Error> for Error {
 /// into, terminated.
 const MESSAGE: usize = 512;
 
-macro_rules! api {
-    ($name:ident { $($field:ident: $ty:ty = $symbol:literal),* $(,)? }) => {
-        /// The VTCapture entry points. Lives for the whole process.
-        struct $name { $($field: $ty,)* }
-        impl $name {
-            fn load(
-                library: &'static Library,
-                names: &[&str],
-            ) -> Result<Self, prysm_webos_luna_sys::Error> {
-                let missing = |source| prysm_webos_luna_sys::Error::Load {
-                    library: names.join(" or "),
-                    source,
-                };
-                Ok(Self {
-                    $($field: {
-                        // SAFETY: signatures and layouts match tv-native-apis. The
-                        // library is never unloaded, so the pointers stay valid.
-                        let symbol = unsafe {
-                            library.get::<$ty>(concat!($symbol, "\0").as_bytes())
-                        };
-                        *symbol.map_err(missing)?
-                    },)*
-                })
-            }
-        }
-    };
-}
-
-api!(VtApi {
-    create: VtCreate = "vtCapture_create",
-    init: VtInit = "vtCapture_init",
-    preprocess: VtPreprocess = "vtCapture_preprocess",
-    plane: VtPlane = "vtCapture_planeInfo",
-    process: VtClient = "vtCapture_process",
-    buffer: VtBuffer = "vtCapture_currentCaptureBuffInfo",
-    stop: VtClient = "vtCapture_stop",
-    postprocess: VtClient = "vtCapture_postprocess",
-    finalize: VtClient = "vtCapture_finalize",
+native_api!(VtApi, ["libvtcapture.so.1", "libvtcapture.so"], {
+    create: VtCreate = Operation::VtCreate.as_str(),
+    init: VtInit = Operation::VtInit.as_str(),
+    preprocess: VtPreprocess = Operation::VtPreprocess.as_str(),
+    plane: VtPlane = Operation::VtPlaneInfo.as_str(),
+    process: VtClient = Operation::VtProcess.as_str(),
+    buffer: VtBuffer = Operation::VtCurrentCaptureBuffInfo.as_str(),
+    stop: VtClient = Operation::VtStop.as_str(),
+    postprocess: VtClient = Operation::VtPostprocess.as_str(),
+    finalize: VtClient = Operation::VtFinalize.as_str(),
     release: VtRelease = "vtCapture_release",
 });
-
-/// Load `libvtcapture` on first use and keep it for the life of the process
-/// (the vendor code can leave threads running and global pointers set, after
-/// a failed create or even after a release).
-fn vt() -> Result<&'static VtApi, Error> {
-    static VT: Mutex<Loaded<VtApi>> = Mutex::new(Loaded::Nothing);
-    let names = ["libvtcapture.so.1", "libvtcapture.so"];
-    Ok(load_once(&VT, &names, |library| {
-        VtApi::load(library, &names)
-    })?)
-}
-
-fn status(code: i32, operation: &'static str) -> Result<(), Error> {
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(Error::Status { operation, code })
-    }
-}
 
 fn vt_result(code: i32, error: &[u8]) -> Result<i32, Error> {
     if code == -1000 {
@@ -197,7 +128,7 @@ macro_rules! vt_call {
         // driver and borrowed out parameters remain live throughout the call,
         // and the bridge writes at most `MESSAGE` bytes of message.
         let code = unsafe {
-            $bridge($function, $owner.driver.as_ptr(), $($arg,)* error.as_mut_ptr().cast(), MESSAGE)
+            $bridge(Some($function), $owner.driver.as_ptr(), $($arg,)* error.as_mut_ptr().cast(), MESSAGE)
         };
         vt_result(code, &error)
     }};
@@ -274,7 +205,6 @@ fn copy_plane(
     if output.len() != row_bytes * rows {
         return Err(Error::Invalid("NV12 output size"));
     }
-    // A short plane is refused before anything is copied.
     if source.length < stride * (rows - 1) + row_bytes {
         return Err(Error::Invalid("short plane"));
     }
@@ -345,7 +275,22 @@ enum Next {
     },
     Pending,
     NotReady,
+    Refused,
 }
+
+/// How far [`VtCapture::prepare`] started the driver.
+enum Started {
+    Running,
+    NotReady,
+    Refused,
+}
+
+/// The status of `vtCapture_init` when the capture device is not available
+/// yet, and of `vtCapture_preprocess` when LG finalized the session.
+const NOT_READY: i32 = 1;
+
+/// Status Prysm treats as a video refusal from `vtCapture_init`.
+const REFUSED: i32 = 17;
 
 /// One native capture tap; see the crate documentation.
 pub struct VtCapture {
@@ -373,23 +318,24 @@ fn check_luna() -> Result<(), Error> {
 }
 
 impl VtCapture {
-    /// Load the library, check Luna permission, create the driver and try to
-    /// start capture once. A tap that is not ready yet still opens; see
-    /// [`Acquired::NotReady`].
+    /// Load the library, check Luna permission and create the driver. The
+    /// tap opens [`Self::created_only`]: its first [`Self::acquire`]
+    /// initializes and starts the driver.
     ///
     /// # Errors
-    /// Library, permission or native failures; [`Error::is_fatal`] says
-    /// whether the process must restart before retrying.
+    /// Invalid options, or library, permission or driver creation failures.
     pub fn open(options: &Options) -> Result<Self, Error> {
         let properties = Properties {
             dump: if options.include_ui { 3 } else { 2 },
-            width: i16::try_from(options.width).map_err(|_| Error::Invalid("width"))?,
-            height: i16::try_from(options.height).map_err(|_| Error::Invalid("height"))?,
-            buffers: 3,
-            fps: i32::from(options.fps),
+            reg: crate::ffi::Resolution {
+                w: i16::try_from(options.width).map_err(|_| Error::Invalid("width"))?,
+                h: i16::try_from(options.height).map_err(|_| Error::Invalid("height"))?,
+            },
+            buf_cnt: 3,
+            frm: i32::from(options.fps),
             ..Properties::default()
         };
-        let api = vt()?;
+        let api = VtApi::load()?;
         check_luna()?;
         let mut driver = ptr::null_mut();
         let mut error = [0_u8; MESSAGE];
@@ -397,29 +343,28 @@ impl VtCapture {
         // buffer of `MESSAGE` bytes; C++ catches throws.
         let code = unsafe {
             prysm_vt_create(
-                api.create,
+                Some(api.create),
                 &raw mut driver,
                 error.as_mut_ptr().cast(),
                 MESSAGE,
             )
         };
         vt_result(code, &error)
-            .and_then(|code| status(code, "vtCapture_create"))
+            .and_then(|code| status(code, Operation::VtCreate))
             .map_err(|error| Error::Create(Box::new(error)))?;
         let driver = NonNull::new(driver).ok_or(Error::Invalid("null driver"))?;
-        let mut this = Self {
+        let mut client = Box::new([0; 128]);
+        // `c_char` is `u8` on ARM (the TV) and `i8` on x86: convert portably.
+        client[..2].fill(c_char::from_ne_bytes(*b"0"));
+        Ok(Self {
             api,
             driver,
-            client: Box::new([0; 128]),
+            client,
             stage: Stage::Working(Reached::Created),
             plane: PlaneInfo::default(),
             properties: Box::new(properties),
             _thread: PhantomData,
-        };
-        // `c_char` is `u8` on ARM (the TV) and `i8` on x86: convert portably.
-        this.client[..2].fill(c_char::from_ne_bytes(*b"0"));
-        this.step(Self::prepare)?;
-        Ok(this)
+        })
     }
 
     /// Runs `step` on a working tap. An error fails the tap, so the next
@@ -435,8 +380,8 @@ impl VtCapture {
         result
     }
 
-    /// Initialize, preprocess and start the driver. `Ok(false)`: not ready.
-    fn prepare(&mut self) -> Result<bool, Error> {
+    /// Initialize, preprocess and start the driver.
+    fn prepare(&mut self) -> Result<Started, Error> {
         if self.stage == Stage::Working(Reached::Created) {
             let code = vt_call!(
                 self,
@@ -445,13 +390,15 @@ impl VtCapture {
                 c"prysm-capture-webos".as_ptr(),
                 self.client.as_mut_ptr()
             )?;
-            if code == 1 {
-                return Ok(false);
+            // Neither initialized the driver, so it stays created: a new
+            // driver would only add a release, which can hang (the vendor's
+            // lost wake-up in its destructor).
+            match code {
+                NOT_READY => return Ok(Started::NotReady),
+                REFUSED => return Ok(Started::Refused),
+                _ => {}
             }
-            status(
-                code,
-                "vtCapture_init (11 = Luna permission denied, 17 = not ready)",
-            )?;
+            status(code, Operation::VtInit)?;
             self.stage = Stage::Working(Reached::Initialized);
         }
         let code = vt_call!(
@@ -461,12 +408,12 @@ impl VtCapture {
             self.client.as_mut_ptr(),
             &raw mut *self.properties
         )?;
-        if code == 1 {
-            // LG finalizes the session on status 1; preprocessing alone cannot reopen it.
+        if code == NOT_READY {
+            // LG finalized the session; preprocessing alone cannot reopen it.
             self.stage = Stage::Working(Reached::Created);
-            return Ok(false);
+            return Ok(Started::NotReady);
         }
-        status(code, "vtCapture_preprocess")?;
+        status(code, Operation::VtPreprocess)?;
         self.stage = Stage::Working(Reached::Prepared);
         let mut plane = PlaneInfo::default();
         status(
@@ -477,9 +424,9 @@ impl VtCapture {
                 self.client.as_mut_ptr(),
                 &raw mut plane
             )?,
-            "vtCapture_planeInfo",
+            Operation::VtPlaneInfo,
         )?;
-        let [_, _, width, height] = plane.region;
+        let (width, height) = (plane.planeregion.c, plane.planeregion.d);
         if !(2..=1920).contains(&width)
             || !(2..=1080).contains(&height)
             || width % 2 != 0
@@ -500,9 +447,9 @@ impl VtCapture {
                 self.api.process,
                 self.client.as_mut_ptr()
             )?,
-            "vtCapture_process",
+            Operation::VtProcess,
         )?;
-        Ok(true)
+        Ok(Started::Running)
     }
 
     /// Borrow the driver's current frame. Its size is known only now: a
@@ -536,33 +483,49 @@ impl VtCapture {
             }
             Next::Pending => Acquired::Pending,
             Next::NotReady => Acquired::NotReady,
+            Next::Refused => Acquired::Refused,
         })
     }
 
-    /// Prepare the driver if a re-initialization is due, then ask for its
-    /// current buffer.
+    /// Prepare the driver if it is not started (just opened, or due for a
+    /// re-initialization), then ask for its current buffer.
     fn next(&mut self) -> Result<Next, Error> {
         let unprepared = matches!(
             self.stage,
             Stage::Working(Reached::Created | Reached::Initialized)
         );
-        if unprepared && !self.prepare()? {
-            return Ok(Next::NotReady);
+        if unprepared {
+            match self.prepare()? {
+                Started::Running => {}
+                Started::NotReady => return Ok(Next::NotReady),
+                Started::Refused => return Ok(Next::Refused),
+            }
         }
         let mut buffer = BufferInfo::default();
         let code = vt_call!(self, prysm_vt_buffer, self.api.buffer, &raw mut buffer)?;
         if code == 2 {
             return Ok(Next::Pending);
         }
-        status(code, "vtCapture_currentCaptureBuffInfo")?;
-        let [_, _, width, height] = self.plane.region;
+        status(code, Operation::VtCurrentCaptureBuffInfo)?;
+        let region = self.plane.planeregion;
+        let (width, height) = (region.c, region.d);
         Ok(Next::Frame {
-            y: checked_plane(buffer.y, buffer.y_len)?,
-            uv: checked_plane(buffer.uv, buffer.uv_len)?,
+            y: checked_plane(buffer.start_addr0.cast(), buffer.size0)?,
+            uv: checked_plane(buffer.start_addr1.cast(), buffer.size1)?,
             width: u32::from(width.cast_unsigned()),
             height: u32::from(height.cast_unsigned()),
             stride: usize::try_from(self.plane.stride).map_err(|_| Error::Invalid("stride"))?,
         })
+    }
+
+    /// The driver is created and not initialized: the tap is just opened, or
+    /// its last acquisition answered [`Acquired::NotReady`] or
+    /// [`Acquired::Refused`], so releasing it undoes only its creation, and
+    /// the next acquisition initializes it. `false` once a driver call
+    /// failed.
+    #[must_use]
+    pub fn created_only(&self) -> bool {
+        self.stage == Stage::Working(Reached::Created)
     }
 
     /// Stop, postprocess, finalize and release the driver.
@@ -581,16 +544,20 @@ impl VtCapture {
         };
         let mut first = None;
         for (needed, function, operation) in [
-            (reached >= Reached::Running, self.api.stop, "vtCapture_stop"),
+            (
+                reached >= Reached::Running,
+                self.api.stop,
+                Operation::VtStop,
+            ),
             (
                 reached >= Reached::Prepared,
                 self.api.postprocess,
-                "vtCapture_postprocess",
+                Operation::VtPostprocess,
             ),
             (
                 reached >= Reached::Initialized,
                 self.api.finalize,
-                "vtCapture_finalize",
+                Operation::VtFinalize,
             ),
         ] {
             if needed {
@@ -656,10 +623,10 @@ mod tests {
                 return driver.code;
             }
             *output = BufferInfo {
-                y: driver.y.as_mut_ptr(),
-                uv: driver.uv.as_mut_ptr(),
-                y_len: 8,
-                uv_len: 4,
+                start_addr0: driver.y.as_mut_ptr().cast(),
+                start_addr1: driver.uv.as_mut_ptr().cast(),
+                size0: 8,
+                size1: 4,
             };
         }
         0
@@ -719,8 +686,12 @@ mod tests {
         unsafe {
             *plane = PlaneInfo {
                 stride: (*driver.cast::<Driver>()).plane_stride,
-                region: [0, 0, 2, 2],
-                active: [0; 4],
+                planeregion: crate::ffi::Region {
+                    c: 2,
+                    d: 2,
+                    ..Default::default()
+                },
+                ..Default::default()
             };
         }
         0
@@ -760,8 +731,12 @@ mod tests {
                 stage: Stage::Working(reached),
                 plane: PlaneInfo {
                     stride: 4,
-                    region: [0, 0, 2, 2],
-                    active: [0; 4],
+                    planeregion: crate::ffi::Region {
+                        c: 2,
+                        d: 2,
+                        ..Default::default()
+                    },
+                    ..Default::default()
                 },
                 properties: Box::default(),
                 _thread: PhantomData,
@@ -793,16 +768,54 @@ mod tests {
         output
     }
 
+    /// A tap as `open` leaves it, created only: its first acquisition
+    /// initializes and starts the driver once, then asks for a buffer.
+    #[test]
+    fn the_first_acquisition_initializes_an_opened_tap() {
+        let fake = Fake::new(0);
+        let mut capture = fake.capture(Reached::Created);
+        assert!(capture.created_only());
+        assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
+        assert!(!capture.created_only());
+        assert_eq!(
+            fake.with(|driver| (driver.initializations, driver.buffers)),
+            (1, 1)
+        );
+        capture.release().unwrap();
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
+    }
+
     #[test]
     fn finalized_session_reinitializes_without_recreating_the_driver() {
-        let fake = Fake::new(1);
+        let fake = Fake::new(NOT_READY);
         let mut capture = fake.capture(Reached::Initialized);
         assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
+        assert!(capture.created_only(), "finalized: back to created");
         assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
         assert_eq!(fake.with(|driver| driver.initializations), 1);
         fake.with(|driver| driver.code = 0);
         assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
+        assert!(!capture.created_only());
         assert_eq!(fake.with(|driver| driver.initializations), 2);
+        capture.release().unwrap();
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
+    }
+
+    /// A refused video keeps the driver: nothing is released, and each call
+    /// initializes the same driver again.
+    #[test]
+    fn refused_video_keeps_the_driver_and_initializes_it_again() {
+        let fake = Fake::new(REFUSED);
+        let mut capture = fake.capture(Reached::Created);
+        assert!(matches!(capture.acquire().unwrap(), Acquired::Refused));
+        assert!(matches!(capture.acquire().unwrap(), Acquired::Refused));
+        assert!(capture.created_only());
+        assert_eq!(fake.with(|driver| driver.initializations), 2);
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), []);
+        fake.with(|driver| driver.code = 0);
+        assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
+        assert!(!capture.created_only());
+        assert_eq!(fake.with(|driver| driver.initializations), 3);
         capture.release().unwrap();
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }
@@ -868,7 +881,6 @@ mod tests {
 
     #[test]
     fn a_failed_call_leaves_only_release() {
-        // A failed acquisition: the next does not reach the driver.
         let fake = Fake::new(12);
         let mut capture = fake.capture(Reached::Running);
         assert!(matches!(
@@ -880,8 +892,6 @@ mod tests {
         capture.release().unwrap();
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
 
-        // A failed preparation: the next acquisition neither prepares nor
-        // asks for a buffer; release undoes what the driver reached.
         let fake = Fake::new(0);
         fake.with(|driver| driver.plane_stride = 1);
         let mut capture = fake.capture(Reached::Initialized);
@@ -931,18 +941,18 @@ mod tests {
     }
 
     #[test]
-    fn every_failed_registration_check_is_fatal() {
+    fn every_failed_registration_check_names_its_failure() {
         use prysm_webos_luna_sys::Error as Luna;
         let denied = Error::from(Luna::Denied {
             name: "com.webos.rm.client.prysm.1".into(),
             message: "Invalid permissions for com.webos.rm.client.prysm.1".into(),
         });
-        assert!(matches!(denied, Error::Permission(_)) && denied.is_fatal());
+        assert!(matches!(denied, Error::Permission(_)), "{denied}");
         let unremoved = Error::from(Luna::Unremoved {
             name: "com.webos.rm.client.prysm.1".into(),
             message: "failed".into(),
         });
-        assert!(matches!(unremoved, Error::Registered(_)) && unremoved.is_fatal());
+        assert!(matches!(unremoved, Error::Registered(_)), "{unremoved}");
         for other in [
             Luna::Luna {
                 operation: "LSRegister",
@@ -955,10 +965,7 @@ mod tests {
             Luna::Nul,
         ] {
             let error = Error::from(other);
-            assert!(
-                matches!(error, Error::Luna(_)) && error.is_fatal(),
-                "{error}"
-            );
+            assert!(matches!(error, Error::Luna(_)), "{error}");
         }
     }
 
@@ -978,8 +985,28 @@ mod tests {
         let capture = fake.capture(Reached::Running);
         let error = capture.release().unwrap_err();
         assert_eq!(error.to_string(), "vtCapture_stop failed with status 5");
-        assert!(!error.is_fatal());
         assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
+    }
+
+    /// The one hint: `vtCapture_init`'s status 11, and no other.
+    #[test]
+    fn only_init_status_eleven_carries_its_suspected_meaning() {
+        for (operation, code, shown) in [
+            (
+                Operation::VtInit,
+                11,
+                "vtCapture_init (11: on webOS 10.3.2 the library's code suggests the TV's resource manager did not grant the capture resource) failed with status 11",
+            ),
+            (Operation::VtInit, 5, "vtCapture_init failed with status 5"),
+            (
+                Operation::VtProcess,
+                11,
+                "vtCapture_process failed with status 11",
+            ),
+        ] {
+            let error = Error::Status { operation, code };
+            assert_eq!(error.to_string(), shown);
+        }
     }
 
     #[test]
@@ -1003,7 +1030,6 @@ mod tests {
         let Err(error) = VtCapture::open(&options) else {
             panic!("no LG library on the development host");
         };
-        assert!(matches!(error, Error::Load { .. }), "{error}");
-        assert!(!error.is_fatal());
+        assert!(matches!(error, Error::Load(_)), "{error}");
     }
 }

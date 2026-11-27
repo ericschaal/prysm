@@ -21,6 +21,18 @@ export const arrows = [
   'ArrowRight',
 ] as const;
 
+/** Select screen sync from the initial Off state of the WLED demo. */
+export async function startScreenSync(page: Page) {
+  await press(page, 'Enter');
+  await expect(page.locator('#light-power')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await pressUntil(page, 'ArrowRight', 'mode-screen_sync');
+  await press(page, 'Enter');
+  await expect(page.locator('#status-title')).toHaveText('Screen sync on');
+}
+
 /** The keys pressed on each page, named in failure messages. */
 const pressed = new WeakMap<Page, string[]>();
 const history = (page: Page) => {

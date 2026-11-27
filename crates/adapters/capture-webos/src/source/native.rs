@@ -1,111 +1,31 @@
 //! The native thread: owns the backend and its tap, follows the video signal,
-//! paces acquisition, retries recoverable interruptions and publishes through
-//! its [`Worker`].
-use super::{Acquired, Backend, Fault, Limits, Recovery, Tap};
-use crate::{Readiness, Video, VideoSignal, WebosSettings};
+//! paces acquisition, recovers from faults and publishes through its
+//! [`Worker`].
+//!
+//! Every decision is [`phase::next`]'s; this shell reads the clock and the
+//! signal, tells the machine what happened and performs what it asks.
+use super::phase::{self, Action, Event, Kind, Next, Note, Occurrence, RefusalEnd, Rules, State};
+use super::{Backend, Limits, Tap, UiTap};
+use crate::classify::{self, UiRecovery};
+use crate::{Readiness, VideoSignal, WebosSettings};
 use prysm_ports::{Error, Result, Worker, chain};
 use std::time::{Duration, Instant};
 
-/// Which tap the native thread holds. The two never run together.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Video,
-    Ui,
-}
-
-/// Whether the TV UI tap works in this source. A UI fault that cannot heal
-/// makes it unsupported until the next source. Any other one stops the
-/// tries until the video signal changes (video comes back, or the context
-/// changes): a UI tap can fail for good (on the bench TV, a worker that died
-/// with the UI tap open left the graphics driver's lock held, and every
-/// later UI open failed until a reboot, commit 4fa820eb), so it is tried
-/// again only after an event, never on a timer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UiSupport {
-    Untried,
-    Works,
-    /// It failed in a way that may pass: not opened again until the video
-    /// signal changes.
-    Failed,
-    /// It cannot work in this process: never opened again in this source.
-    Unsupported,
-}
-
-impl UiSupport {
-    /// After a TV UI fault.
-    fn after_fault(recovery: Recovery) -> Self {
-        match recovery {
-            Recovery::Never => Self::Unsupported,
-            Recovery::Reopen => Self::Failed,
-        }
-    }
-
-    /// After the video signal changed: a failed UI may be tried again.
-    fn after_change(self) -> Self {
-        match self {
-            Self::Failed => Self::Untried,
-            other => other,
-        }
-    }
-
-    fn may_open(self) -> bool {
-        matches!(self, Self::Untried | Self::Works)
-    }
-}
-
-/// When a video tap reopens after a recoverable fault. A TV UI tap reopens
-/// only after an event ([`UiSupport`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reopen {
-    /// At once: the fault is a stall, which already waited
-    /// [`Limits::pending`], so a reopen cannot spin.
-    AtOnce,
-    /// After [`Limits::retry`], so a tap that fails at once is not reopened
-    /// in a tight loop.
-    AfterRetry,
-}
-
-/// After a video fault: how long until the tap reopens, or `None` when the
-/// source fails.
-fn video_wait(recovery: Recovery, reopen: Reopen, limits: &Limits) -> Option<Duration> {
-    match (recovery, reopen) {
-        (Recovery::Never, _) => None,
-        (Recovery::Reopen, Reopen::AtOnce) => Some(Duration::ZERO),
-        (Recovery::Reopen, Reopen::AfterRetry) => Some(limits.retry),
-    }
-}
-
-/// The tap for `video`: video while it is available or unknown, the TV UI
-/// without video while `include_ui` and the UI may open, else none.
-fn wanted(video: Video, include_ui: bool, ui: UiSupport) -> Option<Kind> {
-    match video {
-        Video::Available | Video::Unknown => Some(Kind::Video),
-        Video::Unavailable if include_ui && ui.may_open() => Some(Kind::Ui),
-        Video::Unavailable => None,
-    }
+/// The held tap: one kind at a time.
+enum Held {
+    Video(Box<dyn Tap>),
+    Ui(Box<dyn UiTap>),
 }
 
 pub(super) struct Native<B> {
     /// Declared before `backend`: fields drop in order, so on a panic the
     /// tap's native cleanup still runs while the backend holds the device lock.
-    tap: Option<(Kind, Box<dyn Tap>)>,
+    tap: Option<Held>,
     backend: B,
     settings: WebosSettings,
     video: VideoSignal,
-    limits: Limits,
+    rules: Rules,
     worker: Worker,
-    /// The tap kind the video state asks for; `None`: idle.
-    kind: Option<Kind>,
-    ui: UiSupport,
-    /// Earliest time to open or acquire again.
-    retry_at: Instant,
-    not_ready_since: Option<Instant>,
-    pending_since: Option<Instant>,
-    /// A video fault was logged since the last video frame or the start of
-    /// this video period.
-    video_failing: bool,
-    /// A UI fault was logged since the last UI frame.
-    ui_failing: bool,
 }
 
 impl<B: Backend> Native<B> {
@@ -116,298 +36,237 @@ impl<B: Backend> Native<B> {
         limits: Limits,
         worker: Worker,
     ) -> Self {
+        let rules = Rules {
+            limits,
+            include_ui: settings.include_ui,
+            interval: Duration::from_secs(1) / settings.fps.max(1),
+        };
         Self {
             tap: None,
             backend,
             settings,
             video,
-            limits,
+            rules,
             worker,
-            kind: None,
-            ui: UiSupport::Untried,
-            retry_at: Instant::now(),
-            not_ready_since: None,
-            pending_since: None,
-            video_failing: false,
-            ui_failing: false,
         }
     }
 
-    /// Capture until stopped or failed, release the tap and drop the
-    /// backend; the release result is the thread's last act.
+    /// Capture until stopped or failed, then drop the backend; the last
+    /// release's result is the thread's last act.
     pub(super) fn run(mut self) -> Result<()> {
-        if let Err(error) = self.capture() {
-            // Publish the failure before potentially blocking teardown.
-            self.worker.fail(error);
-        }
-        let released = self.release_tap();
+        let released = self.capture();
         drop(self);
         released
     }
 
     /// Capture until stopped or failed. A change of the video signal wakes
-    /// the thread, so it waits for one without polling.
+    /// the thread, so it waits for one without polling. Changes are told by
+    /// the signal's sequence, read at the start of each run of the loop, so
+    /// one that comes during a step is seen at the next. Each answer is told
+    /// at once, with no stop in between, and the clock is read after the
+    /// native call it answers. Returns `Ok` once stopped or failed with
+    /// every tap released, or the first failed release's error.
     fn capture(&mut self) -> Result<()> {
         self.video.wake(self.worker.wakeup());
-        let period = Duration::from_secs(1) / self.settings.fps.max(1);
-        let mut seen = self.video.current();
-        let mut generation = seen.generation;
-        let mut next = Instant::now();
-        while !self.worker.stopped() {
-            let readiness = self.video.current();
-            if readiness != seen {
-                seen = readiness;
-                self.ui = self.ui.after_change();
-            }
-            let Readiness {
-                video,
-                generation: current,
-            } = readiness;
-            let kind = self.wanted(video);
-            // A change of tap kind or video context releases the current tap;
-            // the next step opens the kind that matches.
-            if kind != self.kind || current != generation {
-                generation = current;
-                self.kind = kind;
-                // A new period: its first video failure is news again.
-                self.video_failing = false;
-                self.release_tap()?;
-                self.retry_at = Instant::now();
-            }
-            let now = Instant::now();
-            let Some(kind) = kind.filter(|_| now >= self.retry_at) else {
-                // Idle: until the video signal changes; retrying: until the
-                // retry time, or a change first.
-                match kind {
-                    None => self.worker.idle(),
-                    Some(_) => self
-                        .worker
-                        .sleep(self.retry_at.saturating_duration_since(now)),
-                }
-                continue;
-            };
-            self.step(kind)?;
-            // Pace on a fixed clock; skip missed ticks instead of bursting.
-            next += period;
-            let now = Instant::now();
-            if now > next {
-                next = now;
-            }
-            self.worker.sleep(next - now);
-        }
-        Ok(())
-    }
+        let mut state = State::new(Instant::now());
 
-    /// The tap for this video state: video while it is available or
-    /// unknown, the TV UI without video (if enabled and supported), else none.
-    fn wanted(&self, video: Video) -> Option<Kind> {
-        wanted(video, self.settings.include_ui, self.ui)
-    }
-
-    /// Open if needed, then acquire once.
-    fn step(&mut self, kind: Kind) -> Result<()> {
-        let worker = self.worker.clone();
-        let tap = match &mut self.tap {
-            Some((_, tap)) => tap,
-            None => {
-                let opened = match kind {
-                    Kind::Video => worker.watch("open", || self.backend.open(&self.settings)),
-                    Kind::Ui => worker.watch("UI open", || self.backend.open_ui(&self.settings)),
-                };
-                match opened {
-                    Ok(tap) => &mut self.tap.insert((kind, tap)).1,
-                    Err(fault) => return self.recover(kind, fault),
-                }
-            }
-        };
-        let operation = match kind {
-            Kind::Video => "acquire",
-            Kind::Ui => "UI acquire",
-        };
-        let acquired = worker.watch(operation, || tap.acquire());
-        self.acquired(kind, acquired)
-    }
-
-    /// Act on one acquisition: publish a frame, time a pending or preparing
-    /// driver, or recover from a fault.
-    fn acquired(&mut self, kind: Kind, acquired: Result<Acquired, Fault>) -> Result<()> {
-        let now = Instant::now();
-        match acquired {
-            Ok(Acquired::Frame(frame)) => {
-                self.not_ready_since = None;
-                self.pending_since = None;
-                if kind == Kind::Video {
-                    self.video_failing = false;
-                }
-                // The first UI frame is reported once.
-                if kind == Kind::Ui && self.ui != UiSupport::Works {
-                    self.ui = UiSupport::Works;
-                    self.ui_failing = false;
-                    tracing::info!(
-                        width = frame.width(),
-                        height = frame.height(),
-                        "capturing the TV UI while there is no video"
-                    );
-                }
-                self.worker.offer(frame);
-            }
-            Ok(Acquired::Pending) => {
-                let since = *self.pending_since.get_or_insert(now);
-                if now.duration_since(since) >= self.limits.pending {
-                    let stalled = Fault::recoverable(Error::other(format!(
-                        "webOS video produced no frame for {:?}",
-                        self.limits.pending
-                    )));
-                    return self.recover_after(kind, stalled, Reopen::AtOnce);
-                }
-            }
-            Ok(Acquired::NotReady) => {
-                let since = *self.not_ready_since.get_or_insert(now);
-                if now.duration_since(since) >= self.limits.preparation {
-                    return Err(Error::other(format!(
-                        "webOS video was not ready within {:?}",
-                        self.limits.preparation
-                    )));
-                }
-                self.retry_at = now + self.limits.retry;
-            }
-            Err(fault) => return self.recover(kind, fault),
-        }
-        Ok(())
-    }
-
-    /// Fatal video faults end the source; others release the tap and retry
-    /// later. UI faults never end the source: lighting idles without video,
-    /// as with `include_ui` off, until the video signal changes (a fault
-    /// that may pass) or the next source (one that cannot). The first UI
-    /// fault since a UI frame is a warning, the rest debug.
-    fn recover(&mut self, kind: Kind, fault: Fault) -> Result<()> {
-        self.recover_after(kind, fault, Reopen::AfterRetry)
-    }
-
-    /// [`Self::recover`], with a video tap reopened as `reopen` says.
-    fn recover_after(&mut self, kind: Kind, fault: Fault, reopen: Reopen) -> Result<()> {
-        let wait = match kind {
-            Kind::Video => {
-                let Some(wait) = video_wait(fault.recovery, reopen, &self.limits) else {
-                    return Err(fault.error);
-                };
-                Self::retrying(&fault.error, !self.video_failing, wait);
-                self.video_failing = true;
-                wait
-            }
-            Kind::Ui => {
-                self.ui = UiSupport::after_fault(fault.recovery);
-                let error = chain(&fault.error);
-                let message = match self.ui {
-                    UiSupport::Unsupported => {
-                        "TV UI capture is unsupported; no frames while there is no video"
+        let mut event = self.event(&state);
+        loop {
+            let step = phase::next(state, event, Instant::now(), &self.rules);
+            state = step.state;
+            for action in step.actions {
+                match action {
+                    Action::Release => self.release_tap()?,
+                    Action::Deliver(frame) => self.worker.offer(frame),
+                    Action::TellRefused(refused) => self.worker.refused(refused),
+                    Action::Note(note) => log(note),
+                    Action::Initialized => self.video.mark_initialized(),
+                    Action::ReportStall(error) => {
+                        let sequence = state.sequence().expect("a stalled tap followed video");
+                        self.worker
+                            .fail(self.video.stalled(sequence, self.settings, error));
                     }
-                    _ => "TV UI capture failed; tried again once the video signal changes",
-                };
-                if std::mem::replace(&mut self.ui_failing, true) {
-                    tracing::debug!(%error, "{message}");
-                } else {
-                    tracing::warn!(%error, "{message}");
+                    // Published before the release, which can block.
+                    Action::Fail(error) => self.worker.fail(error),
                 }
-                self.limits.retry
             }
-        };
-        self.release_tap()?;
-        // From after the release, which can take until the watchdog.
-        self.retry_at = Instant::now() + wait;
-        Ok(())
-    }
-
-    /// Logs that video capture failed with `error` and is retried in `wait`:
-    /// the `first` failure of a run as a warning, the rest at debug, since
-    /// only the first is news.
-    fn retrying(error: &Error, first: bool, wait: Duration) {
-        let error = chain(error);
-        if first {
-            tracing::warn!(%error, retry_in = ?wait, "webOS video capture failed; retrying");
-        } else {
-            tracing::debug!(%error, retry_in = ?wait, "webOS video capture failed; retrying");
+            event = match step.next {
+                Next::Open(kind) => self.open(kind),
+                Next::Acquire => self.acquire(),
+                Next::Sleep(wait) => {
+                    self.worker.sleep(wait);
+                    self.event(&state)
+                }
+                Next::Idle => {
+                    self.worker.idle();
+                    self.event(&state)
+                }
+                Next::End => return Ok(()),
+            };
         }
     }
 
+    /// After waiting, stop takes precedence over a change of signal.
+    fn event(&self, state: &State) -> Event {
+        if self.worker.stopped() {
+            return Event::Stop;
+        }
+        let readiness = self.video.current();
+        if state.sequence() == Some(readiness.sequence) {
+            Event::Woke
+        } else {
+            Event::Signal(readiness)
+        }
+    }
+
+    fn open(&mut self, kind: Kind) -> Event {
+        let worker = &self.worker;
+        let opened = match kind {
+            Kind::Video => worker
+                .watch("open", || self.backend.open(&self.settings))
+                .map(Held::Video)
+                .map_err(Event::OpenFailed),
+            Kind::Ui => worker
+                .watch("UI open", || self.backend.open_ui(&self.settings))
+                .map(Held::Ui)
+                .map_err(Event::UiOpenFailed),
+        };
+        match opened {
+            Ok(held) => {
+                self.tap = Some(held);
+                Event::Opened
+            }
+            Err(failed) => failed,
+        }
+    }
+
+    /// One acquisition of the held tap.
+    fn acquire(&mut self) -> Event {
+        match self
+            .tap
+            .as_mut()
+            .expect("the machine acquires only a held tap")
+        {
+            Held::Video(tap) => Event::Acquired(self.worker.watch("acquire", || tap.acquire())),
+            Held::Ui(tap) => Event::UiAcquired(self.worker.watch("UI acquire", || tap.acquire())),
+        }
+    }
+
+    /// Release the held tap, if any. A failed release, whenever it comes,
+    /// is the thread's result, and the source's failure unless an earlier
+    /// one was published (the worker keeps the first): the device may
+    /// still be held, so its release is unconfirmed and escalates as
+    /// [`classify::UNCONFIRMED_RELEASE`] says.
     fn release_tap(&mut self) -> Result<()> {
-        self.not_ready_since = None;
-        self.pending_since = None;
-        let Some((kind, tap)) = self.tap.take() else {
+        let Some(held) = self.tap.take() else {
             return Ok(());
         };
-        let (operation, unconfirmed) = match kind {
-            Kind::Video => ("release", "webOS video release is unconfirmed"),
-            Kind::Ui => ("UI release", "webOS UI capture release is unconfirmed"),
+        let worker = &self.worker;
+        let (released, unconfirmed) = match held {
+            Held::Video(tap) => (
+                worker.watch("release", || tap.release()),
+                "webOS video release is unconfirmed",
+            ),
+            Held::Ui(tap) => (
+                worker.watch("UI release", || tap.release()),
+                "webOS UI capture release is unconfirmed",
+            ),
         };
-        self.worker
-            .watch(operation, || tap.release())
-            .map_err(|error| Error::adapter(unconfirmed, error))
+        released
+            .map_err(|error| {
+                Error::adapter_escalating(unconfirmed, error, classify::UNCONFIRMED_RELEASE)
+            })
+            .inspect_err(|error| self.worker.fail(error.clone()))
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const LIMITS: Limits = Limits::TV;
-
-    /// Every video fault's recovery meets every reopen: a fatal fault ends
-    /// the source, a stall reopens at once, any other after `retry`.
-    #[test]
-    fn every_video_fault_meets_every_reopen() {
-        for (recovery, reopen, wait) in [
-            (Recovery::Never, Reopen::AtOnce, None),
-            (Recovery::Never, Reopen::AfterRetry, None),
-            (Recovery::Reopen, Reopen::AtOnce, Some(Duration::ZERO)),
-            (Recovery::Reopen, Reopen::AfterRetry, Some(LIMITS.retry)),
-        ] {
-            assert_eq!(
-                video_wait(recovery, reopen, &LIMITS),
-                wait,
-                "{recovery:?} x {reopen:?}"
-            );
-        }
-    }
-
-    /// Every UI state meets every event: a fault that cannot heal is final,
-    /// one that may pass waits for a change of the video signal.
-    #[test]
-    fn every_ui_state_meets_every_event() {
-        use UiSupport::{Failed, Unsupported, Untried, Works};
-        for (state, never, reopen, change) in [
-            (Untried, Unsupported, Failed, Untried),
-            (Works, Unsupported, Failed, Works),
-            (Failed, Unsupported, Failed, Untried),
-            (Unsupported, Unsupported, Failed, Unsupported),
-        ] {
-            assert_eq!(UiSupport::after_fault(Recovery::Never), never, "{state:?}");
-            assert_eq!(
-                UiSupport::after_fault(Recovery::Reopen),
-                reopen,
-                "{state:?}"
-            );
-            assert_eq!(state.after_change(), change, "{state:?}");
-        }
-    }
-
-    /// A failed or unsupported UI is not opened; video always is.
-    #[test]
-    fn the_tap_follows_the_video_the_setting_and_the_ui_state() {
-        use UiSupport::{Failed, Unsupported, Untried, Works};
-        for ui in [Untried, Works, Failed, Unsupported] {
-            for include_ui in [false, true] {
-                for video in [Video::Available, Video::Unknown] {
-                    assert_eq!(wanted(video, include_ui, ui), Some(Kind::Video));
-                }
-                let ui_tap = (include_ui && matches!(ui, Untried | Works)).then_some(Kind::Ui);
-                assert_eq!(
-                    wanted(Video::Unavailable, include_ui, ui),
-                    ui_tap,
-                    "{ui:?}, include_ui {include_ui}"
-                );
+/// Writes `note` as its log line.
+fn log(note: Note) {
+    match note {
+        Note::SignalChanged(Readiness {
+            video,
+            generation,
+            sequence,
+        }) => tracing::debug!(?video, generation, sequence, "video signal changed"),
+        Note::VideoChanged(video) => tracing::info!(?video, "video changed"),
+        Note::ChangedWhileRefused { video, generation } => tracing::info!(
+            ?video,
+            generation,
+            "the video signal changed while the TV refuses; initializing the driver again"
+        ),
+        Note::InitializationAnswered {
+            answer,
+            since_change_ms,
+        } => tracing::debug!(
+            ?answer,
+            since_change_ms,
+            "webOS video initialization answered"
+        ),
+        Note::Refused {
+            initializations,
+            since_change_ms,
+            occurrence,
+        } => {
+            let message = "the TV doesn’t let Prysm capture this video; \
+                           initialized again at the next change of the video signal";
+            match occurrence {
+                Occurrence::First => tracing::info!(initializations, since_change_ms, "{message}"),
+                Occurrence::Again => tracing::debug!(initializations, since_change_ms, "{message}"),
             }
         }
+        Note::RefusalEnded { by, elapsed_ms } => match by {
+            RefusalEnd::Frame => {
+                tracing::info!(elapsed_ms, "the TV lets Prysm capture this video again");
+            }
+            RefusalEnd::KindChange => {
+                tracing::debug!(elapsed_ms, "the refusal ended with the video");
+            }
+        },
+        Note::UiCapturing { width, height } => {
+            tracing::info!(width, height, "capturing the TV UI while there is no video")
+        }
+        Note::UiFault {
+            recovery,
+            error,
+            occurrence,
+        } => ui_fault(
+            &error,
+            occurrence,
+            match recovery {
+                UiRecovery::MayPass => {
+                    "TV UI capture failed; tried again once the video or its context changes"
+                }
+                UiRecovery::Unsupported => {
+                    "TV UI capture is unsupported; no frames while there is no video"
+                }
+            },
+        ),
+        Note::VideoRetrying { error } => tracing::warn!(
+            error = %chain(&error),
+            "webOS video capture failed; opening a new driver once"
+        ),
+        Note::Withheld { error, occurrence } => {
+            let error = chain(&error);
+            let message = "the TV doesn’t let Prysm capture this video; \
+                           a new driver is opened at the next change of the video signal";
+            match occurrence {
+                Occurrence::First => tracing::info!(%error, "{message}"),
+                Occurrence::Again => tracing::debug!(%error, "{message}"),
+            }
+        }
+        Note::ChangedWhileWithheld { video, generation } => tracing::info!(
+            ?video,
+            generation,
+            "the video signal changed while the TV withholds the video; opening a new driver"
+        ),
+    }
+}
+
+/// A TV UI fault: the first since a UI frame is news, the rest debug.
+fn ui_fault(error: &Error, occurrence: Occurrence, message: &str) {
+    let error = chain(error);
+    match occurrence {
+        Occurrence::First => tracing::warn!(%error, "{message}"),
+        Occurrence::Again => tracing::debug!(%error, "{message}"),
     }
 }

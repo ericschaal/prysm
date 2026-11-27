@@ -98,9 +98,8 @@ impl CorrectionControls {
     /// [`Processing::validate`]: crate::Processing::validate
     #[must_use]
     pub fn to_core(&self) -> Option<ColorCorrection> {
-        ColorCorrection::new(self.warmth, self.tint, self.midtones)
-            .and_then(|c| c.with_primaries([self.red, self.green, self.blue].map(Into::into)))
-            .ok()
+        let primaries = [self.red, self.green, self.blue].map(Into::into);
+        ColorCorrection::new(self.warmth, self.tint, self.midtones, primaries).ok()
     }
 }
 
@@ -210,10 +209,13 @@ mod tests {
             blue,
             ..CorrectionControls::default()
         };
-        let expected = ColorCorrection::new(12, -4, 6)
-            .unwrap()
-            .with_primaries([red.into(), PrimaryAdjustment::default(), blue.into()])
-            .unwrap();
+        let expected = ColorCorrection::new(
+            12,
+            -4,
+            6,
+            [red.into(), PrimaryAdjustment::default(), blue.into()],
+        )
+        .unwrap();
         assert_eq!(controls.to_core().unwrap(), expected);
     }
 

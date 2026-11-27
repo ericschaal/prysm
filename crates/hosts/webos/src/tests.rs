@@ -1,12 +1,16 @@
 use crate::link::EngineLink;
 use prysm_capture_webos::{Readiness, VideoSignal};
-use prysm_ports::{AdapterSettings, Error, LightingTarget, Result, SessionPhase, Settings};
+use prysm_ports::{
+    AdapterSettings, Error, LightingMode, LightingTarget, Result, SessionPhase, Settings,
+    SettingsStore,
+};
 use prysm_runtime::Prysm;
 use prysm_runtime::fakes::{
-    self, CallLog, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
+    self, CallLog, FakeDisplay, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources,
+    MemoryStore,
 };
 use prysm_webos_link::worker::{Link, Peer, Stop};
-use prysm_webos_link::{Command, Event, FullStatus, Video, WorkerStatus};
+use prysm_webos_link::{Command, Escalation, Event, FullStatus, Video, WorkerStatus};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,8 +25,6 @@ fn source(settings: &FakeSourceSettings) -> Settings {
 type Running = tokio::task::JoinHandle<(Result<()>, Option<Stop>)>;
 
 const PORTAL: &str = "http://10.0.0.2:8787/";
-/// The first delay before a failed session is retried; each next one doubles.
-const FIRST_RETRY: Duration = Duration::from_millis(20);
 
 /// Run a fake engine with the link surface until the link stops.
 fn start(settings: Settings, initial: LightingTarget) -> (Peer, VideoSignal, CallLog, Running) {
@@ -39,22 +41,24 @@ fn start_with_portal(
     initial: LightingTarget,
     portal: &Arc<Mutex<Option<String>>>,
 ) -> (Peer, VideoSignal, CallLog, Running) {
-    start_timed(
-        settings,
-        initial,
-        portal,
-        Duration::from_millis(50),
-        FIRST_RETRY,
-    )
+    start_timed(settings, initial, portal, Duration::from_millis(50))
 }
 
-/// The same, with this heartbeat and first retry delay.
+/// The same, with this heartbeat.
 fn start_timed(
     settings: Settings,
     initial: LightingTarget,
     portal: &Arc<Mutex<Option<String>>>,
     heartbeat: Duration,
-    first_retry: Duration,
+) -> (Peer, VideoSignal, CallLog, Running) {
+    run_link(MemoryStore::with(settings), initial, portal, heartbeat)
+}
+
+fn run_link(
+    store: MemoryStore,
+    initial: LightingTarget,
+    portal: &Arc<Mutex<Option<String>>>,
+    heartbeat: Duration,
 ) -> (Peer, VideoSignal, CallLog, Running) {
     let (link, peer) = Link::memory();
     let feed = VideoSignal::default();
@@ -64,13 +68,18 @@ fn start_timed(
     let surface = EngineLink::new(
         link,
         feed.clone(),
-        initial,
         Box::new(move || portal.lock().unwrap().clone()),
     )
-    .with_timing(heartbeat, first_retry);
+    .with_heartbeat(heartbeat);
+    if initial != LightingTarget::Off {
+        peer.send(Command::Target {
+            target: initial,
+            sequence: 0,
+        });
+    }
     let (sources, outputs) = (FakeSources(log.clone()), FakeOutputs(log.clone()));
     let task = tokio::spawn(async move {
-        let result = Prysm::builder(MemoryStore::with(settings))
+        let result = Prysm::builder(store)
             .source(sources)
             .output(outputs)
             .surface(surface)
@@ -87,7 +96,7 @@ fn status(event: &Event) -> Option<&FullStatus> {
     match event {
         Event::Status(WorkerStatus::Full(status)) => Some(status),
         Event::Status(WorkerStatus::Slim(status)) => panic!("a slim status: {status:?}"),
-        Event::Failed { .. } | Event::Faulted { .. } => None,
+        Event::Failed(_) | Event::Initialized {} => None,
     }
 }
 
@@ -101,6 +110,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
             capturing: false,
             fps: None,
             target: LightingTarget::Off,
+            lights: None,
             applied: 0,
             portal: Some(PORTAL.into()),
             failure: None,
@@ -130,7 +140,8 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         feed.current(),
         Readiness {
             video: Video::Available,
-            generation: 1
+            generation: 1,
+            sequence: 2
         },
         "set, then one reset"
     );
@@ -162,7 +173,6 @@ async fn initial_target_applies_and_status_repeats_as_heartbeat() {
         .await;
     let running = status(&running).unwrap().clone();
     assert!(running.fps.is_some_and(|fps| fps > 0), "{running:?}");
-    // Unchanged status keeps arriving (the rate may have been measured anew).
     let same = |status: &FullStatus| FullStatus {
         fps: None,
         ..status.clone()
@@ -176,68 +186,11 @@ async fn initial_target_applies_and_status_repeats_as_heartbeat() {
     task.await.unwrap().0.unwrap();
 }
 
-/// A failed session is retried and reported; when a retry is due, and that
-/// turning lighting off cancels it, is `link::tests`.
+/// A blocked capture stays off across heartbeats. A fresh On request can
+/// recheck readiness and make a new initialization attempt.
 #[tokio::test]
-async fn a_failed_session_is_retried_and_reported() {
-    let settings = source(&FakeSourceSettings {
-        fail_after: Some(3),
-        ..FakeSourceSettings::default()
-    });
-    let (mut peer, _feed, log, task) = start(settings, LightingTarget::ScreenSync);
-    assert!(log.wait_for("source.open:", 3).await, "{:?}", log.events());
-    let failed = peer
-        .wait_for("a status with a failure", |e| {
-            status(e).is_some_and(|s| s.failure.is_some())
-        })
-        .await;
-    assert!(
-        status(&failed)
-            .unwrap()
-            .failure
-            .as_ref()
-            .unwrap()
-            .message
-            .contains("fake source failed")
-    );
-
-    peer.send(Command::Target {
-        target: LightingTarget::Off,
-        sequence: 1,
-    });
-    peer.wait_for("a status with lighting off", |e| {
-        status(e).is_some_and(|s| s.target == LightingTarget::Off)
-    })
-    .await;
-    peer.close();
-    task.await.unwrap().0.unwrap();
-}
-
-/// Advance tokio's clock by `by` while no adapter call is in flight (the
-/// fakes run on real threads, so time stays paused only for the jump), and
-/// return once the link has sent the heartbeat that follows: a status with
-/// the portal URL `marker`, which only a heartbeat after the jump reads.
-/// Anything the jump made due ran before it (the link handles a due retry
-/// before the heartbeat).
-async fn advance(peer: &mut Peer, portal: &Arc<Mutex<Option<String>>>, by: Duration, marker: &str) {
-    *portal.lock().unwrap() = Some(marker.to_owned());
-    tokio::time::pause();
-    tokio::time::advance(by).await;
-    tokio::time::resume();
-    peer.wait_for("the heartbeat after the jump", |e| {
-        status(e).is_some_and(|s| s.portal.as_deref() == Some(marker))
-    })
-    .await;
-}
-
-/// The link's own loop retries a failed session once its first delay has
-/// passed, then waits twice as long, and retries nothing once lighting is
-/// off. The first delay and the heartbeat are 10 s, so nothing is due until
-/// the test moves the clock, and the doubled delay (20 s) stays under
-/// `Backoff::MAX` (30 s), which caps every delay.
-#[tokio::test]
-async fn the_link_retries_after_the_delay_and_not_after_off() {
-    const FIRST: Duration = Duration::from_secs(10);
+async fn a_failed_session_waits_for_a_fresh_request() {
+    const BEAT: Duration = Duration::from_millis(20);
     let settings = source(&FakeSourceSettings {
         fail_open: true,
         ..FakeSourceSettings::default()
@@ -245,35 +198,46 @@ async fn the_link_retries_after_the_delay_and_not_after_off() {
     let portal = Arc::new(Mutex::new(Some(PORTAL.to_owned())));
     let opens = |log: &CallLog| log.count("source.open_failed:");
     let (mut peer, _feed, log, task) =
-        start_timed(settings, LightingTarget::ScreenSync, &portal, FIRST, FIRST);
-    peer.wait_for("a status with a failure", |e| {
-        status(e).is_some_and(|s| s.failure.is_some())
-    })
-    .await;
+        start_timed(settings, LightingTarget::ScreenSync, &portal, BEAT);
+    let failed = peer
+        .wait_for("a status with a failure", |e| {
+            status(e).is_some_and(|s| s.target == LightingTarget::Off && s.failure.is_some())
+        })
+        .await;
+    let failure = status(&failed).unwrap().failure.clone().unwrap();
+    assert!(failure.message.contains("fake source"), "{failure:?}");
+    assert_eq!(failure.escalation, Escalation::FAIL_FAST);
     assert_eq!(opens(&log), 1);
 
-    // The first delay passes: one retry, which fails too.
-    advance(&mut peer, &portal, FIRST, "http://10.0.0.3:8787/").await;
-    assert_eq!(opens(&log), 2, "retried once after the first delay");
-    // Another 10 s is short of the doubled delay.
-    advance(&mut peer, &portal, FIRST, "http://10.0.0.4:8787/").await;
-    assert_eq!(opens(&log), 2, "retried before the doubled delay");
+    for last in [3, 4, 5] {
+        let marker = format!("http://10.0.0.{last}:8787/");
+        *portal.lock().unwrap() = Some(marker.clone());
+        peer.wait_for("a later heartbeat with the same failure", |event| {
+            status(event).is_some_and(|state| {
+                state.portal.as_deref() == Some(&marker) && state.failure.is_some()
+            })
+        })
+        .await;
+    }
+    assert_eq!(opens(&log), 1, "tried again by itself");
 
     peer.send(Command::Target {
-        target: LightingTarget::Off,
+        target: LightingTarget::ScreenSync,
         sequence: 1,
     });
-    peer.wait_for("a status with lighting off", |e| {
-        status(e).is_some_and(|s| s.target == LightingTarget::Off)
+    assert!(log.wait_for("source.open_failed:", 2).await);
+    peer.wait_for("a failure after the fresh request", |e| {
+        status(e).is_some_and(|s| {
+            s.target == LightingTarget::Off && s.applied == 1 && s.failure.is_some()
+        })
     })
     .await;
-    advance(&mut peer, &portal, FIRST * 4, "http://10.0.0.5:8787/").await;
-    assert_eq!(opens(&log), 2, "retried after lighting was turned off");
+    assert_eq!(opens(&log), 2, "one attempt per explicit request");
     peer.close();
     task.await.unwrap().0.unwrap();
 }
 
-/// Missing settings fail at once; that they are not retried is `link::tests`.
+/// Missing settings fail at once, asking for other settings.
 #[tokio::test]
 async fn missing_settings_are_reported_without_opening_the_source() {
     let settings = Settings {
@@ -300,73 +264,63 @@ async fn missing_settings_are_reported_without_opening_the_source() {
     task.await.unwrap().0.unwrap();
 }
 
+/// The status reports a fault; whoever started the worker stops it (here
+/// the link's close), and the stop ends in the fault.
+async fn the_fault_is_reported_until_the_stop(mut peer: Peer, task: Running) {
+    let faulted = peer
+        .wait_for("a status with a fault", |e| {
+            status(e)
+                .and_then(|s| s.failure.as_ref())
+                .is_some_and(|failure| failure.escalation == Escalation::Restart)
+        })
+        .await;
+    let status = status(&faulted).unwrap();
+    assert!(!status.capturing, "{status:?}");
+    let fault = status.failure.clone().unwrap();
+    assert!(
+        fault.message.contains("confirming the source's release"),
+        "{fault:?}"
+    );
+    peer.close();
+    let (result, stop) = task.await.unwrap();
+    assert!(matches!(
+        result,
+        Err(Error::Faulted(SessionPhase::SourceUnreleased))
+    ));
+    assert_eq!(stop, Some(Stop::Requested("stdin closed")));
+    assert_eq!(
+        prysm_webos_link::worker::exit_code(stop.as_ref(), &result),
+        1
+    );
+}
+
 #[tokio::test]
-async fn an_unconfirmed_release_faults_the_worker() {
+async fn an_unconfirmed_release_is_reported_as_a_fault() {
     let settings = source(&FakeSourceSettings {
         fail_after: Some(2),
         fail_close: true,
         ..FakeSourceSettings::default()
     });
-    let (mut peer, _feed, _log, task) = start(settings, LightingTarget::ScreenSync);
-    // The status just before the fault says lighting no longer runs; the
-    // fault itself, not a failure, says why.
-    let mut previous = None;
-    let fault = loop {
-        let event = peer.event().await.unwrap();
-        if matches!(event, Event::Faulted { .. }) {
-            break event;
-        }
-        previous = Some(event);
-    };
-    let last = previous.as_ref().and_then(status).unwrap();
-    assert!(!last.capturing && last.failure.is_none(), "{last:?}");
-    let Event::Faulted { cause } = fault else {
-        unreachable!()
-    };
-    assert!(cause.contains("confirming the source's release"), "{cause}");
-    let (result, stop) = task.await.unwrap();
-    assert!(matches!(
-        result,
-        Err(Error::Faulted(SessionPhase::SourceUnreleased))
-    ));
-    assert!(matches!(stop, Some(Stop::Faulted(_))));
-    assert_eq!(
-        prysm_webos_link::worker::exit_code(stop.as_ref(), &result),
-        prysm_webos_link::exit::FAULTED
-    );
+    let (peer, _feed, _log, task) = start(settings, LightingTarget::ScreenSync);
+    the_fault_is_reported_until_the_stop(peer, task).await;
 }
 
 /// Lighting turned off by the app over a source that cannot confirm its
-/// release faults the worker the same way: the commanded path, not only a
+/// release is reported the same way: the commanded path, not only a
 /// session's own end.
 #[tokio::test]
-async fn an_unconfirmed_release_on_a_commanded_stop_faults_the_worker() {
+async fn an_unconfirmed_release_on_a_commanded_stop_is_reported_as_a_fault() {
     let settings = source(&FakeSourceSettings {
         fail_close: true,
         ..FakeSourceSettings::default()
     });
-    let (mut peer, _feed, log, task) = start(settings, LightingTarget::ScreenSync);
+    let (peer, _feed, log, task) = start(settings, LightingTarget::ScreenSync);
     assert!(log.wait_for("output.write:", 1).await);
     peer.send(Command::Target {
         target: LightingTarget::Off,
         sequence: 1,
     });
-    let fault = loop {
-        let event = peer.event().await.unwrap();
-        if matches!(event, Event::Faulted { .. }) {
-            break event;
-        }
-    };
-    let Event::Faulted { cause } = fault else {
-        unreachable!()
-    };
-    assert!(cause.contains("confirming the source's release"), "{cause}");
-    let (result, stop) = task.await.unwrap();
-    assert!(matches!(
-        result,
-        Err(Error::Faulted(SessionPhase::SourceUnreleased))
-    ));
-    assert!(matches!(stop, Some(Stop::Faulted(_))));
+    the_fault_is_reported_until_the_stop(peer, task).await;
 }
 
 /// A new LAN address (a DHCP renewal) is advertised at the next heartbeat.
@@ -382,7 +336,6 @@ async fn the_portal_url_follows_the_tvs_address() {
         status(e).is_some_and(|s| s.portal.as_deref() == Some("http://10.0.0.9:8787/"))
     })
     .await;
-    // No LAN address at all: none is advertised.
     *portal.lock().unwrap() = None;
     peer.wait_for("a status without a portal URL", |e| {
         status(e).is_some_and(|s| s.portal.is_none())
@@ -398,8 +351,6 @@ fn the_portal_url_is_a_concrete_lan_address() {
         prysm_web_portal::lan_url("192.168.1.5:8787".parse().unwrap()).as_deref(),
         Some("http://192.168.1.5:8787/")
     );
-    // A wildcard resolves to the default route's interface address: never
-    // 0.0.0.0, and never loopback, which a phone could not open.
     if let Some(url) = prysm_web_portal::lan_url("0.0.0.0:8787".parse().unwrap()) {
         assert!(!url.contains("0.0.0.0") && !url.contains("127."), "{url}");
     }
@@ -427,7 +378,6 @@ async fn a_session_waiting_for_video_is_not_capturing() {
     peer.send(Command::Video {
         video: Video::Unavailable,
     });
-    // Lighting is on but no frame arrives: not capturing, output untouched.
     let waiting = peer
         .wait_for("a status waiting for video", |e| {
             status(e).is_some_and(|s| {
@@ -436,9 +386,8 @@ async fn a_session_waiting_for_video_is_not_capturing() {
         })
         .await;
     assert!(status(&waiting).unwrap().failure.is_none());
-    // `fps` is first reported after a whole sampling window (about a
-    // second) without a frame: the window this proves nothing opened in.
-    assert_eq!(log.count("output.open:"), 0, "{:?}", log.events());
+    assert_eq!(log.count("output.open:"), 1, "{:?}", log.events());
+    assert_eq!(&log.events()[..2], ["source.open:", "output.open:"]);
 
     peer.send(Command::Target {
         target: LightingTarget::Off,
@@ -465,4 +414,110 @@ fn contract_adapter_fixtures_decode_with_the_registered_adapters() {
         .check()
         .unwrap_or_else(|error| panic!("{fixture}: {error}"));
     }
+}
+
+#[tokio::test]
+async fn boot_respects_an_override_before_any_explicit_selection() {
+    let mut store = MemoryStore::with(Settings {
+        output: Some(AdapterSettings::new(
+            "fake",
+            &FakeOutputSettings {
+                startup: Some(FakeDisplay::Override),
+                ..FakeOutputSettings::default()
+            },
+        )),
+        ..fakes::settings()
+    });
+    store.save_mode(LightingMode::ScreenSync).unwrap();
+    let portal = Arc::new(Mutex::new(Some(PORTAL.into())));
+    let (mut peer, _, log, task) = run_link(
+        store,
+        LightingTarget::Off,
+        &portal,
+        Duration::from_millis(40),
+    );
+    peer.send(Command::Video {
+        video: Video::Available,
+    });
+    peer.wait_for("the override as Effects", |event| {
+        status(event)
+            .is_some_and(|status| status.target == LightingTarget::Effects && status.applied == 0)
+    })
+    .await;
+    assert_eq!(log.count("source.open:"), 0);
+
+    peer.send(Command::Target {
+        target: LightingTarget::ScreenSync,
+        sequence: 1,
+    });
+    peer.wait_for("applied explicit Screen sync", |event| {
+        status(event).is_some_and(|status| {
+            status.target == LightingTarget::ScreenSync && status.applied == 1
+        })
+    })
+    .await;
+    assert!(log.wait_for("output.intent::Explicit", 1).await);
+    peer.close();
+    task.await.unwrap().0.unwrap();
+}
+
+#[tokio::test]
+async fn resume_requests_the_engines_persisted_mode() {
+    let mut store = MemoryStore::with(fakes::settings());
+    store.save_mode(LightingMode::ScreenSync).unwrap();
+    let portal = Arc::new(Mutex::new(Some(PORTAL.into())));
+    let (mut peer, _, log, task) = run_link(
+        store,
+        LightingTarget::Off,
+        &portal,
+        Duration::from_millis(40),
+    );
+    peer.send(Command::Resume { sequence: 1 });
+    peer.send(Command::Video {
+        video: Video::Available,
+    });
+    peer.wait_for("remembered Screen sync", |event| {
+        status(event).is_some_and(|status| {
+            status.target == LightingTarget::ScreenSync && status.applied == 1
+        })
+    })
+    .await;
+    assert!(log.wait_for("source.open:", 1).await);
+    peer.close();
+    task.await.unwrap().0.unwrap();
+}
+
+#[tokio::test]
+async fn a_crash_replacement_over_observed_ddp_resumes_without_takeover() {
+    let store = MemoryStore::with(Settings {
+        output: Some(AdapterSettings::new(
+            "fake",
+            &FakeOutputSettings {
+                startup: Some(FakeDisplay::Live),
+                ..FakeOutputSettings::default()
+            },
+        )),
+        ..fakes::settings()
+    });
+    let portal = Arc::new(Mutex::new(Some(PORTAL.into())));
+    let (mut peer, _, log, task) = run_link(
+        store,
+        LightingTarget::Off,
+        &portal,
+        Duration::from_millis(40),
+    );
+    peer.send(Command::RecoverScreenSync { sequence: 1 });
+    peer.send(Command::Video {
+        video: Video::Available,
+    });
+    peer.wait_for("recovered Screen sync", |event| {
+        status(event).is_some_and(|status| {
+            status.target == LightingTarget::ScreenSync && status.applied == 1
+        })
+    })
+    .await;
+    assert!(log.wait_for("output.intent::Resume", 1).await);
+    assert_eq!(log.count("output.intent::Explicit"), 0);
+    peer.close();
+    task.await.unwrap().0.unwrap();
 }

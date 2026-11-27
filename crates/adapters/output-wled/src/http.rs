@@ -57,9 +57,9 @@ impl Deadline {
         Ok(left)
     }
 }
-/// The most a response may hold, head included: `/json/info` is about
-/// 1.5 KiB, more with usermods.
-const MAX_RESPONSE: usize = 20 * 1024;
+
+/// WLED's response limit, including headers, framing and body bytes.
+const MAX_RESPONSE: usize = 64 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RequestError {
@@ -69,10 +69,10 @@ pub enum RequestError {
     #[error("request failed")]
     Io(#[from] io::Error),
     #[error("malformed HTTP response: {0}")]
-    Malformed(&'static str),
-    /// The response held more than this many bytes.
-    #[error("response exceeds {} KiB", .0 / 1024)]
-    TooLarge(usize),
+    Malformed(Malformed),
+    /// The response exceeded the byte limit.
+    #[error("response exceeds {} KiB", MAX_RESPONSE / 1024)]
+    TooLarge,
     #[error("device answered HTTP {0}")]
     Status(u16),
     #[error("response is not JSON")]
@@ -89,25 +89,57 @@ pub enum RequestError {
     Stopped(#[from] Stopping),
 }
 
-/// A complete HTTP response.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Response {
-    pub status: u16,
-    pub body: Vec<u8>,
+/// What is wrong with a response that is not HTTP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum Malformed {
+    /// The connection closed before the response was complete.
+    #[error("connection closed mid-response")]
+    Closed,
+    #[error("header is not UTF-8")]
+    HeaderNotUtf8,
+    #[error("invalid status line")]
+    StatusLine,
+    #[error("invalid Content-Length")]
+    ContentLength,
+    #[error("invalid chunk size")]
+    ChunkSize,
 }
 
-impl Response {
-    /// The body of a 2xx response.
-    ///
-    /// # Errors
-    /// [`RequestError::Status`] for any other status.
-    pub fn success(self) -> Result<Vec<u8>, RequestError> {
-        if (200..300).contains(&self.status) {
-            Ok(self.body)
-        } else {
-            Err(RequestError::Status(self.status))
-        }
-    }
+/// The updates Prysm sends to WLED's `/json/state` endpoint.
+#[derive(serde::Serialize)]
+pub(crate) struct StateRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live: Option<bool>,
+    #[serde(rename = "lor", skip_serializing_if = "Option::is_none")]
+    live_override: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    on: Option<bool>,
+    #[serde(rename = "tt", skip_serializing_if = "Option::is_none")]
+    transition_time: Option<u8>,
+}
+
+impl StateRequest {
+    pub(crate) const POWER_ON: Self = Self {
+        live: None,
+        live_override: None,
+        on: Some(true),
+        transition_time: Some(0),
+    };
+    pub(crate) const TAKE_OVER: Self = Self {
+        live_override: Some(0),
+        ..Self::POWER_ON
+    };
+    pub(crate) const END_LIVE: Self = Self {
+        live: Some(false),
+        live_override: None,
+        on: None,
+        transition_time: None,
+    };
+    pub(crate) const POWER_OFF: Self = Self {
+        on: Some(false),
+        transition_time: Some(0),
+        ..Self::END_LIVE
+    };
 }
 
 /// Send `state` to `device` by `deadline`, or until `stop` is cut, naming
@@ -116,17 +148,17 @@ impl Response {
 pub fn post_state(
     device: SocketAddr,
     host: &str,
-    state: &Value,
+    state: StateRequest,
     deadline: Deadline,
     stop: &Hangup,
 ) -> Result<(), RequestError> {
-    let body = state.to_string();
+    let body = serde_json::to_string(&state)?;
     let request = format!(
         "POST /json/state HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    let body = exchange(device, &request, deadline, stop)?.success()?;
+    let body = exchange(device, &request, deadline, stop)?;
     let reply: Value = serde_json::from_slice(&body)?;
     if let Some(error) = reply.get("error") {
         return Err(RequestError::Rejected(error.to_string()));
@@ -141,14 +173,25 @@ pub fn post_state(
 /// `GET path` from `device` and its JSON reply, waiting at most `timeout`
 /// for the whole exchange.
 pub fn get_json(device: SocketAddr, path: &str, timeout: Duration) -> Result<Value, RequestError> {
-    let body = exchange(
+    let body = get_body(
         device,
-        &get(path, &device.to_string()),
+        &device.to_string(),
+        path,
         Deadline::after(timeout),
         &Hangup::default(),
-    )?
-    .success()?;
+    )?;
     Ok(serde_json::from_slice(&body)?)
+}
+
+/// Read an addressed JSON endpoint within the caller's deadline and cut.
+pub(crate) fn get_body(
+    device: SocketAddr,
+    host: &str,
+    path: &str,
+    deadline: Deadline,
+    stop: &Hangup,
+) -> Result<Vec<u8>, RequestError> {
+    exchange(device, &get(path, host), deadline, stop)
 }
 
 /// The request text of `GET path` from `host`, asking for JSON.
@@ -169,7 +212,7 @@ fn exchange(
     request: &str,
     deadline: Deadline,
     stop: &Hangup,
-) -> Result<Response, RequestError> {
+) -> Result<Vec<u8>, RequestError> {
     deadline.left()?;
     let (stream, _cut) = stop
         .connect(device, deadline.at)
@@ -178,7 +221,7 @@ fn exchange(
     let response = stream
         .write_all(request.as_bytes())
         .map_err(RequestError::from)
-        .and_then(|()| read_response(&mut stream, &mut Vec::new(), MAX_RESPONSE));
+        .and_then(|()| read_response(&mut stream, &mut Vec::new()));
     // A read the cut ended returns no more data, which can pass for the
     // end of a response.
     if stop.is_cut() {
@@ -236,13 +279,12 @@ fn expired(error: &io::Error) -> bool {
 }
 
 /// Reads what `stream` has into `data`, which holds what earlier calls read:
-/// the response once complete, `None` when a read would block first (more
-/// may come). More than `limit` bytes fail.
+/// the body once complete, `None` when a read would block first (more
+/// may come). A complete non-2xx response or more than [`MAX_RESPONSE`] bytes fail.
 pub fn read_response(
     stream: &mut impl Read,
     data: &mut Vec<u8>,
-    limit: usize,
-) -> Result<Option<Response>, RequestError> {
+) -> Result<Option<Vec<u8>>, RequestError> {
     let mut chunk = [0; 4096];
     loop {
         let count = match stream.read(&mut chunk) {
@@ -251,27 +293,27 @@ pub fn read_response(
             Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        data.extend_from_slice(&chunk[..count]);
-        if data.len() > limit {
-            return Err(RequestError::TooLarge(limit));
+        if data.len() + count > MAX_RESPONSE {
+            return Err(RequestError::TooLarge);
         }
+        data.extend_from_slice(&chunk[..count]);
         if let Some(response) = parse(data, count == 0)? {
             return Ok(Some(response));
         }
         if count == 0 {
-            return Err(RequestError::Malformed("connection closed mid-response"));
+            return Err(RequestError::Malformed(Malformed::Closed));
         }
     }
 }
 
 /// The response in `data`, or `None` while it is incomplete; `eof`: no more
 /// data follows.
-fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
+fn parse(data: &[u8], eof: bool) -> Result<Option<Vec<u8>>, RequestError> {
     let Some(end) = find(data, b"\r\n\r\n") else {
         return Ok(None);
     };
     let head = std::str::from_utf8(&data[..end])
-        .map_err(|_| RequestError::Malformed("header is not UTF-8"))?;
+        .map_err(|_| RequestError::Malformed(Malformed::HeaderNotUtf8))?;
     let mut lines = head.split("\r\n");
     let status = lines
         .next()
@@ -282,7 +324,7 @@ fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
                 .filter(|version| version.starts_with("HTTP/1."))?;
             parts.next()?.parse().ok()
         })
-        .ok_or(RequestError::Malformed("invalid status line"))?;
+        .ok_or(RequestError::Malformed(Malformed::StatusLine))?;
     let header = |name: &str| {
         lines.clone().find_map(|line| {
             let (key, value) = line.split_once(':')?;
@@ -290,22 +332,21 @@ fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
         })
     };
     let body = &data[end + 4..];
-    if header("transfer-encoding").is_some_and(|value| value.eq_ignore_ascii_case("chunked")) {
-        return Ok(dechunk(body)?.map(|body| Response { status, body }));
+    let complete =
+        if header("transfer-encoding").is_some_and(|value| value.eq_ignore_ascii_case("chunked")) {
+            dechunk(body)?
+        } else if let Some(length) = header("content-length") {
+            let length: usize = length
+                .parse()
+                .map_err(|_| RequestError::Malformed(Malformed::ContentLength))?;
+            body.get(..length).map(<[u8]>::to_vec)
+        } else {
+            eof.then(|| body.to_vec())
+        };
+    if complete.is_some() && !(200..300).contains(&status) {
+        return Err(RequestError::Status(status));
     }
-    if let Some(length) = header("content-length") {
-        let length: usize = length
-            .parse()
-            .map_err(|_| RequestError::Malformed("invalid Content-Length"))?;
-        return Ok((body.len() >= length).then(|| Response {
-            status,
-            body: body[..length].to_vec(),
-        }));
-    }
-    Ok(eof.then(|| Response {
-        status,
-        body: body.to_vec(),
-    }))
+    Ok(complete)
 }
 
 fn dechunk(mut rest: &[u8]) -> Result<Option<Vec<u8>>, RequestError> {
@@ -317,7 +358,7 @@ fn dechunk(mut rest: &[u8]) -> Result<Option<Vec<u8>>, RequestError> {
         let size = std::str::from_utf8(&rest[..line])
             .ok()
             .and_then(|text| usize::from_str_radix(text.split(';').next()?.trim(), 16).ok())
-            .ok_or(RequestError::Malformed("invalid chunk size"))?;
+            .ok_or(RequestError::Malformed(Malformed::ChunkSize))?;
         rest = &rest[line + 2..];
         if size == 0 {
             return Ok(Some(body));
@@ -401,15 +442,39 @@ mod tests {
     }
 
     #[test]
-    fn a_response_over_the_limit_fails_naming_it() {
-        let response = format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(MAX_RESPONSE));
-        let error =
-            read_response(&mut response.as_bytes(), &mut Vec::new(), MAX_RESPONSE).unwrap_err();
-        assert!(
-            matches!(error, RequestError::TooLarge(MAX_RESPONSE)),
-            "{error:?}"
-        );
-        assert_eq!(error.to_string(), "response exceeds 20 KiB");
+    fn a_status_error_requires_a_complete_response() {
+        let mut response = b"HTTP/1.1 404 Missing\r\nContent-Length: 1\r\n\r\n".to_vec();
+        assert_eq!(parse(&response, false).unwrap(), None);
+        let error = read_response(&mut response.as_slice(), &mut Vec::new()).unwrap_err();
+        assert!(matches!(error, RequestError::Malformed(Malformed::Closed)));
+        response.push(b'x');
+        assert!(matches!(
+            parse(&response, false),
+            Err(RequestError::Status(404))
+        ));
+    }
+
+    #[test]
+    fn the_limit_counts_headers_and_bytes_received_before_would_block() {
+        struct WouldBlock;
+        impl Read for WouldBlock {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(ErrorKind::WouldBlock.into())
+            }
+        }
+
+        let head = b"HTTP/1.1 200 OK\r\n\r\n";
+        let mut response = head.to_vec();
+        response.resize(64 * 1024, b'x');
+        let mut pending = Vec::new();
+        let mut stream = response.as_slice().chain(WouldBlock);
+        assert_eq!(read_response(&mut stream, &mut pending).unwrap(), None);
+        let body = read_response(&mut io::empty(), &mut pending.clone()).unwrap();
+        assert_eq!(body.as_deref(), Some(&response[head.len()..]));
+
+        let error = read_response(&mut &b"x"[..], &mut pending).unwrap_err();
+        assert!(matches!(error, RequestError::TooLarge));
+        assert_eq!(error.to_string(), "response exceeds 64 KiB");
     }
 
     #[test]

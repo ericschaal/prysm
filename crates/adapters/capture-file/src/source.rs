@@ -9,7 +9,7 @@
 use crate::{FileSettings, players};
 use nix::errno::Errno;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
-use prysm_core::{Frame, FramePool, PixelFormat};
+use prysm_core::{FramePool, PixelFormat};
 use prysm_ports::{Error, FrameSource, Pull, Result};
 use std::fmt;
 use std::io::{self, Read};
@@ -152,10 +152,6 @@ struct Pipes {
     tail: Tail,
 }
 
-fn readable(fd: &PollFd<'_>) -> bool {
-    fd.revents().is_some_and(|events| !events.is_empty())
-}
-
 /// Rounded up so a sub-millisecond remainder does not spin. Longer than
 /// `poll` takes (about 65 s) is cut short; every caller polls again until
 /// its deadline.
@@ -167,27 +163,32 @@ fn poll_timeout(left: Duration) -> PollTimeout {
 impl Pipes {
     /// Wait until stdout has data or reached end of file, draining stderr
     /// meanwhile. `false`: `deadline` passed first.
-    fn stdout_ready(&mut self, deadline: Instant) -> io::Result<bool> {
+    fn stdout_ready(&mut self, deadline: Instant) -> Result<bool> {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let (out, err) = {
-                // On the frame path: no allocation per wait.
-                let stdout = PollFd::new(self.stdout.as_fd(), PollFlags::POLLIN);
+                let mut stdout = PollFd::new(self.stdout.as_fd(), PollFlags::POLLIN);
                 let mut both;
-                let mut one;
-                let fds: &mut [PollFd<'_>] = if let Some(stderr) = &self.stderr {
+                let fds = if let Some(stderr) = &self.stderr {
                     both = [stdout, PollFd::new(stderr.as_fd(), PollFlags::POLLIN)];
-                    &mut both
+                    both.as_mut_slice()
                 } else {
-                    one = [stdout];
-                    &mut one
+                    std::slice::from_mut(&mut stdout)
                 };
                 match poll(fds, poll_timeout(left)) {
                     Ok(_) => {}
                     Err(Errno::EINTR) => continue,
-                    Err(errno) => return Err(errno.into()),
+                    Err(errno) => {
+                        return Err(Error::adapter(
+                            "cannot wait for FFmpeg output",
+                            io::Error::from(errno),
+                        ));
+                    }
                 }
-                (readable(&fds[0]), fds.get(1).is_some_and(readable))
+                (
+                    fds[0].any() == Some(true),
+                    fds.get(1).and_then(PollFd::any) == Some(true),
+                )
             };
             if err {
                 self.drain_stderr();
@@ -231,57 +232,11 @@ impl Pipes {
                     return;
                 }
             }
-            let ready = readable(&fds[0]);
-            if ready {
+            if fds[0].any() == Some(true) {
                 self.drain_stderr();
             } else if left.is_zero() {
                 return;
             }
-        }
-    }
-}
-
-enum Filled {
-    Frame(Frame),
-    /// Stdout ended after `filled` bytes of a frame.
-    Ended {
-        filled: usize,
-        expected: usize,
-    },
-    Stalled {
-        filled: usize,
-        expected: usize,
-    },
-}
-
-/// Fill one pooled frame. The first byte is already readable.
-fn read_frame(
-    pipes: &mut Pipes,
-    pool: &mut FramePool,
-    [width, height]: [u32; 2],
-    stall: Duration,
-) -> Result<Filled> {
-    let mut writer = pool
-        .acquire(width, height, PixelFormat::RGB24)
-        .map_err(|error| Error::adapter("cannot allocate a video frame", error))?;
-    let expected = writer.as_mut_slice().len();
-    let stalled_at = Instant::now() + stall;
-    let mut filled = 0;
-    loop {
-        match pipes.stdout.read(&mut writer.as_mut_slice()[filled..]) {
-            Ok(0) => return Ok(Filled::Ended { filled, expected }),
-            Ok(read) => filled += read,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(Error::adapter("cannot read FFmpeg output", error)),
-        }
-        if filled == expected {
-            return Ok(Filled::Frame(writer.finish()));
-        }
-        if !pipes
-            .stdout_ready(stalled_at)
-            .map_err(|error| Error::adapter("cannot wait for FFmpeg output", error))?
-        {
-            return Ok(Filled::Stalled { filled, expected });
         }
     }
 }
@@ -402,7 +357,6 @@ impl FileFrames {
             Error::adapter("cannot wait for FFmpeg", error)
         });
         let (Some(stdout), Some(stderr)) = pipes else {
-            // Not reached: both are piped above.
             let unreaped = kill_and_reap(&mut exit?, deadlines.reap).err();
             let failure = Error::other(format!("`{program}` output pipes are unavailable"));
             return Err(unreaped.unwrap_or(failure));
@@ -429,38 +383,41 @@ impl FileFrames {
     }
 
     fn read(&mut self, timeout: Duration) -> Result<Pull> {
-        if !self
-            .pipes
-            .stdout_ready(Instant::now() + timeout)
-            .map_err(|error| Error::adapter("cannot wait for FFmpeg output", error))?
-        {
-            return Ok(Pull::Idle);
+        if !self.pipes.stdout_ready(Instant::now() + timeout)? {
+            return Ok(Pull::Quiet);
         }
-        match read_frame(
-            &mut self.pipes,
-            &mut self.pool,
-            self.size,
-            self.deadlines.stall,
-        )? {
-            Filled::Frame(frame) => Ok(Pull::Frame(frame)),
-            Filled::Ended { filled, expected } => {
-                self.ended(filled, expected).map(|()| Pull::Ended)
+        let [width, height] = self.size;
+        let mut writer = self
+            .pool
+            .acquire(width, height, PixelFormat::RGB24)
+            .map_err(|error| Error::adapter("cannot allocate a video frame", error))?;
+        let bytes = writer.as_mut_slice();
+        let expected = bytes.len();
+        let mut filled = 0;
+        let stalled_at = Instant::now() + self.deadlines.stall;
+        loop {
+            match self.pipes.stdout.read(&mut bytes[filled..]) {
+                Ok(0) => return self.ended(filled, expected),
+                Ok(read) => filled += read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(Error::adapter("cannot read FFmpeg output", error)),
             }
-            Filled::Stalled { filled, expected } => {
-                let within = self.deadlines.stall;
+            if filled == expected {
+                return Ok(Pull::Frame(writer.finish()));
+            }
+            if !self.pipes.stdout_ready(stalled_at)? {
                 let stalled = Ended::Stalled {
                     filled,
                     expected,
-                    within,
+                    within: self.deadlines.stall,
                 };
-                Err(self.failed(stalled, None))
+                return Err(self.failed(stalled, None));
             }
         }
     }
 
     /// Stdout reached end of file: reap FFmpeg and say how playback ended.
-    /// `Ok`: the whole file played.
-    fn ended(&mut self, filled: usize, expected: usize) -> Result<()> {
+    fn ended(&mut self, filled: usize, expected: usize) -> Result<Pull> {
         let deadline = Instant::now() + self.deadlines.exit;
         // Until stderr closes: a process FFmpeg left behind may hold it.
         self.pipes.finish_stderr(deadline);
@@ -470,7 +427,7 @@ impl FileFrames {
             .map_err(|error| Error::adapter("cannot wait for FFmpeg", error))?;
         let partial = (filled > 0).then_some((filled, expected));
         match status {
-            Some(status) if status.success() && partial.is_none() => Ok(()),
+            Some(status) if status.success() && partial.is_none() => Ok(Pull::Ended),
             Some(status) => Err(self.failed(Ended::Exited(status), partial)),
             None => Err(self.failed(Ended::DidNotExit(self.deadlines.exit), partial)),
         }
@@ -489,7 +446,7 @@ impl FileFrames {
 }
 
 impl FrameSource for FileFrames {
-    /// `Idle` when no frame arrived within `timeout`. The end of the file
+    /// [`Pull::Quiet`] when no frame arrived within `timeout`. The end of the file
     /// (`Ended`) and every error are terminal and repeated by later calls.
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         if let Some(ended) = &self.ended {

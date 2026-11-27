@@ -207,12 +207,12 @@ class TheTv(unittest.TestCase):
         self.assertEqual(recorded(('tv.get-state', ok(STATE))).portal().base, 'http://192.0.2.50:8787')
         with self.assertRaisesRegex(Failed, 'no portal address'):
             recorded(('tv.get-state', ok(SLIM))).portal()
-        retrying = STATE.replace(
+        asking = STATE.replace(
             '"worker":{"phase":"running","capturing":true,"fps":30,"portal":"http://192.0.2.50:8787"}',
-            '"worker":{"phase":"retrying","seconds":4}',
+            '"worker":{"phase":"asking","problem":{"asked":{"step":"ask","fix":"try_again"},"message":"m"}}',
         )
         with self.assertRaisesRegex(Failed, 'no portal address'):
-            recorded(('tv.get-state', ok(retrying))).portal()
+            recorded(('tv.get-state', ok(asking))).portal()
 
     def test_the_state_is_read_in_its_packages_terms(self) -> None:
         full = webos.luna_reply(ok(STATE))
@@ -425,6 +425,61 @@ class Wake(unittest.TestCase):
     """A wake-on-LAN packet only when the TV does not answer and `[tv] mac` is set."""
 
     MAC = '00:00:5E:00:53:01'
+
+    def test_standby_wakes_the_tv_even_if_the_asleep_check_fails(self) -> None:
+        found = recorded(
+            ('tv.standby', ok('{"returnValue":true}')), ('local.wake-on-lan', ok()), ('tv.get-state', ok(STATE))
+        )
+        wake = commands.wake_on_lan(self.MAC, '192.0.2.10')
+        with self.assertRaisesRegex(Failed, 'lights still live'), found.standby(wake):
+            self.assertEqual(calls(found), ['tv.standby'])
+            raise Failed('lights still live')
+        self.assertEqual(calls(found), ['tv.standby', 'local.wake-on-lan', 'tv.get-state'])
+
+    def test_unattended_standby_requires_positive_evidence(self) -> None:
+        stopped: tv.State = {'power': tv.Power.ASLEEP, 'worker': {'phase': 'stopped'}}
+        states = [
+            None,
+            {'power': tv.Power.SCREEN_SAVER},
+            {'power': tv.Power.ASLEEP, 'worker': {'phase': 'running'}},
+            stopped,
+        ]
+        with no_wait():
+            observed = tv_checks.wait_standby(mock.Mock(side_effect=states), Flavour.FULL, remote_confirmed=False)
+        self.assertEqual(observed, stopped)
+        with (
+            mock.patch.object(tv_checks, 'STANDBY_SECONDS', 0),
+            self.assertRaisesRegex(Failed, 'did not reach standby'),
+        ):
+            tv_checks.wait_standby(lambda: None, Flavour.FULL, remote_confirmed=False)
+        self.assertIsNone(tv_checks.wait_standby(lambda: None, Flavour.FULL, remote_confirmed=True))
+
+    def test_standby_uses_the_remote_only_without_a_mac(self) -> None:
+        values = config.load(EXAMPLE)
+        values.tv.mac = ''
+        plan = bench.PLANS[tv_checks.__name__]['test_standby'].does(TV_CELLS[0], values)
+        self.assertIn('a person wakes the TV', plan)
+        self.assertFalse(any('powerOff' in step for step in plan))
+
+    def test_reboot_requires_reset_uptime_after_ssh_returns(self) -> None:
+        for after, restarted in [(10, True), (505, False)]:
+            with self.subTest(after=after):
+                found = recorded(
+                    ('tv.sample-worker', ok('500 0\n0 0 0\n')),
+                    ('tv.reboot', ok()),
+                    ('tv.reachable', Result(255, '')),
+                    ('tv.reachable', ok()),
+                    ('tv.sample-worker', ok(f'{after} 0\n0 0 0\n')),
+                    *([('tv.processes', ok(f'42 {commands.SUPERVISOR}\n'))] if restarted else []),
+                )
+                if restarted:
+                    with found.reboot() as evidence:
+                        self.assertEqual(calls(found)[-1], 'tv.reachable')
+                    self.assertEqual(evidence['uptime_after'], after)
+                else:
+                    with self.assertRaisesRegex(Failed, 'uptime'), found.reboot():
+                        pass
+                self.assertEqual(calls(found).count('tv.reboot'), 1)
 
     def test_an_answering_tv_is_not_woken(self) -> None:
         found = recorded(('tv.reachable', ok('prysm-acceptance-ok\n')))
@@ -966,6 +1021,25 @@ def planned_commands(values: config.Config) -> Iterator[commands.Command]:
 
 
 class TheCells(unittest.TestCase):
+    def test_delayed_ddp_after_confirmed_off_fails_the_startup_check(self) -> None:
+        portal = mock.Mock(spec=prysm_api.Prysm)
+        off = {
+            'target': 'off',
+            'session': {'state': 'stopped'},
+            'control': {'power': 'off', 'remembered': 'screen_sync', 'busy': False, 'external': False},
+        }
+        portal.wait.return_value = portal.state.return_value = off
+        lights = mock.Mock()
+        lights.si.side_effect = [
+            {'state': {'on': False}, 'info': {'live': False}},
+            {'state': {'on': False}, 'info': {'live': True}},
+        ]
+        evidence: dict[str, object] = {}
+        with mock.patch.object(tv_checks.time, 'sleep'), self.assertRaisesRegex(Failed, 'no live output'):
+            tv_checks.check_startup_off(portal, lights, evidence)
+        self.assertEqual(evidence['portal_after'], off)
+        self.assertEqual(evidence['wled_after'], {'state': {'on': False}, 'info': {'live': True}})
+
     def test_the_checks_any_tv_runs_know_no_webos(self) -> None:
         """The seam: the shared checks and the TV they drive (`tv.Tv`) import nothing of `webos` and nothing of
         the command templates but the `Command` type (`tv.py` only), and name nothing of Luna, the package or
@@ -1034,6 +1108,24 @@ class TheCommandLine(unittest.TestCase):
     def dry(self, *arguments: str, path: Path = EXAMPLE) -> subprocess.CompletedProcess[str]:
         return runner(*arguments, '--dry-run', '--config', str(path), offline=True)
 
+    def test_reverse_reboot_plan_uses_the_existing_tv_permission(self) -> None:
+        done = self.dry('tv', 'slim', '--receiver', 'mac', '--tv-is-free', '-k', 'reboot_autostart_on')
+        self.assertEqual(done.returncode, 0, done.stderr)
+        check = done.stdout.split('  test_reboot_autostart_on:', 1)[1].split('At the end', 1)[0]
+        steps = [
+            'setPreferences',
+            'setEnabled',
+            'setEnabled',
+            '/uninstall',
+            '/setup.sh',
+            '/sbin/reboot',
+            'restore slim',
+        ]
+        for step in steps:
+            _, present, check = check.partition(step)
+            self.assertTrue(present, step)
+        self.assertNotIn('test_reboot_autostart_off:', done.stdout)
+
     def test_a_tv_cell_needs_the_owners_word(self) -> None:
         for arguments in (['tv', 'full'], ['tv', 'slim', '--receiver', 'mac']):
             done = self.dry(*arguments)
@@ -1079,6 +1171,24 @@ class TheCommandLine(unittest.TestCase):
                     )
                 ]
                 self.assertEqual(order, sorted(order))
+                if cell == 'tv-full':
+                    self.assertIn('test_reboot_wled_override_off:', text)
+                    self.assertNotIn('test_reboot_autostart_', text)
+                else:
+                    self.assertIn('test_reboot_autostart_on:', text)
+                    self.assertIn('test_reboot_autostart_off:', text)
+                    self.assertNotIn('test_reboot_wled_override_off:', text)
+                if cell == 'tv-full':
+                    for name, power in [('test_reinstall', 'false'), ('test_reinstall_wled_on', 'true')]:
+                        check = text.split(f'  {name}:', 1)[1].split('\n  test_', 1)[0]
+                        set_power = check.index(f'POST /json/state on={power}')
+                        self.assertLess(check.index('dev/install'), set_power)
+                        self.assertLess(set_power, check.index('/setup.sh'))
+                    wake = text.split('  test_standby:', 1)[1]
+                    self.assertLess(wake.index('POST /json/state on=false'), wake.index('wake-on-LAN magic packet'))
+                else:
+                    self.assertNotIn('test_reinstall_wled_on', text)
+                    self.assertNotIn('POST /json/state on=', text)
                 for line in (
                     'wake-on-LAN magic packet for 00:00:5E:00:53:01',
                     'test_soak',

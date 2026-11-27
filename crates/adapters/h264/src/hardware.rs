@@ -19,7 +19,6 @@ pub(crate) struct Hardware {
     width: u32,
     height: u32,
     encoded: Vec<u8>,
-    first: bool,
 }
 
 impl Hardware {
@@ -30,7 +29,6 @@ impl Hardware {
             width,
             height,
             encoded: Vec::new(),
-            first: true,
         })
     }
 
@@ -39,14 +37,12 @@ impl Hardware {
     pub(crate) fn encode(
         &mut self,
         pixels: &[u8],
+        first: bool,
         output: &mut Vec<u8>,
     ) -> Result<FrameKind, H264Error> {
         self.pipeline
             .encode(pixels, self.width as usize, &mut self.encoded)
             .map_err(H264Error::Hardware)?;
-        let kind =
-            normalize_access_unit(&self.encoded, self.width, self.height, self.first, output)?;
-        self.first = false;
-        Ok(kind)
+        normalize_access_unit(&self.encoded, self.width, self.height, first, output)
     }
 }

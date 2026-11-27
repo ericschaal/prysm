@@ -1,52 +1,26 @@
 //! WLED as a blocking [`prysm_ports::LedOutput`].
 //!
-//! - [`Wled`] opens an output: it resolves the configured host (a name such as
-//!   `wled.local` or an IP literal, with an optional HTTP port, default 80) and
-//!   switches the device to live mode over the JSON API (`POST /json/state`).
-//!   The resolved IP is used for HTTP and DDP until the output is dropped; the
-//!   next open resolves again.
-//! - `write` sends colours as DDP over UDP (port 4048), clockwise from the
-//!   bottom-left corner, encoded for the gamma WLED applies (read with its
-//!   configuration; sRGB until then) and, unless `dither` is off, dithered
-//!   over the levels WLED shows at its brightness. A frame the network
-//!   refuses is dropped; `write` fails once sends have kept failing for 3 s.
-//! - `idle` powers the device off or returns it to its own effect; a failed open
-//!   turns it off before returning. [`Wled`]'s own `idle` does the same for a
-//!   device nobody holds, without live mode first. Either takes at most
-//!   [`IDLE_LIMIT`], name resolution included.
-//! - An open and a held output's `idle` end at once when the
-//!   [`Hangup`](prysm_ports::Hangup) they were given is cut (a session cuts
-//!   it when it is asked to stop): the wait for the name, the connect, the
-//!   request and the reply. The failure then has the cause
-//!   [`Stopping`](prysm_ports::Stopping), and an open says truthfully
-//!   whether a request may have reached the device; it does not turn the
-//!   device off again, as whoever cut it sets the mode next.
-//! - `report` checks WLED's own state about once a second without waiting for
-//!   the connect or the reply, and reports when it is not showing the colours:
-//!   switched off, live override on, not in live mode, another sender, or no
-//!   answer; with WLED's brightness and LED count. Prysm does not switch WLED
-//!   back; the colours show again once WLED takes them.
+//! Device observations read WLED's JSON API. Starting Screen sync powers
+//! the output and clears an explicit WLED override only when the request
+//! authorizes takeover. The first DDP frame activates WLED's normal
+//! realtime mode. An explicit override while streaming hands display back
+//! to WLED.
 //!
-//! - `candidates` finds devices on the local network for the portal's setup:
-//!   one multicast DNS question for `_wled._tcp.local`, then `GET /json/info`
-//!   per device for its name and LED count (see `discover`).
+//! A held stream sends DDP (UDP port 4048) clockwise from the bottom-left
+//! corner, with WLED's gamma and brightness. State reads while streaming
+//! report display ownership, brightness and LED count. A cancelled or
+//! released stream abandons its in-flight observer.
 //!
-//! No background threads: a host name's lookup runs on a helper thread that
-//! open and idle wait for within a deadline (a lookup still running is kept
-//! for the next one), and discovery's requests run on scoped threads it
-//! joins. The time limits are deadlines on calls, never retries:
-//! `http::TIMEOUT` for a resolution or a mode change,
-//! the state check's cadence, backoff and reply deadline, `ddp`'s
-//! `SEND_GRACE` before failing sends fail `write`, and `discover`'s answer
-//! window and per-device request limit. The runtime rewrites the last colours
-//! while the source is briefly quiet, which keeps WLED in live mode, and after
-//! a few seconds without frames idles the output `Native` (WLED's own state)
-//! and opens it again at the next frame.
+//! Ordinary release applies an idle action only with evidence of control.
+//! Explicit Off is a separate acknowledged command. A waiting monitor may
+//! read WLED until it becomes reachable again or its owning request is cut.
 mod address;
+mod classify;
 mod ddp;
 mod discover;
 mod dither;
 mod http;
+mod lifecycle;
 mod observe;
 mod output;
 mod settings;

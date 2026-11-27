@@ -1,9 +1,7 @@
-// Back closes one dialog level and returns focus to the control that opened
-// it; Back on Home asks before closing the app (app.tsx, navigation.ts).
 import { expect, test, type Page } from '@playwright/test';
 import { openTv, press, pressUntil, type Flavor } from './remote';
 
-const start = { full: 'mode-off', slim: 'primary' } as const;
+const start = { full: 'light-power', slim: 'primary' } as const;
 const settingsTop = { full: 'autostart', slim: 'prysm-address' } as const;
 
 const title = (page: Page) => page.locator('#dialog-title');
@@ -58,12 +56,10 @@ for (const flavor of ['full', 'slim'] as const) {
       await press(page, 'Back');
       await expect(modal(page)).toHaveCount(0);
       await expect(page.locator(`#${start[flavor]}`)).toBeFocused();
-      // From another control: focus goes back there.
       await pressUntil(page, 'ArrowRight', settingsTop[flavor]);
       await press(page, 'Back');
       await press(page, 'Back');
       await expect(page.locator(`#${settingsTop[flavor]}`)).toBeFocused();
-      // Close app (OK) closes it; the demo says so in place of the app.
       await press(page, 'Back');
       await press(page, 'ArrowRight');
       await expect(page.locator('#exit')).toBeFocused();

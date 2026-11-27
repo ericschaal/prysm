@@ -1,9 +1,8 @@
 //! OpenAPI roots for the wire values, and the hook hosts use to type the
 //! adapter sections of [`Settings`](prysm_ports::Settings).
 //!
-//! `prysm_ports` stays free of OpenAPI, so its serialized types are described
-//! here by schema-only mirrors. Tests keep each mirror's serde shape identical
-//! to the ports type it describes.
+//! Ports provides schemas for its wire types under the optional `schema` feature.
+//! Serialization mirrors below describe the remaining protocol-specific shapes.
 //!
 //! # Adapter schemas
 //!
@@ -23,17 +22,13 @@
 //! Without registrations `CaptureSettings` and `OutputSettings` are open
 //! objects with a string `kind`.
 use crate::{
-    ColorsEvent, Failure, FailureSection, LedColor, LedColors, LightingFailure, PreviewEvent,
-    PreviewFrame, PreviewViewport, Session, SettingsReplaced, SettingsRequest, State,
-    TargetRequest,
+    ColorsEvent, Failure, PreviewEvent, SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_ports::{
-    MAX_CALIBRATION_ID_LEN, MAX_CALIBRATION_NAME_CHARS, MAX_CALIBRATIONS, OutputFactory,
-    SourceFactory,
+    AdapterSettings, MAX_CALIBRATION_ID_LEN, MAX_CALIBRATION_NAME_CHARS, MAX_CALIBRATIONS,
+    OutputFactory, OutputIssue, SourceFactory,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use std::fmt;
 pub use utoipa::openapi::OpenApi;
 use utoipa::openapi::schema::{
     AdditionalProperties, AllOfBuilder, ObjectBuilder, OneOfBuilder, Schema, Type,
@@ -75,7 +70,7 @@ const _: () = assert!(prysm_ports::StyleValues::MAX_DARK_FLOOR_PERCENT == 20);
 #[schema(as = Processing)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessingSchema {
-    #[schema(minimum = 0, maximum = 100)]
+    #[schema(format = "uint8", minimum = 0, maximum = 100)]
     brightness_percent: u8,
     style: ChosenStyleSchema,
     /// The user's own values, applied while the style is `custom` and kept
@@ -88,7 +83,7 @@ pub struct ProcessingSchema {
     /// At most one sample per sampling-grid cell along an edge (128 along the
     /// longer side): density 200 reaches it for 16:9 pictures of 640x360 or
     /// more, a higher one for squarer or smaller pictures.
-    #[schema(minimum = 1, maximum = 512)]
+    #[schema(format = "uint16", minimum = 1, maximum = 512)]
     sample_density: u16,
     remove_black_bars: bool,
     /// Saved color corrections; ids are unique.
@@ -104,20 +99,6 @@ pub struct ProcessingSchema {
         pattern = "^[A-Za-z0-9_-]+$"
     )]
     active_calibration: Option<String>,
-}
-
-// Mirrors `prysm_ports::Style`.
-/// A style by name: a built-in set of the picture-taste knobs, or `custom`,
-/// the user's own values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Style)]
-#[serde(rename_all = "snake_case")]
-pub enum StyleSchema {
-    Natural,
-    Calm,
-    Vivid,
-    Game,
-    Custom,
 }
 
 // Mirrors `prysm_ports::style::as_object`.
@@ -140,25 +121,25 @@ pub struct StyleValuesSchema {
     smoothing_seconds: f32,
     /// How much of a scene cut the lights take at once; 0 eases a cut in
     /// like any other change.
-    #[schema(minimum = 0, maximum = 100)]
+    #[schema(format = "uint8", minimum = 0, maximum = 100)]
     cut_response_percent: u8,
     /// Seconds, the least time from dark to full brightness; 0 sets no limit.
     #[schema(minimum = 0, maximum = 2)]
     brightness_ramp_seconds: f32,
     /// Edge depth: how far into the picture each light looks, in percent of
     /// the picture's height.
-    #[schema(minimum = 1, maximum = 100)]
+    #[schema(format = "uint8", minimum = 1, maximum = 100)]
     spatial_reach_percent: u8,
     /// How much each light keeps the colour next to it, taking less from the
     /// rest of the picture; 0 is the plain average.
-    #[schema(minimum = 0, maximum = 100)]
+    #[schema(format = "uint8", minimum = 0, maximum = 100)]
     color_focus_percent: u8,
     /// Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
-    #[schema(minimum = 0, maximum = 100)]
+    #[schema(format = "uint8", minimum = 0, maximum = 100)]
     saturation_boost_percent: u8,
     /// The least luminance the lights keep, as a neutral white glow, in
     /// percent of full light; 0 lets them go fully dark.
-    #[schema(minimum = 0, maximum = 20)]
+    #[schema(format = "uint8", minimum = 0, maximum = 20)]
     dark_floor_percent: u8,
 }
 
@@ -184,13 +165,13 @@ pub struct CalibrationSchema {
 #[serde(deny_unknown_fields)]
 pub struct CorrectionControlsSchema {
     /// Positive warms, negative cools.
-    #[schema(minimum = -100, maximum = 100)]
+    #[schema(format = "int16", minimum = -100, maximum = 100)]
     warmth: i16,
     /// Positive adds magenta, negative adds green.
-    #[schema(minimum = -100, maximum = 100)]
+    #[schema(format = "int16", minimum = -100, maximum = 100)]
     tint: i16,
     /// Positive lightens midtones, negative darkens them.
-    #[schema(minimum = -100, maximum = 100)]
+    #[schema(format = "int16", minimum = -100, maximum = 100)]
     midtones: i16,
     red: PrimaryControlsSchema,
     green: PrimaryControlsSchema,
@@ -205,10 +186,10 @@ pub struct CorrectionControlsSchema {
 pub struct PrimaryControlsSchema {
     /// Positive turns toward the next primary in red, green, blue order,
     /// negative toward the previous one.
-    #[schema(minimum = -100, maximum = 100)]
+    #[schema(format = "int16", minimum = -100, maximum = 100)]
     hue: i16,
     /// Negative makes the colour softer, positive stronger.
-    #[schema(minimum = -100, maximum = 100)]
+    #[schema(format = "int16", minimum = -100, maximum = 100)]
     strength: i16,
 }
 
@@ -224,40 +205,6 @@ pub struct CalibrationPatternSchema {
     uncorrected: bool,
 }
 
-// Mirrors `prysm_ports::Pattern`.
-/// A calibration pattern, by its TV clip name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Pattern)]
-#[serde(rename_all = "snake_case")]
-pub enum PatternSchema {
-    #[serde(rename = "gray_192")]
-    Gray192,
-    Red,
-    Yellow,
-    Green,
-    Cyan,
-    Blue,
-    Magenta,
-    BluePair,
-    RedPair,
-    GreenPair,
-    Coast,
-    Garden,
-    Dusk,
-    ReviewGrid,
-}
-
-// Mirrors `prysm_ports::LightingTarget`.
-/// What the user wants the LEDs to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = LightingTarget)]
-#[serde(rename_all = "snake_case")]
-pub enum LightingTargetSchema {
-    Off,
-    ScreenSync,
-    Effects,
-}
-
 // Mirrors `prysm_ports::Input`.
 /// Whether frames are arriving, and how fast.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -266,11 +213,11 @@ pub struct InputSchema {
     /// Frames per second over the last second, to one decimal.
     #[schema(minimum = 0, example = 29.9)]
     fps: f32,
-    /// At least one frame arrived in the last second. `false` right after
-    /// lighting starts and while the source is quiet (no signal, no sender).
-    receiving: bool,
-    /// Frames per second whose colours were written to the output over the
-    /// last second, to one decimal.
+    /// Whether frames arrived in the last second, and if not, why.
+    picture: PictureSchema,
+    /// Frames per second whose colours were handed to the output over the
+    /// last second, to one decimal. An output may drop a frame it cannot
+    /// send now; the device issue says when the lights do not answer.
     #[schema(minimum = 0, example = 29.9)]
     #[serde(default)]
     sent_fps: f32,
@@ -300,58 +247,22 @@ pub enum BehindSchema {
     Output,
 }
 
-// Mirrors `prysm_ports::Latency`.
-/// Mean milliseconds per frame along the path, measured by Prysm (not from
-/// the screen, and not including the lights' own delay), in two parts.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Latency)]
-pub struct LatencySchema {
-    /// From the source capturing the frame to Prysm receiving it; present
-    /// only when every frame flushed in the window carried a capture time
-    /// (video devices on macOS, and on Linux with monotonic stamps).
-    #[schema(minimum = 0, example = 88.0, nullable = false)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    capture_ms: Option<f32>,
-    /// From Prysm receiving the frame to the output write for its colours
-    /// returning.
-    #[schema(minimum = 0, example = 2.4)]
-    output_ms: f32,
-}
-
-// Mirrors `prysm_ports::OutputIssue`.
-/// Why the lights are not showing Prysm's colours. Prysm keeps sending; they
-/// follow again once the device takes the colours.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = OutputIssue)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputIssueSchema {
-    /// The device was switched off (WLED: power off).
-    Off,
-    /// The device's own override is on (WLED: live override).
-    Overridden,
-    /// The device is not taking the colours (WLED: not in live mode, or no
-    /// DDP arriving).
-    NotLive,
-    /// Another sender's colours reach the device.
-    OtherSender,
-    /// The device does not answer state requests.
-    Unreachable,
-}
-
 // Mirrors `prysm_ports::DeviceReport`.
 /// What the lights say about themselves, from the output's own checks. Each
 /// part is absent while the output cannot tell, and all are while no session
 /// holds the output (no session, no frame yet, or released after 3 s without
-/// video; see `session.state` and `input.receiving`). Prysm reports them and
-/// changes none.
+/// video; see `session.state` and `input.picture`), but `issue`
+/// `unreachable` while the lights are waited for: lighting's open, or the
+/// request for `off` or their own effects, that they did not answer. Prysm
+/// reports them and changes none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = DeviceReport)]
 pub struct DeviceReportSchema {
-    /// Why the lights are not showing Prysm's colours; absent while they
-    /// show them.
+    /// Why the lights are not showing Prysm's colours, or that they do not
+    /// answer; absent while all is well.
     #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    issue: Option<OutputIssueSchema>,
+    issue: Option<OutputIssue>,
     /// The lights' own brightness while it scales Prysm's colours (WLED: its
     /// master brightness and brightness factor): the share of Prysm's
     /// brightness they show. Absent while it does not (WLED: "Force max
@@ -362,98 +273,25 @@ pub struct DeviceReportSchema {
     /// How many LEDs the lights say they have (WLED: its LED count). Prysm
     /// sends the configured `settings.output.leds` either way: a different
     /// count leaves LEDs dark or colours unshown.
-    #[schema(nullable = false, example = 120)]
+    #[schema(nullable = false, maximum = 4_294_967_295_u64, example = 120)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     led_count: Option<u32>,
 }
 
-// Mirrors `prysm_ports::Candidate`.
-/// Something an adapter found that a person can pick instead of typing, one
-/// item of `GET /api/v1/candidates/{section}/{kind}`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Candidate)]
-pub struct CandidateSchema {
-    /// What a person recognises, such as the device's name.
-    label: String,
-    /// Where it is or what it has, such as `192.168.1.40`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
-    detail: Option<String>,
-    /// How many LEDs a found output device says it has, when it says.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false, example = 120)]
-    led_count: Option<u32>,
-    #[schema(schema_with = candidate_fields)]
-    fields: Map<String, Value>,
-}
-
-/// Any object; `schema_with` replaces the doc comment, so it is here.
-fn candidate_fields() -> ObjectBuilder {
-    ObjectBuilder::new()
-        .schema_type(Type::Object)
-        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
-        .description(Some(
-            "The settings fields picking it fills, such as `{ \"device\": \"/dev/video0\" }`: \
-             part of the kind's settings, merged over what the person has.",
-        ))
-}
-
-// Mirrors `prysm_ports::Span`.
-/// `min`, `min + step`, … up to `max` (always reached); a single value is
-/// `min == max` with step 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Span)]
-#[serde(deny_unknown_fields)]
-pub struct SpanSchema {
-    #[schema(minimum = 0, example = 2)]
-    min: u32,
-    #[schema(minimum = 0, example = 1920)]
-    max: u32,
-    #[schema(minimum = 1, example = 2)]
-    step: u32,
-}
-
-// Mirrors `prysm_ports::Mode`.
-/// One way a source delivers: every combination of these widths, heights
-/// and frame rates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Mode)]
-#[serde(deny_unknown_fields)]
-pub struct ModeSchema {
-    width: SpanSchema,
-    height: SpanSchema,
-    fps: SpanSchema,
-}
-
-// Mirrors `prysm_ports::Modes`.
-/// What a capture source delivers with the posted settings, the reply of
-/// `POST /api/v1/capture/modes`: `unknown` when it cannot reach its
-/// hardware; `known` with exactly these modes (none: nothing with these
-/// settings). Ranges where the hardware takes any value in them, fixed
-/// modes where it offers fixed ones.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Modes)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ModesSchema {
-    Unknown,
-    Known { modes: Vec<ModeSchema> },
-}
+pub use prysm_ports::{
+    Candidate as CandidateSchema, Latency as LatencySchema, LightingTarget as LightingTargetSchema,
+    Mode as ModeSchema, Modes as ModesSchema, Pattern as PatternSchema, Picture as PictureSchema,
+    SpanSchema, Style as StyleSchema,
+};
 
 /// A capture section, `{ "kind": "...", ...fields }`. Replaced by the
 /// registered adapters' tagged schemas in [`Contract::document`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CaptureSettings(AdapterSection);
+pub struct CaptureSettings(AdapterSettings);
 
 /// An output section; see [`CaptureSettings`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OutputSettings(AdapterSection);
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct AdapterSection {
-    kind: String,
-    #[serde(flatten)]
-    fields: Map<String, Value>,
-}
+pub struct OutputSettings(AdapterSettings);
 
 fn open_section() -> RefOr<Schema> {
     ObjectBuilder::new()
@@ -480,72 +318,32 @@ impl ToSchema for OutputSettings {}
 #[derive(utoipa::OpenApi)]
 #[openapi(components(schemas(
     State,
-    InputSchema,
-    LatencySchema,
-    BehindSchema,
-    OutputIssueSchema,
-    DeviceReportSchema,
-    Session,
-    LightingFailure,
-    Failure,
-    FailureSection,
     TargetRequest,
     SettingsRequest,
     SettingsReplaced,
-    SettingsSchema,
-    ProcessingSchema,
-    StyleSchema,
-    ChosenStyleSchema,
-    StyleValuesSchema,
-    CalibrationSchema,
-    CorrectionControlsSchema,
-    PrimaryControlsSchema,
-    LightingTargetSchema,
-    CalibrationPatternSchema,
-    PatternSchema,
-    CaptureSettings,
-    OutputSettings,
+    Failure,
     PreviewEvent,
-    PreviewFrame,
-    PreviewViewport,
     ColorsEvent,
-    LedColors,
-    LedColor,
     CandidateSchema,
     ModesSchema,
-    ModeSchema,
-    SpanSchema,
 )))]
 struct Roots;
 
-type Schemas = Vec<(String, RefOr<Schema>)>;
-
 struct Variant {
-    kind: &'static str,
-    name: String,
-    schema: RefOr<Schema>,
-    dependencies: Schemas,
+    reference: Ref,
+    schemas: Vec<(String, RefOr<Schema>)>,
 }
 
 impl Variant {
     fn of<T: ToSchema>(kind: &'static str) -> Self {
-        let mut dependencies = Vec::new();
-        T::schemas(&mut dependencies);
-        Self {
-            kind,
-            name: T::name().into_owned(),
-            schema: T::schema(),
-            dependencies,
-        }
-    }
-
-    /// The adapter's schema with `kind` added: as a property when it is a
-    /// plain object, otherwise as an `allOf` with a tag object.
-    fn tagged(self) -> RefOr<Schema> {
+        let mut schemas = Vec::new();
+        T::schemas(&mut schemas);
+        let name = T::name().into_owned();
+        let reference = Ref::from_schema_name(&name);
         let tag = ObjectBuilder::new()
             .schema_type(Type::String)
-            .enum_values(Some([self.kind]));
-        match self.schema {
+            .enum_values(Some([kind]));
+        let tagged = match T::schema() {
             RefOr::T(Schema::Object(mut object)) => {
                 object.properties.insert("kind".into(), tag.into());
                 object.required.insert(0, "kind".into());
@@ -555,7 +353,9 @@ impl Variant {
                 .item(ObjectBuilder::new().property("kind", tag).required("kind"))
                 .item(other)
                 .into(),
-        }
+        };
+        schemas.push((name, tagged));
+        Self { reference, schemas }
     }
 }
 
@@ -613,12 +413,11 @@ impl Contract {
                 continue;
             }
             let mut one_of = OneOfBuilder::new();
-            for mut variant in variants {
-                one_of = one_of.item(Ref::from_schema_name(variant.name.clone()));
-                for (name, schema) in std::mem::take(&mut variant.dependencies) {
+            for variant in variants {
+                one_of = one_of.item(variant.reference);
+                for (name, schema) in variant.schemas {
                     insert(schemas, name, schema)?;
                 }
-                insert(schemas, variant.name.clone(), variant.tagged())?;
             }
             schemas.insert(section.into_owned(), one_of.into());
         }
@@ -641,28 +440,20 @@ fn insert(
 }
 
 /// Two different schemas were registered under one name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("conflicting schemas named `{0}`")]
 pub struct SchemaConflict(pub String);
-
-impl fmt::Display for SchemaConflict {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "conflicting schemas named `{}`", self.0)
-    }
-}
-
-impl std::error::Error for SchemaConflict {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use prysm_ports::{
-        AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
-        DeviceBrightness, DeviceReport, FrameSource, Input, Latency, LightingTarget, Mode, Modes,
-        OutputIssue, Pattern, PrimaryControls, Processing, Result, Settings, Span, Style,
-        StyleValues, ValidationError,
+        AdapterSettings, Behind, Calibration, CalibrationPattern, CorrectionControls,
+        DeviceBrightness, DeviceReport, FrameSource, Input, Latency, OutputIssue, Pattern, Picture,
+        PrimaryControls, Processing, Result, Settings, Style, StyleValues, ValidationError,
     };
     use prysm_testkit::assert_mirror_round_trips;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     #[test]
     fn mirrors_match_ports_serialization() {
@@ -728,18 +519,12 @@ mod tests {
             },
             ..Settings::default()
         });
-        for style in Style::BUILT_IN.into_iter().chain([Style::Custom]) {
-            assert_mirror_round_trips::<Style, StyleSchema>(&style);
-        }
         for style in Style::BUILT_IN {
             assert_mirror_round_trips::<StyleValues, StyleValuesSchema>(&style.built_in().unwrap());
         }
-        for target in LightingTarget::ALL {
-            assert_mirror_round_trips::<LightingTarget, LightingTargetSchema>(&target);
-        }
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             fps: 29.5,
-            receiving: true,
+            picture: Picture::Arriving,
             sent_fps: 29.5,
             latency: Some(Latency {
                 capture_ms: Some(88.0),
@@ -751,6 +536,12 @@ mod tests {
             behind: Behind::Processing,
             ..Input::default()
         });
+        for picture in [Picture::Arriving, Picture::Quiet, Picture::Refused] {
+            assert_mirror_round_trips::<Input, InputSchema>(&Input {
+                picture,
+                ..Input::default()
+            });
+        }
         assert_mirror_round_trips::<Input, InputSchema>(&Input {
             latency: Some(Latency {
                 capture_ms: None,
@@ -759,40 +550,12 @@ mod tests {
             ..Input::default()
         });
         assert_mirror_round_trips::<Input, InputSchema>(&Input::default());
-        for issue in [
-            OutputIssue::Off,
-            OutputIssue::Overridden,
-            OutputIssue::NotLive,
-            OutputIssue::OtherSender,
-            OutputIssue::Unreachable,
-        ] {
-            assert_mirror_round_trips::<OutputIssue, OutputIssueSchema>(&issue);
-        }
         assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport::default());
         assert_mirror_round_trips::<DeviceReport, DeviceReportSchema>(&DeviceReport {
             issue: Some(OutputIssue::OtherSender),
             brightness: DeviceBrightness::from_percent(40),
             led_count: Some(120),
         });
-        assert_mirror_round_trips::<Candidate, CandidateSchema>(&Candidate::new(
-            "USB Video",
-            &json!({ "device": "/dev/video0" }),
-        ));
-        assert_mirror_round_trips::<Candidate, CandidateSchema>(
-            &Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))
-                .detail("192.168.1.40")
-                .led_count(120),
-        );
-        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Unknown);
-        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Known(Vec::new()));
-        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Known(vec![
-            Mode::new(
-                Span::new(2, 1920, 2).unwrap(),
-                Span::new(2, 1080, 2).unwrap(),
-                Span::new(1, 60, 1).unwrap(),
-            ),
-            Mode::new(Span::exactly(640), Span::exactly(360), Span::exactly(30)),
-        ]));
         for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
             assert_mirror_round_trips::<CalibrationPattern, CalibrationPatternSchema>(
                 &CalibrationPattern {
@@ -834,10 +597,39 @@ mod tests {
         let demo = schema_json(&document, "DemoSettings");
         assert_eq!(demo["properties"]["kind"]["enum"], json!(["demo"]));
         assert_eq!(demo["required"], json!(["kind", "path"]));
-        // Unregistered sections stay open.
         assert_eq!(
             schema_json(&document, "OutputSettings")["required"],
             json!(["kind"])
+        );
+    }
+
+    #[test]
+    fn a_composite_adapter_keeps_its_schema_and_dependencies() {
+        #[derive(ToSchema)]
+        #[allow(dead_code)]
+        enum Feed {
+            File(DemoSettings),
+            Off,
+        }
+
+        let document = Contract {
+            sources: vec![Variant::of::<Feed>("feed")],
+            ..Contract::new("test")
+        }
+        .document()
+        .unwrap();
+        let original = serde_json::to_value(Feed::schema()).unwrap();
+        assert!(original.get("oneOf").is_some());
+        assert_eq!(
+            schema_json(&document, "Feed")["allOf"],
+            json!([
+                {"type": "object", "required": ["kind"], "properties": {"kind": {"type": "string", "enum": ["feed"]}}},
+                original,
+            ])
+        );
+        assert_eq!(
+            schema_json(&document, "DemoSettings")["required"],
+            json!(["path"])
         );
     }
 

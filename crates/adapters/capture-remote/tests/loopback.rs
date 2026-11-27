@@ -5,7 +5,7 @@ use prysm_capture_remote::{
     Close, Offer, RemoteReceiver, RemoteSender, RemoteSettings, RemoteSource, SendError, WireError,
 };
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
-use prysm_ports::{FrameSink, FrameSource, Mode, Modes, SourceFactory, Span, StreamEncoding};
+use prysm_ports::{FrameSink, FrameSource, Mode, Modes, Pull, SourceFactory, Span, StreamEncoding};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use prysm_testkit::eventually;
@@ -121,7 +121,6 @@ fn round_trip_preserves_dimensions_format_and_pixels() {
     assert_eq!((got.width(), got.height(), got.format()), (4, 2, format));
     assert_eq!(got.as_slice(), yuyv.as_slice());
 
-    // NV12: 1.5 bytes per pixel, both planes intact; a full-size frame.
     let format = PixelFormat::NV12 {
         range: YuvRange::Limited,
         matrix: YuvStandardMatrix::Bt709,
@@ -145,15 +144,13 @@ fn round_trip_preserves_dimensions_format_and_pixels() {
 }
 
 #[test]
-fn next_frame_times_out_idle() {
+fn next_frame_times_out_quiet() {
     let (_portal, mut source) = open();
     let started = Instant::now();
-    assert!(
-        source
-            .next_frame(Duration::from_millis(30))
-            .unwrap()
-            .is_idle()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(30)).unwrap(),
+        Pull::Quiet
+    ));
     assert!(started.elapsed() >= Duration::from_millis(30));
     Box::new(source).close().unwrap();
 }
@@ -165,19 +162,16 @@ fn a_slow_consumer_sees_only_the_newest_frame() {
     for seed in 1..=20 {
         sender.send(&frame(seed, 8, 4)).unwrap();
     }
-    // Untaken, each frame replaced the one before.
     eventually("the receiver to hold the last frame", BOUND, || {
         source
             .pending_frame()
             .filter(|frame| frame.as_slice()[0] == 20)
     });
     assert_eq!(receive(&mut source).as_slice()[0], 20, "frames were queued");
-    assert!(
-        source
-            .next_frame(Duration::from_millis(100))
-            .unwrap()
-            .is_idle()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(100)).unwrap(),
+        Pull::Quiet
+    ));
     Box::new(source).close().unwrap();
 }
 
@@ -189,13 +183,10 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
     assert_eq!(receive(&mut source).as_slice()[0], 1);
     drop(first);
 
-    // A disconnect is not an error.
-    assert!(
-        source
-            .next_frame(Duration::from_millis(200))
-            .unwrap()
-            .is_idle()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(200)).unwrap(),
+        Pull::Quiet
+    ));
 
     let mut second = portal.connect().unwrap();
     second.send(&frame(2, 4, 4)).unwrap();
@@ -217,7 +208,6 @@ fn a_second_sender_replaces_the_first() {
     assert_eq!(receive(&mut source).as_slice()[0], 3);
     assert_dropped(stalled);
 
-    // A second working sender takes over; the first one is told.
     let mut second = portal.connect().unwrap();
     second.send(&frame(4, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 4);
@@ -264,11 +254,9 @@ fn a_sender_without_an_offer_is_not_checked_against_another_senders() {
             Span::new(1, 30, 1).unwrap(),
         )],
     )]);
-    // Lighting is off: refused, with an offer that excludes raw.
     let error = portal.connect_offering(&h264_only).unwrap_err();
     assert_eq!(wire_cause(&error), WireError::Unavailable(503));
     let mut source = portal.source(RAW);
-    // A client that sends no offer is asked, and streams.
     let mut client = greeted(&portal);
     client
         .send(Message::binary(raw_frame([1, 0, 0, 0], 2, 2, &[9; 12])))
@@ -277,49 +265,38 @@ fn a_sender_without_an_offer_is_not_checked_against_another_senders() {
     Box::new(source).close().unwrap();
 }
 
+/// A message this end does not take fails the source, and the sender hears
+/// close 4002: the same sender would send it again.
 #[test]
-fn malformed_and_oversized_messages_drop_only_that_connection() {
-    let (portal, mut source) = open();
-
-    // Text that is not JSON.
-    let mut garbage = greeted(&portal);
-    garbage.send(Message::text("GET / HTTP/1.1")).unwrap();
-    assert!(assert_dropped(garbage).is_empty());
-
-    // One past the largest size: rejected from the header alone.
-    let mut oversized = greeted(&portal);
-    oversized
-        .send(Message::binary(raw_frame([1, 0, 0, 0], 1921, 1080, &[])))
-        .unwrap();
-    assert!(assert_dropped(oversized).is_empty());
-    // A payload one byte shorter than the header's frame.
-    let mut short = greeted(&portal);
-    short
-        .send(Message::binary(raw_frame([1, 0, 0, 0], 4, 4, &[0; 47])))
-        .unwrap();
-    assert!(assert_dropped(short).is_empty());
-    // Text over the limit, though a message of a type this end ignores.
-    let mut long = greeted(&portal);
+fn malformed_and_oversized_messages_fail_the_source() {
     let padded = format!(r#"{{"type":"stats","pad":"{}"}}"#, "x".repeat(4096));
-    long.send(Message::text(padded)).unwrap();
-    assert!(assert_dropped(long).is_empty());
-    // A message without a type.
-    let mut untyped = greeted(&portal);
-    untyped
-        .send(Message::text(r#"{"refused":"request","reason":"x"}"#))
-        .unwrap();
-    assert!(assert_dropped(untyped).is_empty());
-    assert!(
-        source
-            .next_frame(Duration::from_millis(50))
-            .unwrap()
-            .is_idle()
-    );
-
-    let mut sender = portal.connect().unwrap();
-    sender.send(&frame(4, 4, 4)).unwrap();
-    assert_eq!(receive(&mut source).as_slice()[0], 4);
-    Box::new(source).close().unwrap();
+    for (message, cause) in [
+        (Message::text("GET / HTTP/1.1"), "invalid message"),
+        (
+            Message::binary(raw_frame([1, 0, 0, 0], 1921, 1080, &[])),
+            "outside",
+        ),
+        (
+            Message::binary(raw_frame([1, 0, 0, 0], 4, 4, &[0; 47])),
+            "does not match",
+        ),
+        (Message::text(padded), "exceeds"),
+        (
+            Message::text(r#"{"refused":"request","reason":"x"}"#),
+            "invalid message",
+        ),
+    ] {
+        let (portal, mut source) = open();
+        let mut client = greeted(&portal);
+        client.send(message).unwrap();
+        match client.read() {
+            Ok(Message::Close(Some(frame))) => assert_eq!(u16::from(frame.code), 4002),
+            other => panic!("{cause}: {other:?}"),
+        }
+        let error = failure(&mut source);
+        assert!(wire_cause(&error).to_string().contains(cause), "{error}");
+        Box::new(source).close().unwrap();
+    }
 }
 
 /// What this end does not know is ignored: a sender message of another
@@ -352,7 +329,6 @@ fn unknown_messages_fields_and_flags_are_ignored() {
 #[test]
 fn version_mismatches_are_typed_errors_on_both_ends() {
     let (portal, source) = open();
-    // An older sender: the portal answers 426 with the version it speaks.
     for offered in [Some("prysm-capture.v3"), None] {
         let socket = TcpStream::connect(portal.addr).unwrap();
         let mut request = portal.url().into_client_request().unwrap();
@@ -374,8 +350,6 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
     }
     Box::new(source).close().unwrap();
 
-    // A newer Prysm lists the versions it speaks: this sender names the
-    // highest.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let newer = thread::spawn(move || {
@@ -597,7 +571,6 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
             source.next_frame(Duration::ZERO).is_err(),
             "the failure stays"
         );
-        // The receive thread stopped with the failure: closing is prompt.
         let started = Instant::now();
         Box::new(source).close().unwrap();
         assert!(started.elapsed() < Duration::from_millis(500));
@@ -614,7 +587,6 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
         "the sender cannot stream 320x180 at 30 fps with menus as raw"
     );
 
-    // A frame the stream cannot carry: the sender refuses the request.
     let error = refused(|sender| {
         let error = sender.deliver(&frame(0, 1922, 2)).unwrap_err();
         assert!(matches!(error, SendError::Refused(_)), "{error}");
@@ -624,7 +596,6 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
         WireError::Refused("cannot send frame: frame 1922x2 is outside 1x1 to 1920x1080".into())
     );
 
-    // A refused encoding names the setting, with the sender's reason.
     let error = refused(|sender| sender.refuse_encoding("no encoder here"));
     let prysm_ports::Error::Invalid(invalid) = &error else {
         panic!("{error:?}");
@@ -653,7 +624,6 @@ fn a_refused_attempt_still_tells_the_receiver_what_the_sender_offers() {
     let factory = RemoteReceiver::default();
     let portal = Portal::serving(factory.incoming());
     assert_eq!(factory.modes(&RAW), Modes::Unknown);
-    // Lighting is off: the attempt is refused, the offer kept.
     let error = portal.connect_offering(&raw_offer()).unwrap_err();
     assert_eq!(wire_cause(&error), WireError::Unavailable(503));
     assert_eq!(factory.modes(&RAW), raw_offer().modes(StreamEncoding::Raw));
@@ -661,9 +631,8 @@ fn a_refused_attempt_still_tells_the_receiver_what_the_sender_offers() {
         encoding: StreamEncoding::H264Software,
         ..RAW
     };
-    assert_eq!(factory.modes(&software), Modes::Known(Vec::new()));
+    assert_eq!(factory.modes(&software), Modes::Known { modes: Vec::new() });
 
-    // Opening refuses what the offer excludes, naming the field.
     let invalid = |request: &RemoteSettings| match factory.open(request) {
         Err(prysm_ports::Error::Invalid(invalid)) => invalid.field,
         Err(error) => panic!("{error:?}"),
@@ -684,14 +653,8 @@ fn a_sender_that_does_not_offer_the_request_fails_the_source_unasked() {
         fps: 60,
         ..RAW
     });
-    // The sender is closed without a request.
     let error = portal.connect_offering(&raw_offer()).unwrap_err();
-    assert!(
-        error
-            .source()
-            .is_some_and(|cause| cause.to_string().contains("request")),
-        "{error}"
-    );
+    assert_eq!(wire_cause(&error), WireError::Closed(Some(Close::Failed)));
     let error = failure(&mut source);
     let prysm_ports::Error::Invalid(invalid) = &error else {
         panic!("{error:?}");
@@ -754,7 +717,6 @@ fn stream_until_closed(mut sender: RemoteSender) -> thread::JoinHandle<prysm_por
 /// sender answers, so unread frames do not reset the connection first.
 #[test]
 fn a_streaming_sender_receives_the_close_code() {
-    // Replaced by a second sender.
     let (portal, mut source) = open();
     let streaming = stream_until_closed(portal.connect().unwrap());
     receive(&mut source);
@@ -768,7 +730,6 @@ fn a_streaming_sender_receives_the_close_code() {
     drop(second);
     Box::new(source).close().unwrap();
 
-    // Stopped by the source closing.
     let (portal, mut source) = open();
     let streaming = stream_until_closed(portal.connect().unwrap());
     receive(&mut source);
@@ -862,12 +823,10 @@ fn factory_decodes_validates_and_opens() {
     }
 
     let mut source = factory.open(&RAW).unwrap();
-    assert!(
-        source
-            .next_frame(Duration::from_millis(10))
-            .unwrap()
-            .is_idle()
-    );
+    assert!(matches!(
+        source.next_frame(Duration::from_millis(10)).unwrap(),
+        Pull::Quiet
+    ));
     source.close().unwrap();
 }
 

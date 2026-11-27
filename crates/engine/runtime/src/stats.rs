@@ -15,12 +15,14 @@ pub(crate) struct Stats(Mutex<Totals>);
 pub struct Counters {
     /// Frames taken from the source.
     pub frames_received: u64,
-    /// Frames whose colors were written to the output.
+    /// Frames whose colors were handed to the output. An output may drop a
+    /// frame it cannot send now; the device issue says when the lights do
+    /// not answer.
     pub frames_sent: u64,
     /// Turning frames into colors.
     pub processing: Timing,
-    /// Frames whose colors reached the output, each timed from when Prysm
-    /// received it from the source to when the output write returned.
+    /// Frames whose colors were handed to the output, each timed from when
+    /// Prysm received it from the source to when the output write returned.
     pub flushed: Timing,
     /// Every output write: frames and the keep-alive rewrites, failed ones included.
     pub output_writes: Timing,
@@ -28,8 +30,8 @@ pub struct Counters {
     pub output_write_failures: u64,
     /// Capture sources opened by starting lighting.
     pub source_opens: u64,
-    /// Outputs opened to show colors: at a session's first frame and at the
-    /// first frame after a release.
+    /// Streaming outputs opened during session initialization or when video
+    /// returns after a quiet release. Failed opens are excluded.
     pub output_opens: u64,
 }
 
@@ -60,7 +62,8 @@ pub(crate) struct FrameTimes {
     /// Its colors were ready.
     pub(crate) processed: Instant,
     /// The write of its colors returned successfully; `None` if opening or
-    /// writing the output failed.
+    /// writing the output failed, or the colors were not written while the
+    /// lights do not answer.
     pub(crate) written: Option<Instant>,
 }
 
@@ -76,6 +79,10 @@ pub(crate) struct Totals {
     /// For flushed frames, the loop's time for each, waiting for it included.
     /// Not a metric: against it the engine judges whether the loop has slack.
     pub(crate) cycles: Timing,
+    /// The source's last word without a frame was that its device refuses
+    /// the video; a frame or a new source clears it. Not a metric: the
+    /// engine reports it with the input while no frame arrives.
+    pub(crate) refused: bool,
 }
 
 impl Stats {
@@ -95,22 +102,22 @@ impl Stats {
     }
 
     /// One frame taken from the source: counted and its processing timed;
-    /// if its colors reached the output, also counted as sent and its spans
-    /// from receipt (and from capture, if known) to the write returning.
+    /// if its colors were handed to the output, also counted as sent and
+    /// its spans from receipt (and from capture, if known) to the write
+    /// returning.
     pub(crate) fn frame(&self, times: FrameTimes) {
         let processing = times.processed - times.received;
         let flushed = times.written.map(|written| {
             (
                 written - times.received,
-                // The first frame waited for nothing that counts.
                 written - times.previous_done.unwrap_or(times.received),
-                // Capture to received: the part before Prysm.
                 times
                     .captured
                     .map(|captured| times.received.saturating_duration_since(captured)),
             )
         });
         let mut totals = self.lock();
+        totals.refused = false;
         totals.counters.frames_received += 1;
         totals.counters.processing.add(processing);
         if let Some((flushed, cycle, captured)) = flushed {
@@ -132,8 +139,17 @@ impl Stats {
         }
     }
 
+    /// A pull without a frame, and whether it said the video is refused
+    /// ([`Totals::refused`]).
+    pub(crate) fn no_frame(&self, refused: bool) {
+        self.lock().refused = refused;
+    }
+
+    /// A new source has given no reason yet.
     pub(crate) fn source_opened(&self) {
-        self.lock().counters.source_opens += 1;
+        let mut totals = self.lock();
+        totals.counters.source_opens += 1;
+        totals.refused = false;
     }
 
     pub(crate) fn output_opened(&self) {
@@ -183,7 +199,6 @@ mod tests {
         let start = Instant::now();
         let mut previous_done = None;
         for frame in 0..3 {
-            // A frame every 60 ms, done 20 ms after it arrives.
             let received = start + ms(60) * frame;
             let written = received + ms(20);
             stats.frame(FrameTimes {
@@ -197,8 +212,6 @@ mod tests {
         }
         let totals = stats.totals();
         assert_eq!(totals.counters.flushed.total, ms(60), "busy 20 ms a frame");
-        // The first frame waited for nothing; each later one 40 ms.
-        // so `meter`'s verdict sees 60 of 140 ms busy: slack.
         assert_eq!(totals.cycles.total, ms(20) + 2 * ms(60));
     }
 

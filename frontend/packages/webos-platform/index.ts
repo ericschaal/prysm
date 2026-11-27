@@ -1,3 +1,10 @@
+import {
+  errorKinds,
+  fixes,
+  powers,
+  slimLinkStates,
+  videos,
+} from '@prysm/contracts/constants';
 /**
  * The TV supervisor's Luna API (`luna://<APP_ID>.service`, both packages)
  * over the webOS service bridge. Values are the generated `luna` contract;
@@ -10,67 +17,51 @@ import {
   known,
   lightingTargets,
 } from '@prysm/application-client';
-import type {
-  ErrorKind,
-  FailureKind,
-  FullWorker,
-  LightingTarget,
-  Power,
-  Preferences,
-  StreamEncoding,
-  SlimWorker,
-  State as Sent,
-  Video,
-  WorkerFailure,
-} from '@prysm/contracts/luna';
+import type * as Luna from '@prysm/contracts/luna';
+import type * as Wire from '@prysm/contracts/luna-reading';
+import {
+  isLunaStateReply,
+  isLunaErrorReply,
+  isLunaDoneReply,
+} from '@prysm/contracts/validate/luna';
 
 export type {
+  Asked,
   ErrorKind,
-  FailureKind,
+  Fix,
   FullWorker,
   LightingTarget,
+  OutputIssue,
   Power,
   Preferences,
+  Problem,
   StreamEncoding,
   SlimWorker,
   Video,
-  WorkerFailure,
-};
+} from '@prysm/contracts/luna';
 
-/** A target as this app reads it: `unknown` is one newer than this app. */
-export type TargetReading = LightingTarget | 'unknown';
+export type TargetReading = Luna.LightingTarget | 'unknown';
+type UnknownPhase = { phase: 'unknown' };
+type FullReading =
+  | Exclude<Luna.FullWorker, { phase: 'running' }>
+  | (Omit<Extract<Wire.FullWorker, { phase: 'running' }>, 'problem'> & {
+      problem?: Luna.Problem;
+    })
+  | UnknownPhase;
+type SlimReading =
+  | Exclude<Luna.SlimWorker, { phase: 'running' }>
+  | (Omit<Extract<Wire.SlimWorker, { phase: 'running' }>, 'link'> & {
+      link: SlimLink;
+    })
+  | UnknownPhase;
 
-/**
- * A worker as this app reads it: `unknown` is a phase newer than this app,
- * which offers no start or stop.
- */
-export type WorkerReading<W> = W | { phase: 'unknown' };
-
-/**
- * The installed package as this app reads it, tagged by `flavor`: the
- * contract's `Package`, with values newer than this app read as `unknown`.
- */
-export type PackageReading =
-  | {
-      flavor: 'full';
-      target: TargetReading;
-      worker: WorkerReading<FullWorker>;
-    }
-  | { flavor: 'slim'; enabled: boolean; worker: WorkerReading<SlimWorker> };
-
-/**
- * The supervisor's state as this app reads it ({@link decodeState}): the
- * contract's `State`, its package read as {@link PackageReading}.
- */
-export type State = Omit<Sent, 'flavor' | 'target' | 'enabled' | 'worker'> &
-  PackageReading;
-
-/** The installed package, the tag of {@link State}. */
+export type State = ReturnType<typeof readState>;
 export type Flavor = State['flavor'];
-/** Either package's worker process, tagged by `phase`. */
 export type Worker = State['worker'];
-/** Slim: where the running worker's stream to Prysm stands, tagged by `state`. */
-export type SlimLink = Extract<SlimWorker, { phase: 'running' }>['link'];
+export type SlimLink = Extract<
+  Wire.SlimLink,
+  { state: (typeof slimLinkStates)[number] }
+>;
 
 /**
  * A known mode is on (full: screen sync or effects; a target newer than
@@ -107,15 +98,40 @@ export function fullPortal(state: State): string | null {
     : null;
 }
 
+/**
+ * Full: why the running worker's lights are not showing screen sync, or
+ * that they don't answer whatever was chosen; else `null`. An issue newer
+ * than this app is kept as sent.
+ */
+export function fullLights(state: State): string | null {
+  if (state.flavor !== 'full') return null;
+  const worker = state.worker;
+  return worker.phase === 'running' ? (worker.lights ?? null) : null;
+}
+
+/**
+ * What the person is asked, in whichever phase says it: while no worker
+ * runs, while one stops that will not be restarted, or (full) what the
+ * running worker asks; else `null`.
+ */
+export function problemOf(state: State): Luna.Problem | null {
+  const { worker } = state;
+  if (worker.phase === 'asking') return worker.problem;
+  if (worker.phase === 'stopping') return worker.problem ?? null;
+  return state.flavor === 'full' && state.worker.phase === 'running'
+    ? (state.worker.problem ?? null)
+    : null;
+}
+
 /** Slim: the running worker's stream to Prysm; else `null`. */
-function slimLink(state: State): SlimLink | null {
+export function slimLink(state: State): SlimLink | null {
   if (state.flavor !== 'slim') return null;
   const worker = state.worker;
   return worker.phase === 'running' ? worker.link : null;
 }
 
 /** Slim: the encoding the running worker sends in; else `null`. */
-export function slimEncoding(state: State): StreamEncoding | null {
+export function slimEncoding(state: State): string | null {
   const link = slimLink(state);
   return link?.state === 'sending' ? link.encoding : null;
 }
@@ -123,6 +139,11 @@ export function slimEncoding(state: State): StreamEncoding | null {
 /** Slim: the receiver paused the running worker's stream (its lights are off). */
 export function isPaused(state: State): boolean {
   return slimLink(state)?.state === 'paused';
+}
+
+/** Slim: connected, but the TV refuses to share the video it shows. */
+export function isRefused(state: State): boolean {
+  return slimLink(state)?.state === 'refused';
 }
 
 /** The TV app of both packages; its service is `<APP_ID>.service`. */
@@ -133,24 +154,41 @@ export const SETUP_SCRIPT = `/media/developer/apps/usr/palm/services/${APP_ID}.s
 export const HOMEBREW_EXEC = 'luna://org.webosbrew.hbchannel.service/exec';
 /** A call or the first subscription reply that takes longer has failed. */
 export const CALL_TIMEOUT_MS = 30_000;
-/** Delay before a lost subscription is opened again. */
+/**
+ * Delay before a lost subscription is opened again. The service is dynamic
+ * (`Type=dynamic`): after setup, a fresh call starts it again (observed
+ * after killing it), so a subscription it ended opens on the next try.
+ * Without setup the bus cannot start it and answers so to every call
+ * (`absent`), and the app says it needs setting up.
+ */
 export const RESUBSCRIBE_MS = 3_000;
 
 /**
- * - `unavailable`: no bridge (not on a TV) or the service is not registered.
+ * The bus's own replies (`errorCode` -1, no `errorKind`) when it cannot give
+ * a caller the service, as observed on a webOS TV: `Service does not exist:
+ * <name>.` for a name never registered, and `<name> is not running.` with
+ * `serviceName` for one installed without setup, also sent to a subscriber
+ * when the service ends.
+ */
+const NOT_REGISTERED_REPLY = 'Service does not exist';
+const NOT_RUNNING_REPLY = ' is not running.';
+
+/**
+ * - `unavailable`: no bridge (not on a TV), or the bridge failed.
+ * - `absent`: the bus cannot give the service (not registered or running).
  * - `timeout`: no reply within {@link CALL_TIMEOUT_MS}.
  * - `refused`: the service answered `returnValue: false` (its `errorText`).
  * - `invalid_reply`: the reply is not what the contract says.
  */
 export type LunaFailureKind =
-  'unavailable' | 'timeout' | 'refused' | 'invalid_reply';
+  'unavailable' | 'absent' | 'timeout' | 'refused' | 'invalid_reply';
 
 /**
  * Why the service refused a call (its `errorKind`), as this app reads it:
  * `unknown` is a kind newer than this app, or a reply without one (LS2's
  * own, or not a refusal at all). The message is the one to show.
  */
-export type ErrorKindReading = ErrorKind | 'unknown';
+export type ErrorKindReading = Luna.ErrorKind | 'unknown';
 
 export class LunaError extends Error {
   constructor(
@@ -170,13 +208,16 @@ export interface ServiceBridge {
 }
 export type BridgeFactory = () => ServiceBridge;
 
-/** The TV's bridge, or `null` when the page does not run in a webOS app. */
+declare global {
+  interface Window {
+    PalmServiceBridge?: new () => ServiceBridge;
+    WebOSServiceBridge?: new () => ServiceBridge;
+  }
+}
+
+/** The TV's bridge, or null when the page is outside a webOS app. */
 export function webosBridge(): BridgeFactory | null {
-  const scope = window as unknown as Record<
-    string,
-    (new () => ServiceBridge) | undefined
-  >;
-  const Bridge = scope.PalmServiceBridge ?? scope.WebOSServiceBridge;
+  const Bridge = window.PalmServiceBridge ?? window.WebOSServiceBridge;
   return Bridge ? () => new Bridge() : null;
 }
 
@@ -192,9 +233,9 @@ export interface TvService {
    */
   watch(listener: (event: ServiceEvent) => void): () => void;
   /** Store the complete preferences; resolves with the new state. */
-  setPreferences(preferences: Preferences): Promise<State>;
+  setPreferences(preferences: Luna.Preferences): Promise<State>;
   /** Full: what the lights do; the slim package refuses it. */
-  setTarget(target: LightingTarget): Promise<State>;
+  setTarget(target: Luna.SetTargetRequest['target']): Promise<State>;
   /** Slim: whether frames flow; the full package refuses it. */
   setEnabled(enabled: boolean): Promise<State>;
   /** Stop the worker, remove the setup and end the service; settings stay. */
@@ -205,248 +246,157 @@ export interface TvService {
   cancelAll(): void;
 }
 
-/** Keyed by every value of the generated union, so the compiler keeps them in step. */
-const powers: Record<Power, true> = {
-  unknown: true,
-  active: true,
-  screen_saver: true,
-  asleep: true,
-};
-const videos: Record<Video, true> = {
-  unknown: true,
-  unavailable: true,
-  available: true,
-};
-const failureKinds: Record<FailureKind, true> = {
-  encoder: true,
-  receiver: true,
-  version: true,
-  replaced: true,
-  receiver_failed: true,
-  preferences: true,
-  other: true,
-};
-const errorKinds: Record<ErrorKind, true> = {
-  too_large: true,
-  unknown_method: true,
-  forbidden: true,
-  removing: true,
-  invalid_request: true,
-  wrong_package: true,
-  invalid_preferences: true,
-  save_failed: true,
-  internal: true,
-};
-// An absent value is omitted, never `null`.
-const optionalText = (value: unknown) =>
-  value === undefined || typeof value === 'string';
-const optionalNumber = (value: unknown) =>
-  value === undefined || typeof value === 'number';
-
-/** A failure; an unknown kind is `other`. `null` when malformed. */
-function decodeFailure(value: unknown): WorkerFailure | null {
-  if (
-    !isObject(value) ||
-    typeof value.kind !== 'string' ||
-    typeof value.message !== 'string'
-  )
-    return null;
-  return {
-    kind: known(failureKinds, value.kind, 'other'),
-    message: value.message,
-  };
+function readProblem({ asked, message }: Wire.Problem): Luna.Problem {
+  if (asked.step === 'unanswered')
+    return { asked: { step: 'unanswered' }, message };
+  const fix =
+    asked.step === 'ask' && 'fix' in asked
+      ? known(fixes, asked.fix, 'try_again')
+      : 'try_again';
+  return { asked: { step: 'ask', fix }, message };
 }
 
-/**
- * The phases both packages share: stopped, and retrying with its seconds; a
- * phase newer than this app is `unknown`. `null` when malformed.
- */
-function decodeCommonPhase(
-  worker: Fields,
-):
-  | { phase: 'stopped' }
-  | { phase: 'retrying'; seconds: number }
-  | { phase: 'unknown' }
-  | null {
+function optionalProblem(worker: Wire.FullWorker | Wire.SlimWorker) {
+  return 'problem' in worker && worker.problem !== undefined
+    ? { problem: readProblem(worker.problem) }
+    : {};
+}
+
+function readCommonWorker(
+  worker: Wire.FullWorker | Wire.SlimWorker,
+): Extract<FullReading, { phase: 'stopped' | 'asking' | 'unknown' }> {
   if (worker.phase === 'stopped') return { phase: 'stopped' };
-  if (worker.phase !== 'retrying') return { phase: 'unknown' };
-  return typeof worker.seconds === 'number'
-    ? { phase: 'retrying', seconds: worker.seconds }
-    : null;
-}
-
-function decodeFullWorker(value: unknown): WorkerReading<FullWorker> | null {
-  if (!isObject(value) || typeof value.phase !== 'string') return null;
-  switch (value.phase) {
-    case 'running':
-      return typeof value.capturing === 'boolean' &&
-        optionalNumber(value.fps) &&
-        optionalText(value.portal)
-        ? (value as unknown as FullWorker)
-        : null;
-    case 'stopping':
-      return optionalText(value.portal)
-        ? (value as unknown as FullWorker)
-        : null;
-    default:
-      return decodeCommonPhase(value);
-  }
-}
-
-/**
- * Slim: where the stream stands; a state newer than this app is read as
- * starting. An encoding newer than this app is kept (it is shown as sent).
- */
-function decodeSlimLink(value: unknown): SlimLink | null {
-  if (!isObject(value) || typeof value.state !== 'string') return null;
-  switch (value.state) {
-    case 'sending':
-      return typeof value.encoding === 'string' && typeof value.fps === 'number'
-        ? {
-            state: 'sending',
-            encoding: value.encoding as StreamEncoding,
-            fps: value.fps,
-          }
-        : null;
-    case 'waiting':
-    case 'failed': {
-      const failure = decodeFailure(value.failure);
-      return failure ? { state: value.state, failure } : null;
-    }
-    case 'paused':
-      return { state: 'paused' };
-    default:
-      return { state: 'starting' };
-  }
-}
-
-function decodeSlimWorker(value: unknown): WorkerReading<SlimWorker> | null {
-  if (!isObject(value) || typeof value.phase !== 'string') return null;
-  switch (value.phase) {
-    case 'running': {
-      const link = decodeSlimLink(value.link);
-      return typeof value.capturing === 'boolean' && link
-        ? { phase: 'running', capturing: value.capturing, link }
-        : null;
-    }
-    case 'stopping':
-      return { phase: 'stopping' };
-    default:
-      return decodeCommonPhase(value);
-  }
-}
-
-/** The package's own fields, by its `flavor`; an unknown flavor is malformed. */
-function decodePackage(state: Fields): PackageReading | null {
-  switch (state.flavor) {
-    case 'full': {
-      const worker = decodeFullWorker(state.worker);
-      return typeof state.target === 'string' && worker
-        ? {
-            flavor: 'full',
-            target: known(lightingTargets, state.target, 'unknown'),
-            worker,
-          }
-        : null;
-    }
-    case 'slim': {
-      const worker = decodeSlimWorker(state.worker);
-      return typeof state.enabled === 'boolean' && worker
-        ? { flavor: 'slim', enabled: state.enabled, worker }
-        : null;
-    }
-    default:
-      return null;
-  }
-}
-
-function isPreferences(value: unknown): value is Preferences {
-  return (
-    isObject(value) &&
-    (value.autostart === undefined || typeof value.autostart === 'boolean') &&
-    optionalText(value.prysm_address)
-  );
-}
-
-/**
- * A state as this app reads it, or `null` when it is malformed. Its
- * structure is checked; a value newer than this app in a known field has
- * one reading: an unknown power or video is `unknown`, an unknown failure
- * kind `other`, an unknown lighting target or worker phase `unknown` (never
- * off or stopped) and an unknown slim link state starting, so an app older
- * than its service still shows the service it talks to.
- */
-export function decodeState(value: unknown): State | null {
-  if (!isObject(value)) return null;
-  const pack = decodePackage(value);
-  const failure =
-    value.failure === undefined ? undefined : decodeFailure(value.failure);
-  const { log, preferences } = value;
   if (
-    !pack ||
-    failure === null ||
-    typeof value.power !== 'string' ||
-    typeof value.video !== 'string' ||
-    !isPreferences(preferences) ||
-    !Array.isArray(log) ||
-    !(log as unknown[]).every((line) => typeof line === 'string')
+    worker.phase === 'asking' &&
+    'problem' in worker &&
+    worker.problem !== undefined
   )
-    return null;
-  return {
-    ...pack,
-    power: known(powers, value.power, 'unknown'),
-    video: known(videos, value.video, 'unknown'),
-    preferences,
-    log: log as string[],
-    ...(failure ? { failure } : {}),
-  };
+    return { phase: 'asking', problem: readProblem(worker.problem) };
+  return { phase: 'unknown' };
 }
 
-type Reply = Record<string, unknown>;
+function readFullWorker(worker: Wire.FullWorker): FullReading {
+  if (worker.phase === 'running' && 'capturing' in worker) {
+    const { problem, ...running } = worker;
+    return problem === undefined
+      ? running
+      : { ...running, problem: readProblem(problem) };
+  }
+  if (worker.phase === 'stopping') {
+    const portal = 'portal' in worker ? worker.portal : undefined;
+    return {
+      phase: 'stopping',
+      ...(portal === undefined ? {} : { portal }),
+      ...optionalProblem(worker),
+    };
+  }
+  return readCommonWorker(worker);
+}
 
-function decode(text: string): Reply {
+// The generated validator has already checked every known state's fields.
+function isKnownLink(link: Wire.SlimLink): link is SlimLink {
+  return slimLinkStates.some((state) => state === link.state);
+}
+
+function readSlimLink(link: Wire.SlimLink): SlimLink {
+  if (!isKnownLink(link)) return { state: 'starting' };
+  switch (link.state) {
+    case 'sending':
+      return link;
+    case 'starting':
+    case 'refused':
+    case 'paused':
+      return { state: link.state };
+    default:
+      return { state: link.state, message: link.message };
+  }
+}
+
+function readSlimWorker(worker: Wire.SlimWorker): SlimReading {
+  if (worker.phase === 'running' && 'link' in worker)
+    return {
+      phase: worker.phase,
+      capturing: worker.capturing,
+      link: readSlimLink(worker.link),
+    };
+  if (worker.phase === 'stopping')
+    return { phase: worker.phase, ...optionalProblem(worker) };
+  return readCommonWorker(worker);
+}
+
+/** Map open service values to the states this app can display. */
+export function readState(value: Wire.State) {
+  const { power, video, preferences, log, unreadable } = value;
+  const common = {
+    power: known(powers, power, 'unknown'),
+    video: known(videos, video, 'unknown'),
+    preferences,
+    log,
+    ...(unreadable === undefined ? {} : { unreadable }),
+  };
+  return value.flavor === 'full'
+    ? {
+        ...common,
+        flavor: value.flavor,
+        target: known(lightingTargets, value.target, 'unknown'),
+        worker: readFullWorker(value.worker),
+      }
+    : {
+        ...common,
+        flavor: value.flavor,
+        enabled: value.enabled,
+        worker: readSlimWorker(value.worker),
+      };
+}
+
+type Reply = Fields;
+
+/** The bus cannot give the service; Prysm's own replies carry `errorKind`. */
+const absent = ({ errorKind, errorText, serviceName }: Reply) =>
+  errorKind === undefined &&
+  typeof errorText === 'string' &&
+  (errorText.startsWith(NOT_REGISTERED_REPLY) ||
+    (typeof serviceName === 'string' &&
+      errorText === `${serviceName}${NOT_RUNNING_REPLY}`));
+
+function parseReply(text: string, service: string): Reply {
+  const message = `${service} sent an unreadable reply.`;
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
+    throw new LunaError('invalid_reply', message);
+  }
+  if (!isObject(value)) throw new LunaError('invalid_reply', message);
+  return value;
+}
+
+function decode(text: string): Reply {
+  const reply = parseReply(text, 'The TV service');
+  if (isLunaDoneReply(reply)) return reply;
+  if (!isLunaErrorReply(reply))
     throw new LunaError(
       'invalid_reply',
-      'The TV service sent an unreadable reply.',
+      'The TV service sent an unexpected reply.',
     );
-  }
-  if (!isObject(value))
-    throw new LunaError(
-      'invalid_reply',
-      'The TV service sent an unreadable reply.',
-    );
-  const reply = value as Reply;
-  if (reply.returnValue !== true) {
-    const text =
-      typeof reply.errorText === 'string' && reply.errorText
-        ? reply.errorText
-        : 'The TV service couldn’t complete this action.';
-    // LS2 itself answers this way when the service is not registered.
-    const missing =
-      /not found|unknown service|no such service|service does not exist/i.test(
-        text,
-      );
-    const errorKind =
-      typeof reply.errorKind === 'string'
-        ? known(errorKinds, reply.errorKind, 'unknown')
-        : 'unknown';
-    throw new LunaError(missing ? 'unavailable' : 'refused', text, errorKind);
-  }
-  return reply;
+  const kind =
+    reply.errorKind === undefined
+      ? 'unknown'
+      : known(errorKinds, reply.errorKind, 'unknown');
+  throw new LunaError(
+    absent(reply) ? 'absent' : 'refused',
+    reply.errorText,
+    kind,
+  );
 }
 
 function stateOf(reply: Reply): State {
-  const state = decodeState(reply);
-  if (!state)
+  if (!isLunaStateReply(reply))
     throw new LunaError(
       'invalid_reply',
       'The TV service sent an unexpected state.',
     );
-  return state;
+  return readState(reply);
 }
 
 const notOnTv = () =>
@@ -454,6 +404,21 @@ const notOnTv = () =>
     'unavailable',
     'Open Prysm on your LG TV to reach its service.',
   );
+
+/** Setup talks to Homebrew Channel, which can answer with the command's stderr. */
+function setupReply(text: string) {
+  const reply = parseReply(text, 'Homebrew Channel');
+  if (reply.returnValue === true) return;
+  if (absent(reply))
+    throw new LunaError(
+      'absent',
+      'Setup needs the Homebrew Channel with root access.',
+    );
+  const detail = [reply.errorText, reply.stderrString].find(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  );
+  throw new LunaError('refused', detail ?? 'Setup failed.');
+}
 
 /** The Luna client. `bridge` is `null` off the TV: every call fails `unavailable`. */
 export function lunaTvService(
@@ -467,7 +432,6 @@ export function lunaTvService(
     payload: object,
     onReply: (text: string) => boolean,
     onFailure: (error: LunaError) => void,
-    timeoutMs: number | null,
   ): () => void {
     if (!bridge) {
       onFailure(notOnTv());
@@ -480,33 +444,23 @@ export function lunaTvService(
       onFailure(new LunaError('unavailable', String(error)));
       return () => {};
     }
-    let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const release = () => {
-      if (!active) return false;
-      active = false;
-      clearTimeout(timer);
-      pending.delete(cancel);
-      return true;
-    };
     function cancel() {
-      if (!release()) return;
-      // Cancelling may call back synchronously; it is ignored once released.
+      // Cancelling may call back synchronously; ignore it once released.
+      if (!pending.delete(cancel)) return false;
+      clearTimeout(timer);
       channel.cancel();
+      return true;
     }
     const fail = (error: LunaError) => {
-      if (!active) return;
-      cancel();
-      onFailure(error);
+      if (cancel()) onFailure(error);
     };
-    if (timeoutMs !== null)
-      timer = setTimeout(
-        () => fail(new LunaError('timeout', 'The TV service didn’t respond.')),
-        timeoutMs,
-      );
+    const timer = setTimeout(
+      () => fail(new LunaError('timeout', 'The TV service didn’t respond.')),
+      CALL_TIMEOUT_MS,
+    );
     pending.add(cancel);
     channel.onservicecallback = (text) => {
-      if (!active) return;
+      if (!pending.has(cancel)) return;
       clearTimeout(timer);
       let done: boolean;
       try {
@@ -537,23 +491,24 @@ export function lunaTvService(
   function request<T>(
     uri: string,
     payload: object,
-    parse: (reply: Reply) => T,
+    parse: (text: string) => T,
   ) {
     return new Promise<T>((resolve, reject) => {
       open(
         uri,
         payload,
         (text) => {
-          resolve(parse(decode(text)));
+          resolve(parse(text));
           return true;
         },
         reject,
-        CALL_TIMEOUT_MS,
       );
     });
   }
   const method = (name: string) => `${SERVICE_URI}/${name}`;
 
+  const stateRequest = (name: string, payload: object) =>
+    request(method(name), payload, (text) => stateOf(decode(text)));
   return {
     watch(listener) {
       let stopped = false;
@@ -561,8 +516,8 @@ export function lunaTvService(
       let retry: ReturnType<typeof setTimeout> | undefined;
       function failed(error: LunaError) {
         if (stopped) return;
-        listener({ online: false, error });
         retry = setTimeout(subscribe, RESUBSCRIBE_MS);
+        listener({ online: false, error });
       }
       function subscribe() {
         let first = true;
@@ -571,18 +526,20 @@ export function lunaTvService(
           { subscribe: true },
           (text) => {
             const reply = decode(text);
+            const state = stateOf(reply);
             if (first && reply.subscribed !== true)
               throw new LunaError(
                 'refused',
                 'The TV service didn’t accept a subscription.',
               );
             first = false;
-            if (!stopped) listener({ online: true, state: stateOf(reply) });
+            if (!stopped) listener({ online: true, state });
             return false;
           },
           failed,
-          CALL_TIMEOUT_MS,
         );
+        // The bridge may deliver its first reply before call() returns.
+        if (stopped) close();
       }
       subscribe();
       return () => {
@@ -592,47 +549,14 @@ export function lunaTvService(
       };
     },
     setPreferences: (preferences) =>
-      request(method('setPreferences'), preferences, stateOf),
-    setTarget: (target) => request(method('setTarget'), { target }, stateOf),
-    setEnabled: (enabled) =>
-      request(method('setEnabled'), { enabled }, stateOf),
-    uninstall: () => request(method('uninstall'), {}, () => undefined),
-    setup: () =>
-      new Promise<void>((resolve, reject) => {
-        open(
-          HOMEBREW_EXEC,
-          { command: SETUP_SCRIPT },
-          (text) => {
-            let reply: Reply;
-            try {
-              reply = JSON.parse(text) as Reply;
-            } catch {
-              throw new LunaError(
-                'invalid_reply',
-                'Homebrew Channel sent an unreadable reply.',
-              );
-            }
-            if (reply?.returnValue === true) {
-              resolve();
-              return true;
-            }
-            const detail = [reply?.errorText, reply?.stderrString].find(
-              (value) => typeof value === 'string' && value,
-            ) as string | undefined;
-            const missing = /not found|unknown service|no such service/i.test(
-              detail ?? '',
-            );
-            throw new LunaError(
-              missing ? 'unavailable' : 'refused',
-              missing
-                ? 'Setup needs the Homebrew Channel with root access.'
-                : (detail ?? 'Setup failed.'),
-            );
-          },
-          reject,
-          CALL_TIMEOUT_MS,
-        );
+      stateRequest('setPreferences', preferences),
+    setTarget: (target) => stateRequest('setTarget', { target }),
+    setEnabled: (enabled) => stateRequest('setEnabled', { enabled }),
+    uninstall: () =>
+      request(method('uninstall'), {}, (text) => {
+        decode(text);
       }),
+    setup: () => request(HOMEBREW_EXEC, { command: SETUP_SCRIPT }, setupReply),
     cancelAll() {
       for (const cancel of Array.from(pending)) cancel();
     },

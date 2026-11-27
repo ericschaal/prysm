@@ -74,8 +74,7 @@ const POOLED_BLOCKS: usize = 100;
 /// pools as coarsely relative to its groups as the default does.
 const BLOCK_GROUPS: usize = 3;
 
-/// A selective colour darker than this (Rec. 709 luminance) has no hue worth
-/// scaling up: far below the darkest 8-bit grey, 3e-4.
+/// Ignore selective colours below this Rec. 709 luminance when scaling hue.
 const DARK: f32 = 1e-6;
 
 /// How finely the two-part evaluation looks at the picture; see the
@@ -103,14 +102,14 @@ impl Sizes {
 pub(super) struct ColorFocus {
     /// Whether `fields`, `groups` and `blocks` match the sampler's geometry.
     ready: bool,
-    fields: [Fields; 4],
+    fields: Fields,
     /// The near field's resolution.
     groups: Pooling,
     /// The far field's resolution.
     blocks: Pooling,
 }
 
-/// One edge's samples: near groups, and far weights by block.
+/// The samples in strip order: near groups, and far weights by block.
 #[derive(Debug, Default, PartialEq)]
 struct Fields {
     /// Sample `i`'s near groups are `near[starts[i]..starts[i + 1]]`.
@@ -169,16 +168,13 @@ impl Pooling {
                 rect[2].max(x1),
                 rect[3].max(y1),
             ];
-            areas[group] += cell_area([x0, y0, x1, y1]);
-            self.of_cell.push((group, 0.0));
+            let area = cell_area([x0, y0, x1, y1]);
+            areas[group] += area;
+            self.of_cell.push((group, area));
         }
-        for (&cell, &mut (group, ref mut share)) in cells.iter().zip(&mut self.of_cell) {
-            let area = areas[group];
-            *share = if area > 0.0 {
-                cell_area(cell) / area
-            } else {
-                0.0
-            };
+        // Grid dimensions do not exceed the picture: every member cell has positive area.
+        for (group, share) in &mut self.of_cell {
+            *share /= areas[*group];
         }
     }
 
@@ -338,17 +334,11 @@ impl ColorFocus {
         self.blocks.pool(cell_colors);
     }
 
-    /// Replaces each plain mean in `samples`, samples `first..` of `edge`
-    /// (strip order 0..4), by its focused colour. Call after
+    /// Replaces each plain mean in `samples`, samples from `first`
+    /// in strip order, by its focused colour. Call after
     /// [`Self::prepare_frame`].
-    pub(super) fn refine(
-        &self,
-        edge: usize,
-        first: usize,
-        strength: f32,
-        samples: &mut [LinearColor],
-    ) {
-        let fields = &self.fields[edge];
+    pub(super) fn refine(&self, first: usize, strength: f32, samples: &mut [LinearColor]) {
+        let fields = &self.fields;
         // A picture has at least one cell, so at least one block.
         let far_rows = fields.far.chunks_exact(self.blocks.len()).skip(first);
         let near_rows = fields.starts.windows(2).skip(first);
@@ -397,36 +387,33 @@ impl ColorFocus {
     )]
     fn build(&mut self, geometry: &Geometry, sizes: Sizes) {
         let columns = geometry.columns.max(1);
-        let cell_width = geometry.width as f32 / columns as f32;
+        let cell_width = geometry.key.width as f32 / columns as f32;
         let lobe_width = geometry.radius / 4.0;
         let group = group_side(GROUP_LOBES * lobe_width, cell_width, sizes.group_cells);
         let block =
             (geometry.cells.len().div_ceil(sizes.pooled_blocks).isqrt()).max(BLOCK_GROUPS * group);
-        self.groups.build(geometry.cells, columns, group);
-        self.blocks.build(geometry.cells, columns, block);
+        self.groups.build(&geometry.cells, columns, group);
+        self.blocks.build(&geometry.cells, columns, block);
 
-        let near_radius = (sizes.near_height * geometry.height as f32)
+        let near_radius = (sizes.near_height * geometry.key.height as f32)
             .min(sizes.near_radii_max * geometry.radius)
             .max(NEAR_RADII_MIN * geometry.radius)
             .max(NEAR_MIN_BLOCKS * cell_width * block as f32);
         let split = Split {
-            cells: geometry.cells,
+            cells: &geometry.cells,
             radius: geometry.radius,
             near_limit: (near_radius / geometry.radius).powi(2),
             groups: &self.groups,
             blocks: &self.blocks,
         };
-        let mut scratch = Scratch::new(self.groups.len());
-        let edges = geometry.points.iter().zip(geometry.weights);
-        for (fields, (points, weights)) in self.fields.iter_mut().zip(edges) {
-            fields.clear();
-            let rows = weights.chunks_exact(geometry.cells.len().max(1));
-            for (&point, row) in points.iter().zip(rows) {
-                split.sample(point, row, &mut scratch, fields);
-            }
+        let mut near_weights = vec![None; self.groups.len()];
+        self.fields.clear();
+        let rows = geometry.weights.chunks_exact(geometry.cells.len());
+        for (point, row) in geometry.key.sample_points(geometry.counts).zip(rows) {
+            split.sample(point, row, &mut near_weights, &mut self.fields);
         }
         self.groups.in_use.fill(false);
-        for near_group in self.fields.iter().flat_map(|fields| &fields.near) {
+        for near_group in &self.fields.near {
             self.groups.in_use[near_group.group] = true;
         }
         self.ready = true;
@@ -452,53 +439,45 @@ struct Split<'a> {
     blocks: &'a Pooling,
 }
 
-/// Per-group storage for one sample at a time while splitting.
-struct Scratch {
-    near: Vec<bool>,
-    /// Each near group's geometric and local-lobe weight.
-    weights: Vec<(f32, f32)>,
-}
-
-impl Scratch {
-    fn new(groups: usize) -> Self {
-        Self {
-            near: vec![false; groups],
-            weights: vec![(0.0, 0.0); groups],
-        }
-    }
-}
-
 impl Split<'_> {
     /// Appends the sample at `point`, with geometric weights `row` (one per
     /// cell), to `fields`.
-    fn sample(&self, point: [f32; 2], row: &[f32], scratch: &mut Scratch, fields: &mut Fields) {
-        for (near, &rect) in scratch.near.iter_mut().zip(&self.groups.rects) {
-            *near = distance_squared(rect, point, self.radius) <= self.near_limit;
+    fn sample(
+        &self,
+        point: [f32; 2],
+        row: &[f32],
+        near_weights: &mut [Option<(f32, f32)>],
+        fields: &mut Fields,
+    ) {
+        for (weight, &rect) in near_weights.iter_mut().zip(&self.groups.rects) {
+            *weight = (distance_squared(rect, point, self.radius) <= self.near_limit)
+                .then_some((0.0, 0.0));
         }
-        scratch.weights.fill((0.0, 0.0));
         let far_start = fields.far.len();
         fields.far.resize(far_start + self.blocks.len(), 0.0);
         let far = &mut fields.far[far_start..];
         let pooled = self.groups.of_cell.iter().zip(&self.blocks.of_cell);
         for ((&cell, &weight), (&(group, _), &(block, _))) in self.cells.iter().zip(row).zip(pooled)
         {
-            if scratch.near[group] {
-                let (sum, local) = &mut scratch.weights[group];
+            if let Some((sum, local)) = &mut near_weights[group] {
                 *sum += weight;
                 *local += cell_area(cell) * local_lobe(distance_squared(cell, point, self.radius));
             } else {
                 far[block] += weight;
             }
         }
-        let groups = scratch.near.iter().zip(&scratch.weights).enumerate();
-        let near_groups = groups.filter(|(_, (near, _))| **near);
-        fields
-            .near
-            .extend(near_groups.map(|(group, (_, &(weight, local)))| NearGroup {
-                group,
-                weight,
-                local,
-            }));
+        fields.near.extend(
+            near_weights
+                .iter()
+                .enumerate()
+                .filter_map(|(group, &weights)| {
+                    weights.map(|(weight, local)| NearGroup {
+                        group,
+                        weight,
+                        local,
+                    })
+                }),
+        );
         fields.starts.push(fields.near.len());
     }
 }

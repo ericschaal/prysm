@@ -1,4 +1,5 @@
-//! Explicit V4L buffer lifetime. Unlike the upstream stream, cleanup never panics.
+//! V4L2 buffer allocation and release.
+use crate::classify::{Fault, Op, classify, failure};
 use crate::{CaptureError, Result};
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
@@ -13,7 +14,6 @@ use v4l::{
     v4l2,
 };
 
-/// What capture was doing when the stream failed.
 const WAITING: &str = "error waiting for a capture frame";
 const CAPTURING: &str = "error capturing frame";
 const REQUEUING: &str = "failed to requeue capture buffer";
@@ -24,9 +24,7 @@ enum Request<'a> {
     Querybuf(&'a mut v4l2_buffer),
     Qbuf(&'a mut v4l2_buffer),
     Dqbuf(&'a mut v4l2_buffer),
-    /// For the video capture buffer type.
     StreamOn,
-    /// For the video capture buffer type.
     StreamOff,
 }
 
@@ -75,26 +73,25 @@ pub(super) struct Stream {
     timeout: Duration,
 }
 
-/// Whether `error` from a V4L2 ioctl means the device is gone (unplugged or
-/// reset). Once a node is unregistered the V4L2 core answers every ioctl with
-/// ENODEV without calling the driver, and unregistering stops streaming and
-/// frees the queue's buffers (at the latest when the fd closes). Nothing else
-/// counts: EIO, EPROTO or ESHUTDOWN can come from a device still registered,
-/// whose buffers may still be held.
-fn device_gone(error: &io::Error) -> bool {
-    error.raw_os_error() == Some(libc::ENODEV)
+/// A failure of `op` on the stream, `doing` what, as [`classify`] reads it.
+pub(super) fn failed(op: Op, error: io::Error, doing: &'static str) -> CaptureError {
+    failure(classify(op, &error), error, doing)
 }
 
-/// A failure of the running stream, `doing` what: [`CaptureError::Disconnected`]
-/// when the device is gone, else a backend error.
-pub(super) fn failed(error: io::Error, doing: &'static str) -> CaptureError {
-    if device_gone(&error) {
-        CaptureError::Disconnected {
-            details: doing.into(),
-            source: Some(error),
-        }
-    } else {
-        anyhow::Error::new(error).context(doing).into()
+/// A failed DQBUF or QBUF: [`Dequeued::Interrupted`] for a queue error, else
+/// the end of capture.
+fn queue_failed<T>(op: Op, error: io::Error, doing: &'static str) -> Result<Dequeued<T>> {
+    let fault = classify(op, &error);
+    let failure = failure(fault, error, doing);
+    match fault {
+        Fault::QueueError => Ok(Dequeued::Interrupted(failure)),
+        Fault::Gone
+        | Fault::Busy
+        | Fault::Denied
+        | Fault::Missing
+        | Fault::Rejected
+        | Fault::Signalled
+        | Fault::Other => Err(failure),
     }
 }
 
@@ -111,21 +108,14 @@ pub(super) fn released(release: io::Result<()>, result: Result<()>) -> Result<()
     }
 }
 
-/// Whether `error` from `VIDIOC_DQBUF` or `VIDIOC_QBUF` may be temporary:
-/// EIO, which V4L2 also uses for problems like signal loss (see
-/// [`crate::health`]).
-fn interrupted(error: &io::Error) -> bool {
-    error.raw_os_error() == Some(libc::EIO)
-}
-
 /// What [`Stream::frame`] got from the device.
 pub(super) enum Dequeued<T> {
     /// A buffer, and what was made of it.
     Buffer(T),
     /// No buffer within the timeout.
     Stalled,
-    /// DQBUF or QBUF failed with a possibly temporary error; the stream needs
-    /// a restart before the next frame.
+    /// DQBUF or QBUF failed with [`Fault::QueueError`]; the stream needs a
+    /// restart before the next frame.
     Interrupted(CaptureError),
 }
 
@@ -192,7 +182,11 @@ impl Stream {
             timeout,
         };
         if let Err(error) = stream.allocate() {
-            let allocation = Err(CaptureError::Backend(error.into()));
+            let allocation = Err(failed(
+                Op::Allocate,
+                error,
+                "failed to allocate capture buffers",
+            ));
             return Err(released(stream.release(), allocation)
                 .expect_err("a failed allocation stays failed after release"));
         }
@@ -233,7 +227,6 @@ impl Stream {
         }
         Ok(())
     }
-    /// Queue every buffer and stream on.
     pub fn start(&mut self) -> io::Result<()> {
         let handle = Arc::clone(&self.handle);
         self.start_with(&mut kernel(&handle))
@@ -288,21 +281,25 @@ impl Stream {
             match poll(i32::try_from(left.as_millis()).unwrap_or(i32::MAX)) {
                 Ok(0) => return Ok(Dequeued::Stalled),
                 Ok(_) => break,
-                // A signal handler ran on this thread: poll(2) is never
-                // restarted, so wait again for what is left.
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(failed(error, WAITING)),
+                Err(error) => match classify(Op::Wait, &error) {
+                    Fault::Signalled => {}
+                    fault @ (Fault::Gone
+                    | Fault::Busy
+                    | Fault::Denied
+                    | Fault::Missing
+                    | Fault::Rejected
+                    | Fault::QueueError
+                    | Fault::Other) => {
+                        return Err(failure(fault, error, WAITING));
+                    }
+                },
             }
         }
         let mut info = buffer(0);
-        match ioctl(Request::Dqbuf(&mut info)) {
-            Ok(()) => {}
-            // `info` names no buffer: one the driver may have taken comes
-            // back only with STREAMOFF.
-            Err(error) if interrupted(&error) => {
-                return Ok(Dequeued::Interrupted(failed(error, CAPTURING)));
-            }
-            Err(error) => return Err(failed(error, CAPTURING)),
+        // On a queue error `info` names no buffer: one the driver may have
+        // taken comes back only with STREAMOFF.
+        if let Err(error) = ioctl(Request::Dqbuf(&mut info)) {
+            return queue_failed(Op::Dequeue, error, CAPTURING);
         }
         let Some(mapping) = self
             .buffers
@@ -310,7 +307,7 @@ impl Stream {
             .and_then(Option::as_ref)
         else {
             let error = io::Error::other("capture device returned an invalid buffer index");
-            return Err(failed(error, CAPTURING));
+            return Err(failed(Op::Dequeue, error, CAPTURING));
         };
         let length = info.bytesused as usize;
         let result = if length > mapping.length {
@@ -326,29 +323,25 @@ impl Stream {
                 &info,
             ))
         };
-        match ioctl(Request::Qbuf(&mut buffer(info.index))) {
-            Ok(()) => {}
-            // The restart that follows queues every buffer again.
-            Err(error) if interrupted(&error) => {
-                return Ok(Dequeued::Interrupted(failed(error, REQUEUING)));
-            }
-            Err(error) => return Err(failed(error, REQUEUING)),
+        // On a queue error the restart that follows queues every buffer again.
+        if let Err(error) = ioctl(Request::Qbuf(&mut buffer(info.index))) {
+            return queue_failed(Op::Requeue, error, REQUEUING);
         }
         result
             .map(Dequeued::Buffer)
-            .map_err(|error| failed(error, CAPTURING))
+            .map_err(|error| failed(Op::Dequeue, error, CAPTURING))
     }
     pub fn release(&mut self) -> io::Result<()> {
         let handle = Arc::clone(&self.handle);
         self.release_with(&mut kernel(&handle), &mut Mapping::unmap)
     }
     /// Stop, unmap and free whatever is still held, through `ioctl` and
-    /// `unmap`. A device that is gone ([`device_gone`]) has nothing left to
+    /// `unmap`. A device that is gone ([`Fault::Gone`]) has nothing left to
     /// stop or free, so that counts as released; its mappings are still
     /// unmapped, which needs no device.
     fn release_with(&mut self, ioctl: &mut Ioctl<'_>, unmap: &mut Unmap<'_>) -> io::Result<()> {
         let mut ioctl = |request| match ioctl(request) {
-            Err(error) if device_gone(&error) => Ok(()),
+            Err(error) if classify(Op::Release, &error) == Fault::Gone => Ok(()),
             result => result,
         };
         let mut failure = None;

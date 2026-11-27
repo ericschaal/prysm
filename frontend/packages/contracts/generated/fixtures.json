@@ -529,6 +529,11 @@
   ],
   "State": [
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -549,6 +554,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {
         "brightness_percent": 40,
         "issue": "overridden",
@@ -561,7 +571,7 @@
           "capture_ms": 88,
           "output_ms": 2.4000000953674316
         },
-        "receiving": true,
+        "picture": "arriving",
         "sent_fps": 29.899999618530273
       },
       "revision": 7,
@@ -603,6 +613,11 @@
       "calibration": {
         "pattern": "gray_192",
         "uncorrected": false
+      },
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
       },
       "device": {},
       "revision": 0,
@@ -669,6 +684,53 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
+      "device": {},
+      "input": {
+        "fps": 0,
+        "picture": "refused",
+        "sent_fps": 0
+      },
+      "revision": 0,
+      "session": {
+        "state": "screen_sync"
+      },
+      "settings": {
+        "capture": {
+          "device": "/dev/video0",
+          "kind": "device"
+        },
+        "output": {
+          "address": "192.0.2.1",
+          "kind": "wled",
+          "leds": {
+            "left": 4,
+            "top": 10
+          }
+        },
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "style": {
+            "kind": "natural"
+          }
+        }
+      },
+      "surface_failures": [],
+      "target": "screen_sync",
+      "version": "1.0.0"
+    },
+    {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -689,6 +751,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -726,6 +793,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -763,6 +835,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -788,6 +865,11 @@
       "version": "1.0.0"
     },
     {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
       "device": {},
       "revision": 0,
       "session": {
@@ -806,6 +888,38 @@
       },
       "surface_failures": [],
       "target": "off",
+      "version": "1.0.0"
+    },
+    {
+      "control": {
+        "busy": false,
+        "external": false,
+        "remembered": "effects"
+      },
+      "device": {
+        "issue": "unreachable"
+      },
+      "revision": 0,
+      "session": {
+        "failure": {
+          "field": "capture.device",
+          "kind": "invalid",
+          "message": "a video device is required"
+        },
+        "state": "unanswered"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "style": {
+            "kind": "natural"
+          }
+        }
+      },
+      "surface_failures": [],
+      "target": "effects",
       "version": "1.0.0"
     }
   ],
@@ -927,6 +1041,9 @@
     },
     {
       "target": "effects"
+    },
+    {
+      "target": "remembered"
     }
   ],
   "luna/State": [
@@ -991,45 +1108,188 @@
       "target": "screen_sync",
       "video": "available",
       "worker": {
-        "phase": "retrying",
-        "seconds": 2
+        "phase": "stopping",
+        "problem": {
+          "asked": {
+            "fix": "try_again",
+            "step": "ask"
+          },
+          "message": "again after a restart: worker killed by signal 9"
+        }
       }
     },
     {
-      "enabled": true,
-      "failure": {
-        "kind": "encoder",
-        "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
-      },
-      "flavor": "slim",
-      "log": [],
-      "power": "screen_saver",
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
       "preferences": {
-        "autostart": true,
-        "prysm_address": "http://192.168.1.20:8787"
+        "autostart": false
       },
-      "video": "unknown",
+      "target": "screen_sync",
+      "video": "available",
       "worker": {
-        "phase": "retrying",
-        "seconds": 4
+        "capturing": true,
+        "fps": 30,
+        "lights": "unreachable",
+        "phase": "running",
+        "portal": "http://192.168.1.5:8787/"
       }
     },
     {
-      "enabled": true,
-      "flavor": "slim",
-      "log": [],
-      "power": "screen_saver",
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
       "preferences": {
-        "autostart": true,
-        "prysm_address": "http://192.168.1.20:8787"
+        "autostart": false
       },
-      "video": "unknown",
+      "target": "effects",
+      "video": "available",
       "worker": {
         "capturing": false,
-        "link": {
-          "state": "paused"
-        },
-        "phase": "running"
+        "phase": "running",
+        "portal": "http://192.168.1.5:8787/",
+        "problem": {
+          "asked": {
+            "step": "unanswered"
+          },
+          "message": "switch to effects: output: no answer"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "try_again",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "change_settings",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "set_up",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "unsupported",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "flavor": "full",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "power": "active",
+      "preferences": {
+        "autostart": false
+      },
+      "target": "screen_sync",
+      "video": "available",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "restart_tv",
+            "step": "ask"
+          },
+          "message": "open capture: denied"
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "unreadable": "invalid tv.json: expected a boolean",
+      "video": "unknown",
+      "worker": {
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "try_again",
+            "step": "ask"
+          },
+          "message": "cannot start the worker: no such file"
+        }
       }
     },
     {
@@ -1059,6 +1319,137 @@
       "worker": {
         "phase": "stopping"
       }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "state": "paused"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "state": "refused"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "waiting"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "capture_waiting"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "encoder_failed"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "version_differs"
+        },
+        "phase": "running"
+      }
+    },
+    {
+      "enabled": true,
+      "flavor": "slim",
+      "log": [],
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "prysm_address": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "capturing": false,
+        "link": {
+          "message": "waiting for the receiver: connection refused",
+          "state": "receiver_failed"
+        },
+        "phase": "running"
+      }
     }
   ],
   "luna/StateReply": [
@@ -1084,10 +1475,6 @@
     },
     {
       "enabled": true,
-      "failure": {
-        "kind": "encoder",
-        "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
-      },
       "flavor": "slim",
       "log": [],
       "power": "screen_saver",
@@ -1096,10 +1483,17 @@
         "prysm_address": "http://192.168.1.20:8787"
       },
       "returnValue": true,
+      "unreadable": "invalid tv.json: expected a boolean",
       "video": "unknown",
       "worker": {
-        "phase": "retrying",
-        "seconds": 4
+        "phase": "asking",
+        "problem": {
+          "asked": {
+            "fix": "try_again",
+            "step": "ask"
+          },
+          "message": "cannot start the worker: no such file"
+        }
       }
     }
   ],

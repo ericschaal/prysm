@@ -1,5 +1,5 @@
 //! Construction-time validation and the per-request origin policy with CORS.
-use crate::response::{self, Response, failure};
+use crate::response::{self, Response};
 use crate::{Caching, FrontendAsset, page};
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::http::uri::Authority;
@@ -107,17 +107,9 @@ pub(crate) fn validate_assets(assets: &[FrontendAsset]) -> Result<(), Validation
 /// The origin policy for an API request. `Ok(None)`: no `Origin` or the
 /// portal's own; `Ok(Some(origin))`: an allowed cross origin that gets CORS
 /// headers; `Err`: `403 forbidden`. Forwarded headers are ignored.
-pub(crate) fn check(
-    access: &Access,
-    headers: &HeaderMap,
-) -> Result<Option<HeaderValue>, Box<Response>> {
-    let denied = || {
-        Box::new(failure(
-            StatusCode::FORBIDDEN,
-            Failure::Forbidden {
-                message: "origin denied".into(),
-            },
-        ))
+pub(crate) fn check(access: &Access, headers: &HeaderMap) -> Result<Option<HeaderValue>, Failure> {
+    let denied = || Failure::Forbidden {
+        message: "origin denied".into(),
     };
     let mut values = headers.get_all(header::ORIGIN).iter();
     let origin = match (values.next(), values.next()) {

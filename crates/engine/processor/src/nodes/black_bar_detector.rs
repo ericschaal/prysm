@@ -128,8 +128,6 @@ fn same_boundary(a: u32, b: u32, tolerance: u32) -> bool {
 struct EdgeCrop {
     current: Px,
     candidate: Option<Candidate>,
-    /// Where scans of the last [`INWARD_CONFIRM`] saw the picture begin.
-    recent_content: VecDeque<Content>,
 }
 
 /// A boundary other than the current crop, and the scans that saw it.
@@ -148,13 +146,6 @@ struct Sighting {
     position: Px,
 }
 
-/// One scan's boundary, picture beginning there.
-#[derive(Debug, Clone, Copy)]
-struct Content {
-    position: Px,
-    time: Instant,
-}
-
 impl EdgeCrop {
     /// Takes one scan's boundary (`None`: the scan could not tell) at `now`,
     /// `elapsed` since the previous scan or zero after a gap, and returns the
@@ -167,18 +158,7 @@ impl EdgeCrop {
         elapsed: Duration,
         tolerance: Px,
     ) -> Option<Px> {
-        while self
-            .recent_content
-            .front()
-            .is_some_and(|content| now.saturating_duration_since(content.time) >= INWARD_CONFIRM)
-        {
-            self.recent_content.pop_front();
-        }
         let observed = observed?;
-        self.recent_content.push_back(Content {
-            position: observed,
-            time: now,
-        });
         if observed.matches(self.current, tolerance) {
             self.candidate = None;
             return None;
@@ -224,11 +204,17 @@ impl EdgeCrop {
             .collect();
         let middle = positions.len() / 2;
         let proposed = *positions.select_nth_unstable(middle).1;
-        let picture_outside = self
-            .recent_content
-            .iter()
-            .any(|content| content.position.saturating_add(tolerance) < proposed);
-        (!(inward && picture_outside)).then_some(proposed)
+        // Inward confirmation needs 1.5 s of credit after the first sighting.
+        // Any different boundary since then would have reset this candidate,
+        // so its sightings contain every observation in the veto window.
+        let picture_outside = inward
+            && candidate
+                .seen
+                .iter()
+                .rev()
+                .take_while(|s| now.saturating_duration_since(s.time) < INWARD_CONFIRM)
+                .any(|s| s.position.saturating_add(tolerance) < proposed);
+        (!picture_outside).then_some(proposed)
     }
 
     /// Moves the crop to a proposal; its evidence is used up.

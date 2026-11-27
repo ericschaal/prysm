@@ -33,7 +33,6 @@ import {
 } from '@prysm/web-portal';
 import {
   ledEdgeLimits,
-  ledRuns,
   normalizeWledAddress,
   wledUrl,
 } from '@prysm/output-wled-ui';
@@ -173,7 +172,7 @@ test('a state tick leaves Settings in place; each page has its own save line', a
       fixture.publish({
         target: 'screen_sync',
         session: { state: 'screen_sync' },
-        input: { fps, receiving: true, latency: { output_ms: fps / 10 } },
+        input: { fps, picture: 'arriving', latency: { output_ms: fps / 10 } },
       }),
     );
   try {
@@ -220,7 +219,7 @@ test('the lighting card names a low WLED brightness while screen sync shows', as
     const running = {
       target: 'screen_sync',
       session: { state: 'screen_sync' },
-      input: { fps: 30, receiving: true },
+      input: { fps: 30, picture: 'arriving' },
     };
     await act(async () =>
       fixture.publish({ ...running, device: { brightness_percent: 40 } }),
@@ -269,7 +268,7 @@ test('LED counts that differ are said on Home and on the Lights page', async () 
     await publish({
       target: 'screen_sync',
       session: { state: 'screen_sync' },
-      input: { fps: 30, receiving: true },
+      input: { fps: 30, picture: 'arriving' },
       device: { led_count: 120 },
     });
     assert.equal(info(), differ);
@@ -319,7 +318,7 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       fixture.publish({
         target: 'screen_sync',
         session: { state: 'screen_sync' },
-        input: { fps: 0, receiving: false },
+        input: { fps: 0, picture: 'quiet' },
       }),
     );
     assert.equal(
@@ -337,9 +336,24 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       'Waiting for picture',
       'in place of the Video fact',
     );
+    // The TV refuses to share the video: the calm line says why, still not
+    // a problem, once it lasts.
+    await act(async () =>
+      fixture.publish({
+        input: { fps: 0, picture: 'refused' },
+      }),
+    );
+    await act(async () => sleep(slowStartMs + 50));
+    assert.equal(info(), null, 'a refusal is not a problem');
+    assert.equal(note(), 'The TV doesn’t let Prysm capture this video.');
+    assert.equal(
+      $$('.path-fact')[0].textContent,
+      'The TV doesn’t let Prysm capture this video.',
+      'the Video fact says it, not waiting',
+    );
 
     await act(async () =>
-      fixture.publish({ input: { fps: 29.9, receiving: true } }),
+      fixture.publish({ input: { fps: 29.9, picture: 'arriving' } }),
     );
     assert.equal(info(), null);
     assert.equal(note(), 'Following the screen.');
@@ -372,35 +386,14 @@ test('the power button and the mode tiles set the target and show what the sessi
   const targets = () =>
     fixture.calls.filter((call) => call.startsWith('target:'));
   try {
-    // The mode: a radio group of two option cards, each saying what it does.
-    assert.equal($('[role="radiogroup"]').getAttribute('aria-label'), 'Mode');
-    assert.deepEqual(
-      $$('.modes [role="radio"]').map((item) => [
-        $('.mode-name', item).textContent,
-        $('.mode-line', item).textContent,
-        item.getAttribute('aria-checked'),
-        item.tabIndex,
-      ]),
-      [
-        ['Screen sync', 'Follows the screen', 'true', 0],
-        ['WLED effects', 'Patterns from WLED', 'false', -1],
-      ],
-    );
     assert.equal(power().getAttribute('aria-pressed'), 'false');
     assert.equal(word(), 'Off');
-    assert.equal($('.lighting-status').textContent, 'Lights are off');
-    assert.equal($('.light-card').dataset.mood, 'off');
-    assert.equal(
-      $('.modes').dataset.mode,
-      'screen_sync',
-      'power turns on sync',
-    );
-    assert.equal($('.light-card').dataset.lit, 'false');
-    assert.equal(info(), null, 'no sentence in the normal states');
-
-    // Power turns screen sync on; the light, and the word, come with the session.
+    assert.equal($('.modes'), null);
+    assert.equal($('.picture-controls'), null);
     await press(power());
-    assert.deepEqual(targets(), ['target:screen_sync']);
+    assert.equal(mode('effects').getAttribute('aria-checked'), 'true');
+    await press(mode('screen_sync'));
+    assert.deepEqual(targets(), ['target:effects', 'target:screen_sync']);
     assert.equal(power().getAttribute('aria-pressed'), 'true');
     assert.equal(mode('screen_sync').getAttribute('aria-checked'), 'true');
     assert.equal(word(), 'On');
@@ -414,7 +407,7 @@ test('the power button and the mode tiles set the target and show what the sessi
 
     // The tile that is already on restarts nothing.
     await press(mode('screen_sync'));
-    assert.equal(targets().length, 1);
+    assert.equal(targets().length, 2);
 
     // The other option switches mode while on. Prysm's picture controls do
     // not reach the lights' own effects: they stay in place, quiet and out of
@@ -442,53 +435,29 @@ test('the power button and the mode tiles set the target and show what the sessi
     assert.deepEqual(targets().slice(-1), ['target:off']);
     assert.equal(word(), 'Off');
     assert.equal($('.lighting-status').textContent, 'Lights are off');
-    assert.equal($('.modes').dataset.mode, 'effects');
+    assert.equal($('.modes'), null);
     await press(power());
     assert.deepEqual(targets().slice(-1), ['target:effects']);
     await press(power());
 
-    // A tile chosen while off turns that mode on.
-    await press(mode('screen_sync'));
-    assert.deepEqual(targets().slice(-2), ['target:off', 'target:screen_sync']);
-    assert.equal(word(), 'On');
-
+    // A recoverable wait keeps the request On. Cancelling returns to Off.
     await act(async () =>
       fixture.publish({
         target: 'screen_sync',
-        session: {
-          state: 'stopped',
-          failure: {
-            kind: 'adapter',
-            message: 'WLED at 192.0.2.1 did not switch to live mode',
-          },
+        session: { state: 'stopped' },
+        control: {
+          remembered: 'screen_sync',
+          external: false,
+          busy: false,
+          waiting: 'capture',
         },
       }),
     );
-    assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
-    assert($('.lighting-status').classList.contains('visually-hidden'));
-    assert.equal($$('.light-card .notice').length, 0, 'one sentence, no box');
-    // Plain words from the typed failure; the message under Details.
-    assert.equal(info(), 'Screen sync couldn’t start.');
-    assert.equal(word(), 'Stopped');
-    assert.equal(
-      $('.light-card [role="alert"]').textContent,
-      'Screen sync couldn’t start.',
-    );
-    assert.equal(
-      $('.light-details p').textContent,
-      'WLED at 192.0.2.1 did not switch to live mode',
-    );
-    assert.equal(power().getAttribute('aria-pressed'), 'true', 'still on');
-
-    // After a failure Try again, or the screen sync tile, retries.
-    fixture.failNext({ kind: 'adapter', message: 'fake output cannot open' });
-    await press(button('Try again'));
-    assert.deepEqual(targets().slice(-1), ['target:screen_sync']);
-    assert(text().includes('fake output cannot open'));
-    fixture.failNext({ kind: 'adapter', message: 'still cannot open' });
-    await press(mode('screen_sync'));
-    assert.equal(targets().length, 8);
-    assert(text().includes('still cannot open'));
+    assert.equal(word(), 'On');
+    assert.equal(info(), 'Waiting for the video source.');
+    await press(power());
+    assert.equal(targets().at(-1), 'target:off');
+    assert.equal($('.modes'), null);
 
     await act(async () =>
       fixture.publish({
@@ -521,7 +490,7 @@ test('the word follows the light; starting is said only when it lasts', async ()
       fixture.publish({ target: 'screen_sync', session: { state: 'stopped' } }),
     );
     assert.equal(power().getAttribute('aria-pressed'), 'true');
-    assert.equal(word(), 'Off', 'no "On" before the light');
+    assert.equal(word(), 'On', 'the active request can be cancelled');
     assert.equal($('.light-card').dataset.mood, 'starting');
     assert.equal(info(), null, 'a quick start says nothing');
     assert.equal($('.light-card').dataset.ignite, undefined, 'not yet lit');
@@ -613,7 +582,7 @@ test('a start that fails after switching from effects shows Stopped, unlit, in t
       'Screen sync couldn’t start',
     );
     assert.equal(fixture.snapshot().session.state, 'effects');
-    assert.equal(word(), 'Stopped');
+    assert.equal(word(), 'On');
     assert.equal($('.light-card').dataset.lit, 'false');
     assert.equal($('.light-card').dataset.mood, 'problem');
     assert.equal(
@@ -670,7 +639,7 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   const stopped = () => {
-    assert.equal(word(), 'Stopped');
+    assert.equal(word(), 'On');
     assert.equal($('.light-card').dataset.lit, 'false');
     assert.equal($('.light-frame').dataset.palette, 'error');
     assert.equal(power().getAttribute('aria-busy'), 'false', 'no busy ring');
@@ -782,20 +751,10 @@ test('modes that cannot work are disabled and say why; before setup only the pro
     output: { kind: 'null' },
   });
   try {
-    assert.equal(mode('screen_sync').disabled, false);
-    assert.equal(mode('effects').disabled, true);
-    assert.equal(
-      hint(mode('effects')),
-      'These lights have no effects of their own.',
-    );
-    assert.equal(
-      $('.mode-name', mode('effects')).textContent,
-      'Device effects',
-    );
-    assert.equal(
-      $('.mode-line', mode('effects')).textContent,
-      'Its own patterns',
-    );
+    assert.equal($('.modes'), null);
+    await press(power());
+    assert.equal($('.modes'), null);
+    assert.equal(word(), 'On');
     assert.equal(power().disabled, false);
     assert(!$('.device-link'), 'no device to open');
   } finally {
@@ -939,6 +898,8 @@ test('arrow keys move what the lights follow, as in a radio group', async () => 
       await sleep(0);
     });
   try {
+    await press(power());
+    await press(mode('screen_sync'));
     await key(mode('screen_sync'), 'ArrowRight');
     assert.equal(fixture.snapshot().target, 'effects');
     assertFocused(mode('effects'));
@@ -1070,8 +1031,6 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     );
     assert.equal(radio('Calm').checked, true);
 
-    // The first Custom starts from the style that was ticked, and opens the
-    // sliders.
     await click(radio('Custom'));
     assert.equal(saves(fixture), 4);
     assert.equal(adjust().getAttribute('aria-expanded'), 'true');
@@ -1100,7 +1059,6 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     assert.deepEqual(
       knobs.map((name) => attributes(knob(name))),
       [
-        // Smoothing as a slider over the range worth tuning.
         ['range', '0.8', '0', '2', '0.05'],
         ['range', '0', '0', '100', '1'],
         ['range', '1', '0', '2', '0.1'],
@@ -1165,8 +1123,6 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
       active_calibration: 'ps5',
     });
 
-    // Another style keeps them, and the open sliders show its own values;
-    // Custom returns to the kept ones.
     await click(radio('Vivid'));
     assert.equal(adjust().getAttribute('aria-expanded'), 'true');
     assert.deepEqual(fixture.snapshot().settings.processing.style, {
@@ -1225,7 +1181,6 @@ test('the video source editor saves the exact section once; Cancel drops the dra
     await openEditor('Video source');
     assert.equal(field('capture.device').value, '/dev/video0');
     assert.equal(radio('Custom').checked, true, 'no preset is 25 fps');
-    // Nothing to save yet: no bar; the way out is the page's back link.
     assert(!primary(), 'no save bar');
     assert(!button('Cancel', form('Video source')), 'no Cancel');
     assert.equal(
@@ -1259,7 +1214,6 @@ test('the video source editor saves the exact section once; Cancel drops the dra
       output,
       processing: defaultProcessing,
     });
-    // Screen sync is off: saved, the bar gone, the status unchanged.
     assert(!primary(), 'the bar is gone');
     assert.equal(
       now(),
@@ -1338,7 +1292,6 @@ test('server field errors land on their control and clear when it is edited', as
     await edit(field('output.leds.right'), 2);
     assert.equal($('[data-field-message="output.leds"]').textContent, '');
 
-    // A field this form does not show still explains itself.
     fixture.failNext({
       kind: 'invalid',
       field: 'output.unknown',
@@ -1365,7 +1318,6 @@ test('a saved section without a field its kind requires opens its editor with th
   });
   const { fixture } = portal;
   try {
-    // Through Home and Settings, which show it as well.
     await openEditor('Video source');
     assert.equal(field('capture.device').value, '');
     await edit(field('capture.device'), '/dev/video0');
@@ -1377,6 +1329,56 @@ test('a saved section without a field its kind requires opens its editor with th
       path: '/dev/video0',
       device: '/dev/video0',
     });
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a saved adapter with malformed optional fields still opens its editor', async () => {
+  const video = { ...capture, width: { toString: 1 }, fps: 45 };
+  const lights = {
+    ...output,
+    leds: { top: { toString: 1 }, left: 4 },
+    dither: 'yes',
+  };
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture: video,
+    output: lights,
+  });
+  try {
+    await openEditor('Lights');
+    assert.equal(field('output.leds.top').value, '0');
+    assert.equal(field('output.leds.left').value, '4');
+    assert.deepEqual(portal.fixture.snapshot().settings.capture, video);
+    assert.deepEqual(portal.fixture.snapshot().settings.output, lights);
+    assert.equal(saves(portal.fixture), 0);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a newer style still allows other settings to be edited', async () => {
+  const style = { kind: 'cinema' };
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    (snapshot) => ({
+      ...snapshot,
+      settings: {
+        ...snapshot.settings,
+        processing: { ...snapshot.settings.processing, style },
+      },
+    }),
+  );
+  try {
+    await openSettings();
+    assert(text().includes('Unknown style'));
+    await openEditor('Video source');
+    await edit(field('capture.device'), '/dev/video9');
+    await submit(form('Video source'));
+    const { settings } = portal.fixture.snapshot();
+    assert.equal(settings.capture.device, '/dev/video9');
+    assert.deepEqual(settings.processing.style, style);
   } finally {
     await portal.unmount();
   }
@@ -1456,6 +1458,7 @@ test('the status follows saved lights; failing ones can be swapped back', async 
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await press(power());
     await press(mode('screen_sync'));
     await openSettings();
     assert.equal(problem('Lights'), '', 'nothing wrong: an empty line, kept');
@@ -1470,7 +1473,6 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     assert.equal(now(), 'Starting… — WLED at 192.0.2.99 · 14 LEDs');
     assert(!button('Go back to the previous lights'), 'only when needed');
 
-    // The new address does not answer: said plainly, with the way back.
     await act(async () =>
       fixture.publish({
         session: {
@@ -1489,7 +1491,6 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     assert(button('Go back to the previous lights', $('.page-actions')));
     assert(!$('.section-status-more'), 'said once, in the bar');
 
-    // Settings shows the live problem on its row; the way back stays.
     await leaveEditor();
     assert.equal(problem('Lights'), 'The lights aren’t responding.');
     // The device stays named, before the problem.
@@ -1502,7 +1503,7 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     await act(async () =>
       fixture.publish({
         session: { state: 'screen_sync' },
-        input: { fps: 30, receiving: true },
+        input: { fps: 30, picture: 'arriving' },
       }),
     );
     assert.equal(now(), 'Showing screen sync — WLED at 192.0.2.1 · 14 LEDs');
@@ -1510,7 +1511,6 @@ test('the status follows saved lights; failing ones can be swapped back', async 
     await leaveEditor();
     assert.equal(problem('Lights'), '');
 
-    // The video source: the picture's rate while it arrives.
     await openEditor('Video source');
     assert.equal(now(), 'Picture arriving — 30 fps');
     await edit(field('capture.device'), '/dev/video3');
@@ -1526,6 +1526,7 @@ test('a source that sends nothing for a while is a problem, with the way back', 
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await press(power());
     await press(mode('screen_sync'));
     await openEditor('Video source');
     await edit(field('capture.device'), '/dev/video4');
@@ -1536,7 +1537,7 @@ test('a source that sends nothing for a while is a problem, with the way back', 
     await act(async () =>
       fixture.publish({
         session: { state: 'screen_sync' },
-        input: { fps: 0, receiving: false },
+        input: { fps: 0, picture: 'quiet' },
       }),
     );
     assert.equal(now(), 'Starting… — Waiting for the picture.');
@@ -1561,11 +1562,12 @@ test('after a save the bar stays where the user is: starting, working, then gone
   const { fixture } = portal;
   const bar = () => $('.page-actions', form('Video source'));
   try {
+    await press(power());
     await press(mode('screen_sync'));
     await act(async () =>
       fixture.publish({
         session: { state: 'screen_sync' },
-        input: { fps: 30, receiving: true },
+        input: { fps: 30, picture: 'arriving' },
       }),
     );
     await openEditor('Video source');
@@ -1577,7 +1579,7 @@ test('after a save the bar stays where the user is: starting, working, then gone
     await act(async () =>
       fixture.publish({
         session: { state: 'screen_sync' },
-        input: { fps: 0, receiving: false },
+        input: { fps: 0, picture: 'quiet' },
       }),
     );
     assert.equal(status(), 'Saved. Starting…');
@@ -1585,7 +1587,7 @@ test('after a save the bar stays where the user is: starting, working, then gone
     assert(!button('Use this video source'), 'no button to press again');
     t.mock.timers.enable({ apis: ['setTimeout'] });
     await act(async () =>
-      fixture.publish({ input: { fps: 30, receiving: true } }),
+      fixture.publish({ input: { fps: 30, picture: 'arriving' } }),
     );
     assert.equal(status(), 'Saved. Picture arriving.');
     await act(async () => t.mock.timers.tick(outcomeForMs));
@@ -1593,7 +1595,6 @@ test('after a save the bar stays where the user is: starting, working, then gone
     assert.equal(bar().hidden, true, 'working: the bar goes');
     assert.equal(now(), 'Picture arriving — 30 fps', 'the card stays');
 
-    // A save that fails: Prysm's reason and the way back, in the bar.
     await edit(field('capture.device'), '/dev/video6');
     await submit(form('Video source'));
     await act(async () =>
@@ -1630,7 +1631,6 @@ test('the save bar says how many fields to fix and takes the user to the first',
     // TV-only options wait under Advanced, closed.
     assert.equal(advanced().getAttribute('aria-expanded'), 'false');
     assert(field('capture.encoding').closest('[hidden]'));
-    // A problem inside Advanced opens it, and the jump lands there.
     fixture.failNext({
       kind: 'invalid',
       field: 'capture.encoding',
@@ -1674,7 +1674,7 @@ test('the status never opens the source: off, it says so and shows no picture', 
       fixture.publish({
         target: 'screen_sync',
         session: { state: 'screen_sync' },
-        input: { fps: 29.9, receiving: true },
+        input: { fps: 29.9, picture: 'arriving' },
       }),
     );
     assert.equal(preview.opened(), 1, 'watched while the picture flows');
@@ -1706,7 +1706,6 @@ test('a video file and no lights are developer options; a saved one still shows'
     await openEditor('Video source');
     assert.deepEqual(kinds('capture.kind'), ['device', 'remote']);
     await leaveEditor();
-    // WLED is then the only lights: no choice to make.
     await openEditor('Lights');
     assert(!kindRows('output.kind'));
     await leaveEditor();
@@ -1735,7 +1734,6 @@ test('kind rows swap panels without losing drafts', async () => {
     encoding: 'h264_hardware',
   };
   try {
-    // A video file and no lights are developer options.
     await act(async () => saveDeveloper(true));
     await openEditor('Video source');
     // A choice in the rows pattern, named by its heading alone.
@@ -1759,7 +1757,6 @@ test('kind rows swap panels without losing drafts', async () => {
     );
     await chooseKind('capture.kind', 'remote');
     assert(!field('capture.device'));
-    // The TV reaches this computer at the portal's address: no address field.
     assert(!field('capture.listen'));
     await chooseKind('capture.kind', 'device');
     assert.equal(field('capture.device').value, '/dev/video0');
@@ -1773,7 +1770,6 @@ test('kind rows swap panels without losing drafts', async () => {
     );
     await chooseKind('capture.kind', 'remote');
     await submit(form('Video source'));
-    // Written in full: a later default changes only new setups.
     assert.deepEqual(fixture.snapshot().settings.capture, remote);
     assert.deepEqual(fixture.snapshot().settings.output, output);
 
@@ -1800,7 +1796,7 @@ test('kind rows swap panels without losing drafts', async () => {
     await leaveEditor();
     await click(button('Home'));
     assert(!$('.device-link'));
-    assert.equal(mode('effects').disabled, true);
+    assert.equal(mode('effects'), null);
   } finally {
     await portal.unmount();
   }
@@ -1865,7 +1861,6 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
       caption(),
       'LED 1 is at the bottom-left corner. Order: left upward: LEDs 1–4; top rightward: LEDs 5–14; right: none; bottom: none.',
     );
-    // The total in the drawing's middle; the maximum only when exceeded.
     assert.equal($('.screen-label').textContent, '14 LEDs in total');
     assert(!text().includes('16384'));
 
@@ -1908,8 +1903,8 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
     assert.equal(field('output.address').value, 'wled.local:8080');
     await leaveEditor();
     await click(button('Home'));
-    // The way to WLED, with its effects chosen.
-    await press(mode('effects'));
+    // Power resumes the output’s effects.
+    await press(power());
     assert.equal($('.light-calm .device-link').href, 'http://wled.local:8080/');
   } finally {
     await portal.unmount();
@@ -2093,7 +2088,6 @@ test('each edge’s LED count is typed on that edge of the drawing', async () =>
     assert(!$('.led-counts'), 'no second set of fields');
     await edit(field('output.leds.right'), 6);
     assert.equal($('.screen-label').textContent, '20 LEDs in total');
-    // Too many: said at once, the total marked.
     await edit(field('output.leds.bottom'), 16384);
     assert.equal($('.screen-label').dataset.invalid, 'true');
     assert.equal(
@@ -2114,12 +2108,18 @@ test('each edge’s LED count is typed on that edge of the drawing', async () =>
 });
 
 test('the drawing badges LED 1 and says once where it is and which way the strip runs', async () => {
-  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
-  // The sentence after the line's badge.
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture,
+    output: { ...output, leds: { top: 3, right: 2, bottom: 3, left: 2 } },
+  });
   const way = () => $('.led-way').lastChild.textContent;
   const start = () => $('.led-start');
   try {
     await openEditor('Lights');
+    assert.equal(
+      $('.led-layout figcaption').textContent,
+      'LED 1 is at the bottom-left corner. Order: left upward: LEDs 1–2; top rightward: LEDs 3–5; right downward: LEDs 6–7; bottom leftward: LEDs 8–10.',
+    );
     // The first lit edge decides: left, else top, else right, else bottom.
     for (const [edges, corner, along] of [
       [{}, 'bottom-left', 'up'],
@@ -2146,20 +2146,6 @@ test('the drawing badges LED 1 and says once where it is and which way the strip
   }
 });
 
-test('LED runs follow render_edges: bottom-left, clockwise, empty edges skipped', () => {
-  assert.deepEqual(
-    ledRuns({ top: 3, right: 2, bottom: 3, left: 2 }).map(
-      ({ edge, first, last, from }) => [edge, first, last, from],
-    ),
-    [
-      ['left', 1, 2, 'bottom-left'],
-      ['top', 3, 5, 'top-left'],
-      ['right', 6, 7, 'top-right'],
-      ['bottom', 8, 10, 'bottom-right'],
-    ],
-  );
-});
-
 test('fields the forms do not show are preserved on every save', async () => {
   const portal = await renderPortal(
     HeadlessWebPortal,
@@ -2178,7 +2164,6 @@ test('fields the forms do not show are preserved on every save', async () => {
   );
   const { fixture } = portal;
   try {
-    // A video file and no lights are developer options.
     await act(async () => saveDeveloper(true));
     await openEditor('Video source');
     await click(radio('Smooth'));
@@ -2249,7 +2234,6 @@ test('the saved size and rate tick their preset, omitted fields at their default
       custom,
       'Custom',
     ],
-    // A capture-only TV's defaults are 320 × 180 at 30 fps.
     [HeadlessWebPortal, { kind: 'remote' }, presets, 'Efficient'],
     [
       HeadlessWebPortal,
@@ -2453,7 +2437,6 @@ test('the remote capture form asks the TV for a stream with the same picture cho
       'saved, said in the bar',
     );
 
-    // The server's own check on the encoding lands on the selector.
     fixture.failNext({
       kind: 'invalid',
       field: 'capture.encoding',
@@ -2595,7 +2578,9 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     assert.equal($$('form').length, 0, 'no forms on Home');
     // One headline, the lights' state; off, it says what Power will do.
     assert(!$('.display'));
-    assert.equal($('.light-calm').textContent, 'Power turns on Screen sync.');
+    assert.equal($('.light-calm').textContent, 'Power turns on WLED effects.');
+    await press(power());
+    await press(mode('screen_sync'));
     assert.equal($('.header-link').textContent, 'Settings');
     assert(!$('.diagnostics'));
     assert(!$('.led-map-play'), 'no preview without a preview client');
@@ -2756,7 +2741,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
         session: { state: 'screen_sync' },
         input: {
           fps: 29.9,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 29.97,
           latency: { output_ms: 11.6 },
         },
@@ -2805,7 +2790,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       portal.fixture.publish({
         input: {
           fps: 29.97,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 29.97,
           latency: { capture_ms: 88.4, output_ms: 2.4 },
         },
@@ -2856,7 +2841,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       portal.fixture.publish({
         input: {
           fps: 29.97,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 29.97,
           latency: { output_ms: 0.4 },
         },
@@ -2869,7 +2854,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     // No frame flushed in the window: the rate only, no number made up.
     await act(async () =>
       portal.fixture.publish({
-        input: { fps: 29.97, receiving: true, sent_fps: 0 },
+        input: { fps: 29.97, picture: 'arriving', sent_fps: 0 },
       }),
     );
     assert.deepEqual(links()[1], ['flowing', undefined], 'no delay made up');
@@ -2877,14 +2862,14 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       portal.fixture.publish({
         input: {
           fps: 29.97,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 29.97,
           latency: { output_ms: 11.6 },
         },
       }),
     );
     await act(async () =>
-      portal.fixture.publish({ input: { fps: 0, receiving: false } }),
+      portal.fixture.publish({ input: { fps: 0, picture: 'quiet' } }),
     );
     assert.deepEqual(links()[0], ['still', undefined]);
     assert.equal(stops()[0][1], 'Waiting for picture');
@@ -3058,7 +3043,7 @@ test('the step that keeps Prysm behind shows in orange; a failure stays red', as
         session: { state: 'screen_sync' },
         input: {
           fps: 24.3,
-          receiving: true,
+          picture: 'arriving',
           sent_fps: 24.3,
           latency: { output_ms: 38.2 },
           ...(behind ? { behind } : {}),
@@ -3167,7 +3152,6 @@ test('discovered names are kept in this browser: shown at once next time, not fo
   } finally {
     await portal.unmount();
   }
-  // Another device saved: not its name; the old one is kept for its return.
   portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output: { ...output, address: '192.0.2.99' } },
@@ -3180,6 +3164,51 @@ test('discovered names are kept in this browser: shown at once next time, not fo
       JSON.parse(memory[deviceNamesKey])['output:wled'].map(({ name }) => name),
       ['WLED-Gledopto'],
     );
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('only the current discovery can name a device selected again', async () => {
+  const requests = [];
+  const discovery = {
+    candidates(section, _kind, signal) {
+      if (section !== 'output') return Promise.resolve([]);
+      const { promise, resolve } = Promise.withResolvers();
+      requests.push({ signal, resolve });
+      return promise;
+    },
+  };
+  const lights = { ...output, address: 'wled.local' };
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output: lights },
+    undefined,
+    { discovery },
+  );
+  const select = (address) =>
+    act(async () => {
+      const { settings } = portal.fixture.snapshot();
+      portal.fixture.publish({
+        settings: { ...settings, output: { ...lights, address } },
+      });
+    });
+  const answer = (request, label) =>
+    act(async () =>
+      request.resolve([{ label, fields: { address: lights.address } }]),
+    );
+  try {
+    await select('other.local');
+    await select(lights.address);
+    assert.deepEqual(
+      requests.map(({ signal }) => signal.aborted),
+      [true, true, false],
+    );
+    await answer(requests[2], 'Current');
+    await answer(requests[0], 'Retired');
+    assert.equal($$('.path-name')[2].textContent, 'Current');
+    const names = JSON.parse(window.localStorage.getItem(deviceNamesKey));
+    assert.equal(names['output:wled'][0].name, 'Current');
   } finally {
     await portal.unmount();
   }
@@ -3210,6 +3239,8 @@ test('calibrations swap with one tap on Home, applied at once', async () => {
       .filter((item) => item.getAttribute('aria-checked') === 'true')
       .map((item) => item.textContent);
   try {
+    await press(power());
+    await press(mode('screen_sync'));
     assert.deepEqual(
       chips().map((item) => [item.getAttribute('role'), item.textContent]),
       [
@@ -3259,6 +3290,8 @@ test('calibrations swap with one tap on Home, applied at once', async () => {
   // header, makes one.
   const empty = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
+    await press(power());
+    await press(mode('screen_sync'));
     assert.deepEqual(
       chips().map((item) => item.textContent),
       ['No correction'],
@@ -3291,6 +3324,8 @@ test('the style swaps with one tap on Home, applied at once; Adjust opens the St
       await sleep(0);
     });
   try {
+    await press(power());
+    await press(mode('screen_sync'));
     // A radio group named Style, each segment described by its style's line;
     // Custom only once there is one.
     const group = segmentsOf('Style');
@@ -3313,7 +3348,6 @@ test('the style swaps with one tap on Home, applied at once; Adjust opens the St
     // Under the mode, quiet with the calibrations for the lights' effects.
     assert($('.picture-controls').contains(group));
 
-    // One tap: shown chosen at once, saved without a wait.
     await press(segment('game'));
     assert.deepEqual(checked(), ['Game']);
     assert.equal(saves(fixture), 1, 'no wait');
@@ -3347,7 +3381,6 @@ test('the style swaps with one tap on Home, applied at once; Adjust opens the St
     assert.deepEqual(saved().style, { kind: 'custom' });
     assert.deepEqual(saved().custom_style, kept);
 
-    // A refused change is said as a refused calibration is, under the card.
     fixture.failNext({
       kind: 'adapter',
       message: 'settings file is read-only',
@@ -3494,6 +3527,7 @@ test('quick separate taps on Home brightness always save the last value', async 
     );
   const saved = () => fixture.snapshot().settings.processing.brightness_percent;
   try {
+    await press(power());
     await press(mode('screen_sync'));
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
     for (const answer of ['at once', 'slowly']) {
@@ -3537,6 +3571,7 @@ test('dragging Home brightness lights as it moves and saves once, where it is le
       .filter((call) => call.startsWith('trial:'))
       .map((call) => Number(call.slice(6)));
   try {
+    await press(power());
     await press(mode('screen_sync'));
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
     const revision = fixture.snapshot().revision;
@@ -3663,7 +3698,6 @@ test('Adjust this style opens by hand on a built-in style; moving a slider there
       .map((choice) => $('.row-label', choice).textContent);
   try {
     await openPage('Style');
-    // Closed on a built-in style; a real button, opened and closed by hand.
     assert.equal(adjust().getAttribute('aria-expanded'), 'false');
     const body = () =>
       document.getElementById(adjust().getAttribute('aria-controls'));
@@ -3699,7 +3733,6 @@ test('Adjust this style opens by hand on a built-in style; moving a slider there
     );
     assert.equal(knob('spatial_reach_percent').value, '42');
 
-    // Arriving with Custom chosen, the sliders are open on the kept values.
     await leaveEditor();
     await openPage('Style');
     assert.equal(adjust().getAttribute('aria-expanded'), 'true');
@@ -3753,6 +3786,7 @@ for (const [name, label, value] of [
     const trials = () =>
       fixture.calls.filter((call) => call.startsWith('trial:')).length;
     try {
+      await press(power());
       await press(mode('screen_sync'));
       await openSettings();
       await openPage('Style');
@@ -3799,26 +3833,40 @@ test('with the state in the page, the first render is Home, whole and live, befo
   }
 });
 
-test('with the state in the page, a refused stream keeps Home and says the refusal, not a reconnect', async () => {
-  const portal = await renderPortal(
-    HeadlessWebPortal,
-    { capture, output },
-    undefined,
-    {},
-    { embedded: true, held: true },
-  );
-  const refusal = 'Prysm refuses requests from this page.';
-  try {
-    await portal.answer({ kind: 'forbidden', message: refusal });
-    await act(async () => sleep(connectionGraceMs + 100));
-    assert($('.light-card') && $('.setup-card'), 'Home stays');
-    assert.equal($('.notice[role="alert"]').textContent, refusal);
-    assert.equal($('.connection').textContent, 'Offline');
-    assert(!document.body.textContent.includes('Reconnecting'));
-  } finally {
-    await portal.unmount();
-  }
-});
+for (const [stop, failure] of [
+  [
+    'a refused stream',
+    { kind: 'forbidden', message: 'Prysm refuses requests from this page.' },
+  ],
+  [
+    'an unreadable stream',
+    {
+      kind: 'internal',
+      message:
+        'This page can’t read the state stream from Prysm. Reload the page.',
+    },
+  ],
+]) {
+  test(`with the state in the page, ${stop} keeps Home and says why, not a reconnect`, async () => {
+    const portal = await renderPortal(
+      HeadlessWebPortal,
+      { capture, output },
+      undefined,
+      {},
+      { embedded: true, held: true },
+    );
+    try {
+      await portal.answer(failure);
+      await act(async () => sleep(connectionGraceMs + 100));
+      assert($('.light-card') && $('.setup-card'), 'Home stays');
+      assert.equal($('.notice[role="alert"]').textContent, failure.message);
+      assert.equal($('.connection').textContent, 'Offline');
+      assert(!document.body.textContent.includes('Reconnecting'));
+    } finally {
+      await portal.unmount();
+    }
+  });
+}
 
 test('without a state in the page, Home waits in its own frame, says so only once the wait lasts, and the cards take the blocks’ places', async () => {
   const portal = await renderPortal(
@@ -3830,8 +3878,6 @@ test('without a state in the page, Home waits in its own frame, says so only onc
   );
   const message = () => $('.skeleton-message').textContent;
   try {
-    // Home's frame as it will be: wide, the header with Settings, a block
-    // for each card, nothing said yet.
     assert($('.portal').classList.contains('wide'));
     assert(button('Settings'));
     assert.equal($$('.home-grid > .skeleton').length, 2);
@@ -3887,7 +3933,6 @@ test('after Prysm is updated, every page offers a reload once it reconnects', as
   };
   try {
     assert.equal(asked, 0, 'not asked while the connection holds');
-    // A restart without an update: asked, nothing shown.
     await reconnect();
     assert.equal(asked, 1);
     assert(!$('.notice.updated'));

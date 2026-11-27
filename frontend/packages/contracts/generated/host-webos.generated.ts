@@ -65,18 +65,18 @@ export interface components {
             blue: components["schemas"]["PrimaryControls"];
             green: components["schemas"]["PrimaryControls"];
             /**
-             * Format: int32
+             * Format: int16
              * @description Positive lightens midtones, negative darkens them.
              */
             midtones: number;
             red: components["schemas"]["PrimaryControls"];
             /**
-             * Format: int32
+             * Format: int16
              * @description Positive adds magenta, negative adds green.
              */
             tint: number;
             /**
-             * Format: int32
+             * Format: int16
              * @description Positive warms, negative cools.
              */
             warmth: number;
@@ -85,8 +85,10 @@ export interface components {
          * @description What the lights say about themselves, from the output's own checks. Each
          *     part is absent while the output cannot tell, and all are while no session
          *     holds the output (no session, no frame yet, or released after 3 s without
-         *     video; see `session.state` and `input.receiving`). Prysm reports them and
-         *     changes none.
+         *     video; see `session.state` and `input.picture`), but `issue`
+         *     `unreachable` while the lights are waited for: lighting's open, or the
+         *     request for `off` or their own effects, that they did not answer. Prysm
+         *     reports them and changes none.
          */
         DeviceReport: {
             /**
@@ -99,8 +101,8 @@ export interface components {
              */
             brightness_percent?: number;
             /**
-             * @description Why the lights are not showing Prysm's colours; absent while they
-             *     show them.
+             * @description Why the lights are not showing Prysm's colours, or that they do not
+             *     answer; absent while all is well.
              */
             issue?: components["schemas"]["OutputIssue"];
             /**
@@ -219,15 +221,13 @@ export interface components {
              *     second. Absent when no frame reached the output.
              */
             latency?: components["schemas"]["Latency"];
-            /**
-             * @description At least one frame arrived in the last second. `false` right after
-             *     lighting starts and while the source is quiet (no signal, no sender).
-             */
-            receiving: boolean;
+            /** @description Whether frames arrived in the last second, and if not, why. */
+            picture: components["schemas"]["Picture"];
             /**
              * Format: float
-             * @description Frames per second whose colours were written to the output over the
-             *     last second, to one decimal.
+             * @description Frames per second whose colours were handed to the output over the
+             *     last second, to one decimal. An output may drop a frame it cannot
+             *     send now; the device issue says when the lights do not answer.
              * @example 29.9
              */
             sent_fps?: number;
@@ -297,6 +297,18 @@ export interface components {
             top?: number;
         };
         /**
+         * @description Intent and observed power have separate lifetimes. An external live stream
+         *     leaves both mode buttons unselected until the user requests a mode.
+         */
+        LightingControl: {
+            busy: boolean;
+            external: boolean;
+            power?: components["schemas"]["Power"];
+            remembered: components["schemas"]["LightingMode"];
+            /** @description A requested mode is waiting for a prerequisite that can recover. */
+            waiting?: components["schemas"]["WaitingFor"];
+        };
+        /**
          * @description Why the lighting is as it is: the failure a session state carries. An
          *     adapter failure carries its cause chain (`context: cause: cause`), since
          *     the cause is what names the problem (a device's error, a remote sender's
@@ -322,6 +334,11 @@ export interface components {
             kind: "internal";
             message: string;
         };
+        /**
+         * @description The selected mode restored by the Power button.
+         * @enum {string}
+         */
+        LightingMode: "screen_sync" | "effects";
         /**
          * @description What the user wants the LEDs to do.
          * @enum {string}
@@ -352,8 +369,16 @@ export interface components {
             status: "known";
         };
         /**
-         * @description Why the lights are not showing Prysm's colours. Prysm keeps sending; they
-         *     follow again once the device takes the colours.
+         * @description Why the lights do not show what was chosen. `off`: the device is
+         *     switched off. `overridden`: the device's own override is on (WLED: live
+         *     override). `not_live`: the device is not taking the colours (WLED: not in
+         *     live mode, or no DDP arriving). `other_sender`: another sender's colours
+         *     reach the device. `unreachable`: the device does not answer Prysm's state
+         *     checks, the request that opens it for screen sync, or, with the target
+         *     `off` or `effects`, the request for that mode. During screen sync Prysm
+         *     keeps sending the colours; it tries an unanswered request again every few
+         *     seconds. The lights follow once the device takes the colours or answers.
+         *     Open: an app reads an issue it does not know in general words.
          * @enum {string}
          */
         OutputIssue: "off" | "overridden" | "not_live" | "other_sender" | "unreachable";
@@ -363,6 +388,22 @@ export interface components {
          * @enum {string}
          */
         Pattern: "gray_192" | "red" | "yellow" | "green" | "cyan" | "blue" | "magenta" | "blue_pair" | "red_pair" | "green_pair" | "coast" | "garden" | "dusk" | "review_grid";
+        /**
+         * @description Whether frames arrive from the source. `arriving`: at least one frame in
+         *     the last second. `quiet`: none, and no reason given (no signal, no
+         *     sender); also right after lighting starts. `refused`: none, because the
+         *     source's device refuses to share the video it shows; it ends when the
+         *     video changes. Neither `quiet` nor `refused` is a failure: lighting waits
+         *     for video, and releases the lights after 3 s without it.
+         * @enum {string}
+         */
+        Picture: "arriving" | "quiet" | "refused";
+        /**
+         * @description Physical power as reported by an output. An unknown value is represented by
+         *     the absence of an observation.
+         * @enum {string}
+         */
+        Power: "off" | "on";
         /** @description One server-sent event of the preview stream. */
         PreviewEvent: (components["schemas"]["PreviewFrame"] & {
             /** @enum {string} */
@@ -416,13 +457,13 @@ export interface components {
         /** @description One picture primary's controls, each -100 to 100; white never moves. */
         PrimaryControls: {
             /**
-             * Format: int32
+             * Format: int16
              * @description Positive turns toward the next primary in red, green, blue order,
              *     negative toward the previous one.
              */
             hue: number;
             /**
-             * Format: int32
+             * Format: int16
              * @description Negative makes the colour softer, positive stronger.
              */
             strength: number;
@@ -431,7 +472,7 @@ export interface components {
         Processing: {
             /** @description The `id` of the applied calibration; absent applies no correction. */
             active_calibration?: string;
-            /** Format: int32 */
+            /** Format: uint8 */
             brightness_percent: number;
             /** @description Saved color corrections; ids are unique. */
             calibrations?: components["schemas"]["Calibration"][];
@@ -442,7 +483,7 @@ export interface components {
             custom_style?: components["schemas"]["StyleValues"];
             remove_black_bars: boolean;
             /**
-             * Format: int32
+             * Format: uint16
              * @description Samples per 1000 px of edge, measured on the picture scaled down to
              *     640x360: the same value gives the same samples at any capture size.
              *     At most one sample per sampling-grid cell along an edge (128 along the
@@ -475,6 +516,14 @@ export interface components {
             failure?: components["schemas"]["LightingFailure"];
             /** @enum {string} */
             state: "effects";
+        } | {
+            /**
+             * @description That the saved settings could not be read or do not validate;
+             *     absent while neither.
+             */
+            failure?: components["schemas"]["LightingFailure"];
+            /** @enum {string} */
+            state: "unanswered";
         } | {
             /** @description What did not finish, for people. */
             message: string;
@@ -529,11 +578,11 @@ export interface components {
              *     absent while not calibrating. Never saved.
              */
             calibration?: components["schemas"]["CalibrationPattern"];
+            control: components["schemas"]["LightingControl"];
             /**
-             * @description What the lights say about themselves, from the output's own checks
-             *     (about once a second). Empty while no session holds the output: no
-             *     session, or one that has no frame yet or released the output after 3 s
-             *     without video; `session.state` and `input.receiving` say which.
+             * @description The output's latest report. While the requested mode waits for the
+             *     output, `issue` is `unreachable`. Read `control.waiting` for the
+             *     current prerequisite and `input` for frame delivery.
              */
             device: components["schemas"]["DeviceReport"];
             /**
@@ -571,25 +620,25 @@ export interface components {
              */
             brightness_ramp_seconds: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description How much each light keeps the colour next to it, taking less from the
              *     rest of the picture; 0 is the plain average.
              */
             color_focus_percent: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description How much of a scene cut the lights take at once; 0 eases a cut in
              *     like any other change.
              */
             cut_response_percent: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description The least luminance the lights keep, as a neutral white glow, in
              *     percent of full light; 0 lets them go fully dark.
              */
             dark_floor_percent: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
              */
             saturation_boost_percent: number;
@@ -599,7 +648,7 @@ export interface components {
              */
             smoothing_seconds: number;
             /**
-             * Format: int32
+             * Format: uint8
              * @description Edge depth: how far into the picture each light looks, in percent of
              *     the picture's height.
              */
@@ -609,6 +658,11 @@ export interface components {
         TargetRequest: {
             target: components["schemas"]["LightingTarget"];
         };
+        /**
+         * @description The required adapter holding up the current request.
+         * @enum {string}
+         */
+        WaitingFor: "capture" | "output";
         /**
          * @description `{ "kind": "webos", "width": 640, "height": 360, "fps": 30, "include_ui": true }`
          *
@@ -699,13 +753,17 @@ export type Latency = components['schemas']['Latency'];
 export type LedColor = components['schemas']['LedColor'];
 export type LedColors = components['schemas']['LedColors'];
 export type LedCounts = components['schemas']['LedCounts'];
+export type LightingControl = components['schemas']['LightingControl'];
 export type LightingFailure = components['schemas']['LightingFailure'];
+export type LightingMode = components['schemas']['LightingMode'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type Mode = components['schemas']['Mode'];
 export type Modes = components['schemas']['Modes'];
 export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Pattern = components['schemas']['Pattern'];
+export type Picture = components['schemas']['Picture'];
+export type Power = components['schemas']['Power'];
 export type PreviewEvent = components['schemas']['PreviewEvent'];
 export type PreviewFrame = components['schemas']['PreviewFrame'];
 export type PreviewViewport = components['schemas']['PreviewViewport'];
@@ -720,6 +778,7 @@ export type State = components['schemas']['State'];
 export type Style = components['schemas']['Style'];
 export type StyleValues = components['schemas']['StyleValues'];
 export type TargetRequest = components['schemas']['TargetRequest'];
+export type WaitingFor = components['schemas']['WaitingFor'];
 export type WebosSettings = components['schemas']['WebosSettings'];
 export type WledSettings = components['schemas']['WledSettings'];
 export type $defs = Record<string, never>;

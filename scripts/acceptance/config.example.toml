@@ -108,7 +108,7 @@ target = "ssh://root@192.168.1.50"
 ipk_full = "dist/prysm-tv-full.ipk"
 ipk_slim = "dist/prysm-tv-slim.ipk"
 # The TV's hardware address: when the TV does not answer over SSH, the runner
-# sends it one wake-on-LAN packet and waits for it. Omit to never wake it.
+# wakes it over LAN. Standby uses the remote when no MAC is configured.
 mac = "00:00:5E:00:53:01"
 # Prysm already on the TV (the app, the service or the data files an
 # uninstall leaves): "refuse" (the default) stops before changing anything;

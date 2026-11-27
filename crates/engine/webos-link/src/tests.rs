@@ -36,16 +36,20 @@ fn events_round_trip() {
         capturing: true,
         fps: Some(30),
         target: LightingTarget::ScreenSync,
+        lights: Some(OutputIssue::Unreachable),
         applied: 2,
         portal: Some("http://192.168.1.5:8787/".into()),
-        failure: Some(WorkerFailure::other("output: refused")),
+        failure: Some(Failure {
+            escalation: Escalation::Unanswered,
+            message: "output: refused".into(),
+        }),
     }));
     let text = encode(&full).unwrap();
     assert_eq!(
         String::from_utf8(text.clone()).unwrap(),
         "{\"type\":\"status\",\"flavor\":\"full\",\"capturing\":true,\"fps\":30,\
-         \"target\":\"screen_sync\",\"applied\":2,\"portal\":\"http://192.168.1.5:8787/\",\
-         \"failure\":{\"kind\":\"other\",\"message\":\"output: refused\"}}\n"
+         \"target\":\"screen_sync\",\"lights\":\"unreachable\",\"applied\":2,\"portal\":\"http://192.168.1.5:8787/\",\
+         \"failure\":{\"escalation\":{\"step\":\"unanswered\"},\"message\":\"output: refused\"}}\n"
     );
     assert_eq!(decode::<Event>(&text).unwrap(), full);
     assert_eq!(
@@ -64,17 +68,30 @@ fn events_round_trip() {
             r#"{"state":"sending","encoding":"raw","fps":30}"#,
         ),
         (SlimLink::Paused {}, r#"{"state":"paused"}"#),
+        (SlimLink::Refused {}, r#"{"state":"refused"}"#),
         (
             SlimLink::Waiting {
-                failure: WorkerFailure::new(FailureKind::Receiver, "refused"),
+                message: "refused".into(),
             },
-            r#"{"state":"waiting","failure":{"kind":"receiver","message":"refused"}}"#,
+            r#"{"state":"waiting","message":"refused"}"#,
         ),
         (
-            SlimLink::Failed {
-                failure: WorkerFailure::new(FailureKind::Encoder, "busy"),
+            SlimLink::EncoderFailed {
+                message: "busy".into(),
             },
-            r#"{"state":"failed","failure":{"kind":"encoder","message":"busy"}}"#,
+            r#"{"state":"encoder_failed","message":"busy"}"#,
+        ),
+        (
+            SlimLink::VersionDiffers {
+                message: "v2".into(),
+            },
+            r#"{"state":"version_differs","message":"v2"}"#,
+        ),
+        (
+            SlimLink::ReceiverFailed {
+                message: "f".into(),
+            },
+            r#"{"state":"receiver_failed","message":"f"}"#,
         ),
     ] {
         let status = Event::Status(WorkerStatus::Slim(SlimStatus {
@@ -88,19 +105,45 @@ fn events_round_trip() {
         );
         assert_eq!(decode::<Event>(&encoded).unwrap(), status);
     }
-    let failed = Event::Failed {
-        cause: "cannot bind 0.0.0.0:8787".into(),
-    };
-    let text = encode(&failed).unwrap();
+    for (escalation, text) in [
+        (
+            Escalation::FAIL_FAST,
+            r#"{"type":"failed","escalation":{"step":"ask","fix":"try_again"},"message":"m"}"#,
+        ),
+        (
+            Escalation::Ask(Fix::ChangeSettings),
+            r#"{"type":"failed","escalation":{"step":"ask","fix":"change_settings"},"message":"m"}"#,
+        ),
+        (
+            Escalation::Restart,
+            r#"{"type":"failed","escalation":{"step":"restart"},"message":"m"}"#,
+        ),
+        (
+            Escalation::Unanswered,
+            r#"{"type":"failed","escalation":{"step":"unanswered"},"message":"m"}"#,
+        ),
+    ] {
+        let failed = Event::Failed(Failure {
+            escalation,
+            message: "m".into(),
+        });
+        let encoded = encode(&failed).unwrap();
+        assert_eq!(encoded, line(text));
+        assert_eq!(decode::<Event>(&encoded).unwrap(), failed);
+    }
+}
+
+/// A failure is its escalation and message: what `prysm_ports::Error` says.
+#[test]
+fn a_failure_copies_the_errors_escalation_and_chain() {
+    let error = prysm_ports::Error::Faulted(prysm_ports::SessionPhase::SourceUnreleased);
     assert_eq!(
-        text,
-        line(r#"{"type":"failed","cause":"cannot bind 0.0.0.0:8787"}"#)
+        Failure::of(&error),
+        Failure {
+            escalation: Escalation::Restart,
+            message: prysm_ports::chain(&error),
+        }
     );
-    assert_eq!(decode::<Event>(&text).unwrap(), failed);
-    let fault = Event::Faulted {
-        cause: "release unconfirmed".into(),
-    };
-    assert_eq!(decode::<Event>(&encode(&fault).unwrap()).unwrap(), fault);
 }
 
 #[test]
@@ -127,7 +170,6 @@ fn unknown_types_and_fields_are_rejected() {
         format!(r#"{{"type":"status","flavor":"slim","capturing":false,"link":{link}}}"#)
     };
     const FULL: &str = r#""capturing":false,"target":"off","applied":0"#;
-    // Both base lines are valid, so each rejection below is for its change.
     for valid in [
         format!(r#"{{"type":"status","flavor":"slim",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL}}}"#),
@@ -137,15 +179,21 @@ fn unknown_types_and_fields_are_rejected() {
     for text in [
         format!(r#"{{"type":"status","flavor":"slim",{SLIM},"pid":1}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL},"pid":1}}"#),
-        r#"{"type":"faulted","cause":"x","code":3}"#.to_owned(),
-        // No flavour, an unknown one, or the other flavour's fields.
+        r#"{"type":"failed","cause":"x"}"#.to_owned(),
+        r#"{"type":"failed","message":"x"}"#.to_owned(),
+        r#"{"type":"failed","escalation":"restart","message":"x"}"#.to_owned(),
+        r#"{"type":"failed","escalation":{"step":"restart"},"message":"x","code":3}"#.to_owned(),
+        r#"{"type":"failed","escalation":{"step":"ask"},"message":"x"}"#.to_owned(),
+        r#"{"type":"faulted","cause":"x"}"#.to_owned(),
+        format!(
+            r#"{{"type":"status","flavor":"full",{FULL},"failure":{{"kind":"other","message":"x"}}}}"#
+        ),
         format!(r#"{{"type":"status",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"tv",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{SLIM}}}"#),
         format!(r#"{{"type":"status","flavor":"slim",{FULL}}}"#),
         format!(r#"{{"type":"status","flavor":"full",{FULL},"link":{{"state":"paused"}}}}"#),
         format!(r#"{{"type":"status","flavor":"slim",{SLIM},"portal":"x"}}"#),
-        // No link, an unknown state, or a field another state has.
         r#"{"type":"status","flavor":"slim","capturing":false}"#.to_owned(),
         r#"{"type":"status","flavor":"slim","capturing":false,"link":"sending"}"#.to_owned(),
         format!(r#"{{"type":"status","flavor":"slim",{SLIM},"paused":false}}"#),
@@ -153,7 +201,6 @@ fn unknown_types_and_fields_are_rejected() {
         slim_link(r#"{"state":"paused","fps":1}"#),
         slim_link(r#"{"state":"starting","failure":{"kind":"other","message":"x"}}"#),
         slim_link(r#"{"state":"sending","encoding":"raw"}"#),
-        // The failure as text, without its kind, or with another field.
         slim_link(r#"{"state":"waiting","failure":"x"}"#),
         slim_link(r#"{"state":"failed","failure":{"message":"x"}}"#),
         slim_link(r#"{"state":"failed","failure":{"kind":"other","message":"x","at":1}}"#),
@@ -164,19 +211,17 @@ fn unknown_types_and_fields_are_rejected() {
 
 #[test]
 fn line_limit_counts_the_newline() {
+    let failed = |message: &str| {
+        format!(r#"{{"type":"failed","escalation":{{"step":"restart"}},"message":"{message}"}}"#)
+    };
     let pad = |len: usize| {
-        let mut text = format!(r#"{{"type":"faulted","cause":"{}"}}"#, "");
-        let filler = len - text.len() - 1;
-        text = format!(r#"{{"type":"faulted","cause":"{}"}}"#, "x".repeat(filler));
-        line(&text)
+        let filler = len - failed("").len() - 1;
+        line(&failed(&"x".repeat(filler)))
     };
     let fits = pad(MAX_LINE);
     assert_eq!(fits.len(), MAX_LINE);
     let mut reader = LineReader::new(&fits[..]);
-    assert!(matches!(
-        reader.read::<Event>(),
-        Ok(Some(Event::Faulted { .. }))
-    ));
+    assert!(matches!(reader.read::<Event>(), Ok(Some(Event::Failed(_)))));
     assert!(matches!(reader.read::<Event>(), Ok(None)));
 
     let over = pad(MAX_LINE + 1);
@@ -184,9 +229,12 @@ fn line_limit_counts_the_newline() {
     assert!(matches!(reader.read::<Event>(), Err(LinkError::Oversized)));
     assert!(matches!(decode::<Event>(&over), Err(LinkError::Oversized)));
 
-    let cause = "x".repeat(MAX_LINE);
+    let message = "x".repeat(MAX_LINE);
     assert!(matches!(
-        encode(&Event::Faulted { cause }),
+        encode(&Event::Failed(Failure {
+            escalation: Escalation::Restart,
+            message
+        })),
         Err(LinkError::Oversized)
     ));
 }
@@ -242,7 +290,6 @@ fn full_args_round_trip_and_reject_mistakes() {
     let args = FullArgs {
         settings: PathBuf::from("/var/lib/prysm/settings.json"),
         listen: "0.0.0.0:8787".parse().unwrap(),
-        target: LightingTarget::Effects,
     };
     let argv = args.to_args();
     assert_eq!(
@@ -251,24 +298,13 @@ fn full_args_round_trip_and_reject_mistakes() {
             "--settings",
             "/var/lib/prysm/settings.json",
             "--listen",
-            "0.0.0.0:8787",
-            "--target",
-            "effects"
+            "0.0.0.0:8787"
         ])
     );
     assert_eq!(parse::<FullArgs>(&argv).unwrap(), args);
-    for target in LightingTarget::ALL {
-        let args = FullArgs {
-            listen: "[::1]:0".parse().unwrap(),
-            target,
-            ..args.clone()
-        };
-        assert_eq!(parse::<FullArgs>(&args.to_args()).unwrap(), args);
-    }
     for bad in [
-        strings(&["--settings", "s", "--listen", "0.0.0.0:8787"]),
-        strings(&["--settings", "s", "--listen", "x", "--target", "off"]),
-        strings(&["--settings", "s", "--listen", "0.0.0.0:1", "--target", "on"]),
+        strings(&["--settings", "s"]),
+        strings(&["--settings", "s", "--listen", "x"]),
         strings(&[
             "--settings",
             "s",
@@ -276,10 +312,15 @@ fn full_args_round_trip_and_reject_mistakes() {
             "t",
             "--listen",
             "0.0.0.0:1",
+        ]),
+        strings(&[
+            "--settings",
+            "s",
+            "--listen",
+            "0.0.0.0:1",
             "--target",
             "off",
         ]),
-        strings(&["--settings", "s", "--listen", "0.0.0.0:1", "--target"]),
         strings(&["full", "--settings", "s"]),
         strings(&["--prysm", "http://1.2.3.4:5"]),
     ] {
@@ -306,7 +347,6 @@ fn slim_args_carry_only_the_prysm_address() {
     );
     let error = parse::<SlimArgs>(&[]).unwrap_err().to_string();
     assert!(error.contains("--prysm"), "{error}");
-    // A host name is resolved by the worker, not here.
     let named = parse::<SlimArgs>(&strings(&["--prysm", "https://prysm.example.com"])).unwrap();
     assert_eq!(named.prysm.host(), "prysm.example.com");
     assert_eq!(
@@ -316,22 +356,19 @@ fn slim_args_carry_only_the_prysm_address() {
 }
 
 #[test]
-fn backoff_doubles_to_the_cap_and_resets() {
-    let mut backoff = Backoff::default();
-    let delays: Vec<u64> = (0..7).map(|_| backoff.delay().as_secs()).collect();
-    assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30]);
-    backoff.reset();
-    assert_eq!(backoff.delay(), Backoff::MIN);
-    let mut short = Backoff::starting_at(std::time::Duration::from_millis(20));
-    assert_eq!(short.delay().as_millis(), 20);
-    assert_eq!(short.delay().as_millis(), 40);
-    short.reset();
-    assert_eq!(short.delay().as_millis(), 20);
-}
-
-#[test]
-fn exit_codes_are_described() {
-    assert_eq!(exit::describe(3), "worker faulted");
-    assert!(exit::describe(2).contains("packaging"));
-    assert_eq!(exit::describe(-1), "worker exited with code -1");
+fn recovery_messages_round_trip() {
+    for command in [
+        Command::Resume { sequence: 9 },
+        Command::RecoverScreenSync { sequence: 10 },
+        Command::ObserveVideo { available: true },
+        Command::ObserveVideo { available: false },
+    ] {
+        let bytes = encode(&command).unwrap();
+        assert_eq!(serde_json::from_slice::<Command>(&bytes).unwrap(), command);
+    }
+    let bytes = encode(&Event::Initialized {}).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Event>(&bytes).unwrap(),
+        Event::Initialized {}
+    );
 }

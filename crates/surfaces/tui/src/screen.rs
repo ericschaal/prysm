@@ -14,8 +14,8 @@ use crossterm::{
         disable_raw_mode, enable_raw_mode,
     },
 };
-use prysm_ports::{Error, Result, Snapshot};
-use prysm_runtime::PreviewWatch;
+use prysm_ports::{Error, Result};
+use prysm_runtime::{EngineHandle, PreviewWatch};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::{self, IsTerminal, Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,7 +39,7 @@ pub(crate) enum Exit {
 
 /// What the screen reads and where it sends commands.
 pub(crate) struct Feed {
-    pub snapshot: watch::Receiver<Snapshot>,
+    pub engine: EngineHandle,
     /// Registered for the screen's lifetime, so the session publishes previews.
     pub preview: PreviewWatch,
     pub commands: mpsc::Sender<Command>,
@@ -104,6 +104,7 @@ fn run(mut feed: Feed, stop: &AtomicBool) -> Result<Exit> {
 
 fn render_loop(screen: &mut Screen, feed: &mut Feed, stop: &AtomicBool) -> io::Result<Exit> {
     let mut ui = Ui::default();
+    let snapshots = feed.engine.snapshot();
     loop {
         if stop.load(Ordering::Acquire) {
             return Ok(Exit::Stopped);
@@ -111,7 +112,13 @@ fn render_loop(screen: &mut Screen, feed: &mut Feed, stop: &AtomicBool) -> io::R
         while let Ok(notice) = feed.notices.try_recv() {
             ui.notify(notice);
         }
-        let snapshot = feed.snapshot.borrow().clone();
+        let snapshot = snapshots.borrow().clone();
+        let supports_effects = snapshot
+            .settings
+            .output
+            .as_ref()
+            .is_some_and(|settings| feed.engine.output_supports_effects(settings));
+        ui.update_lighting(&snapshot, supports_effects);
         // Not taken: other surfaces may render the same preview.
         let preview = feed.preview.latest();
         screen.draw(&View {

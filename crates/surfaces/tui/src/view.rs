@@ -1,8 +1,8 @@
 //! Pure presentation: snapshot, preview and UI state in, cells out.
 use crate::input::{Notice, Severity, Ui, clean};
-use crate::video::{self, HalfBlocks};
+use crate::video;
 use prysm_core::{ColorStrip, EdgeColors};
-use prysm_ports::{AdapterSettings, SessionState, Snapshot, chain};
+use prysm_ports::{AdapterSettings, Error, Picture, SessionState, Snapshot, WaitingFor, chain};
 use prysm_runtime::Preview;
 use ratatui::{
     Frame,
@@ -10,7 +10,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Paragraph, Widget, Wrap},
+    widgets::{Block, BorderType, Paragraph, Wrap},
 };
 
 const BACKGROUND: Color = Color::Rgb(16, 20, 28);
@@ -72,7 +72,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, view: &View<'_>) {
     );
     let block = panel(" Diagnostics · newest first ");
     let rows = usize::from(block.inner(events).height);
-    let mut lines: Vec<_> = diagnostics(view).into_iter().take(rows).collect();
+    let mut lines: Vec<_> = diagnostics(view).take(rows).collect();
     if lines.is_empty() {
         lines.push(Line::styled("No events yet", Style::default().fg(MUTED)));
     }
@@ -97,25 +97,22 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
         leds_panel(frame, view, leds);
     }
     let snapshot = view.snapshot;
-    let issue = snapshot
-        .device
-        .issue
-        .map_or_else(String::new, |issue| format!(" · Lights: {issue}"));
+    let mut summary = format!(
+        "Target {} · Session {}",
+        snapshot.target.as_str(),
+        session_label(snapshot)
+    );
+    if let Some(input) = input_label(snapshot) {
+        summary.push_str(" · Input: ");
+        summary.push_str(&input);
+    }
+    if let Some(issue) = snapshot.device.issue {
+        summary.push_str(" · Lights: ");
+        summary.push_str(&issue.to_string());
+    }
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(match input_label(snapshot) {
-                // Short, so the lights' issue fits beside it.
-                Some(input) => format!(
-                    "Target {} · Session {} · Input: {input}{issue}",
-                    snapshot.target.as_str(),
-                    snapshot.session
-                ),
-                None => format!(
-                    "Target {} · Session {}{issue}",
-                    snapshot.target.as_str(),
-                    snapshot.session
-                ),
-            }),
+            Line::from(summary),
             Line::from(format!(
                 "{} → {} · rev {}",
                 adapter_label(snapshot.settings.capture.as_ref()),
@@ -125,7 +122,7 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
         ]),
         status,
     );
-    if let Some(line) = diagnostics(view).into_iter().next() {
+    if let Some(line) = diagnostics(view).next() {
         frame.render_widget(line, event);
     }
     footer_line(frame, view.ui, footer);
@@ -135,10 +132,7 @@ fn header_line(snapshot: &Snapshot) -> Line<'static> {
     Line::from(vec![
         Span::styled(" PRYSM ", Style::default().fg(BACKGROUND).bg(ACCENT).bold()),
         Span::styled("  TERMINAL  /  ", Style::default().fg(MUTED)),
-        Span::styled(
-            snapshot.session.to_string(),
-            Style::default().fg(session_color(&snapshot.session)).bold(),
-        ),
+        styled_session(snapshot),
     ])
 }
 
@@ -154,10 +148,7 @@ pub(crate) fn status_lines(view: &View<'_>) -> Vec<Line<'static>> {
         field("Target", snapshot.target.as_str().to_owned()),
         Line::from(vec![
             Span::styled("Session   ", Style::default().fg(MUTED)),
-            Span::styled(
-                snapshot.session.to_string(),
-                Style::default().fg(session_color(&snapshot.session)).bold(),
-            ),
+            styled_session(snapshot),
         ]),
     ];
     if let Some(input) = input_label(snapshot) {
@@ -216,27 +207,38 @@ fn field(name: &str, value: String) -> Line<'static> {
     ])
 }
 
-/// Lighting failure, surface failures, then notices; newest first.
-pub(crate) fn diagnostics(view: &View<'_>) -> Vec<Line<'static>> {
+/// Lighting failure, surface failures, then notices; newest first. Each
+/// failure ends with the person's next step.
+fn diagnostics(view: &View<'_>) -> impl Iterator<Item = Line<'static>> {
     let snapshot = view.snapshot;
-    let failures = snapshot
-        .session
-        .failure()
-        .into_iter()
-        .map(|error| Notice::error(format!("Lighting: {}", chain(error))));
+    let lighting = match &snapshot.session {
+        SessionState::Faulted(phase) => Some(failed("Lighting", &Error::Faulted(*phase))),
+        session => session.failure().map(|error| {
+            if snapshot.control.waiting.is_some() {
+                Notice::info(format!("Lighting waiting: {}", chain(error)))
+            } else {
+                failed("Lighting", error)
+            }
+        }),
+    };
     let surfaces = snapshot
         .surface_failures
         .iter()
         .rev()
-        .map(|error| Notice::error(format!("Surface: {}", chain(error))));
-    failures
+        .map(|error| failed("Surface", error));
+    lighting
+        .into_iter()
         .chain(surfaces)
         .chain(view.ui.notices().cloned())
-        .map(|notice| event_line(&notice))
-        .collect()
+        .map(event_line)
 }
 
-fn event_line(notice: &Notice) -> Line<'static> {
+fn failed(what: &str, error: &Error) -> Notice {
+    let step = error.escalation().next_step();
+    Notice::error(format!("{what}: {} ({step})", chain(error)))
+}
+
+fn event_line(notice: Notice) -> Line<'static> {
     let (label, color) = match notice.severity {
         Severity::Info => ("INFO ", TEXT),
         Severity::Error => ("ERROR", ERROR),
@@ -244,7 +246,7 @@ fn event_line(notice: &Notice) -> Line<'static> {
     Line::from(vec![
         Span::styled(label, Style::default().fg(color).bold()),
         Span::raw("  "),
-        Span::raw(notice.text.clone()),
+        Span::raw(notice.text),
     ])
 }
 
@@ -255,24 +257,35 @@ fn panel(title: &str) -> Block<'_> {
         .title(Span::styled(title, Style::default().fg(TEXT)))
 }
 
-fn session_color(state: &SessionState) -> Color {
-    match state {
-        SessionState::ScreenSync => ACCENT,
-        SessionState::Effects { .. } => WARNING,
-        SessionState::Faulted(_) => ERROR,
-        SessionState::Stopped { .. } => MUTED,
+fn session_label(snapshot: &Snapshot) -> String {
+    match snapshot.control.waiting {
+        Some(WaitingFor::Capture) => "waiting for capture".into(),
+        Some(WaitingFor::Output) => "waiting for lights".into(),
+        None => snapshot.session.to_string(),
     }
 }
 
-/// Frame rate while frames arrive, "waiting for frames" while the running
-/// source is quiet, nothing without a session.
-pub(crate) fn input_label(snapshot: &Snapshot) -> Option<String> {
-    snapshot.input.map(|input| {
-        if input.receiving {
-            format!("{:.1} fps", input.fps)
-        } else {
-            "waiting for frames".to_owned()
+fn styled_session(snapshot: &Snapshot) -> Span<'static> {
+    let color = if snapshot.control.waiting.is_some() {
+        WARNING
+    } else {
+        match &snapshot.session {
+            SessionState::ScreenSync => ACCENT,
+            SessionState::Effects { .. } | SessionState::Unanswered { .. } => WARNING,
+            SessionState::Faulted(_) => ERROR,
+            SessionState::Stopped { .. } => MUTED,
         }
+    };
+    Span::styled(session_label(snapshot), Style::default().fg(color).bold())
+}
+
+/// Frame rate while frames arrive, why not while the running source gives
+/// none, nothing without a session.
+pub(crate) fn input_label(snapshot: &Snapshot) -> Option<String> {
+    snapshot.input.map(|input| match input.picture {
+        Picture::Arriving => format!("{:.1} fps", input.fps),
+        Picture::Quiet => "waiting for frames".to_owned(),
+        Picture::Refused => "capture not allowed".to_owned(),
     })
 }
 
@@ -282,29 +295,22 @@ fn adapter_label(settings: Option<&AdapterSettings>) -> &str {
 
 /// The LED perimeter with the video inside it.
 fn leds_panel(frame: &mut Frame<'_>, view: &View<'_>, area: Rect) {
-    let title = match view.shown() {
+    let shown = view.shown();
+    let title = match shown {
         Some(preview) => format!(" LEDs · {} samples ", samples(&preview.colors)),
         None => " LEDs ".to_owned(),
     };
     let block = panel(&title);
     let inside = block.inner(area);
     frame.render_widget(block, area);
-    let shown = view.shown();
-    frame.render_widget(Edges(shown.map(|preview| &preview.colors)), inside);
     let Some(center) = center(inside) else {
         return;
     };
     let placeholder = match shown {
         Some(preview) => {
-            match video::sample(
-                &preview.frame,
-                u32::from(center.width),
-                u32::from(center.height) * 2,
-            ) {
-                Ok(image) => {
-                    frame.render_widget(HalfBlocks(&image), center);
-                    return;
-                }
+            paint_edges(frame.buffer_mut(), inside, &preview.colors);
+            match video::draw(&preview.frame, center, frame.buffer_mut()) {
+                Ok(()) => return,
                 Err(reason) => format!("Preview unavailable: {reason}"),
             }
         }
@@ -327,6 +333,7 @@ fn idle_text(snapshot: &Snapshot) -> &'static str {
     match &snapshot.session {
         SessionState::ScreenSync => "Waiting for the first frame",
         SessionState::Effects { .. } => "The lights show their own effects",
+        SessionState::Unanswered { .. } => "The lights do not answer; Prysm keeps trying",
         SessionState::Faulted(_) => "Session did not finish; only shutdown is accepted",
         SessionState::Stopped { failure: Some(_) } => "Lighting stopped after a failure",
         SessionState::Stopped { failure: None } => "Lighting off · press s to start",
@@ -352,50 +359,39 @@ fn vertical_middle(area: Rect) -> Rect {
 
 /// The four edge strips, in screen orientation: top and bottom left to right,
 /// left and right top to bottom. Each cell shows the sample at its position.
-pub(crate) struct Edges<'a>(pub Option<&'a EdgeColors>);
-
-impl Widget for Edges<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        let Some(colors) = self.0 else {
-            return;
-        };
-        if center(area).is_none() {
-            return;
-        }
-        for i in 0..area.width {
-            paint(buffer, (area.x + i, area.y), &colors.top, i, area.width);
+fn paint_edges(buffer: &mut Buffer, area: Rect, colors: &EdgeColors) {
+    if center(area).is_none() {
+        return;
+    }
+    for i in 0..area.width {
+        paint(buffer, (area.x + i, area.y), &colors.top, i, area.width);
+        paint(
+            buffer,
+            (area.x + i, area.bottom() - 1),
+            &colors.bottom,
+            i,
+            area.width,
+        );
+    }
+    let rows = area.height - 2;
+    for i in 0..rows {
+        for offset in 0..SIDE_THICKNESS {
+            let y = area.y + 1 + i;
+            paint(buffer, (area.x + offset, y), &colors.left, i, rows);
             paint(
                 buffer,
-                (area.x + i, area.bottom() - 1),
-                &colors.bottom,
+                (area.right() - 1 - offset, y),
+                &colors.right,
                 i,
-                area.width,
+                rows,
             );
-        }
-        let rows = area.height - 2;
-        for i in 0..rows {
-            for offset in 0..SIDE_THICKNESS {
-                let y = area.y + 1 + i;
-                paint(buffer, (area.x + offset, y), &colors.left, i, rows);
-                paint(
-                    buffer,
-                    (area.right() - 1 - offset, y),
-                    &colors.right,
-                    i,
-                    rows,
-                );
-            }
         }
     }
 }
 
 fn paint(buffer: &mut Buffer, position: (u16, u16), strip: &ColorStrip, cell: u16, cells: u16) {
-    let count = strip.len();
-    if count == 0 {
-        return;
-    }
-    let index = usize::from(cell) * count / usize::from(cells);
-    let Some(color) = strip.color_at(index, count) else {
+    let index = usize::from(cell) * strip.len() / usize::from(cells);
+    let Some(color) = strip.samples().get(index) else {
         return;
     };
     let color = color.to_srgb();
@@ -468,7 +464,7 @@ mod tests {
         };
         let area = Rect::new(0, 0, 8, 5);
         let mut buffer = Buffer::empty(area);
-        Edges(Some(&colors)).render(area, &mut buffer);
+        paint_edges(&mut buffer, area, &colors);
         for x in 0..8 {
             let expected = if x < 4 {
                 Color::Rgb(255, 0, 0)
@@ -482,9 +478,27 @@ mod tests {
         assert_eq!(buffer[(6, 2)].bg, buffer[(7, 2)].bg);
         assert_eq!(buffer[(2, 2)].bg, Color::Reset);
 
-        let mut dark = Buffer::empty(area);
-        Edges(None).render(area, &mut dark);
-        assert!(dark.content.iter().all(|cell| cell.bg == Color::Reset));
+        for (width, height) in [(0, 5), (8, 0), (8, 1), (8, 2), (4, 5)] {
+            let small = Rect::new(0, 0, width, height);
+            let mut buffer = Buffer::empty(small);
+            paint_edges(&mut buffer, small, &colors);
+            assert!(buffer.content.iter().all(|cell| cell.bg == Color::Reset));
+        }
+    }
+
+    #[test]
+    fn absent_preview_leaves_the_led_perimeter_unpainted() {
+        let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+        let view = View {
+            snapshot: &running(),
+            preview: None,
+            ui: &Ui::default(),
+        };
+        terminal
+            .draw(|frame| leds_panel(frame, &view, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(buffer.content.iter().all(|cell| cell.bg == Color::Reset));
     }
 
     #[test]
@@ -512,7 +526,6 @@ mod tests {
                 .iter()
                 .all(|cell| cell.fg == green && cell.bg == green)
         );
-        // The top strip is red above the first video row.
         let first = buffer
             .content
             .iter()
@@ -576,8 +589,11 @@ mod tests {
         };
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         let text = draw(&mut terminal, &view);
-        assert!(text.contains("capture failed: device unplugged"), "{text}");
-        assert!(text.contains("portal could not bind"));
+        assert!(
+            text.contains("capture failed: device unplugged (try again)"),
+            "{text}"
+        );
+        assert!(text.contains("portal could not bind (try again)"));
         assert!(text.contains("Session   effects"), "{text}");
         assert!(text.find("newest event") < text.find("older event"));
         assert!(text.contains("q quit"));
@@ -645,7 +661,7 @@ mod tests {
         let mut snapshot = running();
         snapshot.input = Some(prysm_ports::Input {
             fps: 29.94,
-            receiving: true,
+            picture: Picture::Arriving,
             ..prysm_ports::Input::default()
         });
         let ui = Ui::default();
@@ -673,6 +689,21 @@ mod tests {
             &view,
         );
         assert!(text.contains("waiting for frames"), "{text}");
+
+        snapshot.input = Some(prysm_ports::Input {
+            picture: Picture::Refused,
+            ..prysm_ports::Input::default()
+        });
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(text.contains("capture not allowed"), "{text}");
 
         snapshot.input = None;
         let view = View {
@@ -716,6 +747,7 @@ mod tests {
             text.contains("Session did not finish; only shutdown is accepted"),
             "{text}"
         );
+        assert!(text.contains("(restart Prysm)"), "{text}");
     }
 
     #[test]

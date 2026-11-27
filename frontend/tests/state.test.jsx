@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createApplicationRuntime } from '@prysm/application-state';
-import { ApplicationError } from '@prysm/application-client';
+import { ApplicationError, consumeStream } from '@prysm/application-client';
+import { httpApplicationClient } from '@prysm/application-client/http';
 import { fakeApplicationPort } from '../testkit/application';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -12,28 +13,24 @@ async function connected(fixture) {
   const application = createApplicationRuntime(fixture.client);
   const release = application.connect();
   await tick();
-  return { application, release, state: () => application.store.getState() };
+  return { application, release, state: application.getConnection };
 }
 
 test('commands resolve with the runtime result and observed state follows the stream', async () => {
   const fixture = fakeApplicationPort({ capture, output });
   const { application, release, state } = await connected(fixture);
-  assert.equal(state().connection.status, 'connected');
-  await application.store.dispatch(
-    application.commands.setTarget('screen_sync'),
-  );
+  assert.equal(state().status, 'connected');
+  await application.commands.setTarget('screen_sync');
   await tick();
-  assert.equal(state().connection.snapshot.session.state, 'screen_sync');
+  assert.equal(state().snapshot.session.state, 'screen_sync');
 
-  const revision = await application.store.dispatch(
-    application.commands.configureOutput(0, {
-      ...output,
-      address: '192.0.2.2',
-    }),
-  );
+  const revision = await application.commands.configureOutput(0, {
+    ...output,
+    address: '192.0.2.2',
+  });
   assert.equal(revision, 1);
   await tick();
-  const settings = state().connection.snapshot.settings;
+  const settings = state().snapshot.settings;
   assert.equal(settings.output.address, '192.0.2.2');
   assert.deepEqual(settings.capture, capture);
   assert.equal(settings.processing.brightness_percent, 100);
@@ -44,9 +41,7 @@ test('stale revisions and server failures reject the command', async () => {
   const fixture = fakeApplicationPort({ capture, output, revision: 3 });
   const { application, release } = await connected(fixture);
   await assert.rejects(
-    application.store.dispatch(
-      application.commands.configureCapture(2, capture),
-    ),
+    application.commands.configureCapture(2, capture),
     (error) =>
       error instanceof ApplicationError &&
       error.failure.kind === 'stale_revision' &&
@@ -60,12 +55,12 @@ test('stale revisions and server failures reject the command', async () => {
     field: 'output.leds',
   });
   await assert.rejects(
-    application.store.dispatch(application.commands.configureOutput(3, output)),
+    application.commands.configureOutput(3, output),
     (error) => error.failure.field === 'output.leds',
   );
   fixture.failNext({ kind: 'faulted', message: 'runtime is faulted' });
   await assert.rejects(
-    application.store.dispatch(application.commands.setTarget('off')),
+    application.commands.setTarget('off'),
     (error) => error.failure.kind === 'faulted',
   );
   release();
@@ -75,29 +70,32 @@ test('each runtime has its own store and the stream reconnects after loss', asyn
   const fixture = fakeApplicationPort({ capture, output });
   const first = await connected(fixture);
   const second = await connected(fakeApplicationPort({ capture, output }));
-  await first.application.store.dispatch(
-    first.application.commands.setTarget('screen_sync'),
-  );
+  await first.application.commands.setTarget('screen_sync');
   await tick();
-  assert.equal(first.state().connection.snapshot.target, 'screen_sync');
-  assert.equal(second.state().connection.snapshot.target, 'off');
+  assert.equal(first.state().snapshot.target, 'screen_sync');
+  assert.equal(second.state().snapshot.target, 'off');
 
   let fail = true;
   const observe = fixture.client.observe;
   fixture.client.observe = (signal) => {
     if (fail) {
       fail = false;
-      return Promise.reject(new Error('connection refused'));
+      return Promise.reject(
+        new ApplicationError({
+          kind: 'unavailable',
+          message: 'connection refused',
+        }),
+      );
     }
     return observe(signal);
   };
   first.release();
   const release = first.application.connect();
   await tick();
-  assert.equal(first.state().connection.status, 'disconnected');
-  assert.equal(first.state().connection.error.message, 'connection refused');
+  assert.equal(first.state().status, 'disconnected');
+  assert.equal(first.state().error.message, 'connection refused');
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal(first.state().connection.status, 'connected');
+  assert.equal(first.state().status, 'connected');
   release();
   second.release();
 });
@@ -107,12 +105,10 @@ test('a lost stream keeps its last state but saves nothing into it', async () =>
   const { application, release, state } = await connected(fixture);
   fixture.drop();
   await tick();
-  assert.equal(state().connection.status, 'disconnected');
-  assert.deepEqual(state().connection.snapshot.settings.capture, capture);
+  assert.equal(state().status, 'disconnected');
+  assert.deepEqual(state().snapshot.settings.capture, capture);
   await assert.rejects(
-    application.store.dispatch(
-      application.commands.configureCapture(0, capture),
-    ),
+    application.commands.configureCapture(0, capture),
     (error) =>
       error instanceof ApplicationError &&
       error.failure.kind === 'stale_revision',
@@ -125,7 +121,7 @@ test('a state the page came with is current until the stream replaces it, kept w
   const fixture = fakeApplicationPort({ capture, output });
   const page = { ...fixture.snapshot(), target: 'screen_sync' };
   const application = createApplicationRuntime(fixture.client, page);
-  const state = () => application.store.getState().connection;
+  const state = () => application.getConnection();
   assert.equal(state().status, 'connected');
   assert.equal(state().snapshot, page);
   // Asking for the stream keeps it, current, until the stream's first.
@@ -134,7 +130,12 @@ test('a state the page came with is current until the stream replaces it, kept w
   fixture.client.observe = (signal) => {
     if (fail) {
       fail = false;
-      return Promise.reject(new Error('connection refused'));
+      return Promise.reject(
+        new ApplicationError({
+          kind: 'unavailable',
+          message: 'connection refused',
+        }),
+      );
     }
     return observe(signal);
   };
@@ -164,10 +165,30 @@ test('forbidden streams stop retrying', async () => {
   const { release, state } = await connected(fixture);
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(attempts, 1);
-  assert.deepEqual(state().connection.error, {
+  assert.deepEqual(state().error, {
     kind: 'forbidden',
     message: 'denied',
   });
+  release();
+});
+
+test('a stream event this page can’t read stops the stream, not retried', async () => {
+  let attempts = 0;
+  const client = httpApplicationClient({
+    fetch: async () => {
+      attempts++;
+      return new Response('data: {"kind":"snapshot"}\n\n', {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    },
+  });
+  const application = createApplicationRuntime(client);
+  const release = application.connect();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const connection = application.getConnection();
+  assert.equal(attempts, 1);
+  assert.equal(connection.status, 'disconnected');
+  assert.equal(connection.error.kind, 'internal');
   release();
 });
 
@@ -179,10 +200,10 @@ test('shared observation closes once after the last consumer releases it', async
   await tick();
   first();
   first();
-  assert.equal(application.store.getState().connection.status, 'connected');
+  assert.equal(application.getConnection().status, 'connected');
   second();
   await tick();
-  assert.equal(application.store.getState().connection.snapshot, null);
+  assert.equal(application.getConnection().snapshot, null);
   assert.deepEqual(fixture.calls, ['observe', 'unsubscribe']);
 });
 
@@ -211,6 +232,45 @@ test('an observation acquired after release is closed without replacing newer st
   });
   await tick();
   assert.equal(closed, 1);
-  assert.equal(application.store.getState().connection.snapshot.target, 'off');
+  assert.equal(application.getConnection().snapshot.target, 'off');
   release();
+});
+
+test('EOF, a read failure, and cancellation during delivery each release the stream exactly once', async () => {
+  for (const end of ['eof', 'failure', 'abort']) {
+    const owner = new AbortController();
+    const seen = [];
+    let closed = 0;
+    const stream = {
+      initial: 'snapshot',
+      updates: (async function* () {
+        yield 'update';
+        assert.equal(
+          owner.signal.aborted,
+          false,
+          'no read after delivery cancelled the stream',
+        );
+        if (end === 'failure') throw Error('lost');
+        yield 'last';
+      })(),
+      close: () => closed++,
+    };
+    const done = consumeStream(
+      Promise.resolve(stream),
+      owner.signal,
+      (event) => {
+        seen.push(event);
+        if (end === 'abort' && event === 'update') owner.abort();
+      },
+    );
+    if (end === 'failure') await assert.rejects(done, /lost/);
+    else await done;
+    owner.abort();
+    assert.equal(closed, 1, end);
+    assert.deepEqual(
+      seen,
+      end === 'eof' ? ['snapshot', 'update', 'last'] : ['snapshot', 'update'],
+      end,
+    );
+  }
 });

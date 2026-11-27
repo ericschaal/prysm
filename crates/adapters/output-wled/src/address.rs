@@ -1,7 +1,8 @@
 //! The device address: `host[:port]`, parsed at validation and resolved at open.
+use crate::classify::{self, Cause};
 use prysm_ports::{Error, Hangup, Lookup, Resolver, Result};
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -64,10 +65,8 @@ impl DeviceAddress {
             Host::Ip(IpAddr::V6(
                 ip.parse().map_err(|_| "invalid bracketed IPv6 address")?,
             ))
-        } else if let Ok(ip) = host.parse::<Ipv4Addr>() {
-            Host::Ip(IpAddr::V4(ip))
-        } else if let Ok(ip) = host.parse::<Ipv6Addr>() {
-            Host::Ip(IpAddr::V6(ip))
+        } else if let Ok(ip) = host.parse::<IpAddr>() {
+            Host::Ip(ip)
         } else {
             Host::Name(parse_name(host)?.to_owned())
         };
@@ -114,11 +113,9 @@ fn split_port(text: &str) -> Result<(&str, Option<&str>), &'static str> {
                 .ok_or("invalid bracketed IPv6 address"),
         };
     }
-    match text.matches(':').count() {
-        0 => Ok((text, None)),
-        1 => Ok(text
-            .split_once(':')
-            .map_or((text, None), |(host, port)| (host, Some(port)))),
+    match text.split_once(':') {
+        None => Ok((text, None)),
+        Some((host, port)) if !port.contains(':') => Ok((host, Some(port))),
         _ if text.parse::<Ipv6Addr>().is_ok() => Ok((text, None)),
         _ => Err("an IPv6 address with a port needs brackets, such as `[fe80::1]:8080`"),
     }
@@ -207,14 +204,19 @@ impl Names {
         let ip = resolver
             .resolve(wait, stop)
             .map_err(|source| {
-                Error::adapter(format!("cannot resolve WLED host {}", address.host), source)
+                let escalation = classify::escalation(Cause::Resolve(&source));
+                let context = format!("cannot resolve WLED host {}", address.host);
+                Error::adapter_escalating(context, source, escalation)
             })?
             .ip();
         if !is_unicast(ip) {
-            return Err(Error::other(format!(
-                "WLED host {} resolved to {ip}, which is not a unicast address",
-                address.host
-            )));
+            return Err(Error::other_escalating(
+                format!(
+                    "WLED host {} resolved to {ip}, which is not a unicast address",
+                    address.host
+                ),
+                classify::escalation(Cause::NotUnicast),
+            ));
         }
         Ok(ip)
     }

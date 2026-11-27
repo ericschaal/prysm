@@ -275,7 +275,6 @@ pub unsafe extern "C" fn reply(
 ) -> bool {
     // SAFETY: the wrapper passes a NUL-terminated payload.
     let payload = unsafe { text(payload) };
-    // Only the handler's own reply fails, not an error reply after it.
     if !payload.contains("errorText") && failing("reply", error) {
         record(format!("failed reply {payload}"));
         return false;

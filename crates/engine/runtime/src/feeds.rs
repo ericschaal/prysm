@@ -1,6 +1,5 @@
 //! What a session shows its viewers: the latest preview and the colors last
 //! written, each published only while someone watches.
-use crate::slot::LatestSlot;
 use prysm_core::{EdgeColors, Frame, Viewport};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -24,20 +23,17 @@ pub struct Preview {
 /// while no session runs.
 #[derive(Debug)]
 pub(crate) struct Feed<T> {
-    latest: LatestSlot<T>,
+    latest: watch::Sender<Option<T>>,
     watchers: AtomicUsize,
     sequence: AtomicU64,
-    /// Bumped after every publish and clear, for [`Watch::changed`].
-    changes: watch::Sender<u64>,
 }
 
 impl<T> Default for Feed<T> {
     fn default() -> Self {
         Self {
-            latest: LatestSlot::new(),
+            latest: watch::Sender::new(None),
             watchers: AtomicUsize::new(0),
             sequence: AtomicU64::new(1),
-            changes: watch::Sender::new(0),
         }
     }
 }
@@ -49,7 +45,7 @@ impl<T> Feed<T> {
         self.watchers.fetch_add(1, Ordering::SeqCst);
         Watch {
             feed: self.clone(),
-            changes: self.changes.subscribe(),
+            receiver: self.latest.subscribe(),
         }
     }
 
@@ -67,24 +63,16 @@ impl<T> Feed<T> {
     /// increases with every published value, across sessions.
     fn publish(&self, make: impl FnOnce(u64) -> T) {
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
-        self.latest.offer(make(sequence));
-        // The last watch may have gone between the check and the offer; its
-        // clear could have run first, so do not leave the value pinned.
-        if !self.watched() {
-            self.latest.take();
-        }
-        self.changed();
+        let value = make(sequence);
+        // A frame can finish after the last viewer leaves. Check demand while
+        // holding the channel's write lock, so its clear cannot race our write.
+        self.latest.send_modify(|latest| {
+            *latest = self.watched().then_some(value);
+        });
     }
 
     fn clear(&self) {
-        self.latest.take();
-        self.changed();
-    }
-
-    /// After the value changed, so a watch that then looks sees it.
-    fn changed(&self) {
-        self.changes
-            .send_modify(|version| *version = version.wrapping_add(1));
+        self.latest.send_replace(None);
     }
 }
 
@@ -93,7 +81,7 @@ impl<T> Feed<T> {
 #[derive(Debug)]
 pub struct Watch<T> {
     feed: Arc<Feed<T>>,
-    changes: watch::Receiver<u64>,
+    receiver: watch::Receiver<Option<T>>,
 }
 
 impl<T: Clone> Watch<T> {
@@ -102,7 +90,7 @@ impl<T: Clone> Watch<T> {
     /// while its output is released.
     #[must_use]
     pub fn latest(&self) -> Option<T> {
-        self.feed.latest.peek()
+        self.receiver.borrow().clone()
     }
 }
 
@@ -112,15 +100,21 @@ impl<T> Watch<T> {
     /// changes meanwhile end one wait. Cancel-safe.
     pub async fn changed(&mut self) {
         // This watch holds the feed, which holds the sender: it never closes.
-        let _ = self.changes.changed().await;
+        let _ = self.receiver.changed().await;
     }
 }
 
 impl<T> Drop for Watch<T> {
     fn drop(&mut self) {
-        if self.feed.watchers.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.feed.clear();
-        }
+        // Decide whether this is the last viewer under the same lock as the
+        // clear. A replacement viewer's first frame must survive this drop.
+        self.feed.latest.send_if_modified(|latest| {
+            if self.feed.watchers.fetch_sub(1, Ordering::SeqCst) == 1 {
+                *latest = None;
+                return true;
+            }
+            false
+        });
     }
 }
 
@@ -186,13 +180,13 @@ impl Feeds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::leds::Configured;
     use crate::null::{NullOutput, NullSettings};
-    use crate::session::Session;
+    use crate::session::{IdleDecision, Notice, Session, Start};
     use crate::stats::Stats;
     use prysm_core::{Config, PixelFormat};
     use prysm_ports::{
-        AdapterSettings, Error, FrameSource, IdleMode, OutputFactory, Pull, Registry, Result,
+        AdapterSettings, Error, FrameSource, OpenIntent, OutputFactory, Pull, Registry, Result,
+        SourceFactory, ValidationError,
     };
     use std::time::Duration;
 
@@ -212,22 +206,130 @@ mod tests {
         }
     }
 
-    fn start(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
+    fn ready_claim() -> prysm_ports::Claim {
+        let mut adapter = prysm_ports::AdapterLifecycle::<()>::default();
+        adapter.start(prysm_ports::Readiness::Ready);
+        adapter.claim().unwrap()
+    }
+
+    async fn open_capture(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
         let frames = Arc::new(AtomicUsize::new(0));
+        let session = open_source(feeds, Grey(frames.clone())).await;
+        (session, frames)
+    }
+
+    struct SingleSource(std::sync::Mutex<Option<Box<dyn FrameSource>>>);
+
+    impl SourceFactory for SingleSource {
+        const KIND: &'static str = "single";
+        type Settings = NullSettings;
+
+        fn validate(&self, _: &NullSettings) -> Result<(), ValidationError> {
+            Ok(())
+        }
+
+        fn open(&self, _: &NullSettings) -> Result<Box<dyn FrameSource>> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .take()
+                .expect("one session per test source"))
+        }
+    }
+
+    async fn open_source(feeds: &Feeds, source: impl FrameSource + 'static) -> Session {
         let mut registry = Registry::default();
+        registry.add_source(SingleSource(std::sync::Mutex::new(Some(Box::new(source)))));
         registry.add_output(NullOutput);
-        let session = Session::start(
-            Box::new(Grey(frames.clone())),
-            Configured::new(
-                registry,
-                AdapterSettings::new(NullOutput::KIND, &NullSettings::new()),
-            ),
-            Config::default(),
-            feeds.clone(),
-            Arc::new(Stats::default()),
+        Session::start(
+            ready_claim(),
+            Start {
+                capture: registry
+                    .source(&AdapterSettings::new(
+                        SingleSource::KIND,
+                        &NullSettings::new(),
+                    ))
+                    .unwrap(),
+                output: registry
+                    .output(&AdapterSettings::new(
+                        NullOutput::KIND,
+                        &NullSettings::new(),
+                    ))
+                    .unwrap(),
+                config: Config::default(),
+                feeds: feeds.clone(),
+                stats: Arc::new(Stats::default()),
+            },
         )
-        .map_err(|(error, _)| error)
-        .unwrap();
+        .unwrap()
+    }
+
+    async fn authorize_output(session: &mut Session) {
+        let Notice::CaptureOpened { authorize } = session.next().await else {
+            panic!("expected capture open")
+        };
+        authorize.send(OpenIntent::Resume).unwrap();
+    }
+
+    async fn preserve_after_close(session: &mut Session) {
+        let Notice::CaptureClosed {
+            released: true,
+            decide_idle,
+        } = session.next().await
+        else {
+            panic!("expected confirmed capture close")
+        };
+        decide_idle.send(IdleDecision::PRESERVE).unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_the_end_notice_releases_its_error_before_capture_close_finishes() {
+        use std::sync::mpsc;
+
+        struct DisconnectedSource {
+            pending: Option<mpsc::Sender<()>>,
+            released: mpsc::Receiver<()>,
+        }
+
+        impl FrameSource for DisconnectedSource {
+            fn next_frame(&mut self, _: Duration) -> Result<Pull> {
+                let unsent = self.pending.take().unwrap();
+                Err(Error::adapter(
+                    "capture disconnected",
+                    mpsc::SendError(unsent),
+                ))
+            }
+
+            fn close(self: Box<Self>) -> Result<()> {
+                match self.released.recv_timeout(Duration::from_secs(2)) {
+                    Err(mpsc::RecvTimeoutError::Disconnected) => Ok(()),
+                    _ => Err(Error::other("capture error still held during close")),
+                }
+            }
+        }
+
+        let (pending, released) = mpsc::channel();
+        let source = DisconnectedSource {
+            pending: Some(pending),
+            released,
+        };
+        let mut session = open_source(&Feeds::default(), source).await;
+        authorize_output(&mut session).await;
+        assert!(matches!(session.next().await, Notice::OutputOpened));
+        assert!(matches!(
+            session.next().await,
+            Notice::Ended(crate::worker::Exit::Failed(_))
+        ));
+        preserve_after_close(&mut session).await;
+        assert!(matches!(session.next().await, Notice::Finished(Ok(_))));
+        session.join().await;
+    }
+
+    async fn start(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
+        let (mut session, frames) = open_capture(feeds).await;
+        authorize_output(&mut session).await;
+        assert!(matches!(session.next().await, Notice::OutputOpened));
         (session, frames)
     }
 
@@ -268,20 +370,67 @@ mod tests {
         assert_eq!(watch.latest(), None);
     }
 
-    async fn stop(session: Session) {
-        session
-            .stop(IdleMode::Off, Duration::from_secs(2))
+    #[test]
+    fn a_value_finished_after_the_last_viewer_left_is_released() {
+        let feed: Arc<Feed<u64>> = Arc::default();
+        let viewer = feed.watch();
+        feed.publish(|sequence| {
+            drop(viewer);
+            sequence
+        });
+        assert_eq!(feed.watch().latest(), None);
+    }
+
+    #[test]
+    fn replacing_a_viewer_preserves_the_new_viewers_first_frame() {
+        let feed: Arc<Feed<u64>> = Arc::default();
+        let previous = feed.watch();
+        let ready = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let departing = scope.spawn(|| {
+                ready.wait();
+                drop(previous);
+            });
+            ready.wait();
+            let next = feed.watch();
+            feed.publish(|_| 42);
+            departing.join().unwrap();
+            assert_eq!(next.latest(), Some(42));
+        });
+    }
+
+    async fn stop(mut session: Session) {
+        session.request_stop();
+        assert!(matches!(session.next().await, Notice::Ended(_)));
+        preserve_after_close(&mut session).await;
+        let Notice::Finished(Ok(end)) = session.next().await else {
+            panic!("session did not finish");
+        };
+        end.capture.unwrap();
+        end.output.unwrap();
+        session.join().await;
+    }
+
+    #[tokio::test]
+    async fn stop_before_output_authorization_releases_capture_without_streaming() {
+        let (mut session, frames) = open_capture(&Feeds::default()).await;
+        let Notice::CaptureOpened { authorize } = session.next().await else {
+            panic!("expected authorization request")
+        };
+        tokio::time::timeout(Duration::from_secs(5), stop(session))
             .await
-            .unwrap();
+            .expect("stopping must wake the worker waiting for output authorization");
+        assert!(authorize.is_closed());
+        assert_eq!(frames.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
     async fn unwatched_sessions_publish_nothing() {
         let feeds = Feeds::default();
-        let (session, frames) = start(&feeds);
+        let (session, frames) = start(&feeds).await;
         frames_after(&frames, 20).await;
-        assert!(feeds.preview.latest.peek().is_none());
-        assert!(feeds.colors.latest.peek().is_none());
+        assert!(feeds.preview.latest.borrow().is_none());
+        assert!(feeds.colors.latest.borrow().is_none());
         assert_eq!(published(&feeds.preview), 0, "nothing published");
         assert_eq!(published(&feeds.colors), 0, "nothing published");
 
@@ -289,10 +438,9 @@ mod tests {
         let first = latest(&watch, 0).await;
         drop(watch);
         assert_eq!(feeds.preview.watchers(), 0);
-        // A frame already past the check may still be published, then dropped.
         frames_after(&frames, 5).await;
         assert!(
-            feeds.preview.latest.peek().is_none(),
+            feeds.preview.latest.borrow().is_none(),
             "the last viewer releases the frame"
         );
         let count = published(&feeds.preview);
@@ -306,7 +454,7 @@ mod tests {
     async fn watched_previews_carry_viewport_and_increasing_sequence() {
         let feeds = Feeds::default();
         let watch = feeds.preview.watch();
-        let (session, _) = start(&feeds);
+        let (session, _) = start(&feeds).await;
         let first = latest(&watch, 0).await;
         assert_eq!((first.frame.width(), first.frame.height()), (32, 18));
         assert_eq!(first.viewport, Viewport::full_frame(32, 18));
@@ -318,8 +466,7 @@ mod tests {
             "no preview once the session ended"
         );
 
-        // A later session continues the sequence, so viewers never skip it.
-        let (session, _) = start(&feeds);
+        let (session, _) = start(&feeds).await;
         let next = latest(&watch, 0).await;
         assert!(next.sequence > second.sequence);
         stop(session).await;
@@ -329,28 +476,25 @@ mod tests {
     async fn colors_and_preview_are_published_independently() {
         let feeds = Feeds::default();
         let colors = feeds.colors.watch();
-        let (session, frames) = start(&feeds);
+        let (session, frames) = start(&feeds).await;
         frames_after(&frames, 20).await;
         let written = colors.latest().expect("colors are published");
         assert!(!written.top.is_empty());
-        // Watching colors copies no frame and publishes no preview.
         assert_eq!(published(&feeds.preview), 0);
-        assert!(feeds.preview.latest.peek().is_none());
+        assert!(feeds.preview.latest.borrow().is_none());
 
         drop(colors);
-        // A frame already past the check may still be published, then dropped.
         frames_after(&frames, 5).await;
         assert!(
-            feeds.colors.latest.peek().is_none(),
+            feeds.colors.latest.borrow().is_none(),
             "the last watch clears"
         );
         let count = published(&feeds.colors);
-        // Watching the preview publishes no colors.
         let preview = feeds.preview.watch();
         latest(&preview, 0).await;
         frames_after(&frames, 20).await;
         assert_eq!(published(&feeds.colors), count);
-        assert!(feeds.colors.latest.peek().is_none());
+        assert!(feeds.colors.latest.borrow().is_none());
 
         let colors = feeds.colors.watch();
         frames_after(&frames, 5).await;

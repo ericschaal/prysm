@@ -4,6 +4,8 @@ and slim receiver."""
 from dataclasses import dataclass
 from enum import StrEnum
 
+from prysm_acceptance.wire_generated import Flavour
+
 
 class Platform(StrEnum):
     """Where a host cell runs Prysm (`[mac]`, `[linux]`); also where a slim TV cell's receiver runs."""
@@ -25,13 +27,6 @@ class Source(StrEnum):
 
     FILE = 'file'
     DEVICE = 'device'
-
-
-class Flavour(StrEnum):
-    """The two TV packages."""
-
-    FULL = 'full'
-    SLIM = 'slim'
 
 
 @dataclass(frozen=True)

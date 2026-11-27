@@ -6,16 +6,20 @@
 import {
   memo,
   useEffect,
-  useLayoutEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
   type Ref,
 } from 'react';
 import type { Pattern } from '@prysm/application-client';
-import { calibrationUrl, shown } from './model';
-import { WAITING_PATTERN, type PatternPlayer } from './patterns';
+import { shown } from './preferences';
+import { patternNames, WAITING_PATTERN, type PatternPlayer } from './patterns';
 import { qrCode } from './qr';
+
+/** The portal page the phone opens, from the portal address the TV shows. */
+const calibrationUrl = (portal: string) =>
+  `${portal.replace(/\/+$/, '')}/#/calibrate`;
 
 /**
  * A QR code with a four-module quiet zone. Without `id` it is decorative: the
@@ -26,7 +30,6 @@ export const QrCode = memo(function QrCode({
   id,
   className = 'qr',
 }: {
-  /** Without modules, the code's place is kept empty (not known yet). */
   modules: boolean[][] | null;
   id?: string;
   className?: string;
@@ -66,17 +69,10 @@ function PatternVideo({
   failed: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const latestRef = useRef({ pattern, failed });
-  useLayoutEffect(() => {
-    latestRef.current = { pattern, failed };
-  });
+  const readPattern = useEffectEvent(() => pattern);
+  const onFailure = useEffectEvent(failed);
   useEffect(
-    () =>
-      player.play(
-        videoRef.current!,
-        () => latestRef.current.pattern,
-        () => latestRef.current.failed(),
-      ),
+    () => player.play(videoRef.current!, readPattern, onFailure),
     [player],
   );
   return (
@@ -104,7 +100,7 @@ export function CalibrationScreen({
   root: Ref<HTMLElement>;
   player: PatternPlayer;
   /** `State.calibration.pattern`, absent while none is chosen. */
-  pattern: Pattern | undefined;
+  pattern: string | undefined;
   /** The portal address the TV shows. */
   address: string;
 }) {
@@ -120,7 +116,9 @@ export function CalibrationScreen({
       {failed ? null : (
         <PatternVideo
           player={player}
-          pattern={pattern ?? WAITING_PATTERN}
+          pattern={
+            patternNames.find((name) => name === pattern) ?? WAITING_PATTERN
+          }
           failed={() => setFailed(true)}
         />
       )}

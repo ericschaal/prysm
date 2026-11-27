@@ -4,7 +4,7 @@ import type { AdapterUi } from '@prysm/web-portal';
 import { WebosEditor } from './editor';
 import { describeTvPicture, tvPictureFacts } from './settings';
 
-export { TvPictureFields } from './editor';
+export { IncludeTvMenus } from './editor';
 export * from './settings';
 
 const defaults = captureDefaults.webos;
@@ -12,10 +12,9 @@ const defaults = captureDefaults.webos;
 export const webosCapture: AdapterUi<WebosSettings> = {
   label: 'This TV',
   create: () => ({ kind: 'webos', ...defaults }),
-  optional: { fps: true, height: true, include_ui: true, width: true },
+  optional: defaults,
   Editor: WebosEditor,
   summary: (value) => describeTvPicture(value, defaults),
   facts: (value) => tvPictureFacts(value, defaults),
-  // The TV's own picture, captured on the TV.
   transport: () => 'built_in',
 };

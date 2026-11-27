@@ -80,18 +80,18 @@ fn check(dir: &Path, version: &str, commit: &str) -> Result<Vec<(PathBuf, String
     let mut files: Vec<(PathBuf, String)> = Vec::new();
     for path in manifests {
         let artifact = path.parent().expect("a manifest is in a directory");
-        for (name, entry) in Manifest::read(&path)?.artifacts() {
-            let file = artifact.join(name);
-            let problem = if !is_file_name(name) {
+        for (name, entry) in Manifest::read(&path)?.artifacts {
+            let file = artifact.join(&name);
+            let problem = if !is_file_name(&name) {
                 Some(Problem::NotAFileName)
-            } else if fs::symlink_metadata(dir.join(name)).is_ok() {
+            } else if fs::symlink_metadata(dir.join(&name)).is_ok() {
                 Some(Problem::Exists)
-            } else if files.iter().any(|(_, seen)| seen == name) {
+            } else if files.iter().any(|(_, seen)| seen == &name) {
                 Some(Problem::InTwoArtifacts)
             } else if entry.version != version {
-                Some(Problem::Version(entry.version.clone()))
+                Some(Problem::Version(entry.version))
             } else if entry.commit != commit {
-                Some(Problem::Commit(entry.commit.clone()))
+                Some(Problem::Commit(entry.commit))
             } else if entry.dirty {
                 Some(Problem::Dirty)
             } else if !file.is_file() {
@@ -102,13 +102,9 @@ fn check(dir: &Path, version: &str, commit: &str) -> Result<Vec<(PathBuf, String
                 None
             };
             if let Some(problem) = problem {
-                return Err(Refusal {
-                    name: name.to_owned(),
-                    problem,
-                }
-                .into());
+                return Err(Refusal { name, problem }.into());
             }
-            files.push((file, name.to_owned()));
+            files.push((file, name));
         }
     }
     Ok(files)
@@ -151,7 +147,7 @@ mod tests {
                     built_at: "2026-11-17T12:00:00Z".into(),
                 };
                 edit(name, &mut entry);
-                manifest.insert(name.to_owned(), entry);
+                manifest.artifacts.insert(name.to_owned(), entry);
             }
             manifest.write(&artifact.join("manifest.json")).unwrap();
         }
@@ -256,8 +252,8 @@ mod tests {
             let dir = release("not-a-file-name", &[("one", &["b.deb"])], |_, _| {});
             let manifest_path = dir.join("one/manifest.json");
             let mut manifest = Manifest::read(&manifest_path).unwrap();
-            let entry = manifest.artifacts().next().unwrap().1.clone();
-            manifest.insert(name.to_owned(), entry);
+            let entry = manifest.artifacts.values().next().unwrap().clone();
+            manifest.artifacts.insert(name.to_owned(), entry);
             manifest.write(&manifest_path).unwrap();
             let error = run(&dir, "1.2.0", COMMIT).unwrap_err();
             let refused = error.downcast::<Refusal>().unwrap();

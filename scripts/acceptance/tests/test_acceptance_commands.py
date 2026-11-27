@@ -59,6 +59,9 @@ def confined(test: unittest.TestCase, command: commands.Command) -> None:
     test.assertEqual(command.argv[0], 'ssh')
     test.assertEqual(command.argv[-1], command.remote)
     test.assertIn('BatchMode=yes', command.argv)
+    if command.template == 'tv.reboot':
+        test.assertEqual(command.remote, '/sbin/reboot')
+        return
     test.assertIsNone(FORBIDDEN.search(without_uris(command.remote)), command.remote)
     for path in paths(command.remote):
         test.assertTrue(
@@ -120,7 +123,7 @@ class AllowList(unittest.TestCase):
             with self.subTest(command.template):
                 confined(self, command)
 
-    def test_luna_calls_only_prysm_and_the_install_service(self) -> None:
+    def test_luna_calls_only_the_listed_methods(self) -> None:
         for factory in commands.TEMPLATES.values():
             command = factory()
             for uri in re.findall(r'luna://\S+', command.remote or ''):
@@ -128,6 +131,7 @@ class AllowList(unittest.TestCase):
                     uri,
                     rf'^luna://({re.escape(commands.SERVICE)}/(getState|setPreferences|setEnabled|uninstall)|'
                     r'com\.webos\.appInstallService/dev/(install|remove)|'
+                    r'com\.webos\.service\.tvpower/power/powerOff|'
                     r'com\.webos\.service\.applicationManager/(getForegroundAppInfo|launch|closeByAppId))$',
                 )
             if command.remote and 'luna-send' in command.remote:

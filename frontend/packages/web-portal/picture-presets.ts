@@ -1,16 +1,11 @@
 import type { Picture } from './adapters';
 
-/** The capture sizes and rates offered by name. */
-export type PicturePreset = 'balanced' | 'smooth' | 'efficient';
-
 /**
  * Each preset in words and the size and rate it aims for; what a source
  * delivers decides what it sets (`offeredPresets`). The label is what the
  * user gains, the line beneath what it costs.
  */
-export const picturePresets: Readonly<
-  Record<PicturePreset, Required<Picture> & { label: string; about: string }>
-> = {
+export const picturePresets = {
   balanced: {
     label: 'Balanced',
     about: 'Right for most setups.',
@@ -32,19 +27,20 @@ export const picturePresets: Readonly<
     height: 180,
     fps: 30,
   },
-};
+} as const satisfies Record<
+  string,
+  Required<Picture> & { label: string; about: string }
+>;
 
-/** The presets in the order offered; the first is the one to fall back to. */
-export const presetOrder: readonly PicturePreset[] = [
-  'balanced',
-  'smooth',
-  'efficient',
-];
+export type PicturePreset = keyof typeof picturePresets;
+/** Targets in display order, used until capture reports its modes. */
+export const presetTargets = (
+  Object.keys(picturePresets) as PicturePreset[]
+).map((preset) => ({ preset, ...picturePresets[preset] }));
 
-const rates = presetOrder
-  .map((preset) => picturePresets[preset].fps)
-  .filter((fps, at, all) => all.indexOf(fps) === at)
-  .sort((a, b) => a - b);
+const rates = [...new Set(presetTargets.map(({ fps }) => fps))].sort(
+  (a, b) => a - b,
+);
 
 /** The rates the presets aim for, in words: `30 or 60 fps`. */
 export const presetRates = `${rates.join(' or ')}\u00a0fps`;

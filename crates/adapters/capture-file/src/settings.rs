@@ -61,8 +61,7 @@ impl FileSettings {
                 "a video file path is required",
             ));
         }
-        validate_capture_size(self.width, self.height, self.fps)?;
-        Ok(())
+        validate_capture_size(self.width, self.height, self.fps)
     }
 }
 

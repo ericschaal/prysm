@@ -38,6 +38,11 @@ export const builtInStyles = {
   }
 } as const;
 
+export const calibrationLimits = {
+  "count": 32,
+  "name": 64
+} as const;
+
 export const captureDefaults = {
   "device": {
     "fps": 30,
@@ -65,9 +70,132 @@ export const captureDefaults = {
   }
 } as const;
 
+export const colorsEventTypes = [
+  "colors",
+  "idle"
+] as const;
+
+export const errorKinds = [
+  "too_large",
+  "unknown_method",
+  "forbidden",
+  "removing",
+  "invalid_request",
+  "wrong_package",
+  "invalid_preferences",
+  "save_failed",
+  "internal"
+] as const;
+
+export const failureSections = [
+  "capture",
+  "output"
+] as const;
+
+export const fixes = [
+  "try_again",
+  "change_settings",
+  "set_up",
+  "unsupported",
+  "restart_tv"
+] as const;
+
+export const lightingTargets = [
+  "off",
+  "screen_sync",
+  "effects"
+] as const;
+
+export const pictures = [
+  "arriving",
+  "quiet",
+  "refused"
+] as const;
+
+export const powers = [
+  "unknown",
+  "active",
+  "screen_saver",
+  "asleep"
+] as const;
+
+export const previewEventTypes = [
+  "frame",
+  "idle",
+  "unavailable"
+] as const;
+
+export const processingBounds = {
+  "brightness_percent": {
+    "min": 0,
+    "max": 100
+  },
+  "sample_density": {
+    "min": 1,
+    "max": 512
+  }
+} as const;
+
 export const processingMaxima = {
   "brightness_ramp_seconds": 2,
   "dark_floor_percent": 20,
   "sample_density": 512,
   "smoothing_seconds": 2
 } as const;
+
+export const sessions = [
+  "stopped",
+  "screen_sync",
+  "effects",
+  "unanswered",
+  "faulted"
+] as const;
+
+export const slimLinkStates = [
+  "starting",
+  "sending",
+  "refused",
+  "paused",
+  "waiting",
+  "capture_waiting",
+  "encoder_failed",
+  "version_differs",
+  "receiver_failed"
+] as const;
+
+export const styleBounds = {
+  "brightness_ramp_seconds": {
+    "min": 0,
+    "max": 2
+  },
+  "color_focus_percent": {
+    "min": 0,
+    "max": 100
+  },
+  "cut_response_percent": {
+    "min": 0,
+    "max": 100
+  },
+  "dark_floor_percent": {
+    "min": 0,
+    "max": 20
+  },
+  "saturation_boost_percent": {
+    "min": 0,
+    "max": 100
+  },
+  "smoothing_seconds": {
+    "min": 0,
+    "max": 2
+  },
+  "spatial_reach_percent": {
+    "min": 1,
+    "max": 100
+  }
+} as const;
+
+export const videos = [
+  "unknown",
+  "unavailable",
+  "available"
+] as const;

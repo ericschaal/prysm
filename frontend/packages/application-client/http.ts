@@ -1,24 +1,42 @@
 import {
+  colorsEventTypes,
+  previewEventTypes,
+  sessions,
+} from '@prysm/contracts/constants';
+import type {
+  CaptureSettings,
+  OutputSettings,
+} from '@prysm/contracts/application';
+import type { State as ApplicationStateReading } from '@prysm/contracts/application-reading';
+import {
+  isApplicationStateReading,
+  isLightingFailureReading,
+  isFailure,
+  isFutureFailure,
+  isSettingsReplaced,
+  isCandidate,
+  isModes,
+  isFutureModes,
+  isPreviewEvent,
+  isColorsEvent,
+} from '@prysm/contracts/validate/application';
+import {
   ApplicationError,
   type ApplicationClient,
   type ApplicationSnapshot,
-  type Candidate,
   type CaptureModesClient,
   type ColorsClient,
   type ColorsEvent,
   type DiscoveryClient,
-  type Failure,
   failureSections,
+  failureSide,
   isObject,
   known,
   type LightingFailure,
   lightingTargets,
   unreachable,
-  type Mode,
-  type Modes,
   type PreviewClient,
   type PreviewEvent,
-  type Session,
   type SessionReading,
 } from './index';
 
@@ -40,22 +58,42 @@ function timeoutSignal(ms: number): AbortSignal {
 }
 
 /** A failure this page makes itself: one that carries only its message. */
-const failure = (kind: 'unavailable' | 'forbidden', message: string) =>
-  new ApplicationError({ kind, message });
+const failure = (
+  kind: 'unavailable' | 'forbidden' | 'internal',
+  message: string,
+) => new ApplicationError({ kind, message });
 
-/** Decode the server's failure body; anything else becomes `unavailable`. */
+/**
+ * A reply this page can't read: a defect, not a lost connection. A page
+ * older than Prysm is the usual cause, and a reload brings the current one.
+ */
+const unreadable = (what: string) =>
+  failure(
+    'internal',
+    `This page can’t read ${what} from Prysm. Reload the page.`,
+  );
+
+/** Decode the server's failure body; any other status is `unreadable`. */
 async function responseError(response: Response): Promise<ApplicationError> {
   const body: unknown = await response.json().catch(() => null);
-  const detail = body as Partial<Failure> | null;
-  if (
-    detail &&
-    typeof detail.kind === 'string' &&
-    typeof detail.message === 'string'
-  )
-    return new ApplicationError(detail as Failure);
+  if (isFailure(body)) {
+    if (body.kind !== 'adapter') return new ApplicationError(body);
+    const { message, section } = body;
+    return new ApplicationError(adapterFailure(message, section));
+  }
+  if (isFutureFailure(body)) {
+    const { message } = body;
+    const side = failureSide(body);
+    return side
+      ? new ApplicationError({ kind: 'adapter', message, section: side })
+      : new ApplicationError({
+          kind: response.status < 500 ? 'bad_request' : 'internal',
+          message,
+        });
+  }
   if (response.status === 403)
     return failure('forbidden', 'Prysm refuses requests from this page.');
-  return failure('unavailable', `Unexpected response ${response.status}.`);
+  return unreadable(`a ${response.status} reply`);
 }
 
 export interface HttpClientOptions {
@@ -69,10 +107,10 @@ export interface HttpClientOptions {
 }
 
 /** Fetch transport for the portal API, which needs no credentials. */
-export function httpApplicationClient<C, O>({
+export function httpApplicationClient({
   baseUrl = '',
   fetch: fetcher = fetch,
-}: HttpClientOptions = {}): ApplicationClient<C, O> {
+}: HttpClientOptions = {}): ApplicationClient<CaptureSettings, OutputSettings> {
   const api = `${baseUrl.replace(/\/+$/, '')}/api/v1`;
   /** `PUT` the body, or `DELETE` when there is none. */
   async function command(path: string, body?: unknown): Promise<Response> {
@@ -116,26 +154,19 @@ export function httpApplicationClient<C, O>({
       const reply: unknown = await (
         await command('settings', { expected, settings })
       ).json();
-      const revision = (reply as { revision?: unknown } | null)?.revision;
-      if (typeof revision !== 'number')
+      if (!isSettingsReplaced(reply))
         throw failure('unavailable', 'Invalid settings reply.');
-      return revision;
+      return reply.revision;
     },
     observe: async (signal) => {
-      const stream = await openEvents(
-        fetcher,
-        `${api}/state/stream`,
-        signal,
-        decodeState,
-        'state',
-      );
+      const stream = await openEvents(fetcher, api, 'state', signal, readState);
       try {
         const first = await stream.events.next();
         if (first.done)
           throw failure('unavailable', 'State stream ended before any state.');
         return {
-          initial: first.value as ApplicationSnapshot<C, O>,
-          updates: stream.events as AsyncIterable<ApplicationSnapshot<C, O>>,
+          initial: first.value,
+          updates: stream.events,
           close: stream.close,
         };
       } catch (error) {
@@ -167,157 +198,67 @@ export async function probePortal(
   }
 }
 
-/**
- * The portal's preview stream. Each open stream is a viewer the portal counts
- * (at most 4; more are refused as `busy`), so close it when it is not shown.
- */
-export function httpPreviewClient({
+/** The browser portal's live views and on-demand device lookups. */
+export function httpPortalClient({
   baseUrl = '',
   fetch: fetcher = fetch,
-}: HttpClientOptions = {}): PreviewClient {
-  const url = `${baseUrl.replace(/\/+$/, '')}/api/v1/preview/stream`;
-  return {
-    preview: async (signal) => {
-      const stream = await openEvents(
-        fetcher,
-        url,
-        signal,
-        decodePreview,
-        'preview',
-      );
-      return {
-        events: stream.events as AsyncIterable<PreviewEvent>,
-        close: stream.close,
-      };
-    },
-  };
-}
+}: HttpClientOptions = {}): PreviewClient &
+  ColorsClient &
+  DiscoveryClient &
+  CaptureModesClient {
+  const api = `${baseUrl.replace(/\/+$/, '')}/api/v1`;
 
-/**
- * The portal's colors stream. Each open stream is a listener the portal counts
- * (at most 8; more are refused as `busy`), so close it when it is not shown.
- */
-export function httpColorsClient({
-  baseUrl = '',
-  fetch: fetcher = fetch,
-}: HttpClientOptions = {}): ColorsClient {
-  const url = `${baseUrl.replace(/\/+$/, '')}/api/v1/colors/stream`;
-  return {
-    colors: async (signal) => {
-      const stream = await openEvents(
-        fetcher,
-        url,
-        signal,
-        decodeColors,
-        'colors',
-      );
-      return {
-        events: stream.events as AsyncIterable<ColorsEvent>,
-        close: stream.close,
-      };
-    },
-  };
-}
+  async function query(
+    signal: AbortSignal | undefined,
+    send: (options: RequestInit) => Promise<Response>,
+  ): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await send({
+        signal: signal ?? timeoutSignal(COMMAND_TIMEOUT_MS),
+        cache: 'no-store',
+        redirect: 'error',
+      });
+    } catch {
+      throw failure('unavailable', 'Prysm didn’t answer.');
+    }
+    if (!response.ok) throw await responseError(response);
+    return response.json().catch(() => null);
+  }
 
-/** The portal's `GET /api/v1/candidates/{section}/{kind}`. */
-export function httpDiscoveryClient({
-  baseUrl = '',
-  fetch: fetcher = fetch,
-}: HttpClientOptions = {}): DiscoveryClient {
-  const api = `${baseUrl.replace(/\/+$/, '')}/api/v1/candidates`;
   return {
+    preview: (signal) =>
+      openEvents(fetcher, api, 'preview', signal, decodePreview),
+    colors: (signal) =>
+      openEvents(fetcher, api, 'colors', signal, decodeColors),
     candidates: async (section, kind, signal) => {
-      let response: Response;
-      try {
-        response = await fetcher(
-          `${api}/${section}/${encodeURIComponent(kind)}`,
-          {
-            signal: signal ?? timeoutSignal(COMMAND_TIMEOUT_MS),
-            cache: 'no-store',
-            redirect: 'error',
-          },
-        );
-      } catch {
-        throw failure('unavailable', 'Prysm didn’t answer.');
-      }
-      if (!response.ok) throw await responseError(response);
-      const found: unknown = await response.json().catch(() => null);
-      if (!Array.isArray(found) || !found.every(validCandidate))
+      const found = await query(signal, (options) =>
+        fetcher(
+          `${api}/candidates/${section}/${encodeURIComponent(kind)}`,
+          options,
+        ),
+      );
+      if (!Array.isArray(found) || !found.every(isCandidate))
         throw failure('unavailable', 'Invalid candidates reply.');
       return found;
     },
-  };
-}
-
-/** The portal's `POST /api/v1/capture/modes`. */
-export function httpCaptureModesClient({
-  baseUrl = '',
-  fetch: fetcher = fetch,
-}: HttpClientOptions = {}): CaptureModesClient {
-  const api = `${baseUrl.replace(/\/+$/, '')}/api/v1/capture/modes`;
-  return {
     modes: async (capture, signal) => {
-      let response: Response;
-      try {
-        response = await fetcher(api, {
+      const modes = await query(signal, (options) =>
+        fetcher(`${api}/capture/modes`, {
+          ...options,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(capture),
-          signal: signal ?? timeoutSignal(COMMAND_TIMEOUT_MS),
-          cache: 'no-store',
-          redirect: 'error',
-        });
-      } catch {
-        throw failure('unavailable', 'Prysm didn’t answer.');
-      }
-      if (!response.ok) throw await responseError(response);
-      const modes: unknown = await response.json().catch(() => null);
-      if (!validModes(modes))
-        throw failure('unavailable', 'Invalid capture modes reply.');
-      return modes;
+        }),
+      );
+      if (isModes(modes)) return modes;
+      if (isFutureModes(modes)) return { status: 'unknown' };
+      throw failure('unavailable', 'Invalid capture modes reply.');
     },
   };
 }
 
-function validModes(value: unknown): value is Modes {
-  const modes = value as { status?: unknown; modes?: unknown } | null;
-  if (modes?.status === 'unknown') return true;
-  return (
-    modes?.status === 'known' &&
-    Array.isArray(modes.modes) &&
-    modes.modes.every(validMode)
-  );
-}
-
-function validMode(value: unknown): value is Mode {
-  const mode = value as Partial<Record<keyof Mode, unknown>> | null;
-  const span = (value: unknown) => {
-    const span = value as {
-      min?: unknown;
-      max?: unknown;
-      step?: unknown;
-    } | null;
-    return (
-      Number.isSafeInteger(span?.min) &&
-      Number.isSafeInteger(span?.max) &&
-      Number.isSafeInteger(span?.step)
-    );
-  };
-  return !!mode && span(mode.width) && span(mode.height) && span(mode.fps);
-}
-
-function validCandidate(value: unknown): value is Candidate {
-  const candidate = value as Partial<Candidate> | null;
-  return (
-    !!candidate &&
-    typeof candidate.label === 'string' &&
-    (candidate.detail === undefined || typeof candidate.detail === 'string') &&
-    (candidate.led_count === undefined ||
-      Number.isSafeInteger(candidate.led_count)) &&
-    isObject(candidate.fields)
-  );
-}
-
+/** A stream's failure: one this page did not make is a lost connection. */
 function streamError(error: unknown) {
   return error instanceof ApplicationError
     ? error
@@ -325,25 +266,25 @@ function streamError(error: unknown) {
 }
 
 /** Open an SSE stream; closing it or aborting `signal` cancels the request. */
-async function openEvents(
+async function openEvents<T>(
   fetcher: typeof fetch,
-  url: string,
+  api: string,
+  name: 'state' | 'colors' | 'preview',
   signal: AbortSignal,
-  decode: (value: unknown) => Decoded<unknown>,
-  name: string,
+  decode: (value: unknown) => Decoded<T>,
 ) {
   const abort = new AbortController();
   const stop = () => abort.abort();
   signal.addEventListener('abort', stop, { once: true });
   if (signal.aborted) stop();
-  let events: AsyncGenerator<unknown> | undefined;
+  let events: AsyncGenerator<T> | undefined;
   const close = () => {
     signal.removeEventListener('abort', stop);
     stop();
     void events?.return(undefined).catch(() => {});
   };
   try {
-    const response = await fetcher(url, {
+    const response = await fetcher(`${api}/${name}/stream`, {
       signal: abort.signal,
       cache: 'no-store',
       redirect: 'error',
@@ -353,7 +294,7 @@ async function openEvents(
       !response.headers.get('content-type')?.startsWith('text/event-stream') ||
       !response.body
     )
-      throw failure('unavailable', `Invalid ${name} stream response.`);
+      throw unreadable(`the ${name} stream`);
     events = decodeEvents(response.body, abort.signal, decode, name);
     return { events, close };
   } catch (error) {
@@ -368,13 +309,13 @@ async function openEvents(
  */
 export type Decoded<T> = { event: T } | 'unknown' | 'invalid';
 
-/** Keyed by every value of the generated union, so the compiler keeps them in step. */
-const sessions: Record<Session['state'], true> = {
-  stopped: true,
-  screen_sync: true,
-  effects: true,
-  faulted: true,
-};
+function adapterFailure(message: string, section?: string): LightingFailure {
+  const side = known(failureSections, section ?? '', undefined);
+  return side
+    ? { kind: 'adapter', message, section: side }
+    : { kind: 'adapter', message };
+}
+
 /**
  * A session's failure as this page reads it, or `null` when malformed
  * (`field` and `section` are text when present). A `section` other than
@@ -382,109 +323,71 @@ const sessions: Record<Session['state'], true> = {
  * said by its side, from its `section` or else its `field`'s section:
  * `adapter` with that section, else `internal`.
  */
-function decodeFailure(value: unknown): LightingFailure | null {
-  if (!isObject(value)) return null;
+function readFailure(value: unknown): LightingFailure | null {
+  if (!isLightingFailureReading(value)) return null;
   const { kind, message, field, section } = value;
-  if (
-    typeof kind !== 'string' ||
-    typeof message !== 'string' ||
-    (field !== undefined && typeof field !== 'string') ||
-    (section !== undefined && typeof section !== 'string')
-  )
-    return null;
-  const side =
-    typeof section === 'string'
-      ? known(failureSections, section, undefined)
-      : undefined;
   switch (kind) {
     case 'invalid':
-      return typeof field === 'string'
-        ? { kind: 'invalid', message, field }
-        : { kind: 'invalid', message };
+      return field === undefined ? { kind, message } : { kind, message, field };
     case 'adapter':
+      return adapterFailure(message, section);
+    case 'internal':
+      return { kind, message };
+    default: {
+      const side = failureSide(value);
       return side
         ? { kind: 'adapter', message, section: side }
-        : { kind: 'adapter', message };
-    case 'internal':
-      return { kind: 'internal', message };
-    default: {
-      const named = typeof field === 'string' ? field.split('.')[0] : undefined;
-      const said =
-        side ??
-        (named === undefined
-          ? undefined
-          : known(failureSections, named, undefined));
-      return said
-        ? { kind: 'adapter', message, section: said }
         : { kind: 'internal', message };
     }
   }
 }
 
-/**
- * A state as this page reads it. Its structure is checked; a value newer
- * than this page in a known field has one reading: an unknown target, or
- * an unknown session state, is `unknown` (never off or stopped), and the
- * failure or message such a session carries is kept. Fields not checked
- * here reach the views as sent, and each has its own reading there.
- */
-export function decodeState(
-  value: unknown,
-): Decoded<ApplicationSnapshot<unknown, unknown>> {
-  if (!isObject(value)) return 'invalid';
-  const { session, settings } = value;
-  if (
-    typeof value.version !== 'string' ||
-    typeof value.revision !== 'number' ||
-    typeof value.target !== 'string' ||
-    !isObject(session) ||
-    typeof session.state !== 'string' ||
-    !isObject(value.device) ||
-    !isObject(settings) ||
-    !isObject(settings.processing) ||
-    !Array.isArray(value.surface_failures)
-  )
-    return 'invalid';
+/** Interpret newer session states and preserve any diagnostics we can read. */
+function readSession(
+  session: ApplicationStateReading['session'],
+): SessionReading | null {
   const state = known(sessions, session.state, 'unknown');
   const carries =
-    session.failure === undefined ? undefined : decodeFailure(session.failure);
+    session.failure === undefined ? undefined : readFailure(session.failure);
   // A known state's failure is whole; a newer state's malformed one is
   // dropped, the state kept.
-  if (carries === null && state !== 'unknown') return 'invalid';
+  if (carries === null && state !== 'unknown') return null;
   const message =
     typeof session.message === 'string' ? session.message : undefined;
   // Absent stays absent: a value is omitted, never `undefined`.
   const carried = carries ? { failure: carries } : {};
-  let decoded: SessionReading;
   switch (state) {
     case 'stopped':
-      decoded = { state: 'stopped', ...carried };
-      break;
     case 'effects':
-      decoded = { state: 'effects', ...carried };
-      break;
+    case 'unanswered':
+      return { state, ...carried };
     case 'screen_sync':
-      decoded = { state: 'screen_sync' };
-      break;
+      return { state };
     case 'faulted':
-      if (message === undefined) return 'invalid';
-      decoded = { state: 'faulted', message };
-      break;
+      return message === undefined ? null : { state, message };
     case 'unknown':
-      decoded = {
-        state: 'unknown',
+      return {
+        state,
         ...carried,
         ...(message === undefined ? {} : { message }),
       };
-      break;
     default:
       return unreachable(state);
   }
+}
+
+/** Validate the snapshot before interpreting names from newer portals. */
+export function readState(
+  value: unknown,
+): Decoded<ApplicationSnapshot<CaptureSettings, OutputSettings>> {
+  if (!isApplicationStateReading(value)) return 'invalid';
+  const session = readSession(value.session);
+  if (!session) return 'invalid';
   return {
     event: {
-      ...(value as unknown as ApplicationSnapshot<unknown, unknown>),
+      ...value,
       target: known(lightingTargets, value.target, 'unknown'),
-      session: decoded,
+      session,
     },
   };
 }
@@ -494,9 +397,9 @@ export function decodeState(
  * as a streamed state is, so the first render shows it. `null` without a
  * valid one, such as from a dev server, which serves the page as it is.
  */
-export function embeddedState<C, O>(
+export function embeddedState(
   page: Document = document,
-): ApplicationSnapshot<C, O> | null {
+): ApplicationSnapshot<CaptureSettings, OutputSettings> | null {
   const text = page.getElementById('prysm-state')?.textContent;
   if (!text) return null;
   let value: unknown;
@@ -505,77 +408,36 @@ export function embeddedState<C, O>(
   } catch {
     return null;
   }
-  const decoded = decodeState(value);
-  return typeof decoded === 'object'
-    ? (decoded.event as ApplicationSnapshot<C, O>)
-    : null;
+  const decoded = readState(value);
+  return typeof decoded === 'object' ? decoded.event : null;
 }
 
-const isInt = (value: unknown) => Number.isInteger(value);
-const isColors = (value: unknown) =>
-  Array.isArray(value) &&
-  value.every(
-    (color) =>
-      Array.isArray(color) &&
-      color.length === 3 &&
-      color.every((byte) => isInt(byte) && byte >= 0 && byte <= 255),
-  );
+/** A future event type can be skipped. A malformed event of a known type is an error. */
+function streamEvent<T extends { type: string }>(
+  value: unknown,
+  valid: (input: unknown) => input is T,
+  types: readonly T['type'][],
+): Decoded<T> {
+  if (valid(value)) return { event: value };
+  if (!isObject(value) || typeof value.type !== 'string') return 'invalid';
+  return types.some((type) => type === value.type) ? 'invalid' : 'unknown';
+}
 
-/** A preview event; one of a type newer than this page is skipped. */
 export function decodePreview(value: unknown): Decoded<PreviewEvent> {
-  if (!isObject(value) || typeof value.type !== 'string') return 'invalid';
-  const event = value as unknown as PreviewEvent;
-  switch (value.type) {
-    case 'idle':
-      return { event };
-    case 'unavailable':
-      return typeof value.message === 'string' ? { event } : 'invalid';
-    case 'frame': {
-      const frame = value as unknown as Partial<
-        Extract<PreviewEvent, { type: 'frame' }>
-      >;
-      const viewport = frame.viewport;
-      const valid =
-        [
-          frame.sequence,
-          frame.width,
-          frame.height,
-          frame.source_width,
-          frame.source_height,
-        ].every((size) => isInt(size) && (size as number) >= 0) &&
-        typeof frame.jpeg === 'string' &&
-        !!viewport &&
-        [viewport.x, viewport.y, viewport.width, viewport.height].every(isInt);
-      return valid ? { event } : 'invalid';
-    }
-    default:
-      return 'unknown';
-  }
+  return streamEvent(value, isPreviewEvent, previewEventTypes);
 }
 
-/** A colors event; one of a type newer than this page is skipped. */
 export function decodeColors(value: unknown): Decoded<ColorsEvent> {
-  if (!isObject(value) || typeof value.type !== 'string') return 'invalid';
-  const event = value as unknown as ColorsEvent;
-  switch (value.type) {
-    case 'idle':
-      return { event };
-    case 'colors':
-      return [value.top, value.right, value.bottom, value.left].every(isColors)
-        ? { event }
-        : 'invalid';
-    default:
-      return 'unknown';
-  }
+  return streamEvent(value, isColorsEvent, colorsEventTypes);
 }
 
 /** Bounded SSE decoder; split UTF-8 chunks, CRLF and comment lines are handled. */
-async function* decodeEvents(
+async function* decodeEvents<T>(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-  decode: (value: unknown) => Decoded<unknown>,
+  decode: (value: unknown) => Decoded<T>,
   name: string,
-): AsyncGenerator<unknown> {
+): AsyncGenerator<T> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const cancel = () => {
@@ -585,11 +447,13 @@ async function* decodeEvents(
   let text = '';
   try {
     while (!signal.aborted) {
-      const chunk = await reader.read();
+      const chunk = await reader.read().catch((error: unknown) => {
+        throw streamError(error);
+      });
       if (chunk.done) return;
       text += decoder.decode(chunk.value, { stream: true });
       if (text.length > EVENT_LIMIT)
-        throw failure('unavailable', `The ${name} event is too large.`);
+        throw unreadable(`a ${name} event this large`);
       let boundary: RegExpExecArray | null;
       while ((boundary = /\r?\n\r?\n/.exec(text))) {
         const event = text.slice(0, boundary.index);
@@ -607,8 +471,7 @@ async function* decodeEvents(
           value = null;
         }
         const decoded = decode(value);
-        if (decoded === 'invalid')
-          throw failure('unavailable', `Invalid ${name} event.`);
+        if (decoded === 'invalid') throw unreadable(`a ${name} event`);
         if (decoded !== 'unknown') yield decoded.event;
       }
     }

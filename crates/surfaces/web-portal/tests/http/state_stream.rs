@@ -34,7 +34,6 @@ async fn state_stream_delivers_changes_and_ends_on_shutdown() {
         assert_eq!(running["target"], "screen_sync");
 
         portal.shutdown().await.unwrap();
-        // The stream ends instead of hanging once the portal stops.
         while let Some(chunk) = events.next().await {
             if chunk.is_err() {
                 break;

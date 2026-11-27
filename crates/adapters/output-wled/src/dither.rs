@@ -191,7 +191,6 @@ impl Levels {
         } else {
             light.clamp(0.0, 1.0)
         };
-        // The first level above `light`, the top one at full.
         let upper = self
             .levels
             .partition_point(|level| level.light <= light)
@@ -306,7 +305,6 @@ mod tests {
 
     #[test]
     fn a_dim_colour_averages_to_itself_channel_by_channel() {
-        // At full brightness WLED shows each channel on its own.
         let encoding = dithered(gamma(2.2), 255);
         let levels = wled_levels(2.2, 255);
         let full = f32::from(wled([255; 3], 2.2, 255)[0]);

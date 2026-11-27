@@ -1,6 +1,7 @@
 //! The preview stream: frames while running, its cadence, its viewers and origins.
 use crate::common::*;
 use futures::StreamExt;
+use prysm_ports::{Power, SessionState};
 use prysm_runtime::fakes;
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
@@ -12,10 +13,24 @@ async fn preview_is_idle_while_off_and_streams_frames_while_running() {
         let portal = start(fakes::settings(), Duration::from_secs(5)).await;
         let (status, _) = portal.target("screen_sync").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
-        // Lighting runs, nobody watches: the session publishes nothing.
+        // The target response acknowledges intent. Off is actionable once
+        // the output has finished opening, and preview should start after Off settles.
+        let mut state = portal.engine.snapshot();
+        state
+            .wait_for(|s| matches!(s.session, SessionState::ScreenSync))
+            .await
+            .unwrap();
         assert_eq!(portal.engine.preview_viewers(), 0);
         assert_eq!(portal.target("off").await.0, StatusCode::NO_CONTENT);
 
+        state
+            .wait_for(|s| {
+                matches!(s.session, SessionState::Stopped { .. })
+                    && s.control.power == Some(Power::Off)
+                    && !s.control.busy
+            })
+            .await
+            .unwrap();
         let response = preview_stream(&portal).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -48,7 +63,6 @@ async fn preview_is_idle_while_off_and_streams_frames_while_running() {
         let later = next_state(&mut events, &mut buffer, |e| e["type"] == "frame").await;
         assert!(later["sequence"].as_u64() > frame["sequence"].as_u64());
 
-        // The session ends mid-stream: the stream stays open and says so.
         assert_eq!(portal.target("off").await.0, StatusCode::NO_CONTENT);
         next_state(&mut events, &mut buffer, |e| e["type"] == "idle").await;
 
@@ -98,7 +112,6 @@ async fn preview_viewers_are_limited_and_streams_end_on_shutdown() {
         assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(refused.json::<Value>().await.unwrap()["kind"], "busy");
         assert_eq!(portal.engine.preview_viewers(), 4);
-        // Preview viewers do not use up state streams.
         let state = portal
             .request(Method::GET, "/api/v1/state/stream")
             .send()

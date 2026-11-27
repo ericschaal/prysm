@@ -14,8 +14,8 @@ The implementation before 1.0 is in the tag `pre-1.0-consolidation`.
 
 | Directory | Crates | Role |
 | --- | --- | --- |
-| `crates/engine/` | [`prysm-core`](../../crates/engine/core/src/lib.rs), [`prysm-processor`](../../crates/engine/processor/src/lib.rs), [`prysm-ports`](../../crates/engine/ports/src/lib.rs), [`prysm-runtime`](../../crates/engine/runtime/src/lib.rs), [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs), [`prysm-webos-link`](../../crates/engine/webos-link/src/lib.rs), [`prysm-version`](../../crates/engine/version/src/lib.rs) | Frame and colour types, colour correction; edge sampling and smoothing; ports and settings; engine, session, builder; JSON wire types; TV supervisor ↔ worker protocol; the product version from `VERSION` |
-| `crates/adapters/` | [`capture-device`](../../crates/adapters/capture-device/src/lib.rs) (+ [`-sys`](../../crates/adapters/capture-device-sys/src/lib.rs): V4L2 and AVFoundation), [`capture-file`](../../crates/adapters/capture-file/src/lib.rs), [`capture-remote`](../../crates/adapters/capture-remote/README.md), [`capture-webos`](../../crates/adapters/capture-webos/src/lib.rs) (+ `-sys`), [`h264`](../../crates/adapters/h264/src/lib.rs) (+ [`-rvenc-sys`](../../crates/adapters/h264-rvenc-sys/src/lib.rs)), [`webos-luna-sys`](../../crates/adapters/webos-luna-sys/src/lib.rs), [`output-wled`](../../crates/adapters/output-wled/src/lib.rs), [`settings-file`](../../crates/adapters/settings-file/README.md) | `FrameSource`, `FrameSink`, `LedOutput` and `SettingsStore` implementations; the Luna bus; H.264 for the remote stream |
+| `crates/engine/` | [`prysm-core`](../../crates/engine/core/src/lib.rs), [`prysm-processor`](../../crates/engine/processor/src/lib.rs), [`prysm-ports`](../../crates/engine/ports/src/lib.rs), [`prysm-runtime`](../../crates/engine/runtime/src/lib.rs), [`prysm-protocol`](../../crates/engine/protocol/src/lib.rs), [`prysm-webos-link`](../../crates/engine/webos-link/src/lib.rs), [`prysm-version`](../../crates/engine/version/src/lib.rs), [`prysm-logging`](../../crates/engine/logging/src/lib.rs) | Frame and colour types, colour correction; edge sampling and smoothing; ports and settings; engine, session, builder; JSON wire types; TV supervisor ↔ worker protocol; the product version from `VERSION`; the processes' `tracing` subscriber, without a runtime for the TV supervisor |
+| `crates/adapters/` | [`capture-device`](../../crates/adapters/capture-device/src/lib.rs) (+ [`-sys`](../../crates/adapters/capture-device-sys/src/lib.rs): V4L2 and AVFoundation), [`capture-file`](../../crates/adapters/capture-file/src/lib.rs), [`capture-remote`](../../crates/adapters/capture-remote/README.md), [`capture-webos`](../../crates/adapters/capture-webos/src/lib.rs) (+ `-sys`), [`h264`](../../crates/adapters/h264/src/lib.rs) (+ [`-rvenc-sys`](../../crates/adapters/h264-rvenc-sys/src/lib.rs)), [`webos-library-sys`](../../crates/adapters/webos-library-sys/src/lib.rs) (shared native loader), [`webos-luna-sys`](../../crates/adapters/webos-luna-sys/src/lib.rs), [`output-wled`](../../crates/adapters/output-wled/src/lib.rs), [`settings-file`](../../crates/adapters/settings-file/README.md) | `FrameSource`, `FrameSink`, `LedOutput` and `SettingsStore` implementations; the Luna bus; H.264 for the remote stream |
 | `crates/surfaces/` | [`tui`](../../crates/surfaces/tui/src/lib.rs), [`web-portal`](../../crates/surfaces/web-portal/HTTP-CONTRACT.md) | Ways in and out of a running engine |
 | `crates/hosts/` | [`headless`](../../crates/hosts/headless/src/main.rs), [`tui`](../../crates/hosts/tui/src/main.rs), [`common`](../../crates/hosts/common/src/lib.rs) (`prysm-host`); TV: [`webos`](../../crates/hosts/webos/src/main.rs), [`webos-slim`](../../crates/hosts/webos-slim/src/main.rs), [`webos-service`](../../crates/hosts/webos-service/src/lib.rs) | Executables: a builder list plus process options; the TV workers and their supervisor ([LG TV](webos.md)) |
 | `crates/tools/` | [`export-contracts`](../../crates/tools/export-contracts/src/main.rs), [`xtask`](../../crates/tools/xtask/src/main.rs), [`testkit`](../../crates/tools/testkit/src/lib.rs) (`prysm-testkit`) | OpenAPI documents for frontend codegen; `cargo xtask`, the build entry point ([develop](README.md#build-and-run)); what the tests share (bounded waits, child processes, schema checks, the desktop host launcher), a dev-dependency only |
@@ -127,7 +127,8 @@ impl SourceFactory for Camera {
     fn validate(&self, s: &CameraSettings) -> Result<(), ValidationError> { s.validate() }
     fn open(&self, s: &CameraSettings) -> Result<Box<dyn FrameSource>> { Ok(Box::new(Frames::open(s)?)) }
 }
-// Frames: next_frame(timeout) -> Ok(Pull::Frame(f)), Ok(Pull::Idle) on timeout,
+// Frames: next_frame(timeout) -> Ok(Pull::Frame(f)), Ok(Pull::Quiet) on timeout
+// (Ok(Pull::Refused) when the device refuses to share its video),
 // Ok(Pull::Ended) when finished (lighting stops cleanly); close(self: Box<Self>) releases.
 // A push-style backend runs on an OwnerThread, publishes through its Worker
 // and takes the newest frame in next_frame.
@@ -135,27 +136,19 @@ impl SourceFactory for Camera {
 // them as "capture.fps".
 ```
 
-An **output** is the same shape with `OutputFactory` and `LedOutput`
-(`write(&EdgeColors)`, `idle(self: Box<Self>, IdleMode)`); `idle` runs on every
-session exit, so it is also the failure compensation. An output that can ask
-its device about itself implements `report()` (default: nothing known): why
-the device does not show the colours, its own brightness while it scales
-them, and how many LEDs it drives, as a `DeviceReport`. The session calls it
-after every write, so it must not wait, and the engine republishes it as
-`Snapshot::device` once a second. WLED checks its state about once a second
-and reports power off, live override, no live mode, another sender or no
-answer; Prysm keeps sending and does not switch WLED back. Its brightness
-comes from `bri` in its state and, every 30th check instead of the state,
-`if.live.maxbri` and `light.scale-bri` from `/json/cfg`. The session opens the
-output at the source's first frame, not at start, and idles it `Native` (the
-device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
-at the next frame; a source that never delivers never takes the device over.
-To put a device nobody holds in another idle mode (lights off after such a
-release, or the device's own effects without a session) the engine calls
-`OutputFactory::idle(settings, mode)`, which by default opens and idles; an
-output that can set the mode without taking the device over overrides it,
-as WLED does. Register it with `.output(MyLeds)` in each host that should
-offer it.
+An **output** implements `OutputFactory`. Its readiness check can also
+report physical power and who controls the display. The runtime calls
+`open_for_sync` only after capture has opened. WLED grants a fresh user
+request permission to clear an override. A resumed stream respects an
+override and hands the display to Effects. While streaming, `report()`
+supplies device diagnostics without blocking the session. After a quiet
+spell the handle can release the display until the next frame.
+
+`LedOutput::release` consumes the handle during cleanup. The separate
+`OutputFactory::set_power` controls the device without starting a stream.
+An unavailable required adapter can signal a recovery through its monitor.
+See [error handling](error-handling.md#rules) for restart and release rules.
+Register an output with `.output(MyLeds)` in each host that offers it.
 
 A **surface** gets an `EngineHandle` (commands, snapshot watch, preview and
 colors watches)

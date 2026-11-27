@@ -19,6 +19,7 @@ mod page;
 mod preview;
 mod response;
 mod routes;
+mod sampled;
 mod server;
 mod timed_io;
 

@@ -71,8 +71,9 @@ cargo run -p prysm-tui -- crates/hosts/tui/settings.example.json
 
 A missing settings file means "not set up": the portal opens the setup wizard
 at `http://localhost:8787` and creates the file on the first save. The TUI
-example uses the `null` output, so it needs no LEDs; its keys are `p` (Screen
-sync), `n` (device effects), `o` (off), `:` (command bar) and `q` (quit).
+example uses the `null` output, so it needs no LEDs. Press `p` for Power,
+`:` for the command bar and `q` to quit. While lighting is on and the output
+supports Effects, use `s` for Screen sync or `e` for Effects.
 Options, logging and exit codes: [hosts](workspace.md#hosts).
 
 ### Play a video file

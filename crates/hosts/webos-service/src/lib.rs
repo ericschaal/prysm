@@ -9,13 +9,6 @@
 //! - [`main`]: the process: arguments, signals, the real Luna bus.
 //! - `schema` (feature `schema`): the `luna` OpenAPI document of the TV app's API.
 
-/// `eprintln!` under the supervisor's installed name.
-macro_rules! log {
-    ($($arg:tt)*) => {
-        eprintln!("{}: {}", $crate::identity::SUPERVISOR, format_args!($($arg)*))
-    };
-}
-
 mod cli;
 pub mod identity;
 pub mod install;
@@ -28,5 +21,6 @@ pub mod preferences;
 pub mod schema;
 pub mod service;
 pub mod state;
+mod tail;
 
 pub use cli::main;

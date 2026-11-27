@@ -59,16 +59,20 @@ manual=(
     "The TV app opens and shows Prysm's state in plain words"
     "Screen sync with video playing: the lights follow the picture"
     "Screen sync on the TV's menus without video"
-    "Standby, then wake: lighting resumes as it was"
-    "Cold boot with Start with TV on: lighting starts by itself"
     "A hung capture is killed and lighting recovers"
     "Calibration patterns show and clear"
     "Remote-control navigation reaches every control in the TV app"
-    "Removal: the app and service are gone and the lights are off"
 )
-if [ "$flavour" = slim ]; then
+if [ "$flavour" = full ]; then
+    manual+=("Standby and wake with WLED off: the portal returns, lights stay off and the selected mode is remembered")
+    manual+=("Cold boot with Screen sync remembered and WLED on, idle and without override: lighting resumes")
+else
+    manual+=("Standby, then wake: lighting resumes as it was")
+    manual+=("Cold boot with Start with TV on: lighting starts by itself")
     manual+=("Restart the Prysm at $prysm: the stream reconnects by itself")
 fi
+
+manual+=("Removal: the app and service are gone and the lights are off")
 
 record=
 if [ "$dry_run" = false ]; then

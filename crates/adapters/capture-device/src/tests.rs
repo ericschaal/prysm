@@ -2,7 +2,7 @@ use super::*;
 use crate::source::{Capture, CaptureResult, Check, Deadlines, DeviceFrames};
 use prysm_capture_device_sys::{CaptureError, CaptureSink};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
+use prysm_ports::{AdapterSettings, Error, Escalation, Fix, Pull, Registry, Settings, chain};
 use prysm_testkit::{eventually, within};
 use std::error::Error as _;
 use std::sync::{Arc, Mutex, mpsc};
@@ -134,7 +134,10 @@ fn open_waits_for_readiness_not_frames() {
     assert!(opened.recv_timeout(SHORT).is_err(), "open returned early");
     native.ready();
     let mut frames = opened.recv_timeout(LIMIT).unwrap().unwrap();
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(matches!(
+        frames.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
     closes_cleanly(frames, &native);
 }
 
@@ -150,6 +153,7 @@ fn open_failure_reports_the_native_cause_after_release() {
         chain(&error),
         "video device capture failed: capture device disconnected: cable unplugged"
     );
+    assert_eq!(error.escalation(), Escalation::FAIL_FAST);
 }
 
 #[test]
@@ -168,6 +172,7 @@ fn a_missing_device_fails_open_naming_it() {
         "video device capture failed: no video capture device at /dev/video0: \
          No such file or directory (os error 2)"
     );
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::ChangeSettings));
 }
 
 /// A refused camera permission fails open as an adapter failure saying what to do.
@@ -187,6 +192,7 @@ fn refused_camera_access_fails_open_with_guidance() {
          starts Prysm (such as Terminal) under System Settings > Privacy & Security > \
          Camera, then restart that app"
     );
+    assert_eq!(error.escalation(), Escalation::Ask(Fix::SetUp));
 }
 
 #[test]
@@ -222,6 +228,26 @@ fn open_timeout_reports_unconfirmed_release() {
     let text = chain(&error);
     assert!(text.contains("not ready within"), "{text}");
     assert!(text.contains("release is unconfirmed"), "{text}");
+    assert_eq!(error.escalation(), Escalation::Restart);
+}
+
+#[test]
+fn open_timeout_with_a_failed_release_asks_for_a_restart() {
+    let (capture, native) = native();
+    let deadlines = Deadlines {
+        ready: SHORT,
+        release: LIMIT,
+    };
+    let opening = start(capture, deadlines);
+    native.wait_stopped();
+    native.exit(Err(CaptureError::Cleanup(anyhow::anyhow!(
+        "buffer release failed"
+    ))));
+    let Err(error) = opening.recv_timeout(LIMIT).unwrap() else {
+        panic!("open must time out");
+    };
+    assert!(chain(&error).contains("release is unconfirmed"), "{error}");
+    assert_eq!(error.escalation(), Escalation::Restart);
 }
 
 #[test]
@@ -261,7 +287,6 @@ fn a_format_check_that_never_returns_is_bounded_by_the_ready_wait() {
 
 #[test]
 fn newest_frame_wins() {
-    // Frames before readiness are already replaced.
     let (capture, native) = native();
     let opening = start(capture, TEST);
     for value in 0..100 {
@@ -278,15 +303,20 @@ fn newest_frame_wins() {
             .as_slice(),
         &[99; 96]
     );
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(matches!(
+        frames.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
 
-    // An untaken frame is replaced, never queued.
     native.frame(1);
     assert_eq!(frames.pending_frame().unwrap().as_slice(), &[1; 96]);
     native.frame(2);
     let newest = frames.next_frame(LIMIT).unwrap().into_frame().unwrap();
     assert_eq!(newest.as_slice(), &[2; 96]);
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+    assert!(matches!(
+        frames.next_frame(Duration::ZERO).unwrap(),
+        Pull::Quiet
+    ));
 
     closes_cleanly(frames, &native);
 }
@@ -295,7 +325,7 @@ fn newest_frame_wins() {
 fn timeout_returns_none() {
     let (mut frames, native) = opened();
     let started = Instant::now();
-    assert!(frames.next_frame(SHORT).unwrap().is_idle());
+    assert!(matches!(frames.next_frame(SHORT).unwrap(), Pull::Quiet));
     assert!(started.elapsed() >= SHORT);
     closes_cleanly(frames, &native);
 }
@@ -305,9 +335,7 @@ fn native_failure_propagates_and_release_is_still_certified() {
     let (mut frames, native) = opened();
     native.frame(1);
     native.exit(Err(disconnected()));
-    // A published failure also stops the sink.
     native.wait_stopped();
-    // The failure fences the frame that was never taken.
     let error = frames.next_frame(Duration::ZERO).unwrap_err();
     assert_eq!(
         chain(&error),
@@ -379,6 +407,7 @@ fn close_reports_failed_release() {
         chain(&error),
         "video device release is unconfirmed: native capture cleanup failed: buffer release failed: buffer release failed"
     );
+    assert_eq!(error.escalation(), Escalation::Restart);
 }
 
 #[test]
@@ -493,10 +522,8 @@ fn candidates_fill_a_valid_device() {
             serde_json::from_value(candidate.fields.clone().into()).unwrap();
         assert_eq!(settings.validate(), Ok(()), "{candidate:?}");
         assert_eq!(candidate.detail.as_deref(), Some(settings.device.as_str()));
-        // A device found answers for its formats, and open refuses a size
-        // none has before starting anything.
         assert!(
-            matches!(DeviceSource.modes(&settings), Modes::Known(_)),
+            matches!(DeviceSource.modes(&settings), Modes::Known { .. }),
             "{candidate:?}"
         );
         let odd = DeviceSettings {

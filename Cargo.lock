@@ -1914,6 +1914,7 @@ dependencies = [
  "prysm-core",
  "prysm-ports",
  "rustix 1.1.6",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
@@ -1953,6 +1954,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "strum",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -1974,6 +1976,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "utoipa",
 ]
@@ -1985,7 +1989,9 @@ dependencies = [
  "cc",
  "libc",
  "libloading 0.9.1",
+ "prysm-webos-library-sys",
  "prysm-webos-luna-sys",
+ "strum",
  "tempfile",
  "thiserror 2.0.21",
 ]
@@ -1994,6 +2000,7 @@ dependencies = [
 name = "prysm-core"
 version = "0.0.0"
 dependencies = [
+ "thiserror 2.0.21",
  "yuv",
 ]
 
@@ -2062,7 +2069,6 @@ name = "prysm-host"
 version = "0.0.0"
 dependencies = [
  "clap",
- "futures",
  "prysm-capture-file",
  "prysm-capture-remote",
  "prysm-output-wled",
@@ -2072,6 +2078,14 @@ dependencies = [
  "prysm-version",
  "prysm-web-portal",
  "tokio",
+]
+
+[[package]]
+name = "prysm-logging"
+version = "0.0.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2096,11 +2110,13 @@ name = "prysm-ports"
 version = "0.0.0"
 dependencies = [
  "nix",
+ "num-integer",
  "prysm-core",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "socket2",
+ "strum",
  "thiserror 2.0.21",
  "utoipa",
 ]
@@ -2125,6 +2141,7 @@ dependencies = [
  "prysm-version",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
  "utoipa",
 ]
 
@@ -2134,6 +2151,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-core",
+ "prysm-logging",
  "prysm-ports",
  "prysm-processor",
  "prysm-runtime",
@@ -2228,6 +2246,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "socket2",
+ "strum",
  "tokio",
  "tracing",
  "tungstenite",
@@ -2239,7 +2258,6 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-capture-webos",
- "prysm-capture-webos-sys",
  "prysm-host",
  "prysm-output-wled",
  "prysm-ports",
@@ -2254,6 +2272,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "prysm-webos-library-sys"
+version = "0.0.0"
+dependencies = [
+ "libloading 0.9.1",
+ "once_cell",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "prysm-webos-link"
 version = "0.0.0"
 dependencies = [
@@ -2265,6 +2292,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "utoipa",
 ]
 
 [[package]]
@@ -2274,6 +2302,7 @@ dependencies = [
  "bindgen 0.73.2",
  "clap",
  "libloading 0.9.1",
+ "prysm-webos-library-sys",
  "thiserror 2.0.21",
 ]
 
@@ -2283,6 +2312,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "nix",
+ "prysm-logging",
  "prysm-ports",
  "prysm-settings-file",
  "prysm-testkit",
@@ -2293,8 +2323,10 @@ dependencies = [
  "serde",
  "serde_json",
  "signal-hook 0.4.6",
+ "strum",
  "tempfile",
  "thiserror 2.0.21",
+ "tracing",
  "utoipa",
 ]
 

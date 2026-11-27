@@ -2,7 +2,7 @@
 //! mean frame spans and whether Prysm keeps up, from the totals [`Stats`]
 //! keeps.
 use crate::stats::{Stats, Totals};
-use prysm_ports::{Behind, Input, Latency};
+use prysm_ports::{Behind, Input, Latency, Picture};
 use std::time::Duration;
 use tokio::time::{Instant, Interval, MissedTickBehavior};
 
@@ -115,16 +115,13 @@ impl Meter {
             .saturating_sub(last.frames_received);
         let sent = counters.frames_sent.saturating_sub(last.frames_sent);
         let flushed = counters.flushed.count.saturating_sub(last.flushed.count);
-        // Received to written, for every flushed frame.
         let output = counters.flushed.total.saturating_sub(last.flushed.total);
-        // No slack, and which step took it.
         let processing = counters
             .processing
             .total
             .saturating_sub(last.processing.total);
         let spent = cycles.total.saturating_sub(self.last.cycles.total);
         let behind = self.pace.window(verdict(output, processing, spent));
-        // Capture to received, only when every flushed frame had a capture time.
         let stamped = captured.count.saturating_sub(self.last.captured.count);
         let capture = (flushed > 0 && stamped == flushed)
             .then(|| captured.total.saturating_sub(self.last.captured.total));
@@ -140,7 +137,13 @@ impl Meter {
         };
         Input {
             fps: rate(received),
-            receiving: received > 0,
+            picture: if received > 0 {
+                Picture::Arriving
+            } else if totals.refused {
+                Picture::Refused
+            } else {
+                Picture::Quiet
+            },
             sent_fps: rate(sent),
             latency: (flushed > 0).then(|| {
                 let mean_ms = |span: Duration| tenth(span.as_secs_f64() * 1000.0 / flushed as f64);
@@ -163,6 +166,47 @@ mod tests {
         Duration::from_millis(value)
     }
 
+    fn frame(stats: &Stats) {
+        use crate::stats::FrameTimes;
+        let at = std::time::Instant::now();
+        stats.frame(FrameTimes {
+            previous_done: None,
+            received: at,
+            captured: None,
+            processed: at,
+            written: Some(at),
+        });
+    }
+
+    /// Each window says whether frames arrived and, if not, the source's
+    /// last word: a frame and a new source make that quiet again, so a
+    /// window without any pull after frames never shows an old refusal.
+    #[tokio::test]
+    async fn the_picture_is_arriving_or_the_last_word_without_a_frame() {
+        let stats = Stats::default();
+        let mut meter = Meter::new(&stats);
+        assert_eq!(meter.sample(&stats).picture, Picture::Quiet, "no pull yet");
+        stats.no_frame(true);
+        assert_eq!(meter.sample(&stats).picture, Picture::Refused);
+        assert_eq!(meter.sample(&stats).picture, Picture::Refused, "kept");
+        frame(&stats);
+        stats.no_frame(true);
+        assert_eq!(meter.sample(&stats).picture, Picture::Arriving);
+        frame(&stats);
+        assert_eq!(meter.sample(&stats).picture, Picture::Arriving);
+        assert_eq!(
+            meter.sample(&stats).picture,
+            Picture::Quiet,
+            "reset by a frame"
+        );
+        stats.no_frame(true);
+        stats.no_frame(false);
+        assert_eq!(meter.sample(&stats).picture, Picture::Quiet);
+        stats.no_frame(true);
+        stats.source_opened();
+        assert_eq!(meter.sample(&stats).picture, Picture::Quiet, "a new source");
+    }
+
     #[test]
     fn a_busy_window_names_the_larger_step() {
         assert_eq!(verdict(ms(950), ms(800), SECOND), Behind::Processing);
@@ -173,7 +217,6 @@ mod tests {
     /// loop idle between them: never behind, however slow each frame is.
     #[test]
     fn idle_time_between_frames_is_never_behind() {
-        // 24 frames of 20 ms each: busy 480 ms of the second.
         assert_eq!(verdict(ms(480), ms(400), SECOND), Behind::None);
         assert_eq!(
             verdict(Duration::ZERO, Duration::ZERO, SECOND),
@@ -185,17 +228,13 @@ mod tests {
     #[test]
     fn it_takes_several_windows_to_report_and_to_clear() {
         let mut pace = Pace::default();
-        // One slow window is not falling behind.
         assert_eq!(pace.window(Behind::Output), Behind::None);
         assert_eq!(pace.window(Behind::None), Behind::None);
-        // Three in a row are; mixed causes still count, the latest names it.
         assert_eq!(pace.window(Behind::Output), Behind::None);
         assert_eq!(pace.window(Behind::Processing), Behind::None);
         assert_eq!(pace.window(Behind::Output), Behind::Output);
-        // One good window does not clear it.
         assert_eq!(pace.window(Behind::None), Behind::Output);
         assert_eq!(pace.window(Behind::Output), Behind::Output);
-        // Three in a row do.
         for _ in 0..2 {
             assert_eq!(pace.window(Behind::None), Behind::Output);
         }

@@ -81,13 +81,14 @@ const _: () = assert!(
 );
 
 fn main() -> ExitCode {
-    // stdout carries the supervisor protocol; log lines go to stderr only.
+    // First: until fd 1 points at stderr, anything that prints reaches the
+    // supervisor's event stream.
+    let stdio = worker::take_stdio(NAME);
     logging::init(NAME, Logs::Stderr);
     let cli: Cli = worker::args(NAME, ABOUT);
     match cli.check {
         Some(Check::CheckEncoder(options)) => check::main(options),
-        // Without a subcommand clap requires --prysm.
-        None => worker::main(NAME, cli.worker.expect("--prysm is required"), run),
+        None => worker::main(NAME, stdio, cli.worker.expect("--prysm is required"), run),
     }
 }
 
@@ -95,8 +96,8 @@ fn main() -> ExitCode {
 /// or, for an `https://` address, `wss://`) only while it is lighting with
 /// the remote capture, so the uplink
 /// reconnects on its own and an unavailable receiver is reported in the
-/// status rather than ending the worker (which would back off and show a
-/// failure). Each connection brings the receiver's request: the capture
+/// status rather than ending the worker (its supervisor would then ask
+/// the person). Each connection brings the receiver's request: the capture
 /// follows its size, rate and menus, the sender its encoding. A failing
 /// encoder is reported and refused to the receiver until the request
 /// changes; a failing capture ends the worker. The receiver's host name is
@@ -104,8 +105,10 @@ fn main() -> ExitCode {
 /// wait like a receiver that is not listening. Each attempt carries the
 /// TV's offer (its capture modes within each encoder's limits), so Prysm
 /// knows what the TV streams even while it refuses the stream. While the
-/// receiver has stopped the stream the TV capture is closed; once another
-/// sender replaced this one, the uplink stops until the worker restarts.
+/// receiver has stopped the stream the TV capture is closed. Where waiting
+/// cannot help (another sender replaced this one, a wrong address, an
+/// untrusted certificate, a receiver that breaks the protocol) the worker
+/// fails and the TV asks the person.
 async fn run(args: SlimArgs, link: Link) -> Result<()> {
     let url = args.prysm.capture_stream();
     let mut prysm = Resolver::new(args.prysm);
@@ -119,9 +122,12 @@ async fn run(args: SlimArgs, link: Link) -> Result<()> {
     });
     let video = VideoSignal::default();
     let capture = WebosCapture::new(video.clone());
-    let source = RequestedCapture::new(flow.clone(), link.stop.clone(), move |settings| {
-        Ok(Box::new(capture.start(&settings)?) as Box<dyn FrameSource>)
-    });
+    let source = RequestedCapture::new(
+        flow.clone(),
+        link.stop.clone(),
+        video.clone(),
+        move |settings| Ok(Box::new(capture.start(&settings)?) as Box<dyn FrameSource>),
+    );
     let stopped = {
         let stop = link.stop.stopped();
         async move {

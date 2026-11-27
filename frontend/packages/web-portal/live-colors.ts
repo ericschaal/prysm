@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useState, type RefObject } from 'react';
 import {
+  consumeStream,
   reconnectDelayMs,
   type ColorsClient,
   type ColorsEvent,
 } from '@prysm/application-client';
 
-type Rgb = readonly number[];
+import type { LedColor as Rgb } from '@prysm/contracts/application';
+
+type Lab = readonly [lightness: number, a: number, b: number];
 type Edge = 'top' | 'right' | 'bottom' | 'left';
 
 type Colors = Extract<ColorsEvent, { type: 'colors' }>;
@@ -24,49 +27,35 @@ const floor = 40;
  */
 export const ledStops = 16;
 
-/**
- * The CSS custom properties written: each edge's colours along it, `--led-t-0`
- * to `--led-t-15`… (the LED drawing in Your setup), and the card's four light
- * fields `--live-a`…`-d`.
- */
-export const ledProperties = [
-  ...edges.flatMap((edge) =>
-    Array.from({ length: ledStops }, (_, index) => `--led-${edge[0]}-${index}`),
-  ),
-  '--live-a',
-  '--live-b',
-  '--live-c',
-  '--live-d',
-];
-
 /** The average of `colors`, or `null` for none. */
 function average(colors: readonly Rgb[]): Rgb | null {
   if (!colors.length) return null;
   let [r, g, b] = [0, 0, 0];
-  for (const [red = 0, green = 0, blue = 0] of colors) {
+  for (const [red, green, blue] of colors) {
     r += red;
     g += green;
     b += blue;
   }
-  return [r, g, b].map((value) => value / colors.length);
+  return [r / colors.length, g / colors.length, b / colors.length];
 }
 
 /** Part `index` of `parts` equal stretches of `colors` (one when short). */
-function part(colors: readonly Rgb[], index: number, parts: number) {
+function part<T>(colors: readonly T[], index: number, parts: number) {
   const from = Math.floor((index * colors.length) / parts);
   const to = Math.floor(((index + 1) * colors.length) / parts);
   return colors.slice(from, Math.max(to, from + 1));
 }
 
 /** Part `index` of `parts` equal stretches of `colors` (all of them when short). */
-function stretch(colors: readonly Rgb[], index: number, parts: number) {
+function stretch(colors: readonly Lab[], index: number, parts: number) {
   return colors.length < parts ? colors : part(colors, index, parts);
 }
 
 function lift(color: Rgb): Rgb {
   const brightest = Math.max(...color);
   if (brightest >= floor) return color;
-  return color.map((value) => value + floor - brightest);
+  const [r, g, b] = color;
+  return [r + floor - brightest, g + floor - brightest, b + floor - brightest];
 }
 
 const css = (color: Rgb) =>
@@ -81,7 +70,7 @@ const fromLinear = (v: number) => {
   const c = Math.min(1, Math.max(0, v));
   return 255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
 };
-function oklab([r = 0, g = 0, b = 0]: Rgb): [number, number, number] {
+function oklab([r, g, b]: Rgb): Lab {
   const [lr, lg, lb] = [toLinear(r), toLinear(g), toLinear(b)];
   const l = Math.cbrt(
     0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb,
@@ -98,28 +87,29 @@ function oklab([r = 0, g = 0, b = 0]: Rgb): [number, number, number] {
     0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
   ];
 }
-function srgb([L = 0, a = 0, b = 0]: readonly number[]): Rgb {
+function srgb([L, a, b]: Lab): Rgb {
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
   const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
   const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
   return [
-    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
-  ].map(fromLinear);
+    fromLinear(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    fromLinear(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    fromLinear(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+  ];
 }
 /** The OKLab average of weighted colours. */
-function mixLab(parts: readonly [readonly Rgb[], number][]) {
-  const sum = [0, 0, 0];
+function mixLab(parts: readonly [readonly Lab[], number][]): Lab | null {
+  let [L, a, b] = [0, 0, 0];
   let total = 0;
-  for (const [colors, weight] of parts)
-    for (const color of colors) {
-      oklab(color).forEach((value, index) => {
-        sum[index] = (sum[index] ?? 0) + value * weight;
-      });
+  for (const [colors, weight] of parts) {
+    for (const [light, greenRed, blueYellow] of colors) {
+      L += light * weight;
+      a += greenRed * weight;
+      b += blueYellow * weight;
       total += weight;
     }
-  return total ? sum.map((value) => value / total) : null;
+  }
+  return total ? [L / total, a / total, b / total] : null;
 }
 
 /** A field's lightness: black LEDs rest at `moon`, bright ones reach `full`. */
@@ -142,7 +132,7 @@ const hueFrom = { none: 0.06, clear: 0.16 } as const;
  * grey ones give white light; black ones a faint colourless moonlight. No
  * colour is made up.
  */
-function field([L = 0, a = 0, b = 0]: readonly number[]) {
+function field([L, a, b]: Lab) {
   const light =
     lightness.moon +
     (lightness.full - lightness.moon) * Math.min(1, L / bright) ** sink;
@@ -169,7 +159,7 @@ function field([L = 0, a = 0, b = 0]: readonly number[]) {
  * without LEDs takes all of them).
  */
 export function ledValues(event: Colors) {
-  const all = average(edges.flatMap((edge) => event[edge])) ?? [0, 0, 0];
+  const all: Rgb = average(edges.flatMap((edge) => event[edge])) ?? [0, 0, 0];
   const values = fieldValues(event);
   for (const edge of edges)
     for (let index = 0; index < ledStops; index++)
@@ -180,41 +170,39 @@ export function ledValues(event: Colors) {
 }
 
 /** The card's four fields for the LEDs' colours in `event`. */
-function fieldValues(event: Colors) {
-  const values: Record<string, string> = {};
-  const { top, right, bottom, left } = event;
-  const whole = mixLab([[edges.flatMap((edge) => event[edge]), 1]]) ?? [0];
-  const fields: Record<string, [readonly Rgb[], number][]> = {
-    '--live-a': [
-      [stretch(top, 0, 3), 1],
-      [stretch(left, 0, 2), 1],
-    ],
-    '--live-b': [
-      [stretch(top, 2, 3), 1],
-      [stretch(right, 0, 2), 1],
-    ],
-    '--live-c': [
+function fieldValues(event: Colors): Record<string, string> {
+  const top = event.top.map(oklab);
+  const right = event.right.map(oklab);
+  const bottom = event.bottom.map(oklab);
+  const left = event.left.map(oklab);
+  const whole = mixLab([
+    [top, 1],
+    [right, 1],
+    [bottom, 1],
+    [left, 1],
+  ]) ?? [0, 0, 0];
+  const glow = (...parts: [readonly Lab[], number][]) =>
+    field(mixLab(parts) ?? whole);
+  return {
+    '--live-a': glow([stretch(top, 0, 3), 1], [stretch(left, 0, 2), 1]),
+    '--live-b': glow([stretch(top, 2, 3), 1], [stretch(right, 0, 2), 1]),
+    '--live-c': glow(
       [bottom, 2],
       [stretch(left, 1, 2), 1],
       [stretch(right, 1, 2), 1],
-    ],
-    '--live-d': [[stretch(top, 1, 3), 1]],
+    ),
+    '--live-d': glow([stretch(top, 1, 3), 1]),
   };
-  for (const [name, parts] of Object.entries(fields))
-    values[name] = field(mixLab(parts) ?? whole);
-  return values;
 }
 
-/** The LEDs showing nothing. */
-const dark: Colors = {
+const dark = fieldValues({
   type: 'colors',
   top: [],
   right: [],
   bottom: [],
   left: [],
-};
+});
 
-/** Whether the page is shown (not a background tab). */
 export function usePageVisible() {
   const [visible, setVisible] = useState(
     () => document.visibilityState !== 'hidden',
@@ -229,8 +217,8 @@ export function usePageVisible() {
 
 /**
  * While `active`, stream the LEDs' colours onto `target` as CSS custom
- * properties (see `ledProperties`) and say what the glow shows in its
- * `data-live`: `colors`, or `idle` while the lights show none. Until the
+ * properties. Its `data-live` is `colors` while the LEDs show colours and
+ * `idle` while they show none. Until the
  * first colours, on `idle` and while the stream is lost (`data-live`
  * absent) the card's fields are those of black LEDs: the moonlight, never
  * colours the LEDs do not have. Written through the CSSOM, never through
@@ -250,45 +238,31 @@ export function useLiveColors(
       for (const [name, value] of Object.entries(values))
         element.style.setProperty(name, value);
     };
-    show(fieldValues(dark));
+    show(dark);
     const abort = new AbortController();
     const { signal } = abort;
-    void (async () => {
-      let attempt = 0;
-      while (!signal.aborted) {
-        try {
-          const stream = await client.colors(signal);
-          signal.addEventListener('abort', () => stream.close(), {
-            once: true,
-          });
-          for await (const event of stream.events) {
-            if (signal.aborted) break;
-            attempt = 0;
-            // No picture is black LEDs: the card rests in its moonlight.
-            show(event.type === 'idle' ? fieldValues(dark) : ledValues(event));
-            element.setAttribute('data-live', event.type);
-          }
-        } catch {
-          // Busy or gone: try again later.
-        }
-        if (signal.aborted) break;
-        element.removeAttribute('data-live');
-        show(fieldValues(dark));
-        await new Promise((resolve) => {
-          const timer = setTimeout(resolve, reconnectDelayMs(attempt));
-          signal.addEventListener(
-            'abort',
-            () => {
-              clearTimeout(timer);
-              resolve(undefined);
-            },
-            { once: true },
-          );
+    let retry: ReturnType<typeof setTimeout>;
+    const watch = async (attempt: number) => {
+      try {
+        await consumeStream(client.colors(signal), signal, (event) => {
+          attempt = 0;
+          show(event.type === 'idle' ? dark : ledValues(event));
+          element.setAttribute('data-live', event.type);
         });
-        attempt++;
+      } catch {
+        // A refused or lost colors stream leaves the card dark until it reconnects.
       }
-    })();
+      if (signal.aborted) return;
+      element.removeAttribute('data-live');
+      show(dark);
+      retry = setTimeout(
+        () => void watch(attempt + 1),
+        reconnectDelayMs(attempt),
+      );
+    };
+    void watch(0);
     return () => {
+      clearTimeout(retry);
       abort.abort();
       element.removeAttribute('data-live');
     };

@@ -9,6 +9,7 @@ use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 use v4l::buffer::Type;
 mod stream;
+use crate::classify::{Fault, Op, classify, failure};
 use stream::{Dequeued, Stream, failed, released};
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
@@ -72,8 +73,6 @@ fn yuv_colorimetry(
             | v4l2_colorspace_V4L2_COLORSPACE_470_SYSTEM_M
             | v4l2_colorspace_V4L2_COLORSPACE_470_SYSTEM_BG
             | v4l2_colorspace_V4L2_COLORSPACE_JPEG => YuvStandardMatrix::Bt601,
-            // Default, sRGB (what uvcvideo reports without a colour-matching
-            // descriptor) and the rest name no video matrix.
             _ => crate::unspecified_matrix(height),
         },
         v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_601 | v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SYCC => {
@@ -179,18 +178,29 @@ fn configure_stream(
     let mut last_error = None;
     for wanted in Captured::PREFERRED {
         fmt.fourcc = wanted.fourcc();
-        if let Err(e) = device.set_format(&fmt) {
-            last_error = Some(crate::check_format_rejection(e)?);
-            continue;
+        if let Err(error) = device.set_format(&fmt) {
+            match classify(Op::SetFormat, &error) {
+                Fault::Rejected => {
+                    last_error = Some(error);
+                    continue;
+                }
+                fault @ (Fault::Gone
+                | Fault::Busy
+                | Fault::Denied
+                | Fault::Missing
+                | Fault::QueueError
+                | Fault::Signalled
+                | Fault::Other) => {
+                    return Err(failure(fault, error, "failed to set capture format"));
+                }
+            }
         }
         let format = device
             .format()
             .context("failed to read negotiated capture format")?;
-        // Drivers may substitute dimensions; require the configured native size.
         if format.width != width || format.height != height {
             continue;
         }
-        // A driver may also substitute the format: only those read here count.
         let pixels = match Captured::of(format.fourcc) {
             Some(Captured::Yuyv) if format.width.is_multiple_of(2) => {
                 let (range, matrix) = negotiated_colorimetry(device)?;
@@ -217,7 +227,6 @@ fn configure_stream(
     })
 }
 
-// The shared guard's copy of the timestamp-type bits matches the kernel's.
 const _: () = assert!(
     crate::capture_time::V4L2_TIMESTAMP_MASK == v4l::v4l_sys::V4L2_BUF_FLAG_TIMESTAMP_MASK
         && crate::capture_time::V4L2_TIMESTAMP_MONOTONIC
@@ -243,6 +252,112 @@ fn captured_at(buffer: &v4l::v4l_sys::v4l2_buffer) -> Option<Instant> {
     )
 }
 
+pub(crate) fn check_device(path: &str) -> Result<()> {
+    Device::with_path(path)
+        .map(drop)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => CaptureError::DeviceNotFound {
+                device: Some(path.to_owned()),
+                source: Some(error),
+            },
+            std::io::ErrorKind::PermissionDenied => CaptureError::Denied {
+                device: path.to_owned(),
+                source: error,
+            },
+            _ if matches!(error.raw_os_error(), Some(libc::ENODEV | libc::ENXIO)) => {
+                CaptureError::DeviceNotFound {
+                    device: Some(path.to_owned()),
+                    source: Some(error),
+                }
+            }
+            _ => CaptureError::Backend(anyhow::Error::new(error).context("checking video device")),
+        })
+}
+
+pub(crate) fn watch_device(path: &str, stop: &prysm_ports::Hangup) -> std::io::Result<bool> {
+    use rustix::event::{EventfdFlags, PollFd, PollFlags, eventfd, poll};
+    use rustix::fs::inotify::{CreateFlags, WatchFlags, add_watch, init};
+    use std::path::Path;
+    use std::sync::Arc;
+
+    let wake = Arc::new(eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK)?);
+    let signal = wake.clone();
+    let Some(_registration) = stop.on_cut(move || {
+        let _ = rustix::io::write(&signal, &1u64.to_ne_bytes());
+    }) else {
+        return Ok(false);
+    };
+    let device = Path::new(path);
+    loop {
+        // A configured by-id directory can itself disappear with its last camera.
+        let directory = device
+            .ancestors()
+            .skip(1)
+            .find(|path| path.is_dir())
+            .unwrap_or(Path::new("."));
+        let events = init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK)?;
+        match add_watch(
+            &events,
+            directory,
+            WatchFlags::CREATE
+                | WatchFlags::MOVED_TO
+                | WatchFlags::ATTRIB
+                | WatchFlags::DELETE_SELF,
+        ) {
+            Ok(_) => {}
+            Err(rustix::io::Errno::NOENT) if !stop.is_cut() => continue,
+            Err(error) => return Err(error.into()),
+        }
+        if !matches!(check_device(path), Err(CaptureError::DeviceNotFound { .. })) {
+            return Ok(!stop.is_cut());
+        }
+        let mut fds = [
+            PollFd::new(&events, PollFlags::IN),
+            PollFd::new(wake.as_ref(), PollFlags::IN),
+        ];
+        match poll(&mut fds, None) {
+            Ok(_) if !fds[1].revents().is_empty() => return Ok(false),
+            Ok(_) | Err(rustix::io::Errno::INTR) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+    use prysm_ports::Hangup;
+
+    #[test]
+    fn a_waiting_watch_accepts_device_arrival_and_can_be_cancelled() {
+        let directory = tempfile::tempdir().unwrap();
+        let device = directory.path().join("by-id").join("video");
+        for connected in [true, false] {
+            let stop = Hangup::default();
+            let monitor = stop.clone();
+            let path = device.to_str().unwrap().to_owned();
+            let (ready, observed) = std::sync::mpsc::sync_channel(1);
+            let watcher = std::thread::spawn(move || {
+                ready.send(watch_device(&path, &monitor)).unwrap();
+            });
+            if connected {
+                std::fs::create_dir(device.parent().unwrap()).unwrap();
+                std::fs::File::create(&device).unwrap();
+            } else {
+                stop.cut();
+            }
+
+            let result = observed.recv_timeout(Duration::from_secs(3));
+            stop.cut();
+            watcher.join().unwrap();
+            assert_eq!(result.unwrap().unwrap(), connected);
+            if connected {
+                std::fs::remove_file(&device).unwrap();
+            }
+        }
+    }
+}
+
 /// Nodes that capture video (not metadata or output nodes), by number.
 pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
     let Ok(entries) = std::fs::read_dir("/dev") else {
@@ -259,7 +374,6 @@ pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
     nodes
         .into_iter()
         .filter_map(|(_, path)| {
-            // Opening a node and asking its capabilities starts nothing.
             let caps = Device::with_path(&path).ok()?.query_caps().ok()?;
             caps.capabilities
                 .contains(v4l::capability::Flags::VIDEO_CAPTURE)
@@ -277,7 +391,6 @@ const EVEN: Span = Span::new(0, u32::MAX, 2).expect("a span");
 pub(crate) fn list_formats(path: &str) -> Option<Vec<Mode>> {
     use v4l::framesize::FrameSizeEnum;
     use v4l::v4l_sys::v4l2_frmsizetypes_V4L2_FRMSIZE_TYPE_CONTINUOUS;
-    // Opening a node and asking it starts nothing.
     let device = Device::with_path(path).ok()?;
     let descriptions = device.enum_formats().ok()?;
     // `configure_frame_rate` fails on a device that cannot set its interval.
@@ -294,7 +407,6 @@ pub(crate) fn list_formats(path: &str) -> Option<Vec<Mode>> {
         .filter_map(|description| Some((description.fourcc, Captured::of(description.fourcc)?)))
     {
         let yuyv = captured == Captured::Yuyv;
-        // A driver that cannot list what it captures leaves it unknown.
         for size in device.enum_framesizes(fourcc).ok()? {
             let (width, height, rates) = match size.size {
                 FrameSizeEnum::Discrete(size) => (
@@ -357,39 +469,19 @@ fn rates_at(device: &Device, fourcc: FourCC, width: u32, height: u32) -> Option<
 }
 
 /// Stop the stream and start it again. STREAMOFF gives every buffer back,
-/// including one the driver kept.
+/// including one the driver kept. A failure here ends capture: it is not
+/// retried.
 fn restart(stream: &mut Stream) -> Result<()> {
-    stream
-        .stop()
-        .map_err(|error| failed(error, "failed to stop capture stream to restart it"))?;
+    stream.stop().map_err(|error| {
+        failed(
+            Op::Stop,
+            error,
+            "failed to stop capture stream to restart it",
+        )
+    })?;
     stream
         .start()
-        .map_err(|error| failed(error, "failed to restart capture stream"))
-}
-
-/// Carries out `verdict`: restarts (each after its pause) for as long as
-/// `health` says so, where a failed `restart` is one more interruption, and
-/// a device gone ends capture. `Ok(true)` to capture on, `Ok(false)` when
-/// `sink` stops meanwhile.
-fn settle(
-    mut verdict: Verdict,
-    health: &mut Health,
-    sink: &dyn CaptureSink,
-    mut restart: impl FnMut() -> Result<()>,
-    now: impl Fn() -> Instant,
-) -> Result<bool> {
-    loop {
-        verdict = match verdict {
-            Verdict::Continue => return Ok(true),
-            Verdict::Fail(error) => return Err(error),
-            Verdict::Restart { pause } if sink.should_stop(pause) => return Ok(false),
-            Verdict::Restart { .. } => match restart() {
-                Ok(()) => Verdict::Continue,
-                Err(error @ CaptureError::Disconnected { .. }) => Verdict::Fail(error),
-                Err(error) => health.on(Event::Interrupted(error), now()),
-            },
-        };
-    }
+        .map_err(|error| failed(Op::Start, error, "failed to restart capture stream"))
 }
 
 /// Stream from `stream`, whose buffers hold `format` as `pixels`, into
@@ -407,7 +499,7 @@ fn capture(
     }
     stream
         .start()
-        .map_err(|error| failed(error, "failed to start capture stream"))?;
+        .map_err(|error| failed(Op::Start, error, "failed to start capture stream"))?;
     sink.ready();
     let mut pool = FramePool::default();
     let mut stats = crate::trace_stats::TraceStats::new("v4l_capture");
@@ -440,9 +532,10 @@ fn capture(
         if !matches!(event, Event::Frame) {
             stats.failure();
         }
-        let verdict = health.on(event, Instant::now());
-        if !settle(verdict, &mut health, sink, || restart(stream), Instant::now)? {
-            return Ok(());
+        match health.on(event, Instant::now()) {
+            Verdict::Continue => {}
+            Verdict::Restart => restart(stream)?,
+            Verdict::Fail(error) => return Err(error),
         }
     }
     Ok(())
@@ -460,17 +553,21 @@ pub(crate) fn run(
         return Ok(());
     }
     let path = device_path.unwrap_or("/dev/video0");
-    let mut device = Device::with_path(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            CaptureError::DeviceNotFound {
-                device: Some(path.into()),
-                source: Some(error),
-            }
-        } else {
-            CaptureError::Backend(
-                anyhow::Error::new(error).context(format!("failed to open video device {path}")),
-            )
-        }
+    let mut device = Device::with_path(path).map_err(|error| match classify(Op::Open, &error) {
+        Fault::Missing => CaptureError::DeviceNotFound {
+            device: Some(path.into()),
+            source: Some(error),
+        },
+        Fault::Denied => CaptureError::Denied {
+            device: path.into(),
+            source: error,
+        },
+        fault @ (Fault::Gone
+        | Fault::Busy
+        | Fault::Rejected
+        | Fault::QueueError
+        | Fault::Signalled
+        | Fault::Other) => failure(fault, error, format!("failed to open video device {path}")),
     })?;
     let (format, pixels) = configure_stream(&mut device, width, height, rate)?;
     let mut stream = Stream::new(&device, stall_timeout(rate))?;
@@ -481,7 +578,6 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::health::PAUSE;
     use v4l::v4l_sys::*;
 
     #[test]
@@ -501,114 +597,6 @@ mod tests {
             panic!("expected missing device error")
         };
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
-    }
-
-    /// A sink that never stops and never waits.
-    struct Running;
-
-    impl CaptureSink for Running {
-        fn ready(&self) {}
-        fn frame(&self, _: crate::Frame) {}
-        fn should_stop(&self, _: Duration) -> bool {
-            false
-        }
-        fn wake(&self) {}
-    }
-
-    /// `settle` after an interruption at `start`, with restarts that give
-    /// `restarts` in turn (then succeed), each a pause later than the last.
-    fn settled(restarts: Vec<Result<()>>) -> (Result<bool>, usize) {
-        let start = Instant::now();
-        let mut health = Health::new(NonZeroU32::new(30).unwrap());
-        let interruption = CaptureError::Backend(anyhow::anyhow!("EIO"));
-        let verdict = health.on(Event::Interrupted(interruption), start);
-        let attempts = std::cell::Cell::new(0);
-        let mut restarts = restarts.into_iter();
-        let result = settle(
-            verdict,
-            &mut health,
-            &Running,
-            || {
-                attempts.set(attempts.get() + 1);
-                restarts.next().unwrap_or(Ok(()))
-            },
-            || start + PAUSE * u32::try_from(attempts.get()).unwrap(),
-        );
-        (result, attempts.get())
-    }
-
-    fn refused() -> Result<()> {
-        Err(failed(
-            std::io::Error::from_raw_os_error(libc::EBUSY),
-            "failed to restart capture stream",
-        ))
-    }
-
-    #[test]
-    fn a_failed_restart_is_retried_within_the_grace() {
-        let (result, attempts) = settled(vec![refused(), refused(), Ok(())]);
-        assert!(result.unwrap(), "capturing again");
-        assert_eq!(attempts, 3);
-        // Three seconds of refusals, a pause apart: the last one ends capture.
-        let (result, attempts) = settled((0..100).map(|_| refused()).collect());
-        let error = result.unwrap_err();
-        assert_eq!(attempts, 30, "{error}");
-        assert_eq!(
-            prysm_ports::chain(&error),
-            "failed to restart capture stream: Device or resource busy (os error 16)"
-        );
-    }
-
-    /// A sink that never stops and records how long each check would wait.
-    #[derive(Default)]
-    struct Waits(std::sync::Mutex<Vec<Duration>>);
-
-    impl CaptureSink for Waits {
-        fn ready(&self) {}
-        fn frame(&self, _: crate::Frame) {}
-        fn should_stop(&self, wait: Duration) -> bool {
-            self.0.lock().unwrap().push(wait);
-            false
-        }
-        fn wake(&self) {}
-    }
-
-    /// A stall already waited, so its restart does not pause; an
-    /// interruption's does, so a failing device does not spin.
-    #[test]
-    fn only_an_interruption_pauses_before_its_restart() {
-        let now = Instant::now();
-        let interruption = || Event::Interrupted(CaptureError::Backend(anyhow::anyhow!("EIO")));
-        for (event, pause) in [(Event::Stalled, Duration::ZERO), (interruption(), PAUSE)] {
-            let mut health = Health::new(NonZeroU32::new(30).unwrap());
-            let verdict = health.on(event, now);
-            let sink = Waits::default();
-            let restarts = std::cell::Cell::new(0);
-            let result = settle(
-                verdict,
-                &mut health,
-                &sink,
-                || {
-                    restarts.set(restarts.get() + 1);
-                    Ok(())
-                },
-                || now,
-            );
-            assert!(result.unwrap(), "capturing again");
-            assert_eq!(restarts.get(), 1);
-            assert_eq!(*sink.0.lock().unwrap(), [pause]);
-        }
-    }
-
-    #[test]
-    fn a_device_gone_during_a_restart_ends_capture_at_once() {
-        let gone = Err(failed(
-            std::io::Error::from_raw_os_error(libc::ENODEV),
-            "failed to restart capture stream",
-        ));
-        let (result, attempts) = settled(vec![refused(), gone]);
-        assert!(matches!(result, Err(CaptureError::Disconnected { .. })));
-        assert_eq!(attempts, 2);
     }
 
     #[test]
@@ -631,7 +619,6 @@ mod tests {
             yuv_colorimetry(colorspace, encoding, quantization, height).unwrap()
         };
         let limited = |matrix| (YuvRange::Limited, matrix);
-        // No matrix named: by picture height.
         for colorspace in [0, v4l2_colorspace_V4L2_COLORSPACE_SRGB] {
             assert_eq!(
                 colorimetry(colorspace, 0, 0, 1080),
@@ -642,7 +629,6 @@ mod tests {
                 limited(YuvStandardMatrix::Bt601)
             );
         }
-        // Named by the colorspace or the encoding: whatever the height.
         assert_eq!(
             colorimetry(v4l2_colorspace_V4L2_COLORSPACE_SMPTE170M, 0, 0, 1080),
             limited(YuvStandardMatrix::Bt601)

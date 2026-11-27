@@ -2,10 +2,11 @@
 //! `prysm-capture-webos-sys`, NV12 frames, the cross-process device lock and
 //! signal isolation.
 use crate::WebosSettings;
-use crate::source::{Acquired, Backend, Fault, Recovery, Tap};
+use crate::classify::{self, UiCause, VideoCause};
+use crate::source::{Acquired, Backend, Fault, Tap, UiFault, UiTap};
 use crate::ui::Nv12Converter;
 use prysm_capture_webos_sys::{self as sys, UiCapture, VtCapture};
-use prysm_core::{FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
+use prysm_core::{Frame, FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{Error, Result};
 use std::fs::File;
 use std::path::Path;
@@ -62,53 +63,44 @@ impl Lg {
     }
 }
 
-/// A native fault, fatal as [`sys::Error::is_fatal`] says.
+/// A native fault of the video tap, classified by [`classify::video`].
 pub(crate) fn fault(context: &str, error: sys::Error) -> Fault {
-    Fault {
-        recovery: if error.is_fatal() {
-            Recovery::Never
-        } else {
-            Recovery::Reopen
-        },
-        error: Error::adapter(context, error),
-    }
+    let recovery = classify::video(VideoCause::Native(&error));
+    Fault::video(context, error, recovery)
 }
 
-/// A TV UI open that cannot heal in this process (the library or a symbol
-/// is missing, or `/dev/gfx` is) is fatal; any other failure is retried.
-pub(crate) fn ui_open_fault(error: sys::Error) -> Fault {
-    let fatal = match &error {
-        sys::Error::Load { .. } => true,
-        sys::Error::Device { source, .. } => source.kind() == std::io::ErrorKind::NotFound,
-        _ => false,
-    };
-    Fault {
-        recovery: if fatal {
-            Recovery::Never
-        } else {
-            Recovery::Reopen
-        },
+/// A failed TV UI open, classified by [`classify::ui`].
+pub(crate) fn ui_open_fault(error: sys::Error) -> UiFault {
+    UiFault {
+        recovery: classify::ui(UiCause::Open(&error)),
         error: Error::adapter("cannot open webOS UI capture", error),
     }
 }
 
+/// A TV UI capture fault: it may pass.
+fn ui_capture_fault(error: Error) -> UiFault {
+    UiFault {
+        error,
+        recovery: classify::ui(UiCause::Capture),
+    }
+}
+
+const SIGNAL_MASK: &str = "cannot block signals on the webOS capture thread";
+
 /// A signal handler interrupting LG's native calls can corrupt their caller;
 /// signals go to the host's other threads instead.
-fn block_signals() -> Result<(), Fault> {
+fn block_signals() -> nix::Result<()> {
     let mut signals = nix::sys::signal::SigSet::empty();
     signals.add(nix::sys::signal::Signal::SIGINT);
     signals.add(nix::sys::signal::Signal::SIGTERM);
-    signals.thread_block().map_err(|error| {
-        Fault::fatal(Error::adapter(
-            "cannot block signals on the webOS capture thread",
-            error,
-        ))
-    })
+    signals.thread_block()
 }
 
 impl Backend for Lg {
     fn open(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
-        block_signals()?;
+        block_signals().map_err(|error| {
+            Fault::video(SIGNAL_MASK, error, classify::video(VideoCause::SignalMask))
+        })?;
         let capture = VtCapture::open(&settings.options())
             .map_err(|error| fault("cannot open webOS video capture", error))?;
         Ok(Box::new(LgTap {
@@ -117,8 +109,11 @@ impl Backend for Lg {
         }))
     }
 
-    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
-        block_signals()?;
+    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn UiTap>, UiFault> {
+        block_signals().map_err(|error| UiFault {
+            error: Error::adapter(SIGNAL_MASK, error),
+            recovery: classify::ui(UiCause::SignalMask),
+        })?;
         let (width, height) = settings.ui_size();
         // HAL GAL binds the tap to this thread; the kernel log names a held
         // lock by thread id (`K_pid`).
@@ -139,17 +134,17 @@ struct HalTap {
     pool: FramePool,
 }
 
-impl Tap for HalTap {
-    fn acquire(&mut self) -> Result<Acquired, Fault> {
+impl UiTap for HalTap {
+    fn acquire(&mut self) -> Result<Frame, UiFault> {
         let plane = self
             .capture
             .capture()
-            .map_err(|error| fault("webOS UI capture failed", error))?;
+            .map_err(|error| ui_capture_fault(Error::adapter("webOS UI capture failed", error)))?;
         let mut frame = self
             .pool
             .acquire(plane.width, plane.height, TAP_FORMAT)
             .map_err(|error| {
-                Fault::recoverable(Error::adapter("cannot allocate an NV12 frame", error))
+                ui_capture_fault(Error::adapter("cannot allocate an NV12 frame", error))
             })?;
         self.converter
             .convert(
@@ -162,12 +157,11 @@ impl Tap for HalTap {
                 plane.height as usize,
                 frame.as_mut_slice(),
             )
-            .map_err(Fault::recoverable)?;
-        Ok(Acquired::Frame(frame.finish()))
+            .map_err(ui_capture_fault)?;
+        Ok(frame.finish())
     }
 
     fn release(self: Box<Self>) -> Result<()> {
-        // Logged before as well: a release that hangs never logs after.
         tracing::info!(thread = os_thread(), "releasing the TV UI tap");
         self.capture
             .release()
@@ -198,14 +192,18 @@ impl Tap for LgTap {
             Ok(sys::Acquired::Frame(video)) => video,
             Ok(sys::Acquired::Pending) => return Ok(Acquired::Pending),
             Ok(sys::Acquired::NotReady) => return Ok(Acquired::NotReady),
+            Ok(sys::Acquired::Refused) => return Ok(Acquired::Refused),
             Err(error) => return Err(fault("webOS video interrupted", error)),
         };
-        // An unfinished frame publishes nothing and goes back to the pool.
         let mut frame = self
             .pool
             .acquire(video.width, video.height, TAP_FORMAT)
             .map_err(|error| {
-                Fault::recoverable(Error::adapter("cannot allocate an NV12 frame", error))
+                Fault::video(
+                    "cannot allocate an NV12 frame",
+                    error,
+                    classify::video(VideoCause::Allocation),
+                )
             })?;
         video
             .copy_to(frame.as_mut_slice())

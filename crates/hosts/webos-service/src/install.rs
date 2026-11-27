@@ -352,8 +352,7 @@ fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> R
         program: program.clone(),
         source,
     };
-    // The waiting thread exists before the child, so no child is ever left
-    // without one.
+    // Start the exit waiter before spawning the child.
     let (hand, handed) = mpsc::channel::<u32>();
     let (report, reported) = mpsc::sync_channel(1);
     std::thread::Builder::new()

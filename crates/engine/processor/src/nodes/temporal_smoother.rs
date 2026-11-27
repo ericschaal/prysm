@@ -1,4 +1,6 @@
-use prysm_core::{ColorStrip, Config, EdgeColors, LinearColor, Oklab};
+use prysm_core::{
+    BrightnessRampSeconds, ColorStrip, Config, EdgeColors, LinearColor, Oklab, SmoothingSeconds,
+};
 use std::cmp::Ordering;
 use std::time::Instant;
 
@@ -37,7 +39,9 @@ const CUT_SHARE: f32 = 0.7;
 /// of inputs, so the lights never overshoot and never leave the inputs' range.
 #[derive(Debug, Clone)]
 pub struct TemporalSmoother {
-    knobs: Knobs,
+    smoothing: SmoothingSeconds,
+    ramp: BrightnessRampSeconds,
+    cut_response: f32,
     history: Option<History>,
 }
 
@@ -45,17 +49,21 @@ impl TemporalSmoother {
     /// `None` when the config leaves the input unchanged: no smoothing and no
     /// brightness ramp.
     pub fn new(config: &Config) -> Option<Self> {
-        Some(Self {
-            knobs: Knobs::new(config)?,
-            history: None,
-        })
+        (config.smoothing_seconds.is_enabled() || config.brightness_ramp_seconds.is_enabled()).then(
+            || Self {
+                smoothing: config.smoothing_seconds,
+                ramp: config.brightness_ramp_seconds,
+                cut_response: config.cut_response_percent.as_ratio(),
+                history: None,
+            },
+        )
     }
 
     /// The same history with the new knobs; `None` when the node is now off.
     pub fn reconfigured(self, config: &Config) -> Option<Self> {
         Some(Self {
-            knobs: Knobs::new(config)?,
-            ..self
+            history: self.history,
+            ..Self::new(config)?
         })
     }
 
@@ -83,15 +91,20 @@ impl TemporalSmoother {
             return history.shown.clone();
         }
         let elapsed = elapsed.as_secs_f64();
-        let knobs = self.knobs;
-
-        let at_once = knobs.taken_at_once(&history.input, &input);
-        let share = with_cut(knobs.ordinary_share(elapsed), at_once);
-        let wanted = history
-            .wanted
-            .combine(&input, |wanted, target| wanted.blend(&target, share));
-        let shown = match knobs.lightness_step(elapsed) {
-            Some(step) => history.shown.combine(&wanted, |shown, wanted| {
+        let at_once = if self.cut_response > 0.0 {
+            self.cut_response * cut_strength(&history.input, &input)
+        } else {
+            0.0
+        };
+        let share = with_cut(ordinary_share(self.smoothing, elapsed), at_once);
+        let wanted = history.wanted.blend(&input, share);
+        let shown = if self.ramp.is_enabled() {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "an infinite step deliberately leaves brightness uncapped"
+            )]
+            let step = (elapsed / f64::from(self.ramp.0)) as f32;
+            history.shown.combine(&wanted, |shown, wanted| {
                 let share = ramp_cap(shown, wanted, step);
                 // Reaching the wanted colour is that colour, not a rounded blend.
                 if share >= 1.0 {
@@ -99,8 +112,9 @@ impl TemporalSmoother {
                 } else {
                     shown.blend(&wanted, share)
                 }
-            }),
-            None => wanted.clone(),
+            })
+        } else {
+            wanted.clone()
         };
 
         *history = History {
@@ -149,68 +163,18 @@ fn resample_like(colors: &mut EdgeColors, counts: &EdgeColors) {
     }
 }
 
-/// The configured knobs, in the units the formulae use.
-#[derive(Debug, Clone, Copy)]
-struct Knobs {
-    /// Seconds for an ordinary change to complete 95%; `None` shows it at once.
-    smoothing_seconds: Option<f64>,
-    /// The share of a full cut taken at once, 0 to 1.
-    cut_response: f32,
-    /// The least seconds from dark to full brightness; `None` sets no limit.
-    ramp_seconds: Option<f64>,
-}
-
-impl Knobs {
-    /// `None` when neither smoothing nor a ramp is on. A cut response alone
-    /// changes nothing: without smoothing every change already shows at once.
-    fn new(config: &Config) -> Option<Self> {
-        let when = |enabled: bool, seconds: f32| enabled.then_some(f64::from(seconds));
-        let knobs = Self {
-            smoothing_seconds: when(
-                config.smoothing_seconds.is_enabled(),
-                config.smoothing_seconds.0,
-            ),
-            cut_response: config.cut_response_percent.as_ratio(),
-            ramp_seconds: when(
-                config.brightness_ramp_seconds.is_enabled(),
-                config.brightness_ramp_seconds.0,
-            ),
-        };
-        (knobs.smoothing_seconds.is_some() || knobs.ramp_seconds.is_some()).then_some(knobs)
-    }
-
-    /// How much of the way every sample moves at once: the response times
-    /// the cut strength. Not measured at response 0, where it cannot matter.
-    fn taken_at_once(self, previous: &EdgeColors, input: &EdgeColors) -> f32 {
-        if self.cut_response > 0.0 {
-            self.cut_response * cut_strength(previous, input)
-        } else {
-            0.0
-        }
-    }
-
-    /// The share of the remaining way an ordinary change moves in `elapsed`
-    /// seconds, `1 - e^(-ln 20 · elapsed / seconds)`; all of it without smoothing.
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "a share in 0..=1 fits f32; f64 only keeps the exponent precise"
-    )]
-    fn ordinary_share(self, elapsed: f64) -> f32 {
-        let Some(seconds) = self.smoothing_seconds else {
-            return 1.0;
-        };
+/// Share of an ordinary change taken after `elapsed` seconds; 95% after the
+/// configured duration and the whole change when smoothing is off.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a share in 0..=1 fits f32; f64 keeps the exponent precise"
+)]
+fn ordinary_share(smoothing: SmoothingSeconds, elapsed: f64) -> f32 {
+    if smoothing.is_enabled() {
         // exp_m1 keeps small shares when frames arrive close together.
-        -(-20.0_f64.ln() * elapsed / seconds).exp_m1() as f32
-    }
-
-    /// The most perceived lightness may change in `elapsed` seconds, dark to
-    /// full being 1; `None` without a ramp.
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "a step beyond f32 becomes infinite, which caps nothing, as intended"
-    )]
-    fn lightness_step(self, elapsed: f64) -> Option<f32> {
-        self.ramp_seconds.map(|seconds| (elapsed / seconds) as f32)
+        -(-20.0_f64.ln() * elapsed / f64::from(smoothing.0)).exp_m1() as f32
+    } else {
+        1.0
     }
 }
 
@@ -283,7 +247,6 @@ fn ramp_cap(shown: LinearColor, target: LinearColor, step: f32) -> f32 {
     let allowed = match to.partial_cmp(&from) {
         Some(Ordering::Greater) => (lightness + step).powi(3),
         Some(Ordering::Less) => (lightness - step).max(0.0).powi(3),
-        // A change of hue alone, or no number to compare.
         Some(Ordering::Equal) | None => return 1.0,
     };
     ((allowed - from) / (to - from)).clamp(0.0, 1.0)
@@ -447,7 +410,6 @@ mod tests {
                     .reconfigured(&config(off, 50, off))
                     .is_none()
             );
-            // Either knob alone needs the node.
             assert!(TemporalSmoother::new(&config(off, 0, 0.5)).is_some());
             assert!(TemporalSmoother::new(&config(0.5, 0, off)).is_some());
         }
@@ -455,7 +417,6 @@ mod tests {
 
     #[test]
     fn response_zero_and_no_ramp_are_the_fixed_rate_bit_for_bit() {
-        // The fixed rate exactly as it was before cuts and the ramp existed.
         let fixed = |previous: &EdgeColors, input: &EdgeColors, elapsed: f64, seconds: f32| {
             let ratio = -(-20.0_f64.ln() * elapsed / f64::from(seconds)).exp_m1();
             previous.blend(input, ratio as f32)
@@ -471,7 +432,6 @@ mod tests {
                 for index in 0..40 {
                     time += [FRAME, 1.0 / 60.0, 0.2, 0.004][index % 4];
                     let at = start + Duration::from_secs_f64(time);
-                    // A new random picture every frame: a cut each time.
                     let input = seed.picture(Seeded::color);
                     let actual = smoother.process(input.clone(), at);
                     let elapsed = at.duration_since(before).as_secs_f64();
@@ -529,8 +489,6 @@ mod tests {
                             let label = format!(
                                 "{seconds} s, cut {cut}, ramp {ramp}, {name}, frame {frame}"
                             );
-                            // Each step ends between what was shown and what
-                            // is wanted, itself a mix of inputs.
                             let wanted = smoother.history.as_ref().unwrap().wanted.clone();
                             for ((before, after), goal) in
                                 sample_pairs(&shown, &next).zip(samples(&wanted))
@@ -568,7 +526,7 @@ mod tests {
 
         // The elapsed time as the smoother sees it, in whole nanoseconds.
         let elapsed = Duration::from_secs_f64(FRAME).as_secs_f64();
-        let ordinary = smoother(0.5, 0, 0.0).knobs.ordinary_share(elapsed);
+        let ordinary = ordinary_share(SmoothingSeconds(0.5), elapsed);
         let mut none = smoother(0.5, 0, 0.0);
         assert_eq!(
             change(&mut none, &before, &after, FRAME)[1],
@@ -665,7 +623,6 @@ mod tests {
             picture(&samples)
         };
         let strength = |count| cut_strength(&still, &with_changed(count));
-        // 40 samples: 16 is 40%, 28 is 70%.
         assert_eq!(strength(0), 0.0);
         assert_eq!(strength(16), 0.0);
         assert_eq!(strength(28), 1.0);
@@ -675,10 +632,8 @@ mod tests {
             between.windows(2).all(|pair| pair[0] < pair[1]),
             "{between:?}"
         );
-        // Nothing lit: nothing to compare.
         let black = uniform(LinearColor::black());
         assert_eq!(cut_strength(&black, &black), 0.0);
-        // Out of black is a cut; so is into black.
         assert_eq!(cut_strength(&black, &still), 1.0);
         assert_eq!(cut_strength(&still, &black), 1.0);
     }
@@ -719,7 +674,6 @@ mod tests {
                 at.abs_diff(frames) <= 1,
                 "{seconds} s down: frame {at} of {frames}"
             );
-            // No frame moves faster than the ramp.
             let step = (FRAME / f64::from(seconds)) as f32;
             for lightness in [&up, &down] {
                 for pair in lightness.windows(2) {
@@ -782,8 +736,6 @@ mod tests {
                 (remaining(fps, 0.0, GRAY, RED) - remaining(240, 0.0, GRAY, RED)).abs();
             assert!(difference < 1e-4, "{fps} fps: {difference}");
         }
-        // With it, the lights switch from the ramp to the exponential within
-        // a frame of the same moment at any rate.
         let black = LinearColor::black();
         let reference = remaining(240, 1.0, black, WHITE);
         for fps in [24, 30, 60, 120] {
@@ -797,9 +749,6 @@ mod tests {
 
     #[test]
     fn a_cut_under_a_ramp_proceeds_at_the_ramp_pace_at_any_frame_rate() {
-        // Slow smoothing, full cut response, half a second from dark to full:
-        // the cut is wanted at once, and the lights reach it in the ramp's
-        // time, not the smoothing's.
         let black = LinearColor::black();
         let lightness_after = |fps: u32, frames: u32| {
             let mut smoother = smoother(2.0, 100, 0.5);
@@ -812,7 +761,6 @@ mod tests {
             lightness(samples(&shown)[0])
         };
         for fps in [24_u16, 30, 60, 120] {
-            // A quarter second in: half the ramp, so half the lightness.
             let frames = u32::from(fps / 4);
             let expected = f32::from(u16::try_from(frames).unwrap()) / f32::from(fps) / 0.5;
             let halfway = lightness_after(u32::from(fps), frames);
@@ -832,7 +780,6 @@ mod tests {
         for at in [start, start - Duration::from_millis(100)] {
             assert_eq!(smoother.process(uniform(RED), at), first);
         }
-        // The cut arrived while time stood still; the next frame still sees it.
         let mut fixed = self::smoother(0.5, 0, 0.5);
         fixed.process(uniform(GRAY), start);
         let later = start + Duration::from_secs_f64(FRAME);
@@ -856,7 +803,6 @@ mod tests {
         let mut cuts = smoother(0.5, 100, 0.0);
         cuts.process(before.clone(), start);
         let shown = cuts.process(after.clone(), later);
-        // Same gradient at three samples: nothing moved, so nothing changes.
         assert_eq!(shown.top.len(), 3);
         for (shown, expected) in shown.top.samples().iter().zip(after.top.samples()) {
             for (a, b) in [

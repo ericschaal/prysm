@@ -5,20 +5,30 @@ import {
   describeSituation,
   failureOf,
   lightingSituation,
+  pictureOf,
   plainFailure,
+  REFUSED_VIDEO,
   situationFailure,
   type LightingSituation,
   type LightingTarget,
+  type Picture,
   type TargetReading,
 } from '@prysm/application-client';
 import type { Flavor } from '@prysm/webos-platform';
+import type { ModeRoute } from './modes';
 import type { PortalSnapshot, PortalView } from './portal-connection';
 
 const effectsOf = (snapshot: PortalSnapshot) =>
   snapshot.settings.output?.kind === 'wled' ? 'WLED effects' : null;
 
+/** The message while screen sync runs without a picture; not a problem. */
+const waitingMessage: Record<Exclude<Picture, 'arriving'>, string> = {
+  quiet: 'No picture arriving yet.',
+  refused: REFUSED_VIDEO,
+};
+
 /**
- * The lighting card: the three modes, always in the same place, and one
+ * The lighting card shows Power, the available modes while On, and one
  * message under them (at most two short lines) when the chosen mode does not
  * say it all: starting, a problem, or why the buttons cannot work.
  */
@@ -26,11 +36,17 @@ export function LightingCard({
   flavor,
   portal,
   connecting,
+  route,
+  choose: chooseOnService,
 }: {
   flavor: Flavor;
   portal: PortalView;
   /** The TV service has not answered yet, so where Prysm is is not known. */
   connecting: boolean;
+  /** Where a mode is sent. */
+  route: ModeRoute;
+  /** A mode sent to the TV service; it says its own failure. */
+  choose: (target: LightingTarget | 'remembered') => Promise<unknown>;
 }) {
   const [pending, setPending] = useState<LightingTarget | null>(null);
   const { snapshot, connection } = portal;
@@ -46,20 +62,22 @@ export function LightingCard({
     target: TargetReading | undefined;
     kind: LightingSituation['kind'] | undefined;
   } | null>(null);
-  // Gone once the lights change, also when they change back.
   if (
     refusal &&
     (refusal.target !== snapshot?.target || refusal.kind !== lighting?.kind)
   )
     setRefusal(null);
   const error = refusal?.text ?? '';
+  const onService = route.via === 'service';
 
-  async function choose(target: LightingTarget) {
+  async function choose(target: LightingTarget, power = false) {
     const at = { target: snapshot?.target, kind: lighting?.kind };
     setPending(target);
     setRefusal(null);
     try {
-      await portal.setTarget(target);
+      await (onService
+        ? chooseOnService(power && !on ? 'remembered' : target)
+        : portal.setTarget(target));
     } catch (reason) {
       setRefusal({
         text: plainFailure(
@@ -81,6 +99,8 @@ export function LightingCard({
   let said = '';
   if (connecting) {
     message = 'Connecting to Prysm…';
+  } else if (onService) {
+    said = 'Prysm stopped.';
   } else if (!portal.baseUrl) {
     message = full
       ? 'Waiting for Prysm on this TV…'
@@ -91,14 +111,12 @@ export function LightingCard({
     attention = true;
   } else if (snapshot && lighting) {
     said = describeSituation(lighting, effects ?? 'Device effects').sentence;
-    // Said also with the lights off: settings that could not be applied.
     const failure = situationFailure(lighting);
     const kind = snapshot.settings.capture?.kind;
     if (lighting.kind === 'faulted') {
       message = said;
       attention = true;
     } else if (lighting.kind === 'unknown') {
-      // Newer than this app; what the state carries is still said.
       const carried = failure
         ? ` ${plainFailure(failure, 'unknown', effects ?? 'Device effects')}`
         : '';
@@ -106,6 +124,11 @@ export function LightingCard({
       attention = !!failure;
     } else if (!snapshot.settings.output) {
       message = 'Set up your lights in the web portal first.';
+    } else if (snapshot.control?.waiting) {
+      message =
+        snapshot.control.waiting === 'capture'
+          ? 'Waiting for the video source.'
+          : 'Waiting for the lights.';
     } else if (failure) {
       const still =
         lighting.kind === 'failed' && lighting.effectsOn
@@ -117,8 +140,13 @@ export function LightingCard({
         effects ?? 'Device effects',
       )}${still}`;
       attention = true;
+    } else if (snapshot.control?.external) {
+      message = 'Live stream detected.';
     } else if (snapshot.device.issue && lighting.kind === 'sync') {
       message = describeOutputIssue(snapshot.device.issue);
+      attention = true;
+    } else if (lighting.kind === 'unanswered') {
+      message = said;
       attention = true;
     } else if (!full && kind !== 'remote') {
       message =
@@ -126,17 +154,17 @@ export function LightingCard({
       attention = true;
     } else if (lighting.kind === 'starting') {
       message = said;
-    } else if (
-      lighting.kind === 'sync' &&
-      lighting.input &&
-      !lighting.input.receiving
-    ) {
-      message = 'No picture arriving yet.';
+    } else if (lighting.kind === 'sync' && lighting.input) {
+      const picture = pictureOf(lighting.input);
+      if (picture !== 'arriving') message = waitingMessage[picture];
     }
   } else if (portal.reach === 'refused') {
     message = full
       ? 'Prysm on this TV doesn’t answer the app. Close and open the app again.'
       : 'Prysm on your computer doesn’t take commands from the TV. The TV guide shows how to allow it.';
+    attention = true;
+  } else if (portal.stopped) {
+    message = portal.stopped;
     attention = true;
   } else if (connection?.error) {
     message = full
@@ -150,23 +178,40 @@ export function LightingCard({
   }
 
   // A press in flight does not disable the track: a disabled control drops
-  // focus, which the remote navigation then moves to another column.
-  const offline = !snapshot;
+  // focus, which the remote navigation then moves to another column. On
+  // the service Power resumes the mode stored by the worker.
+  const offline = !snapshot && !onService;
   const faulted = lighting?.kind === 'faulted';
   const hasOutput = !!snapshot?.settings.output;
   const hasCapture = !!snapshot?.settings.capture;
-  const modes: { value: LightingTarget; label: string; disabled: boolean }[] = [
+  const chosen = snapshot?.control?.external ? undefined : snapshot?.target;
+  const on = !onService && chosen !== 'off';
+  const resume =
+    snapshot?.control?.remembered ?? (effects ? 'effects' : 'screen_sync');
+  const choices: { value: LightingTarget; label: string; disabled: boolean }[] =
+    [
+      {
+        value: 'screen_sync',
+        label: 'Screen sync',
+        disabled: !onService && (!hasOutput || !hasCapture),
+      },
+      {
+        value: 'effects',
+        label: effects ?? 'Effects',
+        disabled: !onService && !effects,
+      },
+    ];
+  const showModes = on && !!effects;
+  const modes = [
     {
-      value: 'screen_sync',
-      label: 'Screen sync',
-      disabled: !hasOutput || !hasCapture,
+      value: on ? ('off' as const) : resume,
+      label: 'Power',
+      disabled:
+        !on &&
+        !onService &&
+        (!hasOutput || (resume === 'screen_sync' && !hasCapture)),
     },
-    {
-      value: 'effects',
-      label: effects ?? 'Effects',
-      disabled: !effects,
-    },
-    { value: 'off', label: 'Off', disabled: false },
+    ...(showModes ? choices : []),
   ];
   return (
     <section
@@ -184,15 +229,21 @@ export function LightingCard({
       >
         {modes.map((mode) => (
           <button
-            key={mode.value}
+            key={mode.label}
             type="button"
-            id={`mode-${mode.value}`}
+            id={mode.label === 'Power' ? 'light-power' : `mode-${mode.value}`}
             className="mode"
-            aria-pressed={snapshot ? snapshot.target === mode.value : undefined}
+            aria-pressed={
+              mode.label === 'Power' ? !offline && on : chosen === mode.value
+            }
             disabled={offline || faulted || mode.disabled}
             aria-busy={pending === mode.value ? true : undefined}
             onClick={() => {
-              if (pending === null) void choose(mode.value);
+              if (
+                pending === null &&
+                !(mode.label === 'Power' && snapshot?.control?.busy)
+              )
+                void choose(mode.value, mode.label === 'Power');
             }}
           >
             {mode.label}

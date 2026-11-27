@@ -7,12 +7,14 @@ publish.workspace = true
 description = "The webOS supervisor <-> worker protocol: argv, line-delimited JSON messages and exit codes"
 
 [features]
+schema = ["dep:utoipa", "prysm-ports/schema"]
 # The worker side: stdio plumbing, stop reasons and the process entry point.
 worker = ["dep:tokio", "dep:nix"]
 # `worker::Link::memory` and its `Peer`, for the workers' tests.
 testkit = ["worker"]
 
 [dependencies]
+utoipa = { workspace = true, optional = true }
 prysm-ports.workspace = true
 clap.workspace = true
 http.workspace = true

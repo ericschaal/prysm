@@ -8,7 +8,7 @@ use prysm_core::Frame;
 use prysm_ports::StreamEncoding;
 use prysm_ports::{
     Accepted, Answer, CAPTURE_OFFER_HEADER, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Error,
-    FrameSource, Handoff, Mode, Result, Span,
+    FrameSource, Handoff, Mode, Pull, Result, Span,
 };
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -42,7 +42,7 @@ pub fn offer() -> Offer {
 /// How long one pull of [`receive`] and [`failure`] waits for the source.
 const PULL: Duration = Duration::from_millis(20);
 
-/// The next frame `source` produces within `within`, past idle pulls.
+/// The next frame `source` produces within `within`, past quiet pulls.
 ///
 /// # Panics
 /// The source failed.
@@ -56,7 +56,7 @@ pub fn try_receive(source: &mut RemoteSource, within: Duration) -> Option<Frame>
     None
 }
 
-/// The next frame `source` produces, past idle pulls.
+/// The next frame `source` produces, past quiet pulls.
 ///
 /// # Panics
 /// None within [`BOUND`], or the source failed.
@@ -64,7 +64,7 @@ pub fn receive(source: &mut RemoteSource) -> Frame {
     try_receive(source, BOUND).unwrap_or_else(|| panic!("no frame within {BOUND:?}"))
 }
 
-/// The failure `source` ends with, past idle pulls.
+/// The failure `source` ends with, past quiet pulls.
 ///
 /// # Panics
 /// It produced a frame first, or did not fail within [`BOUND`].
@@ -74,7 +74,7 @@ pub fn failure(source: &mut RemoteSource) -> Error {
         assert!(Instant::now() < deadline, "the source never failed");
         match source.next_frame(PULL) {
             Err(error) => return error,
-            Ok(pull) => assert!(pull.is_idle(), "a frame came first"),
+            Ok(pull) => assert!(matches!(pull, Pull::Quiet), "a frame came first"),
         }
     }
 }

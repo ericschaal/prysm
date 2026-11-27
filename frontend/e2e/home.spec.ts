@@ -10,17 +10,21 @@ test('Home turns screen sync on and off', async ({
   const sender = startSender();
   await page.goto('/');
   const card = page.getByRole('region', { name: 'Your lights' });
-  const power = card.getByRole('button', { name: 'Power' });
+  const power = card.locator('[data-power]');
+  const modes = card.getByRole('radiogroup', { name: 'Mode' });
   // The card's words for screen readers (sighted people see the state word).
   const status = card.locator('[role=status][aria-live]');
 
   await expect(power).toHaveAttribute('aria-pressed', 'false');
   await expect(status).toHaveText(/^Lights are off/);
+  await expect(modes).toHaveCount(0);
+  await expect(card.getByRole('slider', { name: 'Brightness' })).toHaveCount(0);
 
   await power.click();
   await sender.waitFor('connected');
   await expect(power).toHaveAttribute('aria-pressed', 'true');
   await expect(status).toHaveText(/^Lights follow your screen/);
+  await expect(modes).toHaveCount(0);
   await expect
     .poll(async () => (await prysm.state()).session.state)
     .toBe('screen_sync');
@@ -39,8 +43,12 @@ test('Home turns screen sync on and off', async ({
 test('Home switches the style with one tap or an arrow key, and saves it', async ({
   page,
   prysm,
+  startSender,
 }) => {
+  const sender = startSender();
   await page.goto('/');
+  await page.locator('[data-power]').click();
+  await sender.waitFor('connected');
   const card = page.getByRole('region', { name: 'Your lights' });
   const style = card.getByRole('radiogroup', { name: 'Style' });
   const choice = (name: string) => style.getByRole('radio', { name });

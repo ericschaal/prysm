@@ -1,7 +1,8 @@
 //! What the snapshot reports about a running session: rates, latency, issues, the slow step.
 use crate::common::*;
 use prysm_ports::{
-    Behind, DeviceBrightness, DeviceReport, Latency, LightingTarget, OutputIssue, SessionState,
+    Behind, DeviceBrightness, DeviceReport, Latency, LightingTarget, OutputIssue, Picture,
+    SessionState,
 };
 use prysm_runtime::EngineHandle;
 use prysm_runtime::fakes::{CallLog, FakeOutputSettings, FakeSourceSettings};
@@ -24,11 +25,13 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
 
         handle.set_target(LightingTarget::ScreenSync).await.unwrap();
         let started = tokio::time::Instant::now();
-        let waiting = handle.snapshot().borrow().input.unwrap();
-        assert!(!waiting.receiving, "nothing measured yet");
+        let waiting = snapshot_until(&handle, |s| s.input.is_some())
+            .await
+            .input
+            .unwrap();
+        assert_eq!(waiting.picture, Picture::Quiet, "nothing measured yet");
 
-        // The fake delivers a frame about every 2 ms.
-        let receiving = snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
+        let receiving = snapshot_until(&handle, |s| arriving(s.input)).await;
         assert!(
             started.elapsed() >= Duration::from_millis(900),
             "sampled per second"
@@ -38,9 +41,13 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
         let fps = receiving.input.unwrap().fps;
         assert!(fps > 0.0, "{fps}");
 
-        // After 150 frames it goes quiet.
-        let quiet = snapshot_until(&handle, |s| s.input.is_some_and(|i| !i.receiving)).await;
+        let quiet = snapshot_until(&handle, |s| !arriving(s.input)).await;
         assert!(quiet.input.unwrap().fps.abs() < f32::EPSILON);
+        assert_eq!(
+            quiet.input.unwrap().picture,
+            Picture::Quiet,
+            "quiet, for no reason given"
+        );
         assert!(
             matches!(quiet.session, SessionState::ScreenSync),
             "{}",
@@ -49,6 +56,40 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert!(handle.snapshot().borrow().input.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+fn arriving(input: Option<prysm_ports::Input>) -> bool {
+    input.is_some_and(|i| i.picture.is_arriving())
+}
+
+/// A source whose device refuses to share its video: the input says so
+/// while no frame arrives, and frames withdraw it.
+#[tokio::test]
+async fn input_reports_a_refused_video_until_frames_come_again() {
+    within_async(LIMIT, async {
+        let log = CallLog::new();
+        let refused = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                quiet_after: Some(0),
+                quiet_for_ms: 1500,
+                refused: true,
+                ..Default::default()
+            },
+            FakeOutputSettings::default(),
+        );
+        let (handle, engine, _) = start(&log, refused, DEADLINE).await;
+        handle.set_target(LightingTarget::ScreenSync).await.unwrap();
+        let waiting = snapshot_until(&handle, |s| {
+            s.input.is_some_and(|i| i.picture == Picture::Refused)
+        })
+        .await;
+        assert!(matches!(waiting.session, SessionState::ScreenSync));
+
+        snapshot_until(&handle, |s| arriving(s.input)).await;
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -119,19 +160,15 @@ async fn input_reports_frames_sent_and_the_received_to_flushed_span() {
             capture_ms,
             output_ms,
         } = input.latency.unwrap();
-        // At least the write itself; the rest is processing.
         assert!(output_ms >= 20.0, "{output_ms}");
         assert!(output_ms < 200.0, "{output_ms}");
-        // Frames without a capture time have no capture part.
         assert_eq!(capture_ms, None);
-        // One write at a time, about 50 a second.
         assert!(
             input.sent_fps > 0.0 && input.sent_fps <= 55.0,
             "{}",
             input.sent_fps
         );
 
-        // The 61st write fails: only flushed frames are timed.
         snapshot_until(&handle, |s| s.session.failure().is_some()).await;
         let stats = handle.stats();
         assert_eq!(stats.flushed.count, stats.frames_sent);

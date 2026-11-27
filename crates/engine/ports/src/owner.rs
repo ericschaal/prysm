@@ -1,4 +1,4 @@
-use crate::{Error, Pull, Result};
+use crate::{Error, Hangup, Pull, Result, Stopping};
 use prysm_core::Frame;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
@@ -43,6 +43,9 @@ struct State {
     woken: bool,
     ready: bool,
     frame: Option<Frame>,
+    /// The device refuses its video: pulls without a frame are
+    /// [`Pull::Refused`], else [`Pull::Quiet`].
+    refused: bool,
     /// The watched native call in progress and when it started.
     busy: Option<(&'static str, Instant)>,
     /// The first terminal failure.
@@ -131,8 +134,11 @@ impl OwnerThread {
     /// The thread failed or ended before it was ready.
     pub fn wait_ready(&self, timeout: Duration) -> Result<bool> {
         let state = self.shared.wait(timeout, |state| {
-            state.ready || state.failure.is_some() || state.released.is_some()
+            state.stop || state.ready || state.failure.is_some() || state.released.is_some()
         });
+        if state.stop {
+            return Err(Error::adapter("capture open cancelled", Stopping));
+        }
         if state.ready {
             return Ok(true);
         }
@@ -143,7 +149,17 @@ impl OwnerThread {
         }
     }
 
-    /// Wait up to `timeout` for a frame and take it; [`Pull::Idle`] without one.
+    /// Wait for native readiness, or tell the owner to stop upon cancellation.
+    pub fn wait_ready_with_stop(&self, timeout: Duration, stop: &Hangup) -> Result<bool> {
+        let shared = self.shared.clone();
+        let Some(_cut) = stop.on_cut(move || shared.update(|state| state.stop = true)) else {
+            return Err(Error::adapter("capture open cancelled", Stopping));
+        };
+        self.wait_ready(timeout)
+    }
+
+    /// Wait up to `timeout` for a frame and take it; [`Pull::Quiet`] or
+    /// [`Pull::Refused`] ([`Worker::refused`]) without one.
     ///
     /// # Errors
     /// The terminal failure (also a watched call past its watchdog), on every
@@ -160,7 +176,11 @@ impl OwnerThread {
         if state.released.is_some() {
             return Err(self.ended());
         }
-        Ok(state.frame.take().into())
+        Ok(match state.frame.take() {
+            Some(frame) => Pull::Frame(frame),
+            None if state.refused => Pull::Refused,
+            None => Pull::Quiet,
+        })
     }
 
     /// The frame published and not yet taken; for adapters' tests.
@@ -295,6 +315,12 @@ impl Worker {
         drop(self.shared.update(|state| state.frame.replace(frame)));
     }
 
+    /// Whether the device refuses its video, until said otherwise (not at
+    /// first): pulls without a frame say so.
+    pub fn refused(&self, refused: bool) {
+        self.shared.update(|state| state.refused = refused);
+    }
+
     /// Publish a terminal failure; the first one is kept.
     pub fn fail(&self, error: Error) {
         self.shared.update(|state| {
@@ -349,15 +375,42 @@ mod tests {
         while newest.is_none() {
             newest = owner.next_frame(LIMIT).unwrap().into_frame();
         }
-        // Frames may be taken before the last offer; never an older one after a newer.
         let mut last = newest.unwrap().as_slice()[0];
         while last < 3 {
             let frame = owner.next_frame(LIMIT).unwrap().into_frame().unwrap();
             assert!(frame.as_slice()[0] > last);
             last = frame.as_slice()[0];
         }
-        assert!(owner.next_frame(SHORT).unwrap().is_idle());
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Quiet));
         assert_eq!(owner.close().unwrap_err().to_string(), "buffers stuck");
+    }
+
+    /// While the device refuses its video, pulls without a frame say so; a
+    /// frame still comes first.
+    #[test]
+    fn a_refusal_is_said_until_it_is_withdrawn() {
+        let (step, steps) = std::sync::mpsc::channel::<()>();
+        let (done, withdrawn) = std::sync::mpsc::channel::<()>();
+        let mut owner = spawn(move |worker| {
+            worker.refused(true);
+            worker.ready();
+            steps.recv().unwrap();
+            worker.offer(frame(1));
+            steps.recv().unwrap();
+            worker.refused(false);
+            done.send(()).unwrap();
+            until_stopped(worker);
+            Ok(())
+        });
+        assert!(owner.wait_ready(LIMIT).unwrap());
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Refused));
+        step.send(()).unwrap();
+        let frame = owner.next_frame(LIMIT).unwrap().into_frame().unwrap();
+        assert_eq!(frame.as_slice()[0], 1);
+        step.send(()).unwrap();
+        withdrawn.recv_timeout(LIMIT).unwrap();
+        assert!(matches!(owner.next_frame(SHORT).unwrap(), Pull::Quiet));
+        owner.close().unwrap();
     }
 
     /// A wake-up ends a sleep, also one that came before it; it outlives
@@ -376,7 +429,6 @@ mod tests {
             Ok(())
         });
         let wakeup = sleeping.recv_timeout(LIMIT).unwrap();
-        // Before or during the first sleep: either way it ends it.
         assert!(wakeup.wake());
         awake.recv_timeout(LIMIT).unwrap();
         assert!(wakeup.wake());

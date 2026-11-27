@@ -28,11 +28,9 @@ def load(name):
 class MetadataTests(unittest.TestCase):
     def test_package_files_match_the_supervisor(self):
         identity = (ROOT / 'crates/hosts/webos-service/src/identity.rs').read_text()
-        service_rs = (ROOT / 'crates/hosts/webos-service/src/service.rs').read_text()
         app_id = re.search(r'pub const APP_ID: &str = "(.+?)";', identity).group(1)
         supervisor = re.search(r'pub const SUPERVISOR: &str = "(.+?)";', identity).group(1)
         worker = re.search(r'pub const WORKER: &str = "(.+?)";', identity).group(1)
-        methods = re.findall(r'Self::\w+ => "(\w+)"', re.search(r'pub const fn name\(self\).*?\n    \}', service_rs, re.S).group(0))
         self.assertEqual((app_id, supervisor, worker), (ipk.APP_ID, 'prysm-webos-service', 'prysm-webos-worker'))
         # The TV app's and the acceptance runner's own constant.
         platform = (FRONTEND / 'packages/webos-platform/index.ts').read_text()
@@ -59,9 +57,14 @@ class MetadataTests(unittest.TestCase):
             'outbound': ['com.webos.service.tvpower', 'com.webos.service.videooutput']}])
         self.assertEqual(worker_role['exeName'], INSTALLED + worker)
         self.assertEqual(worker_role['allowedNames'], ['com.webos.service.capture.client*', 'com.webos.rm.client.*'])
+        self.assertEqual(worker_role['permissions'], [
+            {'service': 'com.webos.service.capture.client*',
+             'outbound': ['com.webos.service.capture', 'com.webos.service.capturepermission']},
+            {'service': 'com.webos.rm.client.*', 'outbound': ['com.webos.media']}])
+        # The Rust service test compares this file with the methods registered on Luna.
+        methods = ['getState', 'setPreferences', 'setTarget', 'setEnabled', 'uninstall']
         self.assertEqual(api, {'public': [info['id'] + '/' + method for method in methods]})
-        self.assertEqual(methods, ['getState', 'setPreferences', 'setTarget', 'setEnabled', 'uninstall'])
-        self.assertEqual(list(client), [info['id']])
+        self.assertEqual(client, {info['id']: ['activities.callbacks']})
         unit = (HERE / 'service/supervisor.service').read_text().splitlines()
         self.assertIn('Name=' + info['id'], unit)
         self.assertIn('Exec=' + INSTALLED + supervisor, unit)

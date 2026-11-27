@@ -6,7 +6,7 @@
 //! deadline.
 use prysm_capture_device_sys::{CAMERA_ACCESS_WAIT, CaptureError, CaptureSink};
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result, Worker};
+use prysm_ports::{Error, Escalation, FrameSource, Hangup, OwnerThread, Pull, Result, Worker};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -90,15 +90,21 @@ fn run(check: Check, capture: Capture, worker: &Worker) -> Result<()> {
     match capture(&sink) {
         Ok(()) => Ok(()),
         Err(error @ CaptureError::Cleanup(_)) => {
-            let error = Error::adapter("video device release is unconfirmed", error);
+            let error = failure("video device release is unconfirmed", error);
             worker.fail(error.clone());
             Err(error)
         }
         Err(error) => {
-            worker.fail(Error::adapter("video device capture failed", error));
+            worker.fail(failure("video device capture failed", error));
             Ok(())
         }
     }
+}
+
+/// `error` under `context`, escalating as its cause says.
+pub(crate) fn failure(context: &str, error: CaptureError) -> Error {
+    let escalation = error.escalation();
+    Error::adapter_escalating(context, error, escalation)
 }
 
 pub(crate) struct DeviceFrames {
@@ -108,28 +114,43 @@ pub(crate) struct DeviceFrames {
 impl DeviceFrames {
     /// Run `check`, start `capture` and wait for native readiness. On any
     /// failure the device is released first.
+    #[cfg(test)]
     pub(crate) fn start(check: Check, capture: Capture, deadlines: Deadlines) -> Result<Self> {
+        Self::start_with_stop(check, capture, deadlines, &Hangup::default())
+    }
+
+    pub(crate) fn start_with_stop(
+        check: Check,
+        capture: Capture,
+        deadlines: Deadlines,
+        stop: &Hangup,
+    ) -> Result<Self> {
         let thread = OwnerThread::spawn(
             "prysm-capture-device",
             "video device capture thread",
             deadlines.release,
             move |worker| run(check, capture, worker),
         )?;
-        match thread.wait_ready(deadlines.ready) {
+        match thread.wait_ready_with_stop(deadlines.ready, stop) {
             Ok(true) => Ok(Self { thread }),
             Ok(false) => {
                 let late = format!("video device was not ready within {:?}", deadlines.ready);
                 Err(match thread.close() {
                     Ok(()) => Error::other(late),
-                    Err(unreleased) => Error::adapter(late, unreleased),
+                    Err(unreleased) => {
+                        Error::adapter_escalating(late, unreleased, Escalation::Restart)
+                    }
                 })
             }
-            // The capture has returned, so this release is immediate; an
-            // unconfirmed one is already the failure.
-            Err(failure) => {
-                let _ = thread.close();
-                Err(failure)
-            }
+            Err(failure) => match thread.close() {
+                Ok(()) => Err(failure),
+                Err(_) if failure.escalation() == Escalation::Restart => Err(failure),
+                Err(unreleased) => Err(Error::adapter_escalating(
+                    format!("{failure}; video device release is unconfirmed"),
+                    unreleased,
+                    Escalation::Restart,
+                )),
+            },
         }
     }
 
