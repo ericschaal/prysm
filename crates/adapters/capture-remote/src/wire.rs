@@ -166,48 +166,25 @@ impl Refusal {
 
 /// Why the receiver ended a stream, as the WebSocket close code it sent.
 /// Any other close, or none, is a dropped connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::AsRefStr, strum::FromRepr)]
+#[repr(u16)]
 pub enum Close {
-    /// The receiving source closed (lighting stopped, or its capture
-    /// settings changed), possibly before it sent the request: code 4000.
-    /// The sender releases its capture and encoder until a receiver takes a
-    /// connection again.
-    Stopped,
-    /// Another sender's connection replaced this one: code 4001. The sender
-    /// stops until its user starts it again, so two senders never take the
-    /// stream from each other in turn.
-    Replaced,
-    /// The receiving source failed with this sender: its offer excludes the
-    /// request (before the request), or it refused the request, sent what
-    /// the receiver does not take, its H.264 keyframe does not decode, or
-    /// no decoder starts: code 4002. Prysm shows why; the sender releases
-    /// its capture and encoder until a receiver takes a connection again.
-    Failed,
-}
-
-impl Close {
-    pub(crate) const fn code(self) -> u16 {
-        match self {
-            Self::Stopped => 4000,
-            Self::Replaced => 4001,
-            Self::Failed => 4002,
-        }
-    }
-
-    pub(crate) fn from_code(code: u16) -> Option<Self> {
-        [Self::Stopped, Self::Replaced, Self::Failed]
-            .into_iter()
-            .find(|close| close.code() == code)
-    }
+    /// Lighting stopped or capture settings changed, possibly before the request.
+    /// The sender releases capture and encoding until a receiver reconnects.
+    #[strum(serialize = "Prysm stopped receiving")]
+    Stopped = 4000,
+    /// Another sender replaced this one. The sender stops until its user restarts it.
+    #[strum(serialize = "another sender replaced this one at Prysm")]
+    Replaced = 4001,
+    /// The receiver reports a stream failure. The sender releases capture and
+    /// encoding until a receiver reconnects.
+    #[strum(serialize = "Prysm stopped receiving after a failure, which it shows")]
+    Failed = 4002,
 }
 
 impl fmt::Display for Close {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Stopped => "Prysm stopped receiving",
-            Self::Replaced => "another sender replaced this one at Prysm",
-            Self::Failed => "Prysm stopped receiving after a failure, which it shows",
-        })
+        f.write_str(self.as_ref())
     }
 }
 
@@ -861,10 +838,10 @@ mod tests {
             (Close::Replaced, 4001),
             (Close::Failed, 4002),
         ] {
-            assert_eq!(close.code(), code);
-            assert_eq!(Close::from_code(code), Some(close));
+            assert_eq!(close as u16, code);
+            assert_eq!(Close::from_repr(code), Some(close));
         }
-        assert_eq!(Close::from_code(1000), None);
+        assert_eq!(Close::from_repr(1000), None);
         assert_eq!(
             WireError::Closed(None).to_string(),
             "the peer closed the stream"

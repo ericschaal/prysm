@@ -43,9 +43,9 @@ pub use handoff::{
     CAPTURE_STREAM_PATH, CAPTURE_VERSION, Handoff, MAX_ANNOUNCEMENT_BYTES, Receiving,
 };
 pub use hangup::{CallError, Hangup, Registration, Stopping};
-pub use modes::{Mode, Modes, Span};
 #[cfg(feature = "schema")]
-pub use modes::{ModesFields as ModesSchema, SpanFields as SpanSchema};
+pub use modes::SpanFields as SpanSchema;
+pub use modes::{Mode, Modes, Span};
 pub use owner::{OwnerThread, Wakeup, Worker};
 pub use recovery::{Escalation, Fix};
 pub use registry::{

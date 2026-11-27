@@ -280,7 +280,7 @@ pub struct DeviceReportSchema {
 
 pub use prysm_ports::{
     Candidate as CandidateSchema, Latency as LatencySchema, LightingTarget as LightingTargetSchema,
-    Mode as ModeSchema, ModesSchema, Pattern as PatternSchema, Picture as PictureSchema,
+    Mode as ModeSchema, Modes as ModesSchema, Pattern as PatternSchema, Picture as PictureSchema,
     SpanSchema, Style as StyleSchema,
 };
 
@@ -449,9 +449,8 @@ mod tests {
     use super::*;
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, CorrectionControls,
-        DeviceBrightness, DeviceReport, FrameSource, Input, Latency, Mode, Modes, OutputIssue,
-        Pattern, Picture, PrimaryControls, Processing, Result, Settings, Span, Style, StyleValues,
-        ValidationError,
+        DeviceBrightness, DeviceReport, FrameSource, Input, Latency, OutputIssue, Pattern, Picture,
+        PrimaryControls, Processing, Result, Settings, Style, StyleValues, ValidationError,
     };
     use prysm_testkit::assert_mirror_round_trips;
     use serde_json::{Value, json};
@@ -557,16 +556,6 @@ mod tests {
             brightness: DeviceBrightness::from_percent(40),
             led_count: Some(120),
         });
-        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Unknown);
-        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Known(Vec::new()));
-        assert_mirror_round_trips::<Modes, ModesSchema>(&Modes::Known(vec![
-            Mode::new(
-                Span::new(2, 1920, 2).unwrap(),
-                Span::new(2, 1080, 2).unwrap(),
-                Span::new(1, 60, 1).unwrap(),
-            ),
-            Mode::new(Span::exactly(640), Span::exactly(360), Span::exactly(30)),
-        ]));
         for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
             assert_mirror_round_trips::<CalibrationPattern, CalibrationPatternSchema>(
                 &CalibrationPattern {

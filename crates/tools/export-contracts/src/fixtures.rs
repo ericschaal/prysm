@@ -484,11 +484,13 @@ fn application() -> Value {
         "Modes": [
             Modes::from(prysm_capture_webos::MODE),
             Modes::from(prysm_ports::capture_size::SIZES),
-            Modes::Known(vec![
-                Mode::new(Span::exactly(640), Span::exactly(360), Span::new(1, 30, 1).expect("a span")),
-                Mode::new(Span::exactly(1920), Span::exactly(1080), Span::exactly(30)),
-            ]),
-            Modes::Known(Vec::new()),
+            Modes::Known {
+                modes: vec![
+                    Mode::new(Span::exactly(640), Span::exactly(360), Span::new(1, 30, 1).expect("a span")),
+                    Mode::new(Span::exactly(1920), Span::exactly(1080), Span::exactly(30)),
+                ],
+            },
+            Modes::Known { modes: Vec::new() },
             Modes::Unknown,
         ],
         "Candidate": [

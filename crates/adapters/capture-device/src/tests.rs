@@ -523,7 +523,7 @@ fn candidates_fill_a_valid_device() {
         assert_eq!(settings.validate(), Ok(()), "{candidate:?}");
         assert_eq!(candidate.detail.as_deref(), Some(settings.device.as_str()));
         assert!(
-            matches!(DeviceSource.modes(&settings), Modes::Known(_)),
+            matches!(DeviceSource.modes(&settings), Modes::Known { .. }),
             "{candidate:?}"
         );
         let odd = DeviceSettings {

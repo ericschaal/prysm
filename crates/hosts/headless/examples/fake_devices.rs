@@ -63,7 +63,9 @@ impl SourceFactory for FakeDevices {
         self.0
             .iter()
             .find(|device| device.device == settings.device)
-            .map_or(Modes::Unknown, |device| Modes::Known(device.modes.clone()))
+            .map_or(Modes::Unknown, |device| Modes::Known {
+                modes: device.modes.clone(),
+            })
     }
 }
 

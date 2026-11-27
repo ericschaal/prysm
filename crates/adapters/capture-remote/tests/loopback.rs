@@ -631,7 +631,7 @@ fn a_refused_attempt_still_tells_the_receiver_what_the_sender_offers() {
         encoding: StreamEncoding::H264Software,
         ..RAW
     };
-    assert_eq!(factory.modes(&software), Modes::Known(Vec::new()));
+    assert_eq!(factory.modes(&software), Modes::Known { modes: Vec::new() });
 
     let invalid = |request: &RemoteSettings| match factory.open(request) {
         Err(prysm_ports::Error::Invalid(invalid)) => invalid.field,

@@ -82,7 +82,9 @@ impl Offer {
     /// What the sender streams in `encoding`: known, empty when it lacks it.
     #[must_use]
     pub fn modes(&self, encoding: StreamEncoding) -> Modes {
-        Modes::Known(self.encodings.get(&encoding).cloned().unwrap_or_default())
+        Modes::Known {
+            modes: self.encodings.get(&encoding).cloned().unwrap_or_default(),
+        }
     }
 
     /// The sender's Prysm release, if it named one.
@@ -199,7 +201,7 @@ mod tests {
         );
         assert_eq!(
             offer.modes(StreamEncoding::H264Software),
-            Modes::Known(Vec::new())
+            Modes::Known { modes: Vec::new() }
         );
         let raw = RemoteSettings {
             encoding: StreamEncoding::Raw,
@@ -234,9 +236,12 @@ mod tests {
         assert_eq!(offer.check(&software).unwrap_err().field, "encoding");
         assert_eq!(
             offer.modes(StreamEncoding::H264Hardware),
-            Modes::Known(vec![hardware()])
+            Modes::from(hardware())
         );
-        assert_eq!(offer.modes(StreamEncoding::Raw), Modes::Known(Vec::new()));
+        assert_eq!(
+            offer.modes(StreamEncoding::Raw),
+            Modes::Known { modes: Vec::new() }
+        );
         assert!(offer.check(&RemoteSettings::default()).is_ok());
     }
 }

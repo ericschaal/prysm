@@ -405,6 +405,7 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "strum",
  "thiserror",
  "tracing",
  "tungstenite",

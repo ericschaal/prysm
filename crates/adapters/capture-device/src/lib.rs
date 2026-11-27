@@ -142,8 +142,11 @@ impl SourceFactory for DeviceSource {
     /// The `device`'s formats, within what [`DeviceSettings::validate`]
     /// accepts; unknown when the device cannot be opened or asked.
     fn modes(&self, settings: &DeviceSettings) -> Modes {
-        prysm_capture_device_sys::list_formats(&settings.device)
-            .map_or(Modes::Unknown, |listed| Modes::Known(bounded(&listed)))
+        prysm_capture_device_sys::list_formats(&settings.device).map_or(Modes::Unknown, |listed| {
+            Modes::Known {
+                modes: bounded(&listed),
+            }
+        })
     }
 }
 

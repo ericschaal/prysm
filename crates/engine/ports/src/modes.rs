@@ -7,13 +7,15 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::num::NonZeroU32;
 
+pub use ModesFields as Modes;
+
 /// The values `min`, `min + step`, … up to `max`; a single value is
 /// `min == max`. `max` is always reachable from `min`.
 ///
 /// Serialized as `{ "min": 2, "max": 1920, "step": 2 }`; one whose `max` is
 /// not reachable, a zero step or `min > max` does not deserialize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "SpanFields", into = "SpanFields")]
+#[serde(try_from = "SpanFields", rename(serialize = "SpanFields"))]
 pub struct Span {
     min: u32,
     max: u32,
@@ -138,16 +140,6 @@ impl TryFrom<SpanFields> for Span {
     }
 }
 
-impl From<Span> for SpanFields {
-    fn from(span: Span) -> Self {
-        Self {
-            min: span.min,
-            max: span.max,
-            step: span.step.get(),
-        }
-    }
-}
-
 /// One way a source delivers: every combination of these widths, heights
 /// and frame rates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -199,29 +191,22 @@ impl Mode {
     }
 }
 
-/// What a source can deliver with the settings it was asked about.
-///
-/// Whoever owns the hardware answers for it, by one rule: a [`Span`]
-/// wherever the hardware accepts any value in it, whether it says so itself
-/// (a V4L2 stepwise size, an `AVFoundation` rate range) or is known to
-/// scale to what is asked (LG's capture); concrete modes only where the
-/// hardware offers fixed ones. Unknown only when the hardware cannot be
-/// reached or asked.
-///
-/// Serialized as `{ "status": "unknown" }` or
-/// `{ "status": "known", "modes": [...] }`.
+/// What a capture source delivers with the posted settings, the reply of
+/// `POST /api/v1/capture/modes`: `unknown` when it cannot reach its
+/// hardware; `known` with exactly these modes (none: nothing with these
+/// settings). Ranges where the hardware takes any value in them, fixed
+/// modes where it offers fixed ones.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "ModesFields", into = "ModesFields")]
-pub enum Modes {
-    /// The source cannot say (it cannot reach its hardware); only opening tells.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema), schema(as = Modes))]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModesFields {
     Unknown,
-    /// Exactly these; empty: nothing with these settings.
-    Known(Vec<Mode>),
+    Known { modes: Vec<Mode> },
 }
 
 impl From<Mode> for Modes {
     fn from(mode: Mode) -> Self {
-        Self::Known(vec![mode])
+        Self::Known { modes: vec![mode] }
     }
 }
 
@@ -237,7 +222,7 @@ impl Modes {
     /// the section) with what is delivered instead, the reason naming the
     /// field in words, since the portal shows the reason without the field.
     pub fn check(&self, width: u32, height: u32, fps: u32) -> Result<(), ValidationError> {
-        let Self::Known(modes) = self else {
+        let Self::Known { modes } = self else {
             return Ok(());
         };
         if modes.is_empty() {
@@ -296,37 +281,6 @@ fn listed(spans: impl Iterator<Item = Span>) -> String {
         last
     } else {
         format!("{} or {last}", shown.join(", "))
-    }
-}
-
-/// What a capture source delivers with the posted settings, the reply of
-/// `POST /api/v1/capture/modes`: `unknown` when it cannot reach its
-/// hardware; `known` with exactly these modes (none: nothing with these
-/// settings). Ranges where the hardware takes any value in them, fixed
-/// modes where it offers fixed ones.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema), schema(as = Modes))]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ModesFields {
-    Unknown,
-    Known { modes: Vec<Mode> },
-}
-
-impl From<ModesFields> for Modes {
-    fn from(fields: ModesFields) -> Self {
-        match fields {
-            ModesFields::Unknown => Self::Unknown,
-            ModesFields::Known { modes } => Self::Known(modes),
-        }
-    }
-}
-
-impl From<Modes> for ModesFields {
-    fn from(modes: Modes) -> Self {
-        match modes {
-            Modes::Unknown => Self::Unknown,
-            Modes::Known(modes) => Self::Known { modes },
-        }
     }
 }
 
@@ -417,12 +371,13 @@ mod tests {
     fn checks_name_the_first_wrong_field_and_what_is_offered() {
         assert_eq!(Modes::Unknown.check(0, 0, 0), Ok(()));
         let fixed = |w, h, fps| Mode::new(Span::exactly(w), Span::exactly(h), fps);
-        let modes = Modes::Known(vec![
+        let modes = vec![
             fixed(640, 360, span(1, 30, 1)),
             fixed(1280, 720, span(1, 30, 1)),
             fixed(1280, 720, Span::exactly(60)),
             fixed(1920, 1080, span(5, 30, 5)),
-        ]);
+        ];
+        let modes = Modes::Known { modes };
         assert_eq!(modes.check(1280, 720, 60), Ok(()));
         let error = |w, h, fps| modes.check(w, h, fps).unwrap_err();
         assert_eq!(
@@ -447,17 +402,17 @@ mod tests {
             error(1920, 1080, 12).reason,
             "at 1920x1080 this source delivers a frame rate of 5 to 30 in steps of 5"
         );
-        let many = Modes::Known(
-            (1..=9)
+        let many = Modes::Known {
+            modes: (1..=9)
                 .map(|w| fixed(w * 100, 100, Span::exactly(30)))
                 .collect(),
-        );
+        };
         assert_eq!(
             many.check(50, 100, 30).unwrap_err().reason,
             "this source delivers a width of 100, 200, 300, 400, 500, 600 or 3 more"
         );
         assert_eq!(
-            Modes::Known(Vec::new())
+            Modes::Known { modes: Vec::new() }
                 .check(640, 360, 30)
                 .unwrap_err()
                 .field,
@@ -482,14 +437,16 @@ mod tests {
             }] })
         );
         assert_eq!(serde_json::from_value::<Modes>(value).unwrap(), modes);
-        assert_eq!(
-            serde_json::to_value(Modes::Unknown).unwrap(),
-            json!({ "status": "unknown" })
-        );
-        assert_eq!(
-            serde_json::from_value::<Modes>(json!({ "status": "unknown" })).unwrap(),
-            Modes::Unknown
-        );
+        for (modes, value) in [
+            (Modes::Unknown, json!({ "status": "unknown" })),
+            (
+                Modes::Known { modes: Vec::new() },
+                json!({ "status": "known", "modes": [] }),
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(&modes).unwrap(), value);
+            assert_eq!(serde_json::from_value::<Modes>(value).unwrap(), modes);
+        }
         for bad in [
             json!({ "min": 2, "max": 5, "step": 2 }),
             json!({ "min": 2, "max": 1, "step": 1 }),
@@ -502,5 +459,11 @@ mod tests {
             );
         }
         assert!(serde_json::from_value::<Modes>(json!({ "status": "maybe" })).is_err());
+        assert_eq!(
+            serde_json::from_value::<Modes>(json!(42))
+                .unwrap_err()
+                .to_string(),
+            "invalid type: integer `42`, expected internally tagged enum ModesFields"
+        );
     }
 }

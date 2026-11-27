@@ -82,7 +82,7 @@ impl<S: Read + Write> Link<S> {
                 // Pongs are queued by the read and sent with the next write.
                 Ok(Ws::Ping(_) | Ws::Pong(_) | Ws::Frame(_)) => {}
                 Ok(Ws::Close(frame)) => {
-                    let close = frame.and_then(|frame| Close::from_code(frame.code.into()));
+                    let close = frame.and_then(|frame| Close::from_repr(frame.code.into()));
                     return Err(WireError::Closed(close).into());
                 }
                 Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
@@ -128,7 +128,7 @@ impl<S: Read + Write> Link<S> {
     /// peer is not reading, or the socket failed), it stays queued.
     pub(crate) fn close(&mut self, close: Option<Close>) -> bool {
         let frame = close.map(|close| CloseFrame {
-            code: close.code().into(),
+            code: (close as u16).into(),
             reason: "".into(),
         });
         self.socket.close(frame).is_ok()

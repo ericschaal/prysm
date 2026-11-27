@@ -1041,7 +1041,7 @@ fn the_offer_is_the_capture_within_each_encoder() {
     assert_eq!(offer.modes(StreamEncoding::Raw), Modes::from(tiny));
     assert_eq!(
         offer.modes(StreamEncoding::H264Software),
-        Modes::Known(Vec::new())
+        Modes::Known { modes: Vec::new() }
     );
     let tiny_request = RemoteSettings {
         width: 8,
