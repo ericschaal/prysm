@@ -2,7 +2,8 @@
 //! thread keeps native handles and orders source close, output idle and join.
 mod cleanup;
 
-use self::cleanup::{CaptureCleanup, IdleDecision, SessionOutput, release_output};
+pub(crate) use self::cleanup::IdleDecision;
+use self::cleanup::{Access, CaptureCleanup, SessionOutput};
 use crate::feeds::Feeds;
 use crate::session_lifecycle::OutputRelease;
 use crate::slot::LatestSlot;
@@ -10,9 +11,9 @@ use crate::stats::{FrameTimes, Stats};
 use crate::worker::{Exit, Flags, Worker, guarded};
 use prysm_core::{Config, EdgeColors, Frame};
 use prysm_ports::{
-    Claim, ConfiguredOutput, ConfiguredSource, DeviceReport, Error, FrameSource, Hangup, IdleMode,
-    LedOutput, OpenIntent, OutputDisplay, OutputObservation, OutputObservationState, OutputOpen,
-    Power, Pull, Release, Result, Section, SessionPhase,
+    Claim, ConfiguredOutput, ConfiguredSource, DeviceReport, Error, Hangup, LedOutput, OpenIntent,
+    OutputDisplay, OutputObservation, OutputObservationState, Pull, Release, Result, Section,
+    SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -23,12 +24,17 @@ const REFRESH: Duration = Duration::from_millis(500);
 const VIDEO_GRACE: Duration = Duration::from_secs(3);
 
 pub(crate) enum Notice {
-    CaptureOpened,
+    CaptureOpened {
+        authorize: oneshot::Sender<OpenIntent>,
+    },
     OutputOpened,
     Handoff(OutputObservation),
     Observed(OutputObservation),
     Ended(Exit),
-    IdleReady { capture_released: bool },
+    CaptureClosed {
+        released: bool,
+        decide_idle: oneshot::Sender<IdleDecision>,
+    },
     Finished(Result<SessionEnd>),
 }
 
@@ -59,14 +65,13 @@ pub(crate) enum Lease {
 pub(crate) struct Session {
     pub(crate) claims: SessionClaims,
     control: Arc<Control>,
-    open_output: Option<oneshot::Sender<OpenIntent>>,
-    idle: Option<oneshot::Sender<IdleDecision>>,
     notices: notifications::UnboundedReceiver<Notice>,
     worker: Worker<SessionEnd>,
     output_is_current: bool,
 }
 
 pub(crate) struct Start {
+    pub(crate) capture: Arc<dyn ConfiguredSource>,
     pub(crate) output: Arc<dyn ConfiguredOutput>,
     pub(crate) config: Config,
     pub(crate) feeds: Feeds,
@@ -74,32 +79,19 @@ pub(crate) struct Start {
 }
 
 impl Session {
-    pub(crate) fn start(
-        capture: Arc<dyn ConfiguredSource>,
-        claim: Claim,
-        start: Start,
-    ) -> Result<Self, (Error, Claim)> {
-        Self::spawn(claim, start, move |stop| capture.open(stop))
-    }
-
-    pub(crate) fn spawn(
-        claim: Claim,
-        start: Start,
-        open_capture: impl FnOnce(&Hangup) -> Result<Box<dyn FrameSource>> + Send + 'static,
-    ) -> Result<Self, (Error, Claim)> {
+    pub(crate) fn start(claim: Claim, start: Start) -> Result<Self, (Error, Claim)> {
         let control = Arc::new(Control::default());
-        let (open_output, authorize_output) = oneshot::channel();
-        let (idle, idle_after_capture) = oneshot::channel();
         let (notices, events) = notifications::unbounded_channel();
-        let engine = EngineDecisions {
-            authorize_output,
-            idle_after_capture,
+        let session = SessionWorker {
+            control: control.clone(),
             notices,
         };
-        let worker = match Worker::spawn("prysm-session", "session thread", start, {
-            let control = control.clone();
-            move |start, flags| run(start, open_capture, &control, engine, flags)
-        }) {
+        let worker = match Worker::spawn(
+            "prysm-session",
+            "session thread",
+            start,
+            move |start, flags| session.run(start, flags),
+        ) {
             Ok(worker) => worker,
             Err((error, _)) => return Err((error, claim)),
         };
@@ -109,8 +101,6 @@ impl Session {
                 output: Lease::Unclaimed,
             },
             control,
-            open_output: Some(open_output),
-            idle: Some(idle),
             notices: events,
             worker,
             output_is_current: true,
@@ -124,22 +114,8 @@ impl Session {
         }
     }
 
-    pub(crate) fn open_output(&mut self, intent: OpenIntent, claim: Claim) {
-        self.claims.output = Lease::Claimed(claim);
-        if let Some(send) = self.open_output.take() {
-            let _ = send.send(intent);
-        }
-    }
-
-    pub(crate) fn request_stop(&mut self) {
+    pub(crate) fn request_stop(&self) {
         self.worker.request_stop();
-        self.open_output = None;
-    }
-
-    pub(crate) fn idle(&mut self, mode: OutputRelease, known_power: Option<Power>) {
-        if let Some(send) = self.idle.take() {
-            let _ = send.send(IdleDecision { mode, known_power });
-        }
     }
 
     pub(crate) fn retire_output_observations(&mut self) {
@@ -172,74 +148,84 @@ impl Session {
     }
 }
 
-struct EngineDecisions {
-    authorize_output: oneshot::Receiver<OpenIntent>,
-    idle_after_capture: oneshot::Receiver<IdleDecision>,
+struct SessionWorker {
+    control: Arc<Control>,
     notices: notifications::UnboundedSender<Notice>,
 }
 
-fn run(
-    start: Start,
-    open_capture: impl FnOnce(&Hangup) -> Result<Box<dyn FrameSource>>,
-    control: &Control,
-    engine: EngineDecisions,
-    flags: &Flags,
-) -> SessionEnd {
-    let mut capture = None;
-    let mut output = SessionOutput::default();
-    let stop = flags.stopping();
-    let exit = guarded("initializing screen sync", || {
-        let source = open_capture(stop).map_err(|error| error.in_section(Section::Capture))?;
-        let source = capture.insert(source);
-        start.stats.source_opened();
-        if stop.is_cut() || engine.notices.send(Notice::CaptureOpened).is_err() {
-            return Ok(Exit::Stopped);
-        }
-        let Ok(intent) = engine.authorize_output.blocking_recv() else {
-            return Ok(Exit::Stopped);
-        };
-        if stop.is_cut() {
-            return Ok(Exit::Stopped);
-        }
+impl SessionWorker {
+    fn run(self, start: Start, flags: &Flags) -> SessionEnd {
+        let stop = flags.stopping();
+        let mut capture = None;
+        let mut output = SessionOutput::new(&*start.output, &start.stats);
 
-        let held = match start.output.open(intent, stop) {
-            Ok(OutputOpen::Streaming(handle)) => output.hold(handle),
-            Ok(OutputOpen::Handoff(observation)) => {
-                let _ = engine.notices.send(Notice::Handoff(observation));
+        let exit = guarded("initializing screen sync", || {
+            let source = {
+                let adapter = start.capture;
+                adapter.open(stop)
+            }
+            .map_err(|error| error.in_section(Section::Capture))?;
+            let source = capture.insert(source);
+            start.stats.source_opened();
+
+            let Some(intent) = self.await_output_authorization(stop) else {
+                return Ok(Exit::Stopped);
+            };
+            if let Access::Handoff(observation) = output.open_authorized(intent, stop)? {
+                let _ = self.notices.send(Notice::Handoff(observation));
                 return Ok(Exit::Stopped);
             }
-            Err(failure) => return Err(output.open_failed(failure)),
-        };
-        start.stats.output_opened();
-        if stop.is_cut() || engine.notices.send(Notice::OutputOpened).is_err() {
-            return Ok(Exit::Stopped);
-        }
-        let mut stream = Stream::new(&start, control, &engine.notices);
-        Ok(flags.pump(source.as_mut(), |pull| stream.process(pull, held, stop)))
-    })
-    .unwrap_or_else(Exit::Failed);
+            if stop.is_cut() || self.notices.send(Notice::OutputOpened).is_err() {
+                return Ok(Exit::Stopped);
+            }
+            let mut stream = Stream::new(&self, &start.config, &start.feeds, &start.stats);
+            Ok(flags.pump(source.as_mut(), |pull| {
+                stream.process(pull, &mut output, stop)
+            }))
+        })
+        .unwrap_or_else(Exit::Failed);
 
-    let exit = normalize_exit(exit, stop);
-    let capture = CaptureCleanup::after_stream(capture, &exit);
-    let output = output.cleanup_after(&exit);
-    let _ = engine.notices.send(Notice::Ended(exit));
-    start.feeds.clear();
-    flags.set_phase(SessionPhase::ClosingSource);
-    let capture = capture.close();
-    flags.set_phase(SessionPhase::IdlingOutput);
-    let _ = engine.notices.send(Notice::IdleReady {
-        capture_released: capture.is_ok(),
-    });
-    let decision = engine
-        .idle_after_capture
-        .blocking_recv()
-        .unwrap_or(IdleDecision::PRESERVE);
-    let output = output.finish(&*start.output, &decision);
-    SessionEnd {
-        capture,
-        mode: decision.mode,
-        output,
+        let exit = normalize_exit(exit, stop);
+        let capture = CaptureCleanup::after_stream(capture, &exit);
+        let output = output.cleanup_after(&exit);
+        let _ = self.notices.send(Notice::Ended(exit));
+        start.feeds.clear();
+        flags.set_phase(SessionPhase::ClosingSource);
+        let capture = capture.close();
+
+        flags.set_phase(SessionPhase::IdlingOutput);
+        let decision = request_idle(self.notices, capture.is_ok())
+            .blocking_recv()
+            .unwrap_or(IdleDecision::PRESERVE);
+        SessionEnd {
+            capture,
+            mode: decision.mode,
+            output: output.finish(&decision),
+        }
     }
+
+    fn await_output_authorization(&self, stop: &Hangup) -> Option<OpenIntent> {
+        let (authorize, answer) = oneshot::channel();
+        let (answer, cancel) = futures::future::abortable(answer);
+        let _wake_on_stop = stop.on_cut(move || cancel.abort())?;
+        self.notices
+            .send(Notice::CaptureOpened { authorize })
+            .ok()?;
+        futures::executor::block_on(answer).ok()?.ok()
+    }
+}
+
+/// Sends the final notice and relinquishes the worker's sender before waiting for a reply.
+fn request_idle(
+    notices: notifications::UnboundedSender<Notice>,
+    released: bool,
+) -> oneshot::Receiver<IdleDecision> {
+    let (decide_idle, answer) = oneshot::channel();
+    let _ = notices.send(Notice::CaptureClosed {
+        released,
+        decide_idle,
+    });
+    answer
 }
 
 fn normalize_exit(exit: Exit, stop: &Hangup) -> Exit {
@@ -268,7 +254,8 @@ impl std::error::Error for HandedOff {}
 struct Stream<'a> {
     processor: PrysmProcessor,
     control: &'a Control,
-    start: &'a Start,
+    feeds: &'a Feeds,
+    stats: &'a Stats,
     notices: &'a notifications::UnboundedSender<Notice>,
     last: Option<(EdgeColors, Instant)>,
     last_frame: Instant,
@@ -278,16 +265,13 @@ struct Stream<'a> {
 }
 
 impl<'a> Stream<'a> {
-    fn new(
-        start: &'a Start,
-        control: &'a Control,
-        notices: &'a notifications::UnboundedSender<Notice>,
-    ) -> Self {
+    fn new(worker: &'a SessionWorker, config: &Config, feeds: &'a Feeds, stats: &'a Stats) -> Self {
         Self {
-            processor: PrysmProcessor::new(&start.config),
-            control,
-            start,
-            notices,
+            processor: PrysmProcessor::new(config),
+            control: &worker.control,
+            feeds,
+            stats,
+            notices: &worker.notices,
             last: None,
             last_frame: Instant::now(),
             previous_done: None,
@@ -296,57 +280,29 @@ impl<'a> Stream<'a> {
         }
     }
 
-    fn process(
-        &mut self,
-        pull: Pull,
-        output: &mut Option<Box<dyn LedOutput>>,
-        stop: &Hangup,
-    ) -> Result<()> {
+    fn process(&mut self, pull: Pull, output: &mut SessionOutput, stop: &Hangup) -> Result<()> {
         match pull {
-            Pull::Frame(frame) => {
-                let held = match output {
-                    Some(handle) => handle,
-                    None => match self
-                        .start
-                        .output
-                        .open(OpenIntent::Resume, stop)
-                        .map_err(|failure| failure.into_error().in_section(Section::Output))?
-                    {
-                        OutputOpen::Streaming(handle) => {
-                            self.start.stats.output_opened();
-                            output.insert(handle)
-                        }
-                        OutputOpen::Handoff(observation) => return self.handoff(observation),
-                    },
-                };
-                self.on_frame(frame, held.as_mut())?;
-            }
+            Pull::Frame(frame) => match output.streaming(stop)? {
+                Access::Streaming(held) => self.on_frame(frame, held)?,
+                Access::Handoff(observation) => return self.handoff(observation),
+            },
             quiet => {
                 let now = Instant::now();
                 let refused = matches!(quiet, Pull::Refused);
                 if now - self.last_frame >= VIDEO_GRACE {
-                    self.start.stats.no_frame(refused);
-                    if let Some(held) = output.take() {
+                    self.stats.no_frame(refused);
+                    if output.held().is_some() {
                         self.last = None;
-                        self.start.feeds.clear_colors();
-                        let released = release_output(
-                            held,
-                            prysm_ports::OutputRelease::Ordinary(IdleMode::Native),
-                            stop,
-                        );
-                        if let Err(error) = released
-                            && error.escalation() != prysm_ports::Escalation::Unanswered
-                        {
-                            return Err(error.in_section(Section::Output));
-                        }
+                        self.feeds.clear_colors();
+                        output.release_quiet(stop)?;
                     }
-                } else if let Some(held) = output.as_mut() {
-                    self.on_quiet(refused, &mut **held, now)?;
+                } else if let Some(held) = output.held() {
+                    self.on_quiet(refused, held, now)?;
                 }
             }
         }
         let report = output
-            .as_mut()
+            .held()
             .map_or_else(DeviceReport::default, |output| output.report());
         if report != self.report {
             self.report = report;
@@ -356,7 +312,7 @@ impl<'a> Stream<'a> {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = report;
         }
-        if let Some(held) = output.as_mut()
+        if let Some(held) = output.held()
             && let OutputObservationState::Observed(observation) = held.stream_observation()
             && self.observation != Some(observation)
         {
@@ -384,7 +340,7 @@ impl<'a> Stream<'a> {
             .write(colors)
             .map_err(|error| error.in_section(Section::Output));
         let at = Instant::now();
-        self.start.stats.output_write(at - began, result.is_ok());
+        self.stats.output_write(at - began, result.is_ok());
         result.map(|()| at)
     }
 
@@ -395,11 +351,11 @@ impl<'a> Stream<'a> {
         if let Some(config) = self.control.config.take() {
             self.processor.configure(&config);
         }
-        let preview = self.start.feeds.preview_frame(&frame);
+        let preview = self.feeds.preview_frame(&frame);
         let colors = self.processor.process_frame_at(frame, received);
         let processed = Instant::now();
         let wrote = self.write(output, &colors, processed);
-        self.start.stats.frame(FrameTimes {
+        self.stats.frame(FrameTimes {
             previous_done: self.previous_done.replace(Instant::now()),
             received,
             captured,
@@ -407,15 +363,14 @@ impl<'a> Stream<'a> {
             written: wrote.as_ref().ok().copied(),
         });
         let written = wrote?;
-        self.start
-            .feeds
+        self.feeds
             .publish(&colors, preview, self.processor.viewport());
         self.last = Some((colors, written));
         Ok(())
     }
 
     fn on_quiet(&mut self, refused: bool, output: &mut dyn LedOutput, now: Instant) -> Result<()> {
-        self.start.stats.no_frame(refused);
+        self.stats.no_frame(refused);
         if let Some((colors, written)) = self.last.as_ref()
             && now - *written >= REFRESH
         {
@@ -431,6 +386,21 @@ impl<'a> Stream<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_final_notice_releases_its_channel_before_the_engine_answers() {
+        let (notices, mut events) = notifications::unbounded_channel();
+        let answer = request_idle(notices, true);
+        let Some(Notice::CaptureClosed { decide_idle, .. }) = events.recv().await else {
+            panic!("expected the idle request");
+        };
+        assert!(matches!(
+            events.try_recv(),
+            Err(notifications::error::TryRecvError::Disconnected)
+        ));
+        drop(decide_idle);
+        assert!(answer.await.is_err());
+    }
 
     #[test]
     fn the_frame_loop_takes_only_the_newest_pending_config() {

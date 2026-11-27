@@ -181,12 +181,12 @@ impl Feeds {
 mod tests {
     use super::*;
     use crate::null::{NullOutput, NullSettings};
-    use crate::session::{Notice, Session, Start};
-    use crate::session_lifecycle::OutputRelease;
+    use crate::session::{IdleDecision, Notice, Session, Start};
     use crate::stats::Stats;
     use prysm_core::{Config, PixelFormat};
     use prysm_ports::{
         AdapterSettings, Error, FrameSource, OpenIntent, OutputFactory, Pull, Registry, Result,
+        SourceFactory, ValidationError,
     };
     use std::time::Duration;
 
@@ -218,12 +218,39 @@ mod tests {
         (session, frames)
     }
 
+    struct SingleSource(std::sync::Mutex<Option<Box<dyn FrameSource>>>);
+
+    impl SourceFactory for SingleSource {
+        const KIND: &'static str = "single";
+        type Settings = NullSettings;
+
+        fn validate(&self, _: &NullSettings) -> Result<(), ValidationError> {
+            Ok(())
+        }
+
+        fn open(&self, _: &NullSettings) -> Result<Box<dyn FrameSource>> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .take()
+                .expect("one session per test source"))
+        }
+    }
+
     async fn open_source(feeds: &Feeds, source: impl FrameSource + 'static) -> Session {
         let mut registry = Registry::default();
+        registry.add_source(SingleSource(std::sync::Mutex::new(Some(Box::new(source)))));
         registry.add_output(NullOutput);
-        let mut session = Session::spawn(
+        Session::start(
             ready_claim(),
             Start {
+                capture: registry
+                    .source(&AdapterSettings::new(
+                        SingleSource::KIND,
+                        &NullSettings::new(),
+                    ))
+                    .unwrap(),
                 output: registry
                     .output(&AdapterSettings::new(
                         NullOutput::KIND,
@@ -234,11 +261,26 @@ mod tests {
                 feeds: feeds.clone(),
                 stats: Arc::new(Stats::default()),
             },
-            move |_| Ok(Box::new(source)),
         )
-        .unwrap();
-        assert!(matches!(session.next().await, Notice::CaptureOpened));
-        session
+        .unwrap()
+    }
+
+    async fn authorize_output(session: &mut Session) {
+        let Notice::CaptureOpened { authorize } = session.next().await else {
+            panic!("expected capture open")
+        };
+        authorize.send(OpenIntent::Resume).unwrap();
+    }
+
+    async fn preserve_after_close(session: &mut Session) {
+        let Notice::CaptureClosed {
+            released: true,
+            decide_idle,
+        } = session.next().await
+        else {
+            panic!("expected confirmed capture close")
+        };
+        decide_idle.send(IdleDecision::PRESERVE).unwrap();
     }
 
     #[tokio::test]
@@ -273,26 +315,20 @@ mod tests {
             released,
         };
         let mut session = open_source(&Feeds::default(), source).await;
-        session.open_output(OpenIntent::Resume, ready_claim());
+        authorize_output(&mut session).await;
         assert!(matches!(session.next().await, Notice::OutputOpened));
         assert!(matches!(
             session.next().await,
             Notice::Ended(crate::worker::Exit::Failed(_))
         ));
-        assert!(matches!(
-            session.next().await,
-            Notice::IdleReady {
-                capture_released: true
-            }
-        ));
-        session.idle(OutputRelease::Preserve, None);
+        preserve_after_close(&mut session).await;
         assert!(matches!(session.next().await, Notice::Finished(Ok(_))));
         session.join().await;
     }
 
     async fn start(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
         let (mut session, frames) = open_capture(feeds).await;
-        session.open_output(OpenIntent::Resume, ready_claim());
+        authorize_output(&mut session).await;
         assert!(matches!(session.next().await, Notice::OutputOpened));
         (session, frames)
     }
@@ -366,13 +402,7 @@ mod tests {
     async fn stop(mut session: Session) {
         session.request_stop();
         assert!(matches!(session.next().await, Notice::Ended(_)));
-        assert!(matches!(
-            session.next().await,
-            Notice::IdleReady {
-                capture_released: true
-            }
-        ));
-        session.idle(OutputRelease::Preserve, None);
+        preserve_after_close(&mut session).await;
         let Notice::Finished(Ok(end)) = session.next().await else {
             panic!("session did not finish");
         };
@@ -383,10 +413,14 @@ mod tests {
 
     #[tokio::test]
     async fn stop_before_output_authorization_releases_capture_without_streaming() {
-        let (session, frames) = open_capture(&Feeds::default()).await;
+        let (mut session, frames) = open_capture(&Feeds::default()).await;
+        let Notice::CaptureOpened { authorize } = session.next().await else {
+            panic!("expected authorization request")
+        };
         tokio::time::timeout(Duration::from_secs(5), stop(session))
             .await
             .expect("stopping must wake the worker waiting for output authorization");
+        assert!(authorize.is_closed());
         assert_eq!(frames.load(Ordering::SeqCst), 0);
     }
 

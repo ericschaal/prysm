@@ -2,7 +2,7 @@
 use super::Event;
 use crate::engine::Core;
 use crate::meter::Meter;
-use crate::session::{Lease, Notice, Session, SessionClaims, SessionEnd, Start};
+use crate::session::{IdleDecision, Lease, Notice, Session, SessionClaims, SessionEnd, Start};
 use crate::session_lifecycle::{OutputRelease, SessionPhase};
 use crate::worker::Exit;
 use prysm_ports::{Availability, Error, Power, Result, Section, SessionPhase as FaultPhase};
@@ -55,9 +55,9 @@ impl Core {
             return false;
         };
         let session = Session::start(
-            capture,
             claim,
             Start {
+                capture,
                 output,
                 config: self.config(),
                 feeds: self.feeds.clone(),
@@ -84,13 +84,14 @@ impl Core {
 
     pub(super) async fn session_notice(&mut self, notice: Notice) {
         match notice {
-            Notice::CaptureOpened if self.lighting.lifecycle.capture_opened() => {
+            Notice::CaptureOpened { authorize } if self.lighting.lifecycle.capture_opened() => {
                 if let Some(intent) = self.lighting.intent.sync_open_intent()
                     && self.lighting.output.available() == Availability::Ready
                     && let Some(session) = &mut self.lighting.active
                     && let Some(claim) = self.lighting.output.claim()
                 {
-                    session.open_output(intent, claim);
+                    session.claims.output = Lease::Claimed(claim);
+                    let _ = authorize.send(intent);
                 } else {
                     self.stop_session(OutputRelease::Automatic, false);
                 }
@@ -100,7 +101,7 @@ impl Core {
                 self.lighting.meter = Some(Meter::new(&self.stats));
                 self.lighting.intent.sync_started();
             }
-            Notice::CaptureOpened | Notice::OutputOpened => {}
+            Notice::CaptureOpened { .. } | Notice::OutputOpened => {}
             Notice::Observed(observation) => {
                 if self.lighting.lifecycle.phase() == SessionPhase::Running {
                     self.lighting.intent.observe_power(Some(observation.power));
@@ -142,16 +143,20 @@ impl Core {
                 }
             },
             Notice::Ended(_) => {}
-            Notice::IdleReady { capture_released } => {
-                if !capture_released && self.lighting.intent.off_pending() {
+            Notice::CaptureClosed {
+                released,
+                decide_idle,
+            } => {
+                if !released && self.lighting.intent.off_pending() {
                     // The upcoming fault will prevent a separate command from
                     // running. The owner can still perform Off after close.
                     self.stop_session(OutputRelease::Off, true);
                 }
-                if let Some(mode) = self.lighting.lifecycle.take_idle()
-                    && let Some(session) = &mut self.lighting.active
-                {
-                    session.idle(mode, self.lighting.intent.physical_power());
+                if let Some(mode) = self.lighting.lifecycle.take_idle() {
+                    let _ = decide_idle.send(IdleDecision {
+                        mode,
+                        known_power: self.lighting.intent.physical_power(),
+                    });
                 }
             }
             Notice::Finished(end) => {
@@ -274,3 +279,6 @@ impl Core {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
