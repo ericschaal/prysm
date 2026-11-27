@@ -23,9 +23,8 @@ import {
 import {
   note,
   warning,
-  noPictureCopy,
+  refusedVideo,
   problemCopy,
-  stopping,
   setupLights,
   tvCopy,
   updating,
@@ -101,7 +100,8 @@ export function fullStatus(state: FullState, portal: PortalFacts | null): Copy {
   const phase = state.worker.phase;
   const lighting = portal?.lighting;
   const problem = problemOf(state);
-  if (phase === 'stopping' && !problem) return stopping('full');
+  if (phase === 'stopping' && !problem)
+    return note('Restarting Prysm…', 'This takes a moment.');
   if (noLights(portal)) return setupLights;
   if (phase === 'unknown') return updating;
   if (problem) {
@@ -157,8 +157,11 @@ export function fullStatus(state: FullState, portal: PortalFacts | null): Copy {
   const picture = lighting?.input ? pictureOf(lighting.input) : undefined;
   const flowing = picture ? picture === 'arriving' : isCapturing(state);
   if (flowing) return note('Screen sync on', 'Your lights follow the picture.');
-  if (picture === 'refused') return noPictureCopy('refused', 'full');
+  if (picture === 'refused') return refusedVideo('full');
   if (fullPortal(state) && phase === 'running')
-    return noPictureCopy('quiet', 'full');
+    return note(
+      'Waiting for video',
+      'Screen sync starts when a picture arrives.',
+    );
   return starting('screen_sync');
 }

@@ -2,7 +2,7 @@
  * The status card's words that both packages use, and the primary
  * button's labels.
  */
-import { outputIssueHeadline, type Picture } from '@prysm/application-client';
+import { outputIssueHeadline } from '@prysm/application-client';
 import {
   isEnabled,
   type Asked,
@@ -10,44 +10,6 @@ import {
   type State,
 } from '@prysm/webos-platform';
 import type { Button, PrimaryAction } from './situation';
-
-/**
- * The title while the TV refuses to share the video it shows; the lights
- * card says why (`REFUSED_VIDEO`), as the title and detail fit one line each.
- */
-const REFUSED = 'Video can’t be captured';
-
-/**
- * The status card while the capture gives no picture, by why and package
- * (slim's `quiet` also while its worker has not reported yet). Neither is a
- * failure: no button but slim's usual one, and a refusal ends by itself
- * when the video changes.
- */
-const waitingStatus: Record<
-  Exclude<Picture, 'arriving'>,
-  Record<Flavor, { title: string; description: string }>
-> = {
-  quiet: {
-    full: {
-      title: 'Waiting for video',
-      description: 'Screen sync starts when a picture arrives.',
-    },
-    slim: {
-      title: 'Starting capture…',
-      description: 'Waiting for the first picture.',
-    },
-  },
-  refused: {
-    full: {
-      title: REFUSED,
-      description: 'Screen sync continues when the video changes.',
-    },
-    slim: {
-      title: REFUSED,
-      description: 'Capture continues when the video changes.',
-    },
-  },
-};
 
 /** The status card's words, without its button. */
 export interface Copy {
@@ -126,20 +88,16 @@ export const buttons: Record<Button, { label: string; action: PrimaryAction }> =
     start: { label: 'Start capture', action: 'enable' },
   };
 
-/** How the package describes stopping and waking. */
-const packageWords: Record<Flavor, { stopping: string; wakes: string }> = {
-  full: {
-    stopping: 'Restarting Prysm…',
-    wakes: 'Screen sync continues when the TV wakes up.',
-  },
-  slim: {
-    stopping: 'Stopping capture…',
-    wakes: 'Capture continues when the TV wakes up.',
-  },
+const captureName: Record<Flavor, string> = {
+  full: 'Screen sync',
+  slim: 'Capture',
 };
 
-export function stopping(flavor: Flavor): Copy {
-  return note(packageWords[flavor].stopping, 'This takes a moment.');
+export function refusedVideo(flavor: Flavor): Copy {
+  return note(
+    'Video can’t be captured',
+    `${captureName[flavor]} continues when the video changes.`,
+  );
 }
 
 export const setupLights = {
@@ -161,7 +119,7 @@ export function tvCopy(state: State): Copy | null {
   if (state.power !== 'active')
     return note(
       state.power === 'screen_saver' ? 'Screen saver is on' : 'TV is asleep',
-      packageWords[state.flavor].wakes,
+      `${captureName[state.flavor]} continues when the TV wakes up.`,
     );
   if (state.video === 'unavailable')
     return note(
@@ -169,11 +127,4 @@ export function tvCopy(state: State): Copy | null {
       'Choose an input or play something on the TV.',
     );
   return null;
-}
-
-export function noPictureCopy(
-  picture: Exclude<Picture, 'arriving'>,
-  flavor: Flavor,
-): Copy {
-  return { ...waitingStatus[picture][flavor], attention: false };
 }

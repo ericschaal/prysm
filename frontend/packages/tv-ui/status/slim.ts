@@ -16,9 +16,8 @@ import {
 import {
   note,
   warning,
-  noPictureCopy,
+  refusedVideo,
   problemCopy,
-  stopping,
   setupLights,
   tvCopy,
   updating,
@@ -28,7 +27,8 @@ import {
 export function slimStatus(state: SlimState, portal: PortalFacts | null): Copy {
   const phase = state.worker.phase;
   const problem = problemOf(state);
-  if (phase === 'stopping' && !problem) return stopping('slim');
+  if (phase === 'stopping' && !problem)
+    return note('Stopping capture…', 'This takes a moment.');
   if (problem) return problemCopy(problem.asked, 'Capture stopped', 'slim');
   // The running worker's own failures, as its link says them.
   const link = slimLink(state)?.state;
@@ -70,13 +70,13 @@ export function slimStatus(state: SlimState, portal: PortalFacts | null): Copy {
       'Waiting for video',
       'Capture resumes when the video signal changes.',
     );
-  if (isRefused(state)) return noPictureCopy('refused', 'slim');
+  if (isRefused(state)) return refusedVideo('slim');
   if (isCapturing(state))
     return note(
       'Sending the picture',
       'Prysm on your computer lights up with it.',
     );
-  return noPictureCopy('quiet', 'slim');
+  return note('Starting capture…', 'Waiting for the first picture.');
 }
 
 /**
