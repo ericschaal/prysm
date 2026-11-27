@@ -187,11 +187,10 @@ Code: [webos-service](../../crates/hosts/webos-service/src/lib.rs),
 - A worker runs while the TV is on (active or screen saver) and, for slim,
   while capture is enabled and `prysm_address` is set. Video is reported
   unavailable unless the TV is active.
-- The service keeps its last displayed full target or slim enablement with
-  the boot ID in `resume.json`. Slim uses **Start with TV** (`autostart`) on
-  a TV reboot. The full worker reconciles physical power and display with
-  the mode stored by the engine at every launch. The displayed target in
-  `resume.json` never generates a lighting command.
+- The service keeps its last displayed full target or slim enablement in
+  `/run/io.github.ericschaal.prysm-resume.json` for the current boot. Slim
+  uses **Start with TV** (`autostart`) after a TV reboot. The full worker reconciles
+  physical power and display with the mode stored by the engine at every launch.
 
 The full worker waits for known recoverable adapter conditions. A blocked
 session stays Off until a new request. The worker reports a capture stall
@@ -316,9 +315,10 @@ what a running worker asks. `asked` is `{ "step": "unanswered" }` (the
 lights do not answer and Prysm stopped trying) or `{ "step": "ask", "fix":
 … }` with `try_again`, `change_settings`, `set_up`, `unsupported` or
 `restart_tv`. For slim, `autostart` controls streaming on TV boot, and
-a service restart within one boot restores enablement from `resume.json`.
-The file uses `{ "boot": …, "intent": "off" | "screen_sync" | "effects" }`;
-slim streaming is `screen_sync`. API version 5 (the document's `info.version`).
+a service restart within one boot restores enablement from the file in `/run`.
+The file contains a JSON string (`"off"`, `"screen_sync"` or `"effects"`).
+On the first upgrade from the persistent `resume.json` format, slim uses
+**Start with TV**. Later service restarts resume the current boot’s choice. API version 5 (the document's `info.version`).
 
 Values the service sends are open, as on HTTP
 ([decision](decisions/2026-11-22-open-response-enums.md)): the app reads a
@@ -368,7 +368,7 @@ The TV app sets the service up through the Homebrew Channel's `exec` of
 | `/var/luna-service2/manifests.d/io.github.ericschaal.prysm.supervisor.json`, `io.github.ericschaal.prysm.worker.json` | Luna role registration, written by `setup` |
 | `/var/lib/webosbrew/init.d/io.github.ericschaal.prysm` | Boot hook; runs `setup` at boot |
 | `/var/lib/io.github.ericschaal.prysm/tv.json` | Preferences (supervisor) |
-| `/var/lib/io.github.ericschaal.prysm/resume.json` | Intent and boot ID (supervisor) |
+| `/run/io.github.ericschaal.prysm-resume.json` | Supervisor intent for the current boot |
 | `/var/lib/io.github.ericschaal.prysm/settings.json` | Full only: portal settings (worker's engine) |
 
 `prysm-webos-service setup` writes the manifests and boot hook, rescans Luna
@@ -381,7 +381,7 @@ scripts. The Luna method `uninstall` (only the app may call it) replies at
 once, stops the worker gracefully (TERM, KILL 8 s later), then removes the
 hook and manifests, rescans and exits. The `uninstall` subcommand only
 deregisters (hook, manifests, rescan); it does not stop a running Prysm.
-Preferences, settings and the intent in `resume.json` stay either way.
+Preferences and settings survive an uninstall. The supervisor intent remains available until reboot.
 Remove the setup before the app, or the registration stays behind; removing
 the app ends a running Prysm abruptly, so stop it first (the Luna method
 does). Installing over a running Prysm ends it abruptly too, so

@@ -31,7 +31,7 @@ pub fn serve(
     let service = Service::new(
         identity.config(),
         ProcessLauncher::new(wake.waker()),
-        FileStore::new(identity.preferences()),
+        FileStore::new(identity.preferences(), &identity.resume_path),
         FsInstaller::new(identity.layout.clone()),
         Instant::now(),
     );

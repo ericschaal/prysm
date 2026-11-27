@@ -5,7 +5,7 @@ use crate::identity::APP_ID;
 use crate::install::InstallError;
 use crate::launcher::Output;
 use crate::machine::Exit;
-use crate::preferences::{MemoryStore, StoreError};
+use crate::preferences::{FileStore, MemoryStore, StoreError};
 use prysm_webos_link::{Command, Event, FullStatus, Video, WorkerStatus};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -423,6 +423,48 @@ fn a_failed_save_changes_nothing() {
     assert_eq!(service.machine().preferences(), &Preferences::default());
 }
 
+#[test]
+fn slim_resumes_manual_enablement_only_while_the_boot_local_file_exists() {
+    use LightingTarget::{Off, ScreenSync};
+    for (autostart, boot_intent, manual_intent) in
+        [(false, Off, ScreenSync), (true, ScreenSync, Off)]
+    {
+        let data = tempfile::tempdir().unwrap();
+        let run = tempfile::tempdir().unwrap();
+        let prefs = data.path().join("tv.json");
+        let resume = run.path().join("resume.json");
+        std::fs::write(&prefs, format!(r#"{{"autostart":{autostart}}}"#)).unwrap();
+        let legacy = serde_json::json!({"boot": "reused-id", "intent": manual_intent});
+        std::fs::write(data.path().join("resume.json"), legacy.to_string()).unwrap();
+        let start = || {
+            Service::new(
+                slim_config(),
+                FakeLauncher::default(),
+                FileStore::new(&prefs, &resume),
+                FakeInstaller::default(),
+                Instant::now(),
+            )
+        };
+        let mut service = start();
+        assert_eq!(service.machine().intent(), boot_intent);
+        let reply = service.request(
+            &mut FakeBus::default(),
+            "setEnabled",
+            APP_ID,
+            &format!(r#"{{"enabled":{}}}"#, !autostart),
+            Instant::now(),
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&reply.payload).unwrap()["returnValue"],
+            true
+        );
+        drop(service);
+        assert_eq!(start().machine().intent(), manual_intent);
+        std::fs::remove_file(&resume).unwrap();
+        assert_eq!(start().machine().intent(), boot_intent);
+    }
+}
+
 /// No `tv.json` yet: the defaults, and no failure.
 #[test]
 fn a_missing_preferences_file_is_no_failure() {
@@ -430,8 +472,7 @@ fn a_missing_preferences_file_is_no_failure() {
     let service = Service::new(
         slim_config(),
         FakeLauncher::default(),
-        crate::preferences::FileStore::new(dir.path().join("tv.json"))
-            .with_boot_id(dir.path().join("no-boot-id")),
+        FileStore::new(dir.path().join("tv.json"), dir.path().join("resume.json")),
         FakeInstaller::default(),
         Instant::now(),
     );
@@ -456,7 +497,7 @@ fn unreadable_preferences_are_reported_and_kept_until_saved() {
         let mut service = Service::new(
             config,
             FakeLauncher::default(),
-            crate::preferences::FileStore::new(&path).with_boot_id(dir.path().join("no-boot-id")),
+            FileStore::new(&path, dir.path().join("resume.json")),
             FakeInstaller::default(),
             Instant::now(),
         );

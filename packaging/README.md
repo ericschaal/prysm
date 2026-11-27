@@ -250,7 +250,7 @@ Installed layout (`/media/developer/apps/usr/palm/…`):
 
 `setup` writes `/var/luna-service2/manifests.d/io.github.ericschaal.prysm.{supervisor,worker}.json`
 and the boot hook `/var/lib/webosbrew/init.d/io.github.ericschaal.prysm`; preferences and
-settings live in `/var/lib/io.github.ericschaal.prysm` (`tv.json`, `resume.json`, full:
+settings live in `/var/lib/io.github.ericschaal.prysm` (`tv.json` and, for full,
 `settings.json`). The Luna method `uninstall` (from the
 TV app) removes the registration before the IPK is removed. A refused call
 replies `errorKind` and `errorText`
@@ -309,10 +309,9 @@ interactively). Wait for the `installed` reply before the next step.
 app's set-up action and the boot hook run the same `prysm-webos-service
 setup`): the service is not running again until then, and nothing in the
 package can trigger it, since IPKs carry no install scripts. Setup rescans
-and activates the service, which then resumes what it was doing: the
-supervisor keeps the intent (full: lighting target; slim: enabled) with the
-boot id in `/var/lib/io.github.ericschaal.prysm/resume.json`, so a restart in the same boot
-restores it, and a reboot starts from `autostart` as before.
+and activates the service. The supervisor reads its same-boot intent from
+`/run/io.github.ericschaal.prysm-resume.json`. After a reboot, slim uses
+**Start with TV** and full reconciles with the lights.
 
 ### Checking the slim H.264 encoder on a TV
 

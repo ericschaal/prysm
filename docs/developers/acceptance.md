@@ -732,7 +732,7 @@ and none after it.
   package's at the address `getState` reports; the Linux package's at
   `HOST:8787`), and on the TV `getState`'s flavour, preferences (`autostart`,
   `prysm_address`) and intent (full `target`, slim `enabled`), and the data files `tv.json`,
-  `settings.json` and `resume.json` as they are, and for the Linux package
+  `settings.json` and any legacy `resume.json` as they are, and for the Linux package
   its options file `/etc/default/prysm-headless` as it is (`deb.options`;
   the purge deletes it). It reads the file back and
   compares it. When the backup cannot be taken (an installed Prysm that does
