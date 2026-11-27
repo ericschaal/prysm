@@ -475,6 +475,7 @@ name = "prysm-webos-luna-sys"
 version = "0.0.0"
 dependencies = [
  "libloading",
+ "once_cell",
  "thiserror",
 ]
 
