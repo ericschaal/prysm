@@ -432,7 +432,6 @@ export function lunaTvService(
     payload: object,
     onReply: (text: string) => boolean,
     onFailure: (error: LunaError) => void,
-    timeoutMs: number | null,
   ): () => void {
     if (!bridge) {
       onFailure(notOnTv());
@@ -445,29 +444,23 @@ export function lunaTvService(
       onFailure(new LunaError('unavailable', String(error)));
       return () => {};
     }
-    let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     function cancel() {
-      if (!active) return;
       // Cancelling may call back synchronously; ignore it once released.
-      active = false;
+      if (!pending.delete(cancel)) return false;
       clearTimeout(timer);
-      pending.delete(cancel);
       channel.cancel();
+      return true;
     }
     const fail = (error: LunaError) => {
-      if (!active) return;
-      cancel();
-      onFailure(error);
+      if (cancel()) onFailure(error);
     };
-    if (timeoutMs !== null)
-      timer = setTimeout(
-        () => fail(new LunaError('timeout', 'The TV service didn’t respond.')),
-        timeoutMs,
-      );
+    const timer = setTimeout(
+      () => fail(new LunaError('timeout', 'The TV service didn’t respond.')),
+      CALL_TIMEOUT_MS,
+    );
     pending.add(cancel);
     channel.onservicecallback = (text) => {
-      if (!active) return;
+      if (!pending.has(cancel)) return;
       clearTimeout(timer);
       let done: boolean;
       try {
@@ -509,7 +502,6 @@ export function lunaTvService(
           return true;
         },
         reject,
-        CALL_TIMEOUT_MS,
       );
     });
   }
@@ -545,7 +537,6 @@ export function lunaTvService(
             return false;
           },
           failed,
-          CALL_TIMEOUT_MS,
         );
         // The bridge may deliver its first reply before call() returns.
         if (stopped) close();

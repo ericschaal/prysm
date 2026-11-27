@@ -152,10 +152,6 @@ struct Pipes {
     tail: Tail,
 }
 
-fn readable(fd: &PollFd<'_>) -> bool {
-    fd.revents().is_some_and(|events| !events.is_empty())
-}
-
 /// Rounded up so a sub-millisecond remainder does not spin. Longer than
 /// `poll` takes (about 65 s) is cut short; every caller polls again until
 /// its deadline.
@@ -171,15 +167,13 @@ impl Pipes {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let (out, err) = {
-                let stdout = PollFd::new(self.stdout.as_fd(), PollFlags::POLLIN);
+                let mut stdout = PollFd::new(self.stdout.as_fd(), PollFlags::POLLIN);
                 let mut both;
-                let mut one;
-                let fds: &mut [PollFd<'_>] = if let Some(stderr) = &self.stderr {
+                let fds = if let Some(stderr) = &self.stderr {
                     both = [stdout, PollFd::new(stderr.as_fd(), PollFlags::POLLIN)];
-                    &mut both
+                    both.as_mut_slice()
                 } else {
-                    one = [stdout];
-                    &mut one
+                    std::slice::from_mut(&mut stdout)
                 };
                 match poll(fds, poll_timeout(left)) {
                     Ok(_) => {}
@@ -191,7 +185,10 @@ impl Pipes {
                         ));
                     }
                 }
-                (readable(&fds[0]), fds.get(1).is_some_and(readable))
+                (
+                    fds[0].any() == Some(true),
+                    fds.get(1).and_then(PollFd::any) == Some(true),
+                )
             };
             if err {
                 self.drain_stderr();
@@ -235,8 +232,7 @@ impl Pipes {
                     return;
                 }
             }
-            let ready = readable(&fds[0]);
-            if ready {
+            if fds[0].any() == Some(true) {
                 self.drain_stderr();
             } else if left.is_zero() {
                 return;

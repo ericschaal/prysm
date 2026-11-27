@@ -72,7 +72,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, view: &View<'_>) {
     );
     let block = panel(" Diagnostics · newest first ");
     let rows = usize::from(block.inner(events).height);
-    let mut lines: Vec<_> = diagnostics(view).into_iter().take(rows).collect();
+    let mut lines: Vec<_> = diagnostics(view).take(rows).collect();
     if lines.is_empty() {
         lines.push(Line::styled("No events yet", Style::default().fg(MUTED)));
     }
@@ -97,24 +97,22 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
         leds_panel(frame, view, leds);
     }
     let snapshot = view.snapshot;
-    let issue = snapshot
-        .device
-        .issue
-        .map_or_else(String::new, |issue| format!(" · Lights: {issue}"));
+    let mut summary = format!(
+        "Target {} · Session {}",
+        snapshot.target.as_str(),
+        session_label(snapshot)
+    );
+    if let Some(input) = input_label(snapshot) {
+        summary.push_str(" · Input: ");
+        summary.push_str(&input);
+    }
+    if let Some(issue) = snapshot.device.issue {
+        summary.push_str(" · Lights: ");
+        summary.push_str(&issue.to_string());
+    }
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(match input_label(snapshot) {
-                Some(input) => format!(
-                    "Target {} · Session {} · Input: {input}{issue}",
-                    snapshot.target.as_str(),
-                    session_label(snapshot)
-                ),
-                None => format!(
-                    "Target {} · Session {}{issue}",
-                    snapshot.target.as_str(),
-                    session_label(snapshot)
-                ),
-            }),
+            Line::from(summary),
             Line::from(format!(
                 "{} → {} · rev {}",
                 adapter_label(snapshot.settings.capture.as_ref()),
@@ -124,7 +122,7 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
         ]),
         status,
     );
-    if let Some(line) = diagnostics(view).into_iter().next() {
+    if let Some(line) = diagnostics(view).next() {
         frame.render_widget(line, event);
     }
     footer_line(frame, view.ui, footer);
@@ -134,10 +132,7 @@ fn header_line(snapshot: &Snapshot) -> Line<'static> {
     Line::from(vec![
         Span::styled(" PRYSM ", Style::default().fg(BACKGROUND).bg(ACCENT).bold()),
         Span::styled("  TERMINAL  /  ", Style::default().fg(MUTED)),
-        Span::styled(
-            session_label(snapshot),
-            Style::default().fg(session_color(snapshot)).bold(),
-        ),
+        styled_session(snapshot),
     ])
 }
 
@@ -153,10 +148,7 @@ pub(crate) fn status_lines(view: &View<'_>) -> Vec<Line<'static>> {
         field("Target", snapshot.target.as_str().to_owned()),
         Line::from(vec![
             Span::styled("Session   ", Style::default().fg(MUTED)),
-            Span::styled(
-                session_label(snapshot),
-                Style::default().fg(session_color(snapshot)).bold(),
-            ),
+            styled_session(snapshot),
         ]),
     ];
     if let Some(input) = input_label(snapshot) {
@@ -217,31 +209,28 @@ fn field(name: &str, value: String) -> Line<'static> {
 
 /// Lighting failure, surface failures, then notices; newest first. Each
 /// failure ends with the person's next step.
-pub(crate) fn diagnostics(view: &View<'_>) -> Vec<Line<'static>> {
+fn diagnostics(view: &View<'_>) -> impl Iterator<Item = Line<'static>> {
     let snapshot = view.snapshot;
     let lighting = match &snapshot.session {
-        SessionState::Faulted(phase) => Some(Error::Faulted(*phase)),
-        session => session.failure().cloned(),
+        SessionState::Faulted(phase) => Some(failed("Lighting", &Error::Faulted(*phase))),
+        session => session.failure().map(|error| {
+            if snapshot.control.waiting.is_some() {
+                Notice::info(format!("Lighting waiting: {}", chain(error)))
+            } else {
+                failed("Lighting", error)
+            }
+        }),
     };
-    let failures = lighting.iter().map(|error| {
-        if snapshot.control.waiting.is_some()
-            && !matches!(snapshot.session, SessionState::Faulted(_))
-        {
-            Notice::info(format!("Lighting waiting: {}", chain(error)))
-        } else {
-            failed("Lighting", error)
-        }
-    });
     let surfaces = snapshot
         .surface_failures
         .iter()
         .rev()
         .map(|error| failed("Surface", error));
-    failures
+    lighting
+        .into_iter()
         .chain(surfaces)
         .chain(view.ui.notices().cloned())
-        .map(|notice| event_line(&notice))
-        .collect()
+        .map(event_line)
 }
 
 fn failed(what: &str, error: &Error) -> Notice {
@@ -249,7 +238,7 @@ fn failed(what: &str, error: &Error) -> Notice {
     Notice::error(format!("{what}: {} ({step})", chain(error)))
 }
 
-fn event_line(notice: &Notice) -> Line<'static> {
+fn event_line(notice: Notice) -> Line<'static> {
     let (label, color) = match notice.severity {
         Severity::Info => ("INFO ", TEXT),
         Severity::Error => ("ERROR", ERROR),
@@ -257,7 +246,7 @@ fn event_line(notice: &Notice) -> Line<'static> {
     Line::from(vec![
         Span::styled(label, Style::default().fg(color).bold()),
         Span::raw("  "),
-        Span::raw(notice.text.clone()),
+        Span::raw(notice.text),
     ])
 }
 
@@ -276,16 +265,18 @@ fn session_label(snapshot: &Snapshot) -> String {
     }
 }
 
-fn session_color(snapshot: &Snapshot) -> Color {
-    if snapshot.control.waiting.is_some() {
-        return WARNING;
-    }
-    match &snapshot.session {
-        SessionState::ScreenSync => ACCENT,
-        SessionState::Effects { .. } | SessionState::Unanswered { .. } => WARNING,
-        SessionState::Faulted(_) => ERROR,
-        SessionState::Stopped { .. } => MUTED,
-    }
+fn styled_session(snapshot: &Snapshot) -> Span<'static> {
+    let color = if snapshot.control.waiting.is_some() {
+        WARNING
+    } else {
+        match &snapshot.session {
+            SessionState::ScreenSync => ACCENT,
+            SessionState::Effects { .. } | SessionState::Unanswered { .. } => WARNING,
+            SessionState::Faulted(_) => ERROR,
+            SessionState::Stopped { .. } => MUTED,
+        }
+    };
+    Span::styled(session_label(snapshot), Style::default().fg(color).bold())
 }
 
 /// Frame rate while frames arrive, why not while the running source gives

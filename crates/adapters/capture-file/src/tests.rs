@@ -1,6 +1,8 @@
 use super::*;
 use crate::players;
 use crate::source::{Deadlines, DecoderExit, Ended, FileFrames, STDERR_TAIL, ffmpeg};
+use nix::sys::signal::kill;
+use nix::unistd::{Pid, getpgid};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Pull, Registry, Settings, chain};
 use prysm_testkit::within;
@@ -54,18 +56,13 @@ fn next(frames: &mut dyn FrameSource) -> prysm_ports::Result<Frame> {
 }
 
 fn alive(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap()
-        .success()
+    kill(Pid::from_raw(pid.try_into().unwrap()), None).is_ok()
 }
 
 #[test]
-fn frames_have_the_requested_size_and_format_then_playback_finishes() {
+fn playback_keeps_the_requested_frame_size_and_format_after_stderr_closes() {
     within(LIMIT, || {
-        let script = format!("{}; {}", frame_of('A'), frame_of('B'));
+        let script = format!("exec 2>&-; {}; {}", frame_of('A'), frame_of('B'));
         let mut frames = spawn(&script);
         for fill in *b"AB" {
             let frame = next(&mut frames).unwrap();
@@ -250,12 +247,8 @@ fn the_decoder_runs_in_a_process_group_of_its_own() {
     within(LIMIT, || {
         let frames = spawn("exec sleep 30");
         let pid = frames.pid();
-        let group = Command::new("ps")
-            .args(["-o", "pgid=", "-p", &pid.to_string()])
-            .output()
-            .unwrap();
-        let group = String::from_utf8(group.stdout).unwrap();
-        assert_eq!(group.trim(), pid.to_string());
+        let child = Pid::from_raw(pid.try_into().unwrap());
+        assert_eq!(getpgid(Some(child)).unwrap(), child);
         assert_ne!(pid, std::process::id());
         assert!(players::listed(pid));
         Box::new(frames).close().unwrap();

@@ -5,7 +5,7 @@ use prysm_capture_remote::RemoteReceiver;
 use prysm_output_wled::Wled;
 use prysm_ports::{
     Error, Handoff, LightingTarget, OutputIssue, Result, SessionState, Snapshot, SourceFactory,
-    chain,
+    WaitingFor, chain,
 };
 use prysm_runtime::logging::{self, Logs};
 use prysm_runtime::{Builder, EngineHandle, NullOutput, Prysm, STOP_DEADLINE, Shutdown, Surface};
@@ -462,26 +462,16 @@ struct Seen {
 impl Seen {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<String> {
         let mut lines = Vec::new();
-        let mut state = format!(
-            "target {}, session {}",
-            snapshot.target.as_str(),
-            snapshot.session
-        );
-        if let Some(waiting) = snapshot.control.waiting {
-            let prerequisite = match waiting {
-                prysm_ports::WaitingFor::Capture => "capture",
-                prysm_ports::WaitingFor::Output => "lights",
-            };
-            state = format!(
-                "target {}, waiting for {prerequisite}",
-                snapshot.target.as_str()
-            );
-        } else if let SessionState::Faulted(phase) = snapshot.session {
-            state = format!(
-                "{state} ({})",
-                Error::Faulted(phase).escalation().next_step()
-            );
-        }
+        let target = snapshot.target.as_str();
+        let state = match (snapshot.control.waiting, &snapshot.session) {
+            (Some(WaitingFor::Capture), _) => format!("target {target}, waiting for capture"),
+            (Some(WaitingFor::Output), _) => format!("target {target}, waiting for lights"),
+            (None, session @ SessionState::Faulted(phase)) => {
+                let step = Error::Faulted(*phase).escalation().next_step();
+                format!("target {target}, session {session} ({step})")
+            }
+            (None, session) => format!("target {target}, session {session}"),
+        };
         if self.state.as_ref() != Some(&state) {
             lines.push(state.clone());
             self.state = Some(state);
@@ -568,6 +558,17 @@ mod tests {
             seen.update(&snapshot),
             ["target screen_sync, session faulted while idling the output (restart Prysm)"]
         );
+        for (waiting, expected) in [
+            (
+                WaitingFor::Capture,
+                "target screen_sync, waiting for capture",
+            ),
+            (WaitingFor::Output, "target screen_sync, waiting for lights"),
+        ] {
+            snapshot.control.waiting = Some(waiting);
+            assert_eq!(seen.update(&snapshot), [expected]);
+            assert!(seen.update(&snapshot).is_empty());
+        }
     }
 
     #[test]
