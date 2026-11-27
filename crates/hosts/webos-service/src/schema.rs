@@ -29,42 +29,32 @@ use utoipa::openapi::schema::{ObjectBuilder, Type};
 /// product version, which only `VERSION` carries.
 pub const API_VERSION: &str = "5";
 
-fn constant(value: bool) -> ObjectBuilder {
+pub(crate) fn boolean<const VALUE: bool>() -> ObjectBuilder {
     ObjectBuilder::new()
         .schema_type(Type::Boolean)
-        .enum_values(Some([value]))
-}
-
-/// The schema of LS2's `returnValue` on success.
-pub(crate) fn always_true() -> ObjectBuilder {
-    constant(true)
-}
-
-/// The schema of LS2's `returnValue` on failure.
-pub(crate) fn always_false() -> ObjectBuilder {
-    constant(false)
+        .enum_values(Some([VALUE]))
 }
 
 #[derive(utoipa::OpenApi)]
-#[openapi(components(schemas(
-    GetStateRequest,
-    SetTargetRequest,
-    SetEnabledRequest,
-    UninstallRequest,
-    Preferences,
-    StateReply,
-    DoneReply,
-    ErrorReply,
-)))]
+#[openapi(
+    info(title = format!("Prysm TV service (luna://{APP_ID}.service)"), version = API_VERSION),
+    components(schemas(
+        GetStateRequest,
+        SetTargetRequest,
+        SetEnabledRequest,
+        UninstallRequest,
+        Preferences,
+        StateReply,
+        DoneReply,
+        ErrorReply,
+    ))
+)]
 struct Roots;
 
 /// The `luna` document.
 #[must_use]
 pub fn document() -> OpenApi {
-    let mut document = Roots::openapi();
-    document.info.title = format!("Prysm TV service (luna://{APP_ID}.service)");
-    document.info.version = API_VERSION.into();
-    document
+    Roots::openapi()
 }
 
 #[cfg(test)]

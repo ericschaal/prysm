@@ -5,8 +5,7 @@ use crate::offer::Offer;
 use crate::receive;
 use crate::request::RemoteSettings;
 use crate::wire::{
-    self, Encoding, FromReceiver, Header, MAX_TEXT_BYTES, Refusal, RefusalCause, ToReceiver,
-    WireError,
+    self, Encoding, FromReceiver, Header, MAX_TEXT_BYTES, Refusal, RefusalCause, WireError,
 };
 use bytes::{Bytes, BytesMut};
 use prysm_core::Frame;
@@ -537,8 +536,8 @@ fn authorities() -> Result<Arc<rustls::ClientConfig>, WireError> {
 /// Tell the receiver that this end cannot produce its request, and close
 /// the connection. Best effort, within the socket's write timeout.
 fn refuse<S: Read + Write>(link: &mut Link<S>, cause: RefusalCause, reason: &str) {
-    let refusal = ToReceiver::Refused(Refusal::new(cause, reason));
-    let _ = link.send(Message::Text(wire::encode_to_receiver(&refusal).into()));
+    let refusal = Refusal::new(cause, reason);
+    let _ = link.send(Message::Text(wire::encode_refusal(refusal).into()));
     let _ = link.close(None);
 }
 

@@ -7,7 +7,7 @@ use crate::offer::Offer;
 use crate::request::RemoteSettings;
 use crate::wire::{
     self, Encoding, FLAG_BYTE, FromReceiver, FromSender, KEYFRAME, MAX_HEIGHT, MAX_PAYLOAD_BYTES,
-    MAX_REASON_BYTES, MAX_WIDTH, Refusal, RefusalCause, ToReceiver, ToSender,
+    MAX_REASON_BYTES, MAX_WIDTH, Refusal, RefusalCause, ToSender,
 };
 use prysm_ports::StreamEncoding;
 
@@ -100,7 +100,7 @@ pub fn from_sender(text: &str) {
         return;
     };
     assert!(refusal.reason.len() <= MAX_REASON_BYTES);
-    let sent = wire::encode_to_receiver(&ToReceiver::Refused(refusal.clone()));
+    let sent = wire::encode_refusal(refusal.clone());
     assert_eq!(wire::decode_from_sender(&sent), Ok(message));
 }
 

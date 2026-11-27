@@ -137,19 +137,12 @@ pub(crate) enum RefusalCause {
 /// `{"type":"refused","cause":"encoding","reason":"..."}`, after which the
 /// sender closes the connection. A type this end does not know is
 /// [`FromSender::Unknown`].
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum FromSender {
     Refused(Refusal),
-    #[serde(other)]
+    #[serde(other, skip_serializing)]
     Unknown,
-}
-
-/// The sender's text messages, as it sends them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum ToReceiver {
-    Refused(Refusal),
 }
 
 /// The sender cannot produce the request.
@@ -311,9 +304,9 @@ pub(crate) fn decode_from_receiver(text: &str) -> Result<FromReceiver, WireError
     serde_json::from_str(text).map_err(|error| WireError::Json(error.to_string()))
 }
 
-/// A sender's message, as its text message.
-pub(crate) fn encode_to_receiver(message: &ToReceiver) -> String {
-    serde_json::to_string(message).expect("sender messages serialize")
+/// A refusal as a text message to the receiver.
+pub(crate) fn encode_refusal(refusal: Refusal) -> String {
+    serde_json::to_string(&FromSender::Refused(refusal)).expect("refusals serialize")
 }
 
 /// A sender's message from its text message; a refusal's reason is bounded.
@@ -808,7 +801,7 @@ mod tests {
             RefusalCause::Encoding,
             "hardware H.264 encoder cannot start",
         );
-        let text = encode_to_receiver(&ToReceiver::Refused(refusal.clone()));
+        let text = encode_refusal(refusal.clone());
         assert_eq!(
             text,
             r#"{"type":"refused","cause":"encoding","reason":"hardware H.264 encoder cannot start"}"#
@@ -817,7 +810,7 @@ mod tests {
         let long = "é".repeat(MAX_REASON_BYTES);
         let cut = Refusal::new(RefusalCause::Request, &long);
         assert_eq!(cut.reason.len(), MAX_REASON_BYTES);
-        assert!(decode_from_sender(&encode_to_receiver(&ToReceiver::Refused(cut))).is_ok());
+        assert!(decode_from_sender(&encode_refusal(cut)).is_ok());
         for bad in [
             r#"{"type":"refused","reason":"x"}"#,
             r#"{"type":"refused","cause":"request"}"#,
@@ -854,6 +847,7 @@ mod tests {
             decode_from_sender(r#"{"type":"stats","sent":10}"#),
             Ok(FromSender::Unknown)
         );
+        assert!(serde_json::to_string(&FromSender::Unknown).is_err());
         assert_eq!(
             serde_json::to_string(&RefusalCause::Request).unwrap(),
             r#""request""#

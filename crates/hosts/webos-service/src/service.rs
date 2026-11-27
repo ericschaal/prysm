@@ -164,7 +164,7 @@ pub enum ErrorKind {
 pub struct StateReply {
     #[serde(flatten)]
     state: State,
-    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::always_true))]
+    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::boolean::<true>))]
     return_value: bool,
     /// On `getState` and subscription updates: whether the caller is subscribed.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -188,7 +188,7 @@ impl StateReply {
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct DoneReply {
-    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::always_true))]
+    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::boolean::<true>))]
     return_value: bool,
 }
 
@@ -204,7 +204,7 @@ impl Default for DoneReply {
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct ErrorReply {
-    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::always_false))]
+    #[cfg_attr(feature = "schema", schema(schema_with = crate::schema::boolean::<false>))]
     return_value: bool,
     error_kind: ErrorKind,
     /// What failed, for people.
