@@ -2,9 +2,9 @@ use crate::session_lifecycle::OutputRelease;
 use crate::stats::Stats;
 use crate::worker::{Exit, guarded};
 use prysm_ports::{
-    ConfiguredOutput, Error, Escalation, FrameSource, Hangup, IdleMode, LedOutput, OpenFailure,
-    OpenIntent, OutputObservation, OutputOpen, OutputRelease as HandleRelease, Power, Result,
-    Section, SessionPhase,
+    ConfiguredOutput, Error, Escalation, Hangup, IdleMode, LedOutput, OpenFailure, OpenIntent,
+    OutputObservation, OutputOpen, OutputRelease as HandleRelease, Power, Result, Section,
+    SessionPhase,
 };
 
 #[derive(Debug)]
@@ -18,32 +18,6 @@ impl IdleDecision {
         mode: OutputRelease::Preserve,
         known_power: None,
     };
-}
-
-pub(super) enum CaptureCleanup {
-    NotOpened,
-    Close(Box<dyn FrameSource>),
-    Unconfirmed(Error),
-}
-
-impl CaptureCleanup {
-    pub fn after_stream(source: Option<Box<dyn FrameSource>>, exit: &Exit) -> Self {
-        match (source, exit) {
-            (Some(source), _) => Self::Close(source),
-            (None, Exit::Failed(error)) if error.escalation() == Escalation::Restart => {
-                Self::Unconfirmed(error.clone())
-            }
-            (None, _) => Self::NotOpened,
-        }
-    }
-
-    pub fn close(self) -> Result<()> {
-        match self {
-            Self::Close(source) => guarded("closing the source", || source.close()),
-            Self::NotOpened => Ok(()),
-            Self::Unconfirmed(error) => Err(error),
-        }
-    }
 }
 
 pub(super) struct SessionOutput<'a> {

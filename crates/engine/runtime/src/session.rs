@@ -1,9 +1,11 @@
 //! The session effect owner. The engine chooses each next operation; this
 //! thread keeps native handles and orders source close, output idle and join.
-mod cleanup;
+mod capture;
+mod output;
 
-pub(crate) use self::cleanup::IdleDecision;
-use self::cleanup::{Access, CaptureCleanup, SessionOutput};
+use self::capture::CaptureCleanup;
+pub(crate) use self::output::IdleDecision;
+use self::output::{Access, SessionOutput};
 use crate::feeds::Feeds;
 use crate::session_lifecycle::OutputRelease;
 use crate::slot::LatestSlot;
