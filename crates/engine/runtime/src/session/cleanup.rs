@@ -18,14 +18,6 @@ impl IdleDecision {
         mode: OutputRelease::Preserve,
         known_power: None,
     };
-
-    fn handle_release(&self) -> HandleRelease {
-        match self.mode {
-            OutputRelease::Preserve => HandleRelease::Handoff,
-            OutputRelease::Off => HandleRelease::Local,
-            OutputRelease::Automatic => HandleRelease::Ordinary(IdleMode::Native),
-        }
-    }
 }
 
 pub(super) enum CaptureCleanup {
@@ -101,7 +93,7 @@ impl<'a> SessionOutput<'a> {
     fn open(&mut self, intent: OpenIntent, stop: &Hangup) -> Result<Access<'_>> {
         match self.device.open(intent, stop) {
             Ok(OutputOpen::Streaming(handle)) => {
-                let held = self.touched.get_or_insert_with(TouchedOutput::default);
+                let held = self.touched.get_or_insert_default();
                 let handle = held.handle.insert(handle);
                 self.stats.output_opened();
                 Ok(Access::Streaming(handle.as_mut()))
@@ -113,7 +105,7 @@ impl<'a> SessionOutput<'a> {
 
     fn open_failed(&mut self, failure: OpenFailure) -> Error {
         if matches!(failure, OpenFailure::Touched(_)) {
-            self.touched.get_or_insert_with(TouchedOutput::default);
+            self.touched.get_or_insert_default();
         }
         failure.into_error().in_section(Section::Output)
     }
@@ -133,63 +125,68 @@ impl<'a> SessionOutput<'a> {
     }
 
     fn release(&mut self, mode: HandleRelease, stop: &Hangup) -> Result<()> {
-        match self
+        let Some(handle) = self
             .touched
             .as_mut()
-            .and_then(|touched| touched.handle.take())
-        {
-            Some(handle) => release_output(handle, mode, stop),
-            None => Ok(()),
+            .and_then(|output| output.handle.take())
+        else {
+            return Ok(());
+        };
+        match guarded("releasing the output", || handle.release(mode, stop)) {
+            Err(error @ Error::Panicked(_)) => {
+                tracing::warn!(%error, "output release was not confirmed");
+                Err(Error::Faulted(SessionPhase::IdlingOutput))
+            }
+            result => result,
         }
     }
 
     pub fn cleanup_after(self, exit: &Exit) -> OutputCleanup<'a> {
-        let fault = match exit {
-            Exit::Failed(error @ Error::Faulted(SessionPhase::IdlingOutput)) => Some(error.clone()),
-            _ => None,
-        };
         OutputCleanup {
             output: self,
-            fault,
+            release_unconfirmed: matches!(
+                exit,
+                Exit::Failed(Error::Faulted(SessionPhase::IdlingOutput))
+            ),
         }
+    }
+
+    fn turn_off(&mut self, known_power: Option<Power>, stop: &Hangup) -> Result<()> {
+        if self.touched.is_none() && known_power == Some(Power::Off) {
+            return Ok(());
+        }
+        let released = self.release(HandleRelease::Local, stop);
+        if matches!(released, Err(Error::Faulted(_))) {
+            return released;
+        }
+        let off = self.device.set_power(Power::Off, stop);
+        released.and(off)
     }
 }
 
 pub(super) struct OutputCleanup<'a> {
     output: SessionOutput<'a>,
-    fault: Option<Error>,
+    release_unconfirmed: bool,
 }
 
 impl OutputCleanup<'_> {
-    pub fn finish(mut self, decision: &IdleDecision) -> Result<()> {
+    pub fn finish(self, decision: &IdleDecision) -> Result<()> {
         guarded("idling the output", move || {
-            if let Some(fault) = self.fault {
-                return Err(fault);
+            let mut output = self.output;
+            if self.release_unconfirmed {
+                return Err(Error::Faulted(SessionPhase::IdlingOutput));
             }
-            let needs_off = decision.mode == OutputRelease::Off
-                && (self.output.touched.is_some() || decision.known_power != Some(Power::Off));
             let stop = Hangup::default();
-            let released = self.output.release(decision.handle_release(), &stop);
-            if needs_off && !matches!(released, Err(Error::Faulted(_))) {
-                let off = self.output.device.set_power(Power::Off, &stop);
-                released.and(off)
-            } else {
-                released
+            match decision.mode {
+                OutputRelease::Preserve => output.release(HandleRelease::Handoff, &stop),
+                OutputRelease::Automatic => {
+                    output.release(HandleRelease::Ordinary(IdleMode::Native), &stop)
+                }
+                OutputRelease::Off => output.turn_off(decision.known_power, &stop),
             }
         })
         .map_err(|error| error.in_section(Section::Output))
     }
-}
-
-fn release_output(held: Box<dyn LedOutput>, release: HandleRelease, stop: &Hangup) -> Result<()> {
-    guarded("releasing the output", || held.release(release, stop)).map_err(|error| {
-        if matches!(error, Error::Panicked(_)) {
-            tracing::warn!(%error, "output release was not confirmed");
-            Error::Faulted(SessionPhase::IdlingOutput)
-        } else {
-            error
-        }
-    })
 }
 
 #[cfg(test)]
@@ -200,6 +197,12 @@ mod tests {
     use prysm_ports::{AdapterSettings, OutputFactory, Registry};
 
     struct FailedRelease(CallLog);
+
+    impl Drop for FailedRelease {
+        fn drop(&mut self) {
+            self.0.record("drop handle");
+        }
+    }
 
     impl LedOutput for FailedRelease {
         fn write(&mut self, _: &EdgeColors) -> Result<()> {
@@ -272,6 +275,26 @@ mod tests {
     }
 
     #[test]
+    fn unconfirmed_release_holds_the_handle_until_finish_and_skips_off() {
+        let log = CallLog::new();
+        let device = device(&log, FakeIdle::Idles);
+        let stats = Stats::default();
+        let mut output = SessionOutput::new(&*device, &stats);
+        output.touched = Some(TouchedOutput {
+            handle: Some(Box::new(FailedRelease(log.clone()))),
+        });
+
+        let exit = Exit::Failed(Error::Faulted(SessionPhase::IdlingOutput));
+        let cleanup = output.cleanup_after(&exit);
+        assert!(log.events().is_empty());
+        assert!(matches!(
+            cleanup.finish(&KNOWN_OFF),
+            Err(Error::Faulted(SessionPhase::IdlingOutput))
+        ));
+        assert_eq!(log.events(), ["drop handle"]);
+    }
+
+    #[test]
     fn off_runs_after_a_release_error_and_preserves_the_first_failure() {
         let log = CallLog::new();
         let device = device(&log, FakeIdle::Fails);
@@ -284,7 +307,10 @@ mod tests {
             .cleanup_after(&Exit::Stopped)
             .finish(&KNOWN_OFF)
             .unwrap_err();
-        assert_eq!(log.events(), ["release", "output.idle:test:Off"]);
+        assert_eq!(
+            log.events(),
+            ["release", "drop handle", "output.idle:test:Off"]
+        );
         assert_eq!(error.to_string(), "release failed");
         assert_eq!(error.section(), Some(Section::Output));
     }
